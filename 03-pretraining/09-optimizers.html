@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo — The LLM Stack</title>
+<meta name="description" content="SGD+momentum, Adam/AdamW derivation and bias correction, decoupled weight decay; memory of optimizer states; Adafactor; Lion; Shampoo/second-order; Muon (the ne">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="active" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="39-optimizers-sgd-adam-adafactor-lion-muon-shampoo">3.9 Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo<a class="headerlink" href="#39-optimizers-sgd-adam-adafactor-lion-muon-shampoo" title="Permanent link">¶</a></h1>
+<p>The optimizer is the engine that turns gradients into weight updates. Choose it well and a 70-billion-parameter model converges smoothly on a fixed token budget; choose it poorly and you either waste GPU-months or watch the loss spike into NaNs. For most of the deep-learning era one optimizer — Adam, and its weight-decay-fixed cousin AdamW — has been the default for training transformers, and for good reason. But Adam carries a hidden tax: it stores <strong>two extra full-precision tensors per parameter</strong>, and at scale that memory cost rivals the model weights themselves. That tension — <em>fast, robust convergence</em> versus <em>memory and compute overhead</em> — is the throughline of this chapter, and it is exactly what newer optimizers like Adafactor, Lion, Shampoo, and Muon attack from different angles.</p>
+<p>We will build up from the gradient-descent first principles you saw in <a href="../01-foundations/03-calculus-optimization.html">Calculus, Optimization &amp; Convexity</a>, derive Adam and its bias correction carefully, implement AdamW from scratch, account for optimizer-state memory the way a systems engineer must, and then tour the modern menagerie: factored second moments (Adafactor), sign-based updates (Lion), full preconditioners (Shampoo), and the newest newsmaker, <strong>Muon</strong>, which orthogonalizes the update of every weight matrix. By the end you should be able to pick an optimizer for a given memory and stability budget, and defend that choice in an interview.</p>
+<h2 id="from-gradient-descent-to-momentum">From Gradient Descent to Momentum<a class="headerlink" href="#from-gradient-descent-to-momentum" title="Permanent link">¶</a></h2>
+<p>The starting point is plain stochastic gradient descent (SGD). Given a loss <span class="arithmatex">\(L(\theta)\)</span> and a minibatch estimate <span class="arithmatex">\(g_t = \nabla_\theta L_{\mathcal{B}_t}(\theta_{t-1})\)</span> of its gradient, SGD takes the step</p>
+<div class="arithmatex">\[
+\theta_t = \theta_{t-1} - \eta\, g_t,
+\]</div>
+<p>where <span class="arithmatex">\(\eta\)</span> is the learning rate. This is the cheapest possible optimizer: zero extra state, one tensor of gradients, one fused multiply-subtract. Its weakness is that the raw gradient is a noisy, badly-scaled descent direction. In a ravine — a loss surface that is steep across one axis and nearly flat along another, which is the <em>typical</em> geometry of deep nets — SGD zig-zags across the steep walls while crawling along the flat valley floor. The condition number of the Hessian, the ratio of its largest to smallest eigenvalue, controls how bad this is; for transformers it can be enormous.</p>
+<p><strong>Momentum</strong> fixes the zig-zag by accumulating an exponentially-weighted average of past gradients, a &ldquo;velocity&rdquo; <span class="arithmatex">\(v_t\)</span>, and stepping along <em>that</em> instead:</p>
+<div class="arithmatex">\[
+v_t = \mu\, v_{t-1} + g_t, \qquad \theta_t = \theta_{t-1} - \eta\, v_t.
+\]</div>
+<p>Here <span class="arithmatex">\(\mu \in [0,1)\)</span> (typically 0.9) is the momentum coefficient. The intuition is physical: the velocity behaves like a heavy ball rolling downhill. Oscillating components of the gradient cancel across steps, while the consistent down-valley component accumulates. The geometric-series identity tells us that a steady gradient <span class="arithmatex">\(g\)</span> produces a terminal velocity of <span class="arithmatex">\(g/(1-\mu)\)</span>, so momentum with <span class="arithmatex">\(\mu=0.9\)</span> effectively multiplies the step length along consistent directions by <span class="arithmatex">\(10\times\)</span>. That is also why you usually drop the learning rate when you increase momentum.</p>
+<p>A subtle but important variant is <strong>Nesterov momentum</strong>, which evaluates the gradient at the <em>look-ahead</em> point <span class="arithmatex">\(\theta_{t-1} - \eta\mu v_{t-1}\)</span> rather than at <span class="arithmatex">\(\theta_{t-1}\)</span>. The correction term gives a slightly more responsive update and a better convergence rate on convex problems. SGD with Nesterov momentum and a well-tuned learning-rate schedule remains the gold standard for training convolutional vision models, and it generalizes beautifully. So why do we not train transformers with it?</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sgd_momentum_step</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="n">grads</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">mu</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span> <span class="n">nesterov</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One step of (Nesterov) momentum SGD, in-place. Pure PyTorch tensors.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">p</span><span class="p">,</span> <span class="n">g</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="n">grads</span><span class="p">,</span> <span class="n">velocities</span><span class="p">):</span>
+        <span class="n">v</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">mu</span><span class="p">)</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">g</span><span class="p">)</span>              <span class="c1"># v &lt;- mu*v + g</span>
+        <span class="k">if</span> <span class="n">nesterov</span><span class="p">:</span>
+            <span class="n">update</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="n">mu</span><span class="p">)</span>  <span class="c1"># g + mu*v  (look-ahead)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">update</span> <span class="o">=</span> <span class="n">v</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">update</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=-</span><span class="n">lr</span><span class="p">)</span>        <span class="c1"># theta &lt;- theta - lr * update</span>
+</code></pre></div>
+<p>The answer is scale heterogeneity. In a transformer the gradient magnitudes differ wildly across parameters — embedding rows that fire rarely versus LayerNorm gains versus attention projections — and a <em>single</em> global learning rate cannot serve all of them. We need a <strong>per-parameter adaptive</strong> learning rate. That is what Adam provides.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: SGD&rsquo;s generalization edge</p>
+<p>A persistent empirical finding is that SGD-trained models often generalize slightly better than adaptive ones, plausibly because the implicit regularization of SGD&rsquo;s noise biases solutions toward flatter minima. For LLMs this edge is outweighed by Adam&rsquo;s vastly faster and more robust convergence on the ill-conditioned, sparse-gradient landscape of language. The frontier optimizers later in this chapter (Muon, Shampoo) are partly attempts to recover both: adaptive speed <em>and</em> SGD-like generalization.</p>
+</div>
+<h2 id="adam-and-adamw-derivation-bias-correction-decoupled-decay">Adam and AdamW: Derivation, Bias Correction, Decoupled Decay<a class="headerlink" href="#adam-and-adamw-derivation-bias-correction-decoupled-decay" title="Permanent link">¶</a></h2>
+<p>Adam (Kingma &amp; Ba, <em>Adam: A Method for Stochastic Optimization</em>, 2015) combines two ideas: momentum on the gradient (the <strong>first moment</strong>), and a per-coordinate rescaling by the running magnitude of the gradient (the <strong>second moment</strong>, an idea inherited from RMSProp and AdaGrad). It maintains two exponential moving averages:</p>
+<div class="arithmatex">\[
+m_t = \beta_1 m_{t-1} + (1-\beta_1) g_t, \qquad
+v_t = \beta_2 v_{t-1} + (1-\beta_2) g_t^2,
+\]</div>
+<p>where <span class="arithmatex">\(g_t^2\)</span> is elementwise. Typical defaults are <span class="arithmatex">\(\beta_1 = 0.9\)</span>, <span class="arithmatex">\(\beta_2 = 0.999\)</span> (for LLMs <span class="arithmatex">\(\beta_2 = 0.95\)</span> is common — more on that below). <span class="arithmatex">\(m_t\)</span> estimates <span class="arithmatex">\(\mathbb{E}[g]\)</span> and <span class="arithmatex">\(v_t\)</span> estimates <span class="arithmatex">\(\mathbb{E}[g^2]\)</span>.</p>
+<h3 id="why-bias-correction-is-necessary">Why bias correction is necessary<a class="headerlink" href="#why-bias-correction-is-necessary" title="Permanent link">¶</a></h3>
+<p>Both averages are initialized at zero, which biases them toward zero in early steps. Unroll <span class="arithmatex">\(v_t\)</span> assuming a stationary gradient distribution:</p>
+<div class="arithmatex">\[
+v_t = (1-\beta_2)\sum_{i=1}^{t} \beta_2^{\,t-i}\, g_i^2.
+\]</div>
+<p>Taking expectations and assuming <span class="arithmatex">\(\mathbb{E}[g_i^2]\)</span> is approximately constant <span class="arithmatex">\(\approx \mathbb{E}[g_t^2]\)</span>,</p>
+<div class="arithmatex">\[
+\mathbb{E}[v_t] = \mathbb{E}[g_t^2]\,(1-\beta_2)\sum_{i=1}^{t}\beta_2^{\,t-i} = \mathbb{E}[g_t^2]\,(1 - \beta_2^{\,t}).
+\]</div>
+<p>The factor <span class="arithmatex">\((1-\beta_2^{\,t})\)</span> is the bias: at <span class="arithmatex">\(t=1\)</span> with <span class="arithmatex">\(\beta_2=0.999\)</span>, <span class="arithmatex">\(v_1\)</span> is only <span class="arithmatex">\(0.1\%\)</span> of the true second moment, so an <em>uncorrected</em> step would be roughly <span class="arithmatex">\(\sqrt{1000}\approx 31\times\)</span> too large. Adam divides it out:</p>
+<div class="arithmatex">\[
+\hat{m}_t = \frac{m_t}{1-\beta_1^{\,t}}, \qquad \hat{v}_t = \frac{v_t}{1-\beta_2^{\,t}}.
+\]</div>
+<p>The final update normalizes the first moment by the root second moment, with a small <span class="arithmatex">\(\epsilon\)</span> (e.g. <span class="arithmatex">\(10^{-8}\)</span>) for numerical safety:</p>
+<div class="arithmatex">\[
+\theta_t = \theta_{t-1} - \eta\, \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}.
+\]</div>
+<p>The deep insight is in the ratio <span class="arithmatex">\(\hat{m}_t / \sqrt{\hat{v}_t}\)</span>. For a coordinate with a consistent gradient, <span class="arithmatex">\(\hat{m}_t \approx \sqrt{\hat{v}_t}\)</span>, so the update magnitude is <span class="arithmatex">\(\approx \eta\)</span> — Adam takes a step of <em>roughly unit size in each coordinate</em>, regardless of the gradient&rsquo;s absolute scale. This is the <strong>scale-invariance</strong> that makes Adam so robust: you can change the loss scaling (or use mixed precision, see <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a>) and Adam&rsquo;s effective step is unchanged. It is also why Adam tolerates the wildly heterogeneous gradient scales of a transformer that defeat plain SGD.</p>
+<h3 id="decoupled-weight-decay-the-w-in-adamw">Decoupled weight decay: the W in AdamW<a class="headerlink" href="#decoupled-weight-decay-the-w-in-adamw" title="Permanent link">¶</a></h3>
+<p>L2 regularization adds <span class="arithmatex">\(\tfrac{\lambda}{2}\lVert\theta\rVert^2\)</span> to the loss, which contributes <span class="arithmatex">\(\lambda\theta\)</span> to the gradient. In <em>plain</em> SGD this is identical to weight decay (shrinking <span class="arithmatex">\(\theta\)</span> toward zero each step). But in Adam they are <strong>not</strong> equivalent: the <span class="arithmatex">\(\lambda\theta\)</span> term flows through the <span class="arithmatex">\(m_t\)</span> and <span class="arithmatex">\(v_t\)</span> machinery and gets divided by <span class="arithmatex">\(\sqrt{\hat v_t}\)</span>, so parameters with large gradient magnitude (large <span class="arithmatex">\(v_t\)</span>) get <em>less</em> decay — exactly backwards from what you want. Loshchilov &amp; Hutter (<em>Decoupled Weight Decay Regularization</em>, 2019) showed this hurts, and proposed <strong>AdamW</strong>, which applies the decay directly to the weights, decoupled from the adaptive term:</p>
+<div class="arithmatex">\[
+\theta_t = \theta_{t-1} - \eta\left( \frac{\hat{m}_t}{\sqrt{\hat{v}_t}+\epsilon} + \lambda\, \theta_{t-1}\right).
+\]</div>
+<p>Equivalently <span class="arithmatex">\(\theta_t = (1-\eta\lambda)\,\theta_{t-1} - \eta\,\hat m_t/(\sqrt{\hat v_t}+\epsilon)\)</span>: a clean multiplicative shrink toward zero plus the adaptive step. AdamW is the de-facto standard for pretraining every modern LLM. A crucial practical detail: <strong>do not decay 1-D parameters</strong> — biases, LayerNorm/RMSNorm gains, and usually embeddings — only the 2-D weight matrices. Decaying norm gains pulls them toward zero and destabilizes training.</p>
+<h3 id="implementing-adamw-from-scratch">Implementing AdamW from scratch<a class="headerlink" href="#implementing-adamw-from-scratch" title="Permanent link">¶</a></h3>
+<p>Here is a complete, correct, heavily-commented AdamW that you could drop into a real training loop. It mirrors the math above and matches <code>torch.optim.AdamW</code> numerically.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.optim</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optimizer</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">AdamW</span><span class="p">(</span><span class="n">Optimizer</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;From-scratch AdamW (Loshchilov &amp; Hutter, 2019).</span>
+
+<span class="sd">    Stores two state tensors per parameter: exp_avg (m) and exp_avg_sq (v).</span>
+<span class="sd">    This is the memory tax we account for in the next section.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">,</span> <span class="n">betas</span><span class="o">=</span><span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">),</span>
+                 <span class="n">eps</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">weight_decay</span><span class="o">=</span><span class="mf">0.1</span><span class="p">):</span>
+        <span class="c1"># betas: (beta1, beta2). For LLMs beta2=0.95 is the common choice.</span>
+        <span class="n">defaults</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">lr</span><span class="o">=</span><span class="n">lr</span><span class="p">,</span> <span class="n">betas</span><span class="o">=</span><span class="n">betas</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="n">eps</span><span class="p">,</span> <span class="n">weight_decay</span><span class="o">=</span><span class="n">weight_decay</span><span class="p">)</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="n">defaults</span><span class="p">)</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">closure</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">closure</span><span class="p">()</span> <span class="k">if</span> <span class="n">closure</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">param_groups</span><span class="p">:</span>
+            <span class="n">lr</span><span class="p">,</span> <span class="p">(</span><span class="n">b1</span><span class="p">,</span> <span class="n">b2</span><span class="p">)</span> <span class="o">=</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;lr&quot;</span><span class="p">],</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;betas&quot;</span><span class="p">]</span>
+            <span class="n">eps</span><span class="p">,</span> <span class="n">wd</span> <span class="o">=</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;eps&quot;</span><span class="p">],</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;weight_decay&quot;</span><span class="p">]</span>
+            <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;params&quot;</span><span class="p">]:</span>
+                <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">grad</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">g</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">grad</span>
+                <span class="k">if</span> <span class="n">g</span><span class="o">.</span><span class="n">is_sparse</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;AdamW does not support sparse grads&quot;</span><span class="p">)</span>
+
+                <span class="n">state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">[</span><span class="n">p</span><span class="p">]</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">state</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>                    <span class="c1"># lazy init</span>
+                    <span class="n">state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+                    <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>      <span class="c1"># m</span>
+                    <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>   <span class="c1"># v</span>
+                <span class="n">m</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg&quot;</span><span class="p">],</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq&quot;</span><span class="p">]</span>
+                <span class="n">state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">t</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]</span>
+
+                <span class="c1"># --- Decoupled weight decay: multiplicative shrink toward 0 ---</span>
+                <span class="c1"># Applied to the *weights*, NOT folded into the gradient.</span>
+                <span class="k">if</span> <span class="n">wd</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">p</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">wd</span><span class="p">)</span>
+
+                <span class="c1"># --- Update biased first and second moment estimates ---</span>
+                <span class="n">m</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">b1</span><span class="p">)</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">b1</span><span class="p">)</span>          <span class="c1"># m = b1*m + (1-b1)*g</span>
+                <span class="n">v</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">b2</span><span class="p">)</span><span class="o">.</span><span class="n">addcmul_</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">g</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">b2</span><span class="p">)</span>   <span class="c1"># v = b2*v + (1-b2)*g^2</span>
+
+                <span class="c1"># --- Bias correction ---</span>
+                <span class="n">bias_c1</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">b1</span> <span class="o">**</span> <span class="n">t</span>
+                <span class="n">bias_c2</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">b2</span> <span class="o">**</span> <span class="n">t</span>
+                <span class="c1"># Fold bias_c2 into the denominator; step_size folds bias_c1.</span>
+                <span class="n">denom</span> <span class="o">=</span> <span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span> <span class="o">/</span> <span class="p">(</span><span class="n">bias_c2</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">))</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">eps</span><span class="p">)</span>
+                <span class="n">step_size</span> <span class="o">=</span> <span class="n">lr</span> <span class="o">/</span> <span class="n">bias_c1</span>
+
+                <span class="c1"># theta &lt;- theta - step_size * m / denom</span>
+                <span class="n">p</span><span class="o">.</span><span class="n">addcdiv_</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">denom</span><span class="p">,</span> <span class="n">value</span><span class="o">=-</span><span class="n">step_size</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">loss</span>
+</code></pre></div>
+<p>A few implementation notes that separate a toy from a production optimizer. The <code>@torch.no_grad()</code> decorator is mandatory — the update itself must not build an autograd graph. Operations are <strong>in-place</strong> (<code>mul_</code>, <code>add_</code>, <code>addcmul_</code>, <code>addcdiv_</code>) to avoid allocating new tensors every step; for a 7B model a single full-size temporary is 14 GB in bf16. Real implementations go further with <strong>fused</strong> or <strong>foreach</strong> kernels (<code>torch.optim.AdamW(..., fused=True)</code>) that batch the elementwise math across all parameters into one CUDA launch, which is a large throughput win when you have thousands of parameter tensors.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: <span class="arithmatex">\(\beta_2\)</span> and loss spikes</p>
+<p>The default <span class="arithmatex">\(\beta_2 = 0.999\)</span> averages the second moment over <span class="arithmatex">\(\sim 1/(1-\beta_2) = 1000\)</span> steps. If a single batch produces a large gradient (a &ldquo;bad&rdquo; document, a tokenization artifact), <span class="arithmatex">\(v_t\)</span> reacts slowly, so <span class="arithmatex">\(\sqrt{\hat v_t}\)</span> stays small and the update explodes — a classic loss spike. Lowering to <span class="arithmatex">\(\beta_2 = 0.95\)</span> (a <span class="arithmatex">\(\sim 20\)</span>-step window) makes the denominator respond faster and is standard for large LLM pretraining. See <a href="../03-pretraining/11-training-stability.html">Training Stability, Loss Spikes &amp; Debugging Large Runs</a>.</p>
+</div>
+<h2 id="the-memory-cost-of-optimizer-states">The Memory Cost of Optimizer States<a class="headerlink" href="#the-memory-cost-of-optimizer-states" title="Permanent link">¶</a></h2>
+<p>Here is the systems reality that motivates everything in the rest of the chapter. Consider a model with <span class="arithmatex">\(P\)</span> parameters. With AdamW you store, at minimum:</p>
+<table>
+<thead>
+<tr>
+<th>Tensor</th>
+<th>Count</th>
+<th>Typical precision</th>
+<th>Bytes/param</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Parameters (weights)</td>
+<td><span class="arithmatex">\(P\)</span></td>
+<td>bf16</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Gradients</td>
+<td><span class="arithmatex">\(P\)</span></td>
+<td>bf16</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Adam <span class="arithmatex">\(m\)</span> (first moment)</td>
+<td><span class="arithmatex">\(P\)</span></td>
+<td>fp32</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Adam <span class="arithmatex">\(v\)</span> (second moment)</td>
+<td><span class="arithmatex">\(P\)</span></td>
+<td>fp32</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Master weights (fp32 copy)</td>
+<td><span class="arithmatex">\(P\)</span></td>
+<td>fp32</td>
+<td>4</td>
+</tr>
+</tbody>
+</table>
+<p>That last row appears because mixed-precision training keeps a high-precision master copy of the weights so that tiny updates are not lost to bf16 rounding (see <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a>). The headline number from the ZeRO/DeepSpeed analysis is <strong>16 bytes per parameter</strong> for the model+optimizer state (2+2+4+4+4 = 16), of which the <em>optimizer alone</em> (m, v, master weights) is <strong>12 bytes</strong> — three times the size of the bf16 weights themselves.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: optimizer memory for a 7B model</p>
+<p>Take <span class="arithmatex">\(P = 7\times 10^9\)</span> parameters.</p>
+<ul>
+<li>bf16 weights: <span class="arithmatex">\(7\text{e}9 \times 2 = 14\)</span> GB</li>
+<li>bf16 gradients: <span class="arithmatex">\(14\)</span> GB</li>
+<li>Adam <span class="arithmatex">\(m\)</span> (fp32): <span class="arithmatex">\(7\text{e}9 \times 4 = 28\)</span> GB</li>
+<li>Adam <span class="arithmatex">\(v\)</span> (fp32): <span class="arithmatex">\(28\)</span> GB</li>
+<li>fp32 master weights: <span class="arithmatex">\(28\)</span> GB</li>
+</ul>
+<p>Total <span class="arithmatex">\(= 14 + 14 + 28 + 28 + 28 = 112\)</span> GB, i.e. <span class="arithmatex">\(16\)</span> bytes/param. The <strong>optimizer states alone are 84 GB</strong> — they do not fit on a single 80 GB H100, and they dwarf the 14 GB of actual weights. This is the single biggest reason large-model training needs ZeRO/FSDP sharding (see <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a>), and the single biggest motivation for memory-frugal optimizers. Halving optimizer memory can be the difference between needing 16 versus 8 GPUs.</p>
+</div>
+<p>Two orthogonal strategies attack this. The first is <strong>systems-level</strong>: ZeRO/FSDP <em>shards</em> the 12 bytes of optimizer state across <span class="arithmatex">\(N\)</span> data-parallel ranks, so each rank holds only <span class="arithmatex">\(12P/N\)</span> bytes — no change to the math, pure distribution. The second is <strong>algorithmic</strong>: redesign the optimizer to store <em>less state per parameter</em>. Adafactor, Lion, and the sign-based family live here, and that is where we turn next. The two strategies compose: you can shard a Lion optimizer too.</p>
+<h2 id="adafactor-factoring-the-second-moment">Adafactor: Factoring the Second Moment<a class="headerlink" href="#adafactor-factoring-the-second-moment" title="Permanent link">¶</a></h2>
+<p>Adafactor (Shazeer &amp; Stern, <em>Adafactor: Adaptive Learning Rates with Sublinear Memory Cost</em>, 2018) was born from exactly the memory pressure above, originally for training large T5 models on TPUs. Its key observation: the costliest state is the second moment <span class="arithmatex">\(v\)</span>, a full <span class="arithmatex">\(P\)</span>-element tensor. For a weight <em>matrix</em> <span class="arithmatex">\(W \in \mathbb{R}^{n\times m}\)</span>, instead of storing the full <span class="arithmatex">\(n\times m\)</span> matrix of second moments, Adafactor stores only a <strong>row vector</strong> <span class="arithmatex">\(R\in\mathbb{R}^{n}\)</span> and a <strong>column vector</strong> <span class="arithmatex">\(C\in\mathbb{R}^{m}\)</span> and reconstructs a rank-1 approximation:</p>
+<div class="arithmatex">\[
+\hat V_{ij} \approx \frac{R_i\, C_j}{\sum_k R_k}.
+\]</div>
+<p>This is the best rank-1 (in a generalized-KL sense) factorization of the true second-moment matrix. The memory for the second moment drops from <span class="arithmatex">\(O(nm)\)</span> to <span class="arithmatex">\(O(n+m)\)</span> — sublinear in the parameter count. For a <span class="arithmatex">\(4096\times 4096\)</span> matrix that is <span class="arithmatex">\(16.7\)</span>M numbers versus <span class="arithmatex">\(8192\)</span>, a <span class="arithmatex">\(2000\times\)</span> reduction <em>for that tensor&rsquo;s second-moment state</em>.</p>
+<p>Adafactor pairs this with two more memory moves: it can <strong>drop the first moment entirely</strong> (<span class="arithmatex">\(\beta_1 = 0\)</span>, no momentum), and it uses <strong>relative step sizes</strong> scaled by the RMS of the parameters so it needs no external learning-rate tuning. It also adds <strong>update clipping</strong> by RMS norm for stability. The factored update for a matrix, in pseudocode:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">adafactor_matrix_step</span><span class="p">(</span><span class="n">W</span><span class="p">,</span> <span class="n">G</span><span class="p">,</span> <span class="n">R</span><span class="p">,</span> <span class="n">C</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">lr</span><span class="p">,</span> <span class="n">beta2</span><span class="o">=</span><span class="mf">0.999</span><span class="p">,</span> <span class="n">eps1</span><span class="o">=</span><span class="mf">1e-30</span><span class="p">,</span> <span class="n">eps2</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One Adafactor step for a 2D weight W with grad G.</span>
+<span class="sd">    R: row accumulator (n,), C: col accumulator (m,). No first moment here.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">n</span><span class="p">,</span> <span class="n">m</span> <span class="o">=</span> <span class="n">W</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">g2</span> <span class="o">=</span> <span class="n">G</span> <span class="o">*</span> <span class="n">G</span> <span class="o">+</span> <span class="n">eps1</span>                       <span class="c1"># squared grad, floored</span>
+
+    <span class="c1"># Decayed running averages of row sums and column sums of g^2</span>
+    <span class="n">beta2_t</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">t</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="mf">0.8</span><span class="p">)</span>             <span class="c1"># Adafactor&#39;s time-dependent decay</span>
+    <span class="n">R</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">beta2_t</span><span class="p">)</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">g2</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">alpha</span><span class="o">=</span><span class="mi">1</span> <span class="o">-</span> <span class="n">beta2_t</span><span class="p">)</span>   <span class="c1"># (n,)</span>
+    <span class="n">C</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">beta2_t</span><span class="p">)</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">g2</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">),</span> <span class="n">alpha</span><span class="o">=</span><span class="mi">1</span> <span class="o">-</span> <span class="n">beta2_t</span><span class="p">)</span>   <span class="c1"># (m,)</span>
+
+    <span class="c1"># Rank-1 reconstruction of the second-moment estimate V_hat (n,m)</span>
+    <span class="n">R_factor</span> <span class="o">=</span> <span class="p">(</span><span class="n">R</span> <span class="o">/</span> <span class="n">R</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span><span class="o">.</span><span class="n">rsqrt</span><span class="p">()</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># (n,1)</span>
+    <span class="n">C_factor</span> <span class="o">=</span> <span class="n">C</span><span class="o">.</span><span class="n">rsqrt</span><span class="p">()</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>                <span class="c1"># (1,m)</span>
+    <span class="n">update</span> <span class="o">=</span> <span class="n">G</span> <span class="o">*</span> <span class="n">R_factor</span> <span class="o">*</span> <span class="n">C_factor</span>                 <span class="c1"># G / sqrt(V_hat)</span>
+
+    <span class="c1"># RMS-clip the update (Adafactor&#39;s stability trick)</span>
+    <span class="n">rms</span> <span class="o">=</span> <span class="n">update</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>
+    <span class="n">update</span> <span class="o">=</span> <span class="n">update</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="p">(</span><span class="n">rms</span> <span class="o">/</span> <span class="mf">1.0</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+
+    <span class="c1"># Relative step size scaled by parameter RMS</span>
+    <span class="n">param_rms</span> <span class="o">=</span> <span class="n">W</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="n">eps2</span><span class="p">)</span>
+    <span class="n">W</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">update</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=-</span><span class="n">lr</span> <span class="o">*</span> <span class="n">param_rms</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+</code></pre></div>
+<p>The trade-off is real: Adafactor&rsquo;s factored second moment and missing momentum make it slightly noisier and sometimes less stable than AdamW, and it can need more babysitting (warmup, the <code>eps2</code> floor). But it cut optimizer memory roughly in half-to-two-thirds and made T5-scale training feasible. It remains popular for fine-tuning large models on memory-constrained hardware, and its rank-1 factorization idea echoes in later work. A related modern option, <strong>8-bit Adam</strong> (Dettmers et al.), takes the orthogonal route of keeping full <span class="arithmatex">\(m\)</span> and <span class="arithmatex">\(v\)</span> but quantizing them to 8 bits with block-wise scaling, cutting their footprint <span class="arithmatex">\(4\times\)</span> with almost no quality loss — and composes with everything else.</p>
+<h2 id="lion-learning-the-sign-of-the-update">Lion: Learning the Sign of the Update<a class="headerlink" href="#lion-learning-the-sign-of-the-update" title="Permanent link">¶</a></h2>
+<p>Lion (Chen et al., <em>Symbolic Discovery of Optimization Algorithms</em>, 2023) was discovered by a program-search procedure over optimizer programs, and the winner is startlingly simple. &ldquo;Lion&rdquo; stands for <strong>Evo</strong>lved <strong>Si</strong>gn <strong>Mo</strong>me<strong>n</strong>tum. It keeps a <em>single</em> momentum buffer (so only <strong>4 extra bytes/param</strong> versus Adam&rsquo;s 8) and the update direction is the <strong>sign</strong> of an interpolated momentum:</p>
+<div class="arithmatex">\[
+c_t = \beta_1 m_{t-1} + (1-\beta_1) g_t, \qquad
+\theta_t = \theta_{t-1} - \eta\big(\operatorname{sign}(c_t) + \lambda\theta_{t-1}\big),
+\]</div>
+<div class="arithmatex">\[
+m_t = \beta_2 m_{t-1} + (1-\beta_2) g_t.
+\]</div>
+<p>Note the two different interpolations: the <em>update</em> uses <span class="arithmatex">\(\beta_1\)</span> (e.g. 0.9) while the <em>momentum buffer</em> is updated with <span class="arithmatex">\(\beta_2\)</span> (e.g. 0.99). The <span class="arithmatex">\(\operatorname{sign}\)</span> is the heart of it: every parameter moves by exactly <span class="arithmatex">\(\pm\eta\)</span> (plus decay), independent of gradient magnitude. This is an extreme form of the scale-invariance Adam approximates — Lion makes it exact and uniform.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">lion_step</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">g</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">beta1</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span> <span class="n">beta2</span><span class="o">=</span><span class="mf">0.99</span><span class="p">,</span> <span class="n">wd</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One Lion update, in-place. Only ONE state tensor m per parameter.&quot;&quot;&quot;</span>
+    <span class="c1"># Update direction uses an interpolation with beta1...</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">beta1</span><span class="p">)</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta1</span><span class="p">)</span>   <span class="c1"># beta1*m + (1-beta1)*g (temp)</span>
+    <span class="n">update</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">sign</span><span class="p">()</span>                            <span class="c1"># +/-1 per coordinate</span>
+    <span class="k">if</span> <span class="n">wd</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">wd</span><span class="p">)</span>                    <span class="c1"># decoupled weight decay</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">update</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=-</span><span class="n">lr</span><span class="p">)</span>                    <span class="c1"># theta &lt;- theta - lr*sign(c)</span>
+    <span class="c1"># ...but the stored momentum uses beta2 (note: g, not c)</span>
+    <span class="n">m</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">beta2</span><span class="p">)</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta2</span><span class="p">)</span>
+</code></pre></div>
+<p>Because the update magnitude is uniformly <span class="arithmatex">\(\eta\)</span>, Lion&rsquo;s effective step is <strong>larger and more uniform</strong> than AdamW&rsquo;s, so the recommended learning rate is roughly <span class="arithmatex">\(3\)</span>–<span class="arithmatex">\(10\times\)</span> <em>smaller</em> than Adam&rsquo;s, and the weight decay correspondingly <span class="arithmatex">\(3\)</span>–<span class="arithmatex">\(10\times\)</span> <em>larger</em> (to keep <span class="arithmatex">\(\eta\lambda\)</span> in a sane range). When tuned, Lion matches or beats AdamW on many vision and language pretraining tasks while using half the optimizer memory and slightly less compute (no square root, no second buffer). Its weaknesses: the sign update injects more gradient noise, so it tends to need <strong>larger batch sizes</strong> to behave, and it can be touchier near the end of training. Still, Lion is the cleanest demonstration that you do not need a per-coordinate magnitude estimate at all — a good <em>sign</em> plus momentum is often enough.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: re-tune LR and decay when switching optimizers</p>
+<p>You cannot drop a new optimizer into an existing recipe and keep the hyperparameters. Lion needs a much smaller LR and larger decay than AdamW; Muon needs its own LR for matrices and a <em>separate</em> AdamW for embeddings and the LM head. Always re-sweep learning rate (and warmup) when changing optimizer family. See <a href="../03-pretraining/10-lr-schedules-hparams.html">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a>.</p>
+</div>
+<h2 id="second-order-methods-shampoo-and-preconditioning">Second-Order Methods: Shampoo and Preconditioning<a class="headerlink" href="#second-order-methods-shampoo-and-preconditioning" title="Permanent link">¶</a></h2>
+<p>Everything so far uses only <em>diagonal</em> curvature information — Adam&rsquo;s <span class="arithmatex">\(\sqrt{v}\)</span> is a diagonal preconditioner, one scalar per coordinate. The ideal update, from a second-order Taylor expansion, is <strong>Newton&rsquo;s method</strong>:</p>
+<div class="arithmatex">\[
+\theta_t = \theta_{t-1} - \eta\, H^{-1} g_t,
+\]</div>
+<p>where <span class="arithmatex">\(H\)</span> is the Hessian (or, in practice, the Fisher / empirical second-moment matrix). <span class="arithmatex">\(H^{-1}\)</span> rotates and rescales the gradient to undo the loss surface&rsquo;s anisotropy, fixing the ill-conditioning that diagonal methods can only partially address. The catch is fatal at scale: for <span class="arithmatex">\(P\)</span> parameters <span class="arithmatex">\(H\)</span> is <span class="arithmatex">\(P\times P\)</span>, which is <span class="arithmatex">\(\sim 5\times 10^{19}\)</span> entries for a 7B model. Storing, let alone inverting, the full Hessian is impossible.</p>
+<p><strong>Shampoo</strong> (Gupta, Koren &amp; Singer, <em>Shampoo: Preconditioned Stochastic Tensor Optimization</em>, 2018) makes second-order methods tractable for <em>matrix</em>-shaped parameters by using a <strong>Kronecker-factored</strong> preconditioner. For a weight matrix <span class="arithmatex">\(W\in\mathbb{R}^{n\times m}\)</span> with gradient <span class="arithmatex">\(G\)</span>, it maintains two much smaller matrices:</p>
+<div class="arithmatex">\[
+L_t = L_{t-1} + G G^\top \in \mathbb{R}^{n\times n}, \qquad
+R_t = R_{t-1} + G^\top G \in \mathbb{R}^{m\times m},
+\]</div>
+<p>and preconditions on both sides with their inverse fourth roots:</p>
+<div class="arithmatex">\[
+W_t = W_{t-1} - \eta\, L_t^{-1/4}\, G\, R_t^{-1/4}.
+\]</div>
+<p>This approximates the full <span class="arithmatex">\(nm\times nm\)</span> preconditioner by the Kronecker product <span class="arithmatex">\(L^{1/2}\otimes R^{1/2}\)</span>, capturing curvature <em>between rows</em> and <em>between columns</em> separately. The memory is <span class="arithmatex">\(O(n^2 + m^2)\)</span> instead of <span class="arithmatex">\(O(n^2 m^2)\)</span>, and Shampoo provably converges faster per step on many problems. Its costs are the periodic computation of matrix inverse-roots (eigendecompositions of <span class="arithmatex">\(n\times n\)</span> and <span class="arithmatex">\(m\times m\)</span> matrices, done every <span class="arithmatex">\(K\)</span> steps to amortize) and the <span class="arithmatex">\(L,R\)</span> accumulators themselves. A distributed implementation (<strong>Distributed Shampoo</strong>, Anil et al.) won the 2024 AlgoPerf optimization benchmark, demonstrating that well-engineered second-order methods can beat AdamW on wall-clock time, not just step count. The practical barriers — kernel complexity, inverse-root numerics, and integrating with parameter sharding — have kept it out of most mainstream LLM recipes, but it directly inspired the optimizer we cover last.</p>
+<h2 id="muon-orthogonalizing-the-update">Muon: Orthogonalizing the Update<a class="headerlink" href="#muon-orthogonalizing-the-update" title="Permanent link">¶</a></h2>
+<p><strong>Muon</strong> (Jordan et al., 2024) is the newest entrant and has driven much of the recent optimizer excitement, including reported speed records on nanoGPT and use in frontier-scale training. The name stands for <strong>M</strong>oment<strong>U</strong>m <strong>O</strong>rthogonalized by <strong>N</strong>ewton-Schulz. Its premise is geometric: for a 2-D weight matrix, the <em>momentum</em> update <span class="arithmatex">\(M_t\)</span> is typically dominated by a few large singular directions — it is effectively low-rank, so most of the update&rsquo;s &ldquo;energy&rdquo; pushes along a handful of directions and starves the rest. Muon fixes this by replacing the momentum update with its <strong>orthogonalization</strong>: the nearest semi-orthogonal matrix, which has all singular values equal to 1.</p>
+<p>Formally, if <span class="arithmatex">\(M_t = U\Sigma V^\top\)</span> is the singular value decomposition (SVD) of the momentum, Muon&rsquo;s update is</p>
+<div class="arithmatex">\[
+O_t = U V^\top, \qquad W_t = W_{t-1} - \eta\, O_t.
+\]</div>
+<p>Setting every singular value to 1 makes the update <em>spectrally uniform</em> — it pushes equally along every singular direction of the momentum, rather than letting the top few dominate. This is the matrix-valued analogue of Lion&rsquo;s per-coordinate sign: Lion normalizes each scalar entry to <span class="arithmatex">\(\pm 1\)</span>; Muon normalizes each <em>singular value</em> to 1. Both are aggressive ways of discarding magnitude and keeping direction, but Muon respects the matrix structure of the weight.</p>
+<p>The genius is <em>how</em> it computes <span class="arithmatex">\(UV^\top\)</span> without an SVD (which is slow and hard to do well in bf16 on GPUs). It uses a <strong>Newton-Schulz iteration</strong>: a fixed sequence of matrix-multiply-only steps that drives the singular values toward 1. Starting from a spectrally-normalized <span class="arithmatex">\(X_0 = M/\lVert M\rVert_F\)</span>, it repeats a cubic polynomial in <span class="arithmatex">\(X\)</span>:</p>
+<div class="arithmatex">\[
+X_{k+1} = a X_k + b\,(X_k X_k^\top) X_k + c\,(X_k X_k^\top)^2 X_k,
+\]</div>
+<p>with carefully chosen coefficients <span class="arithmatex">\((a,b,c)\approx(3.4445, -4.7750, 2.0315)\)</span> tuned so that roughly 5 iterations push all singular values close to 1. Crucially these are just <code>matmul</code>s — they run at full GPU throughput in bf16, so the orthogonalization adds only modest overhead.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">newton_schulz5</span><span class="p">(</span><span class="n">G</span><span class="p">,</span> <span class="n">steps</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="mf">1e-7</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute an approximate UV^T (orthogonalization) of G via Newton-Schulz.</span>
+<span class="sd">    Matmul-only; runs in bf16. Coefficients tuned to converge singular values-&gt;1.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">assert</span> <span class="n">G</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span>
+    <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span> <span class="o">=</span> <span class="mf">3.4445</span><span class="p">,</span> <span class="o">-</span><span class="mf">4.7750</span><span class="p">,</span> <span class="mf">2.0315</span>
+    <span class="n">X</span> <span class="o">=</span> <span class="n">G</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">()</span>
+    <span class="n">transposed</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="k">if</span> <span class="n">X</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">X</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">1</span><span class="p">):</span>           <span class="c1"># iterate on the smaller dimension</span>
+        <span class="n">X</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">T</span>
+        <span class="n">transposed</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="n">X</span> <span class="o">=</span> <span class="n">X</span> <span class="o">/</span> <span class="p">(</span><span class="n">X</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span> <span class="o">+</span> <span class="n">eps</span><span class="p">)</span>            <span class="c1"># spectral pre-normalization</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">steps</span><span class="p">):</span>
+        <span class="n">A</span> <span class="o">=</span> <span class="n">X</span> <span class="o">@</span> <span class="n">X</span><span class="o">.</span><span class="n">T</span>
+        <span class="n">B</span> <span class="o">=</span> <span class="n">b</span> <span class="o">*</span> <span class="n">A</span> <span class="o">+</span> <span class="n">c</span> <span class="o">*</span> <span class="p">(</span><span class="n">A</span> <span class="o">@</span> <span class="n">A</span><span class="p">)</span>
+        <span class="n">X</span> <span class="o">=</span> <span class="n">a</span> <span class="o">*</span> <span class="n">X</span> <span class="o">+</span> <span class="n">B</span> <span class="o">@</span> <span class="n">X</span>
+    <span class="k">if</span> <span class="n">transposed</span><span class="p">:</span>
+        <span class="n">X</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">T</span>
+    <span class="k">return</span> <span class="n">X</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">muon_step</span><span class="p">(</span><span class="n">W</span><span class="p">,</span> <span class="n">G</span><span class="p">,</span> <span class="n">momentum_buf</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.02</span><span class="p">,</span> <span class="n">mu</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span> <span class="n">ns_steps</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One Muon update for a 2D weight W. Only ONE state buffer (momentum).&quot;&quot;&quot;</span>
+    <span class="n">momentum_buf</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">mu</span><span class="p">)</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">G</span><span class="p">)</span>               <span class="c1"># standard heavy-ball momentum</span>
+    <span class="n">update</span> <span class="o">=</span> <span class="n">newton_schulz5</span><span class="p">(</span><span class="n">momentum_buf</span><span class="p">,</span> <span class="n">steps</span><span class="o">=</span><span class="n">ns_steps</span><span class="p">)</span>  <span class="c1"># orthogonalize</span>
+    <span class="c1"># Scale by sqrt(max(rows,cols)) so RMS of update ~ 1, matching AdamW&#39;s scale</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">W</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>
+    <span class="n">W</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">update</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=-</span><span class="n">lr</span> <span class="o">*</span> <span class="n">scale</span><span class="p">)</span>
+</code></pre></div>
+<p>Muon&rsquo;s properties make it a compelling AdamW replacement for the bulk of an LLM&rsquo;s parameters:</p>
+<ul>
+<li><strong>Memory.</strong> Like momentum SGD and Lion, it stores <strong>one</strong> buffer per parameter (momentum), not two — half of Adam&rsquo;s optimizer-state memory. There is no second-moment tensor at all.</li>
+<li><strong>Only for 2-D weights.</strong> Orthogonalization is defined for matrices. The standard recipe is <strong>hybrid</strong>: use Muon for the 2-D hidden weight matrices (attention and MLP projections) and a small <strong>AdamW for the 1-D parameters and the input embedding / output head</strong>, which are not matrix-multiplied in the same sense and behave better under Adam.</li>
+<li><strong>Scale matching.</strong> The <span class="arithmatex">\(\sqrt{\max(n,m)}\)</span> factor makes Muon&rsquo;s update RMS comparable to AdamW&rsquo;s, so learning-rate intuition transfers and you can reuse much of an AdamW schedule.</li>
+<li><strong>Reported gains.</strong> On small-scale benchmarks (nanoGPT speedruns) and in some larger reports, Muon reaches a target loss in meaningfully fewer steps/tokens than tuned AdamW, while using less memory.</li>
+</ul>
+<p>The mechanism connects cleanly to Shampoo: orthogonalizing <span class="arithmatex">\(M = U\Sigma V^\top\)</span> to <span class="arithmatex">\(UV^\top\)</span> is exactly applying the preconditioner <span class="arithmatex">\((MM^\top)^{-1/2}M\)</span>, a &ldquo;whitening&rdquo; of the update — the same spectral idea as Shampoo&rsquo;s inverse-root preconditioning, but computed cheaply with matmuls and applied to the momentum rather than accumulated second moments. Muon can be read as a streamlined, GPU-friendly descendant of the Shampoo line.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: why the embeddings get AdamW</p>
+<p>Embedding and unembedding (LM head) parameters have rows indexed by token, with extremely sparse and uneven gradients — a rare token&rsquo;s row is updated only when that token appears. Orthogonalizing across the vocabulary dimension mixes unrelated tokens and behaves poorly, and these layers benefit from Adam&rsquo;s per-coordinate magnitude adaptation. Hence the hybrid Muon+AdamW recipe rather than Muon everywhere. The same logic explains why 1-D norm/bias parameters stay on AdamW.</p>
+</div>
+<h2 id="choosing-an-optimizer-a-practical-comparison">Choosing an Optimizer: A Practical Comparison<a class="headerlink" href="#choosing-an-optimizer-a-practical-comparison" title="Permanent link">¶</a></h2>
+<p>The table below summarizes the state per parameter (the memory tax) and the character of each method. &ldquo;Buffers/param&rdquo; counts the optimizer-specific state tensors beyond weights and gradients.</p>
+<table>
+<thead>
+<tr>
+<th>Optimizer</th>
+<th>Buffers/param</th>
+<th>Extra bytes/param (fp32)</th>
+<th>Update character</th>
+<th>Where it shines</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SGD</td>
+<td>0</td>
+<td>0</td>
+<td>raw gradient</td>
+<td>cheapest; rarely used for LLMs</td>
+</tr>
+<tr>
+<td>SGD+momentum</td>
+<td>1 (<span class="arithmatex">\(v\)</span>)</td>
+<td>4</td>
+<td>velocity</td>
+<td>vision models, great generalization</td>
+</tr>
+<tr>
+<td>AdamW</td>
+<td>2 (<span class="arithmatex">\(m,v\)</span>)</td>
+<td>8</td>
+<td>per-coord adaptive</td>
+<td><strong>LLM default</strong>; robust, well-understood</td>
+</tr>
+<tr>
+<td>8-bit AdamW</td>
+<td>2 (quantized)</td>
+<td>~2</td>
+<td>same as AdamW</td>
+<td>AdamW quality, <span class="arithmatex">\(4\times\)</span> less state</td>
+</tr>
+<tr>
+<td>Adafactor</td>
+<td>factored</td>
+<td>~<span class="arithmatex">\(O(n{+}m)\)</span></td>
+<td>factored 2<sup>nd</sup> moment</td>
+<td>memory-bound fine-tuning, T5-scale</td>
+</tr>
+<tr>
+<td>Lion</td>
+<td>1 (<span class="arithmatex">\(m\)</span>)</td>
+<td>4</td>
+<td>sign of momentum</td>
+<td>half AdamW memory; needs big batches</td>
+</tr>
+<tr>
+<td>Shampoo</td>
+<td>2 factors</td>
+<td><span class="arithmatex">\(O(n^2{+}m^2)\)</span></td>
+<td>Kronecker 2<sup>nd</sup>-order</td>
+<td>fewest steps; heavy compute/eng</td>
+</tr>
+<tr>
+<td>Muon (2-D)</td>
+<td>1 (<span class="arithmatex">\(m\)</span>)</td>
+<td>4</td>
+<td>orthogonalized momentum</td>
+<td>speed + half memory; hybrid recipe</td>
+</tr>
+</tbody>
+</table>
+<p>A pragmatic decision procedure for a new pretraining run:</p>
+<ol>
+<li><strong>Default to AdamW</strong> with <span class="arithmatex">\(\beta=(0.9, 0.95)\)</span>, weight decay <span class="arithmatex">\(0.1\)</span> on 2-D weights only, gradient clipping at norm 1.0. It is the most documented and forgiving choice and the safe baseline for an interview answer.</li>
+<li><strong>If optimizer memory is the binding constraint</strong> and you cannot shard further, reach for 8-bit AdamW (smallest behavioral change) or Adafactor (most aggressive, more babysitting).</li>
+<li><strong>If you want speed and have appetite for tuning</strong>, try Muon for the matrices + AdamW for embeddings/head; it is the most exciting current option and halves optimizer-state memory on the bulk of parameters.</li>
+<li><strong>Always re-sweep learning rate, warmup, and weight decay</strong> when you change family — the hyperparameters do not transfer.</li>
+</ol>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Why is Adam (or AdamW) the default for training transformers instead of SGD with momentum, and what is the cost of that choice?</p>
+<p><strong>A:</strong> Three reasons. (1) <strong>Per-parameter adaptivity / scale invariance.</strong> Transformer gradients span many orders of magnitude across parameters — sparse embedding rows, norm gains, dense projections — and Adam&rsquo;s division by <span class="arithmatex">\(\sqrt{\hat v}\)</span> rescales every coordinate to a near-unit step, so a single global learning rate works. SGD has one rate for all and zig-zags on the resulting ill-conditioned, anisotropic loss surface. (2) <strong>Robustness to sparse and noisy gradients</strong>, which dominate at the embedding layer. (3) <strong>Fast, reliable early convergence</strong>, helped by bias correction that prevents huge steps in the first iterations. The cost is memory: AdamW stores two extra fp32 tensors per parameter (first and second moment), so optimizer states are ~12 bytes/param including the fp32 master copy — three times the bf16 weights. For a 7B model that&rsquo;s ~84 GB of optimizer state alone, which is why we need ZeRO/FSDP sharding and why memory-frugal optimizers (Lion, Adafactor, Muon, 8-bit Adam) exist. A secondary cost: SGD often generalizes slightly better, but for LLMs Adam&rsquo;s convergence speed and robustness win decisively.</p>
+<p><strong>Follow-up Q:</strong> What&rsquo;s the difference between L2 regularization and weight decay in Adam, and why does AdamW matter?</p>
+<p><strong>A:</strong> In plain SGD they&rsquo;re identical. In Adam they&rsquo;re not: L2 adds <span class="arithmatex">\(\lambda\theta\)</span> to the gradient, which then passes through the adaptive denominator <span class="arithmatex">\(\sqrt{\hat v}\)</span> — so high-gradient parameters get <em>less</em> effective decay, the opposite of the intent. AdamW decouples decay, applying <span class="arithmatex">\(\theta \leftarrow (1-\eta\lambda)\theta\)</span> directly to the weights independent of the adaptive term. This consistently improves generalization and is why every modern LLM uses AdamW, not Adam-with-L2. And you apply decay only to 2-D weight matrices, never to norm gains or biases.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>SGD+momentum</strong> is cheapest (0–1 buffers) and generalizes well, but a single global learning rate cannot handle the wildly heterogeneous gradient scales of a transformer — hence adaptive methods.</li>
+<li><strong>Adam/AdamW</strong> rescale each coordinate by <span class="arithmatex">\(\hat m/\sqrt{\hat v}\)</span>, giving near-unit, scale-invariant steps; <strong>bias correction</strong> (<span class="arithmatex">\(1-\beta^t\)</span> factors) prevents huge early steps. For LLMs use <span class="arithmatex">\(\beta_2 = 0.95\)</span> to react faster to gradient spikes.</li>
+<li><strong>AdamW decouples weight decay</strong> from the adaptive term (<span class="arithmatex">\(\theta\leftarrow(1-\eta\lambda)\theta\)</span>); L2-in-the-gradient under-decays high-gradient params. Decay only 2-D weights, never norms or biases.</li>
+<li><strong>Optimizer state is the memory hog:</strong> AdamW costs ~12 bytes/param (<span class="arithmatex">\(m\)</span>, <span class="arithmatex">\(v\)</span>, fp32 master) — 3× the bf16 weights, ~84 GB for a 7B model. This forces ZeRO/FSDP sharding and motivates frugal optimizers.</li>
+<li><strong>Adafactor</strong> factors the second moment into row×column vectors (<span class="arithmatex">\(O(n{+}m)\)</span> memory) and can drop momentum — sublinear optimizer memory, at some stability cost. <strong>8-bit Adam</strong> quantizes <span class="arithmatex">\(m,v\)</span> for a <span class="arithmatex">\(4\times\)</span> cut with little quality loss.</li>
+<li><strong>Lion</strong> stores one buffer and steps by the <em>sign</em> of momentum (uniform <span class="arithmatex">\(\pm\eta\)</span>); half AdamW memory, needs a smaller LR, larger decay, and bigger batches.</li>
+<li><strong>Shampoo</strong> is a tractable second-order method via Kronecker-factored preconditioners (<span class="arithmatex">\(L^{-1/4}GR^{-1/4}\)</span>); fewest steps, but heavy compute and engineering.</li>
+<li><strong>Muon</strong> orthogonalizes the momentum of 2-D weights via a matmul-only Newton-Schulz iteration (singular values → 1), the matrix analogue of Lion&rsquo;s sign. One buffer per param, hybrid with AdamW for embeddings/head; a fast, memory-light, newsmaking AdamW alternative.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>As of 2026, AdamW remains the default for LLM pretraining, but orthogonalization-based optimizers—Muon in particular—have moved from nanoGPT speedruns to frontier-scale production use (Kimi K2, GLM-4.5), offering roughly 2× compute efficiency gains over AdamW. The field is converging on hybrid recipes: Muon for 2-D weight matrices, AdamW for embeddings and 1-D parameters.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1412.6980">Kingma &amp; Ba, <em>Adam: A Method for Stochastic Optimization</em> (2015)</a> — original Adam derivation with bias-corrected moment estimates; the paper every LLM optimizer builds on.</li>
+<li><a href="https://arxiv.org/abs/1711.05101">Loshchilov &amp; Hutter, <em>Decoupled Weight Decay Regularization</em> (2019)</a> — shows L2 regularization ≠ weight decay under Adam and introduces AdamW, now the universal LLM training standard.</li>
+<li><a href="https://arxiv.org/abs/1804.04235">Shazeer &amp; Stern, <em>Adafactor: Adaptive Learning Rates with Sublinear Memory Cost</em> (2018)</a> — rank-1 factored second moments cut optimizer memory from O(nm) to O(n+m); first practical large-scale memory-frugal adaptive optimizer.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2302.06675">Chen et al., <em>Symbolic Discovery of Optimization Algorithms</em> (2023)</a> — program-search discovers Lion (Evolved Sign Momentum): one buffer, sign update, half Adam&rsquo;s optimizer-state memory.</li>
+<li><a href="https://arxiv.org/abs/2502.16982">Liu et al., <em>Muon is Scalable for LLM Training</em> (2025)</a> — proves Muon scales to large models with weight decay + per-parameter update scaling, achieving ~2× compute efficiency vs. AdamW on compute-optimal runs.</li>
+<li><a href="https://arxiv.org/abs/2409.11321">Vyas et al., <em>SOAP: Improving and Stabilizing Shampoo using Adam</em> (2024)</a> — runs Adam in Shampoo&rsquo;s eigenbasis, reducing iterations by 40% and wall-clock time by 35% on language model training.</li>
+<li><a href="https://arxiv.org/abs/2002.09018">Anil et al., <em>Scalable Second Order Optimization for Deep Learning</em> (2020)</a> — Distributed Shampoo: Kronecker-factored preconditioners made tractable via CPU-distributed inverse-root computation.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/bitsandbytes-foundation/bitsandbytes">bitsandbytes-foundation/bitsandbytes</a> — drop-in 8-bit AdamW (and other optimizers) via block-wise quantization; cuts optimizer-state memory 4× with negligible quality loss.</li>
+<li><a href="https://github.com/MoonshotAI/Moonlight">MoonshotAI/Moonlight</a> — open-source distributed Muon implementation used to train the 16B Moonlight MoE on 5.7T tokens; includes pretrained checkpoints.</li>
+<li><a href="https://github.com/lucidrains/lion-pytorch">lucidrains/lion-pytorch</a> — clean PyTorch implementation of Lion with optional Triton fused kernels.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://kellerjordan.github.io/posts/muon/">Keller Jordan, <em>Muon: An optimizer for hidden layers in neural networks</em> (2024)</a> — the original Muon blog post explaining Newton-Schulz orthogonalization, nanoGPT results, and the connection to Shampoo.</li>
+<li><a href="https://arxiv.org/abs/2110.02861">Dettmers et al., <em>8-bit Optimizers via Block-wise Quantization</em> (2022)</a> — ICLR 2022 spotlight; the paper behind bitsandbytes&rsquo; 8-bit Adam, with block-wise dynamic quantization preserving 32-bit fidelity.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Kingma &amp; Ba, <em>Adam: A Method for Stochastic Optimization</em> (2015) — the original Adam derivation and bias correction.</li>
+<li>Loshchilov &amp; Hutter, <em>Decoupled Weight Decay Regularization</em> (2019) — AdamW and why decoupling matters.</li>
+<li>Shazeer &amp; Stern, <em>Adafactor: Adaptive Learning Rates with Sublinear Memory Cost</em> (2018) — factored second moments.</li>
+<li>Chen et al., <em>Symbolic Discovery of Optimization Algorithms</em> (2023) — the Lion optimizer.</li>
+<li>Gupta, Koren &amp; Singer, <em>Shampoo: Preconditioned Stochastic Tensor Optimization</em> (2018); Anil et al., <em>Scalable Second Order Optimization for Deep Learning</em> (Distributed Shampoo).</li>
+<li>Jordan et al., <em>Muon</em> (2024) — orthogonalized momentum via Newton-Schulz; see also the nanoGPT speedrun writeups.</li>
+<li>Rajbhandari et al., <em>ZeRO: Memory Optimizations Toward Training Trillion Parameter Models</em> (2020) — the optimizer-state memory analysis and sharding.</li>
+<li>Dettmers et al., <em>8-bit Optimizers via Block-wise Quantization</em> (2022) — quantized Adam states.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="08-mixed-precision-fp8.html"><span class="pn-label">← Previous</span><span class="pn-title">Mixed Precision, bf16 &amp; FP8 Training</span></a>
+<a class="next" href="10-lr-schedules-hparams.html"><span class="pn-label">Next →</span><span class="pn-title">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#from-gradient-descent-to-momentum">From Gradient Descent to Momentum</a></li>
+<li class="toc-l2"><a href="#adam-and-adamw-derivation-bias-correction-decoupled-decay">Adam and AdamW: Derivation, Bias Correction, Decoupled Decay</a></li>
+<li class="toc-l3"><a href="#why-bias-correction-is-necessary">Why bias correction is necessary</a></li>
+<li class="toc-l3"><a href="#decoupled-weight-decay-the-w-in-adamw">Decoupled weight decay: the W in AdamW</a></li>
+<li class="toc-l3"><a href="#implementing-adamw-from-scratch">Implementing AdamW from scratch</a></li>
+<li class="toc-l2"><a href="#the-memory-cost-of-optimizer-states">The Memory Cost of Optimizer States</a></li>
+<li class="toc-l2"><a href="#adafactor-factoring-the-second-moment">Adafactor: Factoring the Second Moment</a></li>
+<li class="toc-l2"><a href="#lion-learning-the-sign-of-the-update">Lion: Learning the Sign of the Update</a></li>
+<li class="toc-l2"><a href="#second-order-methods-shampoo-and-preconditioning">Second-Order Methods: Shampoo and Preconditioning</a></li>
+<li class="toc-l2"><a href="#muon-orthogonalizing-the-update">Muon: Orthogonalizing the Update</a></li>
+<li class="toc-l2"><a href="#choosing-an-optimizer-a-practical-comparison">Choosing an Optimizer: A Practical Comparison</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

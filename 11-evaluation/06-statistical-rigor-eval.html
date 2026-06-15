@@ -1,0 +1,1036 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance — The LLM Stack</title>
+<meta name="description" content="Reporting eval results like a scientist: bootstrap confidence intervals on accuracy/Elo, paired significance tests (paired t, McNemar, Wilcoxon) for A-vs-B, var">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="active" href="06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XI — Evaluation</div>
+<h1 id="116-statistical-rigor-in-evaluation-confidence-intervals-significance">11.6 Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance<a class="headerlink" href="#116-statistical-rigor-in-evaluation-confidence-intervals-significance" title="Permanent link">¶</a></h1>
+<p>A leaderboard says model A scores 84.2 % and model B scores 83.6 % on a 500-question benchmark. The press release announces &ldquo;a new state of the art.&rdquo; A careful engineer asks a different question: <em>is 0.6 percentage points even distinguishable from noise?</em> With 500 questions, the standard error on each number is around 1.6 points, so the gap is well inside the uncertainty. The &ldquo;improvement&rdquo; might be a coin flip.</p>
+<p>This chapter is about treating evaluation as an experiment, not a scoreboard. Every benchmark number is a <em>random variable</em>: it depends on which items you sampled, which random seeds you used, which prompts and decoding parameters you chose, and — when a model grades a model — which judge you trusted. A score reported without an interval is a measurement reported without error bars, and in any other branch of empirical science that would be unpublishable.</p>
+<p>We build the toolkit a scientist would demand: bootstrap confidence intervals on accuracy and Elo, paired significance tests (paired <span class="arithmatex">\(t\)</span>, McNemar, Wilcoxon) for the head-to-head A-vs-B comparison that practitioners actually care about, a variance decomposition that tells you <em>where</em> your noise lives (items? seeds? judges?), and a power analysis to size a test set <em>before</em> you spend money running it. We close with item-response theory (IRT) and adaptive evaluation — how to extract more signal per item — and the single most important leaderboard-reading skill: knowing that <strong>overlapping confidence intervals mean &ldquo;no demonstrated gap.&rdquo;</strong></p>
+<p>This chapter is the statistical spine of Part XI. It assumes you have met the benchmark landscape in <a href="../11-evaluation/01-eval-landscape.html">The Evaluation Problem &amp; Benchmark Landscape</a>, the judge paradigm in <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a>, and harness mechanics in <a href="../11-evaluation/03-eval-harnesses.html">Building Eval Harnesses</a>. The probability foundations live in <a href="../01-foundations/02-probability-information.html">Probability, Statistics &amp; Information Theory</a>. Online A/B testing — the production cousin of everything here — is in <a href="../12-production-mlops/07-online-eval-ab-testing.html">Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a>.</p>
+<hr />
+<h2 id="why-every-eval-number-needs-an-error-bar">Why Every Eval Number Needs an Error Bar<a class="headerlink" href="#why-every-eval-number-needs-an-error-bar" title="Permanent link">¶</a></h2>
+<h3 id="accuracy-is-a-sample-statistic">Accuracy is a sample statistic<a class="headerlink" href="#accuracy-is-a-sample-statistic" title="Permanent link">¶</a></h3>
+<p>When you evaluate a model on a benchmark, you score it on <span class="arithmatex">\(n\)</span> items drawn from some universe of possible items. The accuracy you report, <span class="arithmatex">\(\hat p\)</span>, is an <em>estimate</em> of the true accuracy <span class="arithmatex">\(p\)</span> — the rate the model would achieve on the entire (infinite, hypothetical) population the benchmark is meant to represent. Because <span class="arithmatex">\(\hat p\)</span> is computed from a finite sample, it has sampling variance.</p>
+<p>If each item is scored pass/fail (a Bernoulli trial) and items are independent, then the number correct is <span class="arithmatex">\(\text{Binomial}(n, p)\)</span>, and the standard error of the proportion is</p>
+<div class="arithmatex">\[
+\text{SE}(\hat p) = \sqrt{\frac{p(1-p)}{n}} \approx \sqrt{\frac{\hat p(1-\hat p)}{n}}.
+\]</div>
+<p>The familiar normal-approximation (&ldquo;Wald&rdquo;) 95 % confidence interval is <span class="arithmatex">\(\hat p \pm 1.96\,\text{SE}\)</span>. Plug in numbers: at <span class="arithmatex">\(\hat p = 0.84\)</span>, <span class="arithmatex">\(n = 500\)</span>,</p>
+<div class="arithmatex">\[
+\text{SE} = \sqrt{\frac{0.84 \times 0.16}{500}} = \sqrt{0.0002688} \approx 0.0164,
+\]</div>
+<p>so the 95 % CI is roughly <span class="arithmatex">\(0.84 \pm 0.032\)</span>, i.e. <span class="arithmatex">\([0.808, 0.872]\)</span>. That is a band more than six points wide. A rival at 0.836 sits squarely inside it. <strong>There is no measurable difference.</strong> The width shrinks only as <span class="arithmatex">\(1/\sqrt n\)</span>: to halve the interval you must quadruple the test set.</p>
+<h3 id="the-width-of-ci-table-you-should-memorize">The width-of-CI table you should memorize<a class="headerlink" href="#the-width-of-ci-table-you-should-memorize" title="Permanent link">¶</a></h3>
+<p>The half-width <span class="arithmatex">\(1.96\sqrt{p(1-p)/n}\)</span> near <span class="arithmatex">\(p=0.5\)</span> (the worst case, where variance is maximal) gives a handy rule of thumb: the 95 % margin of error is about <span class="arithmatex">\(1/\sqrt n\)</span>. Some magnitudes worth carrying in your head:</p>
+<table>
+<thead>
+<tr>
+<th><span class="arithmatex">\(n\)</span> (items)</th>
+<th>Margin of error at <span class="arithmatex">\(p\approx0.5\)</span></th>
+<th>Margin at <span class="arithmatex">\(p=0.9\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>100</td>
+<td><span class="arithmatex">\(\pm 9.8\)</span> pts</td>
+<td><span class="arithmatex">\(\pm 5.9\)</span> pts</td>
+</tr>
+<tr>
+<td>500</td>
+<td><span class="arithmatex">\(\pm 4.4\)</span> pts</td>
+<td><span class="arithmatex">\(\pm 2.6\)</span> pts</td>
+</tr>
+<tr>
+<td>1,000</td>
+<td><span class="arithmatex">\(\pm 3.1\)</span> pts</td>
+<td><span class="arithmatex">\(\pm 1.9\)</span> pts</td>
+</tr>
+<tr>
+<td>5,000</td>
+<td><span class="arithmatex">\(\pm 1.4\)</span> pts</td>
+<td><span class="arithmatex">\(\pm 0.8\)</span> pts</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td><span class="arithmatex">\(\pm 1.0\)</span> pts</td>
+<td><span class="arithmatex">\(\pm 0.6\)</span> pts</td>
+</tr>
+</tbody>
+</table>
+<p>So MMLU (around 14,000 items) can resolve differences of roughly a point; a bespoke 200-item eval cannot reliably resolve anything smaller than 7 points. This single table kills most &ldquo;our model beats theirs by 0.4 points&rdquo; claims.</p>
+<div class="admonition warning">
+<p class="admonition-title">The Wald interval lies at the extremes</p>
+<p>The normal-approximation interval is badly behaved when <span class="arithmatex">\(\hat p\)</span> is near 0 or 1, or when <span class="arithmatex">\(n\)</span> is small: it can produce limits below 0 or above 1, and its true coverage can dip well under 95 %. If your model scores 49/50 (<span class="arithmatex">\(\hat p = 0.98\)</span>), do <strong>not</strong> report <span class="arithmatex">\(0.98 \pm 1.96\sqrt{0.98\times0.02/50} = 0.98 \pm 0.039\)</span>. Use a <strong>Wilson score interval</strong> or <strong>Clopper–Pearson exact interval</strong> instead (both shown below), or bootstrap. For pass/fail metrics the Wilson interval is the pragmatic default.</p>
+</div>
+<h3 id="two-kinds-of-variance-items-vs-generation">Two kinds of variance: items vs. generation<a class="headerlink" href="#two-kinds-of-variance-items-vs-generation" title="Permanent link">¶</a></h3>
+<p>There are actually <em>two</em> independent sources of randomness, and conflating them is a classic mistake:</p>
+<ol>
+<li><strong>Item sampling variance.</strong> You happened to draw <em>these</em> questions. A different draw of 500 questions gives a different score. This is the binomial variance above, and it is what a confidence interval over items captures.</li>
+<li><strong>Generation/seed variance.</strong> For a fixed question, a model with temperature <span class="arithmatex">\(&gt;0\)</span> produces different outputs on different runs (different seeds), and may pass on one run and fail on the next. Greedy decoding (<span class="arithmatex">\(T=0\)</span>) removes this <em>in principle</em>, but in practice non-determinism from GPU kernel reductions, batching, and floating-point non-associativity means even &ldquo;greedy&rdquo; runs can differ — see <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a> and the sampling discussion in <a href="../07-inference-serving/09-sampling-decoding.html">Sampling Strategies &amp; Decoding Algorithms</a>.</li>
+</ol>
+<p>If you report a single greedy run, you have <em>no estimate at all</em> of generation variance — you are pretending it is zero. The honest protocol is to run each item <span class="arithmatex">\(k\)</span> times (e.g. <span class="arithmatex">\(k=3\)</span> or <span class="arithmatex">\(k=5\)</span>) at your production temperature and report mean accuracy with an interval that accounts for both axes. We formalize this with a variance decomposition later in the chapter.</p>
+<hr />
+<h2 id="confidence-intervals-that-dont-lie-bootstrap-beyond">Confidence Intervals That Don&rsquo;t Lie: Bootstrap &amp; Beyond<a class="headerlink" href="#confidence-intervals-that-dont-lie-bootstrap-beyond" title="Permanent link">¶</a></h2>
+<h3 id="the-bootstrap-in-one-paragraph">The bootstrap in one paragraph<a class="headerlink" href="#the-bootstrap-in-one-paragraph" title="Permanent link">¶</a></h3>
+<p>The bootstrap (Efron, 1979) is the Swiss-army knife of eval statistics because it makes almost no distributional assumptions and works for <em>any</em> statistic — accuracy, F1, Elo, mean judge score, BLEU, a 90<sup>th</sup>-percentile latency. The idea: your sample of <span class="arithmatex">\(n\)</span> scored items <em>is</em> your best estimate of the population. To learn how much your statistic would wobble across hypothetical re-samples of the population, you re-sample <strong>with replacement</strong> from your own data, recompute the statistic, and repeat <span class="arithmatex">\(B\)</span> times (say <span class="arithmatex">\(B=10{,}000\)</span>). The spread of those <span class="arithmatex">\(B\)</span> recomputed values approximates the sampling distribution of your statistic. The 2.5<sup>th</sup> and 97.5<sup>th</sup> percentiles give a 95 % <strong>percentile bootstrap interval</strong>.</p>
+<div class="arithmatex">\[
+\hat\theta^{*(b)} = s\!\left(\{x_{i}^{*(b)}\}_{i=1}^{n}\right), \quad x^{*(b)} \sim \text{resample}(x_1,\dots,x_n),
+\qquad \text{CI}_{95\%} = \left[\hat\theta^{*}_{(2.5\%)},\ \hat\theta^{*}_{(97.5\%)}\right].
+\]</div>
+<h3 id="bootstrap-ci-wilson-and-clopperpearson-from-scratch">Bootstrap CI, Wilson, and Clopper–Pearson — from scratch<a class="headerlink" href="#bootstrap-ci-wilson-and-clopperpearson-from-scratch" title="Permanent link">¶</a></h3>
+<p>Here is a complete, dependency-light implementation you can drop into an eval harness. It computes a percentile bootstrap CI, a BCa (bias-corrected and accelerated) bootstrap CI — which corrects for skew and is the one to prefer — and the two analytic intervals for binary outcomes.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy</span><span class="w"> </span><span class="kn">import</span> <span class="n">stats</span>  <span class="c1"># only used for the inverse-normal and beta quantiles</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bootstrap_ci</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">statistic</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">,</span> <span class="n">n_boot</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Percentile bootstrap CI for an arbitrary statistic of per-item scores.</span>
+
+<span class="sd">    `scores`    : 1-D array of per-item results (0/1 for pass-fail, or floats</span>
+<span class="sd">                  for judge scores, F1, etc.).</span>
+<span class="sd">    `statistic` : any function array -&gt; scalar (mean, median, np.percentile...).</span>
+<span class="sd">    Returns (point_estimate, lo, hi).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+    <span class="n">point</span> <span class="o">=</span> <span class="n">statistic</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+    <span class="c1"># Vectorized resampling: draw an (n_boot x n) matrix of indices at once.</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">n_boot</span><span class="p">,</span> <span class="n">n</span><span class="p">))</span>
+    <span class="n">boot</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">statistic</span><span class="p">(</span><span class="n">scores</span><span class="p">[</span><span class="n">row</span><span class="p">])</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">idx</span><span class="p">])</span>
+    <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">percentile</span><span class="p">(</span><span class="n">boot</span><span class="p">,</span> <span class="p">[</span><span class="mi">100</span> <span class="o">*</span> <span class="n">alpha</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">100</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">alpha</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)])</span>
+    <span class="k">return</span> <span class="n">point</span><span class="p">,</span> <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bca_bootstrap_ci</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">statistic</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">,</span> <span class="n">n_boot</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Bias-Corrected and accelerated (BCa) bootstrap CI (Efron, 1987).</span>
+
+<span class="sd">    Corrects the percentile interval for (1) median bias and (2) skew of the</span>
+<span class="sd">    sampling distribution via a jackknife acceleration estimate. This is the</span>
+<span class="sd">    interval to trust for skewed statistics like Elo or 90th-percentile latency.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+    <span class="n">theta_hat</span> <span class="o">=</span> <span class="n">statistic</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+
+    <span class="c1"># 1. Bootstrap replicates.</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">n_boot</span><span class="p">,</span> <span class="n">n</span><span class="p">))</span>
+    <span class="n">boot</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">statistic</span><span class="p">(</span><span class="n">scores</span><span class="p">[</span><span class="n">row</span><span class="p">])</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">idx</span><span class="p">])</span>
+
+    <span class="c1"># 2. Bias-correction z0: how often replicates fall below the point estimate.</span>
+    <span class="n">prop</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">boot</span> <span class="o">&lt;</span> <span class="n">theta_hat</span><span class="p">)</span>
+    <span class="n">prop</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">prop</span><span class="p">,</span> <span class="mf">1e-6</span><span class="p">),</span> <span class="mi">1</span> <span class="o">-</span> <span class="mf">1e-6</span><span class="p">)</span>  <span class="c1"># guard against 0/1 -&gt; +-inf</span>
+    <span class="n">z0</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">norm</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="n">prop</span><span class="p">)</span>
+
+    <span class="c1"># 3. Acceleration a from the jackknife (leave-one-out) distribution.</span>
+    <span class="n">jack</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">statistic</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">i</span><span class="p">))</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">)])</span>
+    <span class="n">jack_mean</span> <span class="o">=</span> <span class="n">jack</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="n">num</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">jack_mean</span> <span class="o">-</span> <span class="n">jack</span><span class="p">)</span> <span class="o">**</span> <span class="mi">3</span><span class="p">)</span>
+    <span class="n">den</span> <span class="o">=</span> <span class="mf">6.0</span> <span class="o">*</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">jack_mean</span> <span class="o">-</span> <span class="n">jack</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span> <span class="o">**</span> <span class="mf">1.5</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-12</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">num</span> <span class="o">/</span> <span class="n">den</span>
+
+    <span class="c1"># 4. Adjusted percentiles.</span>
+    <span class="n">z_lo</span><span class="p">,</span> <span class="n">z_hi</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">norm</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="n">alpha</span> <span class="o">/</span> <span class="mi">2</span><span class="p">),</span> <span class="n">stats</span><span class="o">.</span><span class="n">norm</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">alpha</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">adjust</span><span class="p">(</span><span class="n">z</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">stats</span><span class="o">.</span><span class="n">norm</span><span class="o">.</span><span class="n">cdf</span><span class="p">(</span><span class="n">z0</span> <span class="o">+</span> <span class="p">(</span><span class="n">z0</span> <span class="o">+</span> <span class="n">z</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">a</span> <span class="o">*</span> <span class="p">(</span><span class="n">z0</span> <span class="o">+</span> <span class="n">z</span><span class="p">)))</span>
+    <span class="n">p_lo</span><span class="p">,</span> <span class="n">p_hi</span> <span class="o">=</span> <span class="n">adjust</span><span class="p">(</span><span class="n">z_lo</span><span class="p">),</span> <span class="n">adjust</span><span class="p">(</span><span class="n">z_hi</span><span class="p">)</span>
+    <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">percentile</span><span class="p">(</span><span class="n">boot</span><span class="p">,</span> <span class="p">[</span><span class="mi">100</span> <span class="o">*</span> <span class="n">p_lo</span><span class="p">,</span> <span class="mi">100</span> <span class="o">*</span> <span class="n">p_hi</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">theta_hat</span><span class="p">,</span> <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">wilson_interval</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.05</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wilson score interval for a binomial proportion. Well-behaved near 0/1.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">n</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">norm</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">alpha</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">k</span> <span class="o">/</span> <span class="n">n</span>
+    <span class="n">denom</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">z</span><span class="o">**</span><span class="mi">2</span> <span class="o">/</span> <span class="n">n</span>
+    <span class="n">center</span> <span class="o">=</span> <span class="p">(</span><span class="n">p</span> <span class="o">+</span> <span class="n">z</span><span class="o">**</span><span class="mi">2</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">n</span><span class="p">))</span> <span class="o">/</span> <span class="n">denom</span>
+    <span class="n">half</span> <span class="o">=</span> <span class="p">(</span><span class="n">z</span> <span class="o">/</span> <span class="n">denom</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">p</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p</span><span class="p">)</span> <span class="o">/</span> <span class="n">n</span> <span class="o">+</span> <span class="n">z</span><span class="o">**</span><span class="mi">2</span> <span class="o">/</span> <span class="p">(</span><span class="mi">4</span> <span class="o">*</span> <span class="n">n</span><span class="o">**</span><span class="mi">2</span><span class="p">))</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">center</span> <span class="o">-</span> <span class="n">half</span><span class="p">,</span> <span class="n">center</span> <span class="o">+</span> <span class="n">half</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">clopper_pearson</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.05</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Exact (Clopper-Pearson) binomial interval via the Beta distribution.</span>
+
+<span class="sd">    Guaranteed &gt;= 95% coverage (conservative). Good for tiny n or extreme p.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">lo</span> <span class="o">=</span> <span class="mf">0.0</span> <span class="k">if</span> <span class="n">k</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="n">stats</span><span class="o">.</span><span class="n">beta</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="n">alpha</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">n</span> <span class="o">-</span> <span class="n">k</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">hi</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">k</span> <span class="o">==</span> <span class="n">n</span> <span class="k">else</span> <span class="n">stats</span><span class="o">.</span><span class="n">beta</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">alpha</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">k</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">n</span> <span class="o">-</span> <span class="n">k</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">k</span> <span class="o">/</span> <span class="n">n</span><span class="p">,</span> <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="c1"># 420 of 500 correct -&gt; 84% accuracy.</span>
+    <span class="n">correct</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">420</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">80</span><span class="p">)])</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;bootstrap   :&quot;</span><span class="p">,</span> <span class="n">bootstrap_ci</span><span class="p">(</span><span class="n">correct</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;BCa         :&quot;</span><span class="p">,</span> <span class="n">bca_bootstrap_ci</span><span class="p">(</span><span class="n">correct</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Wilson      :&quot;</span><span class="p">,</span> <span class="n">wilson_interval</span><span class="p">(</span><span class="mi">420</span><span class="p">,</span> <span class="mi">500</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;ClopperPears:&quot;</span><span class="p">,</span> <span class="n">clopper_pearson</span><span class="p">(</span><span class="mi">420</span><span class="p">,</span> <span class="mi">500</span><span class="p">))</span>
+    <span class="c1"># Extreme case: 49/50 correct -&gt; Wald would be nonsense.</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Wilson 49/50:&quot;</span><span class="p">,</span> <span class="n">wilson_interval</span><span class="p">(</span><span class="mi">49</span><span class="p">,</span> <span class="mi">50</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Wald   49/50:&quot;</span><span class="p">,</span> <span class="p">(</span><span class="mf">0.98</span><span class="p">,</span> <span class="mf">0.98</span> <span class="o">-</span> <span class="mf">1.96</span> <span class="o">*</span> <span class="p">(</span><span class="mf">0.98</span> <span class="o">*</span> <span class="mf">0.02</span> <span class="o">/</span> <span class="mi">50</span><span class="p">)</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">,</span>
+                                  <span class="mf">0.98</span> <span class="o">+</span> <span class="mf">1.96</span> <span class="o">*</span> <span class="p">(</span><span class="mf">0.98</span> <span class="o">*</span> <span class="mf">0.02</span> <span class="o">/</span> <span class="mi">50</span><span class="p">)</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">))</span>
+</code></pre></div>
+<p>Running this, the four methods agree closely for 420/500 (all give roughly <span class="arithmatex">\([0.807, 0.870]\)</span>), which is reassuring — when <span class="arithmatex">\(n\)</span> is large and <span class="arithmatex">\(p\)</span> is mid-range, everything converges. The 49/50 case is where they diverge: Wilson gives roughly <span class="arithmatex">\([0.894, 0.997]\)</span> while the naive Wald interval gives <span class="arithmatex">\([0.941, 1.019]\)</span> — an upper limit <em>above 1.0</em>, which is nonsense. That is the bug Wilson exists to fix.</p>
+<div class="admonition tip">
+<p class="admonition-title">Cluster-bootstrap when items aren&rsquo;t independent</p>
+<p>Many benchmarks violate item independence: a coding benchmark may have 5 variations of the same underlying problem, an agentic eval may have multiple turns from one task, or a long-document QA set may ask 10 questions about the same passage. Resampling individual items then <em>underestimates</em> variance because correlated items don&rsquo;t carry independent information. The fix is the <strong>cluster (block) bootstrap</strong>: resample whole <em>groups</em> (problems, documents, tasks) with replacement, keeping each group intact. The same code works — just resample group indices instead of item indices, then flatten. Ignoring clustering is one of the most common ways eval CIs come out too narrow.</p>
+</div>
+<h3 id="bootstrapping-an-elo-bradleyterry-rating">Bootstrapping an Elo / Bradley–Terry rating<a class="headerlink" href="#bootstrapping-an-elo-bradleyterry-rating" title="Permanent link">¶</a></h3>
+<p>Pairwise-comparison leaderboards (LMArena-style human votes, or pairwise LLM-judge tournaments) summarize models with an <strong>Elo</strong> or, equivalently, a <strong>Bradley–Terry</strong> rating. The Bradley–Terry model says the probability that model <span class="arithmatex">\(i\)</span> beats model <span class="arithmatex">\(j\)</span> is a logistic function of their rating difference:</p>
+<div class="arithmatex">\[
+P(i \succ j) = \frac{1}{1 + 10^{-(R_i - R_j)/400}} = \sigma\!\left(\frac{\ln 10}{400}(R_i - R_j)\right).
+\]</div>
+<p>Ratings <span class="arithmatex">\(R_i\)</span> are fit by maximum likelihood over the observed battle outcomes. The crucial point for this chapter: <strong>a single Elo number is also a point estimate with sampling error</strong>, and that error is often large — tens of points — when a model has played few battles. You estimate it by <em>bootstrapping over battles</em>: resample the table of (model A, model B, winner) rows with replacement, refit the ratings, and repeat. The spread of refit ratings is the CI.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fit_bradley_terry</span><span class="p">(</span><span class="n">battles</span><span class="p">,</span> <span class="n">models</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="mf">400.0</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>
+                      <span class="n">n_iter</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">anchor</span><span class="o">=</span><span class="mf">1000.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fit BT/Elo ratings by gradient ascent on the log-likelihood.</span>
+
+<span class="sd">    battles : list of (winner_idx, loser_idx). Ties can be split into two</span>
+<span class="sd">              half-weight battles or dropped; we drop them here for clarity.</span>
+<span class="sd">    Returns a rating per model, mean-anchored to `anchor`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">models</span><span class="p">)</span>
+    <span class="n">R</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">m</span><span class="p">)</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">base</span><span class="p">)</span> <span class="o">/</span> <span class="n">scale</span>  <span class="c1"># convert rating-diff to logit units</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">b</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">b</span> <span class="ow">in</span> <span class="n">battles</span><span class="p">])</span>
+    <span class="n">l</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">b</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">b</span> <span class="ow">in</span> <span class="n">battles</span><span class="p">])</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_iter</span><span class="p">):</span>
+        <span class="c1"># P(winner beats loser) under current ratings.</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">c</span> <span class="o">*</span> <span class="p">(</span><span class="n">R</span><span class="p">[</span><span class="n">w</span><span class="p">]</span> <span class="o">-</span> <span class="n">R</span><span class="p">[</span><span class="n">l</span><span class="p">])))</span>
+        <span class="n">grad</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">m</span><span class="p">)</span>
+        <span class="c1"># d/dR of sum log p: winner gets +(1-p), loser gets -(1-p).</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">add</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="n">grad</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="n">c</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">p</span><span class="p">))</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">add</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="n">grad</span><span class="p">,</span> <span class="n">l</span><span class="p">,</span> <span class="o">-</span><span class="n">c</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">p</span><span class="p">))</span>
+        <span class="n">R</span> <span class="o">+=</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">grad</span>
+        <span class="n">R</span> <span class="o">-=</span> <span class="n">R</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>            <span class="c1"># remove the unidentifiable global shift</span>
+    <span class="k">return</span> <span class="n">R</span> <span class="o">-</span> <span class="n">R</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span> <span class="o">+</span> <span class="n">anchor</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bootstrap_elo</span><span class="p">(</span><span class="n">battles</span><span class="p">,</span> <span class="n">models</span><span class="p">,</span> <span class="n">n_boot</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Bootstrap CI on Elo by resampling battles with replacement.&quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    <span class="n">battles</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">battles</span><span class="p">)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">battles</span><span class="p">)</span>
+    <span class="n">boots</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_boot</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">models</span><span class="p">)))</span>
+    <span class="k">for</span> <span class="n">b</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_boot</span><span class="p">):</span>
+        <span class="n">sample</span> <span class="o">=</span> <span class="n">battles</span><span class="p">[</span><span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">n</span><span class="p">)]</span>
+        <span class="n">boots</span><span class="p">[</span><span class="n">b</span><span class="p">]</span> <span class="o">=</span> <span class="n">fit_bradley_terry</span><span class="p">([</span><span class="nb">tuple</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">sample</span><span class="p">],</span> <span class="n">models</span><span class="p">)</span>
+    <span class="n">point</span> <span class="o">=</span> <span class="n">fit_bradley_terry</span><span class="p">([</span><span class="nb">tuple</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">battles</span><span class="p">],</span> <span class="n">models</span><span class="p">)</span>
+    <span class="n">lo</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">percentile</span><span class="p">(</span><span class="n">boots</span><span class="p">,</span> <span class="mf">2.5</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">hi</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">percentile</span><span class="p">(</span><span class="n">boots</span><span class="p">,</span> <span class="mf">97.5</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">models</span><span class="p">[</span><span class="n">i</span><span class="p">]:</span> <span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">point</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span> <span class="nb">round</span><span class="p">(</span><span class="n">lo</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span> <span class="nb">round</span><span class="p">(</span><span class="n">hi</span><span class="p">[</span><span class="n">i</span><span class="p">]))</span>
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">models</span><span class="p">))}</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">models</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;A&quot;</span><span class="p">,</span> <span class="s2">&quot;B&quot;</span><span class="p">,</span> <span class="s2">&quot;C&quot;</span><span class="p">]</span>
+    <span class="c1"># Synthetic battles: A strong, B middling, C weak.</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">true_R</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;A&quot;</span><span class="p">:</span> <span class="mi">1150</span><span class="p">,</span> <span class="s2">&quot;B&quot;</span><span class="p">:</span> <span class="mi">1000</span><span class="p">,</span> <span class="s2">&quot;C&quot;</span><span class="p">:</span> <span class="mi">880</span><span class="p">}</span>
+    <span class="n">battles</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">pairs</span> <span class="o">=</span> <span class="p">[(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)]</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">300</span><span class="p">):</span>
+        <span class="n">i</span><span class="p">,</span> <span class="n">j</span> <span class="o">=</span> <span class="n">pairs</span><span class="p">[</span><span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">)]</span>
+        <span class="n">pi</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="mi">10</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="p">(</span><span class="n">true_R</span><span class="p">[</span><span class="n">models</span><span class="p">[</span><span class="n">i</span><span class="p">]]</span> <span class="o">-</span> <span class="n">true_R</span><span class="p">[</span><span class="n">models</span><span class="p">[</span><span class="n">j</span><span class="p">]])</span> <span class="o">/</span> <span class="mi">400</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">rng</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">pi</span><span class="p">:</span>
+            <span class="n">battles</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">battles</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">j</span><span class="p">,</span> <span class="n">i</span><span class="p">))</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="p">(</span><span class="n">pt</span><span class="p">,</span> <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span><span class="p">)</span> <span class="ow">in</span> <span class="n">bootstrap_elo</span><span class="p">(</span><span class="n">battles</span><span class="p">,</span> <span class="n">models</span><span class="p">)</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">pt</span><span class="si">}</span><span class="s2">  95% CI [</span><span class="si">{</span><span class="n">lo</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">hi</span><span class="si">}</span><span class="s2">]  width=</span><span class="si">{</span><span class="n">hi</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">lo</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>With only 300 battles split across three pairings, the per-model Elo CIs span roughly <span class="arithmatex">\(\pm 40\)</span>–<span class="arithmatex">\(60\)</span> points. That is why real leaderboards report rating <em>intervals</em> and explicitly group models into tiers: if A&rsquo;s interval and B&rsquo;s interval overlap, the leaderboard rank between them is not statistically meaningful, no matter what the ordering of the point estimates says.</p>
+<hr />
+<h2 id="the-question-you-actually-care-about-is-a-better-than-b">The Question You Actually Care About: Is A Better Than B?<a class="headerlink" href="#the-question-you-actually-care-about-is-a-better-than-b" title="Permanent link">¶</a></h2>
+<p>A confidence interval on a single model is necessary but rarely the real question. The real question is comparative: <strong>does my new checkpoint beat the baseline?</strong> And here a subtle but decisive trick is available: <strong>pairing</strong>. You should evaluate both models on the <em>same</em> items, then test the <em>per-item difference</em>. This cancels the enormous item-to-item difficulty variance and gives a vastly more powerful test than comparing two independent CIs.</p>
+<h3 id="why-pairing-crushes-the-variance">Why pairing crushes the variance<a class="headerlink" href="#why-pairing-crushes-the-variance" title="Permanent link">¶</a></h3>
+<p>Suppose item difficulty varies wildly — some questions are trivial (both models pass), some are impossible (both fail), and only a minority are <em>discriminating</em> (one passes, one fails). For independent (unpaired) comparison, the variance of <span class="arithmatex">\(\hat p_A - \hat p_B\)</span> is <span class="arithmatex">\(\text{Var}(\hat p_A) + \text{Var}(\hat p_B)\)</span>. For the paired difference <span class="arithmatex">\(d_i = \text{score}_A(i) - \text{score}_B(i)\)</span>, the variance is</p>
+<div class="arithmatex">\[
+\text{Var}(\bar d) = \frac{\text{Var}(d_i)}{n} = \frac{\sigma_A^2 + \sigma_B^2 - 2\,\text{Cov}(A,B)}{n}.
+\]</div>
+<p>Because two competent models tend to pass and fail the <em>same</em> easy/hard items, <span class="arithmatex">\(\text{Cov}(A,B)\)</span> is large and positive, so the paired variance is much smaller. In practice pairing can be equivalent to a 4–10× larger unpaired test set. <strong>Always pair when you can.</strong></p>
+<h3 id="three-paired-tests-and-when-to-use-each">Three paired tests and when to use each<a class="headerlink" href="#three-paired-tests-and-when-to-use-each" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Data type</th>
+<th>Null hypothesis</th>
+<th>Use when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>McNemar&rsquo;s test</strong></td>
+<td>binary pass/fail</td>
+<td>discordant pairs equally likely either way</td>
+<td>accuracy / pass-rate on the same items</td>
+</tr>
+<tr>
+<td><strong>Paired <span class="arithmatex">\(t\)</span>-test</strong></td>
+<td>continuous (judge scores, F1, log-prob)</td>
+<td>mean difference <span class="arithmatex">\(= 0\)</span></td>
+<td>per-item numeric scores, roughly symmetric diffs</td>
+</tr>
+<tr>
+<td><strong>Wilcoxon signed-rank</strong></td>
+<td>continuous, non-normal</td>
+<td>median difference <span class="arithmatex">\(= 0\)</span></td>
+<td>skewed/heavy-tailed per-item diffs</td>
+</tr>
+</tbody>
+</table>
+<p><strong>McNemar&rsquo;s test</strong> is the right tool for the most common case — both models scored pass/fail on the same items. It looks <em>only</em> at the discordant pairs: items where exactly one model was right. Let <span class="arithmatex">\(b\)</span> = count where A right, B wrong, and <span class="arithmatex">\(c\)</span> = count where A wrong, B right. Concordant pairs (both right, both wrong) carry no information about which is better and are <em>discarded</em>. Under the null &ldquo;the two models are equally good,&rdquo; each discordant item is a coin flip, so <span class="arithmatex">\(b \sim \text{Binomial}(b+c, 0.5)\)</span>. The test statistic is</p>
+<div class="arithmatex">\[
+\chi^2 = \frac{(|b - c| - 1)^2}{b + c} \sim \chi^2_1 \quad\text{(with continuity correction)},
+\]</div>
+<p>and for small <span class="arithmatex">\(b+c\)</span> you should use the <strong>exact binomial</strong> test instead of the chi-square approximation.</p>
+<h3 id="paired-tests-from-scratch">Paired tests — from scratch<a class="headerlink" href="#paired-tests-from-scratch" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy</span><span class="w"> </span><span class="kn">import</span> <span class="n">stats</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">mcnemar_test</span><span class="p">(</span><span class="n">a_correct</span><span class="p">,</span> <span class="n">b_correct</span><span class="p">,</span> <span class="n">exact</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Paired test for two models scored pass/fail on the SAME items.</span>
+
+<span class="sd">    a_correct, b_correct : boolean arrays of per-item correctness.</span>
+<span class="sd">    Returns (b, c, p_value) where</span>
+<span class="sd">        b = # items A right &amp; B wrong,</span>
+<span class="sd">        c = # items A wrong &amp; B right.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">a_correct</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+    <span class="n">b_</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">b_correct</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">a</span> <span class="o">&amp;</span> <span class="o">~</span><span class="n">b_</span><span class="p">))</span>   <span class="c1"># A beats B on this item</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">~</span><span class="n">a</span> <span class="o">&amp;</span> <span class="n">b_</span><span class="p">))</span>   <span class="c1"># B beats A on this item</span>
+    <span class="n">n_disc</span> <span class="o">=</span> <span class="n">b</span> <span class="o">+</span> <span class="n">c</span>
+    <span class="k">if</span> <span class="n">n_disc</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="p">,</span> <span class="mf">1.0</span>       <span class="c1"># models never disagree -&gt; no evidence</span>
+    <span class="k">if</span> <span class="n">exact</span> <span class="ow">and</span> <span class="n">n_disc</span> <span class="o">&lt;</span> <span class="mi">25</span><span class="p">:</span>
+        <span class="c1"># Exact two-sided binomial test on the discordant pairs.</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">binomtest</span><span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="n">n_disc</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span><span class="o">.</span><span class="n">pvalue</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">chi2</span> <span class="o">=</span> <span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">b</span> <span class="o">-</span> <span class="n">c</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">/</span> <span class="n">n_disc</span>   <span class="c1"># continuity-corrected</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">chi2</span><span class="o">.</span><span class="n">sf</span><span class="p">(</span><span class="n">chi2</span><span class="p">,</span> <span class="n">df</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="p">,</span> <span class="n">p</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">paired_t_test</span><span class="p">(</span><span class="n">scores_a</span><span class="p">,</span> <span class="n">scores_b</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Paired t-test on per-item numeric scores (e.g. judge ratings 1-10).&quot;&quot;&quot;</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">scores_a</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">scores_b</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+    <span class="n">mean_d</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="n">se</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">mean_d</span> <span class="o">/</span> <span class="n">se</span> <span class="k">if</span> <span class="n">se</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">stats</span><span class="o">.</span><span class="n">t</span><span class="o">.</span><span class="n">sf</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">t</span><span class="p">),</span> <span class="n">df</span><span class="o">=</span><span class="n">n</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="c1"># Effect size: Cohen&#39;s d_z for paired designs.</span>
+    <span class="n">dz</span> <span class="o">=</span> <span class="n">mean_d</span> <span class="o">/</span> <span class="n">d</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">if</span> <span class="n">d</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;mean_diff&quot;</span><span class="p">:</span> <span class="n">mean_d</span><span class="p">,</span> <span class="s2">&quot;t&quot;</span><span class="p">:</span> <span class="n">t</span><span class="p">,</span> <span class="s2">&quot;df&quot;</span><span class="p">:</span> <span class="n">n</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="n">p</span><span class="p">,</span> <span class="s2">&quot;cohen_dz&quot;</span><span class="p">:</span> <span class="n">dz</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">wilcoxon_signed_rank</span><span class="p">(</span><span class="n">scores_a</span><span class="p">,</span> <span class="n">scores_b</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Non-parametric paired test; robust to non-normal per-item diffs.&quot;&quot;&quot;</span>
+    <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">scores_a</span><span class="p">,</span> <span class="nb">float</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">scores_b</span><span class="p">,</span> <span class="nb">float</span><span class="p">)</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">wilcoxon</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">zero_method</span><span class="o">=</span><span class="s2">&quot;wilcox&quot;</span><span class="p">,</span> <span class="n">correction</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                         <span class="n">alternative</span><span class="o">=</span><span class="s2">&quot;two-sided&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;statistic&quot;</span><span class="p">:</span> <span class="n">res</span><span class="o">.</span><span class="n">statistic</span><span class="p">,</span> <span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="n">res</span><span class="o">.</span><span class="n">pvalue</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">paired_bootstrap_diff</span><span class="p">(</span><span class="n">a_correct</span><span class="p">,</span> <span class="n">b_correct</span><span class="p">,</span> <span class="n">n_boot</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Bootstrap CI on the accuracy DIFFERENCE, resampling item indices once</span>
+<span class="sd">    and applying the SAME resample to both models (this preserves pairing).&quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">a_correct</span><span class="p">,</span> <span class="nb">float</span><span class="p">)</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">b_correct</span><span class="p">,</span> <span class="nb">float</span><span class="p">)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">n_boot</span><span class="p">,</span> <span class="n">n</span><span class="p">))</span>
+    <span class="n">diffs</span> <span class="o">=</span> <span class="n">a</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">-</span> <span class="n">b</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">point</span> <span class="o">=</span> <span class="n">a</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span> <span class="o">-</span> <span class="n">b</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">percentile</span><span class="p">(</span><span class="n">diffs</span><span class="p">,</span> <span class="p">[</span><span class="mf">2.5</span><span class="p">,</span> <span class="mf">97.5</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">point</span><span class="p">,</span> <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">7</span><span class="p">)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="mi">500</span>
+    <span class="c1"># Shared latent difficulty -&gt; strong positive correlation between models.</span>
+    <span class="n">difficulty</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+    <span class="n">skill_a</span><span class="p">,</span> <span class="n">skill_b</span> <span class="o">=</span> <span class="mf">0.45</span><span class="p">,</span> <span class="mf">0.30</span>          <span class="c1"># A is genuinely a bit better</span>
+    <span class="n">a_correct</span> <span class="o">=</span> <span class="p">(</span><span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">skill_a</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">difficulty</span><span class="p">)</span>
+    <span class="n">b_correct</span> <span class="o">=</span> <span class="p">(</span><span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">skill_b</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">difficulty</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;acc A:&quot;</span><span class="p">,</span> <span class="n">a_correct</span><span class="o">.</span><span class="n">mean</span><span class="p">(),</span> <span class="s2">&quot; acc B:&quot;</span><span class="p">,</span> <span class="n">b_correct</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span>
+    <span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="p">,</span> <span class="n">p</span> <span class="o">=</span> <span class="n">mcnemar_test</span><span class="p">(</span><span class="n">a_correct</span><span class="p">,</span> <span class="n">b_correct</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;McNemar: b(A&gt;B)=</span><span class="si">{</span><span class="n">b</span><span class="si">}</span><span class="s2">, c(B&gt;A)=</span><span class="si">{</span><span class="n">c</span><span class="si">}</span><span class="s2">, p=</span><span class="si">{</span><span class="n">p</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">pt</span><span class="p">,</span> <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="n">paired_bootstrap_diff</span><span class="p">(</span><span class="n">a_correct</span><span class="p">,</span> <span class="n">b_correct</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;paired bootstrap diff: </span><span class="si">{</span><span class="n">pt</span><span class="si">:</span><span class="s2">+.3f</span><span class="si">}</span><span class="s2">  95% CI [</span><span class="si">{</span><span class="n">lo</span><span class="si">:</span><span class="s2">+.3f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">hi</span><span class="si">:</span><span class="s2">+.3f</span><span class="si">}</span><span class="s2">]&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: pairing rescues a borderline result</p>
+<p>A team compares fine-tune <strong>A</strong> against baseline <strong>B</strong> on a 500-item eval. Headline accuracies: A = 82.6 %, B = 79.0 % — a 3.6-point gap.</p>
+<p><strong>Naive unpaired check.</strong> Each model&rsquo;s Wald SE is about <span class="arithmatex">\(\sqrt{0.8\times0.2/500}\approx 0.0179\)</span>. The SE of the <em>difference</em> (treating them as independent) is <span class="arithmatex">\(\sqrt{0.0179^2 + 0.0179^2}\approx 0.0253\)</span>, so the unpaired 95 % CI on the gap is <span class="arithmatex">\(0.036 \pm 0.050 = [-0.014,\ 0.086]\)</span>. <strong>It crosses zero</strong> — by this analysis you cannot claim A is better.</p>
+<p><strong>Paired analysis on the same 500 items.</strong> Cross-tabulating: 372 items both got right, 38 both got wrong, <span class="arithmatex">\(b = 51\)</span> items where only A was right, <span class="arithmatex">\(c = 33\)</span> where only B was right. There are only <span class="arithmatex">\(b+c = 84\)</span> discordant items. McNemar&rsquo;s chi-square is</p>
+<div class="arithmatex">\[
+\chi^2 = \frac{(|51-33|-1)^2}{84} = \frac{17^2}{84} = \frac{289}{84} \approx 3.44,
+\]</div>
+<p>giving <span class="arithmatex">\(p \approx 0.064\)</span>. The paired bootstrap CI on the accuracy difference is roughly <span class="arithmatex">\([+0.004,\ +0.069]\)</span> — it <em>barely</em> excludes zero. Pairing shrank the interval from <span class="arithmatex">\(\pm 0.050\)</span> to about <span class="arithmatex">\(\pm 0.033\)</span> because the two models agreed on 410 of 500 items, and those agreements carried no comparative signal but did inflate the unpaired variance. The honest verdict: <strong>suggestive (<span class="arithmatex">\(p\approx 0.06\)</span>) but not conclusive at <span class="arithmatex">\(\alpha=0.05\)</span></strong> — you would want more items or more discriminating items before shipping a &ldquo;beats baseline&rdquo; claim. This is exactly the kind of nuance a single accuracy number hides.</p>
+</div>
+<h3 id="multiple-comparisons-the-leaderboard-trap">Multiple comparisons: the leaderboard trap<a class="headerlink" href="#multiple-comparisons-the-leaderboard-trap" title="Permanent link">¶</a></h3>
+<p>If you test 20 candidate checkpoints against a baseline at <span class="arithmatex">\(\alpha = 0.05\)</span>, you expect <em>one false positive on average even if none is truly better</em> — because <span class="arithmatex">\(0.05 \times 20 = 1\)</span>. Leaderboards with hundreds of models are multiple-comparison machines: some model will look &ldquo;significantly best&rdquo; by chance. Two standard corrections:</p>
+<ul>
+<li><strong>Bonferroni:</strong> test each comparison at <span class="arithmatex">\(\alpha/m\)</span> for <span class="arithmatex">\(m\)</span> comparisons. Simple, conservative, controls the family-wise error rate (probability of <em>any</em> false positive).</li>
+<li><strong>Benjamini–Hochberg (FDR):</strong> sort the <span class="arithmatex">\(m\)</span> p-values, find the largest <span class="arithmatex">\(k\)</span> with <span class="arithmatex">\(p_{(k)} \le \frac{k}{m}\alpha\)</span>, reject all below it. Controls the <em>false discovery rate</em> (expected fraction of false positives among rejections) — more powerful and usually the right choice when you are screening many candidates.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">benjamini_hochberg</span><span class="p">(</span><span class="n">pvals</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.05</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a boolean mask of which hypotheses are rejected under BH-FDR.&quot;&quot;&quot;</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">pvals</span><span class="p">)</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+    <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+    <span class="n">thresh</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">m</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">m</span><span class="p">)</span> <span class="o">*</span> <span class="n">alpha</span>
+    <span class="n">passed</span> <span class="o">=</span> <span class="n">p</span><span class="p">[</span><span class="n">order</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">thresh</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">passed</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+    <span class="n">k_max</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">passed</span><span class="p">))</span>      <span class="c1"># largest index that passes</span>
+    <span class="n">cutoff</span> <span class="o">=</span> <span class="n">p</span><span class="p">[</span><span class="n">order</span><span class="p">][</span><span class="n">k_max</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">p</span> <span class="o">&lt;=</span> <span class="n">cutoff</span>
+</code></pre></div>
+<hr />
+<h2 id="variance-decomposition-where-does-your-noise-live">Variance Decomposition: Where Does Your Noise Live?<a class="headerlink" href="#variance-decomposition-where-does-your-noise-live" title="Permanent link">¶</a></h2>
+<p>A benchmark score is buffeted by several noise sources at once. Knowing which one dominates tells you <em>what to fix</em>: more items, more seeds, prompt averaging, or a better judge. The framework is the <strong>variance components</strong> model from classical experimental design (and, in psychometrics, <strong>generalizability theory</strong>).</p>
+<h3 id="a-linear-variance-model">A linear variance model<a class="headerlink" href="#a-linear-variance-model" title="Permanent link">¶</a></h3>
+<p>Model the score of model <span class="arithmatex">\(m\)</span> on item <span class="arithmatex">\(i\)</span>, under prompt template <span class="arithmatex">\(t\)</span>, seed <span class="arithmatex">\(s\)</span>, judged by judge <span class="arithmatex">\(j\)</span> as</p>
+<div class="arithmatex">\[
+y_{mitsj} = \mu + \alpha_m + \beta_i + \gamma_t + \delta_s + \zeta_j + \varepsilon_{mitsj},
+\]</div>
+<p>where each term is a zero-mean random effect with its own variance: <span class="arithmatex">\(\sigma^2_{\text{item}}\)</span> (item difficulty), <span class="arithmatex">\(\sigma^2_{\text{prompt}}\)</span> (prompt-template sensitivity), <span class="arithmatex">\(\sigma^2_{\text{seed}}\)</span> (generation noise), <span class="arithmatex">\(\sigma^2_{\text{judge}}\)</span> (judge disagreement), and residual <span class="arithmatex">\(\sigma^2_{\varepsilon}\)</span>. The variance of your <em>reported mean</em> over <span class="arithmatex">\(n_i\)</span> items, <span class="arithmatex">\(n_t\)</span> prompts, <span class="arithmatex">\(n_s\)</span> seeds, and <span class="arithmatex">\(n_j\)</span> judges is approximately</p>
+<div class="arithmatex">\[
+\text{Var}(\bar y) \approx \frac{\sigma^2_{\text{item}}}{n_i} + \frac{\sigma^2_{\text{prompt}}}{n_t} + \frac{\sigma^2_{\text{seed}}}{n_i n_s} + \frac{\sigma^2_{\text{judge}}}{n_j} + \frac{\sigma^2_{\varepsilon}}{n_i n_s n_j}.
+\]</div>
+<p>The practical lesson is in the denominators. If <span class="arithmatex">\(\sigma^2_{\text{prompt}}\)</span> is large and you used <strong>one</strong> prompt template, that term is divided by <span class="arithmatex">\(n_t = 1\)</span> — no amount of extra items reduces it. This is why &ldquo;we changed the system prompt and the score moved 4 points&rdquo; is so common: prompt variance is frequently the <em>dominant</em> term, and it is invisible to an item-bootstrap CI. The robustness chapter <a href="../11-evaluation/05-redteaming-safety-eval.html">Red-Teaming, Safety &amp; Robustness Evaluation</a> treats prompt sensitivity as a first-class failure mode.</p>
+<h3 id="estimating-the-components">Estimating the components<a class="headerlink" href="#estimating-the-components" title="Permanent link">¶</a></h3>
+<p>A clean way to estimate components is a crossed design: run the eval over a grid of <span class="arithmatex">\(n_i\)</span> items <span class="arithmatex">\(\times\)</span> <span class="arithmatex">\(n_t\)</span> prompts <span class="arithmatex">\(\times\)</span> <span class="arithmatex">\(n_s\)</span> seeds and fit the variances by ANOVA or REML. Here is a compact estimator for the two axes practitioners most often neglect — prompt and seed — using nested means.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">variance_components</span><span class="p">(</span><span class="n">scores</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Estimate item / prompt / seed variance components from a crossed grid.</span>
+
+<span class="sd">    scores : array of shape (n_items, n_prompts, n_seeds), each entry the</span>
+<span class="sd">             per-(item,prompt,seed) score for ONE model (0/1 or float).</span>
+<span class="sd">    Returns a dict of variance components and the implied SE of the grand mean.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">n_i</span><span class="p">,</span> <span class="n">n_t</span><span class="p">,</span> <span class="n">n_k</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">grand</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+    <span class="c1"># Marginal means along each axis.</span>
+    <span class="n">item_means</span>   <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>   <span class="c1"># average over prompts &amp; seeds</span>
+    <span class="n">prompt_means</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>   <span class="c1"># average over items &amp; seeds</span>
+    <span class="c1"># Variance of marginal means, de-biased by the within noise they still carry</span>
+    <span class="c1"># (Method-of-moments; fine for a diagnostic, use REML for a paper.)</span>
+    <span class="n">var_item</span>   <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">item_means</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="o">-</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+    <span class="n">var_prompt</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">prompt_means</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">-</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+    <span class="c1"># Seed/residual: variance within an (item,prompt) cell, averaged.</span>
+    <span class="n">within</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span> <span class="k">if</span> <span class="n">n_k</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="mf">0.0</span>
+
+    <span class="n">se_mean</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">var_item</span> <span class="o">/</span> <span class="n">n_i</span> <span class="o">+</span> <span class="n">var_prompt</span> <span class="o">/</span> <span class="n">n_t</span> <span class="o">+</span> <span class="n">within</span> <span class="o">/</span> <span class="p">(</span><span class="n">n_i</span> <span class="o">*</span> <span class="n">n_k</span><span class="p">))</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;grand_mean&quot;</span><span class="p">:</span> <span class="n">grand</span><span class="p">,</span>
+        <span class="s2">&quot;var_item&quot;</span><span class="p">:</span> <span class="n">var_item</span><span class="p">,</span>
+        <span class="s2">&quot;var_prompt&quot;</span><span class="p">:</span> <span class="n">var_prompt</span><span class="p">,</span>
+        <span class="s2">&quot;var_seed_resid&quot;</span><span class="p">:</span> <span class="n">within</span><span class="p">,</span>
+        <span class="s2">&quot;se_of_reported_mean&quot;</span><span class="p">:</span> <span class="n">se_mean</span><span class="p">,</span>
+    <span class="p">}</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">n_i</span><span class="p">,</span> <span class="n">n_t</span><span class="p">,</span> <span class="n">n_k</span> <span class="o">=</span> <span class="mi">200</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">3</span>
+    <span class="n">item_eff</span>   <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">1.2</span><span class="p">,</span> <span class="n">n_i</span><span class="p">)</span>      <span class="c1"># big item-difficulty spread</span>
+    <span class="n">prompt_eff</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="n">n_t</span><span class="p">)</span>      <span class="c1"># nontrivial prompt sensitivity</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="p">(</span><span class="mf">0.4</span> <span class="o">+</span> <span class="n">item_eff</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">+</span> <span class="n">prompt_eff</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:,</span> <span class="kc">None</span><span class="p">]</span>
+              <span class="o">+</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="p">(</span><span class="n">n_i</span><span class="p">,</span> <span class="n">n_t</span><span class="p">,</span> <span class="n">n_k</span><span class="p">)))</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="p">(</span><span class="n">logits</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span>       <span class="c1"># pass/fail</span>
+    <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">variance_components</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">k</span><span class="si">:</span><span class="s2">&gt;22</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">v</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The output makes the dependence concrete: with strong item effects and four prompts, the prompt term may rival the item term in the SE budget even though each individual prompt contributes only modestly. If you had reported a single prompt, your CI would have been a fiction.</p>
+<div class="admonition tip">
+<p class="admonition-title">Report on at least 3 prompts and 3 seeds</p>
+<p>A cheap, defensible protocol: evaluate every model on <span class="arithmatex">\(\ge 3\)</span> paraphrased prompt templates and <span class="arithmatex">\(\ge 3\)</span> seeds, report the mean and a CI computed by bootstrapping over the (item, prompt, seed) tuples (use a cluster bootstrap that resamples items as blocks). This folds prompt and seed variance into the interval automatically and immunizes you against the &ldquo;we picked the lucky prompt&rdquo; critique. The cost is a 9× compute increase — often worth it for a headline claim, skippable for a quick dev-loop check.</p>
+</div>
+<hr />
+<h2 id="power-analysis-sizing-the-test-set-before-you-run-it">Power Analysis: Sizing the Test Set <em>Before</em> You Run It<a class="headerlink" href="#power-analysis-sizing-the-test-set-before-you-run-it" title="Permanent link">¶</a></h2>
+<p>Confidence intervals are retrospective — they describe the experiment you already ran. <strong>Power analysis</strong> is prospective: given the smallest effect you would care about, how many items do you need so that, <em>if the effect is real</em>, your test will actually detect it? Running an underpowered eval is the worst of both worlds: you spend the compute and still cannot conclude anything.</p>
+<h3 id="the-four-interlocking-quantities">The four interlocking quantities<a class="headerlink" href="#the-four-interlocking-quantities" title="Permanent link">¶</a></h3>
+<p>Power analysis ties together four numbers; fix any three and the fourth is determined:</p>
+<ul>
+<li><strong><span class="arithmatex">\(\alpha\)</span></strong> — false-positive rate (typically 0.05). <span class="arithmatex">\(z_{1-\alpha/2} = 1.96\)</span> for a two-sided test.</li>
+<li><strong>Power <span class="arithmatex">\(1-\beta\)</span></strong> — probability of detecting a true effect (typically 0.80; sometimes 0.90). <span class="arithmatex">\(z_{1-\beta} = 0.84\)</span> for 80 %.</li>
+<li><strong>Effect size <span class="arithmatex">\(\Delta\)</span></strong> — the minimum difference worth detecting (the <em>minimum detectable effect</em>, MDE).</li>
+<li><strong><span class="arithmatex">\(n\)</span></strong> — the number of items.</li>
+</ul>
+<p>For comparing two proportions on <strong>paired</strong> data, the McNemar-based sample size depends on the discordant-pair rate. A convenient and widely-used approximation for the number of items needed, given expected discordant proportion <span class="arithmatex">\(p_d = p_b + p_c\)</span> and effect <span class="arithmatex">\(p_b - p_c\)</span>, is</p>
+<div class="arithmatex">\[
+n \approx \frac{\left(z_{1-\alpha/2}\sqrt{p_d} + z_{1-\beta}\sqrt{p_d - (p_b - p_c)^2}\right)^2}{(p_b - p_c)^2}.
+\]</div>
+<p>For the simpler <strong>unpaired</strong> two-proportion case (or a back-of-envelope), the classic formula with pooled proportion <span class="arithmatex">\(\bar p\)</span> is</p>
+<div class="arithmatex">\[
+n_{\text{per arm}} \approx \frac{\left(z_{1-\alpha/2} + z_{1-\beta}\right)^2 \cdot 2\,\bar p (1-\bar p)}{\Delta^2}.
+\]</div>
+<h3 id="power-analysis-from-scratch-including-simulation">Power analysis — from scratch, including simulation<a class="headerlink" href="#power-analysis-from-scratch-including-simulation" title="Permanent link">¶</a></h3>
+<p>Closed forms rely on normal approximations; for paired binary outcomes with small discordant counts, a <strong>simulation-based power analysis</strong> is more trustworthy and barely more code. You assume a data-generating process, simulate the experiment thousands of times, and count how often the test rejects.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy</span><span class="w"> </span><span class="kn">import</span> <span class="n">stats</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">n_for_unpaired_proportions</span><span class="p">(</span><span class="n">p1</span><span class="p">,</span> <span class="n">p2</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">power</span><span class="o">=</span><span class="mf">0.80</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Sample size PER ARM to detect a difference between two proportions.&quot;&quot;&quot;</span>
+    <span class="n">z_a</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">norm</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">alpha</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">z_b</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">norm</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="n">power</span><span class="p">)</span>
+    <span class="n">pbar</span> <span class="o">=</span> <span class="p">(</span><span class="n">p1</span> <span class="o">+</span> <span class="n">p2</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span>
+    <span class="n">delta</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">p1</span> <span class="o">-</span> <span class="n">p2</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">((</span><span class="n">z_a</span> <span class="o">+</span> <span class="n">z_b</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">pbar</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">pbar</span><span class="p">)</span> <span class="o">/</span> <span class="n">delta</span> <span class="o">**</span> <span class="mi">2</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">n_for_mcnemar</span><span class="p">(</span><span class="n">p_b</span><span class="p">,</span> <span class="n">p_c</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">power</span><span class="o">=</span><span class="mf">0.80</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Number of items for a paired McNemar test.</span>
+
+<span class="sd">    p_b : P(A right, B wrong);  p_c : P(A wrong, B right).</span>
+<span class="sd">    Larger discordance (p_b+p_c) -&gt; fewer items needed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">z_a</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">norm</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">alpha</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">z_b</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">norm</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="n">power</span><span class="p">)</span>
+    <span class="n">pd</span> <span class="o">=</span> <span class="n">p_b</span> <span class="o">+</span> <span class="n">p_c</span>
+    <span class="n">diff</span> <span class="o">=</span> <span class="n">p_b</span> <span class="o">-</span> <span class="n">p_c</span>
+    <span class="n">num</span> <span class="o">=</span> <span class="p">(</span><span class="n">z_a</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">pd</span><span class="p">)</span> <span class="o">+</span> <span class="n">z_b</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">pd</span> <span class="o">-</span> <span class="n">diff</span> <span class="o">**</span> <span class="mi">2</span><span class="p">))</span> <span class="o">**</span> <span class="mi">2</span>
+    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">num</span> <span class="o">/</span> <span class="n">diff</span> <span class="o">**</span> <span class="mi">2</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">simulate_power</span><span class="p">(</span><span class="n">p_both</span><span class="p">,</span> <span class="n">p_b</span><span class="p">,</span> <span class="n">p_c</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">n_sims</span><span class="o">=</span><span class="mi">4000</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Monte-Carlo power for the paired McNemar test at sample size n.</span>
+
+<span class="sd">    Each item falls into one of four cells with the given probabilities:</span>
+<span class="sd">      both-right, A-right-only (p_b), B-right-only (p_c), both-wrong.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    <span class="n">p_neither</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">p_both</span> <span class="o">-</span> <span class="n">p_b</span> <span class="o">-</span> <span class="n">p_c</span>
+    <span class="n">probs</span> <span class="o">=</span> <span class="p">[</span><span class="n">p_both</span><span class="p">,</span> <span class="n">p_b</span><span class="p">,</span> <span class="n">p_c</span><span class="p">,</span> <span class="n">p_neither</span><span class="p">]</span>
+    <span class="n">rejects</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_sims</span><span class="p">):</span>
+        <span class="n">counts</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">multinomial</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">probs</span><span class="p">)</span>
+        <span class="n">b</span><span class="p">,</span> <span class="n">c</span> <span class="o">=</span> <span class="n">counts</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">counts</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+        <span class="n">nd</span> <span class="o">=</span> <span class="n">b</span> <span class="o">+</span> <span class="n">c</span>
+        <span class="k">if</span> <span class="n">nd</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">pval</span> <span class="o">=</span> <span class="mf">1.0</span>
+        <span class="k">elif</span> <span class="n">nd</span> <span class="o">&lt;</span> <span class="mi">25</span><span class="p">:</span>
+            <span class="n">pval</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">binomtest</span><span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="n">nd</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span><span class="o">.</span><span class="n">pvalue</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">chi2</span> <span class="o">=</span> <span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">b</span> <span class="o">-</span> <span class="n">c</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">/</span> <span class="n">nd</span>
+            <span class="n">pval</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">chi2</span><span class="o">.</span><span class="n">sf</span><span class="p">(</span><span class="n">chi2</span><span class="p">,</span> <span class="n">df</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">rejects</span> <span class="o">+=</span> <span class="p">(</span><span class="n">pval</span> <span class="o">&lt;</span> <span class="n">alpha</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">rejects</span> <span class="o">/</span> <span class="n">n_sims</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="c1"># We want to detect a true 3-point accuracy edge for A.</span>
+    <span class="c1"># Suppose models agree 80% of the time; of the 20% discordant items,</span>
+    <span class="c1"># A wins on 11.5% and B on 8.5% -&gt; a 3-point gap.</span>
+    <span class="n">p_b</span><span class="p">,</span> <span class="n">p_c</span> <span class="o">=</span> <span class="mf">0.115</span><span class="p">,</span> <span class="mf">0.085</span>
+    <span class="n">n_closed</span> <span class="o">=</span> <span class="n">n_for_mcnemar</span><span class="p">(</span><span class="n">p_b</span><span class="p">,</span> <span class="n">p_c</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;closed-form n for 80% power: </span><span class="si">{</span><span class="n">n_closed</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="p">[</span><span class="n">n_closed</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">n_closed</span><span class="p">]:</span>
+        <span class="n">pw</span> <span class="o">=</span> <span class="n">simulate_power</span><span class="p">(</span><span class="n">p_both</span><span class="o">=</span><span class="mf">0.80</span><span class="p">,</span> <span class="n">p_b</span><span class="o">=</span><span class="n">p_b</span><span class="p">,</span> <span class="n">p_c</span><span class="o">=</span><span class="n">p_c</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">n</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  n=</span><span class="si">{</span><span class="n">n</span><span class="si">:</span><span class="s2">5d</span><span class="si">}</span><span class="s2"> -&gt; simulated power </span><span class="si">{</span><span class="n">pw</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># Compare to the UNPAIRED requirement for the same 3-point gap at p~0.8.</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;unpaired n PER ARM:&quot;</span><span class="p">,</span> <span class="n">n_for_unpaired_proportions</span><span class="p">(</span><span class="mf">0.83</span><span class="p">,</span> <span class="mf">0.80</span><span class="p">))</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">How big a test set to catch a 1-point gap?</p>
+<p>You want to reliably detect a <strong>1-point</strong> accuracy difference (say 80.0 % vs 81.0 %) at <span class="arithmatex">\(\alpha=0.05\)</span>, power 0.80. Using the unpaired formula with <span class="arithmatex">\(\bar p = 0.805\)</span> and <span class="arithmatex">\(\Delta=0.01\)</span>:</p>
+<div class="arithmatex">\[
+n \approx \frac{(1.96 + 0.84)^2 \cdot 2 \times 0.805 \times 0.195}{0.01^2}
+= \frac{7.84 \times 0.3140}{0.0001} \approx 24{,}600 \text{ per arm}.
+\]</div>
+<p>Roughly <strong>25,000 items per model</strong> — which is why no 500-item benchmark can adjudicate a one-point claim, and why frontier leaderboards still cannot cleanly separate the top few models. Now switch to a <em>paired</em> design: if the models agree on 85 % of items, the effective discordant sample is far richer, and <code>n_for_mcnemar</code> returns on the order of a <strong>few thousand</strong> items for the same 1-point effect — an order-of-magnitude saving from pairing alone. The takeaway: choose your MDE honestly, then either accept that small gaps need huge test sets, or pair aggressively, or stop reporting differences you cannot resolve.</p>
+</div>
+<hr />
+<h2 id="squeezing-more-signal-per-item-irt-adaptive-evaluation">Squeezing More Signal Per Item: IRT &amp; Adaptive Evaluation<a class="headerlink" href="#squeezing-more-signal-per-item-irt-adaptive-evaluation" title="Permanent link">¶</a></h2>
+<p>Power analysis says &ldquo;buy more items.&rdquo; But items are not equally informative — a question every model gets right (or every model gets wrong) tells you <em>nothing</em> about relative ability. <strong>Item Response Theory</strong> (IRT), the measurement framework behind standardized tests like the SAT and GRE, formalizes this and lets you (a) build a better ability estimate from the same items and (b) <em>select</em> the most informative items to ask, cutting eval cost dramatically.</p>
+<h3 id="the-2-parameter-logistic-model">The 2-parameter logistic model<a class="headerlink" href="#the-2-parameter-logistic-model" title="Permanent link">¶</a></h3>
+<p>In the <strong>2PL</strong> IRT model, the probability that a test-taker (here, a model) with latent ability <span class="arithmatex">\(\theta\)</span> answers item <span class="arithmatex">\(i\)</span> correctly is</p>
+<div class="arithmatex">\[
+P(\text{correct} \mid \theta, a_i, b_i) = \sigma\big(a_i(\theta - b_i)\big) = \frac{1}{1 + e^{-a_i(\theta - b_i)}},
+\]</div>
+<p>where <span class="arithmatex">\(b_i\)</span> is the item&rsquo;s <strong>difficulty</strong> (the ability at which a model has a 50 % chance) and <span class="arithmatex">\(a_i\)</span> is its <strong>discrimination</strong> (how sharply the pass probability rises with ability). High-<span class="arithmatex">\(a_i\)</span> items are the ones that cleanly separate strong from weak models; low-<span class="arithmatex">\(a_i\)</span> items (everyone guesses, or a typo makes the answer ambiguous) are noise. Note the structural kinship with Bradley–Terry — both are logistic latent-trait models — and with the logistic regression in <a href="../01-foundations/05-ml-fundamentals.html">Machine Learning Fundamentals</a>.</p>
+<p>The <strong>Fisher information</strong> an item contributes about ability <span class="arithmatex">\(\theta\)</span> is</p>
+<div class="arithmatex">\[
+I_i(\theta) = a_i^2\, P_i(\theta)\big(1 - P_i(\theta)\big),
+\]</div>
+<p>maximized when <span class="arithmatex">\(P_i(\theta) = 0.5\)</span>, i.e. when the item&rsquo;s difficulty matches the model&rsquo;s ability. This is the engine of <strong>adaptive testing</strong>: ask each model items near its own ability frontier, where each answer is maximally informative, and you reach a target precision with a fraction of the items.</p>
+<h3 id="fitting-a-tiny-irt-model-and-computing-item-information">Fitting a tiny IRT model and computing item information<a class="headerlink" href="#fitting-a-tiny-irt-model-and-computing-item-information" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.optimize</span><span class="w"> </span><span class="kn">import</span> <span class="n">minimize</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fit_2pl</span><span class="p">(</span><span class="n">R</span><span class="p">,</span> <span class="n">n_iter</span><span class="o">=</span><span class="mi">300</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fit a 2PL IRT model by alternating MAP estimation.</span>
+
+<span class="sd">    R : (n_models x n_items) binary response matrix (1 = correct).</span>
+<span class="sd">    Returns theta (ability per model), a (discrimination), b (difficulty).</span>
+<span class="sd">    Priors: theta,b ~ N(0,1); log a ~ N(0,1) keeps discriminations positive.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">n_m</span><span class="p">,</span> <span class="n">n_i</span> <span class="o">=</span> <span class="n">R</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">theta</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_m</span><span class="p">)</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">n_i</span><span class="p">)</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_i</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">sig</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+        <span class="k">return</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">x</span><span class="p">))</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_iter</span><span class="p">):</span>
+        <span class="c1"># --- E-ish step: update abilities given items ---</span>
+        <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_m</span><span class="p">):</span>
+            <span class="k">def</span><span class="w"> </span><span class="nf">negll_theta</span><span class="p">(</span><span class="n">t</span><span class="p">):</span>
+                <span class="n">p</span> <span class="o">=</span> <span class="n">sig</span><span class="p">(</span><span class="n">a</span> <span class="o">*</span> <span class="p">(</span><span class="n">t</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="n">b</span><span class="p">))</span>
+                <span class="n">ll</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">R</span><span class="p">[</span><span class="n">m</span><span class="p">]</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">p</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">)</span> <span class="o">+</span>
+                            <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">R</span><span class="p">[</span><span class="n">m</span><span class="p">])</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">))</span>
+                <span class="k">return</span> <span class="o">-</span><span class="p">(</span><span class="n">ll</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">t</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>        <span class="c1"># + N(0,1) prior</span>
+            <span class="n">theta</span><span class="p">[</span><span class="n">m</span><span class="p">]</span> <span class="o">=</span> <span class="n">minimize</span><span class="p">(</span><span class="n">negll_theta</span><span class="p">,</span> <span class="p">[</span><span class="n">theta</span><span class="p">[</span><span class="n">m</span><span class="p">]],</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;BFGS&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">theta</span> <span class="o">-=</span> <span class="n">theta</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>                         <span class="c1"># identifiability anchor</span>
+
+        <span class="c1"># --- M-ish step: update item params given abilities ---</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_i</span><span class="p">):</span>
+            <span class="k">def</span><span class="w"> </span><span class="nf">negll_item</span><span class="p">(</span><span class="n">par</span><span class="p">):</span>
+                <span class="n">a_i</span><span class="p">,</span> <span class="n">b_i</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">par</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="n">par</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>     <span class="c1"># exp keeps a_i &gt; 0</span>
+                <span class="n">p</span> <span class="o">=</span> <span class="n">sig</span><span class="p">(</span><span class="n">a_i</span> <span class="o">*</span> <span class="p">(</span><span class="n">theta</span> <span class="o">-</span> <span class="n">b_i</span><span class="p">))</span>
+                <span class="n">ll</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">R</span><span class="p">[:,</span> <span class="n">i</span><span class="p">]</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">p</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">)</span> <span class="o">+</span>
+                            <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">R</span><span class="p">[:,</span> <span class="n">i</span><span class="p">])</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">))</span>
+                <span class="k">return</span> <span class="o">-</span><span class="p">(</span><span class="n">ll</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">par</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">b_i</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+            <span class="n">res</span> <span class="o">=</span> <span class="n">minimize</span><span class="p">(</span><span class="n">negll_item</span><span class="p">,</span> <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">a</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span> <span class="n">b</span><span class="p">[</span><span class="n">i</span><span class="p">]],</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;BFGS&quot;</span><span class="p">)</span>
+            <span class="n">a</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">b</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">res</span><span class="o">.</span><span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="n">res</span><span class="o">.</span><span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">theta</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">item_information</span><span class="p">(</span><span class="n">theta</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fisher information each item gives about a model at ability theta.&quot;&quot;&quot;</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">a</span> <span class="o">*</span> <span class="p">(</span><span class="n">theta</span> <span class="o">-</span> <span class="n">b</span><span class="p">)))</span>
+    <span class="k">return</span> <span class="n">a</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">p</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">n_m</span><span class="p">,</span> <span class="n">n_i</span> <span class="o">=</span> <span class="mi">30</span><span class="p">,</span> <span class="mi">120</span>
+    <span class="n">true_theta</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">n_m</span><span class="p">)</span>
+    <span class="n">true_a</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">,</span> <span class="n">n_i</span><span class="p">))</span> <span class="o">+</span> <span class="mf">0.2</span>
+    <span class="n">true_b</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">n_i</span><span class="p">)</span>
+    <span class="n">P</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">true_a</span> <span class="o">*</span> <span class="p">(</span><span class="n">true_theta</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">-</span> <span class="n">true_b</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:])))</span>
+    <span class="n">R</span> <span class="o">=</span> <span class="p">(</span><span class="n">rng</span><span class="o">.</span><span class="n">random</span><span class="p">((</span><span class="n">n_m</span><span class="p">,</span> <span class="n">n_i</span><span class="p">))</span> <span class="o">&lt;</span> <span class="n">P</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span>
+
+    <span class="n">theta</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">fit_2pl</span><span class="p">(</span><span class="n">R</span><span class="p">)</span>
+    <span class="c1"># Recovery check: correlation between true and estimated ability.</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;ability recovery r =&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">corrcoef</span><span class="p">(</span><span class="n">true_theta</span><span class="p">,</span> <span class="n">theta</span><span class="p">)[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">3</span><span class="p">))</span>
+    <span class="c1"># The 10 most discriminating items -- these are worth their weight.</span>
+    <span class="n">top</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">a</span><span class="p">)[::</span><span class="o">-</span><span class="mi">1</span><span class="p">][:</span><span class="mi">10</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;most informative items (idx, a, b):&quot;</span><span class="p">,</span>
+          <span class="p">[(</span><span class="nb">int</span><span class="p">(</span><span class="n">i</span><span class="p">),</span> <span class="nb">round</span><span class="p">(</span><span class="n">a</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="mi">2</span><span class="p">),</span> <span class="nb">round</span><span class="p">(</span><span class="n">b</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="mi">2</span><span class="p">))</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">top</span><span class="p">])</span>
+</code></pre></div>
+<h3 id="adaptive-evaluation-same-precision-a-fraction-of-the-items">Adaptive evaluation: same precision, a fraction of the items<a class="headerlink" href="#adaptive-evaluation-same-precision-a-fraction-of-the-items" title="Permanent link">¶</a></h3>
+<p>Once items are calibrated (their <span class="arithmatex">\(a_i, b_i\)</span> are known from a reference panel of models), evaluating a <em>new</em> model adaptively is cheap: ask an item near the current ability estimate, update the estimate, repeat until the standard error on <span class="arithmatex">\(\hat\theta\)</span> drops below a threshold. Because each item is chosen to maximize information at the current <span class="arithmatex">\(\hat\theta\)</span>, this <strong>computerized adaptive testing</strong> (CAT) loop typically reaches the precision of a fixed 100-item test in 20–40 items. This is the statistical core behind &ldquo;efficient benchmarking&rdquo; work (e.g. tinyBenchmarks, Anchor Points, and IRT-based leaderboard analyses): you do not need all 14,000 MMLU items if you have calibrated the item bank — a carefully chosen few hundred recover the full-benchmark ranking within its own confidence band.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.optimize</span><span class="w"> </span><span class="kn">import</span> <span class="n">minimize_scalar</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">adaptive_eval</span><span class="p">(</span><span class="n">answer_fn</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">max_items</span><span class="o">=</span><span class="mi">40</span><span class="p">,</span> <span class="n">target_se</span><span class="o">=</span><span class="mf">0.30</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Computerized adaptive test against a pre-calibrated item bank.</span>
+
+<span class="sd">    answer_fn(i) -&gt; 0/1 : runs the model on item i, returns correctness.</span>
+<span class="sd">    a, b                : calibrated discrimination/difficulty per item.</span>
+<span class="sd">    Stops when SE(theta_hat) &lt; target_se or max_items reached.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">asked</span><span class="p">,</span> <span class="n">resp</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[]</span>
+    <span class="n">theta</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="n">remaining</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">a</span><span class="p">)))</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_items</span><span class="p">):</span>
+        <span class="c1"># Pick the unasked item with max Fisher information at current theta.</span>
+        <span class="n">info</span> <span class="o">=</span> <span class="p">[(</span><span class="n">item_information</span><span class="p">(</span><span class="n">theta</span><span class="p">,</span> <span class="n">a</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">b</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span> <span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">remaining</span><span class="p">]</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">best</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">info</span><span class="p">)</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">answer_fn</span><span class="p">(</span><span class="n">best</span><span class="p">)</span>
+        <span class="n">asked</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">best</span><span class="p">);</span> <span class="n">resp</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">y</span><span class="p">);</span> <span class="n">remaining</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">best</span><span class="p">)</span>
+
+        <span class="c1"># Re-estimate ability by MAP over items asked so far.</span>
+        <span class="n">aa</span><span class="p">,</span> <span class="n">bb</span><span class="p">,</span> <span class="n">yy</span> <span class="o">=</span> <span class="n">a</span><span class="p">[</span><span class="n">asked</span><span class="p">],</span> <span class="n">b</span><span class="p">[</span><span class="n">asked</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">resp</span><span class="p">,</span> <span class="nb">float</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">negll</span><span class="p">(</span><span class="n">t</span><span class="p">):</span>
+            <span class="n">p</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">aa</span> <span class="o">*</span> <span class="p">(</span><span class="n">t</span> <span class="o">-</span> <span class="n">bb</span><span class="p">)))</span>
+            <span class="k">return</span> <span class="o">-</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">yy</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">p</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">)</span> <span class="o">+</span>
+                            <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">yy</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">))</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">t</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">theta</span> <span class="o">=</span> <span class="n">minimize_scalar</span><span class="p">(</span><span class="n">negll</span><span class="p">,</span> <span class="n">bounds</span><span class="o">=</span><span class="p">(</span><span class="o">-</span><span class="mi">4</span><span class="p">,</span> <span class="mi">4</span><span class="p">),</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;bounded&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">x</span>
+
+        <span class="c1"># SE from the inverse total information at the current estimate.</span>
+        <span class="n">tot_info</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">item_information</span><span class="p">(</span><span class="n">theta</span><span class="p">,</span> <span class="n">a</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">b</span><span class="p">[</span><span class="n">i</span><span class="p">])</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">asked</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1.0</span>
+        <span class="n">se</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">tot_info</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">se</span> <span class="o">&lt;</span> <span class="n">target_se</span><span class="p">:</span>
+            <span class="k">break</span>
+    <span class="k">return</span> <span class="n">theta</span><span class="p">,</span> <span class="n">se</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">asked</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">item_information</span><span class="p">(</span><span class="n">theta</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">a</span> <span class="o">*</span> <span class="p">(</span><span class="n">theta</span> <span class="o">-</span> <span class="n">b</span><span class="p">)))</span>
+    <span class="k">return</span> <span class="n">a</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">p</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Adaptive evaluation needs a calibrated, uncontaminated bank</p>
+<p>IRT-based shortcuts are only valid if the item parameters were estimated on a representative panel of models and the items are <em>not</em> in the model&rsquo;s training data. A contaminated item (memorized from training) looks artificially easy and corrupts the calibration — see the contamination discussion in <a href="../11-evaluation/01-eval-landscape.html">The Evaluation Problem &amp; Benchmark Landscape</a>. Re-calibrate when the model population shifts (e.g., a new generation of reasoning models), because an item that was discriminating for last year&rsquo;s models may be trivially solved by this year&rsquo;s.</p>
+</div>
+<hr />
+<h2 id="reading-leaderboards-like-a-statistician">Reading Leaderboards Like a Statistician<a class="headerlink" href="#reading-leaderboards-like-a-statistician" title="Permanent link">¶</a></h2>
+<p>Bring it together with the skill this chapter exists to instill. When you look at a leaderboard:</p>
+<ol>
+<li><strong>Find the error bars.</strong> If a leaderboard reports no intervals, mentally attach <span class="arithmatex">\(\pm 1/\sqrt n\)</span> to every number (<span class="arithmatex">\(n\)</span> = items). LMArena-style boards <em>do</em> publish rating CIs and group models into tiers — use them.</li>
+<li><strong>Overlapping CIs ⇒ no demonstrated gap.</strong> If model A&rsquo;s 95 % interval overlaps model B&rsquo;s, you cannot claim A ranks above B from this data, regardless of point-estimate order. (Strictly, <em>non</em>-overlapping intervals imply a significant difference, but <em>overlapping</em> intervals do <strong>not</strong> imply non-significance — for a rigorous yes/no you still want the paired test on the difference. Overlap is a quick screen, the paired test is the verdict.)</li>
+<li><strong>Ask how many evaluations.</strong> Two models near the top of an Elo board may have played thousands of battles each (tight CIs) while a new entrant has played 200 (a <span class="arithmatex">\(\pm 50\)</span>-point interval). Rank is meaningless until the new entrant has enough battles.</li>
+<li><strong>Suspect the prompt.</strong> A 3-point swing between two papers&rsquo; numbers for the <em>same</em> model is almost always prompt/harness variance, not a real capability change. Demand the prompt template and the harness version.</li>
+<li><strong>Check for multiple comparisons.</strong> &ldquo;Best on 9 of 12 benchmarks&rdquo; with 12 noisy benchmarks is roughly what chance produces. Look for a pre-registered headline metric, not a victory lap across cherry-picked subsets.</li>
+</ol>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Your team&rsquo;s new model scores 71.4 % on a 1,000-item internal benchmark; the previous model scored 70.1 %. Leadership wants to ship the new one as &ldquo;better.&rdquo; Walk me through how you&rsquo;d decide whether that 1.3-point gain is real, and what you&rsquo;d report.</p>
+<p><strong>A:</strong> First, recognize both numbers are estimates with sampling error. The single-model 95 % margin at <span class="arithmatex">\(n=1{,}000\)</span>, <span class="arithmatex">\(p\approx0.7\)</span> is about <span class="arithmatex">\(1.96\sqrt{0.7\times0.3/1000}\approx 2.8\)</span> points — so the two <em>independent</em> intervals overlap heavily and a naive comparison is inconclusive. But I wouldn&rsquo;t compare independent intervals; I&rsquo;d <strong>pair</strong>. Both models were run on the same 1,000 items, so I&rsquo;d build the per-item correctness vectors and run <strong>McNemar&rsquo;s test</strong> on the discordant pairs, plus a <strong>paired bootstrap CI on the accuracy difference</strong> (resample item indices once, apply to both models). If the paired CI excludes zero and McNemar&rsquo;s <span class="arithmatex">\(p &lt; 0.05\)</span>, the gain is statistically credible.</p>
+<p>I&rsquo;d also check three things that frequently overturn such a result: (1) <strong>prompt and seed variance</strong> — I&rsquo;d re-run both models on <span class="arithmatex">\(\ge 3\)</span> prompt templates and <span class="arithmatex">\(\ge 3\)</span> seeds, because a 1.3-point gap can vanish under a different system prompt; (2) <strong>clustering</strong> — if the benchmark has grouped items (e.g. multiple questions per document), I&rsquo;d use a cluster bootstrap so the CI isn&rsquo;t falsely narrow; (3) <strong>contamination/regressions</strong> — even if the average improved, I&rsquo;d inspect the items the <em>new</em> model newly fails (the McNemar <span class="arithmatex">\(c\)</span> cell), since a net gain can hide a meaningful regression on an important slice. What I&rsquo;d report: the paired difference with its 95 % CI, the McNemar p-value, the per-prompt spread, and an explicit minimum-detectable-effect statement (&ldquo;at this <span class="arithmatex">\(n\)</span> we can resolve gaps down to ~X points&rdquo;). If the CI is, say, <span class="arithmatex">\([+0.1, +2.5]\)</span> points, I&rsquo;d say &ldquo;likely a small real improvement, but within the range where prompt choice matters — ship behind an online A/B test (<a href="../12-production-mlops/07-online-eval-ab-testing.html">Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a>) rather than declaring a decisive win.&rdquo;</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Frequentist CIs vs. Bayesian credible intervals</p>
+<p>Everything above is frequentist: a 95 % CI means &ldquo;95 % of intervals built this way would contain the true value.&rdquo; A <strong>Bayesian credible interval</strong> instead says &ldquo;given a prior and the data, there&rsquo;s a 95 % posterior probability the value lies in this range&rdquo; — often what people <em>think</em> a CI means. For a binomial accuracy with a uniform <span class="arithmatex">\(\text{Beta}(1,1)\)</span> prior, the posterior is <span class="arithmatex">\(\text{Beta}(k+1, n-k+1)\)</span>, and its 2.5/97.5 percentiles give a credible interval that closely matches the Wilson interval for moderate <span class="arithmatex">\(n\)</span>. Bayesian framing shines for leaderboards: you can report <span class="arithmatex">\(P(\text{model A} &gt; \text{model B})\)</span> directly from the posterior over abilities — a more decision-relevant statement than a p-value. The mechanics live in <a href="../01-foundations/02-probability-information.html">Probability, Statistics &amp; Information Theory</a>.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Every eval number is a random variable.</strong> Report a confidence interval, never a bare point estimate. The 95 % margin near <span class="arithmatex">\(p=0.5\)</span> is roughly <span class="arithmatex">\(1/\sqrt n\)</span> — so a 500-item benchmark cannot resolve gaps smaller than about 4 points, and a 1-point claim needs tens of thousands of items.</li>
+<li><strong>Use the right interval.</strong> Wilson or Clopper–Pearson for binomial accuracy (the Wald interval breaks near 0/1); <strong>bootstrap</strong> (prefer BCa) for any non-trivial statistic — Elo, F1, judge means, percentiles. Use a <strong>cluster bootstrap</strong> when items are grouped, or your CIs will be too narrow.</li>
+<li><strong>Pair whenever possible.</strong> Evaluate A and B on the <em>same</em> items and test the per-item difference (McNemar for pass/fail, paired <span class="arithmatex">\(t\)</span> or Wilcoxon for scores). Pairing cancels item-difficulty variance and can be worth a 4–10× larger unpaired test set.</li>
+<li><strong>Know where your noise lives.</strong> Decompose variance across items, prompts, seeds, and judges. Prompt-template variance is often dominant and is <em>invisible</em> to an item-only CI — run <span class="arithmatex">\(\ge 3\)</span> prompts and <span class="arithmatex">\(\ge 3\)</span> seeds before any headline claim.</li>
+<li><strong>Size the test set before running it.</strong> Power analysis turns &ldquo;what&rsquo;s the smallest gap I care about?&rdquo; into &ldquo;how many items do I need?&rdquo; Simulate the paired test when the closed-form normal approximation is shaky.</li>
+<li><strong>Correct for multiple comparisons.</strong> Testing many checkpoints/benchmarks manufactures false positives; use Benjamini–Hochberg (FDR) or Bonferroni, and prefer a pre-registered headline metric.</li>
+<li><strong>IRT buys efficiency.</strong> Items differ in discrimination and information; a calibrated item bank plus adaptive selection reaches fixed-test precision in a fraction of the items — provided the bank is uncontaminated and re-calibrated as models evolve.</li>
+<li><strong>Overlapping CIs mean &ldquo;no demonstrated gap.&rdquo;</strong> On a leaderboard, rank order without separation is noise. Demand error bars, battle counts, and the prompt/harness version before believing any &ldquo;new state of the art.&rdquo;</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Statistical rigor in LLM evaluation has moved from academic concern to mainstream practice: leaderboards now publish rating confidence intervals, ICML 2025 accepted a spotlight position paper on CLT failures at small sample sizes, and IRT-based methods that cut evaluation cost 10–100× have been published and packaged. The field consensus is that bare point estimates are no longer acceptable for any published claim.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://projecteuclid.org/journals/statistical-science/volume-16/issue-2/Interval-Estimation-for-a-Binomial-Proportion/10.1214/ss/1009213286.full">Brown, Cai &amp; DasGupta, <em>Interval Estimation for a Binomial Proportion</em> (2001)</a> — the canonical paper proving Wald intervals are defective near 0/1 and recommending Wilson/Jeffreys alternatives.</li>
+<li><a href="https://aclanthology.org/P18-1128/">Dror et al., <em>The Hitchhiker&rsquo;s Guide to Testing Statistical Significance in NLP</em> (ACL 2018)</a> — practical protocol for choosing McNemar, Wilcoxon, or permutation tests across NLP eval setups.</li>
+<li><a href="https://arxiv.org/abs/2403.04132">Chiang et al., <em>Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference</em> (2024)</a> — the pairwise human-preference leaderboard that popularized Bradley–Terry ratings with bootstrap confidence intervals and model tier grouping.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2402.14992">Polo et al., <em>tinyBenchmarks: Evaluating LLMs with Fewer Examples</em> (ICML 2024)</a> — IRT-based method that estimates full-benchmark performance from ~100 curated items; shows MMLU rankings recoverable from 100 vs 14 000 items.</li>
+<li><a href="https://arxiv.org/abs/2503.01747">Bowyer, Aitchison &amp; Ivanova, <em>Don&rsquo;t Use the CLT in LLM Evals With Fewer Than a Few Hundred Datapoints</em> (ICML 2025 spotlight)</a> — demonstrates CLT-based CIs dramatically underestimate uncertainty on specialized small benchmarks; proposes frequentist and Bayesian alternatives.</li>
+<li><a href="https://arxiv.org/abs/2601.20251">Wu, Nair &amp; Candès, <em>Efficient Evaluation of LLM Performance with Statistical Guarantees</em> (2025)</a> — Factorized Active Querying (FAQ) achieves up to 5× effective sample-size gains over baselines while preserving valid frequentist coverage.</li>
+<li><a href="https://arxiv.org/abs/2412.18407">Ameli et al., <em>A Statistical Framework for Ranking LLM-Based Chatbots</em> (ICLR 2025)</a> — extends Bradley–Terry with a factored tie model and covariance structure for better-calibrated leaderboard intervals.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/felipemaiapolo/tinyBenchmarks">felipemaiapolo/tinyBenchmarks</a> — Python package for IRT/p-IRT/gp-IRT estimation on MMLU, GSM8K, and Open LLM Leaderboard subsets.</li>
+<li><a href="https://github.com/Kaleidophon/deep-significance">Kaleidophon/deep-significance</a> — library implementing Almost Stochastic Order, bootstrap, and permutation tests for comparing deep-learning models, with power-analysis utilities.</li>
+<li><a href="https://github.com/rtmdrr/testSignificanceNLP">rtmdrr/testSignificanceNLP</a> — companion code for Dror et al. 2018; runs Shapiro–Wilk, t-test, Wilcoxon, and McNemar from the command line on any score files.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://cameronrwolfe.substack.com/p/stats-llm-evals">Cameron R. Wolfe, <em>Applying Statistics to LLM Evaluations</em> (2024)</a> — practitioner-focused deep-dive covering CLT, clustered SEs, paired comparisons, and power analysis with worked examples.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Bradley, R. A. &amp; Terry, M. E., <em>Rank Analysis of Incomplete Block Designs</em> (1952) — the pairwise-comparison model underlying Elo and modern LLM arenas.</li>
+<li>Efron, B. &amp; Tibshirani, R. J., <em>An Introduction to the Bootstrap</em> (1993) — the definitive treatment of bootstrap CIs, including BCa.</li>
+<li>Brown, Cai &amp; DasGupta, <em>Interval Estimation for a Binomial Proportion</em> (Statistical Science, 2001) — why Wald is bad and Wilson/Agresti–Coull are good.</li>
+<li>Dietterich, T. G., <em>Approximate Statistical Tests for Comparing Supervised Classification Learning Algorithms</em> (1998) — paired tests, McNemar, and the perils of naive comparison in ML.</li>
+<li>Benjamini, Y. &amp; Hochberg, Y., <em>Controlling the False Discovery Rate</em> (1995) — the standard multiple-comparison correction for screening many candidates.</li>
+<li>Lord, F. M., <em>Applications of Item Response Theory to Practical Testing Problems</em> (1980) — the foundational IRT and adaptive-testing reference.</li>
+<li>Polo et al., <em>tinyBenchmarks: Evaluating LLMs with Fewer Examples</em>, and Vivek et al., <em>Anchor Points</em> — IRT-style efficient LLM evaluation.</li>
+<li>Miller, E., <em>Adding Error Bars to Evals</em> — a practitioner-facing call to report confidence intervals on LLM benchmarks.</li>
+<li>Chiang et al., <em>Chatbot Arena</em> — the human-preference leaderboard whose Bradley–Terry ratings and confidence intervals popularized statistical rigor in LLM ranking.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="05-redteaming-safety-eval.html"><span class="pn-label">← Previous</span><span class="pn-title">Red-Teaming, Safety &amp; Robustness Evaluation</span></a>
+<a class="next" href="../12-production-mlops/01-serving-system-design.html"><span class="pn-label">Next →</span><span class="pn-title">Designing an LLM Serving System</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-every-eval-number-needs-an-error-bar">Why Every Eval Number Needs an Error Bar</a></li>
+<li class="toc-l3"><a href="#accuracy-is-a-sample-statistic">Accuracy is a sample statistic</a></li>
+<li class="toc-l3"><a href="#the-width-of-ci-table-you-should-memorize">The width-of-CI table you should memorize</a></li>
+<li class="toc-l3"><a href="#two-kinds-of-variance-items-vs-generation">Two kinds of variance: items vs. generation</a></li>
+<li class="toc-l2"><a href="#confidence-intervals-that-dont-lie-bootstrap-beyond">Confidence Intervals That Don&amp;rsquo;t Lie: Bootstrap &amp;amp; Beyond</a></li>
+<li class="toc-l3"><a href="#the-bootstrap-in-one-paragraph">The bootstrap in one paragraph</a></li>
+<li class="toc-l3"><a href="#bootstrap-ci-wilson-and-clopperpearson-from-scratch">Bootstrap CI, Wilson, and Clopper–Pearson — from scratch</a></li>
+<li class="toc-l3"><a href="#bootstrapping-an-elo-bradleyterry-rating">Bootstrapping an Elo / Bradley–Terry rating</a></li>
+<li class="toc-l2"><a href="#the-question-you-actually-care-about-is-a-better-than-b">The Question You Actually Care About: Is A Better Than B?</a></li>
+<li class="toc-l3"><a href="#why-pairing-crushes-the-variance">Why pairing crushes the variance</a></li>
+<li class="toc-l3"><a href="#three-paired-tests-and-when-to-use-each">Three paired tests and when to use each</a></li>
+<li class="toc-l3"><a href="#paired-tests-from-scratch">Paired tests — from scratch</a></li>
+<li class="toc-l3"><a href="#multiple-comparisons-the-leaderboard-trap">Multiple comparisons: the leaderboard trap</a></li>
+<li class="toc-l2"><a href="#variance-decomposition-where-does-your-noise-live">Variance Decomposition: Where Does Your Noise Live?</a></li>
+<li class="toc-l3"><a href="#a-linear-variance-model">A linear variance model</a></li>
+<li class="toc-l3"><a href="#estimating-the-components">Estimating the components</a></li>
+<li class="toc-l2"><a href="#power-analysis-sizing-the-test-set-before-you-run-it">Power Analysis: Sizing the Test Set Before You Run It</a></li>
+<li class="toc-l3"><a href="#the-four-interlocking-quantities">The four interlocking quantities</a></li>
+<li class="toc-l3"><a href="#power-analysis-from-scratch-including-simulation">Power analysis — from scratch, including simulation</a></li>
+<li class="toc-l2"><a href="#squeezing-more-signal-per-item-irt-adaptive-evaluation">Squeezing More Signal Per Item: IRT &amp;amp; Adaptive Evaluation</a></li>
+<li class="toc-l3"><a href="#the-2-parameter-logistic-model">The 2-parameter logistic model</a></li>
+<li class="toc-l3"><a href="#fitting-a-tiny-irt-model-and-computing-item-information">Fitting a tiny IRT model and computing item information</a></li>
+<li class="toc-l3"><a href="#adaptive-evaluation-same-precision-a-fraction-of-the-items">Adaptive evaluation: same precision, a fraction of the items</a></li>
+<li class="toc-l2"><a href="#reading-leaderboards-like-a-statistician">Reading Leaderboards Like a Statistician</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

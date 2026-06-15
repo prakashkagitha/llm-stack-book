@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups — The LLM Stack</title>
+<meta name="description" content="Prompt tuning, prefix tuning, P-tuning v2, IA3; model merging (linear, SLERP, TIES, DARE, task arithmetic), model soups, Frankenmerges; when merging beats finet">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="active" href="04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part V — Post-Training &amp; Alignment</div>
+<h1 id="54-peft-ii-promptprefix-tuning-ia3-model-merging-soups">5.4 PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups<a class="headerlink" href="#54-peft-ii-promptprefix-tuning-ia3-model-merging-soups" title="Permanent link">¶</a></h1>
+<p>The previous chapter (<a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a>) showed how low-rank weight updates let you adapt large models cheaply. This chapter covers the complementary half of the parameter-efficient fine-tuning (PEFT) landscape: methods that add learnable tokens to the input space rather than the weight space (prompt tuning, prefix tuning, P-tuning v2), a multiplication-based approach that touches only scale vectors (IA3), and a family of techniques that skip gradient-based tuning entirely by combining pre-trained or fine-tuned checkpoints after the fact (model merging, task arithmetic, model soups, Frankenmerges).</p>
+<p>The through-line is the same practical constraint: a 70-billion-parameter base model is expensive to fully fine-tune, expensive to maintain as dozens of separate copies, and hard to ship. Each technique in this chapter is a different answer to the question &ldquo;how do we get specialized behavior cheaply?&rdquo;</p>
+<hr />
+<h2 id="soft-prompts-motivation-and-taxonomy">Soft Prompts: Motivation and Taxonomy<a class="headerlink" href="#soft-prompts-motivation-and-taxonomy" title="Permanent link">¶</a></h2>
+<p>Before going into individual algorithms, it helps to see why the field explored the <em>input</em> rather than the <em>weights</em>.</p>
+<p>Standard prompting (hard prompting) works entirely in the discrete token space: you write a text prefix and the model conditions on it. This is zero-cost but brittle — the gradient of the downstream loss never reaches the prompt text, so you cannot improve it by training.</p>
+<p>The key insight of <strong>soft prompting</strong> is: why not make the prompt embeddings themselves trainable? Swap out the discrete token sequence for a set of continuous, differentiable embedding vectors that are learned end-to-end on a task. The frozen base model provides its full representational power; the learnable &ldquo;soft tokens&rdquo; provide the task steering.</p>
+<figure class="viz" id="fig-softprompt-frozen-backbone-gradient-flow">
+<svg viewBox="0 0 820 490" role="img" aria-label="Soft prompting architecture: three trainable soft-token embeddings are prepended to input token embeddings, the concatenated sequence enters a fully frozen transformer, output logits emerge on the right, and gradients flow only back to the soft-token embeddings.">
+  <defs>
+    <marker id="sp-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#e1845f)"/>
+    </marker>
+    <marker id="sp-arrow-neutral" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#978f83)"/>
+    </marker>
+    <marker id="sp-arrow-strong" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-label" fill="var(--ink-soft,#cbc4b8)"/>
+    </marker>
+
+    <marker id="sp-arrow-grad-left" viewBox="0 0 10 10" refX="2" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M10 0 L0 5 L10 10 z" fill="var(--accent,#e1845f)"/>
+    </marker>
+  </defs>
+
+  <style>
+    #fig-softprompt-frozen-backbone-gradient-flow .lbl {
+      font: 600 12px var(--sans,sans-serif);
+    }
+    #fig-softprompt-frozen-backbone-gradient-flow .lbl-sm {
+      font: 400 10px var(--sans,sans-serif);
+    }
+    #fig-softprompt-frozen-backbone-gradient-flow .lbl-caps {
+      font: 600 10px var(--sans,sans-serif);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    #fig-softprompt-frozen-backbone-gradient-flow .lbl-inner {
+      font: 400 11px var(--sans,sans-serif);
+    }
+    #fig-softprompt-frozen-backbone-gradient-flow .caption-txt {
+      font: 500 11px var(--sans,sans-serif);
+    }
+    #fig-softprompt-frozen-backbone-gradient-flow text {
+      fill: var(--ink-soft,#cbc4b8);
+    }
+  </style>
+
+
+
+
+  <g id="soft-tokens">
+
+    <rect x="14" y="44" width="150" height="38" rx="6"
+          fill="var(--accent,#e1845f)" stroke="var(--accent,#e1845f)"
+          stroke-width="2"/>
+    <text x="89" y="68" text-anchor="middle" class="lbl" fill="#fff">soft token 1</text>
+
+
+    <rect x="14" y="92" width="150" height="38" rx="6"
+          fill="var(--accent,#e1845f)" stroke="var(--accent,#e1845f)"
+          stroke-width="2"/>
+    <text x="89" y="116" text-anchor="middle" class="lbl" fill="#fff">soft token 2</text>
+
+
+    <circle cx="89" cy="133" r="2.5" fill="var(--accent,#e1845f)"/>
+    <circle cx="89" cy="142" r="2.5" fill="var(--accent,#e1845f)"/>
+    <circle cx="89" cy="151" r="2.5" fill="var(--accent,#e1845f)"/>
+
+
+    <rect x="14" y="152" width="150" height="38" rx="6"
+          fill="var(--accent,#e1845f)" stroke="var(--accent,#e1845f)"
+          stroke-width="2"/>
+    <text x="89" y="176" text-anchor="middle" class="lbl" fill="#fff">soft token k</text>
+
+
+    <text x="89" y="34" text-anchor="middle" class="lbl-caps" fill="var(--accent,#e1845f)">trainable</text>
+  </g>
+
+
+
+
+  <g id="input-tokens">
+
+    <rect x="14" y="228" width="150" height="38" rx="6"
+          class="v-fill" fill="var(--surface,#2f2b27)"
+          stroke="var(--ink-soft,#cbc4b8)" stroke-width="1.5"/>
+    <text x="89" y="252" text-anchor="middle" class="lbl">input token 1</text>
+
+
+    <rect x="14" y="276" width="150" height="38" rx="6"
+          class="v-fill" fill="var(--surface,#2f2b27)"
+          stroke="var(--ink-soft,#cbc4b8)" stroke-width="1.5"/>
+    <text x="89" y="300" text-anchor="middle" class="lbl">input token 2</text>
+
+
+    <text x="89" y="334" text-anchor="middle" class="lbl" fill="var(--muted,#978f83)">&#8230;</text>
+
+
+    <text x="89" y="356" text-anchor="middle" class="lbl-caps" fill="var(--muted,#978f83)">input tokens</text>
+  </g>
+
+
+
+
+  <g id="frozen-transformer">
+
+    <rect x="240" y="30" width="360" height="340" rx="10"
+          fill="var(--surface-3,#2f2b27)" stroke="var(--ink-soft,#cbc4b8)"
+          stroke-width="1.5"/>
+
+
+    <text x="420" y="58" text-anchor="middle" class="lbl-caps">frozen transformer</text>
+
+
+    <rect x="268" y="70" width="304" height="90" rx="6"
+          fill="var(--surface,#201d1a)" stroke="var(--border-2,#413c35)"
+          stroke-width="1" stroke-dasharray="4 3"/>
+    <text x="420" y="104" text-anchor="middle" class="lbl-inner">multi-layer self-attention + FFN</text>
+    <text x="420" y="122" text-anchor="middle" class="lbl-inner">(all weights frozen)</text>
+
+
+    <g transform="translate(570,44)">
+
+      <rect x="-10" y="2" width="20" height="14" rx="3"
+            fill="var(--muted,#978f83)" stroke="none"/>
+
+      <path d="M -5 2 L -5 -4 A 5 5 0 0 1 5 -4 L 5 2"
+            fill="none" stroke="var(--muted,#978f83)" stroke-width="2.5"
+            stroke-linecap="round"/>
+
+      <circle cx="0" cy="9" r="2.5" fill="var(--surface-3,#2f2b27)"/>
+    </g>
+  </g>
+
+
+
+
+  <g id="output-logits">
+    <rect x="646" y="160" width="148" height="48" rx="6"
+          class="v-fill" fill="var(--surface,#2f2b27)"
+          stroke="var(--ink-soft,#cbc4b8)" stroke-width="1.5"/>
+    <text x="720" y="190" text-anchor="middle" class="lbl">output logits</text>
+  </g>
+
+
+
+
+
+  <line x1="164" y1="63" x2="236" y2="110"
+        stroke="var(--accent,#e1845f)" stroke-width="2"
+        marker-end="url(#sp-arrow-accent)"/>
+
+
+  <line x1="164" y1="111" x2="236" y2="125"
+        stroke="var(--accent,#e1845f)" stroke-width="2"
+        marker-end="url(#sp-arrow-accent)"/>
+
+
+  <line x1="164" y1="171" x2="236" y2="140"
+        stroke="var(--accent,#e1845f)" stroke-width="2"
+        marker-end="url(#sp-arrow-accent)"/>
+
+
+
+
+
+  <line x1="164" y1="247" x2="236" y2="200"
+        stroke="var(--muted,#978f83)" stroke-width="1.8"
+        marker-end="url(#sp-arrow-neutral)"/>
+
+
+  <line x1="164" y1="295" x2="236" y2="220"
+        stroke="var(--muted,#978f83)" stroke-width="1.8"
+        marker-end="url(#sp-arrow-neutral)"/>
+
+
+
+
+  <line x1="600" y1="184" x2="642" y2="184"
+        stroke="var(--ink-soft,#cbc4b8)" stroke-width="2"
+        marker-end="url(#sp-arrow-strong)"/>
+
+
+
+
+
+
+  <line x1="94" y1="396" x2="650" y2="396"
+        stroke="var(--accent,#e1845f)" stroke-width="2"
+        stroke-dasharray="6 4"
+        marker-start="url(#sp-arrow-grad-left)"/>
+
+
+  <path d="M656 392 L668 392 L662 404 z"
+        fill="none" stroke="var(--accent,#e1845f)" stroke-width="1.6"
+        stroke-linejoin="round"/>
+
+
+  <text x="375" y="418" text-anchor="middle" class="caption-txt"
+        fill="var(--accent,#e1845f)">gradients flow ONLY to soft-token embeddings</text>
+
+
+
+
+  <g id="legend" transform="translate(14,450)">
+
+    <rect x="0" y="0" width="12" height="12" rx="2"
+          fill="var(--accent,#e1845f)"/>
+    <text x="17" y="10" class="lbl-sm">trainable (soft prompt)</text>
+
+
+    <rect x="0" y="18" width="12" height="12" rx="2"
+          class="v-fill" fill="var(--surface,#2f2b27)"
+          stroke="var(--ink-soft,#cbc4b8)" stroke-width="1"/>
+    <text x="17" y="28" class="lbl-sm">frozen (backbone + real tokens)</text>
+  </g>
+
+</svg>
+<figcaption><b>Soft prompting prepends a small set of learnable continuous vectors to a fully frozen transformer.</b> Only the <em>k</em> soft-token embeddings receive gradients during fine-tuning; every backbone weight stays fixed. This means the entire representational power of a large pretrained model is available while the tunable parameter count is just <em>k &amp;times; d</em> — often less than 0.01% of the base model.</figcaption>
+</figure>
+
+<p>Three distinct families emerged:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>What is learned</th>
+<th>Where it attaches</th>
+<th>Params per task</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Prompt tuning</strong> (Lester et al., 2021)</td>
+<td><span class="arithmatex">\(k\)</span> embedding vectors, first-layer input</td>
+<td>Input layer only</td>
+<td><span class="arithmatex">\(k \times d\)</span></td>
+</tr>
+<tr>
+<td><strong>Prefix tuning</strong> (Li &amp; Liang, 2021)</td>
+<td>Key/value pairs injected at every layer</td>
+<td>All attention layers</td>
+<td><span class="arithmatex">\(2 \times L \times k \times d\)</span></td>
+</tr>
+<tr>
+<td><strong>P-tuning v2</strong> (Liu et al., 2022)</td>
+<td>Deep prefix + per-layer MLP reparameterization</td>
+<td>All layers</td>
+<td>similar to prefix tuning</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="prompt-tuning">Prompt Tuning<a class="headerlink" href="#prompt-tuning" title="Permanent link">¶</a></h2>
+<h3 id="the-core-algorithm">The Core Algorithm<a class="headerlink" href="#the-core-algorithm" title="Permanent link">¶</a></h3>
+<p>Lester et al. introduced prompt tuning as the minimalist end of the soft-token spectrum. The only change relative to standard inference is that a learned matrix</p>
+<div class="arithmatex">\[
+P \in \mathbb{R}^{k \times d}
+\]</div>
+<p>is prepended to the sequence of ordinary token embeddings <span class="arithmatex">\(X \in \mathbb{R}^{n \times d}\)</span> before the first transformer layer. The concatenated input is</p>
+<div class="arithmatex">\[
+\tilde{X} = \begin{bmatrix} P \\ X \end{bmatrix} \in \mathbb{R}^{(k+n) \times d}.
+\]</div>
+<p>During fine-tuning, the backbone weights are frozen; gradients flow only through <span class="arithmatex">\(P\)</span>. During inference, <span class="arithmatex">\(P\)</span> is stored once and prepended to every example.</p>
+<p>Parameter count: for <span class="arithmatex">\(k = 100\)</span> soft tokens and <span class="arithmatex">\(d = 4096\)</span> (LLaMA-7B width), we have <span class="arithmatex">\(100 \times 4096 = 409{,}600\)</span> parameters — roughly 0.006 % of the base model.</p>
+<h3 id="initialization-strategy">Initialization Strategy<a class="headerlink" href="#initialization-strategy" title="Permanent link">¶</a></h3>
+<p>How you initialize <span class="arithmatex">\(P\)</span> matters. Lester et al. found that initializing each soft token from a real vocabulary embedding (rather than random noise) gives notably faster convergence and higher peak accuracy. The intuition: the model already knows how to &ldquo;read&rdquo; its own embedding space; starting from a real token gives the optimizer a warm start.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoTokenizer</span><span class="p">,</span> <span class="n">AutoModelForCausalLM</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SoftPromptWrapper</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Wraps a frozen causal LM with a learnable soft-prompt prefix.</span>
+<span class="sd">    Only the `soft_prompt` embedding matrix is trainable.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">num_soft_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">20</span><span class="p">,</span> <span class="n">init_text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Answer the following question:&quot;</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+        <span class="c1"># Freeze ALL base model parameters</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="n">d_model</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">hidden_size</span>
+
+        <span class="c1"># ---------- Initialization from real tokens ----------</span>
+        <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">_name_or_path</span><span class="p">)</span>
+        <span class="n">init_ids</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">init_text</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+        <span class="c1"># Pad or truncate to exactly num_soft_tokens</span>
+        <span class="n">embed_weight</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">get_input_embeddings</span><span class="p">()</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">data</span>  <span class="c1"># (vocab_size, d)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">init_ids</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">num_soft_tokens</span><span class="p">:</span>
+            <span class="n">chosen_ids</span> <span class="o">=</span> <span class="n">init_ids</span><span class="p">[:</span><span class="n">num_soft_tokens</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Random fill for any extra slots</span>
+            <span class="n">random_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">embed_weight</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="n">num_soft_tokens</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">init_ids</span><span class="p">),))</span>
+            <span class="n">chosen_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">init_ids</span><span class="p">,</span> <span class="n">random_ids</span><span class="p">])</span>
+
+        <span class="n">init_embeds</span> <span class="o">=</span> <span class="n">embed_weight</span><span class="p">[</span><span class="n">chosen_ids</span><span class="p">]</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>  <span class="c1"># (num_soft_tokens, d)</span>
+
+        <span class="c1"># The one trainable parameter</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">soft_prompt</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">init_embeds</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">input_ids</span><span class="p">,</span> <span class="n">attention_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="n">batch_size</span> <span class="o">=</span> <span class="n">input_ids</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+        <span class="c1"># Embed the real input tokens</span>
+        <span class="n">input_embeds</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">get_input_embeddings</span><span class="p">()(</span><span class="n">input_ids</span><span class="p">)</span>  <span class="c1"># (B, T, d)</span>
+
+        <span class="c1"># Expand soft prompt to batch: (B, k, d)</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">soft_prompt</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># Concatenate along the token dimension</span>
+        <span class="n">combined</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">prompt</span><span class="p">,</span> <span class="n">input_embeds</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B, k+T, d)</span>
+
+        <span class="c1"># Extend the attention mask to cover the soft tokens</span>
+        <span class="k">if</span> <span class="n">attention_mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">prompt_mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">soft_prompt</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>
+                                     <span class="n">device</span><span class="o">=</span><span class="n">attention_mask</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">attention_mask</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+            <span class="n">attention_mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">prompt_mask</span><span class="p">,</span> <span class="n">attention_mask</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># Shift labels to account for the k prepended tokens</span>
+        <span class="c1"># (for CLM loss, we don&#39;t want to predict from soft-token positions)</span>
+        <span class="k">if</span> <span class="n">labels</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">pad_labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">soft_prompt</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)),</span> <span class="o">-</span><span class="mi">100</span><span class="p">,</span>
+                                    <span class="n">device</span><span class="o">=</span><span class="n">labels</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">labels</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+            <span class="n">labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">pad_labels</span><span class="p">,</span> <span class="n">labels</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">inputs_embeds</span><span class="o">=</span><span class="n">combined</span><span class="p">,</span> <span class="n">attention_mask</span><span class="o">=</span><span class="n">attention_mask</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">labels</span><span class="p">)</span>
+
+<span class="c1"># ---- Quick test ----</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span>
+    <span class="n">wrapper</span> <span class="o">=</span> <span class="n">SoftPromptWrapper</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">num_soft_tokens</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+
+    <span class="n">trainable</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">wrapper</span><span class="o">.</span><span class="n">parameters</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">)</span>
+    <span class="n">total</span>     <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">wrapper</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Trainable: </span><span class="si">{</span><span class="n">trainable</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">  Total: </span><span class="si">{</span><span class="n">total</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">  Fraction: </span><span class="si">{</span><span class="n">trainable</span><span class="o">/</span><span class="n">total</span><span class="si">:</span><span class="s2">.5%</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># Trainable: 7,680  Total: 124,447,232  Fraction: 0.00617%</span>
+</code></pre></div>
+<h3 id="scaling-behavior">Scaling Behavior<a class="headerlink" href="#scaling-behavior" title="Permanent link">¶</a></h3>
+<p>A key empirical finding from the original paper: prompt tuning&rsquo;s gap relative to full fine-tuning shrinks as model size grows. For models with on the order of hundreds of millions of parameters, full fine-tuning wins by a meaningful margin. At very large scales — on the order of tens of billions of parameters — prompt tuning approaches the accuracy of full fine-tuning while using orders-of-magnitude fewer parameters. This scale-dependence is a recurring theme for input-space PEFT methods.</p>
+<hr />
+<h2 id="prefix-tuning">Prefix Tuning<a class="headerlink" href="#prefix-tuning" title="Permanent link">¶</a></h2>
+<h3 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">¶</a></h3>
+<p>Li &amp; Liang (2021) identified a limitation of prompt tuning: soft tokens only influence the model at the first layer. By the time information propagates through the second, third, and subsequent layers, the &ldquo;prompt signal&rdquo; has been blended into the residual stream in ways that may not remain task-specific. Their solution is to inject learned key–value pairs at <strong>every</strong> transformer layer&rsquo;s attention computation.</p>
+<p>For layer <span class="arithmatex">\(\ell\)</span>, the standard self-attention computes</p>
+<div class="arithmatex">\[
+\text{Attn}^\ell(Q^\ell, K^\ell, V^\ell) = \text{softmax}\!\left(\frac{Q^\ell (K^\ell)^\top}{\sqrt{d_k}}\right) V^\ell.
+\]</div>
+<p>Prefix tuning prepends a learned prefix to both <span class="arithmatex">\(K^\ell\)</span> and <span class="arithmatex">\(V^\ell\)</span>:</p>
+<div class="arithmatex">\[
+\tilde{K}^\ell = \begin{bmatrix} P^K_\ell \\ K^\ell \end{bmatrix}, \quad
+\tilde{V}^\ell = \begin{bmatrix} P^V_\ell \\ V^\ell \end{bmatrix},
+\]</div>
+<p>where <span class="arithmatex">\(P^K_\ell, P^V_\ell \in \mathbb{R}^{k \times d_k}\)</span>. The attention query is unchanged and attends to both the learned prefix and the real tokens.</p>
+<p>The effect: at every layer, the model has <span class="arithmatex">\(k\)</span> &ldquo;virtual past tokens&rdquo; whose key–value representations can be specialized to steer the layer&rsquo;s attention pattern for a particular task.</p>
+<h3 id="reparameterization-trick">Reparameterization Trick<a class="headerlink" href="#reparameterization-trick" title="Permanent link">¶</a></h3>
+<p>Directly optimizing <span class="arithmatex">\(P^K_\ell, P^V_\ell\)</span> leads to training instability — the prefix tensors exist in a high-dimensional continuous space with no warm-start. Li &amp; Liang found that routing the prefix through a small MLP helps:</p>
+<div class="arithmatex">\[
+P^\ell = \text{MLP}_\theta(e^\ell),
+\]</div>
+<p>where <span class="arithmatex">\(e^\ell\)</span> is a row of a small trainable embedding matrix <span class="arithmatex">\(E \in \mathbb{R}^{k \times d'}\)</span> (with <span class="arithmatex">\(d' \ll d\)</span>). At inference time, the MLP can be discarded; only the resulting <span class="arithmatex">\(P^\ell\)</span> tensors are stored.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PrefixEncoder</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Generates per-layer prefix key/value tensors from a compact embedding.</span>
+<span class="sd">    At inference, call `.materialize()` to get the final prefix tensors</span>
+<span class="sd">    (the MLP can then be discarded to save memory).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num_layers</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_head</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                 <span class="n">prefix_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span> <span class="n">bottleneck_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">num_layers</span> <span class="o">=</span> <span class="n">num_layers</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">num_heads</span>  <span class="o">=</span> <span class="n">num_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_head</span>     <span class="o">=</span> <span class="n">d_head</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">prefix_len</span> <span class="o">=</span> <span class="n">prefix_len</span>
+
+        <span class="c1"># Compact embedding: shape (prefix_len, bottleneck_dim)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">embedding</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">prefix_len</span><span class="p">,</span> <span class="n">bottleneck_dim</span><span class="p">)</span>
+
+        <span class="c1"># Two-layer MLP expands to (2 * num_layers * num_heads * d_head)</span>
+        <span class="c1"># Factor of 2 = one for K, one for V</span>
+        <span class="n">out_dim</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">num_layers</span> <span class="o">*</span> <span class="n">num_heads</span> <span class="o">*</span> <span class="n">d_head</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mlp</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">bottleneck_dim</span><span class="p">,</span> <span class="n">bottleneck_dim</span> <span class="o">*</span> <span class="mi">2</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Tanh</span><span class="p">(),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">bottleneck_dim</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="n">out_dim</span><span class="p">),</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># Token indices 0..prefix_len-1</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">prefix_len</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">embedding</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">embedding</span><span class="p">(</span><span class="n">idx</span><span class="p">)</span>                     <span class="c1"># (prefix_len, bottleneck_dim)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>                           <span class="c1"># (prefix_len, 2*L*H*d_head)</span>
+
+        <span class="c1"># Reshape to (2, num_layers, prefix_len, num_heads, d_head)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">prefix_len</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_layers</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">d_head</span><span class="p">)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>           <span class="c1"># (2, L, prefix_len, H, d_head)</span>
+        <span class="c1"># out[0] = K prefix across all layers; out[1] = V prefix</span>
+        <span class="k">return</span> <span class="n">out</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">out</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>                       <span class="c1"># each: (L, prefix_len, H, d_head)</span>
+
+
+<span class="c1"># Sanity check parameter count</span>
+<span class="n">encoder</span> <span class="o">=</span> <span class="n">PrefixEncoder</span><span class="p">(</span><span class="n">num_layers</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">num_heads</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">d_head</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">prefix_len</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">bottleneck_dim</span><span class="o">=</span><span class="mi">512</span><span class="p">)</span>
+<span class="n">trainable</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">encoder</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Prefix encoder params: </span><span class="si">{</span><span class="n">trainable</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># ~13 M params for a 70B-class attention shape — vs. 70B frozen</span>
+</code></pre></div>
+<h3 id="p-tuning-v2">P-tuning v2<a class="headerlink" href="#p-tuning-v2" title="Permanent link">¶</a></h3>
+<p>P-tuning v2 (Liu et al., 2022) is essentially a cleaned-up, scaled version of prefix tuning applied to encoder-style and encoder-decoder models. Its main contributions are:</p>
+<ol>
+<li><strong>Deep prefix across all layers</strong> — confirmed the importance of per-layer injection (versus only the input layer) for complex NLU tasks.</li>
+<li><strong>Removing the MLP reparameterization</strong> — found that with careful initialization and learning-rate tuning, direct optimization of the prefix tensors is stable and slightly better.</li>
+<li><strong>Verifiable results at different scales</strong> — showed that deep prefix tuning can match full fine-tuning on hard sequence-labeling tasks (NER, SRL) even for smaller models (hundreds of millions of parameters), filling a gap where prompt tuning struggles.</li>
+</ol>
+<hr />
+<h2 id="ia3-infused-adapter-by-inhibiting-and-amplifying-inner-activations">IA3: Infused Adapter by Inhibiting and Amplifying Inner Activations<a class="headerlink" href="#ia3-infused-adapter-by-inhibiting-and-amplifying-inner-activations" title="Permanent link">¶</a></h2>
+<h3 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">¶</a></h3>
+<p>Liu et al. (T-Few, 2022) asked: what is the minimal intervention that can still adapt behavior effectively? Instead of adding parameters (adapters) or input tokens (prefix tuning), IA3 <strong>rescales</strong> three specific activation vectors inside the transformer using learned scale vectors with as few as a few thousand parameters per task.</p>
+<h3 id="mechanism">Mechanism<a class="headerlink" href="#mechanism" title="Permanent link">¶</a></h3>
+<p>For each transformer layer, IA3 introduces three learned vectors:</p>
+<div class="arithmatex">\[
+l_k, l_v \in \mathbb{R}^{d_k}, \quad l_{ff} \in \mathbb{R}^{d_{ff}},
+\]</div>
+<p>and modifies the forward pass as:</p>
+<div class="arithmatex">\[
+\text{Attn}(Q, K, V) = \text{softmax}\!\left(\frac{Q (l_k \odot K)^\top}{\sqrt{d_k}}\right)(l_v \odot V),
+\]</div>
+<div class="arithmatex">\[
+\text{FFN}(x) = W_2 \cdot \bigl(l_{ff} \odot \sigma(W_1 x)\bigr),
+\]</div>
+<p>where <span class="arithmatex">\(\odot\)</span> denotes element-wise multiplication. The backbone <span class="arithmatex">\(Q, K, V\)</span> projections and the FFN weights are completely frozen; only <span class="arithmatex">\(l_k, l_v, l_{ff}\)</span> are trained.</p>
+<p>The intuition is that element-wise rescaling can suppress or amplify the &ldquo;channels&rdquo; most relevant for a task without requiring any additive rank-1 update in weight space. Because the scale vectors multiply directly into the forward computation, they can be folded into the weight matrices at inference time with zero overhead:</p>
+<div class="arithmatex">\[
+W'_K = \text{diag}(l_k) \cdot W_K, \quad W'_V = \text{diag}(l_v) \cdot W_V.
+\]</div>
+<p>After this fold, the model has the same parameter count as the base model and no extra matrix multiplication at runtime — a key advantage over adapters.</p>
+<h3 id="parameter-count">Parameter Count<a class="headerlink" href="#parameter-count" title="Permanent link">¶</a></h3>
+<p>For a 7B model with <span class="arithmatex">\(L = 32\)</span> layers, <span class="arithmatex">\(d_k = 128\)</span>, <span class="arithmatex">\(d_{ff} = 14336\)</span>:</p>
+<div class="arithmatex">\[
+\text{params} = L \times (d_k + d_k + d_{ff}) = 32 \times (128 + 128 + 14336) = 32 \times 14592 \approx 467{,}000.
+\]</div>
+<p>That is roughly 0.007 % of 7B — smaller than a LoRA rank-8 adapter.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">IA3Attention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Single-head attention with IA3 scale vectors on K and V.</span>
+<span class="sd">    In practice you would patch an existing multi-head module;</span>
+<span class="sd">    here we show the mechanics clearly.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_k</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_k</span> <span class="o">=</span> <span class="n">d_k</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_q</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_k</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_k</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_k</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_v</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_k</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_k</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="c1"># Freeze backbone</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">W_q</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_k</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_v</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span><span class="p">]:</span>
+            <span class="k">for</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+                <span class="n">param</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="c1"># IA3 learnable scale vectors — initialized to 1 (identity)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">l_k</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">d_k</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">l_v</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">d_k</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">Q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_q</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                            <span class="c1"># (B, T, d_k)</span>
+        <span class="n">K</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_k</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">l_k</span>                <span class="c1"># element-wise scale on K</span>
+        <span class="n">V</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_v</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">l_v</span>                <span class="c1"># element-wise scale on V</span>
+
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">matmul</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">d_k</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>
+        <span class="n">attn</span>   <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">out</span>    <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">matmul</span><span class="p">(</span><span class="n">attn</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fold_weights</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Bake IA3 scales into W_k and W_v so inference has zero overhead.</span>
+<span class="sd">        After calling this, l_k and l_v can be deleted.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="c1"># W_k output dim is d_k; scale each row</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">W_k</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">l_k</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">W_v</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">l_v</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="c1"># Detach scale vectors (they&#39;re now baked in)</span>
+        <span class="k">del</span> <span class="bp">self</span><span class="o">.</span><span class="n">l_k</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">l_v</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;IA3 weights folded — no runtime overhead.&quot;</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">IA3FFN</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;FFN with IA3 scale on the intermediate activations.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_ff</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">W1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">W2</span><span class="p">]:</span>
+            <span class="k">for</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+                <span class="n">param</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">l_ff</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">d_ff</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">gelu</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W1</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>    <span class="c1"># (B, T, d_ff)</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="n">h</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">l_ff</span>         <span class="c1"># IA3 scale on hidden activations</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">W2</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="t-few-few-shot-fine-tuning-with-ia3">T-Few: Few-Shot Fine-Tuning with IA3<a class="headerlink" href="#t-few-few-shot-fine-tuning-with-ia3" title="Permanent link">¶</a></h3>
+<p>The T-Few paper packaged IA3 into a practical recipe for few-shot learning on T0/T5 family models:</p>
+<ol>
+<li>Pre-train a multi-task model (T0) across many tasks.</li>
+<li>For a new task with only a handful of labeled examples, fine-tune only the IA3 vectors.</li>
+<li>Add an &ldquo;unlikelihood&rdquo; regularization term that penalizes high probability on wrong answers (preventing memorization with tiny data).</li>
+</ol>
+<p>The combination matched or beat much larger few-shot competitors while using a fraction of the compute.</p>
+<hr />
+<h2 id="model-merging-the-big-idea">Model Merging: The Big Idea<a class="headerlink" href="#model-merging-the-big-idea" title="Permanent link">¶</a></h2>
+<p>All the methods above involve gradient-based training, however cheap. Model merging takes a different stance: <strong>can we combine the knowledge in two or more independently trained checkpoints by arithmetic on their weight tensors?</strong></p>
+<p>The answer is yes, surprisingly well, and the space of merging algorithms has exploded since 2022. The key enabling observation is that fine-tuned models that share the same pre-trained initialization live in a roughly convex basin of the loss landscape — their interpolation often stays in a low-loss region for multiple tasks simultaneously.</p>
+<h3 id="why-merging-beats-fine-tuning-in-some-scenarios">Why Merging Beats Fine-Tuning in Some Scenarios<a class="headerlink" href="#why-merging-beats-fine-tuning-in-some-scenarios" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>No access to training data.</strong> Two proprietary fine-tunes can be merged without seeing each other&rsquo;s data.</li>
+<li><strong>No additional GPU hours.</strong> Merging is a CPU-memory operation — no forward/backward passes.</li>
+<li><strong>Catastrophic forgetting avoidance.</strong> Sequential fine-tuning on task B degrades task A; merging two task-specific models often retains both.</li>
+<li><strong>Ensemble-like generalization.</strong> Merged models sometimes outperform any single constituent on held-out distributions.</li>
+</ul>
+<p>See <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a> for the gradient-based PEFT background, and <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a> for what fine-tuned checkpoints look like before merging.</p>
+<hr />
+<h2 id="the-merging-algorithms">The Merging Algorithms<a class="headerlink" href="#the-merging-algorithms" title="Permanent link">¶</a></h2>
+<h3 id="linear-interpolation-weight-averaging">Linear Interpolation (Weight Averaging)<a class="headerlink" href="#linear-interpolation-weight-averaging" title="Permanent link">¶</a></h3>
+<p>The simplest merge: take a weighted average of two (or more) model parameter tensors.</p>
+<div class="arithmatex">\[
+\theta_\text{merge} = (1 - \lambda)\,\theta_A + \lambda\,\theta_B.
+\]</div>
+<p>Model soups (Wortsman et al., 2022) used this idea to combine several fine-tuned checkpoints of the same base model, showing that the average generalized better than any individual checkpoint under distribution shift — a form of implicit ensembling in weight space.</p>
+<p><strong>When it works:</strong> <span class="arithmatex">\(\theta_A\)</span> and <span class="arithmatex">\(\theta_B\)</span> must share the same initialization (same base model). Models trained from completely different random seeds do not generally merge well; the parameters live in different basins.</p>
+<h3 id="slerp-spherical-linear-interpolation">SLERP: Spherical Linear Interpolation<a class="headerlink" href="#slerp-spherical-linear-interpolation" title="Permanent link">¶</a></h3>
+<p>Linear interpolation can reduce the norm of the merged tensor when <span class="arithmatex">\(\theta_A\)</span> and <span class="arithmatex">\(\theta_B\)</span> point in different directions (just as the average of two unit vectors on a sphere has smaller magnitude). SLERP corrects this by interpolating along the great circle:</p>
+<div class="arithmatex">\[
+\text{SLERP}(\theta_A, \theta_B, t) = \frac{\sin((1-t)\Omega)}{\sin\Omega}\,\hat{\theta}_A + \frac{\sin(t\Omega)}{\sin\Omega}\,\hat{\theta}_B,
+\]</div>
+<p>where <span class="arithmatex">\(\Omega = \arccos(\hat{\theta}_A \cdot \hat{\theta}_B)\)</span> is the angle between the unit-normalized versions of the two vectors and <span class="arithmatex">\(t \in [0,1]\)</span> is the interpolation parameter.</p>
+<p>SLERP is applied independently to each weight tensor (or each row/column vector within a tensor), preserving magnitude throughout the interpolation.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">slerp</span><span class="p">(</span><span class="n">v0</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">v1</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Spherical linear interpolation between two tensors.</span>
+<span class="sd">    Works on flattened weight matrices.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        v0, v1: weight tensors of the same shape (will be flattened, then reshaped)</span>
+<span class="sd">        t: interpolation factor in [0, 1]</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        Interpolated tensor, same shape as inputs</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">orig_shape</span> <span class="o">=</span> <span class="n">v0</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">v0_flat</span> <span class="o">=</span> <span class="n">v0</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">v1_flat</span> <span class="o">=</span> <span class="n">v1</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+    <span class="c1"># Normalise</span>
+    <span class="n">n0</span> <span class="o">=</span> <span class="n">v0_flat</span> <span class="o">/</span> <span class="p">(</span><span class="n">v0_flat</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span> <span class="o">+</span> <span class="n">eps</span><span class="p">)</span>
+    <span class="n">n1</span> <span class="o">=</span> <span class="n">v1_flat</span> <span class="o">/</span> <span class="p">(</span><span class="n">v1_flat</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span> <span class="o">+</span> <span class="n">eps</span><span class="p">)</span>
+
+    <span class="c1"># Angle between the two vectors</span>
+    <span class="n">dot</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">((</span><span class="n">n0</span> <span class="o">*</span> <span class="n">n1</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(),</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">omega</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">acos</span><span class="p">(</span><span class="n">dot</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">omega</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span> <span class="o">&lt;</span> <span class="mf">1e-6</span><span class="p">:</span>
+        <span class="c1"># Nearly parallel — fall back to linear interpolation</span>
+        <span class="k">return</span> <span class="p">((</span><span class="mi">1</span> <span class="o">-</span> <span class="n">t</span><span class="p">)</span> <span class="o">*</span> <span class="n">v0</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">v1</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">orig_shape</span><span class="p">)</span>
+
+    <span class="n">sin_omega</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">omega</span><span class="p">)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">((</span><span class="mi">1</span> <span class="o">-</span> <span class="n">t</span><span class="p">)</span> <span class="o">*</span> <span class="n">omega</span><span class="p">)</span> <span class="o">/</span> <span class="n">sin_omega</span><span class="p">)</span> <span class="o">*</span> <span class="n">v0_flat</span> <span class="o">+</span> \
+          <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">t</span> <span class="o">*</span> <span class="n">omega</span><span class="p">)</span> <span class="o">/</span> <span class="n">sin_omega</span><span class="p">)</span> <span class="o">*</span> <span class="n">v1_flat</span>
+
+    <span class="k">return</span> <span class="n">out</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">orig_shape</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">slerp_models</span><span class="p">(</span><span class="n">state_dict_a</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">state_dict_b</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Merge two model state dicts using per-tensor SLERP.&quot;&quot;&quot;</span>
+    <span class="n">merged</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">state_dict_a</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">state_dict_b</span><span class="p">:</span>
+            <span class="n">merged</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">state_dict_a</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+            <span class="k">continue</span>
+        <span class="n">wa</span> <span class="o">=</span> <span class="n">state_dict_a</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+        <span class="n">wb</span> <span class="o">=</span> <span class="n">state_dict_b</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">wa</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="n">wb</span><span class="o">.</span><span class="n">shape</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Shape mismatch at </span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">wa</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2"> vs </span><span class="si">{</span><span class="n">wb</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">merged</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">slerp</span><span class="p">(</span><span class="n">wa</span><span class="p">,</span> <span class="n">wb</span><span class="p">,</span> <span class="n">t</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">merged</span>
+</code></pre></div>
+<h3 id="task-arithmetic">Task Arithmetic<a class="headerlink" href="#task-arithmetic" title="Permanent link">¶</a></h3>
+<p>Ilharco et al. (2023) introduced a clean algebraic framing. Define the <strong>task vector</strong> for a fine-tune as:</p>
+<div class="arithmatex">\[
+\tau_{\text{task}} = \theta_{\text{fine-tuned}} - \theta_{\text{pre-trained}}.
+\]</div>
+<p>Task vectors support a surprising range of operations:</p>
+<ul>
+<li><strong>Add</strong> a skill: <span class="arithmatex">\(\theta_\text{merge} = \theta_\text{pre-trained} + \lambda \tau_\text{task}\)</span></li>
+<li><strong>Remove</strong> a behavior: <span class="arithmatex">\(\theta_\text{merge} = \theta_\text{pre-trained} - \lambda \tau_\text{task}\)</span> (analogy negation)</li>
+<li><strong>Combine</strong> multiple tasks: <span class="arithmatex">\(\theta_\text{merge} = \theta_\text{pre-trained} + \lambda \sum_i \tau_i\)</span></li>
+</ul>
+<p>The scalar <span class="arithmatex">\(\lambda\)</span> controls the &ldquo;temperature&rdquo; of the intervention — too large and the fine-tune dominates; too small and the effect disappears. Values around 0.3–0.8 work well in practice.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">compute_task_vector</span><span class="p">(</span><span class="n">base_sd</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">finetuned_sd</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the task vector (delta weights) for one fine-tune.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">finetuned_sd</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">-</span> <span class="n">base_sd</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">base_sd</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">task_arithmetic_merge</span><span class="p">(</span><span class="n">base_sd</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">task_vectors</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+                          <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Merge multiple task vectors into the base model.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        base_sd:      base model state dict</span>
+<span class="sd">        task_vectors: list of per-task delta-weight dicts</span>
+<span class="sd">        scale:        scalar lambda applied uniformly to all task vectors</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        merged state dict</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">merged</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">base_sd</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+    <span class="k">for</span> <span class="n">tv</span> <span class="ow">in</span> <span class="n">task_vectors</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">tv</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">merged</span><span class="p">:</span>
+                <span class="n">merged</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">scale</span> <span class="o">*</span> <span class="n">tv</span><span class="p">[</span><span class="n">k</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">merged</span>
+</code></pre></div>
+<h3 id="ties-trim-elect-sign-disjoint-merge">TIES: Trim, Elect Sign, Disjoint Merge<a class="headerlink" href="#ties-trim-elect-sign-disjoint-merge" title="Permanent link">¶</a></h3>
+<p>A key failure mode of naive task arithmetic is <strong>interference</strong>: different tasks may push the same parameter in opposite directions. TIES-Merging (Yadav et al., 2023) addresses this in three steps:</p>
+<p><strong>Step 1 — Trim.</strong> For each task vector <span class="arithmatex">\(\tau_i\)</span>, keep only the top-<span class="arithmatex">\(p\)</span>% parameters by absolute magnitude; zero out the rest. This removes noise from small updates that are more likely to conflict than contribute.</p>
+<div class="arithmatex">\[
+\hat{\tau}_i[j] = \begin{cases} \tau_i[j] &amp; \text{if } |\tau_i[j]| \geq t_i^{(p)} \\ 0 &amp; \text{otherwise} \end{cases}
+\]</div>
+<p><strong>Step 2 — Elect sign.</strong> For each parameter position <span class="arithmatex">\(j\)</span>, resolve the sign conflict by majority vote among all task vectors that have a nonzero entry at position <span class="arithmatex">\(j\)</span>:</p>
+<div class="arithmatex">\[
+\gamma_j = \operatorname{sign}\!\left(\sum_i \hat{\tau}_i[j]\right).
+\]</div>
+<p><strong>Step 3 — Disjoint merge.</strong> Aggregate only the task vectors that agree with the elected sign:</p>
+<div class="arithmatex">\[
+\tau_\text{merge}[j] = \frac{\sum_i \mathbb{1}[\hat{\tau}_i[j] \cdot \gamma_j &gt; 0] \cdot \hat{\tau}_i[j]}{\sum_i \mathbb{1}[\hat{\tau}_i[j] \cdot \gamma_j &gt; 0]}.
+\]</div>
+<p>The final model is:</p>
+<div class="arithmatex">\[
+\theta_\text{merge} = \theta_\text{pre-trained} + \lambda \cdot \tau_\text{merge}.
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">ties_merge</span><span class="p">(</span>
+    <span class="n">base_sd</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+    <span class="n">task_vectors</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+    <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+    <span class="n">trim_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.8</span><span class="p">,</span>          <span class="c1"># keep top (1 - trim_fraction)</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    TIES-Merging: Trim, Elect Sign, Disjoint Merge.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        base_sd:          base model state dict</span>
+<span class="sd">        task_vectors:     list of per-task delta dicts (same keys as base_sd)</span>
+<span class="sd">        scale:            final scaling factor lambda</span>
+<span class="sd">        trim_fraction:    fraction of params to zero out (e.g. 0.8 =&gt; keep top 20%)</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        merged state dict</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">merged</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">base_sd</span><span class="p">:</span>
+        <span class="n">base_val</span> <span class="o">=</span> <span class="n">base_sd</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+        <span class="n">deltas</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="c1"># --- Step 1: Trim ---</span>
+        <span class="k">for</span> <span class="n">tv</span> <span class="ow">in</span> <span class="n">task_vectors</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">tv</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">delta</span> <span class="o">=</span> <span class="n">tv</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+            <span class="c1"># Compute magnitude threshold at the (trim_fraction) quantile</span>
+            <span class="k">if</span> <span class="n">delta</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="n">threshold</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">quantile</span><span class="p">(</span><span class="n">delta</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">flatten</span><span class="p">(),</span> <span class="n">trim_fraction</span><span class="p">)</span>
+                <span class="n">delta</span><span class="p">[</span><span class="n">delta</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">threshold</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="n">deltas</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">delta</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">deltas</span><span class="p">:</span>
+            <span class="n">merged</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">base_val</span>
+            <span class="k">continue</span>
+
+        <span class="n">stacked</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">deltas</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>          <span class="c1"># (num_tasks, *param_shape)</span>
+
+        <span class="c1"># --- Step 2: Elect sign ---</span>
+        <span class="c1"># Sum of all trimmed deltas to determine majority sign</span>
+        <span class="n">sign_sum</span> <span class="o">=</span> <span class="n">stacked</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">elected_sign</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sign</span><span class="p">(</span><span class="n">sign_sum</span><span class="p">)</span>             <span class="c1"># +1 or -1 per parameter</span>
+        <span class="c1"># Handle exact zero: assign +1 arbitrarily</span>
+        <span class="n">elected_sign</span><span class="p">[</span><span class="n">elected_sign</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span>
+
+        <span class="c1"># --- Step 3: Disjoint merge ---</span>
+        <span class="c1"># Mask: keep delta only where it agrees with elected sign</span>
+        <span class="n">agree_mask</span> <span class="o">=</span> <span class="p">(</span><span class="n">stacked</span> <span class="o">*</span> <span class="n">elected_sign</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span> <span class="o">&gt;</span> <span class="mi">0</span>   <span class="c1"># (num_tasks, *shape)</span>
+
+        <span class="c1"># Numerator: sum of agreeing deltas</span>
+        <span class="n">numerator</span>   <span class="o">=</span> <span class="p">(</span><span class="n">stacked</span> <span class="o">*</span> <span class="n">agree_mask</span><span class="o">.</span><span class="n">float</span><span class="p">())</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="c1"># Denominator: count of agreements per position</span>
+        <span class="n">denominator</span> <span class="o">=</span> <span class="n">agree_mask</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+
+        <span class="n">task_vector_merged</span> <span class="o">=</span> <span class="n">numerator</span> <span class="o">/</span> <span class="n">denominator</span>
+        <span class="n">merged</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">base_val</span> <span class="o">+</span> <span class="n">scale</span> <span class="o">*</span> <span class="n">task_vector_merged</span>
+
+    <span class="k">return</span> <span class="n">merged</span>
+
+
+<span class="c1"># ------------- Worked sketch: two tasks, small tensor ----------------</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="c1"># Simulate a single weight tensor of size (4, 4)</span>
+    <span class="n">base</span>  <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;W&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">4</span><span class="p">)}</span>
+    <span class="n">tv_a</span>  <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;W&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.3</span><span class="p">}</span>   <span class="c1"># task A gradient</span>
+    <span class="n">tv_b</span>  <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;W&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.3</span><span class="p">}</span>   <span class="c1"># task B gradient</span>
+
+    <span class="n">result</span> <span class="o">=</span> <span class="n">ties_merge</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="p">[</span><span class="n">tv_a</span><span class="p">,</span> <span class="n">tv_b</span><span class="p">],</span> <span class="n">scale</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">trim_fraction</span><span class="o">=</span><span class="mf">0.6</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Merged W:</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;W&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">decimals</span><span class="o">=</span><span class="mi">3</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Nonzero fraction:&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;W&quot;</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="dare-drop-and-rescale">DARE: Drop And REscale<a class="headerlink" href="#dare-drop-and-rescale" title="Permanent link">¶</a></h3>
+<p>DARE (Yu et al., 2023) takes an even simpler denoising approach: randomly zero out a fraction <span class="arithmatex">\(p\)</span> of the task vector entries and rescale the survivors by <span class="arithmatex">\(1/(1-p)\)</span> to preserve the expected magnitude. This is analogous to dropout applied to the delta weights.</p>
+<div class="arithmatex">\[
+\hat{\tau}[j] = \begin{cases} \frac{\tau[j]}{1-p} &amp; \text{with probability } 1-p \\ 0 &amp; \text{with probability } p \end{cases}
+\]</div>
+<p>Despite its simplicity, DARE often reduces interference well because the interference signal tends to be distributed among many small parameters, while the task-specific signal is concentrated in fewer large ones. Random dropping disproportionately removes the former.</p>
+<p>DARE is frequently combined with TIES (DARE-TIES): apply DARE&rsquo;s stochastic trimming first, then TIES&rsquo;s sign election and disjoint merge.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Parameter Count and Memory for a TIES Merge</p>
+<p>Suppose we want to merge three LLaMA-7B fine-tuned checkpoints, each stored in bfloat16.</p>
+<ul>
+<li>Base model: ~7 billion parameters × 2 bytes/param = <strong>14 GB</strong></li>
+<li>Each fine-tune checkpoint: same 14 GB</li>
+<li>Task vectors (delta weights): same size as the model = 14 GB each</li>
+</ul>
+<p>Total GPU/CPU memory needed to run TIES merge:</p>
+<ul>
+<li>Load base: 14 GB</li>
+<li>Load three task vectors: 3 × 14 GB = 42 GB</li>
+<li>Working buffers (stacked deltas, masks): roughly one additional copy = ~14 GB</li>
+<li><strong>Total: ~70 GB</strong></li>
+</ul>
+<p>This fits comfortably on a machine with 128 GB of CPU RAM and can be done entirely in float32 on CPU with no GPUs. Runtime on CPU with PyTorch is typically a few minutes for a 7B model — merging is genuinely cheap.</p>
+<p>For a 70B model at bfloat16, the same calculation gives ~140 GB per checkpoint × 5 tensors ≈ 700 GB — requires a well-equipped CPU server but remains feasible. GPU-resident merging at 70B would require a multi-GPU node.</p>
+</div>
+<hr />
+<h2 id="model-soups-and-frankenmerges">Model Soups and Frankenmerges<a class="headerlink" href="#model-soups-and-frankenmerges" title="Permanent link">¶</a></h2>
+<h3 id="model-soups">Model Soups<a class="headerlink" href="#model-soups" title="Permanent link">¶</a></h3>
+<p>Wortsman et al. (2022) coined &ldquo;model soups&rdquo; for the practice of averaging multiple fine-tuned checkpoints of the same pre-trained model. The recipe:</p>
+<ol>
+<li>Fine-tune the same base model with several different hyperparameter configurations (learning rate, data augmentation, etc.).</li>
+<li>Average all checkpoints that individually exceed some accuracy threshold.</li>
+<li>The resulting &ldquo;soup&rdquo; typically generalizes better than any single ingredient.</li>
+</ol>
+<p>The theoretical grounding connects to loss-landscape flatness and the work of Garipov et al. on loss surface geometry: fine-tunes from the same pre-trained model tend to lie in a connected low-loss region, so their average is also low-loss.</p>
+<h3 id="frankenmerges">Frankenmerges<a class="headerlink" href="#frankenmerges" title="Permanent link">¶</a></h3>
+<p>The community (particularly on HuggingFace and the mergekit project) explored an extreme variant: merging <strong>different models entirely</strong>, combining, say, layers from a coding-specialized fine-tune with layers from a math-specialized fine-tune and layers from a general instruction-following model. This is sometimes called a Frankenmerge or model frankenstein.</p>
+<p>The simplest Frankenmerge strategy selects layers by index:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">frankenmerge</span><span class="p">(</span>
+    <span class="n">state_dicts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+    <span class="n">layer_assignments</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+    <span class="n">num_layers</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Build a Frankenmerge by selecting each layer from a specific model.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        state_dicts:      list of model state dicts (all same architecture)</span>
+<span class="sd">        layer_assignments: list of length num_layers, value = index into state_dicts</span>
+<span class="sd">        num_layers:       number of transformer layers</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        merged state dict</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">merged</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="c1"># Copy all non-layer parameters from model 0 (embed, lm_head, norms)</span>
+    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">val</span> <span class="ow">in</span> <span class="n">state_dicts</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">any</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;.</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">.&quot;</span> <span class="ow">in</span> <span class="n">key</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_layers</span><span class="p">)):</span>
+            <span class="n">merged</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">val</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+
+    <span class="c1"># Assign each layer from the specified model</span>
+    <span class="k">for</span> <span class="n">layer_idx</span><span class="p">,</span> <span class="n">model_idx</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">layer_assignments</span><span class="p">):</span>
+        <span class="n">src</span> <span class="o">=</span> <span class="n">state_dicts</span><span class="p">[</span><span class="n">model_idx</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">src</span><span class="p">:</span>
+            <span class="k">if</span> <span class="sa">f</span><span class="s2">&quot;.</span><span class="si">{</span><span class="n">layer_idx</span><span class="si">}</span><span class="s2">.&quot;</span> <span class="ow">in</span> <span class="n">key</span><span class="p">:</span>
+                <span class="n">merged</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">src</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">merged</span>
+
+
+<span class="c1"># Example: 32-layer model — first 16 from model 0, last 16 from model 1</span>
+<span class="n">assignments</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="mi">16</span> <span class="o">+</span> <span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="mi">16</span>
+<span class="c1"># merged_sd = frankenmerge([sd_general, sd_coding], assignments, 32)</span>
+</code></pre></div>
+<p>Frankenmerges can be surprisingly capable, but they are sensitive to layer ordering and often require empirical search over which layers to pull from which model. Tools like <code>mergekit</code> automate this exploration.</p>
+<h3 id="mergekit-the-practical-tool">Mergekit: The Practical Tool<a class="headerlink" href="#mergekit-the-practical-tool" title="Permanent link">¶</a></h3>
+<p><code>mergekit</code> (by Charles Goddard) is the de facto library for model merging in the open-source community. It supports TIES, DARE, SLERP, task arithmetic, and Frankenmerges via a YAML config:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># mergekit config: TIES merge of two Mistral-7B fine-tunes</span>
+<span class="nt">merge_method</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ties</span>
+<span class="nt">base_model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mistralai/Mistral-7B-v0.1</span>
+<span class="nt">models</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-org/mistral-7b-code-finetune</span>
+<span class="w">    </span><span class="nt">parameters</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">weight</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.5</span>
+<span class="w">      </span><span class="nt">density</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.2</span><span class="w">          </span><span class="c1"># keep top 20% of delta by magnitude (trim_fraction=0.8)</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-org/mistral-7b-math-finetune</span>
+<span class="w">    </span><span class="nt">parameters</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">weight</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.5</span>
+<span class="w">      </span><span class="nt">density</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.2</span>
+<span class="nt">parameters</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">normalize</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">           </span><span class="c1"># normalize task vectors before merging</span>
+<span class="w">  </span><span class="nt">int8_mask</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">           </span><span class="c1"># use int8 masks to reduce RAM</span>
+<span class="nt">dtype</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bfloat16</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># Install and run</span>
+pip<span class="w"> </span>install<span class="w"> </span>mergekit
+
+mergekit-merge<span class="w"> </span>merge_config.yaml<span class="w"> </span>./output-model<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--cuda<span class="w">                   </span><span class="se">\ </span><span class="w">  </span><span class="c1"># use GPU if available</span>
+<span class="w">    </span>--copy-tokenizer<span class="w">         </span><span class="se">\ </span><span class="w">  </span><span class="c1"># copy tokenizer from base model</span>
+<span class="w">    </span>--lazy-unpickle<span class="w">              </span><span class="c1"># stream large tensors to avoid OOM</span>
+</code></pre></div>
+<hr />
+<h2 id="when-does-merging-beat-fine-tuning">When Does Merging Beat Fine-Tuning?<a class="headerlink" href="#when-does-merging-beat-fine-tuning" title="Permanent link">¶</a></h2>
+<p>This is the practical question you actually care about. Here is a decision framework:</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Recommendation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>You have training data and a GPU budget</td>
+<td>Gradient-based fine-tuning (LoRA or full) — always the ceiling</td>
+</tr>
+<tr>
+<td>You have two fine-tuned checkpoints, no data</td>
+<td>TIES or SLERP merge — often within a few points of training</td>
+</tr>
+<tr>
+<td>You want to combine skills without forgetting</td>
+<td>Task arithmetic or TIES merge</td>
+</tr>
+<tr>
+<td>You have many checkpoints of the same base</td>
+<td>Model soup (average) — free accuracy boost</td>
+</tr>
+<tr>
+<td>You want to negate a behavior</td>
+<td>Task arithmetic subtraction</td>
+</tr>
+<tr>
+<td>You want to test capability combinations cheaply</td>
+<td>Frankenmerge + eval loop</td>
+</tr>
+<tr>
+<td>Models come from different base checkpoints</td>
+<td>Merging is unreliable; use fine-tuning or distillation</td>
+</tr>
+</tbody>
+</table>
+<p>The loss-landscape intuition is the key: merging works because fine-tunes from the same base model are geometrically close. If the models started from different initializations, the weight spaces are unrelated and merging is noise.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> &ldquo;You have two 7B LLaMA fine-tunes — one specialized for SQL generation, one for Python coding. You want a single model that does both well, but you have no training data and no GPU. What are your options and which would you choose?&rdquo;</p>
+<p><strong>A:</strong> The main options are (a) SLERP merge — interpolates along the unit sphere to preserve norms and avoids the magnitude collapse of linear averaging; (b) task arithmetic — subtract the base model from each fine-tune to get task vectors, then add both scaled task vectors back to the base; &copy; TIES merge — same as task arithmetic but first trims small-magnitude parameters and resolves sign conflicts by majority vote, reducing interference between the two tasks.</p>
+<p>I would choose TIES with a moderate trim density (e.g., keep top 20-40% of each task vector), because SQL and Python code share many parameters (tokenization, syntax awareness) but diverge on dialect-specific idioms, and TIES&rsquo;s sign-election step explicitly handles the parameter-level conflicts that arise from that overlap. I would set the scale <span class="arithmatex">\(\lambda\)</span> to around 0.4–0.6 for each task vector and eval on a held-out set to tune it. If I had even a small validation set, I could do a grid search over <span class="arithmatex">\(\lambda\)</span> and density in CPU memory in minutes.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Common Pitfall: Merging Models with Different Tokenizers or Architectures</p>
+<p>Merging only makes sense when both models have <em>exactly</em> the same architecture and tokenizer. If model A uses a 32k-token vocabulary and model B uses a 128k-token vocabulary, their embedding matrices have different shapes and cannot be averaged. Always verify <code>config.json</code> architecture fields and <code>tokenizer.json</code> vocabulary size match before attempting any merge.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner Tip: Use float32 for Merge Arithmetic</p>
+<p>Even if your models are stored in bfloat16, always cast to float32 before computing task vectors and running merge arithmetic. The intermediate differences <span class="arithmatex">\(\theta_\text{fine-tuned} - \theta_\text{base}\)</span> can be very small, and bfloat16&rsquo;s limited mantissa precision (7 bits) causes significant rounding error when subtracting numbers of similar magnitude. Cast back to bfloat16 only at the end.</p>
+</div>
+<hr />
+<h2 id="comparison-and-selection-guide">Comparison and Selection Guide<a class="headerlink" href="#comparison-and-selection-guide" title="Permanent link">¶</a></h2>
+<div class="highlight"><pre><span></span><code>Method           Params trained   Modifies weights?  Inference overhead   Best for
+───────────────  ───────────────  ─────────────────  ──────────────────   ────────────────────────
+Prompt tuning    k × d            No                 +k tokens            Low-resource; huge models
+Prefix tuning    2 × L × k × d_k No                 +k KV per layer      NLG/seq2seq; all layers
+P-tuning v2      similar          No                 +k KV per layer      NLU (NER, SRL); robust
+IA3              L × (2d_k+d_ff)  No (foldable)      Zero (after fold)    Few-shot; fast deploy
+LoRA             2 × L × r × d   Yes (merge-able)    Zero (after merge)   General purpose
+TIES merge       0 (no training)  Yes                Zero                 Multi-task combination
+SLERP            0                Yes                Zero                 Two-model interpolation
+Task arithmetic  0                Yes                Zero                 Adding/removing skills
+Model soup       0                Yes                Zero                 Same-base checkpoint avg
+</code></pre></div>
+<p>For a complete treatment of LoRA and adapters, see <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a>. For the memory math behind training these methods, see <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a>.</p>
+<p>If your use case involves distribution shifts after merging, the evaluation framework in <a href="../11-evaluation/01-eval-landscape.html">The Evaluation Problem &amp; Benchmark Landscape</a> provides the right lens for measuring merged-model generalization.</p>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Prompt tuning</strong> learns <span class="arithmatex">\(k\)</span> soft embedding vectors prepended to the input; it trains fewer than 0.01% of parameters and closes the gap with full fine-tuning only at very large model scales.</li>
+<li><strong>Prefix tuning</strong> injects learned key–value pairs at <em>every</em> attention layer, giving the model a per-layer task signal; it is more effective than prompt tuning on smaller models and harder tasks.</li>
+<li><strong>IA3</strong> multiplies learned scale vectors into key, value, and FFN activations; its ~0.007% parameter overhead can be <em>folded into weights</em> at inference for zero latency cost.</li>
+<li><strong>Task arithmetic</strong> defines a task vector as <span class="arithmatex">\(\theta_\text{ft} - \theta_\text{base}\)</span>; tasks can be added, subtracted, and composed algebraically — no new training required.</li>
+<li><strong>TIES-Merging</strong> reduces inter-task interference by trimming small-magnitude parameters, electing a majority sign per position, and averaging only the agreeing values.</li>
+<li><strong>DARE</strong> provides a stochastic alternative to deterministic trimming: random dropout on task-vector entries with rescaling to preserve expectation.</li>
+<li><strong>Model soups</strong> average several fine-tunes of the same base model; the average generalizes better than any individual due to implicit ensembling in weight space.</li>
+<li><strong>Merging only works reliably when models share the same pre-trained initialization.</strong> Different base checkpoints live in geometrically unrelated parameter spaces.</li>
+<li><strong>Cast to float32 before merge arithmetic</strong> — bfloat16 rounding errors in small delta weights are a real and common bug.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Soft-prompt methods (prompt tuning, prefix tuning, IA3) are now mature and production-ready via the HuggingFace PEFT library, while model merging has evolved from a curiosity into a mainstream technique — methods like TIES, DARE, and task arithmetic are used routinely to combine open-weight fine-tunes without any retraining.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2104.08691">Lester et al., <em>The Power of Scale for Parameter-Efficient Prompt Tuning</em> (2021)</a> — establishes prompt tuning and its scale-dependent behavior.</li>
+<li><a href="https://arxiv.org/abs/2101.00190">Li &amp; Liang, <em>Prefix-Tuning: Optimizing Continuous Prompts for Generation</em> (2021)</a> — introduces per-layer key-value prefix injection and the MLP reparameterization trick.</li>
+<li><a href="https://arxiv.org/abs/2110.07602">Liu et al., <em>P-Tuning v2: Prompt Tuning Can Be Comparable to Fine-tuning Universally Across Scales and Tasks</em> (2022)</a> — validates deep prefix tuning on NLU tasks including NER and SRL.</li>
+<li><a href="https://arxiv.org/abs/2205.05638">Liu et al. (T-Few), <em>Few-Shot Parameter-Efficient Fine-Tuning is Better and Cheaper than In-Context Learning</em> (2022)</a> — introduces IA3 and the T-Few recipe for few-shot adaptation.</li>
+<li><a href="https://arxiv.org/abs/2203.05482">Wortsman et al., <em>Model Soups: Averaging Weights of Multiple Fine-Tuned Models</em> (2022)</a> — coins model soups and demonstrates weight-space ensembling for free accuracy gains.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2212.04089">Ilharco et al., <em>Editing Models with Task Arithmetic</em> (2023)</a> — formalizes task vectors as composable weight-space directions for adding, removing, and combining skills.</li>
+<li><a href="https://arxiv.org/abs/2306.01708">Yadav et al., <em>TIES-Merging: Resolving Interference When Merging Models</em> (2023)</a> — trim-elect-sign pipeline that reduces parameter interference across merged task vectors.</li>
+<li><a href="https://arxiv.org/abs/2311.03099">Yu et al., <em>Language Models are Super Mario: Absorbing Abilities from Homologous Models as a Free Lunch</em> (2023)</a> — introduces DARE, stochastic delta-weight dropout with rescaling to reduce merge interference.</li>
+<li><a href="https://arxiv.org/abs/2408.07666">Yang et al., <em>Model Merging in LLMs, MLLMs, and Beyond</em> (2024)</a> — comprehensive survey of model merging methods, theory, and applications across ML subfields.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/arcee-ai/mergekit">arcee-ai/mergekit</a> — the de facto model-merging toolkit; supports TIES, DARE, SLERP, task arithmetic, and Frankenmerges via YAML config.</li>
+<li><a href="https://github.com/huggingface/peft">huggingface/peft</a> — HuggingFace PEFT library with production-ready implementations of prompt tuning, prefix tuning, P-tuning, and IA3.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/docs/peft/conceptual_guides/prompting">HuggingFace PEFT: Soft Prompts Conceptual Guide</a> — accessible walkthrough of prompt tuning, prefix tuning, and P-tuning with diagrams and code pointers.</li>
+<li><a href="https://arxiv.org/abs/2403.13257">Goddard et al., <em>Arcee&rsquo;s MergeKit: A Toolkit for Merging Large Language Models</em> (2024)</a> — describes the engineering and algorithms behind mergekit, including out-of-core CPU-resident merging.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Lester, Brain et al. <strong>&ldquo;The Power of Scale for Parameter-Efficient Prompt Tuning&rdquo;</strong>, EMNLP 2021. The original prompt tuning paper; contains the key scaling analysis.</li>
+<li>Li &amp; Liang. <strong>&ldquo;Prefix-Tuning: Optimizing Continuous Prompts for Generation&rdquo;</strong>, ACL 2021. Introduces per-layer prefix injection and the MLP reparameterization trick.</li>
+<li>Liu et al. <strong>&ldquo;P-Tuning v2: Prompt Tuning Can Be Comparable to Fine-tuning Universally Across Scales and Tasks&rdquo;</strong>, ACL 2022. Deep prefix tuning for NLU tasks.</li>
+<li>Liu et al. (T-Few). <strong>&ldquo;Few-Shot Parameter-Efficient Fine-Tuning is Better and Cheaper than In-Context Learning&rdquo;</strong>, NeurIPS 2022. Introduces IA3 and the T-Few training recipe.</li>
+<li>Wortsman et al. <strong>&ldquo;Model Soups: Averaging Weights of Multiple Fine-Tuned Models Improves Accuracy and Robustness&rdquo;</strong>, ICML 2022. The foundational model-soup paper.</li>
+<li>Ilharco et al. <strong>&ldquo;Editing Models with Task Arithmetic&rdquo;</strong>, ICLR 2023. Formalizes task vectors; shows arithmetic composition of skills.</li>
+<li>Yadav et al. <strong>&ldquo;TIES-Merging: Resolving Interference When Merging Models&rdquo;</strong>, NeurIPS 2023. TIES algorithm with comprehensive multi-task experiments.</li>
+<li>Yu et al. <strong>&ldquo;Language Models are Super Mario: Absorbing Abilities from Homologous Models as a Free Lunch&rdquo;</strong>, 2023. Introduces DARE (Drop And REscale).</li>
+<li>Goddard, Charles et al. <strong>mergekit</strong> (GitHub: arcee-ai/mergekit). The practical open-source library for all merging methods; supports YAML-based merge configs.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="03-peft-lora-qlora.html"><span class="pn-label">← Previous</span><span class="pn-title">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</span></a>
+<a class="next" href="05-rlhf-reward-modeling.html"><span class="pn-label">Next →</span><span class="pn-title">The RLHF Pipeline &amp; Reward Modeling</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#soft-prompts-motivation-and-taxonomy">Soft Prompts: Motivation and Taxonomy</a></li>
+<li class="toc-l2"><a href="#prompt-tuning">Prompt Tuning</a></li>
+<li class="toc-l3"><a href="#the-core-algorithm">The Core Algorithm</a></li>
+<li class="toc-l3"><a href="#initialization-strategy">Initialization Strategy</a></li>
+<li class="toc-l3"><a href="#scaling-behavior">Scaling Behavior</a></li>
+<li class="toc-l2"><a href="#prefix-tuning">Prefix Tuning</a></li>
+<li class="toc-l3"><a href="#architecture">Architecture</a></li>
+<li class="toc-l3"><a href="#reparameterization-trick">Reparameterization Trick</a></li>
+<li class="toc-l3"><a href="#p-tuning-v2">P-tuning v2</a></li>
+<li class="toc-l2"><a href="#ia3-infused-adapter-by-inhibiting-and-amplifying-inner-activations">IA3: Infused Adapter by Inhibiting and Amplifying Inner Activations</a></li>
+<li class="toc-l3"><a href="#motivation">Motivation</a></li>
+<li class="toc-l3"><a href="#mechanism">Mechanism</a></li>
+<li class="toc-l3"><a href="#parameter-count">Parameter Count</a></li>
+<li class="toc-l3"><a href="#t-few-few-shot-fine-tuning-with-ia3">T-Few: Few-Shot Fine-Tuning with IA3</a></li>
+<li class="toc-l2"><a href="#model-merging-the-big-idea">Model Merging: The Big Idea</a></li>
+<li class="toc-l3"><a href="#why-merging-beats-fine-tuning-in-some-scenarios">Why Merging Beats Fine-Tuning in Some Scenarios</a></li>
+<li class="toc-l2"><a href="#the-merging-algorithms">The Merging Algorithms</a></li>
+<li class="toc-l3"><a href="#linear-interpolation-weight-averaging">Linear Interpolation (Weight Averaging)</a></li>
+<li class="toc-l3"><a href="#slerp-spherical-linear-interpolation">SLERP: Spherical Linear Interpolation</a></li>
+<li class="toc-l3"><a href="#task-arithmetic">Task Arithmetic</a></li>
+<li class="toc-l3"><a href="#ties-trim-elect-sign-disjoint-merge">TIES: Trim, Elect Sign, Disjoint Merge</a></li>
+<li class="toc-l3"><a href="#dare-drop-and-rescale">DARE: Drop And REscale</a></li>
+<li class="toc-l2"><a href="#model-soups-and-frankenmerges">Model Soups and Frankenmerges</a></li>
+<li class="toc-l3"><a href="#model-soups">Model Soups</a></li>
+<li class="toc-l3"><a href="#frankenmerges">Frankenmerges</a></li>
+<li class="toc-l3"><a href="#mergekit-the-practical-tool">Mergekit: The Practical Tool</a></li>
+<li class="toc-l2"><a href="#when-does-merging-beat-fine-tuning">When Does Merging Beat Fine-Tuning?</a></li>
+<li class="toc-l2"><a href="#comparison-and-selection-guide">Comparison and Selection Guide</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

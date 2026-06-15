@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat Templates, Data Formatting &amp; Sequence Packing — The LLM Stack</title>
+<meta name="description" content="ChatML/Llama/Qwen templates, special/role tokens, system prompts, masking the prompt vs completion (train on completions only), multi-turn loss masking, sample ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="active" href="02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part V — Post-Training &amp; Alignment</div>
+<h1 id="52-chat-templates-data-formatting-sequence-packing">5.2 Chat Templates, Data Formatting &amp; Sequence Packing<a class="headerlink" href="#52-chat-templates-data-formatting-sequence-packing" title="Permanent link">¶</a></h1>
+<p>Raw text pretraining teaches a model to continue arbitrary strings. Turning that capability into a <em>conversational assistant</em> requires convincing the model that conversations have structure: a system instruction, alternating user and assistant turns, and a definitive end-of-turn marker. This chapter is the engineering manual for that structure — how templates are designed, how loss masks are constructed to train only on completions, how multi-turn dialogues are packed tightly into fixed-length batches, and how tool calls extend the vocabulary of a chat turn.</p>
+<p>Related chapters: <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a> covers the overall SFT recipe; this chapter zooms into the data side. <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a> explains the causal language modelling loss that we are selectively masking here. <a href="../02-transformer/01-tokenization.html">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a> explains how special tokens are added to a vocabulary.</p>
+<h2 id="why-chat-templates-exist">Why Chat Templates Exist<a class="headerlink" href="#why-chat-templates-exist" title="Permanent link">¶</a></h2>
+<p>A pretrained language model has seen billions of documents, but almost none of them were labelled &ldquo;this is the human&rsquo;s turn; this is the assistant&rsquo;s turn.&rdquo; Without some delimiter, there is no way for the model—or the training code—to know where one turn ends and the next begins, and there is no way to enforce &ldquo;generate here but not there&rdquo; during both fine-tuning and inference.</p>
+<p>The solution is a <em>chat template</em>: a deterministic function that maps a list of role–content pairs to a single token sequence that the model will both train on and generate from. Critically, a template also defines a <em>prompt boundary</em>: everything before this token is prompt; everything after is what the model is expected to generate. During training we mask (zero out the loss on) the prompt side and supervise only the generation side.</p>
+<p>Templates must be:</p>
+<ol>
+<li><strong>Unambiguous</strong> — every special token must be one that the base model tokenizer will never split or confuse with natural text.</li>
+<li><strong>Consistent</strong> — inference must use the exact same string as training. A single missing space or wrong special token is enough to tank benchmark performance.</li>
+<li><strong>Efficient</strong> — the template overhead (role tokens, BOS/EOS) should be small relative to the content.</li>
+</ol>
+<h2 id="the-major-template-families">The Major Template Families<a class="headerlink" href="#the-major-template-families" title="Permanent link">¶</a></h2>
+<h3 id="chatml">ChatML<a class="headerlink" href="#chatml" title="Permanent link">¶</a></h3>
+<p>ChatML (popularised by OpenAI and widely adopted thereafter) encodes each turn as:</p>
+<div class="highlight"><pre><span></span><code>&lt;|im_start|&gt;role\ncontent&lt;|im_end|&gt;\n
+</code></pre></div>
+<p>A complete two-turn exchange looks like this:</p>
+<div class="highlight"><pre><span></span><code>&lt;|im_start|&gt;system
+You are a helpful assistant.&lt;|im_end|&gt;
+&lt;|im_start|&gt;user
+What is the capital of France?&lt;|im_end|&gt;
+&lt;|im_start|&gt;assistant
+Paris.&lt;|im_end|&gt;
+</code></pre></div>
+<p>The special tokens <code>&lt;|im_start|&gt;</code> and <code>&lt;|im_end|&gt;</code> (short for <em>image marker</em> in the original GPT-4-V vocabulary, though the name is now purely historical) are added to the base vocabulary during fine-tuning. The role string (<code>system</code>, <code>user</code>, <code>assistant</code>) is ordinary text immediately followed by a newline; it is not itself a special token.</p>
+<p>During generation, the server appends <code>&lt;|im_start|&gt;assistant\n</code> after the last user turn and lets the model decode until it emits <code>&lt;|im_end|&gt;</code>.</p>
+<h3 id="llama-2-llama-3-templates">Llama 2 &amp; Llama 3 Templates<a class="headerlink" href="#llama-2-llama-3-templates" title="Permanent link">¶</a></h3>
+<p>Meta&rsquo;s Llama 2 used a different convention:</p>
+<div class="highlight"><pre><span></span><code>[INST] &lt;&lt;SYS&gt;&gt;
+{system}
+&lt;&lt;/SYS&gt;&gt;
+
+{user_turn} [/INST] {assistant_turn} &lt;/s&gt;&lt;s&gt;[INST] {next_user} [/INST]
+</code></pre></div>
+<p>This is notoriously tricky: the system prompt is embedded inside the <em>first</em> <code>[INST]</code> block, there is no per-turn <code>&lt;s&gt;</code> except between turns, and the closing <code>&lt;/s&gt;</code> is part of the assistant turn, not a standalone separator. Getting one of these details wrong silently produces bad outputs.</p>
+<p>Llama 3 simplified things significantly, adopting a header-token system closer in spirit to ChatML:</p>
+<div class="highlight"><pre><span></span><code>&lt;|begin_of_text|&gt;&lt;|start_header_id|&gt;system&lt;|end_header_id|&gt;
+
+You are a helpful assistant.&lt;|eot_id|&gt;&lt;|start_header_id|&gt;user&lt;|end_header_id|&gt;
+
+What is the capital of France?&lt;|eot_id|&gt;&lt;|start_header_id|&gt;assistant&lt;|end_header_id|&gt;
+
+Paris.&lt;|eot_id|&gt;
+</code></pre></div>
+<p>Here <code>&lt;|start_header_id|&gt;</code>, <code>&lt;|end_header_id|&gt;</code>, and <code>&lt;|eot_id|&gt;</code> (end-of-turn) are proper special tokens. The double newline after the header acts as a role separator. <code>&lt;|eot_id|&gt;</code> replaces both <code>[/INST]</code> and <code>&lt;/s&gt;</code> in a single unambiguous token.</p>
+<h3 id="qwen-templates">Qwen Templates<a class="headerlink" href="#qwen-templates" title="Permanent link">¶</a></h3>
+<p>Qwen models (Alibaba&rsquo;s open-weight series) use a format almost identical to ChatML, with <code>&lt;|im_start|&gt;</code> / <code>&lt;|im_end|&gt;</code> inherited from OpenAI conventions:</p>
+<div class="highlight"><pre><span></span><code>&lt;|im_start|&gt;system
+You are Qwen, created by Alibaba Cloud.&lt;|im_end|&gt;
+&lt;|im_start|&gt;user
+Translate &quot;bonjour&quot; to English.&lt;|im_end|&gt;
+&lt;|im_start|&gt;assistant
+Hello.&lt;|im_end|&gt;
+</code></pre></div>
+<p>The Qwen tokenizer&rsquo;s special-token list includes <code>&lt;|im_start|&gt;</code>, <code>&lt;|im_end|&gt;</code>, <code>&lt;|endoftext|&gt;</code>, and a set of tool-calling tokens discussed later.</p>
+<h3 id="comparison">Comparison<a class="headerlink" href="#comparison" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model family</th>
+<th>Turn-start token</th>
+<th>Turn-end token</th>
+<th>System handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ChatML / GPT-4</td>
+<td><code>&lt;\|im_start\|&gt;role</code></td>
+<td><code>&lt;\|im_end\|&gt;</code></td>
+<td>First <code>system</code> turn</td>
+</tr>
+<tr>
+<td>Llama 2</td>
+<td><code>[INST]</code></td>
+<td><code>[/INST]</code></td>
+<td>Embedded in first <code>[INST]</code></td>
+</tr>
+<tr>
+<td>Llama 3</td>
+<td><code>&lt;\|start_header_id\|&gt;role&lt;\|end_header_id\|&gt;</code></td>
+<td><code>&lt;\|eot_id\|&gt;</code></td>
+<td>First <code>system</code> turn</td>
+</tr>
+<tr>
+<td>Qwen 2+</td>
+<td><code>&lt;\|im_start\|&gt;role</code></td>
+<td><code>&lt;\|im_end\|&gt;</code></td>
+<td>First <code>system</code> turn</td>
+</tr>
+<tr>
+<td>Mistral v1</td>
+<td><code>[INST]</code></td>
+<td><code>[/INST]</code></td>
+<td>No system turn (injected into user)</td>
+</tr>
+<tr>
+<td>Gemma</td>
+<td><code>&lt;start_of_turn&gt;role</code></td>
+<td><code>&lt;end_of_turn&gt;</code></td>
+<td>Injected into user</td>
+</tr>
+</tbody>
+</table>
+<p>The HuggingFace <code>tokenizers</code> library stores a Jinja2 template string in the tokenizer&rsquo;s <code>chat_template</code> field so that <code>tokenizer.apply_chat_template(messages)</code> always returns the correct string for that model. This is the canonical way to apply templates in Python — do not hard-code delimiter strings yourself.</p>
+<h2 id="building-a-chat-template-from-scratch">Building a Chat Template from Scratch<a class="headerlink" href="#building-a-chat-template-from-scratch" title="Permanent link">¶</a></h2>
+<p>Let us implement a minimal ChatML formatter and a corresponding loss-mask builder. This is the kind of code you would write to process a dataset before passing it to a training loop.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">chat_template.py</span>
+<span class="sd">────────────────</span>
+<span class="sd">A from-scratch ChatML formatter with a loss mask builder.</span>
+<span class="sd">Compatible with any tokenizer that has &lt;|im_start|&gt; and &lt;|im_end|&gt;</span>
+<span class="sd">in its vocabulary (e.g. Qwen, phi-3, many fine-tuned models).</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">Sequence</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">PreTrainedTokenizerFast</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Data structures</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">Role</span> <span class="o">=</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;assistant&quot;</span><span class="p">,</span> <span class="s2">&quot;tool&quot;</span><span class="p">]</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ChatMessage</span><span class="p">:</span>
+    <span class="n">role</span><span class="p">:</span> <span class="n">Role</span>
+    <span class="n">content</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Template formatter</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">IM_START</span> <span class="o">=</span> <span class="s2">&quot;&lt;|im_start|&gt;&quot;</span>
+<span class="n">IM_END</span>   <span class="o">=</span> <span class="s2">&quot;&lt;|im_end|&gt;&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">format_chatml</span><span class="p">(</span>
+    <span class="n">messages</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">ChatMessage</span><span class="p">],</span>
+    <span class="n">add_generation_prompt</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Render a list of ChatMessage objects to a ChatML string.</span>
+
+<span class="sd">    If add_generation_prompt=True (used during inference and at the</span>
+<span class="sd">    end of training examples), appends &#39;&lt;|im_start|&gt;assistant\n&#39; so</span>
+<span class="sd">    the model knows it should generate next.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pieces</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">messages</span><span class="p">:</span>
+        <span class="c1"># Each turn: &lt;|im_start|&gt;ROLE\nCONTENT&lt;|im_end|&gt;\n</span>
+        <span class="n">pieces</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">IM_START</span><span class="si">}{</span><span class="n">msg</span><span class="o">.</span><span class="n">role</span><span class="si">}</span><span class="se">\n</span><span class="si">{</span><span class="n">msg</span><span class="o">.</span><span class="n">content</span><span class="si">}{</span><span class="n">IM_END</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">add_generation_prompt</span><span class="p">:</span>
+        <span class="n">pieces</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">IM_START</span><span class="si">}</span><span class="s2">assistant</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">pieces</span><span class="p">)</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Loss mask builder</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_chatml_loss_mask</span><span class="p">(</span>
+    <span class="n">tokenizer</span><span class="p">:</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">,</span>
+    <span class="n">messages</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">ChatMessage</span><span class="p">],</span>
+    <span class="n">max_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2048</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Tokenize a chat conversation and return:</span>
+<span class="sd">        input_ids  : LongTensor of shape (seq_len,)</span>
+<span class="sd">        loss_mask  : BoolTensor  of shape (seq_len,)</span>
+<span class="sd">                     True  → compute loss on this position</span>
+<span class="sd">                     False → mask out (prompt / special tokens)</span>
+
+<span class="sd">    Strategy: we tokenize the full sequence, then for each assistant</span>
+<span class="sd">    turn we find the span [start_of_content, end_of_turn] and set</span>
+<span class="sd">    loss_mask = True only for those positions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Render full string (no generation prompt needed for training)</span>
+    <span class="n">full_text</span> <span class="o">=</span> <span class="n">format_chatml</span><span class="p">(</span><span class="n">messages</span><span class="p">,</span> <span class="n">add_generation_prompt</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="c1"># Tokenize full sequence; do not add special tokens automatically</span>
+    <span class="c1"># (the template already handles BOS/EOS via &lt;|im_start|&gt; etc.)</span>
+    <span class="n">enc</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span>
+        <span class="n">full_text</span><span class="p">,</span>
+        <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">,</span>
+        <span class="n">truncation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="n">max_length</span><span class="p">,</span>
+        <span class="n">add_special_tokens</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">=</span> <span class="n">enc</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># (seq_len,)</span>
+    <span class="n">seq_len</span> <span class="o">=</span> <span class="n">input_ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">loss_mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">seq_len</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">)</span>
+
+    <span class="c1"># -----------------------------------------------------------------------</span>
+    <span class="c1"># Find assistant spans by scanning for the token IDs of</span>
+    <span class="c1"># &lt;|im_start|&gt;assistant\n  …content…  &lt;|im_end|&gt;</span>
+    <span class="c1"># -----------------------------------------------------------------------</span>
+    <span class="n">im_start_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">convert_tokens_to_ids</span><span class="p">(</span><span class="n">IM_START</span><span class="p">)</span>
+    <span class="n">im_end_id</span><span class="p">:</span>   <span class="nb">int</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">convert_tokens_to_ids</span><span class="p">(</span><span class="n">IM_END</span><span class="p">)</span>
+
+    <span class="c1"># Tokenize the role string that follows &lt;|im_start|&gt; for an assistant turn.</span>
+    <span class="c1"># We need to detect &quot;assistant\n&quot; as token(s).</span>
+    <span class="n">role_ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span>
+        <span class="s2">&quot;assistant</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">add_special_tokens</span><span class="o">=</span><span class="kc">False</span>
+    <span class="p">)</span>
+
+    <span class="n">ids</span> <span class="o">=</span> <span class="n">input_ids</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">ids</span><span class="p">):</span>
+        <span class="c1"># Look for &lt;|im_start|&gt;</span>
+        <span class="k">if</span> <span class="n">ids</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">!=</span> <span class="n">im_start_id</span><span class="p">:</span>
+            <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">continue</span>
+
+        <span class="c1"># Check if the next tokens are the assistant role</span>
+        <span class="n">role_end</span> <span class="o">=</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">role_ids</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">role_end</span> <span class="o">&lt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span> <span class="ow">and</span> <span class="n">ids</span><span class="p">[</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span> <span class="p">:</span> <span class="n">role_end</span><span class="p">]</span> <span class="o">==</span> <span class="n">role_ids</span><span class="p">:</span>
+            <span class="c1"># We are inside an assistant turn.</span>
+            <span class="c1"># Content starts at role_end; supervise until &lt;|im_end|&gt;.</span>
+            <span class="n">content_start</span> <span class="o">=</span> <span class="n">role_end</span>
+            <span class="c1"># Find the matching &lt;|im_end|&gt;</span>
+            <span class="n">j</span> <span class="o">=</span> <span class="n">content_start</span>
+            <span class="k">while</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span> <span class="ow">and</span> <span class="n">ids</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">!=</span> <span class="n">im_end_id</span><span class="p">:</span>
+                <span class="n">j</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="c1"># Mark content tokens for loss (include &lt;|im_end|&gt; itself so the</span>
+            <span class="c1"># model learns to emit the stop token)</span>
+            <span class="k">if</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">ids</span><span class="p">):</span>
+                <span class="n">loss_mask</span><span class="p">[</span><span class="n">content_start</span> <span class="p">:</span> <span class="n">j</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="n">i</span> <span class="o">=</span> <span class="n">j</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Not an assistant turn; skip to the next &lt;|im_end|&gt;</span>
+            <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="k">return</span> <span class="n">input_ids</span><span class="p">,</span> <span class="n">loss_mask</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: token counts and mask positions</p>
+<p>Consider this three-message exchange tokenised by a Qwen-2 tokenizer (vocabulary size 151,936):</p>
+<div class="highlight"><pre><span></span><code>messages = [
+    ChatMessage(&quot;system&quot;,    &quot;You are a helpful assistant.&quot;),
+    ChatMessage(&quot;user&quot;,      &quot;What is 2+2?&quot;),
+    ChatMessage(&quot;assistant&quot;, &quot;4.&quot;),
+]
+</code></pre></div>
+<p>The formatted string is (spaces shown explicitly for clarity):</p>
+<div class="highlight"><pre><span></span><code>&lt;|im_start|&gt;system\nYou are a helpful assistant.&lt;|im_end|&gt;\n
+&lt;|im_start|&gt;user\nWhat is 2+2?&lt;|im_end|&gt;\n
+&lt;|im_start|&gt;assistant\n4.&lt;|im_end|&gt;\n
+</code></pre></div>
+<p>Approximate token counts (Qwen-2 tokenizer):
+- System turn: 2 (im_start + &ldquo;system\n&rdquo;) + ~6 (content) + 1 (im_end) + 1 (newline) = ~10 tokens
+- User turn: ~10 tokens
+- Assistant turn: ~6 tokens</p>
+<p>Total ≈ 26 tokens. Of those, <strong>only the assistant content</strong> (tokens for &ldquo;4.&rdquo; plus <code>&lt;|im_end|&gt;</code>) — roughly 3 tokens — have <code>loss_mask = True</code>. The rest (system turn, user turn, role headers) are masked to zero. This is the &ldquo;train on completions only&rdquo; principle.</p>
+<p>For a dataset of on the order of 100,000 conversations averaging ~200 tokens each, roughly 30–40% of tokens are typically assistant tokens and thus supervised. Packing (discussed below) ensures we do not pay for the other 60–70% with wasted sequence length.</p>
+</div>
+<h2 id="loss-masking-in-depth">Loss Masking in Depth<a class="headerlink" href="#loss-masking-in-depth" title="Permanent link">¶</a></h2>
+<h3 id="why-mask-the-prompt">Why Mask the Prompt?<a class="headerlink" href="#why-mask-the-prompt" title="Permanent link">¶</a></h3>
+<p>During causal language modelling pretraining, every token in the sequence is both an input and a target. When we fine-tune on conversations, we do not want the model to &ldquo;memorise&rdquo; system prompts or user questions as outputs it should produce; we want it to learn to <em>respond</em> to them. Including the prompt in the loss does two things:</p>
+<ol>
+<li><strong>Gradient pollution</strong>: the gradient signal for role tokens like <code>&lt;|im_start|&gt;user</code> is dominated by examples where those tokens appear, and none of that signal helps the model become a better assistant.</li>
+<li><strong>Objective mismatch</strong>: at inference time, the model never generates the user&rsquo;s message; training it to do so creates a distribution mismatch.</li>
+</ol>
+<p>Empirically, SFT runs where the prompt is masked converge to lower perplexity on held-out completions (not full sequences) and exhibit fewer repetitions of the system prompt in responses.</p>
+<h3 id="the-loss-computation-with-a-mask">The Loss Computation with a Mask<a class="headerlink" href="#the-loss-computation-with-a-mask" title="Permanent link">¶</a></h3>
+<p>The standard causal LM loss for a sequence <span class="arithmatex">\(x_1, \ldots, x_T\)</span> is:</p>
+<div class="arithmatex">\[
+\mathcal{L} = -\frac{1}{T} \sum_{t=1}^{T} \log p_\theta(x_t \mid x_{&lt;t})
+\]</div>
+<p>With a binary loss mask <span class="arithmatex">\(m_t \in \{0, 1\}\)</span>, we change this to:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{masked}} = -\frac{1}{\sum_t m_t} \sum_{t=1}^{T} m_t \log p_\theta(x_t \mid x_{&lt;t})
+\]</div>
+<p>The denominator normalises by the number of <em>supervised</em> tokens rather than the total sequence length, so that longer prompts do not dilute the gradient.</p>
+<p>In PyTorch the standard way is to pass <code>labels</code> to a causal LM where masked positions are set to <code>-100</code> — <code>CrossEntropyLoss</code> ignores index <code>-100</code> by default.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">labels_from_mask</span><span class="p">(</span>
+    <span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">loss_mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Construct labels for a causal LM: supervised positions keep their</span>
+<span class="sd">    token id; masked positions are set to -100 (ignored by CrossEntropyLoss).</span>
+
+<span class="sd">    Note the standard causal LM shift: the model predicts x_{t+1} given x_{&lt;=t},</span>
+<span class="sd">    so labels are input_ids shifted left by one, i.e. labels[t] = input_ids[t+1].</span>
+<span class="sd">    HuggingFace CausalLM models do this shift internally when you pass `labels`,</span>
+<span class="sd">    so we just pass the full input_ids with -100 at masked positions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">labels</span> <span class="o">=</span> <span class="n">input_ids</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+    <span class="n">labels</span><span class="p">[</span><span class="o">~</span><span class="n">loss_mask</span><span class="p">]</span> <span class="o">=</span> <span class="o">-</span><span class="mi">100</span>
+    <span class="k">return</span> <span class="n">labels</span>
+</code></pre></div>
+<h3 id="multi-turn-loss-masking">Multi-Turn Loss Masking<a class="headerlink" href="#multi-turn-loss-masking" title="Permanent link">¶</a></h3>
+<p>In a multi-turn conversation there are multiple assistant turns, each of which should be supervised independently. The loss-mask builder above already handles this: it scans the entire token sequence and marks all assistant-content spans, not just the final one.</p>
+<p>A common mistake is to supervise only the <em>last</em> assistant turn. This wastes signal — a four-turn conversation has four assistant responses, all of which are valuable training signal.</p>
+<figure class="viz" id="fig-chattmpl-multiturn-loss-mask">
+<svg viewBox="0 0 820 490" role="img" aria-label="Multi-turn loss masking over a 3-turn ChatML conversation: user turns are masked with label -100 and receive no gradient, while assistant turns are supervised and gradient flows through them. Causal attention still lets each assistant token attend to all prior tokens.">
+<style>
+  #fig-chattmpl-multiturn-loss-mask text  { fill: var(--ink-soft, #374151); }
+  #fig-chattmpl-multiturn-loss-mask .lbl  { font: 600 13px var(--sans, sans-serif); }
+  #fig-chattmpl-multiturn-loss-mask .mono { font: 600 12px var(--mono, monospace); }
+  #fig-chattmpl-multiturn-loss-mask .sub  { font: 400 10px var(--sans, sans-serif); }
+  #fig-chattmpl-multiturn-loss-mask .cap  { font: 600 11px var(--sans, sans-serif); }
+  #fig-chattmpl-multiturn-loss-mask .title{ font: 600 12px var(--sans, sans-serif); fill: var(--muted, #6b7280); }
+  #fig-chattmpl-multiturn-loss-mask .mt   { fill: var(--muted, #6b7280); }
+  #fig-chattmpl-multiturn-loss-mask .at   { fill: var(--accent, #2563eb); }
+  #fig-chattmpl-multiturn-loss-mask .spine-lbl { font: 400 10px var(--sans, sans-serif); fill: var(--muted, #9ca3af); }
+</style>
+<defs>
+  <marker id="lm-up" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M10 1 L1 5 L10 9 z" fill="var(--muted,#9ca3af)"/>
+  </marker>
+</defs>
+
+
+<text x="300" y="22" text-anchor="middle" class="title">Loss mask over a 3-turn ChatML conversation</text>
+
+
+
+
+<rect x="36" y="40"  width="530" height="52" rx="7" fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="56"  y="61"  class="lbl">Turn 1</text>
+<text x="116" y="61"  class="mono">&lt;|im_start|&gt;user</text>
+<text x="56"  y="80"  class="sub mt">… user message tokens …</text>
+<rect x="418" y="47"  width="136" height="38" rx="6" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="486" y="63"  text-anchor="middle" class="lbl mt">MASKED</text>
+<text x="486" y="78"  text-anchor="middle" class="sub mt">label = -100</text>
+
+
+<rect x="36" y="108" width="530" height="52" rx="7" fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="56"  y="129" class="lbl">Turn 1</text>
+<text x="116" y="129" class="mono">&lt;|im_start|&gt;assistant</text>
+<text x="56"  y="148" class="sub mt">… assistant response tokens …</text>
+<rect x="418" y="115" width="136" height="38" rx="6" fill="var(--accent,#2563eb)" fill-opacity="0.12" stroke="var(--accent,#2563eb)" stroke-width="1.2"/>
+<path d="M428 133 l4 4 l7 -7" stroke="var(--accent,#2563eb)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="491" y="131" text-anchor="middle" class="lbl at">SUPERVISED</text>
+<text x="491" y="146" text-anchor="middle" class="sub at">gradient flows</text>
+
+
+<rect x="36" y="176" width="530" height="52" rx="7" fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="56"  y="197" class="lbl">Turn 2</text>
+<text x="116" y="197" class="mono">&lt;|im_start|&gt;user</text>
+<text x="56"  y="216" class="sub mt">… user message tokens …</text>
+<rect x="418" y="183" width="136" height="38" rx="6" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="486" y="199" text-anchor="middle" class="lbl mt">MASKED</text>
+<text x="486" y="214" text-anchor="middle" class="sub mt">label = -100</text>
+
+
+<rect x="36" y="244" width="530" height="52" rx="7" fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="56"  y="265" class="lbl">Turn 2</text>
+<text x="116" y="265" class="mono">&lt;|im_start|&gt;assistant</text>
+<text x="56"  y="284" class="sub mt">… assistant response tokens …</text>
+<rect x="418" y="251" width="136" height="38" rx="6" fill="var(--accent,#2563eb)" fill-opacity="0.12" stroke="var(--accent,#2563eb)" stroke-width="1.2"/>
+<path d="M428 269 l4 4 l7 -7" stroke="var(--accent,#2563eb)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="491" y="267" text-anchor="middle" class="lbl at">SUPERVISED</text>
+<text x="491" y="282" text-anchor="middle" class="sub at">gradient flows</text>
+
+
+<rect x="36" y="312" width="530" height="52" rx="7" fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="56"  y="333" class="lbl">Turn 3</text>
+<text x="116" y="333" class="mono">&lt;|im_start|&gt;user</text>
+<text x="56"  y="352" class="sub mt">… user message tokens …</text>
+<rect x="418" y="319" width="136" height="38" rx="6" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="486" y="335" text-anchor="middle" class="lbl mt">MASKED</text>
+<text x="486" y="350" text-anchor="middle" class="sub mt">label = -100</text>
+
+
+<rect x="36" y="380" width="530" height="52" rx="7" fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="56"  y="401" class="lbl">Turn 3</text>
+<text x="116" y="401" class="mono">&lt;|im_start|&gt;assistant</text>
+<text x="56"  y="420" class="sub mt">… assistant response tokens …</text>
+<rect x="418" y="387" width="136" height="38" rx="6" fill="var(--accent,#2563eb)" fill-opacity="0.12" stroke="var(--accent,#2563eb)" stroke-width="1.2"/>
+<path d="M428 405 l4 4 l7 -7" stroke="var(--accent,#2563eb)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="491" y="403" text-anchor="middle" class="lbl at">SUPERVISED</text>
+<text x="491" y="418" text-anchor="middle" class="sub at">gradient flows</text>
+
+
+<line x1="20" y1="432" x2="20" y2="48"
+      stroke="var(--muted,#9ca3af)" stroke-width="1.4"
+      stroke-dasharray="4 3" opacity="0.8"
+      marker-end="url(#lm-up)"/>
+<line x1="20" y1="66"  x2="36" y2="66"  stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="3 2" opacity="0.5"/>
+<line x1="20" y1="134" x2="36" y2="134" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="3 2" opacity="0.5"/>
+<line x1="20" y1="202" x2="36" y2="202" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="3 2" opacity="0.5"/>
+<line x1="20" y1="270" x2="36" y2="270" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="3 2" opacity="0.5"/>
+<line x1="20" y1="338" x2="36" y2="338" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="3 2" opacity="0.5"/>
+<line x1="20" y1="406" x2="36" y2="406" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="3 2" opacity="0.5"/>
+<text class="spine-lbl" text-anchor="middle" transform="translate(9,270) rotate(-90)">causal attention sees ALL prior tokens</text>
+
+
+<rect x="585" y="40" width="222" height="108" rx="6"
+      fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="600" y="59" class="cap mt">Legend</text>
+
+<rect x="600" y="66" width="14" height="14" rx="3"
+      fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="620" y="76" class="sub mt">MASKED</text>
+<text x="620" y="89" class="sub mt">label = -100, no gradient</text>
+
+<rect x="600" y="100" width="14" height="14" rx="3"
+      fill="var(--accent,#2563eb)" fill-opacity="0.15" stroke="var(--accent,#2563eb)" stroke-width="1"/>
+<path d="M602 108 l3 3 l5 -5" stroke="var(--accent,#2563eb)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+<text x="620" y="110" class="sub at">SUPERVISED</text>
+<text x="620" y="123" class="sub at">gradient flows (asst)</text>
+
+
+<text x="301" y="455" text-anchor="middle" class="sub mt">Masking removes gradient, not context —</text>
+<text x="301" y="469" text-anchor="middle" class="sub mt">assistant tokens still attend to all prior tokens via causal self-attention.</text>
+
+</svg>
+<figcaption><b>User turns are masked (label = -100); only assistant turns contribute to the loss.</b> All six segments share a single packed token sequence — the loss mask zeros the gradient for every user turn while leaving assistant spans fully supervised. The left spine illustrates that causal self-attention still reaches across masked turns: masking removes gradient, not context.</figcaption>
+</figure>
+
+<p>The causal mask of the transformer still lets each assistant token attend to everything before it (including previous user turns), so learning is coherent — the model sees the full context, it just does not receive gradient for repeating the prompt tokens.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: off-by-one in the loss shift</p>
+<p>HuggingFace&rsquo;s <code>CausalLMOutputWithCrossAttentions</code> shifts labels internally: the model is given <code>input_ids[:-1]</code> and predicts <code>labels[1:]</code>. If you pre-shift labels yourself and also let the model shift, every label is off by two positions — completely wrong. Use the convention above: pass the <em>full</em> <code>input_ids</code> as labels with <code>-100</code> masking, and let HuggingFace do the single shift internally.</p>
+</div>
+<h2 id="system-prompts-and-role-tokens">System Prompts and Role Tokens<a class="headerlink" href="#system-prompts-and-role-tokens" title="Permanent link">¶</a></h2>
+<h3 id="the-system-turn">The System Turn<a class="headerlink" href="#the-system-turn" title="Permanent link">¶</a></h3>
+<p>The system prompt is the privileged message that gives the model its persona, its capabilities, and its constraints. It appears as a <code>system</code> role turn at the very beginning of the context. During training on conversations that include system prompts, the system turn is part of the prompt and is masked from the loss.</p>
+<p>Not all models have a dedicated system role. Llama 2&rsquo;s template embeds the system prompt inside the first <code>[INST]</code> block. Mistral v1 has no system slot at all and expects operators to prepend the system content to the first user message. This matters for fine-tuning: if you are training on Mistral but your dataset has a <code>role: system</code> field, you must decide whether to drop it, inject it into the user turn, or add <code>&lt;s&gt;[INST]</code> tokens — and then be consistent at inference time.</p>
+<h3 id="role-tokens-as-special-tokens">Role Tokens as Special Tokens<a class="headerlink" href="#role-tokens-as-special-tokens" title="Permanent link">¶</a></h3>
+<p>When role markers like <code>&lt;|im_start|&gt;</code> are added to the tokenizer vocabulary, they receive their own embedding vectors in the model&rsquo;s embedding table. These are randomly initialised at fine-tuning time (unless the base model already included them during pretraining, as many modern bases do). Because only a handful of examples per token appear in each gradient step, the embeddings for <code>&lt;|im_end|&gt;</code> and role names typically need a higher learning rate or more warm-up steps than ordinary parameters, or they remain near their random init.</p>
+<p>One practical consequence: if you fine-tune a model on ChatML format but then serve it with a Llama 3-format prompt, the special tokens your model was trained with may not exist in the serving tokenizer — and vice versa. Always version and lock your tokenizer alongside your model weights.</p>
+<h2 id="sequence-packing">Sequence Packing<a class="headerlink" href="#sequence-packing" title="Permanent link">¶</a></h2>
+<h3 id="the-problem-with-padding">The Problem with Padding<a class="headerlink" href="#the-problem-with-padding" title="Permanent link">¶</a></h3>
+<p>Naive batching left-pads (or right-pads) every sequence in a batch to the same length, filling the gap with a <code>[PAD]</code> token. The model then wastes computation on padding positions. For SFT datasets where individual examples range from 50 to 2,000 tokens, a batch max-length of 2,048 means that short examples may waste 90%+ of their sequence slot on padding.</p>
+<p>For a 7B-parameter model with context length 2,048, each forward + backward pass over a batch of size 4 costs on the order of:</p>
+<div class="arithmatex">\[
+\text{FLOPs} \approx 6 \cdot N_{\text{params}} \cdot T_{\text{batch}} = 6 \times 7 \times 10^9 \times (4 \times 2048) \approx 3.4 \times 10^{14}
+\]</div>
+<p>If the average sequence is only 512 tokens long, padding wastes 75% of those FLOPs. Sequence packing eliminates this waste.</p>
+<h3 id="pack-then-truncate">Pack-Then-Truncate<a class="headerlink" href="#pack-then-truncate" title="Permanent link">¶</a></h3>
+<p>Sequence packing concatenates multiple independent examples into a single sequence of exactly <code>max_length</code> tokens. The simplest algorithm is first-fit-decreasing bin packing: sort examples by length, greedily fill each bin.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">packing.py</span>
+<span class="sd">──────────</span>
+<span class="sd">First-fit-decreasing bin packer for SFT sequences.</span>
+<span class="sd">Each bin becomes one training row of length `max_length`.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">NamedTuple</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PackedSample</span><span class="p">(</span><span class="n">NamedTuple</span><span class="p">):</span>
+    <span class="n">input_ids</span><span class="p">:</span>  <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>  <span class="c1"># (max_length,)</span>
+    <span class="n">labels</span><span class="p">:</span>     <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>  <span class="c1"># (max_length,) with -100 for masked positions</span>
+    <span class="c1"># position_ids tracks the per-document position so RoPE is applied</span>
+    <span class="c1"># correctly within each packed document.</span>
+    <span class="n">position_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>  <span class="c1"># (max_length,)</span>
+
+<span class="n">PAD_ID</span> <span class="o">=</span> <span class="mi">0</span>   <span class="c1"># tokenizer.pad_token_id — used only to fill the last bin</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">pack_sequences</span><span class="p">(</span>
+    <span class="n">examples</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]],</span>  <span class="c1"># (input_ids, labels)</span>
+    <span class="n">max_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2048</span><span class="p">,</span>
+    <span class="n">pad_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">PAD_ID</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">PackedSample</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Pack variable-length (input_ids, labels) pairs into fixed-length bins.</span>
+
+<span class="sd">    For each packed bin we also build position_ids that reset to 0 at the</span>
+<span class="sd">    start of each new document — critical for correct RoPE / ALiBi behaviour.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Sort longest-first for better bin utilisation (first-fit-decreasing)</span>
+    <span class="n">examples</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">examples</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">bins</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">bin_lengths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">ids</span><span class="p">,</span> <span class="n">labs</span> <span class="ow">in</span> <span class="n">examples</span><span class="p">:</span>
+        <span class="n">L</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">L</span> <span class="o">&gt;</span> <span class="n">max_length</span><span class="p">:</span>
+            <span class="c1"># Truncate oversized examples</span>
+            <span class="n">ids</span>  <span class="o">=</span> <span class="n">ids</span><span class="p">[:</span><span class="n">max_length</span><span class="p">]</span>
+            <span class="n">labs</span> <span class="o">=</span> <span class="n">labs</span><span class="p">[:</span><span class="n">max_length</span><span class="p">]</span>
+            <span class="n">L</span> <span class="o">=</span> <span class="n">max_length</span>
+
+        <span class="n">placed</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="k">for</span> <span class="n">b_idx</span><span class="p">,</span> <span class="n">b_len</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">bin_lengths</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">b_len</span> <span class="o">+</span> <span class="n">L</span> <span class="o">&lt;=</span> <span class="n">max_length</span><span class="p">:</span>
+                <span class="n">bins</span><span class="p">[</span><span class="n">b_idx</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">ids</span><span class="p">,</span> <span class="n">labs</span><span class="p">))</span>
+                <span class="n">bin_lengths</span><span class="p">[</span><span class="n">b_idx</span><span class="p">]</span> <span class="o">+=</span> <span class="n">L</span>
+                <span class="n">placed</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="k">break</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">placed</span><span class="p">:</span>
+            <span class="n">bins</span><span class="o">.</span><span class="n">append</span><span class="p">([(</span><span class="n">ids</span><span class="p">,</span> <span class="n">labs</span><span class="p">)])</span>
+            <span class="n">bin_lengths</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">L</span><span class="p">)</span>
+
+    <span class="n">packed</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">PackedSample</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">bin_contents</span><span class="p">,</span> <span class="n">bin_len</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">bins</span><span class="p">,</span> <span class="n">bin_lengths</span><span class="p">):</span>
+        <span class="c1"># Concatenate all examples in this bin</span>
+        <span class="n">all_ids</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">bin_contents</span><span class="p">])</span>
+        <span class="n">all_labs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">bin_contents</span><span class="p">])</span>
+
+        <span class="c1"># Build position_ids: reset to 0 at the start of each document</span>
+        <span class="n">pos</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">ids</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">bin_contents</span><span class="p">:</span>
+            <span class="n">pos</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+        <span class="n">position_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">pos</span><span class="p">)</span>
+
+        <span class="c1"># Pad the bin to max_length if needed</span>
+        <span class="n">pad_len</span> <span class="o">=</span> <span class="n">max_length</span> <span class="o">-</span> <span class="n">bin_len</span>
+        <span class="k">if</span> <span class="n">pad_len</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">all_ids</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">all_ids</span><span class="p">,</span>  <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">pad_len</span><span class="p">,),</span> <span class="n">pad_id</span><span class="p">)])</span>
+            <span class="n">all_labs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">all_labs</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">pad_len</span><span class="p">,),</span> <span class="o">-</span><span class="mi">100</span><span class="p">)])</span>
+            <span class="n">position_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">position_ids</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">pad_len</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)])</span>
+
+        <span class="n">packed</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">PackedSample</span><span class="p">(</span><span class="n">all_ids</span><span class="p">,</span> <span class="n">all_labs</span><span class="p">,</span> <span class="n">position_ids</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">packed</span>
+</code></pre></div>
+<h3 id="attention-boundaries-preventing-cross-document-leakage">Attention Boundaries: Preventing Cross-Document Leakage<a class="headerlink" href="#attention-boundaries-preventing-cross-document-leakage" title="Permanent link">¶</a></h3>
+<p>The most important correctness issue with packing is <strong>cross-document attention leakage</strong>. In a naively packed sequence, token 1,024 (the first token of document 2) can attend to token 1,023 (the last token of document 1), creating a spurious dependency that never exists at inference time.</p>
+<p>For most SFT training this leakage is a minor nuisance — the model quickly learns that <code>&lt;|im_start|&gt;</code> marks a boundary — but it can degrade performance on short conversations and is measurably harmful for preference learning where sequence independence is critical.</p>
+<p>The fix is a <strong>block-diagonal attention mask</strong>: within each packed bin, the causal mask is restricted to within-document boundaries. Each document can only attend to its own prior tokens.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">make_block_diagonal_mask</span><span class="p">(</span>
+    <span class="n">document_lengths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+    <span class="n">dtype</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">dtype</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+    <span class="n">neg_inf</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">),</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Build a causal block-diagonal attention mask for a packed sequence.</span>
+
+<span class="sd">    Returns a (total_len, total_len) additive mask M where</span>
+<span class="sd">        M[i, j] = 0        if j &lt;= i AND same document as i</span>
+<span class="sd">        M[i, j] = -inf     otherwise</span>
+
+<span class="sd">    Add this to raw attention logits before softmax.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">total_len</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">document_lengths</span><span class="p">)</span>
+    <span class="c1"># Start with full -inf (no attention allowed anywhere)</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">total_len</span><span class="p">,</span> <span class="n">total_len</span><span class="p">),</span> <span class="n">neg_inf</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="n">offset</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">doc_len</span> <span class="ow">in</span> <span class="n">document_lengths</span><span class="p">:</span>
+        <span class="c1"># Within this document, causal attention is allowed</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">doc_len</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>  <span class="c1"># j &lt;= i → causal</span>
+                <span class="n">mask</span><span class="p">[</span><span class="n">offset</span> <span class="o">+</span> <span class="n">i</span><span class="p">,</span> <span class="n">offset</span> <span class="o">+</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="n">offset</span> <span class="o">+=</span> <span class="n">doc_len</span>
+
+    <span class="k">return</span> <span class="n">mask</span>  <span class="c1"># (total_len, total_len)</span>
+</code></pre></div>
+<p>In practice, building this mask explicitly is memory-intensive for long sequences. Production implementations (e.g. in HuggingFace TRL&rsquo;s <code>DataCollatorForCompletionOnlyLM</code>, or in Megatron-LM) either use Flash Attention&rsquo;s <code>cu_seqlens</code> (cumulative sequence lengths) argument which natively handles variable-length batches without materialising the mask, or they pass the <code>document_ids</code> array and compute the mask on-the-fly inside the kernel.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Using Flash Attention&#39;s varlen API (pseudo-code showing the key argument)</span>
+<span class="c1"># flash_attn.flash_attn_varlen_func accepts:</span>
+<span class="c1">#   qkv : packed Q/K/V for all documents concatenated</span>
+<span class="c1">#   cu_seqlens_q, cu_seqlens_k : cumulative sequence lengths (int32)</span>
+<span class="c1">#   max_seqlen_q, max_seqlen_k : max document length in the batch</span>
+<span class="c1"># This naturally restricts attention to within-document boundaries.</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">flash_attn</span>
+
+<span class="n">output</span> <span class="o">=</span> <span class="n">flash_attn</span><span class="o">.</span><span class="n">flash_attn_varlen_func</span><span class="p">(</span>
+    <span class="n">q</span><span class="o">=</span><span class="n">q_packed</span><span class="p">,</span>            <span class="c1"># (total_tokens, n_heads, head_dim)</span>
+    <span class="n">k</span><span class="o">=</span><span class="n">k_packed</span><span class="p">,</span>
+    <span class="n">v</span><span class="o">=</span><span class="n">v_packed</span><span class="p">,</span>
+    <span class="n">cu_seqlens_q</span><span class="o">=</span><span class="n">cu_seqlens</span><span class="p">,</span>  <span class="c1"># e.g. tensor([0, 512, 1024, 2048])</span>
+    <span class="n">cu_seqlens_k</span><span class="o">=</span><span class="n">cu_seqlens</span><span class="p">,</span>
+    <span class="n">max_seqlen_q</span><span class="o">=</span><span class="n">max_doc_len</span><span class="p">,</span>
+    <span class="n">max_seqlen_k</span><span class="o">=</span><span class="n">max_doc_len</span><span class="p">,</span>
+    <span class="n">causal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Packing efficiency worked example</p>
+<p>Suppose your SFT dataset has the following five examples (lengths in tokens):</p>
+<table>
+<thead>
+<tr>
+<th>Example</th>
+<th>Tokens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td>900</td>
+</tr>
+<tr>
+<td>B</td>
+<td>600</td>
+</tr>
+<tr>
+<td>C</td>
+<td>400</td>
+</tr>
+<tr>
+<td>D</td>
+<td>350</td>
+</tr>
+<tr>
+<td>E</td>
+<td>200</td>
+</tr>
+</tbody>
+</table>
+<p>With <code>max_length = 2048</code> and first-fit-decreasing packing:</p>
+<ul>
+<li><strong>Bin 1</strong>: A (900) + B (600) + C (400) = 1,900 tokens → pad 148 → <strong>93% utilisation</strong></li>
+<li><strong>Bin 2</strong>: D (350) + E (200) = 550 tokens → pad 1,498 → <strong>27% utilisation</strong></li>
+</ul>
+<p>Without packing (one sequence per row, right-padded to 2,048):
+- 5 rows × 2,048 = <strong>10,240 total compute tokens</strong>
+- Actual content = 900 + 600 + 400 + 350 + 200 = <strong>2,450 tokens</strong>
+- Utilisation = 2,450 / 10,240 = <strong>24%</strong></p>
+<p>With packing (2 bins):
+- 2 rows × 2,048 = <strong>4,096 total compute tokens</strong>
+- Utilisation = 2,450 / 4,096 = <strong>60%</strong></p>
+<p>In practice, real SFT datasets with thousands of examples achieve 85–95% utilisation because length distributions are smoother and the bin-packing problem has many feasible solutions.</p>
+</div>
+<h2 id="tool-call-formatting">Tool-Call Formatting<a class="headerlink" href="#tool-call-formatting" title="Permanent link">¶</a></h2>
+<p>Modern assistant models must handle not just text exchanges but also <em>tool calls</em> — structured requests to invoke external functions — and their results. The chat template is the natural place to encode these, and several distinct conventions have emerged.</p>
+<h3 id="the-tool-use-turn">The Tool-Use Turn<a class="headerlink" href="#the-tool-use-turn" title="Permanent link">¶</a></h3>
+<p>A tool-call turn is an assistant message that contains a structured payload instead of (or in addition to) plain text. The template must encode both the call and the return value. In ChatML-based systems, this is often done with a dedicated <code>tool</code> role for the tool&rsquo;s response:</p>
+<div class="highlight"><pre><span></span><code><span class="p">[</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user&quot;</span><span class="p">,</span><span class="w">      </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;What&#39;s the weather in Paris?&quot;</span><span class="p">},</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">   </span><span class="nt">&quot;tool_calls&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;call_1&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;function&quot;</span><span class="p">,</span>
+<span class="w">                   </span><span class="nt">&quot;function&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;get_weather&quot;</span><span class="p">,</span>
+<span class="w">                                </span><span class="nt">&quot;arguments&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;{\&quot;city\&quot;: \&quot;Paris\&quot;}&quot;</span><span class="p">}}]},</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;tool&quot;</span><span class="p">,</span><span class="w">      </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;{\&quot;temp\&quot;: 18, \&quot;condition\&quot;: \&quot;cloudy\&quot;}&quot;</span><span class="p">,</span>
+<span class="w">   </span><span class="nt">&quot;tool_call_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;call_1&quot;</span><span class="p">},</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;It&#39;s 18 °C and cloudy in Paris.&quot;</span><span class="p">}</span>
+<span class="p">]</span>
+</code></pre></div>
+<p>When this is rendered to tokens, the template serialises the <code>tool_calls</code> JSON (or a subset of it) as the assistant turn&rsquo;s content. Some models (Qwen, Llama 3.1+) define dedicated special tokens for the open/close of a tool call block:</p>
+<div class="highlight"><pre><span></span><code>&lt;|im_start|&gt;assistant
+&lt;tool_call&gt;
+{&quot;name&quot;: &quot;get_weather&quot;, &quot;arguments&quot;: {&quot;city&quot;: &quot;Paris&quot;}}
+&lt;/tool_call&gt;&lt;|im_end|&gt;
+&lt;|im_start|&gt;tool
+{&quot;temp&quot;: 18, &quot;condition&quot;: &quot;cloudy&quot;}&lt;|im_end|&gt;
+&lt;|im_start|&gt;assistant
+It&#39;s 18 °C and cloudy in Paris.&lt;|im_end|&gt;
+</code></pre></div>
+<p>Here <code>&lt;tool_call&gt;</code> and <code>&lt;/tool_call&gt;</code> may be single special tokens or ordinary text (model-dependent). The key design decision is whether they are special tokens — in which case they are immune to BPE splitting — or ordinary strings that must be stable under tokenization.</p>
+<h3 id="loss-masking-for-tool-calls">Loss Masking for Tool Calls<a class="headerlink" href="#loss-masking-for-tool-calls" title="Permanent link">¶</a></h3>
+<p>For training, we must decide which parts of a tool-call exchange to supervise:</p>
+<ul>
+<li><strong>The assistant&rsquo;s tool-call invocation</strong> (the JSON payload): supervised — the model must learn to emit valid JSON with the right function name and arguments.</li>
+<li><strong>The <code>tool</code> role turn</strong> (the function return): masked — the model does not generate this; the harness does.</li>
+<li><strong>The final assistant text</strong> after the tool return: supervised.</li>
+</ul>
+<p>The loss-mask scanner from our <code>build_chatml_loss_mask</code> function handles this correctly if <code>tool</code> turns are treated as non-assistant turns (they will not match the <code>role_ids == "assistant\n"</code> check).</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Tool-call example: extend build_chatml_loss_mask to recognise</span>
+<span class="sd">the &lt;tool_call&gt;...&lt;/tool_call&gt; block within an assistant turn.</span>
+
+<span class="sd">For simplicity we supervise the ENTIRE assistant turn content</span>
+<span class="sd">(including the tool_call JSON), since the model should learn to</span>
+<span class="sd">emit both plain text and tool call syntax.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="c1"># The loss masking logic in build_chatml_loss_mask already handles this:</span>
+<span class="c1"># it supervises everything between &lt;|im_start|&gt;assistant\n and &lt;|im_end|&gt;,</span>
+<span class="c1"># which includes any &lt;tool_call&gt; blocks the model emits.</span>
+<span class="c1"># The only special case is if you want to EXCLUDE the &lt;tool_call&gt; JSON</span>
+<span class="c1"># from the loss (e.g. treat it as planning overhead).  For most SFT</span>
+<span class="c1"># practitioners, supervising it is the right choice.</span>
+</code></pre></div>
+<h2 id="putting-it-all-together-a-training-ready-collator">Putting It All Together: A Training-Ready Collator<a class="headerlink" href="#putting-it-all-together-a-training-ready-collator" title="Permanent link">¶</a></h2>
+<p>Here is a complete data collator that formats, packs, and masks a batch of conversations, ready to be passed to a training loop.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">collator.py</span>
+<span class="sd">───────────</span>
+<span class="sd">A DataCollator that applies ChatML formatting, loss masking, and</span>
+<span class="sd">optional sequence packing.  Drop this into any HuggingFace Trainer.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">PreTrainedTokenizerFast</span>
+
+<span class="c1"># Re-use helpers defined above</span>
+<span class="c1"># from chat_template import build_chatml_loss_mask, labels_from_mask, ChatMessage</span>
+<span class="c1"># from packing import pack_sequences</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ChatMLCollator</span><span class="p">:</span>
+    <span class="n">tokenizer</span><span class="p">:</span> <span class="n">PreTrainedTokenizerFast</span>
+    <span class="n">max_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2048</span>
+    <span class="n">pack</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">raw_batch</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        raw_batch: list of dicts with key &quot;messages&quot;: list[dict] with</span>
+<span class="sd">                   &quot;role&quot; and &quot;content&quot; keys (HuggingFace-style).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">examples</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">raw_batch</span><span class="p">:</span>
+            <span class="c1"># Convert raw dicts to ChatMessage objects</span>
+            <span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="n">ChatMessage</span><span class="p">(</span><span class="n">role</span><span class="o">=</span><span class="n">m</span><span class="p">[</span><span class="s2">&quot;role&quot;</span><span class="p">],</span> <span class="n">content</span><span class="o">=</span><span class="n">m</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">])</span>
+                <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">item</span><span class="p">[</span><span class="s2">&quot;messages&quot;</span><span class="p">]</span>
+            <span class="p">]</span>
+            <span class="c1"># Build tokens + mask</span>
+            <span class="n">input_ids</span><span class="p">,</span> <span class="n">loss_mask</span> <span class="o">=</span> <span class="n">build_chatml_loss_mask</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">max_length</span>
+            <span class="p">)</span>
+            <span class="n">labels</span> <span class="o">=</span> <span class="n">labels_from_mask</span><span class="p">(</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">loss_mask</span><span class="p">)</span>
+            <span class="n">examples</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">labels</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">pack</span><span class="p">:</span>
+            <span class="n">packed</span> <span class="o">=</span> <span class="n">pack_sequences</span><span class="p">(</span>
+                <span class="n">examples</span><span class="p">,</span>
+                <span class="n">max_length</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">max_length</span><span class="p">,</span>
+                <span class="n">pad_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">batch_ids</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">p</span><span class="o">.</span><span class="n">input_ids</span>   <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">packed</span><span class="p">])</span>
+            <span class="n">batch_labs</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">p</span><span class="o">.</span><span class="n">labels</span>      <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">packed</span><span class="p">])</span>
+            <span class="n">batch_pos</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">p</span><span class="o">.</span><span class="n">position_ids</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">packed</span><span class="p">])</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Simple right-padding without packing</span>
+            <span class="n">max_len</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">ids</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">examples</span><span class="p">)</span>
+            <span class="n">pad_id</span>  <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span> <span class="ow">or</span> <span class="mi">0</span>
+
+            <span class="k">def</span><span class="w"> </span><span class="nf">pad</span><span class="p">(</span><span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">fill</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+                <span class="n">p</span> <span class="o">=</span> <span class="n">max_len</span> <span class="o">-</span> <span class="n">t</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">t</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">p</span><span class="p">,),</span> <span class="n">fill</span><span class="p">)])</span>
+
+            <span class="n">batch_ids</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">pad</span><span class="p">(</span><span class="n">ids</span><span class="p">,</span>  <span class="n">pad_id</span><span class="p">)</span> <span class="k">for</span> <span class="n">ids</span><span class="p">,</span> <span class="n">_</span>    <span class="ow">in</span> <span class="n">examples</span><span class="p">])</span>
+            <span class="n">batch_labs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">pad</span><span class="p">(</span><span class="n">labs</span><span class="p">,</span> <span class="o">-</span><span class="mi">100</span><span class="p">)</span>   <span class="k">for</span> <span class="n">_</span><span class="p">,</span>   <span class="n">labs</span> <span class="ow">in</span> <span class="n">examples</span><span class="p">])</span>
+            <span class="c1"># Standard sequential positions (no packing, so no reset needed)</span>
+            <span class="n">batch_pos</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">max_len</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">examples</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">attention_mask</span> <span class="o">=</span> <span class="p">(</span><span class="n">batch_ids</span> <span class="o">!=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">))</span><span class="o">.</span><span class="n">long</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;input_ids&quot;</span><span class="p">:</span>      <span class="n">batch_ids</span><span class="p">,</span>
+            <span class="s2">&quot;labels&quot;</span><span class="p">:</span>         <span class="n">batch_labs</span><span class="p">,</span>
+            <span class="s2">&quot;attention_mask&quot;</span><span class="p">:</span> <span class="n">attention_mask</span><span class="p">,</span>
+            <span class="s2">&quot;position_ids&quot;</span><span class="p">:</span>   <span class="n">batch_pos</span><span class="p">,</span>
+        <span class="p">}</span>
+</code></pre></div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are fine-tuning a 13B-parameter model on a multi-turn chat dataset with average conversation length of 400 tokens and a context length of 4,096. A colleague suggests just padding everything to 4,096. What is wrong with that approach, and what would you do instead?</p>
+<p><strong>A:</strong> Padding to 4,096 when conversations are ~400 tokens means roughly 90% of each sequence is padding. The model wastes FLOPs computing attention over PAD tokens, and gradient normalisation by total sequence length (including padding) dilutes the signal. You should apply <strong>sequence packing</strong>: concatenate multiple conversations into a single 4,096-token row using first-fit-decreasing bin packing. With ~400-token conversations you can fit about 10 per row, achieving ~98% utilisation. To prevent cross-conversation attention leakage you either pass <code>cu_seqlens</code> to Flash Attention&rsquo;s variable-length API, or build a block-diagonal causal mask. Additionally, apply a <strong>loss mask</strong> so only assistant turns contribute to the cross-entropy loss — prompt tokens should have label <code>-100</code>.</p>
+</div>
+<h2 id="practical-checklist-for-template-consistency">Practical Checklist for Template Consistency<a class="headerlink" href="#practical-checklist-for-template-consistency" title="Permanent link">¶</a></h2>
+<p>Template bugs are among the most common causes of unexplained degradation in SFT runs. The following checklist covers the most frequent footguns.</p>
+<ol>
+<li>
+<p><strong>Lock tokenizer version.</strong> A tokenizer update can reorder or renumber special tokens. Pin your tokenizer to the same commit as your model weights.</p>
+</li>
+<li>
+<p><strong>Use <code>apply_chat_template</code>, not string concatenation.</strong> <code>tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False)</code> is always right; manual string formatting is often subtly wrong.</p>
+</li>
+<li>
+<p><strong>Verify the loss mask before training.</strong> Print out a sample batch and confirm that <code>labels != -100</code> only for assistant content. A one-liner: <code>(labels != -100).float().mean()</code> should match your expected supervised-fraction (typically 0.25–0.50 for chat data).</p>
+</li>
+<li>
+<p><strong>Match the inference prompt exactly.</strong> The string passed to the model server at inference time must be the output of <code>apply_chat_template(messages, add_generation_prompt=True)</code>. Many bugs arise from adding an extra space, a missing BOS token, or the wrong role name.</p>
+</li>
+<li>
+<p><strong>Check EOS handling.</strong> Most templates include an EOS-like token (<code>&lt;|im_end|&gt;</code>, <code>&lt;|eot_id|&gt;</code>) at the end of each assistant turn. Make sure your inference server stops generation at this token — add it to <code>stop_sequences</code> if it is not the model&rsquo;s default EOS.</p>
+</li>
+<li>
+<p><strong>Truncate from the left for long prompts.</strong> If a conversation exceeds <code>max_length</code>, truncating from the right destroys the final assistant turn. Truncate early user turns from the left, preserving the system prompt and the most recent turns.</p>
+</li>
+<li>
+<p><strong>Tool-turn masking.</strong> If your dataset includes tool-return turns (<code>role: "tool"</code>), confirm that these are masked. The model should not learn to generate tool return values.</p>
+</li>
+</ol>
+<p>Cross-reference: <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a> for the broader training loop; <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a> for parameter-efficient fine-tuning considerations; <a href="../08-agents-harness/01-tool-use-function-calling.html">Tool Use &amp; Function Calling</a> for the inference-side view of tool calls.</p>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>A <strong>chat template</strong> is a deterministic function from role–content pairs to a token sequence; it must be identical between training and inference.</li>
+<li>The three dominant families are <strong>ChatML</strong> (<code>&lt;|im_start|&gt;</code>/<code>&lt;|im_end|&gt;</code>), <strong>Llama 3</strong> (<code>&lt;|start_header_id|&gt;</code>/<code>&lt;|eot_id|&gt;</code>), and the legacy Llama 2 <code>[INST]</code>/<code>[/INST]</code> format; HuggingFace&rsquo;s <code>apply_chat_template</code> abstracts over all of them.</li>
+<li><strong>Loss masking</strong> sets <code>labels = -100</code> for all prompt and role tokens; only assistant-turn content contributes to the cross-entropy gradient. The denominator of the loss is the number of supervised tokens, not the total sequence length.</li>
+<li><strong>Multi-turn masking</strong> should supervise every assistant turn in the conversation, not just the last — this multiplies usable signal per example by the number of turns.</li>
+<li><strong>Sequence packing</strong> eliminates padding waste by concatenating multiple examples into a single max-length row; a block-diagonal causal mask (or Flash Attention&rsquo;s <code>cu_seqlens</code> API) prevents cross-document attention leakage.</li>
+<li><strong>Tool-call turns</strong> are handled by the template: assistant invocations are supervised; <code>tool</code> role returns are masked, because the harness — not the model — generates them.</li>
+<li>Template inconsistency between training and inference is one of the most common silent causes of fine-tuned model degradation — always lock and test the template as part of your model release process.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Chat templates and sequence packing are mature but actively evolving: the HuggingFace ecosystem has converged on Jinja2 tokenizer templates and the <code>apply_chat_template</code> API as the interoperability standard, while Flash Attention&rsquo;s variable-length (<code>varlen</code>) API has made padding-free packed training mainstream at scale.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2307.09288">Touvron et al., <em>Llama 2: Open Foundation and Fine-Tuned Chat Models</em> (2023)</a> — canonical description of the <code>[INST]</code>/<code>[/INST]</code> template and the role of formatting in RLHF data collection.</li>
+<li><a href="https://arxiv.org/abs/2107.02027">Krell et al., <em>Efficient Sequence Packing without Cross-contamination</em> (2021)</a> — foundational study showing up to 50% of tokens can be padding, formalises packing as bin-packing, and proves block-diagonal masks prevent accuracy loss.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2407.21783">Meta, <em>The Llama 3 Herd of Models</em> (2024)</a> — introduces the <code>&lt;|start_header_id|&gt;</code> / <code>&lt;|eot_id|&gt;</code> header-token template and multi-turn RLHF data formatting at scale.</li>
+<li><a href="https://arxiv.org/abs/2307.08691">Dao, <em>FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning</em> (2023)</a> — the <code>flash_attn_varlen_func</code> / <code>cu_seqlens</code> API that makes packed training without explicit mask materialisation practical.</li>
+<li><a href="https://arxiv.org/abs/2407.09105">Kundu et al., <em>Enhancing Training Efficiency Using Packing with Flash Attention</em> (2024)</a> — empirical analysis showing up to 2× throughput and ~20% memory reduction when combining packing with Flash Attention 2 across 14 model families.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/huggingface/trl">huggingface/trl</a> — TRL&rsquo;s <code>SFTTrainer</code> with <code>packing=True</code> and <code>assistant_only_loss=True</code> is the reference implementation of packed, completion-masked SFT.</li>
+<li><a href="https://github.com/Dao-AILab/flash-attention">Dao-AILab/flash-attention</a> — the <code>flash_attn_varlen_func</code> used for block-diagonal packed-sequence attention without materialising the mask.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/docs/transformers/main/en/chat_templating">HuggingFace Transformers — Chat Templates</a> — canonical docs for <code>apply_chat_template</code>, Jinja2 template authoring, and the <code>add_generation_prompt</code> / <code>continue_final_message</code> parameters.</li>
+<li><a href="https://huggingface.co/blog/packing-with-FA2">HuggingFace Blog — Improving Training Efficiency Through Packing with Flash Attention 2</a> — step-by-step guide to enabling <code>DataCollatorWithFlattening</code> and <code>padding_free=True</code> in TRL, with throughput benchmarks across real SFT datasets.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>HuggingFace <code>chat_templates</code> documentation and Jinja2 template examples</strong> — the canonical reference for <code>apply_chat_template</code> and per-model template strings. Available in the <code>transformers</code> repository under <code>docs/source/en/chat_templating.md</code>.</li>
+<li><strong>Meta, &ldquo;Llama 2: Open Foundation and Fine-Tuned Chat Models&rdquo;</strong> (Touvron et al., 2023) — describes the <code>[INST]</code>/<code>[/INST]</code> format and its role in RLHF data collection.</li>
+<li><strong>Meta, &ldquo;The Llama 3 Herd of Models&rdquo;</strong> (Dubey et al., 2024) — introduces the Llama 3 header-token template and discusses multi-turn RLHF data formatting.</li>
+<li><strong>OpenAI, &ldquo;ChatML format&rdquo;</strong> — the original description of <code>&lt;|im_start|&gt;</code>/<code>&lt;|im_end|&gt;</code> tokens, described in early GPT-4 system-card documentation.</li>
+<li><strong>Krell et al., &ldquo;Efficient Sequence Packing without Cross-contamination&rdquo;</strong> (2021) — empirical study on the impact of cross-document attention in packed pretraining sequences, and the efficacy of document-boundary masks.</li>
+<li><strong>Tri Dao, &ldquo;FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning&rdquo;</strong> (2023) — the <code>flash_attn_varlen_func</code> API used for packing without explicit mask materialisation.</li>
+<li><strong>Zheng et al., &ldquo;SGLang: Efficient Execution of Structured Language Model Programs&rdquo;</strong> (2023) — covers structured generation and how tool-call schemas interact with constrained decoding, complementing the template story.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="01-sft-instruction-tuning.html"><span class="pn-label">← Previous</span><span class="pn-title">Supervised Fine-Tuning &amp; Instruction Tuning</span></a>
+<a class="next" href="03-peft-lora-qlora.html"><span class="pn-label">Next →</span><span class="pn-title">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-chat-templates-exist">Why Chat Templates Exist</a></li>
+<li class="toc-l2"><a href="#the-major-template-families">The Major Template Families</a></li>
+<li class="toc-l3"><a href="#chatml">ChatML</a></li>
+<li class="toc-l3"><a href="#llama-2-llama-3-templates">Llama 2 &amp;amp; Llama 3 Templates</a></li>
+<li class="toc-l3"><a href="#qwen-templates">Qwen Templates</a></li>
+<li class="toc-l3"><a href="#comparison">Comparison</a></li>
+<li class="toc-l2"><a href="#building-a-chat-template-from-scratch">Building a Chat Template from Scratch</a></li>
+<li class="toc-l2"><a href="#loss-masking-in-depth">Loss Masking in Depth</a></li>
+<li class="toc-l3"><a href="#why-mask-the-prompt">Why Mask the Prompt?</a></li>
+<li class="toc-l3"><a href="#the-loss-computation-with-a-mask">The Loss Computation with a Mask</a></li>
+<li class="toc-l3"><a href="#multi-turn-loss-masking">Multi-Turn Loss Masking</a></li>
+<li class="toc-l2"><a href="#system-prompts-and-role-tokens">System Prompts and Role Tokens</a></li>
+<li class="toc-l3"><a href="#the-system-turn">The System Turn</a></li>
+<li class="toc-l3"><a href="#role-tokens-as-special-tokens">Role Tokens as Special Tokens</a></li>
+<li class="toc-l2"><a href="#sequence-packing">Sequence Packing</a></li>
+<li class="toc-l3"><a href="#the-problem-with-padding">The Problem with Padding</a></li>
+<li class="toc-l3"><a href="#pack-then-truncate">Pack-Then-Truncate</a></li>
+<li class="toc-l3"><a href="#attention-boundaries-preventing-cross-document-leakage">Attention Boundaries: Preventing Cross-Document Leakage</a></li>
+<li class="toc-l2"><a href="#tool-call-formatting">Tool-Call Formatting</a></li>
+<li class="toc-l3"><a href="#the-tool-use-turn">The Tool-Use Turn</a></li>
+<li class="toc-l3"><a href="#loss-masking-for-tool-calls">Loss Masking for Tool Calls</a></li>
+<li class="toc-l2"><a href="#putting-it-all-together-a-training-ready-collator">Putting It All Together: A Training-Ready Collator</a></li>
+<li class="toc-l2"><a href="#practical-checklist-for-template-consistency">Practical Checklist for Template Consistency</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

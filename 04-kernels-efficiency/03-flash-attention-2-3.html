@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8 — The LLM Stack</title>
+<meta name="description" content="FA2: better parallelism over seqlen, fewer non-matmul FLOPs, warp partitioning. FA3 (Hopper): warp-specialization, producer/consumer with TMA, async, FP8 attent">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="active" href="03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IV — Kernels, Efficiency &amp; Quantization</div>
+<h1 id="43-flashattention-2-3-work-partitioning-warp-specialization-fp8">4.3 FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8<a class="headerlink" href="#43-flashattention-2-3-work-partitioning-warp-specialization-fp8" title="Permanent link">¶</a></h1>
+<p>FlashAttention I (covered in <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a>) solved the <em>memory</em> problem: by tiling the attention computation and keeping the intermediate softmax statistics in on-chip SRAM, it computes exact attention without ever materializing the <span class="arithmatex">\(N \times N\)</span> score matrix in high-bandwidth memory (HBM). That single idea — fuse the whole attention into one kernel, never write the scores out — is the foundation everything in this chapter builds on.</p>
+<p>But FlashAttention-1 (FA1) left a lot of GPU performance on the table. Measured against the device&rsquo;s peak matmul throughput, the original kernel ran at roughly 25–40% of the GPU&rsquo;s FLOP ceiling on an A100, while a well-tuned dense GEMM hits 80–90%. The gap is not memory traffic — FA1 already minimized that. The gap is <em>occupancy and instruction mix</em>: the kernel was leaving compute units idle and burning too many cycles on non-matmul arithmetic. FlashAttention-2 (FA2, Dao 2023) closes most of that gap on Ampere with three changes to <em>how the work is partitioned</em>. FlashAttention-3 (FA3, Shah et al. 2024) then exploits hardware features specific to NVIDIA&rsquo;s Hopper architecture — asynchronous tensor-core instructions, the Tensor Memory Accelerator (TMA), and FP8 tensor cores — to push utilization to roughly 75% of bf16 peak and into the petaFLOP range with FP8.</p>
+<p>This chapter is about the <em>systems engineering</em> of attention kernels. We assume you already understand the online-softmax recurrence; here we focus on <strong>work partitioning</strong> (which thread does what), <strong>warp specialization</strong> (producer/consumer pipelines), and <strong>low-precision attention</strong> (FP8 with incoherent processing). To follow the hardware reasoning, keep <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a> and <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a> nearby — we lean heavily on the concepts of warps, warp-groups, shared memory, register pressure, and arithmetic intensity.</p>
+<h2 id="what-flashattention-1-left-on-the-table">What FlashAttention-1 left on the table<a class="headerlink" href="#what-flashattention-1-left-on-the-table" title="Permanent link">¶</a></h2>
+<p>Let us restate the FA1 inner loop precisely, because the FA2 improvements are best understood as edits to it. We tile the query into blocks of <span class="arithmatex">\(B_r\)</span> rows and the keys/values into blocks of <span class="arithmatex">\(B_c\)</span> columns. For a fixed query block <span class="arithmatex">\(Q_i\)</span> we loop over all key blocks <span class="arithmatex">\(K_j, V_j\)</span>, maintaining a running max <span class="arithmatex">\(m\)</span>, running denominator <span class="arithmatex">\(\ell\)</span>, and a running unnormalized output accumulator <span class="arithmatex">\(O\)</span>:</p>
+<div class="arithmatex">\[
+S_{ij} = Q_i K_j^\top, \quad m^{\text{new}} = \max(m, \operatorname{rowmax}(S_{ij})), \quad P_{ij} = \exp(S_{ij} - m^{\text{new}})
+\]</div>
+<div class="arithmatex">\[
+\ell^{\text{new}} = e^{m - m^{\text{new}}}\,\ell + \operatorname{rowsum}(P_{ij}), \qquad O^{\text{new}} = e^{m - m^{\text{new}}}\,O + P_{ij} V_j
+\]</div>
+<p>After the last key block, the final output is <span class="arithmatex">\(O / \ell\)</span>. This is exact attention — the online recurrence reproduces the global softmax. Three inefficiencies hide in this loop.</p>
+<p><strong>1. The rescaling does too much non-matmul work.</strong> Every inner iteration multiplies the accumulator <span class="arithmatex">\(O\)</span> by the correction factor <span class="arithmatex">\(e^{m - m^{\text{new}}}\)</span>. On a GPU, FLOPs are <em>not</em> fungible: a tensor-core matmul instruction on an A100 runs at ~312 TFLOP/s in bf16, but the same hardware executes element-wise transcendental and multiply operations on the much slower CUDA cores at perhaps 1/16<sup>th</sup> that rate. So the <span class="arithmatex">\(\exp\)</span>, the rowmax, and the per-iteration rescale — though they are a small <em>fraction</em> of total FLOPs — consume a disproportionate share of <em>time</em>. FA1 rescales <span class="arithmatex">\(O\)</span> once per inner iteration; that is more non-matmul work than necessary.</p>
+<p><strong>2. The parallelization wastes blocks.</strong> FA1 parallelized over the batch and head dimensions and over query blocks, assigning one thread block per <span class="arithmatex">\((\text{batch},\text{head},\text{query-block})\)</span>. The number of these is <code>batch * heads * (seqlen / B_r)</code>. For training large models with long sequences, batch-times-heads can be small (you trade batch for sequence length), so the grid may not have enough thread blocks to fill all the streaming multiprocessors (SMs). An A100 has 108 SMs; if your grid launches only 60 thread blocks, 44% of the chip is idle.</p>
+<p><strong>3. Work is split badly across warps inside a block.</strong> A thread block on Ampere is typically 4 or 8 warps (128–256 threads). FA1 split the <em>key/value</em> block across warps: each warp computed <span class="arithmatex">\(Q_i K_j^\top\)</span> for a slice of columns. But then every warp needs the full <span class="arithmatex">\(Q_i\)</span> in registers, and after computing its partial <span class="arithmatex">\(P V\)</span> the warps must <em>communicate through shared memory</em> to combine results, because each warp owns a column-slice of the scores but the output reduction is along columns. This shared-memory round trip — the so-called &ldquo;split-K&rdquo; pattern — stalls the warps and adds synchronization.</p>
+<p>FA2 fixes all three. None of these changes touch the math; they change <em>who computes what, in what order</em>.</p>
+<h2 id="flashattention-2-three-edits-to-the-inner-loop">FlashAttention-2: three edits to the inner loop<a class="headerlink" href="#flashattention-2-three-edits-to-the-inner-loop" title="Permanent link">¶</a></h2>
+<h3 id="edit-1-defer-the-rescaling">Edit 1 — defer the rescaling<a class="headerlink" href="#edit-1-defer-the-rescaling" title="Permanent link">¶</a></h3>
+<p>The first FA2 trick removes the per-iteration accumulator rescale. Instead of keeping <span class="arithmatex">\(O\)</span> correctly normalized at every step, we keep an <strong>unnormalized</strong> accumulator and only divide by <span class="arithmatex">\(\ell\)</span> once at the very end.</p>
+<p>Look again at the recurrence. The accumulator update is <span class="arithmatex">\(O^{\text{new}} = e^{m - m^{\text{new}}} O + P_{ij} V_j\)</span>. The factor <span class="arithmatex">\(e^{m - m^{\text{new}}}\)</span> must still be applied — it corrects for the change in the running max — so we cannot drop it. But the <em>normalization by <span class="arithmatex">\(\ell\)</span></em> can be deferred. In FA1&rsquo;s framing the normalization and the max-correction were tangled together; FA2 separates them. The accumulator is held as <span class="arithmatex">\(\tilde{O}\)</span> (unnormalized), and we only compute <span class="arithmatex">\(O_i = \tilde{O}_i / \ell_i\)</span> after the key loop finishes. This removes one full division per element per inner iteration and replaces it with a single division at the end.</p>
+<p>More importantly, FA2 reorganizes which operations are on the critical path so that the bulk of the inner loop is two back-to-back matmuls (<span class="arithmatex">\(Q K^\top\)</span> then <span class="arithmatex">\(P V\)</span>) with the minimum possible scalar work between them. The rule of thumb: <strong>keep the tensor cores fed; do everything else as rarely as possible.</strong></p>
+<p>Here is a from-scratch, runnable reference implementation in pure PyTorch that mirrors the FA2 dataflow. It is not fast — it is meant to make the bookkeeping unambiguous so you can map it onto the CUDA kernel.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">flash_attention_2_reference</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">Br</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">Bc</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Exact attention via the FlashAttention-2 recurrence.</span>
+<span class="sd">    Q, K, V: (N, d). Returns O: (N, d).</span>
+
+<span class="sd">    Mirrors the FA2 dataflow:</span>
+<span class="sd">      - outer loop over QUERY blocks (this is the parallel axis on the GPU)</span>
+<span class="sd">      - inner loop over KEY/VALUE blocks</span>
+<span class="sd">      - the output accumulator is kept UNNORMALIZED and divided by l only at the end</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">N</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">Q</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">O</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">Q</span><span class="p">)</span>
+    <span class="c1"># running statistics, one per query row</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">Br</span><span class="p">):</span>
+        <span class="n">qi</span> <span class="o">=</span> <span class="n">Q</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="n">Br</span><span class="p">]</span>                          <span class="c1"># (Br, d)</span>
+        <span class="n">Oi</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">qi</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">d</span><span class="p">)</span>        <span class="c1"># UNNORMALIZED accumulator</span>
+        <span class="n">mi</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">qi</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],),</span> <span class="o">-</span><span class="nb">float</span><span class="p">(</span><span class="s1">&#39;inf&#39;</span><span class="p">))</span>   <span class="c1"># running max</span>
+        <span class="n">li</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">qi</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>           <span class="c1"># running denominator (sum of exp)</span>
+
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">Bc</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">causal</span> <span class="ow">and</span> <span class="n">j</span> <span class="o">&gt;</span> <span class="n">i</span> <span class="o">+</span> <span class="n">Br</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="k">break</span>                            <span class="c1"># whole key block is in the future</span>
+            <span class="n">kj</span> <span class="o">=</span> <span class="n">K</span><span class="p">[</span><span class="n">j</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="n">Bc</span><span class="p">]</span>                       <span class="c1"># (Bc, d)</span>
+            <span class="n">vj</span> <span class="o">=</span> <span class="n">V</span><span class="p">[</span><span class="n">j</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="n">Bc</span><span class="p">]</span>                       <span class="c1"># (Bc, d)</span>
+
+            <span class="c1"># ---- matmul 1: scores ----</span>
+            <span class="n">Sij</span> <span class="o">=</span> <span class="p">(</span><span class="n">qi</span> <span class="o">@</span> <span class="n">kj</span><span class="o">.</span><span class="n">T</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">d</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>       <span class="c1"># (Br, Bc)</span>
+            <span class="k">if</span> <span class="n">causal</span><span class="p">:</span>
+                <span class="c1"># mask future positions inside the diagonal block</span>
+                <span class="n">qpos</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">i</span><span class="o">+</span><span class="n">qi</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+                <span class="n">kpos</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">j</span><span class="p">,</span> <span class="n">j</span><span class="o">+</span><span class="n">kj</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+                <span class="n">Sij</span> <span class="o">=</span> <span class="n">Sij</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">kpos</span> <span class="o">&gt;</span> <span class="n">qpos</span><span class="p">,</span> <span class="o">-</span><span class="nb">float</span><span class="p">(</span><span class="s1">&#39;inf&#39;</span><span class="p">))</span>
+
+            <span class="c1"># ---- online softmax statistics ----</span>
+            <span class="n">mij</span> <span class="o">=</span> <span class="n">Sij</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">values</span>                  <span class="c1"># block rowmax</span>
+            <span class="n">mi_new</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">mi</span><span class="p">,</span> <span class="n">mij</span><span class="p">)</span>
+            <span class="n">Pij</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">Sij</span> <span class="o">-</span> <span class="n">mi_new</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>   <span class="c1"># (Br, Bc)</span>
+            <span class="n">alpha</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">mi</span> <span class="o">-</span> <span class="n">mi_new</span><span class="p">)</span>               <span class="c1"># correction factor</span>
+
+            <span class="c1"># rescale running denom and accumulator by alpha</span>
+            <span class="n">li</span> <span class="o">=</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">li</span> <span class="o">+</span> <span class="n">Pij</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+            <span class="c1"># ---- matmul 2: weighted values, accumulated UNNORMALIZED ----</span>
+            <span class="n">Oi</span> <span class="o">=</span> <span class="n">alpha</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">Oi</span> <span class="o">+</span> <span class="n">Pij</span> <span class="o">@</span> <span class="n">vj</span>      <span class="c1"># (Br, d)</span>
+
+            <span class="n">mi</span> <span class="o">=</span> <span class="n">mi_new</span>
+
+        <span class="c1"># single normalization at the very end (FA2&#39;s deferred division)</span>
+        <span class="n">O</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="n">qi</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span> <span class="o">=</span> <span class="n">Oi</span> <span class="o">/</span> <span class="n">li</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">O</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">N</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">64</span>
+    <span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+    <span class="n">ref</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">Q</span> <span class="o">@</span> <span class="n">K</span><span class="o">.</span><span class="n">T</span> <span class="o">/</span> <span class="n">d</span><span class="o">**</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span> <span class="o">@</span> <span class="n">V</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">flash_attention_2_reference</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;max abs error vs dense softmax:&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">ref</span> <span class="o">-</span> <span class="n">out</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+    <span class="c1"># prints something like 1e-6 — exact attention up to floating point</span>
+</code></pre></div>
+<p>The single line <code>Oi = alpha.unsqueeze(1) * Oi + Pij @ vj</code> plus the final <code>Oi / li</code> is the heart of the deferred-normalization scheme. Compare it to FA1, which would divide inside the loop. The savings are not the division per se but the <em>register and instruction budget</em> freed up for the tensor cores.</p>
+<h3 id="edit-2-parallelize-over-the-sequence-dimension">Edit 2 — parallelize over the sequence dimension<a class="headerlink" href="#edit-2-parallelize-over-the-sequence-dimension" title="Permanent link">¶</a></h3>
+<p>FA2&rsquo;s second change is at the <em>grid</em> level, not inside the kernel. FA1 assigned one thread block per query block but did not use sequence-length parallelism beyond that. FA2 makes the <strong>outer loop over query blocks the parallel axis</strong> and additionally allows splitting along sequence length so that the grid has enough thread blocks to saturate every SM even when batch and heads are small.</p>
+<p>Concretely, the FA2 launch grid is three-dimensional:</p>
+<div class="highlight"><pre><span></span><code>gridDim = (ceil(seqlen_q / Br),   num_heads,   batch_size)
+</code></pre></div>
+<p>Each thread block owns one query block for one (head, batch) and loops over <em>all</em> key blocks itself. Because the query-block axis is now first and independent, long sequences directly produce more thread blocks. For a sequence of 8192 tokens with <code>Br = 64</code>, that is 128 query blocks <em>per head per batch element</em> — easily enough to fill 108 SMs even at batch=1, head=1.</p>
+<p>For the <em>backward</em> pass the story is subtler. The backward pass needs to accumulate gradients <span class="arithmatex">\(dK\)</span> and <span class="arithmatex">\(dV\)</span>, which are reductions over query blocks. FA2 parallelizes the backward over <em>key/value</em> blocks (so each thread block owns a <span class="arithmatex">\(K_j, V_j\)</span> and loops over query blocks), avoiding atomic adds into <span class="arithmatex">\(dK, dV\)</span>. The asymmetry — forward parallel over queries, backward parallel over keys — is a recurring theme in attention kernels: pick the parallel axis that makes the reduction local.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: why causal masking is a load-balancing problem</p>
+<p>With a causal mask, query block <span class="arithmatex">\(i\)</span> only attends to key blocks <span class="arithmatex">\(j \le i\)</span>. So the <em>amount of work per query block grows linearly with <span class="arithmatex">\(i\)</span></em>: the first query block does one inner iteration, the last does many. If you naively map query blocks to SMs, the SMs handling early query blocks finish quickly and sit idle while late ones grind on — a classic load imbalance. FA2 mitigates this by skipping fully-masked key blocks entirely (the <code>break</code> in the reference code) and by scheduling so that long and short query blocks are interleaved across SMs. This is why a causal FlashAttention forward is roughly <em>half</em> the FLOPs of a full one, but only if the scheduler actually exploits the triangular structure.</p>
+</div>
+<h3 id="edit-3-partition-warps-over-queries-not-keys">Edit 3 — partition warps over queries, not keys<a class="headerlink" href="#edit-3-partition-warps-over-queries-not-keys" title="Permanent link">¶</a></h3>
+<p>The third FA2 change is the most hardware-specific and the one that gives the kernel its &ldquo;warp partitioning&rdquo; name. Recall a thread block on Ampere has, say, 4 warps. The question is how to divide the <span class="arithmatex">\(B_r \times B_c\)</span> tile of work among them.</p>
+<p>FA1 used the <strong>split-K</strong> layout: each warp computes <span class="arithmatex">\(Q_i K_j^\top\)</span> for <em>all</em> <span class="arithmatex">\(B_r\)</span> query rows but only a slice of the <span class="arithmatex">\(B_c\)</span> key columns. The problem: after the second matmul <span class="arithmatex">\(P_{ij} V_j\)</span>, the partial outputs from different warps must be summed (they hold partial sums over disjoint key columns), and that reduction goes through shared memory with a synchronization barrier. Every inner iteration pays for a shared-memory write, a <code>__syncthreads()</code>, and a read.</p>
+<p>FA2 flips this to the <strong>split-Q</strong> layout (sometimes called &ldquo;warp partitioning over rows&rdquo;): each warp owns a slice of the <span class="arithmatex">\(B_r\)</span> query rows and computes the <em>full</em> row of scores and output for those rows. Now warp 0 produces the final output for query rows 0–15, warp 1 for rows 16–31, and so on — <em>no inter-warp reduction is needed</em>, because each warp&rsquo;s rows are independent. <span class="arithmatex">\(K_j\)</span> and <span class="arithmatex">\(V_j\)</span> are shared across warps (read from shared memory), but there is no write-back-and-sum.</p>
+<div class="highlight"><pre><span></span><code>SPLIT-K (FA1)                           SPLIT-Q (FA2)
+each warp: all Br rows, slice of cols    each warp: slice of Br rows, all cols
+
+  Q_i (all rows)                          Q_i rows 0-15  -&gt; warp 0  (full output)
+   |                                      Q_i rows 16-31 -&gt; warp 1  (full output)
+   v                                      Q_i rows 32-47 -&gt; warp 2  (full output)
+  K_j cols 0-15  -&gt; warp 0  (partial)     Q_i rows 48-63 -&gt; warp 3  (full output)
+  K_j cols 16-31 -&gt; warp 1  (partial)
+   ...                                    K_j / V_j: SHARED across warps (read-only)
+  REDUCE across warps via shared mem  &lt;-- no reduction needed
+  + __syncthreads()                       no extra __syncthreads in the hot path
+</code></pre></div>
+<p>Removing that per-iteration synchronization and shared-memory traffic is worth a large fraction of FA2&rsquo;s speedup. The cost is that each warp needs the <span class="arithmatex">\(K_j, V_j\)</span> tile available; FA2 keeps those in shared memory and lets all warps read them, which is exactly what shared memory is good at (broadcast reads).</p>
+<p>Putting the three edits together, FA2 roughly doubles FA1&rsquo;s throughput on A100, reaching on the order of 50–73% of theoretical bf16 matmul peak depending on head dimension and sequence length. In practice you never write this yourself — you call the library:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="c1"># PyTorch&#39;s scaled_dot_product_attention dispatches to a FlashAttention-2</span>
+<span class="c1"># backend on Ampere+/CUDA when the inputs qualify (fp16/bf16, head_dim &lt;= 256,</span>
+<span class="c1"># contiguous, etc.). This is the FA2 kernel in production form.</span>
+<span class="n">q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">8192</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>  <span class="c1"># (B,H,N,d)</span>
+<span class="n">k</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+<span class="n">v</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">attention</span><span class="o">.</span><span class="n">sdpa_kernel</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">attention</span><span class="o">.</span><span class="n">SDPBackend</span><span class="o">.</span><span class="n">FLASH_ATTENTION</span><span class="p">):</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">scaled_dot_product_attention</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">is_causal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>  <span class="c1"># (2, 16, 8192, 128)</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: how much does the non-matmul work matter?</p>
+<p>Take one attention head with sequence length <span class="arithmatex">\(N = 8192\)</span> and head dimension <span class="arithmatex">\(d = 128\)</span>, full (non-causal) attention. The two matmuls <span class="arithmatex">\(QK^\top\)</span> and <span class="arithmatex">\(PV\)</span> cost about <span class="arithmatex">\(2 \cdot 2 N^2 d = 4 N^2 d\)</span> FLOPs (a factor 2 per matmul for multiply-add). Plug in:</p>
+<div class="arithmatex">\[
+4 N^2 d = 4 \cdot (8192)^2 \cdot 128 \approx 3.4 \times 10^{10}\ \text{matmul FLOPs}.
+\]</div>
+<p>The softmax non-matmul work — one <span class="arithmatex">\(\exp\)</span>, one max, one sum, one rescale per score — is on the order of a handful of FLOPs per score, so roughly <span class="arithmatex">\(c \cdot N^2\)</span> with <span class="arithmatex">\(c \approx 5\)</span>:</p>
+<div class="arithmatex">\[
+5 N^2 = 5 \cdot (8192)^2 \approx 3.4 \times 10^8\ \text{non-matmul FLOPs}.
+\]</div>
+<p>So non-matmul work is only ~1% of the FLOP <em>count</em>. But on an A100, suppose tensor cores run at 312 TFLOP/s and the special-function unit handling <span class="arithmatex">\(\exp\)</span> runs at ~20 TFLOP/s. The matmul takes <span class="arithmatex">\(3.4\times10^{10} / 3.12\times10^{14} \approx 109\ \mu s\)</span>; the non-matmul takes <span class="arithmatex">\(3.4\times10^{8} / 2.0\times10^{13} \approx 17\ \mu s\)</span>. That &ldquo;1% of FLOPs&rdquo; is suddenly <strong>~14% of the runtime</strong> if it is on the critical path. This is exactly why FA2 fights to minimize and overlap the softmax work, and why FA3&rsquo;s overlapping of matmul and softmax (below) matters so much.</p>
+</div>
+<h2 id="flashattention-3-exploiting-hopper">FlashAttention-3: exploiting Hopper<a class="headerlink" href="#flashattention-3-exploiting-hopper" title="Permanent link">¶</a></h2>
+<p>FA2 is close to optimal <em>for Ampere&rsquo;s programming model</em>, where the tensor-core instruction (<code>mma</code>) is synchronous: a warp issues it and waits for the result. NVIDIA&rsquo;s Hopper architecture (H100) added new hardware that breaks that synchronous assumption, and FA3 is essentially &ldquo;FA2 rewritten to use everything Hopper offers.&rdquo; Three Hopper features matter.</p>
+<p><strong>Warpgroup-wide asynchronous matmul (WGMMA).</strong> Hopper&rsquo;s <code>wgmma</code> instruction is issued by a <em>warpgroup</em> (4 warps = 128 threads acting together) and runs <em>asynchronously</em>: the warpgroup issues it, then continues executing other instructions while the tensor cores grind, and later waits on the result. This is the key that lets us overlap matmul with softmax.</p>
+<p><strong>The Tensor Memory Accelerator (TMA).</strong> TMA is a dedicated hardware unit that performs bulk asynchronous copies between global memory and shared memory, with the address generation done in hardware. Instead of every thread computing addresses and issuing loads, a single thread kicks off a TMA copy of a whole tile and the unit streams it in the background. This frees the warps from address arithmetic and overlaps data movement with compute.</p>
+<p><strong>FP8 tensor cores.</strong> Hopper tensor cores can do matmuls in 8-bit floating point (<code>e4m3</code>/<code>e5m2</code>), roughly doubling throughput over bf16 — on the order of ~2 PFLOP/s for FP8 on an H100 versus ~1 PFLOP/s bf16 (dense). For attention, where the matmuls dominate, FP8 is a huge prize <em>if</em> you can manage the accuracy.</p>
+<p>FA3&rsquo;s design is built around two ideas: <strong>warp specialization</strong> (a producer/consumer pipeline) and <strong>overlapping the two matmuls with the softmax</strong>.</p>
+<h3 id="warp-specialization-producerconsumer-with-tma">Warp specialization: producer/consumer with TMA<a class="headerlink" href="#warp-specialization-producerconsumer-with-tma" title="Permanent link">¶</a></h3>
+<p>In FA2, every warp does the same thing: load, matmul, softmax, matmul. FA3 instead <strong>specializes</strong> warps into roles, turning the thread block into a software pipeline.</p>
+<ul>
+<li><strong>Producer warps</strong> do almost no compute. Their job is to issue TMA loads that stream the next <span class="arithmatex">\(K_j, V_j\)</span> tiles from HBM into a circular buffer in shared memory, staying one or two stages ahead of consumption.</li>
+<li><strong>Consumer warpgroups</strong> do the math. They wait until a tile is present in the shared-memory buffer (signaled by the producer via an asynchronous barrier), then run <code>wgmma</code> for <span class="arithmatex">\(QK^\top\)</span>, the softmax, and <code>wgmma</code> for <span class="arithmatex">\(PV\)</span>.</li>
+</ul>
+<p>This is the classic <strong>producer/consumer</strong> decoupling. Because the producer uses TMA (which is asynchronous and doesn&rsquo;t occupy the tensor cores or the math pipes), data movement for iteration <span class="arithmatex">\(j+1\)</span> happens <em>while</em> the consumer computes iteration <span class="arithmatex">\(j\)</span>. The shared-memory buffer is a small ring (often 2–3 stages deep); synchronization uses Hopper&rsquo;s <code>mbarrier</code> asynchronous transaction barriers rather than <code>__syncthreads()</code>.</p>
+<div class="highlight"><pre><span></span><code>                         shared-memory ring buffer (stages 0,1,2)
+   PRODUCER warps   --TMA--&gt;  [ K0 V0 | K1 V1 | K2 V2 ]  --read--&gt;  CONSUMER warpgroups
+   (issue async copies,                                            (wgmma QK^T, softmax,
+    stay ahead)         &lt;-- &quot;buffer empty&quot; signal (mbarrier) --     wgmma PV, advance)
+
+   time ---&gt;
+   prod:  load0  load1  load2  load3  load4 ...
+   cons:         gemm0  gemm1  gemm2  gemm3 ...   (always one step behind, never starved)
+</code></pre></div>
+<p>The payoff: the tensor cores rarely stall waiting for data, and the warps doing math never spend cycles on address generation. Register usage is also better balanced — Hopper lets you <em>reallocate</em> registers between warpgroups (<code>setmaxnreg</code>), giving the compute warpgroups more registers and the producer warps fewer.</p>
+<h3 id="overlapping-the-two-matmuls-with-softmax-ping-pong-pipelined">Overlapping the two matmuls with softmax (ping-pong &amp; pipelined)<a class="headerlink" href="#overlapping-the-two-matmuls-with-softmax-ping-pong-pipelined" title="Permanent link">¶</a></h3>
+<p>The deeper FA3 trick attacks the worked-example problem above: the softmax (an <span class="arithmatex">\(\exp\)</span>-heavy non-matmul op running on the slow special-function units) sits <em>between</em> the two matmuls and stalls the tensor cores. FA3 overlaps them in two complementary ways.</p>
+<p><strong>Inter-warpgroup &ldquo;ping-pong&rdquo; scheduling.</strong> With two consumer warpgroups, FA3 staggers them so that while warpgroup 1 is doing its softmax (on the special-function units / CUDA cores), warpgroup 2 is doing its <code>wgmma</code> (on the tensor cores), and then they swap. Because softmax uses different execution units than the matmul, the two warpgroups interleave to keep <em>both</em> unit types busy. The scheduler uses synchronization barriers to force this alternation, so the tensor cores are almost never idle waiting on an <span class="arithmatex">\(\exp\)</span>.</p>
+<div class="highlight"><pre><span></span><code>PING-PONG across two consumer warpgroups (WG):
+
+WG1:  GEMM(QK)  | softmax  | GEMM(PV) | GEMM(QK)  | softmax  | ...
+WG2:  ........  | GEMM(QK) | softmax  | GEMM(PV)  | GEMM(QK) | ...
+            ^ while WG1 does softmax (SFU), WG2 does GEMM (tensor cores)
+              -&gt; tensor cores and SFUs both stay busy
+</code></pre></div>
+<p><strong>Intra-warpgroup pipelining.</strong> Within a single warpgroup, FA3 also software-pipelines across inner-loop iterations: the <span class="arithmatex">\(QK^\top\)</span> matmul of iteration <span class="arithmatex">\(j+1\)</span> is issued (asynchronously, via <code>wgmma</code>) <em>before</em> the softmax of iteration <span class="arithmatex">\(j\)</span> finishes, so the score matmul for the next block overlaps the current block&rsquo;s exponentiation. Because <code>wgmma</code> is asynchronous, you issue it and move on; the dependency is resolved later by a wait. This is exactly the kind of overlap that is <em>impossible</em> on Ampere, where <code>mma</code> is synchronous.</p>
+<p>The combination — TMA-fed producer/consumer plus matmul/softmax overlap — is why FA3 reaches roughly 75% of H100 bf16 peak (on the order of 700+ TFLOP/s) where FA2 on the same hardware sits closer to 35–45%. FA2 simply cannot express the overlap; it was designed for a synchronous instruction set.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: FA2 on Hopper is leaving half the chip idle</p>
+<p>A frequent surprise: you upgrade from A100 to H100, keep using the FA2 kernel, and see far less than the expected speedup. The reason is that FA2&rsquo;s synchronous structure cannot use <code>wgmma</code> overlap or TMA, so on Hopper it under-utilizes the tensor cores badly. The fix is to use a kernel built for Hopper (the FA3 kernel, or cuDNN&rsquo;s Hopper attention, or a Triton/CUTLASS kernel that targets <code>wgmma</code>). Check which backend your framework actually dispatches to — &ldquo;FlashAttention is enabled&rdquo; does not tell you whether it is the Hopper-optimized path.</p>
+</div>
+<h3 id="a-from-scratch-model-of-the-producerconsumer-pipeline">A from-scratch model of the producer/consumer pipeline<a class="headerlink" href="#a-from-scratch-model-of-the-producerconsumer-pipeline" title="Permanent link">¶</a></h3>
+<p>You cannot write <code>wgmma</code> in Python, but you <em>can</em> simulate the dataflow to internalize the dependency structure. The following models the ring buffer and the producer/consumer roles, computing exact attention while showing how a consumer is &ldquo;always one step behind&rdquo; the producer.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">deque</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fa3_pipeline_model</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">Bc</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">n_stages</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A *dataflow model* of FA3&#39;s producer/consumer pipeline for one query block.</span>
+<span class="sd">    It does NOT use real async hardware; it shows the ordering:</span>
+<span class="sd">      - producer &#39;prefetches&#39; up to n_stages KV tiles into a ring buffer</span>
+<span class="sd">      - consumer pops a tile only after it is present, then does the GEMMs/softmax</span>
+<span class="sd">    Result is exact attention for the single query block Q.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">N</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">K</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">ring</span> <span class="o">=</span> <span class="n">deque</span><span class="p">()</span>                      <span class="c1"># the shared-memory ring buffer of (Kj, Vj)</span>
+    <span class="n">Oi</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">Q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">d</span><span class="p">)</span>     <span class="c1"># unnormalized accumulator</span>
+    <span class="n">mi</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">Q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],),</span> <span class="o">-</span><span class="nb">float</span><span class="p">(</span><span class="s1">&#39;inf&#39;</span><span class="p">))</span>
+    <span class="n">li</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">Q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+    <span class="n">key_blocks</span> <span class="o">=</span> <span class="p">[(</span><span class="n">j</span><span class="p">,</span> <span class="n">K</span><span class="p">[</span><span class="n">j</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="n">Bc</span><span class="p">],</span> <span class="n">V</span><span class="p">[</span><span class="n">j</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="n">Bc</span><span class="p">])</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">Bc</span><span class="p">)]</span>
+    <span class="n">it</span> <span class="o">=</span> <span class="nb">iter</span><span class="p">(</span><span class="n">key_blocks</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">produce</span><span class="p">():</span>                      <span class="c1"># PRODUCER: issue one &quot;TMA load&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">ring</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">next</span><span class="p">(</span><span class="n">it</span><span class="p">))</span>       <span class="c1"># copy a KV tile into the ring</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        <span class="k">except</span> <span class="ne">StopIteration</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="c1"># prime the pipeline: producer runs ahead by n_stages</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_stages</span><span class="p">):</span>
+        <span class="n">produce</span><span class="p">()</span>
+
+    <span class="k">while</span> <span class="n">ring</span><span class="p">:</span>                         <span class="c1"># CONSUMER drains the ring</span>
+        <span class="n">j</span><span class="p">,</span> <span class="n">kj</span><span class="p">,</span> <span class="n">vj</span> <span class="o">=</span> <span class="n">ring</span><span class="o">.</span><span class="n">popleft</span><span class="p">()</span>      <span class="c1"># wait-for-tile then take it</span>
+        <span class="n">produce</span><span class="p">()</span>                       <span class="c1"># producer refills behind the consumer</span>
+
+        <span class="n">Sij</span> <span class="o">=</span> <span class="p">(</span><span class="n">Q</span> <span class="o">@</span> <span class="n">kj</span><span class="o">.</span><span class="n">T</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">d</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>          <span class="c1"># wgmma #1 (async on real HW)</span>
+        <span class="n">mij</span> <span class="o">=</span> <span class="n">Sij</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">values</span>
+        <span class="n">mi_new</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">mi</span><span class="p">,</span> <span class="n">mij</span><span class="p">)</span>
+        <span class="n">Pij</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">Sij</span> <span class="o">-</span> <span class="n">mi_new</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>   <span class="c1"># softmax on SFU (overlapped)</span>
+        <span class="n">alpha</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">mi</span> <span class="o">-</span> <span class="n">mi_new</span><span class="p">)</span>
+        <span class="n">li</span> <span class="o">=</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">li</span> <span class="o">+</span> <span class="n">Pij</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">Oi</span> <span class="o">=</span> <span class="n">alpha</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">Oi</span> <span class="o">+</span> <span class="n">Pij</span> <span class="o">@</span> <span class="n">vj</span>      <span class="c1"># wgmma #2 (async on real HW)</span>
+        <span class="n">mi</span> <span class="o">=</span> <span class="n">mi_new</span>
+
+    <span class="k">return</span> <span class="n">Oi</span> <span class="o">/</span> <span class="n">li</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">N</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span> <span class="mi">64</span>
+    <span class="n">Q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="n">d</span><span class="p">);</span> <span class="n">K</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">);</span> <span class="n">V</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+    <span class="n">ref</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">Q</span> <span class="o">@</span> <span class="n">K</span><span class="o">.</span><span class="n">T</span> <span class="o">/</span> <span class="n">d</span><span class="o">**</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span> <span class="o">@</span> <span class="n">V</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">fa3_pipeline_model</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;max abs error:&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">ref</span> <span class="o">-</span> <span class="n">out</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>  <span class="c1"># ~1e-6</span>
+</code></pre></div>
+<p>The takeaway is the ordering: <code>produce()</code> is called <em>before</em> the consumer touches the tile, and again <em>after</em> it pops one, so the buffer stays full and the consumer never waits. On real Hopper hardware the <code>produce()</code> is a TMA instruction that the GPU executes concurrently with the consumer&rsquo;s <code>wgmma</code>s.</p>
+<h2 id="fp8-attention-and-incoherent-processing">FP8 attention and incoherent processing<a class="headerlink" href="#fp8-attention-and-incoherent-processing" title="Permanent link">¶</a></h2>
+<p>The biggest single lever in FA3 is FP8. Hopper&rsquo;s FP8 tensor cores roughly double matmul throughput, and since attention is matmul-bound, FP8 attention can nearly double the kernel&rsquo;s speed. But naive FP8 attention is <em>inaccurate</em>, and FA3 introduces a specific technique — borrowed from quantization literature — to make it usable.</p>
+<h3 id="why-fp8-attention-is-hard">Why FP8 attention is hard<a class="headerlink" href="#why-fp8-attention-is-hard" title="Permanent link">¶</a></h3>
+<p>FP8 <code>e4m3</code> has 1 sign bit, 4 exponent bits, 3 mantissa bits — about 3–4 bits of precision, representing a small dynamic range with coarse steps. Two problems arise.</p>
+<p><strong>Outliers blow up the scale.</strong> To quantize a tensor to FP8 you pick a scale <span class="arithmatex">\(s\)</span> so that values map into the representable range. If a few entries of <span class="arithmatex">\(Q\)</span> or <span class="arithmatex">\(K\)</span> are large outliers (and attention activations are notoriously outlier-prone — see <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a>), the scale must stretch to cover them, crushing all the <em>typical</em> values into just a handful of FP8 levels. The quantization error on the bulk of the data explodes.</p>
+<p><strong>Layout mismatch for the second matmul.</strong> FP8 <code>wgmma</code> on Hopper requires specific operand layouts; the probability matrix <span class="arithmatex">\(P\)</span> produced by softmax and the value matrix <span class="arithmatex">\(V\)</span> may not be in the right layout, forcing in-kernel transposes/shuffles. FA3 handles this with byte-permute tricks and careful layout choices, but it is real engineering, not free.</p>
+<h3 id="incoherent-processing-rotate-away-the-outliers">Incoherent processing: rotate away the outliers<a class="headerlink" href="#incoherent-processing-rotate-away-the-outliers" title="Permanent link">¶</a></h3>
+<p>FA3&rsquo;s accuracy fix for the outlier problem is <strong>incoherent processing</strong>, an idea from the QuIP quantization work (Chee et al.). The insight: multiply <span class="arithmatex">\(Q\)</span> and <span class="arithmatex">\(K\)</span> by a random orthogonal matrix <span class="arithmatex">\(M\)</span> before quantizing. Because <span class="arithmatex">\(M\)</span> is orthogonal, <span class="arithmatex">\(M^\top M = I\)</span>, so</p>
+<div class="arithmatex">\[
+(Q M)(K M)^\top = Q M M^\top K^\top = Q K^\top,
+\]</div>
+<p>the attention scores are <em>unchanged</em>. But the rotation <strong>spreads each outlier across many coordinates</strong>: a single huge entry becomes many moderate entries, so no coordinate dominates and the FP8 scale no longer has to stretch to cover an outlier. The quantization becomes far more uniform and the error drops.</p>
+<p>In practice FA3 uses a structured orthogonal matrix that is cheap to apply — a random-sign <strong>Hadamard transform</strong>, <span class="arithmatex">\(M = \frac{1}{\sqrt{d}} H D\)</span>, where <span class="arithmatex">\(H\)</span> is the Hadamard matrix (applied in <span class="arithmatex">\(O(d \log d)\)</span> via the fast Hadamard transform) and <span class="arithmatex">\(D\)</span> is a random diagonal of <span class="arithmatex">\(\pm 1\)</span>. The cost is a small pre-rotation of <span class="arithmatex">\(Q\)</span> and <span class="arithmatex">\(K\)</span>; the benefit is that FP8 attention error approaches that of a properly-scaled quantization without outlier contamination.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">hadamard</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build the n x n (Sylvester) Hadamard matrix; n must be a power of 2.&quot;&quot;&quot;</span>
+    <span class="k">assert</span> <span class="n">n</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">n</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;n must be a power of two&quot;</span>
+    <span class="n">H</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">while</span> <span class="n">H</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">:</span>
+        <span class="n">H</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">H</span><span class="p">,</span>  <span class="n">H</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span>
+                       <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">H</span><span class="p">,</span> <span class="o">-</span><span class="n">H</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">H</span> <span class="o">/</span> <span class="p">(</span><span class="n">H</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>            <span class="c1"># orthonormal: H^T H = I</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">incoherent_rotation</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+    <span class="n">g</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">Generator</span><span class="p">()</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    <span class="n">H</span> <span class="o">=</span> <span class="n">hadamard</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+    <span class="n">D</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">generator</span><span class="o">=</span><span class="n">g</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">)</span>  <span class="c1"># random +-1 signs</span>
+    <span class="k">return</span> <span class="n">H</span> <span class="o">@</span> <span class="n">torch</span><span class="o">.</span><span class="n">diag</span><span class="p">(</span><span class="n">D</span><span class="p">)</span>                   <span class="c1"># M = H D, orthogonal</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fake_fp8_quant</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Crude e4m3-like quantization: per-tensor scale, ~3 mantissa bits.&quot;&quot;&quot;</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">/</span> <span class="mf">448.0</span>                  <span class="c1"># 448 = max finite e4m3 magnitude</span>
+    <span class="k">if</span> <span class="n">s</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">xs</span> <span class="o">=</span> <span class="n">x</span> <span class="o">/</span> <span class="n">s</span>                                 <span class="c1"># bring values into FP8 range</span>
+    <span class="c1"># simulate ~3 mantissa bits by rounding to 2^-3 relative steps</span>
+    <span class="c1"># (illustrative, not a bit-exact e4m3 emulator)</span>
+    <span class="n">mant</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">xs</span> <span class="o">*</span> <span class="mi">8</span><span class="p">)</span> <span class="o">/</span> <span class="mi">8</span>
+    <span class="k">return</span> <span class="n">mant</span> <span class="o">*</span> <span class="n">s</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="mi">128</span>
+    <span class="n">Q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="n">d</span><span class="p">);</span> <span class="n">K</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+    <span class="n">Q</span><span class="p">[:,</span> <span class="mi">7</span><span class="p">]</span> <span class="o">*=</span> <span class="mf">25.0</span><span class="p">;</span> <span class="n">K</span><span class="p">[:,</span> <span class="mi">7</span><span class="p">]</span> <span class="o">*=</span> <span class="mf">25.0</span>           <span class="c1"># inject an outlier feature</span>
+    <span class="n">ref</span> <span class="o">=</span> <span class="n">Q</span> <span class="o">@</span> <span class="n">K</span><span class="o">.</span><span class="n">T</span>
+
+    <span class="c1"># --- FP8 WITHOUT incoherent processing ---</span>
+    <span class="n">err_plain</span> <span class="o">=</span> <span class="p">(</span><span class="n">fake_fp8_quant</span><span class="p">(</span><span class="n">Q</span><span class="p">)</span> <span class="o">@</span> <span class="n">fake_fp8_quant</span><span class="p">(</span><span class="n">K</span><span class="p">)</span><span class="o">.</span><span class="n">T</span> <span class="o">-</span> <span class="n">ref</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+    <span class="c1"># --- FP8 WITH incoherent processing (rotate, quantize, scores invariant) ---</span>
+    <span class="n">M</span> <span class="o">=</span> <span class="n">incoherent_rotation</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+    <span class="n">Qr</span><span class="p">,</span> <span class="n">Kr</span> <span class="o">=</span> <span class="n">Q</span> <span class="o">@</span> <span class="n">M</span><span class="p">,</span> <span class="n">K</span> <span class="o">@</span> <span class="n">M</span>                       <span class="c1"># (QM)(KM)^T == QK^T exactly</span>
+    <span class="n">err_rot</span> <span class="o">=</span> <span class="p">(</span><span class="n">fake_fp8_quant</span><span class="p">(</span><span class="n">Qr</span><span class="p">)</span> <span class="o">@</span> <span class="n">fake_fp8_quant</span><span class="p">(</span><span class="n">Kr</span><span class="p">)</span><span class="o">.</span><span class="n">T</span> <span class="o">-</span> <span class="n">ref</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;mean score error  plain FP8 : </span><span class="si">{</span><span class="n">err_plain</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;mean score error  rotated   : </span><span class="si">{</span><span class="n">err_rot</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># the rotated version has substantially lower error because the</span>
+    <span class="c1"># outlier in feature 7 is spread across all d coordinates</span>
+</code></pre></div>
+<p>Run it and the rotated version shows markedly lower error: the outlier in feature 7, which forced a huge scale and wrecked the plain FP8 matmul, is smeared across all <span class="arithmatex">\(d\)</span> coordinates after the Hadamard rotation. This is the same principle that powers Hadamard-based quantization schemes elsewhere in the stack (QuaRot, SpinQuant); see <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a> and the FP8 training discussion in <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a>.</p>
+<h3 id="what-stays-in-higher-precision">What stays in higher precision<a class="headerlink" href="#what-stays-in-higher-precision" title="Permanent link">¶</a></h3>
+<p>A crucial detail: FA3 does <strong>not</strong> do everything in FP8. The matmul <em>inputs</em> (<span class="arithmatex">\(Q\)</span>, <span class="arithmatex">\(K\)</span>, <span class="arithmatex">\(P\)</span>, <span class="arithmatex">\(V\)</span>) are FP8, but the tensor cores <strong>accumulate in FP32</strong>, and the softmax statistics (<span class="arithmatex">\(m\)</span>, <span class="arithmatex">\(\ell\)</span>) and the running output accumulator are kept in higher precision. You quantize the operands going <em>into</em> the matmul, not the running state. This mixed strategy — low precision for the bandwidth- and throughput-bound multiply, high precision for the sensitive accumulation and the softmax — is the same pattern as bf16 mixed-precision training and is what keeps end-to-end error tolerable.</p>
+<h2 id="comparison-trade-offs-and-when-each-wins">Comparison, trade-offs, and when each wins<a class="headerlink" href="#comparison-trade-offs-and-when-each-wins" title="Permanent link">¶</a></h2>
+<p>It is worth stepping back to place these kernels against each other and against alternatives.</p>
+<table>
+<thead>
+<tr>
+<th>Kernel</th>
+<th>Target HW</th>
+<th>Key mechanism</th>
+<th>Precision</th>
+<th>Rough peak util.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FlashAttention-1</td>
+<td>Ampere (A100)</td>
+<td>IO-aware tiling, online softmax</td>
+<td>fp16/bf16</td>
+<td>~25–40%</td>
+</tr>
+<tr>
+<td>FlashAttention-2</td>
+<td>Ampere (A100)</td>
+<td>deferred rescale, seqlen parallel, split-Q warps</td>
+<td>fp16/bf16</td>
+<td>~50–73%</td>
+</tr>
+<tr>
+<td>FlashAttention-3</td>
+<td>Hopper (H100)</td>
+<td>warp-specialized producer/consumer (TMA), wgmma overlap</td>
+<td>bf16 / FP8</td>
+<td>~75% (bf16); higher FP8</td>
+</tr>
+<tr>
+<td>xFormers mem-efficient</td>
+<td>Ampere+</td>
+<td>tiled attention (similar idea)</td>
+<td>fp16/bf16</td>
+<td>comparable to FA1/FA2</td>
+</tr>
+<tr>
+<td>cuDNN fused attention</td>
+<td>Ampere/Hopper</td>
+<td>vendor kernels, Hopper-aware</td>
+<td>bf16/FP8</td>
+<td>competitive on Hopper</td>
+</tr>
+<tr>
+<td>FlashDecoding</td>
+<td>inference decode</td>
+<td>split-KV parallelism for tiny query</td>
+<td>fp16/bf16</td>
+<td>optimizes decode latency</td>
+</tr>
+</tbody>
+</table>
+<p>A few important clarifications:</p>
+<p><strong>Forward vs backward.</strong> All the FA2/FA3 ideas apply to the <em>forward</em> pass cleanly. The backward pass is harder: it has more matmuls (five vs two), more intermediate quantities, and a different optimal parallelization (over keys, as noted). FA3&rsquo;s FP8 backward in particular is delicate; many production setups run the forward in FP8 but keep the backward in bf16.</p>
+<p><strong>Decode is a different regime.</strong> During autoregressive <em>inference decode</em> the query is a single token (<span class="arithmatex">\(B_r = 1\)</span>), so the <span class="arithmatex">\(QK^\top\)</span> matmul is a matrix-vector product — memory-bound, not compute-bound. FA2&rsquo;s seqlen parallelism over queries does nothing when there is one query. The right tool is <strong>FlashDecoding</strong>, which parallelizes over the <em>KV</em> sequence (split the long KV cache across SMs, each computes a partial softmax, then combine) to keep all SMs busy. This is the same online-softmax combine logic, applied along a different axis. See <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a> and <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>.</p>
+<p><strong>Head dimension matters.</strong> These kernels are tuned for head dimensions up to 128 or 256. Very large head dims, or unusual ones, may fall off the fast path and dispatch to a slower fallback. Variants like GQA/MQA/MLA change the effective shapes (<a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>); modern kernels have GQA-aware variants that avoid replicating KV.</p>
+<p><strong>Alternatives to attention.</strong> None of this helps the <em>asymptotic</em> <span class="arithmatex">\(O(N^2)\)</span> scaling — FlashAttention makes the constant factor and memory tiny, but the work still grows quadratically in sequence length. Sub-quadratic architectures (state-space models, linear attention) attack the asymptotics directly and are covered in <a href="../02-transformer/11-ssm-and-alternatives.html">Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a>. In practice, FlashAttention-style exact attention remains dominant because its constant is so small that quadratic-but-fast beats subquadratic-but-clunky up to quite long contexts.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: you almost never write these kernels</p>
+<p>The right move is to <em>use</em> the kernel through <code>torch.nn.functional.scaled_dot_product_attention</code>, the <code>flash-attn</code> package, vLLM/SGLang&rsquo;s attention backends, or cuDNN — and to make sure your tensors satisfy the fast-path conditions (supported dtype, contiguous, head_dim in range, correct mask type). When you profile and find attention is the bottleneck, first check <em>which backend dispatched</em> before reaching for a custom kernel. Writing a competitive Hopper attention kernel is a multi-month CUTLASS/<code>wgmma</code> project; see <a href="../04-kernels-efficiency/04-triton-kernels.html">Writing GPU Kernels with Triton</a> and <a href="../04-kernels-efficiency/05-cuda-essentials.html">CUDA Programming Essentials for ML Engineers</a> for the tools and the ceiling on what hand-written kernels can reach.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> FlashAttention-1 already minimized HBM traffic. So why is FlashAttention-2 roughly 2× faster on the <em>same</em> GPU, and why does it take a <em>third</em> kernel (FA3) to get most of the remaining speedup on H100?</p>
+<p><strong>A:</strong> FA1 was memory-optimal but compute-<em>under</em>-utilized — it ran at ~25–40% of tensor-core peak. FA2 raises utilization without touching memory traffic via three work-partitioning changes: (1) it defers the softmax normalization so the inner loop spends fewer cycles on slow non-matmul (transcendental) ops, (2) it parallelizes the forward over query blocks along the sequence dimension so the grid has enough thread blocks to fill all SMs even at small batch/heads, and (3) it switches warp partitioning from split-K to split-Q, so warps own disjoint query rows and need no inter-warp reduction through shared memory each iteration. Those are <em>occupancy and instruction-mix</em> wins, not bandwidth wins.</p>
+<p>FA2 still assumes Ampere&rsquo;s <em>synchronous</em> tensor-core instruction (<code>mma</code>): issue and wait. Hopper adds asynchronous <code>wgmma</code>, the TMA copy engine, and FP8 tensor cores — none of which FA2&rsquo;s structure can exploit. FA3 is a rewrite that (a) splits warps into TMA <em>producers</em> and compute <em>consumers</em> (a software pipeline so data movement overlaps compute), (b) overlaps the two matmuls with the softmax via ping-pong scheduling across warpgroups and intra-warpgroup pipelining, hiding the slow <span class="arithmatex">\(\exp\)</span> behind tensor-core work, and &copy; runs the matmuls in FP8 — using incoherent processing (a Hadamard rotation that leaves <span class="arithmatex">\(QK^\top\)</span> invariant but spreads outliers) to keep accuracy. So: FA2 fixes Ampere occupancy; FA3 unlocks Hopper-specific async hardware and low precision.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>FlashAttention-1 was memory-optimal but only ~25–40% of compute peak; FA2 and FA3 are about <strong>compute utilization</strong>, not memory traffic.</li>
+<li>FA2&rsquo;s three edits: <strong>defer normalization</strong> (less non-matmul work on the critical path), <strong>parallelize the forward over query blocks / sequence length</strong> (fill all SMs at small batch×heads), and <strong>split-Q warp partitioning</strong> (each warp owns query rows → no per-iteration inter-warp reduction). Backward parallelizes over keys instead, to keep <span class="arithmatex">\(dK,dV\)</span> reductions local.</li>
+<li>On a GPU, FLOPs are not fungible: the ~1% of FLOPs that are softmax/<span class="arithmatex">\(\exp\)</span> can be ~15% of <em>runtime</em> because they run on slow special-function units — which is why minimizing and overlapping them matters.</li>
+<li>FA3 targets Hopper with <strong>warp specialization</strong>: TMA-driven <em>producer</em> warps prefetch KV tiles into a shared-memory ring buffer while <em>consumer</em> warpgroups run <code>wgmma</code>, so data movement overlaps compute.</li>
+<li>FA3 overlaps the two matmuls with softmax via <strong>ping-pong scheduling</strong> (one warpgroup does softmax on SFUs while another does GEMM on tensor cores) and intra-warpgroup pipelining — possible only because Hopper&rsquo;s <code>wgmma</code> is asynchronous.</li>
+<li><strong>FP8 attention</strong> roughly doubles matmul throughput; <strong>incoherent processing</strong> (a random-sign Hadamard rotation <span class="arithmatex">\(M\)</span> with <span class="arithmatex">\(M^\top M = I\)</span>, so <span class="arithmatex">\(QK^\top\)</span> is unchanged) spreads outliers across coordinates so the FP8 scale stays tight. Inputs are FP8 but accumulation and softmax stats stay in FP32.</li>
+<li>These kernels keep attention at <span class="arithmatex">\(O(N^2)\)</span> work but with a tiny constant; <strong>decode</strong> (single-token query) is memory-bound and wants <strong>FlashDecoding</strong> (split-KV) instead, and subquadratic alternatives are a separate design axis.</li>
+<li>In practice you call the kernel (<code>scaled_dot_product_attention</code>, <code>flash-attn</code>, vLLM/cuDNN) — the engineering lesson is to verify <em>which backend dispatched</em> on your hardware before assuming you got the fast path.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>FlashAttention has evolved through four generations — from IO-aware tiling (FA1) through work-partitioning on Ampere (FA2), Hopper warp specialization and FP8 (FA3), to algorithm/kernel co-design for Blackwell&rsquo;s asymmetric hardware (FA4) — and remains the dominant exact-attention implementation in production training and inference stacks.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2205.14135">Dao et al., <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022)</a> — the original IO-aware tiled kernel that eliminated HBM materialization of the <span class="arithmatex">\(N\times N\)</span> score matrix.</li>
+<li><a href="https://arxiv.org/abs/2307.08691">Dao, <em>FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning</em> (2023)</a> — deferred rescaling, sequence-length parallelism, and split-Q warp partitioning that lift A100 utilization to 50–73% of bf16 peak.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2407.08608">Shah et al., <em>FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision</em> (2024)</a> — TMA producer/consumer warp specialization, wgmma overlap of matmul and softmax, and FP8 with incoherent processing reaching 740 TFLOP/s on H100.</li>
+<li><a href="https://arxiv.org/abs/2603.05451">Zadouri et al., <em>FlashAttention-4: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling</em> (2026)</a> — fully asynchronous MMA pipelines and software-emulated exponentials for NVIDIA Blackwell, achieving 1613 TFLOP/s (71% utilization) on B200.</li>
+<li><a href="https://arxiv.org/abs/2307.13304">Chee et al., <em>QuIP: 2-Bit Quantization of Large Language Models With Guarantees</em> (2023)</a> — origin of incoherent processing via random orthogonal/Hadamard rotation that FA3 borrows to tame FP8 outliers.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/Dao-AILab/flash-attention">Dao-AILab/flash-attention</a> — official FA2/FA3/FA4 kernels with GQA, causal, variable-length, and ROCm support; the implementation virtually every framework calls.</li>
+<li><a href="https://github.com/NVIDIA/cutlass">NVIDIA/cutlass</a> — CUDA C++ templates and CuTe DSL providing the wgmma, TMA, and FP8 abstractions that FA3/FA4 are built on; essential reading for writing Hopper/Blackwell kernels.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://crfm.stanford.edu/2023/10/12/flashdecoding.html">Dao, Haziza, Massa, Sizov — <em>Flash-Decoding for long-context inference</em> (2023)</a> — split-KV parallelism that makes decode-time attention fast when the query is a single token and the KV cache is long.</li>
+<li><a href="https://pytorch.org/blog/flashattention-3/">PyTorch Blog — <em>FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision</em> (2024)</a> — accessible technical walkthrough of FA3&rsquo;s three key techniques with context on PyTorch&rsquo;s SDPA dispatch.</li>
+<li><a href="https://iclr-blogposts.github.io/2026/blog/2026/the-evolution-of-flashattention/">ICLR Blogposts 2026 — <em>The Evolution of FlashAttention</em></a> — end-to-end survey from FA1 through FA4 with roofline analysis, backward-pass derivations, and coverage of Ring Attention and block-sparse extensions.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Tri Dao, <em>FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning</em> (2023) — the definitive source for the deferred-rescale, sequence-parallel, and split-Q warp-partitioning ideas.</li>
+<li>Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, Tri Dao, <em>FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision</em> (2024) — warp specialization, TMA producer/consumer, <code>wgmma</code> overlap, and FP8 with incoherent processing.</li>
+<li>Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, Christopher Ré, <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022) — the original; read alongside <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a>.</li>
+<li>Tri Dao et al., <em>Flash-Decoding for long-context inference</em> (2023) — the split-KV technique for the decode regime.</li>
+<li>Jerry Chee, Yaohui Cai, Volodymyr Kuleshov, Christopher De Sa, <em>QuIP: 2-Bit Quantization of Large Language Models With Guarantees</em> (2023) — origin of incoherent processing via random orthogonal/Hadamard rotations.</li>
+<li>NVIDIA, <em>Hopper Architecture Whitepaper</em> and the CUTLASS library / CUDA programming guide — authoritative references for <code>wgmma</code>, TMA, asynchronous barriers, and FP8 tensor cores.</li>
+<li>The <code>Dao-AILab/flash-attention</code> repository — production kernels and the GQA/causal/varlen variants you will actually call.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-flash-attention-1.html"><span class="pn-label">← Previous</span><span class="pn-title">FlashAttention I: IO-Awareness &amp; The Online Softmax</span></a>
+<a class="next" href="04-triton-kernels.html"><span class="pn-label">Next →</span><span class="pn-title">Writing GPU Kernels with Triton</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#what-flashattention-1-left-on-the-table">What FlashAttention-1 left on the table</a></li>
+<li class="toc-l2"><a href="#flashattention-2-three-edits-to-the-inner-loop">FlashAttention-2: three edits to the inner loop</a></li>
+<li class="toc-l3"><a href="#edit-1-defer-the-rescaling">Edit 1 — defer the rescaling</a></li>
+<li class="toc-l3"><a href="#edit-2-parallelize-over-the-sequence-dimension">Edit 2 — parallelize over the sequence dimension</a></li>
+<li class="toc-l3"><a href="#edit-3-partition-warps-over-queries-not-keys">Edit 3 — partition warps over queries, not keys</a></li>
+<li class="toc-l2"><a href="#flashattention-3-exploiting-hopper">FlashAttention-3: exploiting Hopper</a></li>
+<li class="toc-l3"><a href="#warp-specialization-producerconsumer-with-tma">Warp specialization: producer/consumer with TMA</a></li>
+<li class="toc-l3"><a href="#overlapping-the-two-matmuls-with-softmax-ping-pong-pipelined">Overlapping the two matmuls with softmax (ping-pong &amp;amp; pipelined)</a></li>
+<li class="toc-l3"><a href="#a-from-scratch-model-of-the-producerconsumer-pipeline">A from-scratch model of the producer/consumer pipeline</a></li>
+<li class="toc-l2"><a href="#fp8-attention-and-incoherent-processing">FP8 attention and incoherent processing</a></li>
+<li class="toc-l3"><a href="#why-fp8-attention-is-hard">Why FP8 attention is hard</a></li>
+<li class="toc-l3"><a href="#incoherent-processing-rotate-away-the-outliers">Incoherent processing: rotate away the outliers</a></li>
+<li class="toc-l3"><a href="#what-stays-in-higher-precision">What stays in higher precision</a></li>
+<li class="toc-l2"><a href="#comparison-trade-offs-and-when-each-wins">Comparison, trade-offs, and when each wins</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

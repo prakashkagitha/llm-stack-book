@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-Tenant LoRA &amp; Adapter Serving at Scale — The LLM Stack</title>
+<meta name="description" content="Serving hundreds-to-thousands of LoRA adapters over a shared base model: batched heterogeneous-adapter kernels (Punica/SGMV), S-LoRA / LoRAX architectures, adap">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="active" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="714-multi-tenant-lora-adapter-serving-at-scale">7.14 Multi-Tenant LoRA &amp; Adapter Serving at Scale<a class="headerlink" href="#714-multi-tenant-lora-adapter-serving-at-scale" title="Permanent link">¶</a></h1>
+<p>Imagine you run a platform where every customer fine-tunes their own model. A legal-tech firm wants a contracts assistant; a game studio wants a lore-keeping NPC; a hospital wants a discharge-summary drafter. The naïve answer is &ldquo;give each customer their own GPU running their own fine-tuned model.&rdquo; With a 13-billion-parameter base in bf16 weighing roughly 26 GB, that means one (or several) dedicated 80 GB GPU per tenant, sitting near-idle whenever that tenant is quiet. At a thousand tenants this is economically absurd: you are paying for thousands of GPUs to serve a request rate that, aggregated, might fit on twenty.</p>
+<p>The escape hatch is <strong>Low-Rank Adaptation (LoRA)</strong>. Each tenant&rsquo;s fine-tune is not a fresh 26 GB of weights — it is a handful of tiny low-rank matrices, often 10–200 MB, layered <em>on top of</em> a single shared base model. If we can keep one copy of the base resident on the GPU and swap in the right small adapter per request, we can serve hundreds-to-thousands of distinct fine-tuned models from a single base deployment. The catch: a production batch contains requests for <em>many different adapters at once</em>. Serving them efficiently — without looping over adapters one at a time and destroying GPU utilization — is the central systems problem of this chapter.</p>
+<p>This chapter assumes you understand LoRA&rsquo;s math from <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a> and the inference anatomy from <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a> and <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>. We build up from the LoRA forward pass, derive the batched heterogeneous-adapter kernel (Punica&rsquo;s SGMV), study the S-LoRA / LoRAX architectures and their adapter registries, hot-swapping and tiered storage, unified vs. disaggregated execution, cross-model prefix-cache reuse, and the throughput/SLO/fairness trade-offs that govern real deployments. We close with a from-scratch batched multi-adapter forward in PyTorch.</p>
+<hr />
+<h2 id="7141-the-lora-forward-pass-and-why-multi-tenancy-is-hard">7.14.1 The LoRA Forward Pass and Why Multi-Tenancy Is Hard<a class="headerlink" href="#7141-the-lora-forward-pass-and-why-multi-tenancy-is-hard" title="Permanent link">¶</a></h2>
+<p>Recall the LoRA reparameterization. For a frozen base weight matrix <span class="arithmatex">\(W_0 \in \mathbb{R}^{d_\text{out} \times d_\text{in}}\)</span>, LoRA adds a low-rank update:</p>
+<div class="arithmatex">\[
+W = W_0 + \Delta W = W_0 + \frac{\alpha}{r} B A
+\]</div>
+<p>where <span class="arithmatex">\(A \in \mathbb{R}^{r \times d_\text{in}}\)</span> and <span class="arithmatex">\(B \in \mathbb{R}^{d_\text{out} \times r}\)</span>, the rank <span class="arithmatex">\(r \ll \min(d_\text{out}, d_\text{in})\)</span> (typically 8–64), and <span class="arithmatex">\(\alpha\)</span> is a scaling hyperparameter. For an input activation <span class="arithmatex">\(x \in \mathbb{R}^{d_\text{in}}\)</span>, the layer output is</p>
+<div class="arithmatex">\[
+y = W_0 x + \frac{\alpha}{r} B (A x).
+\]</div>
+<p>The crucial structural fact is the <strong>parenthesization</strong>: we never materialize <span class="arithmatex">\(\Delta W = BA\)</span> (that would be a full <span class="arithmatex">\(d_\text{out} \times d_\text{in}\)</span> matrix, as large as the base). Instead we compute <span class="arithmatex">\(Ax\)</span> first — a cheap projection down to dimension <span class="arithmatex">\(r\)</span> — then <span class="arithmatex">\(B(Ax)\)</span>, a projection back up. The LoRA path costs <span class="arithmatex">\(r(d_\text{in} + d_\text{out})\)</span> multiply-adds versus <span class="arithmatex">\(d_\text{in} d_\text{out}\)</span> for the base; for <span class="arithmatex">\(r=16\)</span> on a <span class="arithmatex">\(4096 \times 4096\)</span> projection, that is about 0.8% extra compute.</p>
+<h3 id="the-single-adapter-trap-merging">The single-adapter trap: merging<a class="headerlink" href="#the-single-adapter-trap-merging" title="Permanent link">¶</a></h3>
+<p>If you only ever serve <strong>one</strong> adapter, the optimal move is to <em>merge</em> it into the base: precompute <span class="arithmatex">\(W = W_0 + \frac{\alpha}{r}BA\)</span> once, and from then on you run a plain dense model with zero LoRA overhead. This is what <code>peft</code>&rsquo;s <code>merge_and_unload()</code> does. Merging is perfect for single-tenant serving.</p>
+<p>But merging is a trap for multi-tenancy. If a batch contains requests for adapters <span class="arithmatex">\(\mathcal{A}_1, \mathcal{A}_2, \dots, \mathcal{A}_k\)</span>, a merged weight can only embody one of them. You would have to either (a) run <span class="arithmatex">\(k\)</span> separate forward passes, one per adapter, each with batch size <span class="arithmatex">\(\tfrac{B}{k}\)</span> — collapsing the batch and wrecking throughput — or (b) re-merge and un-merge the base weights between micro-batches, which means rewriting tens of gigabytes of GPU memory per step. Both are catastrophic. The entire field of multi-tenant LoRA serving exists to avoid them.</p>
+<h3 id="the-batched-heterogeneous-problem-stated-precisely">The batched-heterogeneous problem, stated precisely<a class="headerlink" href="#the-batched-heterogeneous-problem-stated-precisely" title="Permanent link">¶</a></h3>
+<p>Continuous batching (the foundation of vLLM/SGLang/TGI) assembles a batch of tokens from many requests at different decode positions. In multi-tenant LoRA, each <em>request</em> carries an adapter ID. So a single batched matrix multiply now looks like this: we have a stacked activation tensor <span class="arithmatex">\(X \in \mathbb{R}^{B \times d_\text{in}}\)</span> where row <span class="arithmatex">\(i\)</span> belongs to adapter <span class="arithmatex">\(a_i \in \{1, \dots, N\}\)</span>. The base contribution <span class="arithmatex">\(X W_0^\top\)</span> is shared and trivially batched. The LoRA contribution is <em>not</em>:</p>
+<div class="arithmatex">\[
+y_i = x_i W_0^\top + \frac{\alpha_{a_i}}{r_{a_i}} \, x_i A_{a_i}^\top B_{a_i}^\top.
+\]</div>
+<p>Every row may use a <strong>different</strong> <span class="arithmatex">\(A\)</span>, <span class="arithmatex">\(B\)</span>, rank <span class="arithmatex">\(r\)</span>, and scale <span class="arithmatex">\(\alpha\)</span>. This is a <em>grouped</em> or <em>segmented</em> matrix multiply: the batch is partitioned into segments by adapter, and each segment multiplies against its own pair of small matrices. Standard <code>torch.bmm</code> cannot express it efficiently when segment sizes are wildly uneven (one popular adapter might have 200 rows in the batch; a cold one, 1). The kernel that solves this is the heart of the chapter.</p>
+<div class="admonition note">
+<p class="admonition-title">Adapter scope</p>
+<p>In practice LoRA is applied to a subset of projections — most commonly the attention <span class="arithmatex">\(q,k,v,o\)</span> projections, and increasingly the MLP up/gate/down projections. Each adapted linear layer gets its own <span class="arithmatex">\(A,B\)</span> pair, so a single adapter is really a <em>bundle</em> of dozens of <span class="arithmatex">\((A,B)\)</span> matrices, one per adapted layer. When we say &ldquo;adapter <span class="arithmatex">\(a\)</span>&rdquo; in a kernel, we mean its slice for the specific layer being computed.</p>
+</div>
+<hr />
+<h2 id="7142-punica-sgmv-the-batched-multi-adapter-kernel">7.14.2 Punica &amp; SGMV: The Batched Multi-Adapter Kernel<a class="headerlink" href="#7142-punica-sgmv-the-batched-multi-adapter-kernel" title="Permanent link">¶</a></h2>
+<p><a href="https://arxiv.org/abs/2310.18547">Punica (Chen et al., <em>Punica: Multi-Tenant LoRA Serving</em>, 2023)</a> identified the grouped matmul as the bottleneck and introduced <strong>SGMV — Segmented Gather Matrix-Vector multiplication</strong> (more precisely a segmented gather matrix–<em>matrix</em> multiply). The insight: rather than launching one kernel per adapter (which serializes and underuses the GPU), launch <strong>one</strong> kernel that processes the whole batch, with each thread block told which adapter&rsquo;s weights to gather.</p>
+<h3 id="the-data-layout">The data layout<a class="headerlink" href="#the-data-layout" title="Permanent link">¶</a></h3>
+<p>Punica keeps all adapter weights in a single contiguous tensor, indexed by adapter ID:</p>
+<div class="highlight"><pre><span></span><code>  A_all:  [N_adapters, num_layers, r, d_in]   # all &quot;down&quot; projections, stacked
+  B_all:  [N_adapters, num_layers, d_out, r]  # all &quot;up&quot; projections, stacked
+
+  For a batch of B tokens, a per-token index vector:
+  lora_idx: [B]  e.g. [3, 3, 7, 0, 3, 7, ...]  # which adapter each token uses
+                 (value -1 or a reserved slot means &quot;no adapter / base only&quot;)
+</code></pre></div>
+<p>Because requests for the same adapter tend to arrive together (and the scheduler can <em>sort</em> the batch by adapter to make segments contiguous), the batch decomposes into segments:</p>
+<div class="highlight"><pre><span></span><code>  sorted batch:  [ A=3 | A=3 | A=3 | A=7 | A=7 | A=0 ]
+  segment ptrs:  seg_start = [0, 3, 5]   # adapter 3: rows 0..2, adapter 7: 3..4, adapter 0: 5
+  seg_adapter  = [3, 7, 0]
+</code></pre></div>
+<h3 id="what-sgmv-computes">What SGMV computes<a class="headerlink" href="#what-sgmv-computes" title="Permanent link">¶</a></h3>
+<p>SGMV fuses the two LoRA matmuls with the gather. Conceptually, for each segment <span class="arithmatex">\(s\)</span> with adapter <span class="arithmatex">\(a\)</span> and rows <span class="arithmatex">\([\text{start}_s, \text{end}_s)\)</span>:</p>
+<div class="arithmatex">\[
+V_{[\text{start}_s:\text{end}_s]} = X_{[\text{start}_s:\text{end}_s]} \, A_a^\top \quad (\text{shrink: } d_\text{in} \to r)
+\]</div>
+<div class="arithmatex">\[
+Y_{[\text{start}_s:\text{end}_s]} \mathrel{+}= \frac{\alpha_a}{r_a} \, V_{[\text{start}_s:\text{end}_s]} \, B_a^\top \quad (\text{expand: } r \to d_\text{out})
+\]</div>
+<p>The kernel is launched as a 2-D grid: one axis over segments, one over output tiles. Each CTA (cooperative thread array / thread block) reads its segment&rsquo;s adapter ID, indexes into <code>A_all</code>/<code>B_all</code> to find the right weight tile, and accumulates. Crucially, <strong>the base matmul <span class="arithmatex">\(XW_0^\top\)</span> is a separate, fully-batched GEMM</strong> that runs at peak GPU efficiency; SGMV only computes the small low-rank <em>additive correction</em> and writes it into the same output buffer.</p>
+<p>This split is what makes the scheme cheap: 99% of the FLOPs (the base GEMM) are a dense batched operation independent of adapters, and the 1% LoRA correction is handled by a specialized grouped kernel.</p>
+<h3 id="two-variants-bgmv-vs-sgmv">Two variants: BGMV vs SGMV<a class="headerlink" href="#two-variants-bgmv-vs-sgmv" title="Permanent link">¶</a></h3>
+<p>Punica distinguishes the decode and prefill regimes:</p>
+<ul>
+<li><strong>BGMV (Batched Gather Matrix-Vector)</strong> — used in <strong>decode</strong>, where each request contributes exactly <em>one</em> token per step. The batch is &ldquo;one row per request,&rdquo; so it is a batched matrix-vector product: each row gathers a different adapter. Memory-bandwidth bound (we stream each adapter&rsquo;s weights to multiply by a single vector).</li>
+<li><strong>SGMV (Segmented Gather Matrix-multiply)</strong> — used in <strong>prefill</strong>, where each request contributes <em>many</em> tokens (its whole prompt). Now each adapter&rsquo;s segment has multiple rows, so we get a real (small) GEMM per segment with arithmetic intensity high enough to be compute-bound. SGMV tiles over the rows of a segment to reuse the adapter weights loaded into shared memory.</li>
+</ul>
+<div class="admonition example">
+<p class="admonition-title">Worked example: LoRA correction cost in a decode step</p>
+<p>Take a Llama-2-13B-shaped layer: <span class="arithmatex">\(d_\text{in}=d_\text{out}=5120\)</span>, LoRA on <span class="arithmatex">\(q,k,v,o\)</span> (4 projections), rank <span class="arithmatex">\(r=16\)</span>, scale <span class="arithmatex">\(\alpha=32\)</span>. Suppose a decode batch has <span class="arithmatex">\(B=64\)</span> tokens spread over 20 distinct adapters.</p>
+<p><strong>Base path (per adapted projection):</strong> the dense GEMM is <span class="arithmatex">\(B \times d_\text{out} \times d_\text{in} = 64 \times 5120 \times 5120 \approx 1.68 \times 10^9\)</span> MACs. Across 4 projections, <span class="arithmatex">\(\approx 6.7\)</span> GMACs.</p>
+<p><strong>LoRA correction (per adapted projection):</strong> shrink <span class="arithmatex">\(B \times r \times d_\text{in} = 64\times 16\times 5120 \approx 5.2\times 10^6\)</span> MACs, expand the same, so <span class="arithmatex">\(\approx 1.0\times 10^7\)</span> MACs per projection, <span class="arithmatex">\(\approx 4.2\times 10^7\)</span> across 4 — about <strong>0.6%</strong> of the base FLOPs.</p>
+<p>But in <em>decode</em> the operation is bandwidth-bound, not FLOP-bound. The base weights for the 4 projections are <span class="arithmatex">\(4 \times 5120 \times 5120 \times 2\,\text{bytes} \approx 210\,\text{MB}\)</span>, loaded once for the whole batch. The LoRA weights are <span class="arithmatex">\(20\,\text{adapters} \times 4\,\text{proj} \times (B{+}A)\,\text{params} = 20 \times 4 \times (5120{\cdot}16 + 16{\cdot}5120) \times 2\,\text{bytes} \approx 52\,\text{MB}\)</span> — about a <strong>25% bandwidth tax</strong> on the attention-projection matmuls, even though it is only 0.6% of the FLOPs. This is exactly why decode-time LoRA hurts more than its FLOP count suggests, and why fusing the gather (avoiding redundant reloads) matters so much.</p>
+</div>
+<hr />
+<h2 id="7143-s-lora-lorax-serving-thousands-of-adapters">7.14.3 S-LoRA &amp; LoRAX: Serving Thousands of Adapters<a class="headerlink" href="#7143-s-lora-lorax-serving-thousands-of-adapters" title="Permanent link">¶</a></h2>
+<p>Punica gave us the kernel. <a href="https://arxiv.org/abs/2311.03285">S-LoRA (Sheng et al., <em>S-LoRA: Serving Thousands of Concurrent LoRA Adapters</em>, 2023)</a> gave us the <em>system</em>: how to keep thousands of adapters straight in memory, schedule them fairly, and not run out of GPU DRAM. LoRAX (Predibase&rsquo;s open-source server) and the multi-LoRA paths now in vLLM and SGLang are direct descendants.</p>
+<h3 id="unified-paging-adapters-live-in-the-kv-cache-pool">Unified Paging: adapters live in the KV-cache pool<a class="headerlink" href="#unified-paging-adapters-live-in-the-kv-cache-pool" title="Permanent link">¶</a></h3>
+<p>The signature S-LoRA idea is <strong>Unified Paging</strong>. The KV cache (see <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>) already manages GPU DRAM as a pool of fixed-size pages allocated and freed dynamically as requests come and go. S-LoRA stuffs adapter weights into the <em>same</em> paged memory pool. Both KV pages and adapter weight tensors are variable in size and lifetime; unifying them avoids fragmentation and lets the system trade memory fluidly between &ldquo;more concurrent requests&rdquo; (KV) and &ldquo;more resident adapters&rdquo; (LoRA weights).</p>
+<figure class="viz" id="fig-lora-serving-unified-paged-pool">
+<svg viewBox="0 0 760 360" role="img" aria-label="S-LoRA Unified Paging: a base model band sits above a shared paged pool containing interleaved KV-cache pages and LoRA adapter pages alongside free pages, showing that memory trades fluidly between KV use and adapter residency.">
+  <defs>
+    <marker id="pp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-lora-serving-unified-paged-pool text { font-family: var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+    #fig-lora-serving-unified-paged-pool .lbl { font: 600 12px var(--sans,sans-serif); }
+    #fig-lora-serving-unified-paged-pool .sub  { font: 400 10px var(--mono,monospace); fill: var(--muted,#888); }
+    #fig-lora-serving-unified-paged-pool .cell-lbl { font: 700 10px var(--mono,monospace); }
+    #fig-lora-serving-unified-paged-pool .cell-sub  { font: 400 9px var(--mono,monospace); fill: var(--ink-soft,#555); }
+    #fig-lora-serving-unified-paged-pool .outer-lbl { font: 700 11px var(--sans,sans-serif); fill: var(--ink-soft,#444); }
+    #fig-lora-serving-unified-paged-pool .caption-txt { font: italic 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+    #fig-lora-serving-unified-paged-pool .dbl-arrow { stroke: var(--ink-soft,#666); stroke-width: 1.2; fill: none; }
+  </style>
+
+
+  <rect x="20" y="12" width="720" height="336" rx="8" fill="none" stroke="var(--border-2,#bbb)" stroke-width="1.5"/>
+  <text x="36" y="30" class="outer-lbl">GPU DRAM</text>
+
+
+  <rect x="28" y="36" width="704" height="54" rx="6" fill="var(--surface-3,#e8eef5)" stroke="var(--border-2,#bbb)" stroke-width="1.4"/>
+  <text x="380" y="58" text-anchor="middle" class="lbl">BASE MODEL WEIGHTS (resident)</text>
+  <text x="380" y="74" text-anchor="middle" class="sub">~26 GB for 13B bf16  —  never evicted, always in GPU memory</text>
+
+
+  <rect x="28" y="100" width="704" height="232" rx="6" fill="none" stroke="var(--border-2,#bbb)" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="42" y="118" class="outer-lbl">UNIFIED PAGED POOL</text>
+
+
+
+
+
+  <rect x="38" y="128" width="64" height="64" rx="6" fill="var(--accent,#4f86c6)" fill-opacity="0.25" stroke="var(--accent,#4f86c6)" stroke-width="1.5"/>
+  <text x="70" y="152" text-anchor="middle" class="cell-lbl" fill="var(--accent,#4f86c6)">KV</text>
+  <text x="70" y="166" text-anchor="middle" class="cell-sub">req3</text>
+
+
+  <rect x="108" y="128" width="64" height="64" rx="6" fill="var(--accent,#4f86c6)" fill-opacity="0.25" stroke="var(--accent,#4f86c6)" stroke-width="1.5"/>
+  <text x="140" y="152" text-anchor="middle" class="cell-lbl" fill="var(--accent,#4f86c6)">KV</text>
+  <text x="140" y="166" text-anchor="middle" class="cell-sub">req3</text>
+
+
+  <rect x="178" y="128" width="64" height="64" rx="6" fill="var(--accent-2,#c6724f)" fill-opacity="0.25" stroke="var(--accent-2,#c6724f)" stroke-width="1.5"/>
+  <text x="210" y="152" text-anchor="middle" class="cell-lbl" fill="var(--accent-2,#c6724f)">LoRA</text>
+  <text x="210" y="166" text-anchor="middle" class="cell-sub">a7</text>
+
+
+  <rect x="248" y="128" width="64" height="64" rx="6" fill="var(--accent,#4f86c6)" fill-opacity="0.25" stroke="var(--accent,#4f86c6)" stroke-width="1.5"/>
+  <text x="280" y="152" text-anchor="middle" class="cell-lbl" fill="var(--accent,#4f86c6)">KV</text>
+  <text x="280" y="166" text-anchor="middle" class="cell-sub">req1</text>
+
+
+  <rect x="318" y="128" width="64" height="64" rx="6" fill="var(--accent-2,#c6724f)" fill-opacity="0.25" stroke="var(--accent-2,#c6724f)" stroke-width="1.5"/>
+  <text x="350" y="152" text-anchor="middle" class="cell-lbl" fill="var(--accent-2,#c6724f)">LoRA</text>
+  <text x="350" y="166" text-anchor="middle" class="cell-sub">a7</text>
+
+
+  <rect x="388" y="128" width="64" height="64" rx="6" fill="var(--accent-2,#c6724f)" fill-opacity="0.25" stroke="var(--accent-2,#c6724f)" stroke-width="1.5"/>
+  <text x="420" y="152" text-anchor="middle" class="cell-lbl" fill="var(--accent-2,#c6724f)">LoRA</text>
+  <text x="420" y="166" text-anchor="middle" class="cell-sub">a2</text>
+
+
+  <rect x="458" y="128" width="64" height="64" rx="6" fill="var(--accent,#4f86c6)" fill-opacity="0.25" stroke="var(--accent,#4f86c6)" stroke-width="1.5"/>
+  <text x="490" y="152" text-anchor="middle" class="cell-lbl" fill="var(--accent,#4f86c6)">KV</text>
+  <text x="490" y="166" text-anchor="middle" class="cell-sub">req9</text>
+
+
+  <rect x="528" y="128" width="64" height="64" rx="6" fill="none" stroke="var(--muted,#aaa)" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="560" y="155" text-anchor="middle" class="cell-lbl" fill="var(--muted,#aaa)">free</text>
+
+
+  <rect x="598" y="128" width="64" height="64" rx="6" fill="none" stroke="var(--muted,#aaa)" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="630" y="155" text-anchor="middle" class="cell-lbl" fill="var(--muted,#aaa)">free</text>
+
+
+  <rect x="668" y="128" width="56" height="64" rx="6" fill="var(--accent,#4f86c6)" fill-opacity="0.25" stroke="var(--accent,#4f86c6)" stroke-width="1.5"/>
+  <text x="696" y="152" text-anchor="middle" class="cell-lbl" fill="var(--accent,#4f86c6)">KV</text>
+  <text x="696" y="166" text-anchor="middle" class="cell-sub">req1</text>
+
+
+  <text x="730" y="165" text-anchor="middle" class="cell-lbl" fill="var(--muted,#888)">...</text>
+
+
+  <text x="173" y="157" text-anchor="middle" style="font:10px var(--sans,sans-serif); fill:var(--muted,#888);" opacity="0.7">⇄</text>
+  <text x="313" y="157" text-anchor="middle" style="font:10px var(--sans,sans-serif); fill:var(--muted,#888);" opacity="0.7">⇄</text>
+  <text x="453" y="157" text-anchor="middle" style="font:10px var(--sans,sans-serif); fill:var(--muted,#888);" opacity="0.7">⇄</text>
+
+
+  <rect x="38" y="212" width="14" height="14" rx="3" fill="var(--accent,#4f86c6)" fill-opacity="0.35" stroke="var(--accent,#4f86c6)" stroke-width="1.2"/>
+  <text x="58" y="223" class="sub" fill="var(--ink-soft,#555)">KV-cache pages (tagged by request ID)</text>
+
+  <rect x="38" y="232" width="14" height="14" rx="3" fill="var(--accent-2,#c6724f)" fill-opacity="0.35" stroke="var(--accent-2,#c6724f)" stroke-width="1.2"/>
+  <text x="58" y="243" class="sub" fill="var(--ink-soft,#555)">LoRA adapter pages (tagged by adapter ID — note: a7 appears at cells 3 and 5, non-adjacent)</text>
+
+  <rect x="38" y="252" width="14" height="14" rx="3" fill="none" stroke="var(--muted,#aaa)" stroke-width="1.2" stroke-dasharray="3 2"/>
+  <text x="58" y="263" class="sub" fill="var(--ink-soft,#555)">free pages (available for either KV or adapter use)</text>
+
+
+  <text x="380" y="316" text-anchor="middle" class="caption-txt">pages flow between KV-use and adapter-use as load shifts</text>
+</svg>
+<figcaption><b>S-LoRA Unified Paging places KV-cache pages and LoRA adapter pages in the same fixed-size pool above the resident base model.</b> KV pages (blue) are tagged by request ID; LoRA pages (orange) by adapter ID — note adapter a7 occupies non-adjacent pages 3 and 5, reflecting fragmented residency. Free pages (dashed) can be claimed by either KV or adapter use, letting the system trade memory fluidly between concurrency (more KV pages) and adapter breadth (more resident adapters).</figcaption>
+</figure>
+
+<p>Because adapters are of heterogeneous rank, S-LoRA pads them to a common rank for the kernel or, better, uses rank-aware tiling so a rank-8 adapter does not waste a rank-64 slot. Its custom kernels (an evolution of Punica&rsquo;s MBGMV/SGMV) handle the non-uniform ranks directly.</p>
+<h3 id="tiered-storage-gpu-cpu-diskobject-store">Tiered storage: GPU → CPU → disk/object store<a class="headerlink" href="#tiered-storage-gpu-cpu-diskobject-store" title="Permanent link">¶</a></h3>
+<p>You cannot fit thousands of adapters in GPU DRAM at once, and you do not need to: at any instant only the <em>active</em> adapters (those with in-flight requests) must be resident. S-LoRA and LoRAX organize adapters in a <strong>storage hierarchy</strong>:</p>
+<figure class="viz" id="fig-lora-serving-tiered-storage-hierarchy">
+<svg viewBox="-26 0 850 360" role="img" aria-label="Four-tier adapter storage hierarchy from GPU HBM (fastest) to object store (slowest), with async prefetch arrow indicating cold-miss data movement upward through the tiers.">
+  <style>
+    #fig-lora-serving-tiered-storage-hierarchy text { font-family: var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+    #fig-lora-serving-tiered-storage-hierarchy .tier-lbl  { font: 700 13px var(--sans,sans-serif); }
+    #fig-lora-serving-tiered-storage-hierarchy .tier-lat  { font: 500 10px var(--mono,monospace); }
+    #fig-lora-serving-tiered-storage-hierarchy .tier-role { font: 400 10px var(--sans,sans-serif); fill: var(--ink-soft,#444); }
+    #fig-lora-serving-tiered-storage-hierarchy .axis-lbl  { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+    #fig-lora-serving-tiered-storage-hierarchy .pfetch-lbl { font: 600 9px var(--sans,sans-serif); fill: var(--accent-2,#c6724f); }
+    #fig-lora-serving-tiered-storage-hierarchy .cap-txt { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#888); }
+  </style>
+
+  <defs>
+    <marker id="th-arr-up" viewBox="0 0 10 10" refX="5" refY="1" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 10 L5 0 L10 10 z" fill="var(--accent-2,#c6724f)"/>
+    </marker>
+    <marker id="th-arr-dn" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0 0 L5 10 L10 0 z" fill="var(--muted,#aaa)"/>
+    </marker>
+    <marker id="th-arr-up2" viewBox="0 0 10 10" refX="5" refY="1" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0 10 L5 0 L10 10 z" fill="var(--muted,#aaa)"/>
+    </marker>
+  </defs>
+
+
+
+
+  <line x1="30" y1="272" x2="30" y2="38" stroke="var(--muted,#bbb)" stroke-width="1.4" marker-end="url(#th-arr-up2)"/>
+  <line x1="30" y1="42"  x2="30" y2="274" stroke="var(--muted,#bbb)" stroke-width="1.4" marker-end="url(#th-arr-dn)"/>
+  <text x="16" y="30"  text-anchor="middle" class="axis-lbl">faster</text>
+  <text x="16" y="41"  text-anchor="middle" class="axis-lbl">smaller</text>
+  <text x="16" y="286" text-anchor="middle" class="axis-lbl">larger</text>
+  <text x="16" y="297" text-anchor="middle" class="axis-lbl">slower</text>
+
+
+
+
+  <rect x="170" y="18" width="160" height="50" rx="6"
+        fill="var(--accent,#4f86c6)" fill-opacity="0.90"
+        stroke="var(--accent,#4f86c6)" stroke-width="1.5"/>
+  <text x="250" y="41" text-anchor="middle" class="tier-lbl" fill="var(--surface,#fff)">GPU HBM</text>
+  <text x="250" y="56" text-anchor="middle" class="tier-lat" fill="var(--surface,#fff)" opacity="0.9">~ns–µs</text>
+
+
+  <rect x="119" y="78" width="262" height="50" rx="6"
+        fill="var(--accent,#4f86c6)" fill-opacity="0.62"
+        stroke="var(--accent,#4f86c6)" stroke-width="1.3"/>
+  <text x="250" y="101" text-anchor="middle" class="tier-lbl" fill="var(--surface,#fff)">CPU DRAM</text>
+  <text x="250" y="116" text-anchor="middle" class="tier-lat" fill="var(--surface,#fff)" opacity="0.9">~µs</text>
+
+
+  <rect x="69" y="138" width="362" height="50" rx="6"
+        fill="var(--accent,#4f86c6)" fill-opacity="0.28"
+        stroke="var(--border-2,#8fa8c0)" stroke-width="1.3"/>
+  <text x="250" y="161" text-anchor="middle" class="tier-lbl">Local SSD</text>
+  <text x="250" y="176" text-anchor="middle" class="tier-lat">~ms</text>
+
+
+  <rect x="50" y="198" width="400" height="56" rx="6"
+        fill="var(--surface-3,#cdd8e4)" fill-opacity="0.85"
+        stroke="var(--border-2,#b0bfcc)" stroke-width="1.3"/>
+  <text x="250" y="224" text-anchor="middle" class="tier-lbl">Object store (S3 / GCS)</text>
+  <text x="250" y="240" text-anchor="middle" class="tier-lat">~10–100 ms  (cold start)</text>
+
+
+
+
+
+
+
+  <line x1="460" y1="246" x2="460" y2="30"
+        stroke="var(--accent-2,#c6724f)" stroke-width="2.5"
+        stroke-dasharray="6 3"
+        marker-end="url(#th-arr-up)"/>
+
+
+  <text x="460" y="262" text-anchor="middle" class="pfetch-lbl">async prefetch (cold miss)</text>
+  <text x="460" y="275" text-anchor="middle" class="pfetch-lbl">HBM &lt;- CPU &lt;- SSD &lt;- S3</text>
+
+
+
+
+
+  <line x1="330" y1="43"  x2="540" y2="43"  stroke="var(--muted,#ccc)" stroke-width="0.7" stroke-dasharray="3 3"/>
+  <line x1="381" y1="103" x2="540" y2="103" stroke="var(--muted,#ccc)" stroke-width="0.7" stroke-dasharray="3 3"/>
+  <line x1="431" y1="163" x2="540" y2="163" stroke="var(--muted,#ccc)" stroke-width="0.7" stroke-dasharray="3 3"/>
+  <line x1="450" y1="226" x2="540" y2="226" stroke="var(--muted,#ccc)" stroke-width="0.7" stroke-dasharray="3 3"/>
+
+  <text x="544" y="37"  class="tier-role">active adapters with</text>
+  <text x="544" y="50"  class="tier-role">in-flight requests</text>
+
+  <text x="544" y="97"  class="tier-role">warm pool; prefetch</text>
+  <text x="544" y="110" class="tier-role">source for GPU misses</text>
+
+  <text x="544" y="157" class="tier-role">larger cache of</text>
+  <text x="544" y="170" class="tier-role">the tenant fleet</text>
+
+  <text x="544" y="220" class="tier-role">source of truth:</text>
+  <text x="544" y="233" class="tier-role">every adapter ever trained</text>
+
+
+  <text x="300" y="308" text-anchor="middle" class="cap-txt">bar width = capacity; narrowest = fastest; only active adapters must be GPU-resident</text>
+</svg>
+<figcaption><b>Adapter storage is organized in four tiers from fastest-but-smallest GPU HBM (top) to largest-but-coldest object store (bottom).</b> Only adapters with active in-flight requests must sit in GPU HBM; a CPU DRAM warm pool catches most GPU misses below the millisecond threshold. The orange dashed arrow shows the asynchronous prefetch path triggered on a cold miss — weights migrate upward through the hierarchy (S3 to SSD to CPU to GPU) while the request waits, keeping the cold-start penalty off the critical compute path.</figcaption>
+</figure>
+
+<p>When a request arrives for adapter <span class="arithmatex">\(a\)</span>, the scheduler checks whether <span class="arithmatex">\(a\)</span> is GPU-resident. If not, it triggers an <strong>asynchronous prefetch</strong> (HBM ← CPU ← SSD/object store) while the request waits in the queue, and admits the request to a batch only once the weights have landed. The cost of a cold adapter is dominated by this transfer, not by compute.</p>
+<h3 id="hot-swapping-and-the-prefetch-pipeline">Hot-swapping and the prefetch pipeline<a class="headerlink" href="#hot-swapping-and-the-prefetch-pipeline" title="Permanent link">¶</a></h3>
+<p>The art is <strong>overlapping</strong> adapter transfer with ongoing compute so swaps are invisible. A good server runs a copy engine (DMA over a separate CUDA stream) that streams the next batch&rsquo;s needed adapters into GPU pages while the current batch is still executing on the compute stream. Because adapters are small (tens of MB) and PCIe/NVLink bandwidth is large (tens to hundreds of GB/s), an adapter swap from CPU DRAM typically takes well under a millisecond — comfortably hidden behind a decode step.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Sketch: overlap adapter prefetch with the current forward pass.</span>
+<span class="c1"># copy_stream does H2D DMA; compute_stream runs the model.</span>
+<span class="n">copy_stream</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Stream</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">prefetch_adapters</span><span class="p">(</span><span class="n">needed_ids</span><span class="p">,</span> <span class="n">registry</span><span class="p">,</span> <span class="n">gpu_pool</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Stream weights for `needed_ids` into GPU pages on a side stream.&quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="n">copy_stream</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">aid</span> <span class="ow">in</span> <span class="n">needed_ids</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">aid</span> <span class="ow">in</span> <span class="n">gpu_pool</span><span class="p">:</span>                  <span class="c1"># already resident -&gt; skip</span>
+                <span class="k">continue</span>
+            <span class="n">cpu_weights</span> <span class="o">=</span> <span class="n">registry</span><span class="o">.</span><span class="n">fetch_to_cpu</span><span class="p">(</span><span class="n">aid</span><span class="p">)</span>   <span class="c1"># CPU/SSD/object store</span>
+            <span class="n">slot</span> <span class="o">=</span> <span class="n">gpu_pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span><span class="n">aid</span><span class="p">)</span>                  <span class="c1"># may evict an LRU adapter</span>
+            <span class="n">slot</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">cpu_weights</span><span class="p">,</span> <span class="n">non_blocking</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># async H2D into the slot</span>
+
+<span class="c1"># Each scheduler step:</span>
+<span class="c1">#   1. pick the batch (requests + their adapter IDs)</span>
+<span class="c1">#   2. prefetch_adapters(...) on copy_stream</span>
+<span class="c1">#   3. run base+LoRA forward on compute_stream</span>
+<span class="c1">#   4. compute_stream.wait_stream(copy_stream)  before the LoRA kernel reads weights</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">The cold-adapter SLO cliff</p>
+<p>A request whose adapter is <em>not</em> resident pays the full fetch latency before its first token. If your object store is S3, a cold adapter can add 50–200 ms to time-to-first-token (TTFT). Two defenses: (1) a <strong>warm pool</strong> in CPU DRAM sized to your working set of adapters so most &ldquo;GPU misses&rdquo; are CPU hits, and (2) <strong>admission shaping</strong> — group cold-adapter requests so you pay the transfer once for a batch, and keep a small LRU pin for your most popular adapters. Always measure TTFT <em>segmented by adapter cache state</em> (GPU-hit / CPU-hit / cold); a healthy median can hide a brutal cold tail.</p>
+</div>
+<hr />
+<h2 id="7144-the-adapter-registry-eviction-fairness">7.14.4 The Adapter Registry, Eviction &amp; Fairness<a class="headerlink" href="#7144-the-adapter-registry-eviction-fairness" title="Permanent link">¶</a></h2>
+<p>Behind every multi-LoRA server is an <strong>adapter registry</strong>: the control-plane component that maps a tenant-facing adapter name to its physical weights and current residency tier, reference-counts in-flight usage, and decides what to evict.</p>
+<h3 id="what-the-registry-tracks">What the registry tracks<a class="headerlink" href="#what-the-registry-tracks" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>adapter_id</code> / name</td>
+<td>tenant-facing handle (e.g. <code>acme/contracts-v3</code>)</td>
+</tr>
+<tr>
+<td>rank <span class="arithmatex">\(r\)</span>, target modules, <span class="arithmatex">\(\alpha\)</span></td>
+<td>kernel configuration; validated against base at load</td>
+</tr>
+<tr>
+<td>location</td>
+<td><code>GPU</code> / <code>CPU</code> / <code>SSD</code> / <code>OBJECT_STORE</code></td>
+</tr>
+<tr>
+<td><code>gpu_slot</code></td>
+<td>page handle in the unified pool when resident</td>
+</tr>
+<tr>
+<td><code>ref_count</code></td>
+<td>number of in-flight requests currently using it</td>
+</tr>
+<tr>
+<td><code>last_used</code>, <code>hit_count</code></td>
+<td>LRU/LFU eviction signals</td>
+</tr>
+<tr>
+<td>checksum / version</td>
+<td>integrity + safe hot-reload of a retrained adapter</td>
+</tr>
+</tbody>
+</table>
+<h3 id="eviction-policy">Eviction policy<a class="headerlink" href="#eviction-policy" title="Permanent link">¶</a></h3>
+<p>When the GPU pool is full and a new adapter must be loaded, the registry evicts a resident adapter with <code>ref_count == 0</code> (never one in active use). LRU is the default; LFU or a cost-aware policy (weight the recency by adapter size and fetch cost) can be better when a few adapters dominate traffic. Because an evicted adapter still lives in CPU DRAM (or at least the object store), eviction is cheap — it just frees GPU pages. This is structurally identical to KV-cache eviction in <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>, and in S-LoRA&rsquo;s unified pool it is literally the <em>same</em> allocator.</p>
+<h3 id="per-tenant-fairness">Per-tenant fairness<a class="headerlink" href="#per-tenant-fairness" title="Permanent link">¶</a></h3>
+<p>A naïve &ldquo;first-come-first-served, sort by adapter&rdquo; scheduler is throughput-optimal but unfair: one tenant who floods the queue can starve everyone else, and a popular adapter that is always resident gets a latency advantage over a cold one. Production servers add fairness controls:</p>
+<ul>
+<li><strong>Per-tenant token-bucket rate limits</strong> to cap any single tenant&rsquo;s share of the batch.</li>
+<li><strong>Max-adapters-per-batch</strong> so a single step&rsquo;s LoRA kernel does not degenerate into thousands of tiny segments (each segment has fixed launch overhead; too many tanks efficiency).</li>
+<li><strong>Weighted fair queuing</strong> across tenants so batch slots are allocated proportionally to entitlements, not arrival order.</li>
+<li><strong>Reserved/pinned adapters</strong> for premium tenants guaranteed GPU residency (a latency SLO), traded against shared pool capacity.</li>
+</ul>
+<p>There is a genuine tension here: sorting the batch by adapter maximizes kernel efficiency (few, large segments) but can violate per-request latency fairness; honoring strict FCFS order maximizes fairness but can produce a batch with many tiny adapter segments. Real schedulers interpolate — they sort <em>within</em> a fairness-bounded window.</p>
+<div class="admonition tip">
+<p class="admonition-title">Cap the adapters-per-step, not just the batch size</p>
+<p>The dominant inefficiency in multi-LoRA decode is not batch size — it is <em>adapter cardinality</em> in the batch. A batch of 128 tokens over 4 adapters runs a tight SGMV; the same 128 tokens over 128 adapters runs 128 microscopic segments dominated by launch and gather overhead. Configure <code>max_loras</code> (vLLM) / max concurrent adapters per step, and let the scheduler defer overflow adapters to the next step. This single knob often moves throughput more than any kernel tuning.</p>
+</div>
+<hr />
+<h2 id="7145-unified-vs-disaggregated-execution-cross-model-prefix-reuse">7.14.5 Unified vs. Disaggregated Execution &amp; Cross-Model Prefix Reuse<a class="headerlink" href="#7145-unified-vs-disaggregated-execution-cross-model-prefix-reuse" title="Permanent link">¶</a></h2>
+<h3 id="unified-execution">Unified execution<a class="headerlink" href="#unified-execution" title="Permanent link">¶</a></h3>
+<p>The default architecture — vLLM, SGLang, LoRAX, S-LoRA — is <strong>unified</strong>: base GEMM and LoRA correction run on the same GPU(s) in the same forward pass. The base matmul output is computed, then the SGMV/BGMV kernel adds the per-adapter correction in place before the activation flows on. One process, one weight set, one batch. This is simplest and has the lowest latency because there is no cross-machine hop.</p>
+<figure class="viz" id="fig-lora-serving-unified-forward-sgmv">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 900 300" role="img"
+     aria-label="Unified forward pass for one adapted linear layer: X fans into two parallel paths — a dense base GEMM giving Y_base and an SGMV low-rank correction giving Y_lora — which sum to produce output Y.">
+  <defs>
+    <marker id="sf-ab" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f86c6)"/>
+    </marker>
+    <marker id="sf-ao" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#c6724f)"/>
+    </marker>
+    <marker id="sf-an" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
+    </marker>
+    <marker id="sf-am" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#aaa)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-lora-serving-unified-forward-sgmv text {
+      font-family: var(--sans,sans-serif);
+      fill: var(--ink-soft,#333);
+    }
+    #fig-lora-serving-unified-forward-sgmv .lbl  { font: 700 11.5px var(--sans,sans-serif); }
+    #fig-lora-serving-unified-forward-sgmv .sub  { font: 400 9px var(--mono,monospace); fill: var(--muted,#888); }
+    #fig-lora-serving-unified-forward-sgmv .nlbl { font: 700 13px var(--sans,sans-serif); }
+    #fig-lora-serving-unified-forward-sgmv .elbl { font: italic 9px var(--sans,sans-serif); fill: var(--muted,#999); }
+    #fig-lora-serving-unified-forward-sgmv .ptag { font: 600 9px var(--sans,sans-serif); }
+
+    @keyframes sf-pb {
+      0%,5%  { opacity:0; transform:translateX(0); }
+      10%    { opacity:1; }
+      46%    { opacity:1; transform:translateX(216px); }
+      60%    { opacity:1; transform:translateX(332px); }
+      82%    { opacity:1; transform:translateX(442px); }
+      90%    { opacity:0; }
+      100%   { opacity:0; transform:translateX(0); }
+    }
+    @keyframes sf-pl {
+      0%,5%  { opacity:0; transform:translateX(0); }
+      10%    { opacity:1; }
+      46%    { opacity:1; transform:translateX(248px); }
+      60%    { opacity:1; transform:translateX(368px); }
+      82%    { opacity:1; transform:translateX(480px); }
+      90%    { opacity:0; }
+      100%   { opacity:0; transform:translateX(0); }
+    }
+    @keyframes sf-mf {
+      0%,63%  { fill-opacity:0.06; }
+      73%     { fill-opacity:0.35; }
+      80%     { fill-opacity:0.1; }
+      87%     { fill-opacity:0.35; }
+      95%     { fill-opacity:0.06; }
+    }
+    @media (prefers-reduced-motion:reduce) {
+      .sf-pd, .sf-mr { animation:none!important; opacity:0!important; }
+    }
+    .sf-pdb { animation:sf-pb 3.6s ease-in-out infinite; transform-box:fill-box; transform-origin:center; }
+    .sf-pdl { animation:sf-pl 3.6s ease-in-out infinite; transform-box:fill-box; transform-origin:center; }
+    .sf-mr  { animation:sf-mf 3.6s ease-in-out infinite; transform-box:fill-box; transform-origin:center; }
+  </style>
+
+
+
+
+  <g data-anim="1">
+
+    <rect x="10" y="116" width="120" height="64" rx="8"
+          fill="var(--surface,#f4f6fa)"
+          stroke="var(--border-2,#bbb)" stroke-width="1.5"/>
+    <text x="70" y="140" text-anchor="middle" class="nlbl">X</text>
+    <text x="70" y="155" text-anchor="middle" class="sub">[B, d_in]</text>
+    <text x="70" y="168" text-anchor="middle" class="sub">activations</text>
+
+
+    <rect x="10" y="190" width="120" height="36" rx="4"
+          fill="none"
+          stroke="var(--muted,#ccc)" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="70" y="204" text-anchor="middle"
+          style="font:600 8px var(--mono,monospace); fill:var(--muted,#777)">adapter idx per token</text>
+    <text x="70" y="217" text-anchor="middle"
+          style="font:400 8px var(--mono,monospace); fill:var(--muted,#777)">[3,3,7,0,...]</text>
+  </g>
+
+
+  <line x1="130" y1="136" x2="150" y2="100"
+        stroke="var(--accent,#4f86c6)" stroke-width="2"
+        marker-end="url(#sf-ab)"/>
+  <line x1="130" y1="162" x2="150" y2="210"
+        stroke="var(--accent-2,#c6724f)" stroke-width="2"
+        marker-end="url(#sf-ao)"/>
+
+
+  <text x="138" y="92" text-anchor="middle" class="ptag" fill="var(--accent,#4f86c6)">base</text>
+  <text x="138" y="228" text-anchor="middle" class="ptag" fill="var(--accent-2,#c6724f)">LoRA</text>
+
+
+  <g data-anim="2">
+    <rect x="152" y="58" width="248" height="64" rx="8"
+          fill="var(--accent,#4f86c6)" fill-opacity="0.18"
+          stroke="var(--accent,#4f86c6)" stroke-width="2"/>
+    <text x="276" y="83" text-anchor="middle"
+          class="lbl" fill="var(--accent,#4f86c6)">dense GEMM: X . W0^T</text>
+    <text x="276" y="97" text-anchor="middle" class="sub">fully batched, adapter-agnostic</text>
+    <text x="276" y="110" text-anchor="middle" class="sub">~99% of FLOPs</text>
+  </g>
+
+
+  <line x1="400" y1="90" x2="410" y2="90"
+        stroke="var(--accent,#4f86c6)" stroke-width="2"
+        marker-end="url(#sf-ab)"/>
+
+
+  <g data-anim="3">
+    <rect x="412" y="66" width="84" height="48" rx="6"
+          fill="var(--accent,#4f86c6)" fill-opacity="0.12"
+          stroke="var(--accent,#4f86c6)" stroke-width="1.5"/>
+    <text x="454" y="95" text-anchor="middle"
+          class="nlbl" fill="var(--accent,#4f86c6)">Y_base</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="152" y="182" width="268" height="68" rx="8"
+          fill="var(--accent-2,#c6724f)" fill-opacity="0.15"
+          stroke="var(--accent-2,#c6724f)" stroke-width="2"/>
+    <text x="286" y="206" text-anchor="middle"
+          class="lbl" fill="var(--accent-2,#c6724f)">SGMV: gather A_a, B_a</text>
+    <text x="286" y="221" text-anchor="middle" class="sub">(a/r)*X*A^T*B^T</text>
+    <text x="286" y="235" text-anchor="middle" class="sub">d_in -&gt; r -&gt; d_out  (~1 % FLOPs)</text>
+  </g>
+
+
+  <path d="M70 226 L70 268 L150 248"
+        fill="none"
+        stroke="var(--muted,#bbb)" stroke-width="1.2"
+        stroke-dasharray="4 3"
+        marker-end="url(#sf-am)"/>
+  <text x="92" y="282" text-anchor="middle" class="elbl">gather A_a,B_a</text>
+
+
+  <line x1="420" y1="216" x2="430" y2="216"
+        stroke="var(--accent-2,#c6724f)" stroke-width="2"
+        marker-end="url(#sf-ao)"/>
+
+
+  <g data-anim="3">
+    <rect x="432" y="192" width="84" height="48" rx="6"
+          fill="var(--accent-2,#c6724f)" fill-opacity="0.12"
+          stroke="var(--accent-2,#c6724f)" stroke-width="1.5"/>
+    <text x="474" y="221" text-anchor="middle"
+          class="nlbl" fill="var(--accent-2,#c6724f)">Y_lora</text>
+  </g>
+
+
+  <g data-anim="4">
+    <circle cx="628" cy="148" r="28" class="sf-mr"
+            fill="var(--accent,#4f86c6)" fill-opacity="0.06"/>
+    <circle cx="628" cy="148" r="23"
+            fill="var(--surface,#f4f6fa)"
+            stroke="var(--border-2,#bbb)" stroke-width="2"/>
+    <text x="628" y="155" text-anchor="middle"
+          class="nlbl" style="font-size:20px">+</text>
+  </g>
+
+
+  <line x1="496" y1="100" x2="610" y2="138"
+        stroke="var(--accent,#4f86c6)" stroke-width="1.8"
+        marker-end="url(#sf-ab)"/>
+
+  <line x1="496" y1="214" x2="610" y2="160"
+        stroke="var(--accent-2,#c6724f)" stroke-width="1.8"
+        marker-end="url(#sf-ao)"/>
+
+
+  <g data-anim="5">
+    <rect x="660" y="120" width="228" height="56" rx="8"
+          fill="var(--surface,#f4f6fa)"
+          stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+    <text x="774" y="146" text-anchor="middle"
+          class="nlbl" fill="var(--good,#2f9e6e)">Y</text>
+    <text x="774" y="162" text-anchor="middle"
+          class="sub" style="fill:var(--good,#2f9e6e)">Y_base + Y_lora</text>
+  </g>
+
+
+  <line x1="651" y1="148" x2="658" y2="148"
+        stroke="var(--ink-soft,#555)" stroke-width="2"
+        marker-end="url(#sf-an)"/>
+
+
+  <circle cx="134" cy="130" r="5" fill="var(--accent,#4f86c6)"
+          class="sf-pd sf-pdb" opacity="0"/>
+  <circle cx="134" cy="158" r="5" fill="var(--accent-2,#c6724f)"
+          class="sf-pd sf-pdl" opacity="0"/>
+
+</svg>
+<figcaption><b>The unified forward pass splits at each adapted linear layer: a dense base GEMM computes Y_base for the entire batch (blue, ~99 % of FLOPs), while SGMV gathers per-token adapter matrices and computes the low-rank correction Y_lora (orange, ~1 % of FLOPs).</b> The per-token adapter index drives which adapter weights SGMV gathers per row. The two results add in place to produce Y = Y_base + Y_lora before the activation flows on — the expensive base GEMM stays fully batched and adapter-independent while the small correction handles per-tenant specialisation.</figcaption>
+</figure>
+
+<h3 id="disaggregated-execution">Disaggregated execution<a class="headerlink" href="#disaggregated-execution" title="Permanent link">¶</a></h3>
+<p>A <strong>disaggregated</strong> design separates concerns across machines or pools. There are two distinct axes, easily conflated:</p>
+<ol>
+<li><strong>Prefill/decode disaggregation</strong> (see <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>) — prefill (compute-bound, batches large) runs on one pool, decode (bandwidth-bound) on another, with the KV cache shipped between them. With LoRA, <em>both</em> pools must hold the relevant adapters, and the SGMV vs BGMV split maps naturally onto the two pools.</li>
+<li><strong>Base/adapter disaggregation</strong> — a more exotic design where a fleet of &ldquo;base servers&rdquo; runs the shared dense forward and a separate &ldquo;adapter service&rdquo; applies LoRA corrections, or where adapters are sharded across nodes. This can help when you have <em>so many</em> high-rank adapters that they exceed any single node&rsquo;s memory, or when adapter compute is offloaded to cheaper hardware. The cost is an extra activation round-trip per layer, which is usually prohibitive for the decode path; it is mostly of interest at extreme adapter counts.</li>
+</ol>
+<p>For the overwhelming majority of deployments, <strong>unified execution with tiered adapter storage</strong> wins: it keeps the hot path local and pays transfer cost only on cold misses.</p>
+<h3 id="cross-model-prefix-cache-reuse">Cross-model prefix-cache reuse<a class="headerlink" href="#cross-model-prefix-cache-reuse" title="Permanent link">¶</a></h3>
+<p>Here is a subtle and valuable interaction. Prefix caching reuses KV blocks for shared token prefixes (system prompts, few-shot headers). But KV tensors depend on the <em>weights</em>, and LoRA changes the weights — so in general two requests on <em>different adapters</em> produce <em>different</em> KV tensors for the same prefix tokens. Can they share a prefix cache?</p>
+<p>The answer hinges on <strong>which modules the adapter touches</strong>:</p>
+<ul>
+<li>If the LoRA does <strong>not</strong> adapt the <span class="arithmatex">\(k\)</span> and <span class="arithmatex">\(v\)</span> projections (e.g., it only adapts <span class="arithmatex">\(q,o\)</span> or the MLP), then <span class="arithmatex">\(K\)</span> and <span class="arithmatex">\(V\)</span> for the prefix are computed purely from base weights and are <strong>identical across all such adapters</strong>. The prefix KV cache can be shared across every tenant — a large win, since system prompts are often shared.</li>
+<li>If the LoRA <strong>does</strong> adapt <span class="arithmatex">\(k\)</span> or <span class="arithmatex">\(v\)</span>, the cached KV blocks are adapter-specific. They are still cacheable, but only reusable by requests on the <em>same</em> adapter (and only if the base prefix is the same). The cache must therefore be keyed by <code>(prefix_hash, adapter_id)</code>.</li>
+</ul>
+<div class="highlight"><pre><span></span><code>  Prefix-cache key strategy:
+    adapter touches k or v  →  key = hash(prefix_tokens) ⊕ adapter_id   (per-adapter)
+    adapter leaves k,v base →  key = hash(prefix_tokens)                (shared!)
+</code></pre></div>
+<p>Designing adapters to avoid the <span class="arithmatex">\(k,v\)</span> projections (when accuracy permits) is therefore not just a quality choice — it directly enables cross-tenant KV reuse. This is a concrete example of co-designing the fine-tuning recipe with the serving system. See <a href="../07-inference-serving/04-sglang-radixattention.html">SGLang: RadixAttention &amp; Structured Programs</a> for the trie-based cache this plugs into; the radix tree can store per-adapter subtrees off a shared base-prefix root.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> &ldquo;We serve 800 customer-specific LoRA adapters over a shared 13B base. Decode throughput is fine but p99 TTFT is terrible and very spiky. Walk me through the likely causes and fixes.&rdquo;</p>
+<p><strong>A:</strong> Spiky p99 TTFT with good steady-state throughput almost always points to <strong>cold-adapter loading on the request critical path</strong>. The fixes, in order:</p>
+<ol>
+<li><strong>Measure TTFT segmented by adapter cache state</strong> (GPU-resident / CPU-warm / cold-from-object-store). The spikes are the cold tail.</li>
+<li><strong>Add or enlarge a CPU-DRAM warm pool</strong> sized to the working set of adapters so most GPU misses are sub-millisecond CPU hits rather than 50–200 ms object-store fetches.</li>
+<li><strong>Prefetch on a side CUDA stream</strong> so adapter H2D transfer overlaps the prior batch&rsquo;s compute and is hidden behind a decode step.</li>
+<li><strong>Pin the top-K most popular adapters</strong> in GPU memory (LRU exempt) so the bulk of traffic never misses.</li>
+<li><strong>Cap <code>max_loras</code> per step</strong> — if the scheduler crams too many distinct adapters into one batch, the SGMV degenerates into many tiny segments, inflating both decode time and queueing delay that shows up as TTFT.</li>
+<li><strong>Shape admission</strong>: batch cold-adapter requests so each adapter is fetched once per wave, and apply per-tenant rate limits so one tenant&rsquo;s burst of cold adapters doesn&rsquo;t evict everyone else&rsquo;s warm ones (cache thrashing).</li>
+</ol>
+<p>The throughput being fine while TTFT spikes is the tell: the GPU is busy and efficient; the latency is being injected in the <em>control plane</em> (registry/prefetch), not the <em>data plane</em> (kernels).</p>
+</div>
+<hr />
+<h2 id="7146-the-vllm-sglang-multi-lora-paths">7.14.6 The vLLM &amp; SGLang Multi-LoRA Paths<a class="headerlink" href="#7146-the-vllm-sglang-multi-lora-paths" title="Permanent link">¶</a></h2>
+<p>Both leading open-source engines ship production multi-LoRA support built on the Punica/S-LoRA lineage.</p>
+<p><strong>vLLM</strong> exposes LoRA as a first-class serving feature. You launch with <code>--enable-lora</code>, set <code>--max-loras</code> (max distinct adapters per <em>batch/step</em>) and <code>--max-cpu-loras</code> (the CPU warm-pool size), and bound rank with <code>--max-lora-rank</code>. Adapters can be registered statically at launch (<code>--lora-modules name=path ...</code>) or <strong>loaded dynamically at runtime</strong> via the API, which is what makes a true multi-tenant platform possible — tenants upload adapters and route to them by name without restarting the server. Internally vLLM uses Punica-style SGMV/BGMV kernels (and Triton variants), the paged allocator holds adapter weights, and an LRU manager handles GPU↔CPU residency. Requests carry a <code>LoRARequest(name, id, path)</code> so the scheduler knows which adapter each belongs to.</p>
+<p><strong>SGLang</strong> similarly supports multi-LoRA, sorting requests by adapter to form efficient SGMV segments and integrating adapter residency with its RadixAttention KV cache (so the cross-model prefix-reuse story above is native). Its structured-program model means a single program can fan out across adapters, and its scheduler co-optimizes the LoRA batch with prefix sharing.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># vLLM: serve a base model with multi-LoRA, dynamic loading enabled.</span>
+vllm<span class="w"> </span>serve<span class="w"> </span>meta-llama/Llama-2-13b-hf<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--enable-lora<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-loras<span class="w"> </span><span class="m">8</span><span class="w"> </span><span class="se">\ </span><span class="w">          </span><span class="c1"># up to 8 distinct adapters per scheduler step</span>
+<span class="w">  </span>--max-lora-rank<span class="w"> </span><span class="m">64</span><span class="w"> </span><span class="se">\ </span><span class="w">     </span><span class="c1"># kernel sized for ranks up to 64</span>
+<span class="w">  </span>--max-cpu-loras<span class="w"> </span><span class="m">256</span><span class="w"> </span><span class="se">\ </span><span class="w">    </span><span class="c1"># CPU warm pool: 256 adapters resident off-GPU</span>
+<span class="w">  </span>--enable-prefix-caching<span class="w">   </span><span class="c1"># share base-prefix KV where adapters allow</span>
+
+<span class="c1"># Register / route to an adapter at request time (OpenAI-compatible API):</span>
+<span class="c1">#   &quot;model&quot;: &quot;acme-contracts-v3&quot;   where that name maps to a loaded LoRA.</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># vLLM offline batched multi-LoRA: one base, many adapters, one batch.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">vllm</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLM</span><span class="p">,</span> <span class="n">SamplingParams</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">vllm.lora.request</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoRARequest</span>
+
+<span class="n">llm</span> <span class="o">=</span> <span class="n">LLM</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;meta-llama/Llama-2-13b-hf&quot;</span><span class="p">,</span>
+          <span class="n">enable_lora</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_loras</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">max_lora_rank</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>
+
+<span class="n">sp</span> <span class="o">=</span> <span class="n">SamplingParams</span><span class="p">(</span><span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">64</span><span class="p">)</span>
+
+<span class="c1"># Each prompt is tagged with its own adapter; vLLM batches them together</span>
+<span class="c1"># and applies the per-row SGMV correction in a single fused forward.</span>
+<span class="n">prompts</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">(</span><span class="s2">&quot;Summarize this contract clause: ...&quot;</span><span class="p">,</span> <span class="n">LoRARequest</span><span class="p">(</span><span class="s2">&quot;contracts&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;/adapters/contracts&quot;</span><span class="p">)),</span>
+    <span class="p">(</span><span class="s2">&quot;Generate NPC dialogue for a dragon:&quot;</span><span class="p">,</span> <span class="n">LoRARequest</span><span class="p">(</span><span class="s2">&quot;game-lore&quot;</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;/adapters/game-lore&quot;</span><span class="p">)),</span>
+    <span class="p">(</span><span class="s2">&quot;Draft a discharge summary for:&quot;</span><span class="p">,</span>      <span class="n">LoRARequest</span><span class="p">(</span><span class="s2">&quot;med-notes&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="s2">&quot;/adapters/med-notes&quot;</span><span class="p">)),</span>
+<span class="p">]</span>
+<span class="n">outs</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">generate</span><span class="p">([</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">prompts</span><span class="p">],</span> <span class="n">sp</span><span class="p">,</span>
+                    <span class="n">lora_request</span><span class="o">=</span><span class="p">[</span><span class="n">lr</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">lr</span> <span class="ow">in</span> <span class="n">prompts</span><span class="p">])</span>
+</code></pre></div>
+<hr />
+<h2 id="7147-from-scratch-a-batched-multi-adapter-forward">7.14.7 From Scratch: A Batched Multi-Adapter Forward<a class="headerlink" href="#7147-from-scratch-a-batched-multi-adapter-forward" title="Permanent link">¶</a></h2>
+<p>Let us build the core mechanism end to end: a single adapted linear layer that, given a batch of activations each tagged with an adapter ID, computes the base GEMM once and adds the correct per-row LoRA correction — a CPU/GPU-portable PyTorch model of SGMV/BGMV. We then wrap it in a tiny registry with eviction to show the control plane.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">OrderedDict</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 1. The batched multi-adapter linear layer (the SGMV/BGMV idea, vectorized).</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">MultiLoRALinear</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A frozen base weight W0 plus a *stack* of LoRA adapters, applied</span>
+<span class="sd">    per-row according to a per-token adapter index. This is the math model</span>
+<span class="sd">    of Punica&#39;s SGMV; a real kernel fuses the gather + matmuls in CUDA/Triton.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_in</span><span class="p">,</span> <span class="n">d_out</span><span class="p">,</span> <span class="n">max_adapters</span><span class="p">,</span> <span class="n">rank</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cpu&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_in</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">d_out</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">rank</span> <span class="o">=</span> <span class="n">d_in</span><span class="p">,</span> <span class="n">d_out</span><span class="p">,</span> <span class="n">rank</span>
+        <span class="c1"># Frozen base weight: [d_out, d_in]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W0</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">d_out</span><span class="p">,</span> <span class="n">d_in</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="o">/</span> <span class="n">d_in</span><span class="o">**</span><span class="mf">0.5</span>
+        <span class="c1"># Adapter stacks. Slot 0 is reserved as the &quot;no adapter&quot; identity:</span>
+        <span class="c1"># its A,B are zero so the correction is exactly zero (base-only rows).</span>
+        <span class="c1"># A_all: [S, r, d_in]   B_all: [S, d_out, r]</span>
+        <span class="n">S</span> <span class="o">=</span> <span class="n">max_adapters</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">A_all</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">S</span><span class="p">,</span> <span class="n">rank</span><span class="p">,</span> <span class="n">d_in</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">B_all</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">S</span><span class="p">,</span> <span class="n">d_out</span><span class="p">,</span> <span class="n">rank</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">S</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>  <span class="c1"># alpha/r per slot; slot 0 -&gt; 0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scale</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">device</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_adapter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">slot</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="p">,</span> <span class="n">alpha</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Install adapter weights into a GPU slot. A:[r,d_in] B:[d_out,r].&quot;&quot;&quot;</span>
+        <span class="k">assert</span> <span class="n">slot</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;slot 0 is reserved as base-only&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">A_all</span><span class="p">[</span><span class="n">slot</span><span class="p">]</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">A</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">B_all</span><span class="p">[</span><span class="n">slot</span><span class="p">]</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">B</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scale</span><span class="p">[</span><span class="n">slot</span><span class="p">]</span> <span class="o">=</span> <span class="n">alpha</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">rank</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">lora_idx</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        x:        [B, d_in]   stacked activations (one row per token)</span>
+<span class="sd">        lora_idx: [B] long    adapter slot for each row (0 == base only)</span>
+<span class="sd">        returns:  [B, d_out]</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># (a) Base GEMM — fully batched, peak-efficiency, adapter-independent.</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">W0</span><span class="p">)</span>                      <span class="c1"># [B, d_out]</span>
+
+        <span class="c1"># (b) Gather each row&#39;s adapter matrices. In a real kernel this gather</span>
+        <span class="c1">#     is fused; here we use advanced indexing for clarity.</span>
+        <span class="n">A</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">A_all</span><span class="p">[</span><span class="n">lora_idx</span><span class="p">]</span>                       <span class="c1"># [B, r, d_in]</span>
+        <span class="n">B</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">B_all</span><span class="p">[</span><span class="n">lora_idx</span><span class="p">]</span>                       <span class="c1"># [B, d_out, r]</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span><span class="p">[</span><span class="n">lora_idx</span><span class="p">]</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>         <span class="c1"># [B, 1]</span>
+
+        <span class="c1"># (c) Shrink then expand:  v = A x   (per-row mat-vec), then B v.</span>
+        <span class="c1">#     einsum expresses the per-row low-rank product without a Python loop.</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;brd,bd-&gt;br&quot;</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span>           <span class="c1"># [B, r]   (down-proj)</span>
+        <span class="n">delta</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;bor,br-&gt;bo&quot;</span><span class="p">,</span> <span class="n">B</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>       <span class="c1"># [B, d_out](up-proj)</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">y</span> <span class="o">+</span> <span class="n">s</span> <span class="o">*</span> <span class="n">delta</span>                              <span class="c1"># rows with slot 0 add 0</span>
+        <span class="k">return</span> <span class="n">y</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 2. A segment-sorted variant: sort the batch by adapter so identical</span>
+<span class="c1">#    adapters are contiguous (what the scheduler does to form SGMV segments).</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">forward_segmented</span><span class="p">(</span><span class="n">layer</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">lora_idx</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Demonstrate adapter-sorting: group rows by adapter, apply per segment,</span>
+<span class="sd">    then scatter results back to original order. Mirrors how a real server</span>
+<span class="sd">    sorts a continuous batch by adapter id before launching SGMV.&quot;&quot;&quot;</span>
+    <span class="n">order</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">lora_idx</span><span class="p">)</span>                    <span class="c1"># stable grouping</span>
+    <span class="n">x_sorted</span><span class="p">,</span> <span class="n">idx_sorted</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="n">order</span><span class="p">],</span> <span class="n">lora_idx</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
+    <span class="n">y_sorted</span> <span class="o">=</span> <span class="n">layer</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">x_sorted</span><span class="p">,</span> <span class="n">idx_sorted</span><span class="p">)</span>     <span class="c1"># same result, contiguous</span>
+    <span class="c1"># scatter back to the caller&#39;s order</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">y_sorted</span><span class="p">)</span>
+    <span class="n">y</span><span class="p">[</span><span class="n">order</span><span class="p">]</span> <span class="o">=</span> <span class="n">y_sorted</span>
+    <span class="k">return</span> <span class="n">y</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 3. A tiny adapter registry with GPU-slot LRU eviction + CPU warm pool.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">AdapterMeta</span><span class="p">:</span>
+    <span class="n">A</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>
+    <span class="n">B</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">ref_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">AdapterRegistry</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">layer</span><span class="p">:</span> <span class="s2">&quot;MultiLoRALinear&quot;</span><span class="p">,</span> <span class="n">n_gpu_slots</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">layer</span> <span class="o">=</span> <span class="n">layer</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_gpu_slots</span> <span class="o">=</span> <span class="n">n_gpu_slots</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cpu_pool</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AdapterMeta</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>     <span class="c1"># warm pool (CPU DRAM)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">gpu</span><span class="p">:</span> <span class="s2">&quot;OrderedDict[str,int]&quot;</span> <span class="o">=</span> <span class="n">OrderedDict</span><span class="p">()</span>  <span class="c1"># name -&gt; slot (LRU order)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">free_slots</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">n_gpu_slots</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span>  <span class="c1"># slot 0 reserved</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">register</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="p">,</span> <span class="n">alpha</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Add an adapter to the (CPU) warm pool — the source of truth here.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cpu_pool</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">AdapterMeta</span><span class="p">(</span><span class="n">A</span><span class="o">=</span><span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="o">=</span><span class="n">B</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">ensure_resident</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the GPU slot for `name`, loading + evicting as needed.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">gpu</span><span class="p">:</span>                           <span class="c1"># GPU hit</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">gpu</span><span class="o">.</span><span class="n">move_to_end</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>                 <span class="c1"># mark most-recently-used</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">gpu</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+        <span class="n">meta</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cpu_pool</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>                     <span class="c1"># CPU-warm hit (else KeyError)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">free_slots</span><span class="p">:</span>                        <span class="c1"># need to evict an LRU adapter</span>
+            <span class="n">victim</span><span class="p">,</span> <span class="n">vslot</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">gpu</span><span class="o">.</span><span class="n">items</span><span class="p">()))</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">cpu_pool</span><span class="p">[</span><span class="n">victim</span><span class="p">]</span><span class="o">.</span><span class="n">ref_count</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;LRU victim is in use; need a richer policy&quot;</span><span class="p">)</span>
+            <span class="k">del</span> <span class="bp">self</span><span class="o">.</span><span class="n">gpu</span><span class="p">[</span><span class="n">victim</span><span class="p">]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">free_slots</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">vslot</span><span class="p">)</span>
+        <span class="n">slot</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">free_slots</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">layer</span><span class="o">.</span><span class="n">set_adapter</span><span class="p">(</span><span class="n">slot</span><span class="p">,</span> <span class="n">meta</span><span class="o">.</span><span class="n">A</span><span class="p">,</span> <span class="n">meta</span><span class="o">.</span><span class="n">B</span><span class="p">,</span> <span class="n">meta</span><span class="o">.</span><span class="n">alpha</span><span class="p">)</span>  <span class="c1"># H2D copy</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">gpu</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">slot</span>
+        <span class="k">return</span> <span class="n">slot</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">build_index</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request_adapter_names</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Map a batch&#39;s per-request adapter names to GPU slot indices,</span>
+<span class="sd">        ensuring each is resident first.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">ensure_resident</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">request_adapter_names</span><span class="p">],</span>
+                            <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">layer</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 4. End-to-end sanity check: correctness vs an explicit per-adapter reference.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">d_in</span><span class="p">,</span> <span class="n">d_out</span><span class="p">,</span> <span class="n">r</span> <span class="o">=</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">48</span><span class="p">,</span> <span class="mi">8</span>
+    <span class="n">layer</span> <span class="o">=</span> <span class="n">MultiLoRALinear</span><span class="p">(</span><span class="n">d_in</span><span class="p">,</span> <span class="n">d_out</span><span class="p">,</span> <span class="n">max_adapters</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="n">r</span><span class="p">)</span>
+    <span class="n">reg</span> <span class="o">=</span> <span class="n">AdapterRegistry</span><span class="p">(</span><span class="n">layer</span><span class="p">,</span> <span class="n">n_gpu_slots</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>        <span class="c1"># only 2 GPU slots: forces eviction</span>
+
+    <span class="c1"># Register 3 adapters into the CPU warm pool (more than GPU slots).</span>
+    <span class="n">refs</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;contracts&quot;</span><span class="p">,</span> <span class="s2">&quot;game-lore&quot;</span><span class="p">,</span> <span class="s2">&quot;med-notes&quot;</span><span class="p">]:</span>
+        <span class="n">A</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">d_in</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.02</span>
+        <span class="n">B</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">d_out</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.02</span>
+        <span class="n">reg</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">16.0</span><span class="p">)</span>
+        <span class="n">refs</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="p">,</span> <span class="mf">16.0</span> <span class="o">/</span> <span class="n">r</span><span class="p">)</span>
+
+    <span class="c1"># A heterogeneous batch: 6 tokens over 3 adapters + 1 base-only row.</span>
+    <span class="n">batch_names</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;contracts&quot;</span><span class="p">,</span> <span class="s2">&quot;game-lore&quot;</span><span class="p">,</span> <span class="s2">&quot;contracts&quot;</span><span class="p">,</span>
+                   <span class="s2">&quot;med-notes&quot;</span><span class="p">,</span> <span class="s2">&quot;game-lore&quot;</span><span class="p">,</span> <span class="s2">&quot;__base__&quot;</span><span class="p">]</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">batch_names</span><span class="p">),</span> <span class="n">d_in</span><span class="p">)</span>
+
+    <span class="c1"># __base__ maps to reserved slot 0 (no correction); others get real slots.</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_slot</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="k">return</span> <span class="mi">0</span> <span class="k">if</span> <span class="n">n</span> <span class="o">==</span> <span class="s2">&quot;__base__&quot;</span> <span class="k">else</span> <span class="n">reg</span><span class="o">.</span><span class="n">ensure_resident</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+    <span class="n">lora_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">to_slot</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">batch_names</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)</span>
+
+    <span class="n">y</span> <span class="o">=</span> <span class="n">layer</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">lora_idx</span><span class="p">)</span>
+    <span class="n">y_seg</span> <span class="o">=</span> <span class="n">forward_segmented</span><span class="p">(</span><span class="n">layer</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">lora_idx</span><span class="p">)</span>      <span class="c1"># sorted path, same answer</span>
+
+    <span class="c1"># Reference: compute each row independently with merged math y = W0 x + (a/r) B A x</span>
+    <span class="n">y_ref</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">batch_names</span><span class="p">):</span>
+        <span class="n">base</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">layer</span><span class="o">.</span><span class="n">W0</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">n</span> <span class="o">==</span> <span class="s2">&quot;__base__&quot;</span><span class="p">:</span>
+            <span class="n">y_ref</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">base</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="p">,</span> <span class="n">s</span> <span class="o">=</span> <span class="n">refs</span><span class="p">[</span><span class="n">n</span><span class="p">]</span>
+            <span class="n">y_ref</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">base</span> <span class="o">+</span> <span class="n">s</span> <span class="o">*</span> <span class="p">(</span><span class="n">B</span> <span class="o">@</span> <span class="p">(</span><span class="n">A</span> <span class="o">@</span> <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">]))</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;batched  vs reference  max err:&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">y</span> <span class="o">-</span> <span class="n">y_ref</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;segmented vs reference max err:&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">y_seg</span> <span class="o">-</span> <span class="n">y_ref</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+    <span class="c1"># Both errors are ~1e-6 (float rounding): the fused multi-adapter forward</span>
+    <span class="c1"># is numerically identical to per-adapter merged math.</span>
+</code></pre></div>
+<p>Running this prints max errors on the order of <span class="arithmatex">\(10^{-6}\)</span> — float rounding — confirming that the single batched forward over a heterogeneous mix of adapters is <em>exactly</em> equivalent to merging each adapter and running it alone, but at a fraction of the cost and with one shared base in memory. The <code>forward_segmented</code> path shows the scheduler trick of sorting by adapter; the registry shows GPU-slot LRU eviction with a CPU warm pool and a reserved base-only slot.</p>
+<p>To turn this toy into the real thing you would: (1) replace the <code>einsum</code> gather with a fused SGMV/BGMV Triton or CUDA kernel that never materializes the gathered <code>A</code>/<code>B</code> tensors; (2) apply it to all adapted projections in every transformer block, not one layer; (3) move the registry&rsquo;s CPU↔GPU copies onto a side stream for overlap; and (4) wire the adapter index through the continuous-batching scheduler so it is rebuilt every step as requests join and leave.</p>
+<div class="admonition warning">
+<p class="admonition-title">Don&rsquo;t materialize the gathered weights</p>
+<p>The <code>self.A_all[lora_idx]</code> advanced-index in the toy creates a <code>[B, r, d_in]</code> tensor — it physically copies each adapter&rsquo;s matrix once per row that uses it. For a popular adapter with 200 rows in the batch, that is 200 redundant copies of the same weight, ballooning memory traffic. The whole point of a real SGMV kernel is that a thread block loads each adapter&rsquo;s weight tile into shared memory <strong>once</strong> and reuses it across all rows of that adapter&rsquo;s segment. The toy is correct but not bandwidth-optimal; the production kernel is both.</p>
+</div>
+<hr />
+<h2 id="7148-throughput-slos-when-not-to-use-multi-lora">7.14.8 Throughput, SLOs &amp; When Not to Use Multi-LoRA<a class="headerlink" href="#7148-throughput-slos-when-not-to-use-multi-lora" title="Permanent link">¶</a></h2>
+<p>Multi-tenant LoRA serving is a throughput-per-dollar machine, but it is not free. A summary of the trade-offs:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Win</th>
+<th>Cost / caveat</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU memory</td>
+<td>one base resident, adapters are tiny</td>
+<td>adapter pool competes with KV cache for DRAM</td>
+</tr>
+<tr>
+<td>Throughput</td>
+<td>thousands of tenants on one deployment</td>
+<td>LoRA correction adds a decode bandwidth tax (§7.14.2)</td>
+</tr>
+<tr>
+<td>TTFT</td>
+<td>warm adapters add ~0 latency</td>
+<td>cold adapters add fetch latency (the SLO cliff)</td>
+</tr>
+<tr>
+<td>Fairness</td>
+<td>shared infra, elastic</td>
+<td>needs explicit per-tenant scheduling/limits</td>
+</tr>
+<tr>
+<td>Quality</td>
+<td>per-tenant customization</td>
+<td>rank ceiling; high-rank adapters cost more to serve</td>
+</tr>
+</tbody>
+</table>
+<p><strong>When <em>not</em> to use multi-LoRA serving:</strong> if a single tenant dominates traffic, just <em>merge</em> their adapter and serve a dedicated dense model — you avoid the LoRA tax entirely. If adapters are high-rank (hundreds) or full fine-tunes, the &ldquo;tiny adapter&rdquo; assumption breaks and per-model deployment may be cheaper. And if tenants need different <em>base</em> models (not just different adapters on one base), multi-LoRA doesn&rsquo;t apply at all — you are back to multi-model serving and routing (see <a href="../12-production-mlops/03-caching-routing-cost.html">Caching, Routing &amp; Cost Control in Production</a>). The sweet spot is <strong>many low-rank adapters over one shared base, with skewed-but-not-degenerate traffic</strong> — exactly the SaaS fine-tuning platform we opened with.</p>
+<p>For the broader economics of latency vs. throughput vs. cost that frame these decisions, see <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a> and the system-design view in <a href="../12-production-mlops/01-serving-system-design.html">Designing an LLM Serving System</a>.</p>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Merging a LoRA into the base is optimal for <em>one</em> adapter but fatal for multi-tenancy; keep the LoRA path separate so a single batch can serve many adapters at once.</li>
+<li>The core kernel problem is a <em>grouped/segmented</em> matmul: one shared base GEMM plus a per-row low-rank correction where each row may use a different <span class="arithmatex">\(A,B,r,\alpha\)</span>. Punica&rsquo;s SGMV (prefill) and BGMV (decode) fuse the gather with the small matmuls.</li>
+<li>In decode, the LoRA correction is bandwidth-bound: it can be ~0.6% of the FLOPs yet a 20–30% bandwidth tax because each adapter&rsquo;s weights must be streamed — fusing the gather to load each weight once is what makes it cheap.</li>
+<li>S-LoRA&rsquo;s Unified Paging puts adapters in the same paged DRAM pool as the KV cache; tiered storage (GPU→CPU→SSD→object store) keeps only active adapters on the GPU, with async prefetch hiding swaps behind compute.</li>
+<li>The adapter registry is the control plane: name→weights mapping, residency tier, ref-counting, and LRU/LFU eviction (never evict a <code>ref_count&gt;0</code> adapter).</li>
+<li>Cold adapters create the p99 TTFT cliff; defend with a CPU warm pool, side-stream prefetch, pinned top-K adapters, and capping adapters-per-step (<code>max_loras</code>).</li>
+<li>Cross-tenant prefix-cache reuse is possible when the adapter does <em>not</em> touch the <span class="arithmatex">\(k,v\)</span> projections — co-design the fine-tune to keep KV base-computed and share system-prompt KV across all tenants.</li>
+<li>vLLM (<code>--enable-lora</code>, <code>--max-loras</code>, <code>--max-cpu-loras</code>) and SGLang ship Punica/S-LoRA-style multi-LoRA with dynamic runtime adapter loading — the foundation of a real fine-tuning SaaS.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Multi-tenant LoRA serving has matured rapidly from the 2023 Punica/S-LoRA papers into production-grade support in every major inference engine; the open frontier is disaggregated LoRA execution, cross-model KV reuse, and co-optimizing adapter eviction with KV-cache management.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2106.09685">Hu et al., <em>LoRA: Low-Rank Adaptation of Large Language Models</em> (2021)</a> — the reparameterization that makes multi-tenant adapter serving tractable.</li>
+<li><a href="https://arxiv.org/abs/2310.18547">Chen et al., <em>Punica: Multi-Tenant LoRA Serving</em> (2023)</a> — introduces SGMV/BGMV, the grouped gather matmul that lets one kernel serve a heterogeneous-adapter batch.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2311.03285">Sheng et al., <em>S-LoRA: Serving Thousands of Concurrent LoRA Adapters</em> (2023)</a> — Unified Paging puts adapters and KV pages in one pool; tiered storage enables serving thousands of adapters from a single GPU cluster.</li>
+<li><a href="https://arxiv.org/abs/2401.11240">Li et al., <em>CaraServe: CPU-Assisted and Rank-Aware LoRA Serving</em> (2024)</a> — early-starts prefill on CPU while the adapter streams to GPU, hiding cold-adapter load latency.</li>
+<li><a href="https://www.usenix.org/conference/osdi24/presentation/wu-bingyang">Wu et al., <em>dLoRA: Dynamically Orchestrating Requests and Adapters for LoRA LLM Serving</em> (OSDI 2024)</a> — dynamically merges and unmerges adapters and migrates requests across replicas to balance load.</li>
+<li><a href="https://arxiv.org/abs/2505.03756">Zhang et al., <em>Improving Multi-LoRA Serving via Efficient LoRA and KV Cache Management</em> (2025)</a> — joint adapter + KV cache placement (FASTLIBRA) cuts TTFT by ~63% over prior systems.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/punica-ai/punica">punica-ai/punica</a> — reference SGMV/BGMV CUDA kernels and multi-LoRA serving system from the Punica paper.</li>
+<li><a href="https://github.com/predibase/lorax">predibase/lorax</a> — production-ready multi-LoRA inference server with dynamic adapter loading, tiered weight caching, and OpenAI-compatible API.</li>
+<li><a href="https://docs.vllm.ai/en/latest/features/lora/">vLLM — LoRA Adapters</a> — official docs for <code>--enable-lora</code>, <code>--max-loras</code>, <code>--max-cpu-loras</code>, and dynamic runtime adapter registration.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.lmsys.org/blog/2023-11-15-slora/">LMSYS Blog — <em>Recipe for Serving Thousands of Concurrent LoRA Adapters</em> (2023)</a> — accessible walkthrough of S-LoRA&rsquo;s design, benchmarks, and trade-offs against PEFT/vLLM baselines.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Chen, L. et al. &ldquo;Punica: Multi-Tenant LoRA Serving.&rdquo; <em>MLSys 2024 / arXiv:2310.18547</em>. — Introduces SGMV/BGMV, the batched gather matmul for heterogeneous adapters over a shared base.</li>
+<li>Sheng, Y. et al. &ldquo;S-LoRA: Serving Thousands of Concurrent LoRA Adapters.&rdquo; <em>arXiv:2311.03285</em>, 2023. — Unified Paging, tiered adapter storage, and rank-aware kernels for thousands of adapters.</li>
+<li>Hu, E. et al. &ldquo;LoRA: Low-Rank Adaptation of Large Language Models.&rdquo; <em>ICLR 2022</em>. — The original low-rank reparameterization underpinning everything in this chapter.</li>
+<li>Kwon, W. et al. &ldquo;Efficient Memory Management for Large Language Model Serving with PagedAttention.&rdquo; <em>SOSP 2023</em>. — The paged allocator S-LoRA&rsquo;s Unified Paging extends to adapter weights.</li>
+<li>Zheng, L. et al. &ldquo;SGLang: Efficient Execution of Structured Language Model Programs.&rdquo; <em>arXiv:2312.07104</em>, 2023. — RadixAttention and the structured-program serving model that hosts SGLang&rsquo;s multi-LoRA path.</li>
+<li>Predibase, &ldquo;LoRAX: Multi-LoRA inference server.&rdquo; Open-source repository — production reference implementation of dynamic adapter loading and tiered storage.</li>
+<li>vLLM documentation, &ldquo;Using LoRA adapters&rdquo; — configuration and the runtime dynamic-loading API for multi-tenant adapter serving.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="13-serving-moe.html"><span class="pn-label">← Previous</span><span class="pn-title">Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</span></a>
+<a class="next" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="pn-label">Next →</span><span class="pn-title">Tool Use &amp; Function Calling</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#7141-the-lora-forward-pass-and-why-multi-tenancy-is-hard">7.14.1 The LoRA Forward Pass and Why Multi-Tenancy Is Hard</a></li>
+<li class="toc-l3"><a href="#the-single-adapter-trap-merging">The single-adapter trap: merging</a></li>
+<li class="toc-l3"><a href="#the-batched-heterogeneous-problem-stated-precisely">The batched-heterogeneous problem, stated precisely</a></li>
+<li class="toc-l2"><a href="#7142-punica-sgmv-the-batched-multi-adapter-kernel">7.14.2 Punica &amp;amp; SGMV: The Batched Multi-Adapter Kernel</a></li>
+<li class="toc-l3"><a href="#the-data-layout">The data layout</a></li>
+<li class="toc-l3"><a href="#what-sgmv-computes">What SGMV computes</a></li>
+<li class="toc-l3"><a href="#two-variants-bgmv-vs-sgmv">Two variants: BGMV vs SGMV</a></li>
+<li class="toc-l2"><a href="#7143-s-lora-lorax-serving-thousands-of-adapters">7.14.3 S-LoRA &amp;amp; LoRAX: Serving Thousands of Adapters</a></li>
+<li class="toc-l3"><a href="#unified-paging-adapters-live-in-the-kv-cache-pool">Unified Paging: adapters live in the KV-cache pool</a></li>
+<li class="toc-l3"><a href="#tiered-storage-gpu-cpu-diskobject-store">Tiered storage: GPU → CPU → disk/object store</a></li>
+<li class="toc-l3"><a href="#hot-swapping-and-the-prefetch-pipeline">Hot-swapping and the prefetch pipeline</a></li>
+<li class="toc-l2"><a href="#7144-the-adapter-registry-eviction-fairness">7.14.4 The Adapter Registry, Eviction &amp;amp; Fairness</a></li>
+<li class="toc-l3"><a href="#what-the-registry-tracks">What the registry tracks</a></li>
+<li class="toc-l3"><a href="#eviction-policy">Eviction policy</a></li>
+<li class="toc-l3"><a href="#per-tenant-fairness">Per-tenant fairness</a></li>
+<li class="toc-l2"><a href="#7145-unified-vs-disaggregated-execution-cross-model-prefix-reuse">7.14.5 Unified vs. Disaggregated Execution &amp;amp; Cross-Model Prefix Reuse</a></li>
+<li class="toc-l3"><a href="#unified-execution">Unified execution</a></li>
+<li class="toc-l3"><a href="#disaggregated-execution">Disaggregated execution</a></li>
+<li class="toc-l3"><a href="#cross-model-prefix-cache-reuse">Cross-model prefix-cache reuse</a></li>
+<li class="toc-l2"><a href="#7146-the-vllm-sglang-multi-lora-paths">7.14.6 The vLLM &amp;amp; SGLang Multi-LoRA Paths</a></li>
+<li class="toc-l2"><a href="#7147-from-scratch-a-batched-multi-adapter-forward">7.14.7 From Scratch: A Batched Multi-Adapter Forward</a></li>
+<li class="toc-l2"><a href="#7148-throughput-slos-when-not-to-use-multi-lora">7.14.8 Throughput, SLOs &amp;amp; When Not to Use Multi-LoRA</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prime-RL, Async RL &amp; Decentralized Training — The LLM Stack</title>
+<meta name="description" content="Asynchronous/off-policy RL (decoupled generation and training), staleness and importance sampling corrections, Prime Intellect&#x27;s prime-rl and decentralized/glob">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="active" href="06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VI — RL Infrastructure (Deep Dive)</div>
+<h1 id="66-prime-rl-async-rl-decentralized-training">6.6 Prime-RL, Async RL &amp; Decentralized Training<a class="headerlink" href="#66-prime-rl-async-rl-decentralized-training" title="Permanent link">¶</a></h1>
+<p>Every RL-for-LLM system we have built so far has a hidden synchronization barrier at its heart. In <a href="../06-rl-infra/02-generation-training-loop.html">The Generation–Training Loop &amp; Rollout Engines</a> we drew the loop as a strict alternation: the policy generates a batch of rollouts, <em>everyone waits</em>, the trainer computes a gradient step, <em>everyone waits</em> for the new weights, and only then does generation resume. That barrier is the single largest source of wasted GPU-hours in the entire stack. Generation is autoregressive, memory-bound, and dominated by a long tail of slow samples; training is compute-bound and bursty. When you couple them on the same clock, the trainer sits idle while the slowest rollout finishes, and the generators sit idle while the optimizer steps. On a real reasoning-RL run where responses range from 200 to 16,000 tokens, this <em>straggler</em> effect alone can leave half your fleet idle.</p>
+<p>This chapter is about breaking that barrier. We will make generation and training run as <strong>decoupled, continuously-busy services</strong> that exchange rollouts and weights over a queue rather than a lock-step. Doing so turns on-policy RL into <em>off-policy</em> RL — the data a gradient step consumes was produced by a slightly older policy — which forces us to confront <strong>staleness</strong> and to import <strong>importance-sampling corrections</strong> from the policy-gradient literature. We will then push the idea to its logical extreme: if generation and training need only exchange a queue of rollouts and an occasional weight broadcast, the two can live in <em>different data centers</em>, on <em>different continents</em>, on <em>heterogeneous, untrusted hardware</em>. That is the bet Prime Intellect makes with <strong>prime-rl</strong> and the <strong>INTELLECT</strong> models, and it requires one more ingredient we will build carefully: a cryptographic-style <strong>proof that a remote, untrusted GPU actually ran the inference it claims to have run</strong> — TOPLOC.</p>
+<p>This is the async frontier of RL infrastructure. It pairs with <a href="../06-rl-infra/07-colocated-vs-disaggregated.html">Colocated vs Disaggregated RL &amp; Weight Synchronization</a> (the placement question), <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a> (the estimator math), and <a href="../06-rl-infra/11-scaling-rl-tricks.html">Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a> (the throughput view).</p>
+<h2 id="the-synchronous-barrier-and-why-it-wastes-the-fleet">The synchronous barrier and why it wastes the fleet<a class="headerlink" href="#the-synchronous-barrier-and-why-it-wastes-the-fleet" title="Permanent link">¶</a></h2>
+<h3 id="anatomy-of-the-stall">Anatomy of the stall<a class="headerlink" href="#anatomy-of-the-stall" title="Permanent link">¶</a></h3>
+<p>Recall the synchronous RL step. Let <span class="arithmatex">\(T_{\text{gen}}\)</span> be the wall-clock time to generate one batch of rollouts and <span class="arithmatex">\(T_{\text{train}}\)</span> the time for the forward/backward/optimizer step on those rollouts. In a colocated system (generation and training share the GPUs) the two phases are serialized on the <em>same</em> devices, so the step time is simply</p>
+<div class="arithmatex">\[
+T_{\text{step}}^{\text{sync}} = T_{\text{gen}} + T_{\text{train}} + T_{\text{sync}},
+\]</div>
+<p>where <span class="arithmatex">\(T_{\text{sync}}\)</span> is the cost of moving updated weights from the trainer into the inference engine&rsquo;s memory (a <code>load_weights</code> into vLLM/SGLang; see <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a>). The problem is not the sum — it is that during <span class="arithmatex">\(T_{\text{gen}}\)</span> the <em>training</em> kernels are idle and during <span class="arithmatex">\(T_{\text{train}}\)</span> the <em>generation</em> engine is idle. You bought one set of GPUs and are using it for one job at a time.</p>
+<p>In a <em>disaggregated</em> system (separate generator and trainer pools) you can at least run them on different hardware, but the synchronous barrier still couples their clocks: the trainer cannot start step <span class="arithmatex">\(k\)</span> until the generators finish producing batch <span class="arithmatex">\(k\)</span>, and the generators cannot start batch <span class="arithmatex">\(k+1\)</span> until they receive weights <span class="arithmatex">\(\theta_k\)</span>. The two pools ping-pong, and at any instant exactly one is working.</p>
+<h3 id="the-straggler-tax">The straggler tax<a class="headerlink" href="#the-straggler-tax" title="Permanent link">¶</a></h3>
+<p>Autoregressive generation makes this far worse than the naïve picture. The time to generate a response is roughly linear in its token length, and reasoning-RL response-length distributions are heavy-tailed. If a batch of <span class="arithmatex">\(B\)</span> prompts produces responses whose lengths <span class="arithmatex">\(\ell_i\)</span> vary widely, the batch is not done until the <em>longest</em> one finishes:</p>
+<div class="arithmatex">\[
+T_{\text{gen}} \approx t_{\text{tok}} \cdot \max_i \ell_i,
+\]</div>
+<p>even though the <em>mean</em> work is <span class="arithmatex">\(t_{\text{tok}} \cdot \frac{1}{B}\sum_i \ell_i\)</span>. With a long tail, <span class="arithmatex">\(\max_i \ell_i\)</span> can be <span class="arithmatex">\(5\!-\!20\times\)</span> the mean. The generators that finished their short samples early sit idle, waiting on one or two outliers, and the trainer waits on all of them.</p>
+<figure class="viz" id="fig-primerl-sync-vs-async-timeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 900 460" role="img" aria-label="Two-panel Gantt chart: the synchronous panel shows gen and train lanes alternating busy and idle, with a straggler tail; the async panel shows both lanes continuously busy with no idle gaps. An animated playhead sweeps across both panels, highlighting the contrast.">
+<defs>
+  <marker id="psa-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+  <marker id="psa-arrow-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#b00"/>
+  </marker>
+  <pattern id="psa-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+    <line x1="0" y1="0" x2="0" y2="8" stroke="var(--muted,#6b7280)" stroke-width="1.5" stroke-opacity="0.35"/>
+  </pattern>
+
+  <clipPath id="psa-clip-sync">
+    <rect id="psa-sync-clip-rect" x="120" y="40" width="0" height="180"/>
+  </clipPath>
+
+  <clipPath id="psa-clip-async">
+    <rect id="psa-async-clip-rect" x="120" y="245" width="0" height="180"/>
+  </clipPath>
+</defs>
+
+<style>
+  #fig-primerl-sync-vs-async-timeline text { fill: var(--ink-soft,#374151); }
+  #fig-primerl-sync-vs-async-timeline .panel-title { font: 700 13px var(--sans,sans-serif); }
+  #fig-primerl-sync-vs-async-timeline .lane-lbl { font: 600 11px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+  #fig-primerl-sync-vs-async-timeline .block-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--surface,#fff); }
+  #fig-primerl-sync-vs-async-timeline .idle-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-sync-vs-async-timeline .annot { font: 500 10px var(--sans,sans-serif); fill: #b00; }
+  #fig-primerl-sync-vs-async-timeline .axis-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-sync-vs-async-timeline .note-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+
+  /* playhead animation */
+  @keyframes psa-sweep {
+    0%   { x: 120; width: 0; }
+    85%  { x: 120; width: 740; }
+    100% { x: 120; width: 740; }
+  }
+  #fig-primerl-sync-vs-async-timeline #psa-sync-clip-rect,
+  #fig-primerl-sync-vs-async-timeline #psa-async-clip-rect {
+    animation: psa-sweep 5s ease-in-out 0.3s infinite;
+  }
+
+  /* highlight overlay inside playhead - just a moving vertical sliver on both panels */
+  @keyframes psa-playhead-move {
+    0%   { transform: translateX(120px); opacity:0; }
+    5%   { opacity:1; }
+    85%  { transform: translateX(856px); opacity:1; }
+    95%  { opacity:0; }
+    100% { transform: translateX(856px); opacity:0; }
+  }
+  #fig-primerl-sync-vs-async-timeline .psa-playhead {
+    animation: psa-playhead-move 5s ease-in-out 0.3s infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-primerl-sync-vs-async-timeline * {
+      animation: none !important;
+    }
+    #fig-primerl-sync-vs-async-timeline #psa-sync-clip-rect,
+    #fig-primerl-sync-vs-async-timeline #psa-async-clip-rect {
+      x: 120 !important; width: 740 !important;
+    }
+    #fig-primerl-sync-vs-async-timeline .psa-playhead { opacity:0 !important; }
+  }
+</style>
+
+
+<line x1="120" y1="440" x2="760" y2="440" stroke="var(--muted,#6b7280)" stroke-width="1.4" marker-end="url(#psa-arrow)"/>
+<text x="768" y="444" class="axis-lbl" text-anchor="start">wall-clock time</text>
+
+
+<text x="60" y="30" class="panel-title" fill="var(--ink-soft,#374151)">SYNCHRONOUS (lock-step)</text>
+
+
+<line x1="120" y1="90" x2="860" y2="90" stroke="var(--muted,#6b7280)" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.4"/>
+<line x1="120" y1="150" x2="860" y2="150" stroke="var(--muted,#6b7280)" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.4"/>
+
+
+<text x="108" y="94" class="lane-lbl" text-anchor="end">gen</text>
+<text x="108" y="154" class="lane-lbl" text-anchor="end">train</text>
+
+
+<rect x="120" y="72" width="210" height="36" rx="5" fill="var(--accent,#4f46e5)" opacity="0.90"/>
+<text x="225" y="95" class="block-lbl" text-anchor="middle">gen batch k</text>
+
+<rect x="320" y="78" width="22" height="24" rx="2" fill="var(--accent,#4f46e5)" opacity="0.55"/>
+<rect x="332" y="82" width="14" height="16" rx="2" fill="var(--accent,#4f46e5)" opacity="0.35"/>
+
+
+<rect x="342" y="72" width="128" height="36" rx="5" fill="url(#psa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3" opacity="0.9"/>
+<text x="406" y="94" class="idle-lbl" text-anchor="middle">idle</text>
+
+
+<rect x="470" y="72" width="210" height="36" rx="5" fill="var(--accent,#4f46e5)" opacity="0.90"/>
+<text x="575" y="95" class="block-lbl" text-anchor="middle">gen batch k+1</text>
+
+
+<rect x="680" y="72" width="140" height="36" rx="5" fill="url(#psa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3" opacity="0.9"/>
+<text x="750" y="94" class="idle-lbl" text-anchor="middle">idle</text>
+
+
+<rect x="120" y="132" width="222" height="36" rx="5" fill="url(#psa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3" opacity="0.9"/>
+<text x="231" y="154" class="idle-lbl" text-anchor="middle">idle</text>
+
+
+<rect x="342" y="132" width="108" height="36" rx="5" fill="var(--accent2,#0891b2)" opacity="0.90"/>
+<text x="396" y="155" class="block-lbl" text-anchor="middle">train k</text>
+
+
+<rect x="450" y="132" width="230" height="36" rx="5" fill="url(#psa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3" opacity="0.9"/>
+<text x="565" y="154" class="idle-lbl" text-anchor="middle">idle</text>
+
+
+<rect x="680" y="132" width="108" height="36" rx="5" fill="var(--accent2,#0891b2)" opacity="0.90"/>
+<text x="734" y="155" class="block-lbl" text-anchor="middle">train k+1</text>
+
+
+<rect x="788" y="132" width="32" height="36" rx="5" fill="url(#psa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3" opacity="0.9"/>
+
+
+
+<line x1="406" y1="120" x2="406" y2="110" stroke="#b00" stroke-width="1.2" marker-end="url(#psa-arrow-danger)"/>
+<text x="406" y="129" class="annot" text-anchor="middle" font-size="9">gen idle (waiting on weights θk)</text>
+
+
+<line x1="231" y1="170" x2="231" y2="190" stroke="#b00" stroke-width="1.2"/>
+<text x="231" y="204" class="annot" text-anchor="middle">train idle (waiting on gen)</text>
+
+
+<line x1="336" y1="65" x2="298" y2="52" stroke="#b00" stroke-width="1" marker-end="url(#psa-arrow-danger)"/>
+<text x="338" y="56" class="annot" text-anchor="start" font-size="9">straggler: waits on longest sample</text>
+
+
+<line x1="40" y1="222" x2="870" y2="222" stroke="var(--muted,#6b7280)" stroke-width="0.5" stroke-dasharray="5 4" opacity="0.35"/>
+
+
+<text x="60" y="243" class="panel-title" fill="var(--ink-soft,#374151)">ASYNCHRONOUS (decoupled — both always busy)</text>
+
+
+<line x1="120" y1="298" x2="860" y2="298" stroke="var(--muted,#6b7280)" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.4"/>
+<line x1="120" y1="358" x2="860" y2="358" stroke="var(--muted,#6b7280)" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.4"/>
+
+
+<text x="108" y="302" class="lane-lbl" text-anchor="end">gen</text>
+<text x="108" y="362" class="lane-lbl" text-anchor="end">train</text>
+
+
+<rect x="120" y="280" width="740" height="36" rx="5" fill="var(--accent,#4f46e5)" opacity="0.88"/>
+<text x="490" y="303" class="block-lbl" text-anchor="middle">continuous stream of rollouts</text>
+
+
+<rect x="120" y="340" width="120" height="36" rx="5" fill="var(--accent2,#0891b2)" opacity="0.88"/>
+<text x="180" y="362" class="block-lbl" text-anchor="middle">k</text>
+<line x1="240" y1="340" x2="240" y2="376" stroke="var(--surface,#fff)" stroke-width="1.5" opacity="0.6"/>
+
+<rect x="241" y="340" width="120" height="36" rx="0" fill="var(--accent2,#0891b2)" opacity="0.88"/>
+<text x="301" y="362" class="block-lbl" text-anchor="middle">k+1</text>
+<line x1="361" y1="340" x2="361" y2="376" stroke="var(--surface,#fff)" stroke-width="1.5" opacity="0.6"/>
+
+<rect x="362" y="340" width="120" height="36" rx="0" fill="var(--accent2,#0891b2)" opacity="0.88"/>
+<text x="422" y="362" class="block-lbl" text-anchor="middle">k+2</text>
+<line x1="482" y1="340" x2="482" y2="376" stroke="var(--surface,#fff)" stroke-width="1.5" opacity="0.6"/>
+
+<rect x="483" y="340" width="120" height="36" rx="0" fill="var(--accent2,#0891b2)" opacity="0.88"/>
+<text x="543" y="362" class="block-lbl" text-anchor="middle">k+3</text>
+<line x1="603" y1="340" x2="603" y2="376" stroke="var(--surface,#fff)" stroke-width="1.5" opacity="0.6"/>
+
+<rect x="604" y="340" width="120" height="36" rx="0" fill="var(--accent2,#0891b2)" opacity="0.88"/>
+<text x="664" y="362" class="block-lbl" text-anchor="middle">k+4</text>
+<line x1="724" y1="340" x2="724" y2="376" stroke="var(--surface,#fff)" stroke-width="1.5" opacity="0.6"/>
+
+<rect x="725" y="340" width="135" height="36" rx="5" fill="var(--accent2,#0891b2)" opacity="0.88" style="border-radius:0 5px 5px 0"/>
+<text x="792" y="362" class="block-lbl" text-anchor="middle">…</text>
+
+
+<text x="490" y="400" class="note-lbl" text-anchor="middle">rollouts flow over a queue; weights pushed every N steps</text>
+
+
+<line x1="200" y1="316" x2="200" y2="338" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="2 2" marker-end="url(#psa-arrow)" opacity="0.7"/>
+<text x="205" y="328" class="note-lbl" text-anchor="start" font-size="9">rollout queue</text>
+
+
+
+<g class="psa-playhead">
+  <rect x="-1" y="60" width="2" height="170" fill="var(--warn,#e0a106)" opacity="0.85"/>
+</g>
+
+<g class="psa-playhead">
+  <rect x="-1" y="270" width="2" height="130" fill="var(--warn,#e0a106)" opacity="0.85"/>
+</g>
+
+
+<g clip-path="url(#psa-clip-sync)">
+
+  <rect x="120" y="72" width="210" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+  <rect x="470" y="72" width="210" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+
+  <rect x="342" y="132" width="108" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+  <rect x="680" y="132" width="108" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+</g>
+<g clip-path="url(#psa-clip-async)">
+
+  <rect x="120" y="280" width="740" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+
+  <rect x="120" y="340" width="740" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+</g>
+
+</svg>
+<figcaption><b>Synchronous lock-step RL leaves half the fleet idle at all times; asynchronous decoupled RL keeps both lanes continuously busy.</b> In the top panel, gen and train alternate: when one is working the other is idle, and a straggler response stretches the gen block, delaying the trainer further. In the bottom panel, a rollout queue decouples the two — both lanes run without gaps, delivering 2–4× throughput improvement over matched-quality training.</figcaption>
+</figure>
+
+<p>The fix is conceptually simple: <strong>let the generators keep generating while the trainer trains.</strong> Don&rsquo;t synchronize on every step. Push fresh weights to the generators <em>occasionally</em> and let them continue producing rollouts from whatever weights they currently hold. This is asynchronous, off-policy RL — and it is the dominant paradigm for large-scale reasoning RL in 2025.</p>
+<h2 id="decoupling-generation-from-training-async-off-policy-rl">Decoupling generation from training: async off-policy RL<a class="headerlink" href="#decoupling-generation-from-training-async-off-policy-rl" title="Permanent link">¶</a></h2>
+<h3 id="the-queue-based-architecture">The queue-based architecture<a class="headerlink" href="#the-queue-based-architecture" title="Permanent link">¶</a></h3>
+<p>The async design replaces the barrier with a <strong>rollout queue</strong> and a <strong>weight-update channel</strong>. Three logical components run concurrently:</p>
+<ol>
+<li><strong>Inference workers</strong> (generators): a pool of vLLM/SGLang engines that pull prompts, sample completions with the <em>current</em> policy weights they hold, compute rewards (or ship completions to a verifier), and push finished rollouts onto the queue. They never block on the trainer.</li>
+<li><strong>Trainer</strong>: pulls a batch of rollouts off the queue, computes the loss, steps the optimizer, and — every <span class="arithmatex">\(N\)</span> steps — publishes new weights to a versioned store.</li>
+<li><strong>Weight broadcaster</strong>: pushes published weights into the inference workers. A worker swaps to the new weights at a safe boundary (between requests, or via an atomic in-place update) and tags every subsequent rollout with the <strong>policy version</strong> it was generated under.</li>
+</ol>
+<figure class="viz" id="fig-primerl-queue-async-architecture">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 880 460" role="img" aria-label="Cyclic data-flow diagram of queue-based async off-policy RL: inference workers push rollouts to a queue, the trainer pulls batches and publishes weights to a versioned store, which workers load periodically. Animated dots show fast rollout flow and slow weight broadcasts.">
+<defs>
+  <marker id="pqa-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="pqa-arr-acc2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#0891b2)"/>
+  </marker>
+  <marker id="pqa-arr-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-primerl-queue-async-architecture text { fill: var(--ink-soft,#374151); }
+  #fig-primerl-queue-async-architecture .box-title { font: 700 12px var(--sans,sans-serif); }
+  #fig-primerl-queue-async-architecture .box-sub { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-queue-async-architecture .edge-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-primerl-queue-async-architecture .edge-lbl-sm { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-queue-async-architecture .callout { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#4f46e5); }
+  #fig-primerl-queue-async-architecture .source-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+
+  /* ---- rollout dot animations (workers -> queue) ---- */
+  @keyframes pqa-dot-workers-q-1 {
+    0%   { cx: 362; cy: 135; opacity: 0; }
+    5%   { opacity: 1; }
+    45%  { cx: 620; cy: 135; opacity: 1; }
+    50%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes pqa-dot-workers-q-2 {
+    0%   { opacity: 0; }
+    20%  { opacity: 0; }
+    25%  { cx: 362; cy: 135; opacity: 1; }
+    65%  { cx: 620; cy: 135; opacity: 1; }
+    70%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes pqa-dot-workers-q-3 {
+    0%   { opacity: 0; }
+    40%  { opacity: 0; }
+    45%  { cx: 362; cy: 135; opacity: 1; }
+    85%  { cx: 620; cy: 135; opacity: 1; }
+    90%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  /* ---- queue -> trainer dot ---- */
+  @keyframes pqa-dot-q-train-1 {
+    0%   { cy: 210; opacity: 0; }
+    10%  { cy: 210; opacity: 1; }
+    40%  { cy: 280; opacity: 1; }
+    45%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes pqa-dot-q-train-2 {
+    0%   { opacity: 0; }
+    35%  { cy: 210; opacity: 0; }
+    40%  { cy: 210; opacity: 1; }
+    70%  { cy: 280; opacity: 1; }
+    75%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  /* ---- trainer -> weight store (slow, every ~3s equiv) ---- */
+  @keyframes pqa-dot-train-store {
+    0%   { cx: 620; cy: 340; opacity: 0; }
+    55%  { cx: 620; cy: 340; opacity: 0; }
+    60%  { cx: 620; cy: 340; opacity: 1; }
+    85%  { cx: 360; cy: 340; opacity: 1; }
+    90%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  /* ---- store -> workers (slow) ---- */
+  @keyframes pqa-dot-store-workers {
+    0%   { cy: 280; opacity: 0; }
+    65%  { cy: 280; opacity: 0; }
+    70%  { cy: 280; opacity: 1; }
+    90%  { cy: 195; opacity: 1; }
+    95%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  #fig-primerl-queue-async-architecture .pqa-rdot1 { animation: pqa-dot-workers-q-1 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-rdot2 { animation: pqa-dot-workers-q-2 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-rdot3 { animation: pqa-dot-workers-q-3 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-qdot1 { animation: pqa-dot-q-train-1 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-qdot2 { animation: pqa-dot-q-train-2 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-wdot  { animation: pqa-dot-train-store 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-sdot  { animation: pqa-dot-store-workers 3s linear 0.2s infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-primerl-queue-async-architecture circle {
+      animation: none !important;
+      opacity: 0 !important;
+    }
+  }
+</style>
+
+
+<rect x="18" y="140" width="70" height="36" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#6b7280)" stroke-width="1.5"/>
+<text x="53" y="162" class="source-lbl" text-anchor="middle">prompts</text>
+
+<line x1="88" y1="158" x2="152" y2="158" stroke="var(--muted,#6b7280)" stroke-width="1.5" marker-end="url(#pqa-arr-muted)"/>
+
+
+<rect x="155" y="80" width="205" height="155" rx="10" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+<text x="257" y="103" class="box-title" text-anchor="middle" fill="var(--accent,#4f46e5)">inference workers</text>
+<text x="257" y="117" class="box-sub" text-anchor="middle">(generators)</text>
+
+<rect x="170" y="124" width="175" height="22" rx="4" fill="var(--accent,#4f46e5)" fill-opacity="0.12" stroke="var(--accent,#4f46e5)" stroke-width="1"/>
+<text x="257" y="139" class="box-sub" text-anchor="middle">vLLM / SGLang</text>
+<rect x="170" y="150" width="175" height="22" rx="4" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="0.8" stroke-dasharray="3 2"/>
+<text x="257" y="165" class="box-sub" text-anchor="middle">vLLM / SGLang</text>
+<rect x="170" y="176" width="175" height="22" rx="4" fill="var(--accent,#4f46e5)" fill-opacity="0.05" stroke="var(--accent,#4f46e5)" stroke-width="0.8" stroke-dasharray="3 2"/>
+<text x="257" y="191" class="box-sub" text-anchor="middle">vLLM / SGLang</text>
+
+<text x="257" y="213" class="box-sub" text-anchor="middle">θv held in memory</text>
+<text x="257" y="225" class="box-sub" text-anchor="middle">sample with current weights</text>
+
+
+<line x1="360" y1="135" x2="622" y2="135" stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#pqa-arr-acc)"/>
+<text x="488" y="126" class="edge-lbl" text-anchor="middle">push finished rollouts(θv)</text>
+<text x="488" y="113" class="edge-lbl-sm" text-anchor="middle">(tagged with policy version v)</text>
+
+
+<rect x="622" y="70" width="190" height="155" rx="10" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#6b7280)" stroke-width="1.8"/>
+<text x="717" y="97" class="box-title" text-anchor="middle" fill="var(--ink-soft,#374151)">rollout queue</text>
+
+<rect x="638" y="106" width="158" height="22" rx="3" fill="var(--surface,#fff)" stroke="var(--muted,#6b7280)" stroke-width="1"/>
+<text x="717" y="121" class="box-sub" text-anchor="middle">rollout (sample-level)</text>
+<rect x="638" y="132" width="158" height="22" rx="3" fill="var(--surface,#fff)" stroke="var(--muted,#6b7280)" stroke-width="1"/>
+<text x="717" y="147" class="box-sub" text-anchor="middle">rollout (sample-level)</text>
+<rect x="638" y="158" width="158" height="22" rx="3" fill="var(--surface,#fff)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="3 2" fill-opacity="0.5"/>
+<text x="717" y="173" class="box-sub" text-anchor="middle">rollout (sample-level)</text>
+<text x="717" y="212" class="box-sub" text-anchor="middle">individual rollouts, not batches</text>
+
+
+<line x1="717" y1="225" x2="717" y2="278" stroke="var(--muted,#6b7280)" stroke-width="1.8" marker-end="url(#pqa-arr-muted)"/>
+<text x="724" y="255" class="edge-lbl-sm" text-anchor="start">sample / drain batch</text>
+
+
+<rect x="622" y="282" width="190" height="125" rx="10" fill="var(--surface,#f5f5f5)" stroke="var(--accent2,#0891b2)" stroke-width="2"/>
+<text x="717" y="305" class="box-title" text-anchor="middle" fill="var(--accent2,#0891b2)">trainer</text>
+<text x="717" y="322" class="box-sub" text-anchor="middle">pull batch, compute loss</text>
+<text x="717" y="336" class="box-sub" text-anchor="middle">optimizer step, emit k</text>
+<text x="717" y="354" class="box-sub" text-anchor="middle">publishes weights every N steps</text>
+<text x="717" y="368" class="box-sub" text-anchor="middle">(θk to weight store)</text>
+<text x="717" y="394" class="box-sub" text-anchor="middle" fill="var(--muted,#94a3b8)" font-size="9">stateful, reliable hardware</text>
+
+
+<line x1="622" y1="340" x2="362" y2="340" stroke="var(--accent2,#0891b2)" stroke-width="2" marker-end="url(#pqa-arr-acc2)"/>
+<text x="492" y="333" class="edge-lbl" text-anchor="middle" fill="var(--accent2,#0891b2)">publish θk</text>
+
+
+<rect x="155" y="282" width="205" height="125" rx="10" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#6b7280)" stroke-width="1.8"/>
+<text x="257" y="305" class="box-title" text-anchor="middle" fill="var(--ink-soft,#374151)">weight store</text>
+<text x="257" y="319" class="box-sub" text-anchor="middle">(versioned)</text>
+
+<text x="257" y="342" class="box-sub" text-anchor="middle" font-family="var(--mono,monospace)">θ…, θk-2, θk-1, θk</text>
+<line x1="185" y1="350" x2="330" y2="350" stroke="var(--muted,#6b7280)" stroke-width="0.8" stroke-dasharray="3 3" opacity="0.5"/>
+<text x="257" y="368" class="box-sub" text-anchor="middle">tracks generation version</text>
+<text x="257" y="382" class="box-sub" text-anchor="middle">per rollout</text>
+
+
+<line x1="290" y1="282" x2="290" y2="240" stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#pqa-arr-acc)"/>
+<text x="282" y="251" class="edge-lbl-sm" text-anchor="end" fill="var(--accent,#4f46e5)">load_weights(θk)</text>
+<text x="282" y="262" class="edge-lbl-sm" text-anchor="end" fill="var(--accent,#4f46e5)">(every N steps)</text>
+<text x="282" y="273" class="edge-lbl-sm" text-anchor="end" fill="var(--accent,#4f46e5)">hot-swap at boundary</text>
+
+
+<rect x="390" y="222" width="235" height="68" rx="8" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<text x="507" y="242" class="callout" text-anchor="middle">key bookkeeping:</text>
+<text x="507" y="258" class="callout" text-anchor="middle">every rollout stamped with</text>
+<text x="507" y="274" class="callout" text-anchor="middle">policy version v;</text>
+<text x="507" y="287" class="callout" text-anchor="middle" font-size="9" fill="var(--muted,#6b7280)">staleness s = k - v</text>
+
+
+
+<circle class="pqa-rdot1" cx="362" cy="135" r="5" fill="var(--accent,#4f46e5)" opacity="0"/>
+<circle class="pqa-rdot2" cx="362" cy="135" r="5" fill="var(--accent,#4f46e5)" opacity="0"/>
+<circle class="pqa-rdot3" cx="362" cy="135" r="5" fill="var(--accent,#4f46e5)" opacity="0"/>
+
+<circle class="pqa-qdot1" cx="717" cy="210" r="5" fill="var(--muted,#6b7280)" opacity="0"/>
+<circle class="pqa-qdot2" cx="717" cy="210" r="5" fill="var(--muted,#6b7280)" opacity="0"/>
+
+<circle class="pqa-wdot" cx="620" cy="340" r="7" fill="var(--accent2,#0891b2)" opacity="0"/>
+
+<circle class="pqa-sdot" cx="290" cy="280" r="7" fill="var(--accent,#4f46e5)" opacity="0"/>
+
+</svg>
+<figcaption><b>Queue-based async off-policy RL decouples generation from training via a rollout queue and versioned weight store.</b> Inference workers continuously push completed rollouts (tagged with policy version θv) into the queue; the trainer drains batches and steps the optimizer; and only occasionally (every N steps) broadcasts new weights. The staleness s = k−v between generation version v and trainer step k is the central quantity that importance-sampling corrections must bound.</figcaption>
+</figure>
+
+<p>The single most important new piece of bookkeeping is the <strong>policy version stamped on every rollout</strong>. A rollout generated under weights <span class="arithmatex">\(\theta_v\)</span> but used to update weights <span class="arithmatex">\(\theta_k\)</span> (with <span class="arithmatex">\(k &gt; v\)</span>) is <strong>stale</strong> by <span class="arithmatex">\(s = k - v\)</span> steps. Staleness is the central quantity of this chapter; everything else is engineering around keeping it bounded and correcting for it.</p>
+<h3 id="staleness-the-off-policy-gap-and-the-async-hyperparameter">Staleness, the off-policy gap, and the async hyperparameter<a class="headerlink" href="#staleness-the-off-policy-gap-and-the-async-hyperparameter" title="Permanent link">¶</a></h3>
+<p>Define the <strong>maximum allowed staleness</strong> <span class="arithmatex">\(s_{\max}\)</span> (often called <code>async_level</code> or <code>max_off_policy_age</code>). The trainer refuses to consume any rollout older than <span class="arithmatex">\(s_{\max}\)</span> steps, and the inference workers throttle so they don&rsquo;t run more than <span class="arithmatex">\(s_{\max}\)</span> versions ahead of the trainer. Two limits anchor the design space:</p>
+<ul>
+<li><span class="arithmatex">\(s_{\max} = 0\)</span>: fully synchronous, on-policy. The generators must use <em>exactly</em> the weights the trainer just produced. Maximum statistical fidelity, maximum idle time.</li>
+<li><span class="arithmatex">\(s_{\max} = \infty\)</span>: fully off-policy. Generators run an arbitrarily old policy. Maximum throughput, but the data may be so off-distribution that the gradient is meaningless.</li>
+</ul>
+<p>The interesting regime is small but nonzero, typically <span class="arithmatex">\(s_{\max} \in \{1,2,4\}\)</span>. The classic empirical result, established by the <strong>AReaL</strong> (Ant Research) and related async-RL systems and echoed across the field, is that <strong>one step of staleness is essentially free</strong> — the policy moves so little per step that <span class="arithmatex">\(\theta_{k-1}\)</span> and <span class="arithmatex">\(\theta_k\)</span> induce nearly identical sampling distributions — and even moderate staleness is tolerable <em>if you apply an importance-sampling correction</em>. The throughput win is large: published async systems report on the order of <strong>2–4× end-to-end speedups</strong> over the synchronous baseline at matched final quality.</p>
+<p>There is a subtle but critical degenerate case to design out, sometimes called the <strong>one-step-staleness trap</strong>. If you naïvely allow exactly one batch in flight, a single straggler in the <em>generation</em> of batch <span class="arithmatex">\(k+1\)</span> can still stall the trainer once it exhausts batch <span class="arithmatex">\(k\)</span>. Robust systems therefore decouple at the <em>sample</em> level, not the batch level: the queue holds individual finished rollouts, the trainer assembles a training batch from whatever is available, and inference workers continuously refill. This is the <strong>pipelined async rollout</strong> pattern (next section).</p>
+<h3 id="why-off-policy-needs-a-correction-the-distribution-mismatch">Why off-policy needs a correction: the distribution mismatch<a class="headerlink" href="#why-off-policy-needs-a-correction-the-distribution-mismatch" title="Permanent link">¶</a></h3>
+<p>Under the hood, async RL is plain off-policy policy-gradient. We want the gradient of the expected reward under the <em>current</em> policy <span class="arithmatex">\(\pi_\theta\)</span>, but our samples came from an <em>older behavior policy</em> <span class="arithmatex">\(\pi_{\theta_{\text{old}}}\)</span> (the one the generator held). The score-function estimator is only unbiased if samples come from the policy being differentiated. To fix the mismatch we reweight each sample by the <strong>importance ratio</strong> between the target and behavior policies — exactly the ratio at the heart of PPO (see <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>).</p>
+<h2 id="the-math-of-staleness-importance-sampling-for-off-policy-llm-rl">The math of staleness: importance sampling for off-policy LLM RL<a class="headerlink" href="#the-math-of-staleness-importance-sampling-for-off-policy-llm-rl" title="Permanent link">¶</a></h2>
+<h3 id="the-token-level-importance-ratio">The token-level importance ratio<a class="headerlink" href="#the-token-level-importance-ratio" title="Permanent link">¶</a></h3>
+<p>For language models the action at each step is a token, so the natural unit is the per-token importance ratio. For response <span class="arithmatex">\(o = (o_1,\dots,o_{|o|})\)</span> generated under behavior policy <span class="arithmatex">\(\pi_{\theta_{\text{old}}}\)</span> and being optimized under target policy <span class="arithmatex">\(\pi_\theta\)</span>, define</p>
+<div class="arithmatex">\[
+\rho_t(\theta) \;=\; \frac{\pi_\theta(o_t \mid q, o_{&lt;t})}{\pi_{\theta_{\text{old}}}(o_t \mid q, o_{&lt;t})}.
+\]</div>
+<p>The importance-weighted policy-gradient surrogate (the objective whose gradient is the off-policy REINFORCE gradient) is</p>
+<div class="arithmatex">\[
+J^{\text{IS}}(\theta) \;=\; \mathbb{E}_{o\sim\pi_{\theta_{\text{old}}}}\!\Big[\sum_{t} \rho_t(\theta)\, \hat A_t \Big],
+\]</div>
+<p>where <span class="arithmatex">\(\hat A_t\)</span> is the advantage (a group-relative score for GRPO; see <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>). When <span class="arithmatex">\(\theta = \theta_{\text{old}}\)</span> every <span class="arithmatex">\(\rho_t = 1\)</span> and this collapses to the on-policy objective — exactly what you want at zero staleness.</p>
+<p>The danger of importance sampling is <strong>variance explosion</strong>. The ratio is a product of per-token ratios over the whole sequence; for a 4,000-token response, even tiny per-token discrepancies compound multiplicatively. A sequence-level ratio <span class="arithmatex">\(\prod_t \rho_t\)</span> can be astronomically large or small, and its variance is unbounded. Three standard defenses, in increasing sophistication:</p>
+<p><strong>1. PPO clipping.</strong> Replace the raw ratio with the clipped surrogate. This is <em>the same machinery</em> that makes PPO multi-epoch-safe, now doing double duty as a staleness corrector:</p>
+<div class="arithmatex">\[
+J^{\text{clip}}(\theta) = \mathbb{E}\Big[\sum_t \min\big(\rho_t \hat A_t,\; \operatorname{clip}(\rho_t, 1-\varepsilon, 1+\varepsilon)\,\hat A_t\big)\Big].
+\]</div>
+<p>Clipping caps how far the target policy can move per step on any single token, bounding the per-token contribution to <span class="arithmatex">\([1-\varepsilon, 1+\varepsilon]\cdot|\hat A_t|\)</span>. This is the workhorse correction; for <span class="arithmatex">\(s=1\)</span> staleness it is usually sufficient by itself.</p>
+<p><strong>2. Truncated importance sampling (TIS).</strong> Clipping the <em>PPO</em> ratio is not enough when the gap between the generation engine and the training engine is large or systematic. A second ratio appears in async/disaggregated RL that practitioners often miss: the <strong>inference engine</strong> (vLLM, in fp16/fp8 with fused kernels) and the <strong>training engine</strong> (PyTorch FSDP, possibly bf16 with different kernels) do <strong>not</strong> produce numerically identical log-probs for the same tokens and weights. The behavior log-prob you logged at generation time, <span class="arithmatex">\(\pi_{\theta_{\text{old}}}^{\text{infer}}\)</span>, differs from what the trainer would compute, <span class="arithmatex">\(\pi_{\theta_{\text{old}}}^{\text{train}}\)</span>. Truncated importance sampling caps the behavior-side ratio at a constant <span class="arithmatex">\(C\)</span>:</p>
+<div class="arithmatex">\[
+w_t = \min\!\left(\frac{\pi_\theta^{\text{train}}(o_t)}{\pi_{\theta_{\text{old}}}^{\text{infer}}(o_t)},\; C\right), \qquad C \in [2, 10] \text{ typically.}
+\]</div>
+<p>This single correction, highlighted by veRL/AReaL practitioners, is frequently the difference between a stable async run and one that silently collapses — the engine-mismatch bias is real and accumulates.</p>
+<p><strong>3. Sequence-level masking / regularized IS.</strong> Some systems (e.g. GSPO-style sequence-level objectives) avoid the multiplicative product entirely by using a <em>geometric-mean</em> or length-normalized sequence ratio, or by simply <strong>dropping</strong> rollouts whose sequence-level ratio falls outside a trust band. Dropping is crude but robust: a rollout that is wildly off-policy contributes more noise than signal, so discard it.</p>
+<h3 id="a-from-scratch-async-off-policy-loss">A from-scratch async off-policy loss<a class="headerlink" href="#a-from-scratch-async-off-policy-loss" title="Permanent link">¶</a></h3>
+<p>Here is a compact, correct implementation of the corrected loss. It takes log-probs from <em>both</em> the behavior policy (logged at generation, from the inference engine) and the current policy (recomputed by the trainer), applies PPO clipping plus truncated importance sampling, and masks stale or degenerate samples.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">async_ppo_loss</span><span class="p">(</span>
+    <span class="n">logp_train</span><span class="p">,</span>          <span class="c1"># (B, T) log pi_theta(o_t | ...) recomputed by the TRAINER (current weights)</span>
+    <span class="n">logp_behavior</span><span class="p">,</span>       <span class="c1"># (B, T) log pi_theta_old(o_t | ...) LOGGED at generation by the INFERENCE engine</span>
+    <span class="n">advantages</span><span class="p">,</span>          <span class="c1"># (B,)   group-relative advantage per response (GRPO-style), detached</span>
+    <span class="n">response_mask</span><span class="p">,</span>       <span class="c1"># (B, T) 1.0 on response tokens, 0.0 on prompt/pad</span>
+    <span class="n">staleness</span><span class="p">,</span>           <span class="c1"># (B,)   integer s = k - v for each rollout (trainer_step - gen_version)</span>
+    <span class="n">eps_low</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>         <span class="c1"># PPO clip lower</span>
+    <span class="n">eps_high</span><span class="o">=</span><span class="mf">0.28</span><span class="p">,</span>       <span class="c1"># PPO clip-higher (DAPO-style asymmetric clip aids exploration)</span>
+    <span class="n">tis_cap</span><span class="o">=</span><span class="mf">4.0</span><span class="p">,</span>         <span class="c1"># truncated importance-sampling cap C on the behavior-side ratio</span>
+    <span class="n">s_max</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>             <span class="c1"># drop rollouts staler than this</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Off-policy, token-level PPO surrogate for ASYNC RL.</span>
+<span class="sd">    Returns (loss, metrics). Designed so that at s=0 and matched engines it equals on-policy GRPO.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span> <span class="o">=</span> <span class="n">logp_train</span><span class="o">.</span><span class="n">shape</span>
+
+    <span class="c1"># --- 1. Hard staleness gate: drop rollouts older than s_max (zero their contribution) ----</span>
+    <span class="n">fresh</span> <span class="o">=</span> <span class="p">(</span><span class="n">staleness</span> <span class="o">&lt;=</span> <span class="n">s_max</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>          <span class="c1"># (B, 1)</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">response_mask</span> <span class="o">*</span> <span class="n">fresh</span>                                <span class="c1"># (B, T)</span>
+
+    <span class="c1"># --- 2. Per-token PPO ratio rho_t = pi_theta / pi_theta_old (computed in log-space) -------</span>
+    <span class="n">log_ratio</span> <span class="o">=</span> <span class="n">logp_train</span> <span class="o">-</span> <span class="n">logp_behavior</span>                     <span class="c1"># (B, T)</span>
+    <span class="n">ratio</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">log_ratio</span><span class="p">)</span>                               <span class="c1"># rho_t</span>
+
+    <span class="c1"># --- 3. Truncated importance sampling: cap the ratio so a few outlier tokens can&#39;t blow up.</span>
+    <span class="c1">#        We cap the *raw* ratio used as an IS weight; the clip below provides the trust region.</span>
+    <span class="n">ratio</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="n">ratio</span><span class="p">,</span> <span class="nb">max</span><span class="o">=</span><span class="n">tis_cap</span><span class="p">)</span>
+
+    <span class="c1"># --- 4. PPO clipped surrogate, token level. advantages broadcast across the sequence. -----</span>
+    <span class="n">adv</span> <span class="o">=</span> <span class="n">advantages</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>                              <span class="c1"># (B, 1) -&gt; broadcast to (B, T)</span>
+    <span class="n">unclipped</span> <span class="o">=</span> <span class="n">ratio</span> <span class="o">*</span> <span class="n">adv</span>
+    <span class="n">clipped</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="n">ratio</span><span class="p">,</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">eps_low</span><span class="p">,</span> <span class="mf">1.0</span> <span class="o">+</span> <span class="n">eps_high</span><span class="p">)</span> <span class="o">*</span> <span class="n">adv</span>
+    <span class="n">per_token</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">unclipped</span><span class="p">,</span> <span class="n">clipped</span><span class="p">)</span>                  <span class="c1"># (B, T)</span>
+
+    <span class="c1"># --- 5. Token-level aggregation (Dr. GRPO / DAPO style): sum over all tokens, divide by ---</span>
+    <span class="c1">#        the total number of valid tokens. NOT a per-response mean (that biases length).</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">per_token</span> <span class="o">*</span> <span class="n">mask</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">/</span> <span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+
+    <span class="c1"># --- diagnostics that you MUST watch in async runs ----------------------------------------</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="n">approx_kl</span> <span class="o">=</span> <span class="p">((</span><span class="n">ratio</span> <span class="o">-</span> <span class="mf">1.0</span><span class="p">)</span> <span class="o">-</span> <span class="n">log_ratio</span><span class="p">)</span>                <span class="c1"># k3 estimator of KL(old||new), per token</span>
+        <span class="n">approx_kl</span> <span class="o">=</span> <span class="p">(</span><span class="n">approx_kl</span> <span class="o">*</span> <span class="n">mask</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">/</span> <span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+        <span class="n">clipfrac</span> <span class="o">=</span> <span class="p">(((</span><span class="n">ratio</span> <span class="o">&lt;</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">eps_low</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">ratio</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">eps_high</span><span class="p">))</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">*</span> <span class="n">mask</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">/</span> <span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+        <span class="n">dropped</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">fresh</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">loss</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;approx_kl&quot;</span><span class="p">:</span> <span class="n">approx_kl</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+                  <span class="s2">&quot;clipfrac&quot;</span><span class="p">:</span> <span class="n">clipfrac</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+                  <span class="s2">&quot;frac_dropped_stale&quot;</span><span class="p">:</span> <span class="n">dropped</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+                  <span class="s2">&quot;mean_staleness&quot;</span><span class="p">:</span> <span class="n">staleness</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()}</span>
+</code></pre></div>
+<p>Three design notes worth internalizing. First, <strong>you must recompute <code>logp_train</code> in the trainer</strong> — you cannot reuse the inference engine&rsquo;s log-probs as the numerator, because then <code>log_ratio</code> would mix two engines&rsquo; numerics on <em>both</em> sides and the gradient would be wrong (the numerator must be differentiable w.r.t. <span class="arithmatex">\(\theta\)</span>). Second, <strong>the behavior log-prob is logged once at generation</strong> and travels with the rollout through the queue; storing it is cheap (one float per token) and essential. Third, the <strong>clip-higher</strong> asymmetry (<code>eps_high &gt; eps_low</code>, from DAPO) matters more in async settings because off-policy data tends to be lower-entropy; the higher upper clip preserves exploration. See <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a> for the KL-control side.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: the silent engine-mismatch bias</p>
+<p>The most insidious async bug is <em>not</em> staleness — it is the numerical gap between your inference engine and your training engine computing log-probs for the <em>same</em> weights and tokens. vLLM in fp8 with paged kernels and your FSDP trainer in bf16 will disagree, sometimes by enough that the importance ratio is systematically biased away from 1 even at zero staleness. Symptoms: a nonzero, <em>drifting</em> <code>approx_kl</code> on the very first epoch over fresh rollouts; reward that climbs then collapses. Always log both log-probs and monitor their mean absolute difference. Truncated importance sampling (<code>tis_cap</code>) and recomputing the trainer-side log-prob are the fixes; never assume the two engines agree.</p>
+</div>
+<h2 id="pipelined-async-rollouts-keeping-every-gpu-busy">Pipelined async rollouts: keeping every GPU busy<a class="headerlink" href="#pipelined-async-rollouts-keeping-every-gpu-busy" title="Permanent link">¶</a></h2>
+<h3 id="sample-level-streaming-instead-of-batch-level-barriers">Sample-level streaming instead of batch-level barriers<a class="headerlink" href="#sample-level-streaming-instead-of-batch-level-barriers" title="Permanent link">¶</a></h3>
+<p>The decisive engineering move is to stream at the granularity of <em>individual rollouts</em>. Instead of &ldquo;generate batch <span class="arithmatex">\(k\)</span>, then train on batch <span class="arithmatex">\(k\)</span>,&rdquo; the inference workers run a continuous loop, and the trainer assembles each training batch from whatever finished rollouts are sitting in the queue. Long stragglers no longer block short samples — a worker that finishes a 200-token response immediately starts the next prompt; the 16,000-token outlier finishes whenever it finishes and joins a <em>later</em> training batch (with its staleness stamped accordingly).</p>
+<p>This requires the inference engine to support <strong>continuous batching</strong> (in-flight requests of different lengths, new prompts admitted as slots free up; see <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>). vLLM and SGLang provide exactly this, which is why they are the standard rollout engines for async RL.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span><span class="o">,</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">deque</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RolloutQueue</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A bounded async queue of finished rollouts, each stamped with its policy version.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">maxsize</span><span class="o">=</span><span class="mi">4096</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">q</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Queue</span><span class="p">(</span><span class="n">maxsize</span><span class="o">=</span><span class="n">maxsize</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">put</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rollout</span><span class="p">):</span>     <span class="c1"># rollout = dict(prompt, tokens, logp_behavior, reward, version)</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">q</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">rollout</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">drain_batch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">trainer_step</span><span class="p">,</span> <span class="n">s_max</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Pull up to batch_size FRESH rollouts; skip (and discard) any too stale.&quot;&quot;&quot;</span>
+        <span class="n">batch</span><span class="p">,</span> <span class="n">attempts</span> <span class="o">=</span> <span class="p">[],</span> <span class="mi">0</span>
+        <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">batch_size</span> <span class="ow">and</span> <span class="n">attempts</span> <span class="o">&lt;</span> <span class="n">batch_size</span> <span class="o">*</span> <span class="mi">8</span><span class="p">:</span>
+            <span class="n">r</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">q</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+            <span class="n">attempts</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="n">trainer_step</span> <span class="o">-</span> <span class="n">r</span><span class="p">[</span><span class="s2">&quot;version&quot;</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">s_max</span><span class="p">:</span>
+                <span class="n">batch</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+            <span class="c1"># else: silently drop the stale rollout; it is off-distribution noise</span>
+        <span class="k">return</span> <span class="n">batch</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">inference_worker</span><span class="p">(</span><span class="n">worker_id</span><span class="p">,</span> <span class="n">engine</span><span class="p">,</span> <span class="n">prompts</span><span class="p">,</span> <span class="n">weight_box</span><span class="p">,</span> <span class="n">rq</span><span class="p">:</span> <span class="n">RolloutQueue</span><span class="p">,</span> <span class="n">reward_fn</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One generator: pull a prompt, sample with CURRENT in-memory weights, score, enqueue. Repeat forever.&quot;&quot;&quot;</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompts</span><span class="p">[</span><span class="n">idx</span> <span class="o">%</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompts</span><span class="p">)];</span> <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">version</span> <span class="o">=</span> <span class="n">weight_box</span><span class="o">.</span><span class="n">version</span>                      <span class="c1"># the policy version we are about to sample under</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="k">await</span> <span class="n">engine</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>               <span class="c1"># continuous-batched sampling; returns tokens + logprobs</span>
+        <span class="n">reward</span> <span class="o">=</span> <span class="k">await</span> <span class="n">reward_fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">out</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>        <span class="c1"># verifier / reward model (may be remote &amp; async)</span>
+        <span class="k">await</span> <span class="n">rq</span><span class="o">.</span><span class="n">put</span><span class="p">({</span><span class="s2">&quot;prompt&quot;</span><span class="p">:</span> <span class="n">prompt</span><span class="p">,</span> <span class="s2">&quot;tokens&quot;</span><span class="p">:</span> <span class="n">out</span><span class="o">.</span><span class="n">token_ids</span><span class="p">,</span>
+                      <span class="s2">&quot;logp_behavior&quot;</span><span class="p">:</span> <span class="n">out</span><span class="o">.</span><span class="n">logprobs</span><span class="p">,</span> <span class="s2">&quot;reward&quot;</span><span class="p">:</span> <span class="n">reward</span><span class="p">,</span>
+                      <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="n">version</span><span class="p">})</span>
+        <span class="c1"># Hot-swap to newer weights at this safe boundary if the trainer published some.</span>
+        <span class="k">if</span> <span class="n">weight_box</span><span class="o">.</span><span class="n">version</span> <span class="o">&gt;</span> <span class="n">version</span><span class="p">:</span>
+            <span class="k">await</span> <span class="n">engine</span><span class="o">.</span><span class="n">load_weights</span><span class="p">(</span><span class="n">weight_box</span><span class="o">.</span><span class="n">state_dict</span><span class="p">)</span>   <span class="c1"># in-place; next sample uses new weights</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">trainer_loop</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">rq</span><span class="p">:</span> <span class="n">RolloutQueue</span><span class="p">,</span> <span class="n">weight_box</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">s_max</span><span class="p">,</span> <span class="n">publish_every</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">steps</span><span class="p">):</span>
+        <span class="n">batch</span> <span class="o">=</span> <span class="k">await</span> <span class="n">rq</span><span class="o">.</span><span class="n">drain_batch</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">trainer_step</span><span class="o">=</span><span class="n">step</span><span class="p">,</span> <span class="n">s_max</span><span class="o">=</span><span class="n">s_max</span><span class="p">)</span>
+        <span class="n">loss</span><span class="p">,</span> <span class="n">metrics</span> <span class="o">=</span> <span class="n">compute_loss</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">trainer_step</span><span class="o">=</span><span class="n">step</span><span class="p">)</span>   <span class="c1"># uses async_ppo_loss internally</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">();</span> <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">();</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="n">publish_every</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">weight_box</span><span class="o">.</span><span class="n">publish</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="n">version</span><span class="o">=</span><span class="n">step</span><span class="p">)</span>        <span class="c1"># generators pick this up lazily</span>
+</code></pre></div>
+<p><code>weight_box</code> is the versioned weight store. Its <code>publish</code> is the broadcaster&rsquo;s job; in a single-node setup it is a shared object, but at scale it is a sharded broadcast — discussed in <a href="../06-rl-infra/07-colocated-vs-disaggregated.html">Colocated vs Disaggregated RL &amp; Weight Synchronization</a>. The key property of this loop: <strong>neither the trainer nor any worker ever blocks on the other.</strong> Workers always have weights to sample with; the trainer always has rollouts to consume. The only coupling is the soft staleness gate.</p>
+<h3 id="throughput-bookkeeping">Throughput bookkeeping<a class="headerlink" href="#throughput-bookkeeping" title="Permanent link">¶</a></h3>
+<p>How fast can the trainer go before it starves? Let the inference fleet produce rollouts at rate <span class="arithmatex">\(r_{\text{gen}}\)</span> (rollouts/sec) and let the trainer consume a batch of size <span class="arithmatex">\(B\)</span> in <span class="arithmatex">\(T_{\text{train}}\)</span> seconds. The trainer is <em>generation-bound</em> if <span class="arithmatex">\(B / T_{\text{train}} &gt; r_{\text{gen}}\)</span> (it eats faster than the fleet produces) and <em>training-bound</em> otherwise. The async sweet spot provisions the fleet so the two rates are close, with a small generation surplus to absorb straggler variance. When generation-bound, add inference workers (cheap, embarrassingly parallel); when training-bound, the trainer is the bottleneck and async buys you nothing — you are already saturated.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: how much does async actually save?</p>
+<p>Take a 7B reasoning-RL run. Suppose for a batch of <span class="arithmatex">\(B=512\)</span> prompts:</p>
+<ul>
+<li>Mean response length is 1,200 tokens, but the <strong>max</strong> in a batch is ~9,000 tokens (heavy tail).</li>
+<li>Inference throughput per worker is ~3,000 tok/s; you have 16 inference workers → ~48,000 tok/s aggregate.</li>
+<li>Training step (forward+backward+optimizer on the 512 rollouts) takes <span class="arithmatex">\(T_{\text{train}} = 14\text{ s}\)</span>.</li>
+</ul>
+<p><strong>Synchronous step time.</strong> Generation must wait for the longest sample. Even with continuous batching across 16 workers, the batch is not &ldquo;done&rdquo; until the 9,000-token straggler finishes. Total response tokens <span class="arithmatex">\(\approx 512 \times 1200 = 614{,}400\)</span>, but the <em>critical path</em> is set by the straggler queued behind others. A realistic synchronous gen time is dominated by the tail; call it <span class="arithmatex">\(T_{\text{gen}}^{\text{sync}} \approx 614{,}400 / 48{,}000 \approx 12.8\text{ s}\)</span> of useful work, but tail effects stretch wall-clock to ~<span class="arithmatex">\(18\text{ s}\)</span>. Plus weight sync <span class="arithmatex">\(T_{\text{sync}} \approx 2\text{ s}\)</span>. So</p>
+<div class="arithmatex">\[
+T_{\text{step}}^{\text{sync}} \approx 18 + 14 + 2 = 34\text{ s}, \quad\text{GPU utilization} \approx \frac{14}{34} \approx 41\% \text{ (trainer)}.
+\]</div>
+<p><strong>Async step time.</strong> The trainer never waits: while it spends <span class="arithmatex">\(14\text{ s}\)</span> on step <span class="arithmatex">\(k\)</span>, the 16 workers produce <span class="arithmatex">\(48{,}000 \times 14 = 672{,}000\)</span> tokens <span class="arithmatex">\(\approx 560\)</span> rollouts — <em>more</em> than the 512 it needs. The trainer is generation-fed continuously, so</p>
+<div class="arithmatex">\[
+T_{\text{step}}^{\text{async}} \approx \max(T_{\text{train}},\, B/r_{\text{gen}}) \approx \max(14, \; 614{,}400/48{,}000) \approx \max(14, 12.8) = 14\text{ s}.
+\]</div>
+<p><strong>Speedup</strong> <span class="arithmatex">\(\approx 34 / 14 \approx 2.4\times\)</span>, with trainer utilization near 100%. The straggler tax and the weight-sync stall both vanish because nothing is on the critical path but the trainer&rsquo;s own compute. This is exactly the 2–4× regime async systems report — and note the savings come <em>entirely</em> from eliminating idle time, not from any algorithmic change.</p>
+</div>
+<h2 id="prime-intellects-prime-rl-and-decentralized-rl">Prime Intellect&rsquo;s prime-rl and decentralized RL<a class="headerlink" href="#prime-intellects-prime-rl-and-decentralized-rl" title="Permanent link">¶</a></h2>
+<h3 id="what-changes-when-the-workers-leave-the-data-center">What changes when the workers leave the data center<a class="headerlink" href="#what-changes-when-the-workers-leave-the-data-center" title="Permanent link">¶</a></h3>
+<p>Everything so far assumed your inference workers and trainer share a fast interconnect (NVLink/InfiniBand inside one cluster). <strong>prime-rl</strong>, Prime Intellect&rsquo;s RL framework, takes the async architecture and asks: what if the inference workers are scattered across the <em>internet</em> — community GPUs, spot instances in different clouds, machines you neither own nor trust? The async, queue-based design is precisely what makes this feasible, because the only thing that crosses the slow, unreliable wide-area link is (a) prompts going out, (b) rollouts coming back, and &copy; occasional weight broadcasts. None of these is on a tight latency-critical loop.</p>
+<p>Three properties of async RL make decentralization tractable where synchronous RL would be hopeless:</p>
+<ol>
+<li><strong>Loose coupling tolerates latency.</strong> A rollout that takes an extra 500 ms to traverse the WAN just arrives a little later and carries slightly more staleness — which the importance-sampling correction already handles. A <em>synchronous</em> barrier across the internet would be catastrophic; an async queue barely notices.</li>
+<li><strong>Generation is the parallel, fault-tolerant part.</strong> Inference workers are stateless w.r.t. each other. One dropping offline mid-rollout costs you one rollout. The trainer — the stateful, hard-to-replicate part — stays centralized on reliable hardware. This is the same disaggregation logic as <a href="../06-rl-infra/07-colocated-vs-disaggregated.html">Colocated vs Disaggregated RL &amp; Weight Synchronization</a>, pushed to a global scale.</li>
+<li><strong>Weight broadcast is infrequent and one-way.</strong> Publishing weights every <span class="arithmatex">\(N\)</span> steps over the internet is a bandwidth problem, not a latency problem, and it is solvable with sharding, quantized weight deltas, and BitTorrent-style fan-out.</li>
+</ol>
+<p>This is the lineage of the <strong>INTELLECT</strong> models. <strong>INTELLECT-1</strong> (a ~10B-parameter base model) demonstrated globally-distributed <em>pretraining</em> across continents using Prime Intellect&rsquo;s <strong>OpenDiLoCo</strong> (an open implementation of DeepMind&rsquo;s DiLoCo — Distributed Low-Communication training), which performs many <em>local</em> optimizer steps between rare global synchronizations to slash communication. <strong>INTELLECT-2</strong> then applied the same decentralized philosophy to <strong>RL</strong>: globally-distributed, asynchronous reinforcement learning for a reasoning model, where permissionless, geographically-spread inference nodes contribute rollouts. prime-rl is the framework that orchestrates that RL.</p>
+<figure class="viz" id="fig-primerl-decentralized-trust-pipeline">
+<svg viewBox="0 0 900 480" role="img" aria-label="Decentralized async RL trust architecture: a dashed vertical boundary separates the trusted left side (FSDP trainer plus verifier+TOPLOC trust gate) from the untrusted right side (permissionless inference GPUs scattered across clouds). Rollouts carrying TOPLOC proofs flow left through the trust gate before entering the trainer; weight broadcasts flow right from the trainer.">
+<defs>
+  <marker id="pdt-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="pdt-arr-acc2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#0891b2)"/>
+  </marker>
+  <marker id="pdt-arr-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+  <marker id="pdt-arr-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-primerl-decentralized-trust-pipeline text { fill: var(--ink-soft,#374151); }
+  #fig-primerl-decentralized-trust-pipeline .box-title { font: 700 12px var(--sans,sans-serif); }
+  #fig-primerl-decentralized-trust-pipeline .box-sub { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-decentralized-trust-pipeline .gate-row { font: 500 10px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-primerl-decentralized-trust-pipeline .edge-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-primerl-decentralized-trust-pipeline .edge-lbl-sm { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-decentralized-trust-pipeline .zone-lbl { font: 600 11px var(--sans,sans-serif); }
+  #fig-primerl-decentralized-trust-pipeline .worker-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#4f46e5); }
+  #fig-primerl-decentralized-trust-pipeline .note { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-decentralized-trust-pipeline .danger { font: 700 11px var(--sans,sans-serif); fill: #b00; }
+</style>
+
+
+
+<rect x="18" y="30" width="400" height="430" rx="12" fill="var(--accent2,#0891b2)" fill-opacity="0.05" stroke="var(--accent2,#0891b2)" stroke-width="1.5" stroke-dasharray="6 3"/>
+
+<rect x="468" y="30" width="415" height="430" rx="12" fill="var(--accent,#4f46e5)" fill-opacity="0.04" stroke="var(--accent,#4f46e5)" stroke-width="1" stroke-dasharray="5 4"/>
+
+
+<text x="218" y="22" class="zone-lbl" text-anchor="middle" fill="var(--accent2,#0891b2)">reliable, owned hardware</text>
+<text x="675" y="22" class="zone-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">permissionless, untrusted GPUs</text>
+
+
+<line x1="448" y1="30" x2="448" y2="460" stroke="var(--muted,#6b7280)" stroke-width="1.5" stroke-dasharray="8 5" opacity="0.6"/>
+<text x="448" y="471" class="note" text-anchor="middle">WAN boundary — only prompts out, rollouts in, weight broadcasts cross</text>
+
+
+<rect x="38" y="55" width="300" height="155" rx="10" fill="var(--surface,#f5f5f5)" stroke="var(--accent2,#0891b2)" stroke-width="2"/>
+
+<path d="M58 75 l8 0 l0 -6 l-16 0 l0 6 l8 0 l0 8 z" fill="var(--accent2,#0891b2)" fill-opacity="0.5"/>
+<text x="210" y="80" class="box-title" text-anchor="middle" fill="var(--accent2,#0891b2)">TRAINER (FSDP, central)</text>
+<line x1="52" y1="88" x2="324" y2="88" stroke="var(--accent2,#0891b2)" stroke-width="0.8" opacity="0.4"/>
+<text x="188" y="106" class="box-sub" text-anchor="middle">consumes accepted rollouts</text>
+<text x="188" y="122" class="box-sub" text-anchor="middle">steps optimizer (FSDP)</text>
+<text x="188" y="138" class="box-sub" text-anchor="middle">publishes θk every N steps</text>
+<text x="188" y="155" class="box-sub" text-anchor="middle" fill="var(--muted,#94a3b8)">trusted / stateful</text>
+<rect x="52" y="168" width="272" height="30" rx="4" fill="var(--accent2,#0891b2)" fill-opacity="0.10"/>
+<text x="188" y="187" class="box-sub" text-anchor="middle" fill="var(--accent2,#0891b2)">only verified rollouts enter training stream</text>
+
+
+<rect x="38" y="270" width="300" height="165" rx="10" fill="var(--surface-3,#f1f5f9)" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+<text x="188" y="294" class="box-title" text-anchor="middle" fill="var(--accent,#4f46e5)">VERIFIER + TOPLOC</text>
+<text x="188" y="308" class="box-sub" text-anchor="middle">(trust gate)</text>
+<line x1="52" y1="315" x2="324" y2="315" stroke="var(--accent,#4f46e5)" stroke-width="0.8" opacity="0.4"/>
+
+
+<rect x="50" y="320" width="276" height="42" rx="5" fill="var(--surface,#fff)" stroke="var(--muted,#6b7280)" stroke-width="1"/>
+<text x="188" y="336" class="gate-row" text-anchor="middle" font-weight="600">A: TOPLOC</text>
+<text x="188" y="352" class="box-sub" text-anchor="middle">proof completion came from THIS policy</text>
+<text x="188" y="363" class="box-sub" text-anchor="middle">(anti inference-forgery)</text>
+
+
+<rect x="50" y="368" width="276" height="42" rx="5" fill="var(--surface,#fff)" stroke="var(--muted,#6b7280)" stroke-width="1"/>
+<text x="188" y="384" class="gate-row" text-anchor="middle" font-weight="600">B: VERIFIER</text>
+<text x="188" y="400" class="box-sub" text-anchor="middle">recompute reward from completion</text>
+<text x="188" y="411" class="box-sub" text-anchor="middle">(anti reward-forgery)</text>
+
+
+<text x="188" y="426" class="note" text-anchor="middle">verify proof + reward -&gt; accept / reject rollout</text>
+
+
+<line x1="188" y1="270" x2="188" y2="210" stroke="var(--good,#2f9e6e)" stroke-width="2" marker-end="url(#pdt-arr-good)"/>
+<text x="196" y="244" class="edge-lbl-sm" text-anchor="start" fill="var(--good,#2f9e6e)">accepted rollouts</text>
+<text x="196" y="255" class="edge-lbl-sm" text-anchor="start" fill="var(--good,#2f9e6e)">to training stream</text>
+
+
+<rect x="480" y="48" width="415" height="395" rx="10" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="1.5" stroke-dasharray="5 3" opacity="0.6"/>
+
+
+
+<rect x="498" y="68" width="160" height="44" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.10" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<text x="578" y="88" class="worker-lbl" text-anchor="middle">worker A: cloud X</text>
+<text x="578" y="103" class="box-sub" text-anchor="middle">inference GPU</text>
+
+
+<rect x="710" y="68" width="160" height="44" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="1.5" stroke-dasharray="4 2"/>
+<text x="790" y="88" class="worker-lbl" text-anchor="middle">worker B: home GPU</text>
+<text x="790" y="103" class="box-sub" text-anchor="middle">inference GPU</text>
+
+
+<rect x="498" y="138" width="160" height="44" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="1.5" stroke-dasharray="4 2"/>
+<text x="578" y="158" class="worker-lbl" text-anchor="middle">worker C: cloud Y</text>
+<text x="578" y="173" class="box-sub" text-anchor="middle">inference GPU</text>
+
+
+<rect x="710" y="138" width="160" height="44" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="1.5" stroke-dasharray="4 2"/>
+<text x="790" y="158" class="worker-lbl" text-anchor="middle">worker D: spot</text>
+<text x="790" y="173" class="box-sub" text-anchor="middle">inference GPU</text>
+
+
+<rect x="604" y="208" width="160" height="44" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.06" stroke="var(--accent,#4f46e5)" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="684" y="228" class="worker-lbl" text-anchor="middle">worker E: ...</text>
+<text x="684" y="243" class="box-sub" text-anchor="middle">inference GPU</text>
+
+
+<text x="504" y="82" class="danger" font-size="12">?</text>
+<text x="716" y="82" class="danger" font-size="12">?</text>
+<text x="504" y="152" class="danger" font-size="12">?</text>
+<text x="716" y="152" class="danger" font-size="12">?</text>
+<text x="610" y="222" class="danger" font-size="12">?</text>
+
+
+<rect x="492" y="280" width="396" height="70" rx="6" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#6b7280)" stroke-width="1"/>
+<text x="690" y="299" class="box-sub" text-anchor="middle" font-weight="600">anyone can join — no trust assumed</text>
+<text x="690" y="315" class="box-sub" text-anchor="middle">stateless w.r.t. each other</text>
+<text x="690" y="331" class="box-sub" text-anchor="middle">one dropping offline = one lost rollout (fault-tolerant)</text>
+<text x="690" y="347" class="box-sub" text-anchor="middle">generation = parallel, replaceable, cheap</text>
+
+
+<rect x="492" y="365" width="396" height="58" rx="6" fill="var(--surface,#f5f5f5)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 2"/>
+<text x="690" y="385" class="box-sub" text-anchor="middle">weight broadcast: sharded / BitTorrent fan-out</text>
+<text x="690" y="401" class="box-sub" text-anchor="middle">infrequent, one-way, bandwidth not latency</text>
+<text x="690" y="414" class="box-sub" text-anchor="middle">no tight sync required</text>
+
+
+
+<line x1="498" y1="108" x2="340" y2="345" stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#pdt-arr-acc)"/>
+<line x1="578" y1="252" x2="340" y2="345" stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#pdt-arr-acc)"/>
+<line x1="710" y1="160" x2="340" y2="345" stroke="var(--accent,#4f46e5)" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#pdt-arr-acc)" opacity="0.7"/>
+
+
+<text x="430" y="246" class="edge-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">rollouts</text>
+<text x="430" y="258" class="edge-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">(+ TOPLOC proof)</text>
+
+
+<line x1="338" y1="120" x2="480" y2="90" stroke="var(--accent2,#0891b2)" stroke-width="2.5" marker-end="url(#pdt-arr-acc2)"/>
+<line x1="338" y1="120" x2="480" y2="158" stroke="var(--accent2,#0891b2)" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#pdt-arr-acc2)" opacity="0.7"/>
+<line x1="338" y1="120" x2="596" y2="210" stroke="var(--accent2,#0891b2)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#pdt-arr-acc2)" opacity="0.5"/>
+<text x="408" y="106" class="edge-lbl" text-anchor="middle" fill="var(--accent2,#0891b2)">θk broadcast</text>
+<text x="408" y="118" class="edge-lbl-sm" text-anchor="middle">(sharded / BitTorrent fan-out)</text>
+
+</svg>
+<figcaption><b>Decentralized async RL (prime-rl / INTELLECT-2) adds a trust boundary and two-check gate between untrusted workers and the central trainer.</b> Every rollout from the permissionless GPU pool must pass both a TOPLOC activation-fingerprint check (proving the correct model was used) and an independent reward recomputation before it enters the training stream. Weight broadcasts flow outward infrequently and one-way; no latency-critical cross-WAN synchronization is ever needed.</figcaption>
+</figure>
+
+<h3 id="the-new-problem-you-cannot-trust-the-workers">The new problem: you cannot trust the workers<a class="headerlink" href="#the-new-problem-you-cannot-trust-the-workers" title="Permanent link">¶</a></h3>
+<p>Centralized async RL trusts its inference workers implicitly — they are your own GPUs. The moment workers are <em>permissionless</em> (anyone can join and contribute rollouts, possibly for a reward/incentive), you inherit two adversarial problems that do not exist inside a single trusted cluster:</p>
+<ol>
+<li><strong>Reward forgery.</strong> A worker could claim its completion solved the math problem (reward = 1) when it didn&rsquo;t. <em>This</em> is handled by running the <strong>verifier</strong> on trusted hardware: the verifier independently re-checks the answer (re-runs the unit tests, re-evaluates the math equivalence). The worker sends the <em>completion</em>, not the <em>reward</em>; the trusted side computes the reward. See <a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a>.</li>
+<li><strong>Inference forgery.</strong> Far subtler: a worker could <em>lie about what it generated</em>. It could run a <em>smaller/cheaper</em> model, or a different model entirely, or just fabricate tokens, then submit a plausible-looking completion. Re-verifying the reward catches a wrong <em>answer</em>, but a forged <em>correct-looking</em> completion that was never actually produced by the policy poisons the training distribution — the trainer would update toward tokens the policy never assigned probability to. We need a way to prove that <strong>this specific completion was generated by this specific model on this specific input.</strong> That is what TOPLOC provides.</li>
+</ol>
+<h2 id="toploc-verifying-that-an-untrusted-gpu-really-ran-the-model">TOPLOC: verifying that an untrusted GPU really ran the model<a class="headerlink" href="#toploc-verifying-that-an-untrusted-gpu-really-ran-the-model" title="Permanent link">¶</a></h2>
+<h3 id="the-verification-problem-precisely">The verification problem, precisely<a class="headerlink" href="#the-verification-problem-precisely" title="Permanent link">¶</a></h3>
+<p>The naïve verification of an inference claim is to <strong>re-run it</strong>: take the prompt and the claimed output tokens, run a forward pass on trusted hardware, and check that the model assigns them the probabilities the worker claimed. But a full re-run on trusted hardware is as expensive as generating in the first place — it defeats the entire purpose of offloading generation to cheap external GPUs. We need verification that is <strong>much cheaper than generation</strong>, yet still catches a worker that swapped the model, changed the precision, or fabricated tokens.</p>
+<p>The core difficulty is <em>non-determinism</em>. Re-running the exact same model on the exact same tokens on <em>different</em> hardware does <strong>not</strong> give bit-identical activations: GPU floating-point reductions are non-associative, kernels differ across vLLM versions and GPU architectures, and tensor-parallel reductions reorder sums. So you cannot just demand a hash of the activations to match — an honest worker on an A100 and an honest verifier on an H100 would disagree, yet both are legitimate. The verification scheme must be <strong>robust to benign numerical noise</strong> while still <strong>sensitive to adversarial changes</strong> (a different model, wrong precision, fabricated tokens).</p>
+<h3 id="how-toploc-works-the-mechanism">How TOPLOC works (the mechanism)<a class="headerlink" href="#how-toploc-works-the-mechanism" title="Permanent link">¶</a></h3>
+<p><strong>TOPLOC</strong> (Prime Intellect&rsquo;s <em>Locality-sensitive hashing for inference verification</em>) solves this with a compact, <strong>locality-sensitive commitment</strong> to the model&rsquo;s intermediate activations. The intuition is to commit not to the exact floating-point activations (too brittle) but to a <em>robust fingerprint</em> of them that survives benign perturbation but breaks under a real model change. The mechanism, at a useful level of detail:</p>
+<ol>
+<li><strong>The prover (worker)</strong> runs the forward pass during generation. For the committed layer(s), it computes a small set of features from the activations — concretely, it identifies the <strong>top-<span class="arithmatex">\(k\)</span> activation values and their indices</strong> for each token&rsquo;s hidden state (the largest-magnitude components dominate the geometry and are the most stable), and forms a compact commitment over them. This commitment is tiny — on the order of bytes per token, not the full hidden state — and ships alongside the completion.</li>
+<li><strong>The verifier (trusted)</strong> takes the prompt and the claimed output tokens and runs a forward pass <em>in a single batched prefill</em> — crucially, this is <strong>far cheaper than autoregressive generation</strong>, because it processes all tokens in parallel (one big matmul) rather than one-at-a-time with a growing KV cache. The verifier recomputes the same top-<span class="arithmatex">\(k\)</span> activation features and checks them against the prover&rsquo;s commitment.</li>
+<li><strong>The robust comparison.</strong> The verifier does not demand exact equality. It checks that the prover&rsquo;s top-<span class="arithmatex">\(k\)</span> indices/values <strong>agree within a tolerance</strong>: the same large components show up in roughly the same places with roughly the same magnitudes. Benign hardware/kernel noise perturbs the low bits and occasionally swaps near-ties in the ranking, but the <em>dominant structure</em> is preserved. A different model, a different precision (fp8 vs bf16), or fabricated tokens shifts the activation geometry enough that the top-<span class="arithmatex">\(k\)</span> structure diverges beyond tolerance — the proof fails.</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">toploc_commit</span><span class="p">(</span><span class="n">hidden_states</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">128</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    PROVER side (runs on the untrusted worker during generation).</span>
+<span class="sd">    hidden_states: (T, d) activations at the committed layer for the generated tokens.</span>
+<span class="sd">    Returns a compact commitment: the top-k magnitude components per token.</span>
+<span class="sd">    The real scheme adds a cryptographic hash + polynomial encoding over these;</span>
+<span class="sd">    this captures the locality-sensitive core that makes it robust yet discriminative.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">T</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">hidden_states</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">vals</span><span class="p">,</span> <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">hidden_states</span><span class="o">.</span><span class="n">abs</span><span class="p">(),</span> <span class="n">k</span><span class="o">=</span><span class="n">k</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>        <span class="c1"># (T, k) largest-|h| components</span>
+    <span class="n">signs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sign</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="n">hidden_states</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">idx</span><span class="p">))</span>         <span class="c1"># keep sign of each</span>
+    <span class="c1"># Quantize values coarsely so benign low-bit noise doesn&#39;t change the commitment.</span>
+    <span class="n">q_vals</span> <span class="o">=</span> <span class="p">(</span><span class="n">vals</span> <span class="o">*</span> <span class="mi">16</span><span class="p">)</span><span class="o">.</span><span class="n">round</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">int16</span><span class="p">)</span>                    <span class="c1"># coarse magnitude buckets</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;idx&quot;</span><span class="p">:</span> <span class="n">idx</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span> <span class="s2">&quot;qval&quot;</span><span class="p">:</span> <span class="n">q_vals</span><span class="p">,</span> <span class="s2">&quot;sign&quot;</span><span class="p">:</span> <span class="n">signs</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">int8</span><span class="p">)}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">toploc_verify</span><span class="p">(</span><span class="n">commitment</span><span class="p">,</span> <span class="n">recomputed_hidden</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">tol_frac</span><span class="o">=</span><span class="mf">0.90</span><span class="p">,</span> <span class="n">mag_tol</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    VERIFIER side (trusted). recomputed_hidden: (T, d) from a CHEAP batched prefill</span>
+<span class="sd">    on trusted hardware over the SAME claimed tokens. Returns True if the worker&#39;s</span>
+<span class="sd">    commitment is consistent with an honest run of THIS model, within numeric tolerance.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ref</span> <span class="o">=</span> <span class="n">toploc_commit</span><span class="p">(</span><span class="n">recomputed_hidden</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">k</span><span class="p">)</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="n">recomputed_hidden</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">passes</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">T</span><span class="p">):</span>
+        <span class="c1"># How many of the prover&#39;s top-k indices also appear in our top-k for this token?</span>
+        <span class="n">shared</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">commitment</span><span class="p">[</span><span class="s2">&quot;idx&quot;</span><span class="p">][</span><span class="n">t</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">())</span> <span class="o">&amp;</span> <span class="nb">set</span><span class="p">(</span><span class="n">ref</span><span class="p">[</span><span class="s2">&quot;idx&quot;</span><span class="p">][</span><span class="n">t</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">()))</span>
+        <span class="c1"># And do the shared components&#39; coarse magnitudes roughly agree?</span>
+        <span class="n">ok_idx</span> <span class="o">=</span> <span class="n">shared</span> <span class="o">/</span> <span class="n">k</span> <span class="o">&gt;=</span> <span class="n">tol_frac</span>
+        <span class="c1"># (a full check also compares q_vals on the shared indices within mag_tol buckets)</span>
+        <span class="n">passes</span> <span class="o">+=</span> <span class="nb">int</span><span class="p">(</span><span class="n">ok_idx</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">passes</span> <span class="o">/</span> <span class="n">T</span> <span class="o">&gt;=</span> <span class="n">tol_frac</span>     <span class="c1"># accept only if MOST tokens are consistent</span>
+</code></pre></div>
+<p>The economics are what make it work: the <strong>commitment is tiny</strong> (top-<span class="arithmatex">\(k\)</span> ints, a few hundred bytes per token at most, often compressed much further), and <strong>verification is a single batched prefill</strong> — cheaper than the original autoregressive generation by the ratio of &ldquo;one parallel forward over <span class="arithmatex">\(T\)</span> tokens&rdquo; to &ldquo;<span class="arithmatex">\(T\)</span> sequential forwards with KV-cache growth.&rdquo; So the trainer can afford to verify <strong>every</strong> rollout (or a random audited subset) before admitting it to the training stream, at a cost that is a small fraction of generation. A worker that submits a forged completion fails the check and its rollout is rejected (and, in an incentivized network, the worker is penalized).</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: why locality-sensitive, not cryptographic, hashing</p>
+<p>A normal cryptographic hash (SHA-256) of the activations is useless here: flip one low bit and the hash is completely different, so an honest worker on different hardware would always fail. TOPLOC&rsquo;s insight is to hash a <em>quantity that is stable under benign perturbation</em> — the identity and coarse magnitude of the dominant activation components — so the commitment is <strong>locality-sensitive</strong>: nearby activation tensors produce consistent commitments, distant ones (different model/precision) do not. It trades the exactness of a cryptographic proof for <em>robust statistical confidence</em> that is appropriate for floating-point ML, and that is exactly the right tradeoff for verifying inference on heterogeneous GPUs.</p>
+</div>
+<h3 id="putting-it-together-the-prime-rl-trust-pipeline">Putting it together: the prime-rl trust pipeline<a class="headerlink" href="#putting-it-together-the-prime-rl-trust-pipeline" title="Permanent link">¶</a></h3>
+<p>A rollout from a permissionless worker is admitted to training only after passing <strong>two</strong> independent trusted checks:</p>
+<ol>
+<li><strong>TOPLOC</strong> confirms the <em>completion was genuinely produced by the current policy</em> on the given prompt (anti-inference-forgery).</li>
+<li>The <strong>verifier</strong> independently recomputes the <em>reward</em> from the completion (anti-reward-forgery), per <a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a>.</li>
+</ol>
+<p>Only then does the rollout — with its behavior log-probs, reward, and <strong>staleness stamp</strong> — join the queue feeding the async off-policy loss we built earlier. Staleness is generally <em>larger</em> here than in a single cluster (weight broadcasts over the WAN are infrequent), so the importance-sampling and truncated-IS corrections do real, load-bearing work. The full system is async off-policy RL (Sections 2–4) plus a trust layer (Sections 5–6).</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re designing globally-distributed, permissionless RL: a central trainer plus thousands of untrusted inference GPUs across the internet. Walk me through the two things that break versus a single-cluster async setup, and how you&rsquo;d fix each.</p>
+<p><strong>A:</strong> Two categories break. <strong>(1) Statistical / systems:</strong> the WAN makes weight broadcast slow and infrequent, so rollouts arrive <em>staler</em> and from a possibly-different inference engine. I keep the queue-based async architecture (nothing latency-critical crosses the WAN — only prompts out, rollouts in, periodic sharded weight broadcasts), stamp every rollout with its policy version, gate on a max-staleness <span class="arithmatex">\(s_{\max}\)</span>, and correct the off-policy gap with the PPO clipped ratio plus <strong>truncated importance sampling</strong> to bound the engine-mismatch ratio. I log both behavior (inference-engine) and recomputed (trainer) log-probs and watch <code>approx_kl</code> and <code>clipfrac</code>. <strong>(2) Trust / adversarial:</strong> workers are untrusted, so they can forge the <em>reward</em> or forge the <em>inference itself</em>. Reward forgery I kill by never trusting a worker-reported reward — the trusted verifier recomputes it from the completion. Inference forgery (running a smaller model, wrong precision, or fabricating tokens) I catch with <strong>TOPLOC</strong>: each worker ships a tiny locality-sensitive commitment to its top-<span class="arithmatex">\(k\)</span> activations; the trusted side re-verifies with a single <em>cheap batched prefill</em> (much cheaper than generation) and accepts only if the dominant activation structure matches within tolerance — robust to benign GPU numerical noise but sensitive to a real model swap. A rollout enters training only after passing both checks. I keep the <em>trainer</em> (stateful, hard to replicate) centralized on reliable hardware and push only the <em>stateless, fault-tolerant generation</em> to the edge.</p>
+</div>
+<h2 id="practical-configuration-and-failure-modes">Practical configuration and failure modes<a class="headerlink" href="#practical-configuration-and-failure-modes" title="Permanent link">¶</a></h2>
+<p>A real prime-rl-style async run lives or dies by a handful of knobs and monitors. The config below is representative (not a verbatim copy of any repo) and annotated with <em>why</em> each value matters.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Async off-policy RL — representative configuration</span>
+<span class="nt">async</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">s_max</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span><span class="w">                 </span><span class="c1"># max staleness (steps). 1-2 for tight clusters; up to 8 over WAN.</span>
+<span class="w">  </span><span class="nt">batch_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">512</span><span class="w">          </span><span class="c1"># training batch assembled from the rollout queue</span>
+<span class="w">  </span><span class="nt">publish_weights_every</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span><span class="w"> </span><span class="c1"># broadcast new weights every N trainer steps (raise over slow links)</span>
+<span class="w">  </span><span class="nt">queue_maxsize</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4096</span><span class="w">      </span><span class="c1"># backpressure: workers throttle if the queue is full (too far ahead)</span>
+
+<span class="nt">importance_sampling</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">ppo_eps_low</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.2</span>
+<span class="w">  </span><span class="nt">ppo_eps_high</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.28</span><span class="w">       </span><span class="c1"># clip-higher (DAPO): preserves exploration on lower-entropy off-policy data</span>
+<span class="w">  </span><span class="nt">tis_cap</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4.0</span><span class="w">             </span><span class="c1"># truncated importance sampling on the behavior-side ratio (engine mismatch)</span>
+<span class="w">  </span><span class="nt">drop_if_seq_ratio_gt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span><span class="w">  </span><span class="c1"># discard rollouts whose sequence-level ratio is wildly off-policy</span>
+
+<span class="nt">loss</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">token_level</span><span class="w"> </span><span class="c1"># Dr. GRPO / DAPO: sum over tokens / total tokens (NOT per-response mean)</span>
+<span class="w">  </span><span class="nt">kl_coef</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0</span><span class="w">             </span><span class="c1"># R1-style runs often drop the explicit KL; clip provides the trust region</span>
+
+<span class="nt">decentralized</span><span class="p">:</span><span class="w">             </span><span class="c1"># only when workers are permissionless / remote</span>
+<span class="w">  </span><span class="nt">verify_inference</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">toploc</span><span class="w"> </span><span class="c1"># require a TOPLOC proof per rollout</span>
+<span class="w">  </span><span class="nt">toploc_topk</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">128</span>
+<span class="w">  </span><span class="nt">recompute_reward</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">   </span><span class="c1"># never trust a worker-reported reward; verifier recomputes it</span>
+<span class="w">  </span><span class="nt">audit_fraction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0</span><span class="w">      </span><span class="c1"># fraction of rollouts to verify (1.0 = all; lower to save verifier compute)</span>
+</code></pre></div>
+<p>The dashboard you watch, in priority order:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Healthy</th>
+<th>Red flag</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mean_staleness</code></td>
+<td><span class="arithmatex">\(\le s_{\max}\)</span>, stable</td>
+<td>climbing</td>
+<td>trainer is generation-starved or workers fell behind</td>
+</tr>
+<tr>
+<td><code>frac_dropped_stale</code></td>
+<td>low, steady</td>
+<td>rising</td>
+<td><span class="arithmatex">\(s_{\max}\)</span> too tight or fleet too slow; add workers / raise <span class="arithmatex">\(s_{\max}\)</span></td>
+</tr>
+<tr>
+<td><code>approx_kl</code> (fresh data)</td>
+<td><span class="arithmatex">\(\approx 0\)</span></td>
+<td>nonzero &amp; drifting</td>
+<td><strong>engine mismatch</strong> — trainer vs inference log-probs disagree</td>
+</tr>
+<tr>
+<td><code>clipfrac</code></td>
+<td>moderate (5–25%)</td>
+<td><span class="arithmatex">\(&gt;50\%\)</span></td>
+<td>data too off-policy; lower <span class="arithmatex">\(s_{\max}\)</span> or publish weights more often</td>
+</tr>
+<tr>
+<td><code>toploc_reject_rate</code></td>
+<td>low</td>
+<td>spiking</td>
+<td>a worker (or cohort) is forging inference; quarantine it</td>
+</tr>
+<tr>
+<td>trainer GPU util</td>
+<td><span class="arithmatex">\(\approx 100\%\)</span></td>
+<td>low</td>
+<td>async isn&rsquo;t helping — you&rsquo;re training-bound, not generation-bound</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: start synchronous, then turn the staleness dial up</p>
+<p>Bring up your RL run <strong>fully synchronous</strong> (<span class="arithmatex">\(s_{\max}=0\)</span>) first and confirm reward climbs and <code>approx_kl</code> on fresh data is essentially zero. <em>Then</em> introduce async by raising <span class="arithmatex">\(s_{\max}\)</span> to 1, then 2, watching that reward curves overlay the sync baseline. This isolates async/staleness bugs from ordinary RL bugs: if the sync run is healthy and the <span class="arithmatex">\(s_{\max}=1\)</span> run diverges, your importance-sampling correction or engine-mismatch handling is wrong — not your reward, advantage, or learning rate. Debugging async-and-RL simultaneously from a cold start is how teams lose a week.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: backpressure deadlock and version skew</p>
+<p>Two async-specific footguns. <strong>(1) No backpressure:</strong> if inference workers race arbitrarily far ahead of the trainer, the queue fills with rollouts that are <em>already</em> staler than <span class="arithmatex">\(s_{\max}\)</span> by the time the trainer reaches them — you generate a mountain of garbage that gets dropped. Bound the queue and have workers <em>block</em> (or slow their prompt intake) when it is full, so generation rate self-throttles to the trainer&rsquo;s consumption rate. <strong>(2) Version skew on weight swap:</strong> if a worker hot-swaps weights <em>mid-response</em>, the first half of the completion came from <span class="arithmatex">\(\theta_v\)</span> and the second half from <span class="arithmatex">\(\theta_{v+1}\)</span>, and your behavior log-probs are now inconsistent — the importance ratio is meaningless. Only ever swap weights at a <em>request boundary</em> (between completions), never mid-generation, and stamp the rollout with the single version that produced it end-to-end.</p>
+</div>
+<h2 id="where-the-frontier-is-heading">Where the frontier is heading<a class="headerlink" href="#where-the-frontier-is-heading" title="Permanent link">¶</a></h2>
+<p>Async off-policy RL is now the default for serious reasoning-RL at scale: veRL, AReaL, SLIME, and prime-rl all ship asynchronous pipelines, and the open question has shifted from &ldquo;<em>should</em> we go async&rdquo; to &ldquo;<em>how much</em> staleness can we absorb and <em>how</em> do we correct for it.&rdquo; The research edges, briefly:</p>
+<ul>
+<li><strong>Bigger staleness budgets with smarter corrections.</strong> Sequence-level importance weighting (GSPO-style), adaptive <span class="arithmatex">\(s_{\max}\)</span> that grows as the policy stabilizes, and per-token confidence weighting to down-weight high-variance ratios.</li>
+<li><strong>Fully disaggregated, elastic fleets.</strong> Inference and training pools that scale independently and tolerate node churn — the topic of <a href="../06-rl-infra/07-colocated-vs-disaggregated.html">Colocated vs Disaggregated RL &amp; Weight Synchronization</a> and <a href="../06-rl-infra/11-scaling-rl-tricks.html">Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a>.</li>
+<li><strong>Cheaper, stronger inference verification.</strong> TOPLOC is one point in a design space that includes trusted execution environments (TEEs) and zero-knowledge ML proofs; the prize is verification cost approaching zero with cryptographic-grade guarantees.</li>
+<li><strong>Permissionless training as an economic system.</strong> INTELLECT-style networks turn idle global GPU capacity into a substrate for frontier RL, with incentive design (who gets paid for a verified rollout) becoming as important as the optimizer.</li>
+</ul>
+<p>The throughline of the whole chapter: <strong>the async barrier-break is a systems idea, but it forces an algorithmic correction (off-policy importance sampling) and, at global scale, a trust mechanism (TOPLOC).</strong> Get all three right and you can run frontier RL on hardware you neither own nor trust.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>The synchronous RL barrier wastes the fleet.</strong> Lock-step generation→train→sync leaves the trainer idle during generation and the generators idle during training; heavy-tailed response lengths add a brutal <em>straggler tax</em> where the batch waits on its single longest sample.</li>
+<li><strong>Async off-policy RL decouples the two via a rollout queue.</strong> Generators sample continuously with whatever weights they hold; the trainer consumes rollouts and publishes weights every <span class="arithmatex">\(N\)</span> steps. Each rollout is stamped with a <strong>policy version</strong>, and <strong>staleness</strong> <span class="arithmatex">\(s = k - v\)</span> becomes the central quantity.</li>
+<li><strong>Off-policy means importance sampling.</strong> Reweight each token by <span class="arithmatex">\(\rho_t = \pi_\theta/\pi_{\theta_{\text{old}}}\)</span>. Tame the variance with <strong>PPO clipping</strong> (the per-step trust region), <strong>truncated importance sampling</strong> (caps the behavior-side ratio — critical because the inference and training engines compute different log-probs), and dropping wildly off-policy rollouts.</li>
+<li><strong>One step of staleness is nearly free; <span class="arithmatex">\(s_{\max}\in\{1,2,4\}\)</span> buys ~2–4× throughput</strong> at matched quality. The win is <em>eliminating idle time</em>, not any algorithmic change.</li>
+<li><strong>Pipeline at the sample level, not the batch level.</strong> Stream individual finished rollouts through a bounded queue (with backpressure) so stragglers never block short samples; swap weights only at request boundaries, never mid-generation.</li>
+<li><strong>Decentralized RL (prime-rl, INTELLECT-2) exploits loose coupling.</strong> Only prompts, rollouts, and infrequent weight broadcasts cross the WAN — none latency-critical — so stateless generation can run on permissionless, globally-distributed GPUs while the stateful trainer stays centralized.</li>
+<li><strong>Untrusted workers create two new attacks.</strong> <em>Reward forgery</em> is killed by recomputing rewards on a trusted <strong>verifier</strong>; <em>inference forgery</em> (wrong model/precision/fabricated tokens) is caught by <strong>TOPLOC</strong>, a locality-sensitive commitment to top-<span class="arithmatex">\(k\)</span> activations that re-verifies via a cheap batched prefill — robust to benign GPU numerics, sensitive to real model changes.</li>
+<li><strong>Monitor staleness, <code>approx_kl</code> on fresh data, <code>clipfrac</code>, and TOPLOC reject rate.</strong> A drifting <code>approx_kl</code> on the first epoch over fresh rollouts is the signature of engine mismatch — the most common silent async bug. Bring the run up synchronously, then dial <span class="arithmatex">\(s_{\max}\)</span> up.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Async, off-policy RL is now the default paradigm for large-scale reasoning-model training. The open frontier has shifted from <em>whether</em> to decouple generation from training to <em>how much staleness is tolerable</em>, how to correct for it rigorously, and how to push generation onto permissionless, globally-distributed hardware — the domain pioneered by Prime Intellect&rsquo;s INTELLECT-2 and prime-rl.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1802.01561">Espeholt et al., <em>IMPALA: Scalable Distributed Deep-RL with Importance Weighted Actor-Learner Architectures</em> (2018)</a> — introduced the decoupled actor-learner architecture and V-trace off-policy correction that is the direct conceptual ancestor of async LLM RL.</li>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI, <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em> (2025)</a> — the landmark reasoning-RL recipe whose scale and heavy-tailed response lengths made async infrastructure a practical necessity.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2505.24298">Fu et al., <em>AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning</em> (2025)</a> — full decoupling of generation and training with staleness-aware PPO; reports up to 2.77× speedup over synchronous baselines (NeurIPS 2025).</li>
+<li><a href="https://arxiv.org/abs/2505.07291">Prime Intellect Team, <em>INTELLECT-2: A Reasoning Model Trained Through Globally Decentralized Reinforcement Learning</em> (2025)</a> — first 32B model trained via permissionless, globally-distributed async RL using prime-rl, TOPLOC, and SHARDCAST.</li>
+<li><a href="https://arxiv.org/abs/2501.16007">Ong et al., <em>TOPLOC: A Locality Sensitive Hashing Scheme for Trustless Verifiable Inference</em> (2025)</a> — compact top-k activation commitments enable cheap, hardware-robust verification that an untrusted GPU ran the claimed model.</li>
+<li><a href="https://arxiv.org/abs/2503.14476">Yu et al., <em>DAPO: An Open-Source LLM Reinforcement Learning System at Scale</em> (2025)</a> — introduces clip-higher asymmetric PPO, token-level loss aggregation, and dynamic sampling; key stabilization techniques for async off-policy runs.</li>
+<li><a href="https://arxiv.org/abs/2409.19256">Sheng et al., <em>HybridFlow: A Flexible and Efficient RLHF Framework</em> (2024)</a> — the single-controller architecture underlying veRL; covers truncated importance sampling to handle inference-vs-training engine log-prob mismatch.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/PrimeIntellect-ai/prime-rl">PrimeIntellect-ai/prime-rl</a> — async RL training framework used for INTELLECT-2; supports FSDP2, vLLM, TOPLOC verification, and multi-node deployment at 1000+ GPUs.</li>
+<li><a href="https://github.com/inclusionAI/AReaL">inclusionAI/AReaL</a> — production async RL system from Ant Group / Tsinghua IIIS; flexible, sample-level streaming with staleness control.</li>
+<li><a href="https://github.com/verl-project/verl">verl-project/verl</a> — widely-used HybridFlow-based RL post-training library integrating FSDP, Megatron, vLLM, and SGLang; 21k+ GitHub stars.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.primeintellect.ai/blog/intellect-2">Prime Intellect, <em>INTELLECT-2: The First Globally Distributed RL Training of a 32B Model</em> (blog, 2025)</a> — engineering walkthrough of the full decentralized async pipeline, TOPLOC integration, and SHARDCAST weight broadcast.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>DeepSeek-AI, <strong>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</strong> (2025) — the reasoning-RL recipe whose scale motivates async infrastructure.</li>
+<li>Mei, Fu, Zhang, et al. (Ant Research / IIIS Tsinghua), <strong>AReaL: A Fully Asynchronous Reinforcement Learning System for Language Reasoning</strong> (2025) — staleness control and async pipelining in practice.</li>
+<li>Yu, et al. (Qwen / ByteDance Seed), <strong>DAPO: An Open-Source LLM Reinforcement Learning System at Scale</strong> (2025) — clip-higher, token-level loss, dynamic sampling.</li>
+<li>Sheng, Zhang, et al., <strong>HybridFlow (veRL): A Flexible and Efficient RLHF Framework</strong> (2024) — the single-controller architecture and truncated-IS for engine mismatch; see <a href="../06-rl-infra/04-verl.html">veRL: HybridFlow &amp; The Single-Controller Architecture</a>.</li>
+<li>Prime Intellect, <strong>INTELLECT-1: Launching the First Decentralized Training of a 10B Parameter Model</strong> and <strong>OpenDiLoCo</strong> (2024) — globally-distributed low-communication pretraining.</li>
+<li>Prime Intellect, <strong>INTELLECT-2</strong> and the <strong>prime-rl</strong> framework (2025) — globally-distributed asynchronous RL for reasoning models.</li>
+<li>Douillard, Feng, Rusu, et al. (DeepMind), <strong>DiLoCo: Distributed Low-Communication Training of Language Models</strong> (2023) — many local steps between rare global syncs.</li>
+<li>Ong, et al. (Prime Intellect), <strong>TOPLOC: A Locality-Sensitive Hashing Scheme for Trustless Verifiable Inference</strong> (2024) — verifying that an untrusted GPU ran the claimed model.</li>
+<li>Schulman, Wolski, Dhariwal, et al., <strong>Proximal Policy Optimization Algorithms</strong> (2017) — the clipped surrogate that doubles as the staleness corrector.</li>
+<li>Espeholt, et al. (DeepMind), <strong>IMPALA: Scalable Distributed Deep-RL with Importance Weighted Actor-Learner Architectures</strong> (2018) — the classic decoupled actor-learner with V-trace off-policy correction, the conceptual ancestor of async LLM RL.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="05-openrlhf-nemo-ray.html"><span class="pn-label">← Previous</span><span class="pn-title">OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</span></a>
+<a class="next" href="07-colocated-vs-disaggregated.html"><span class="pn-label">Next →</span><span class="pn-title">Colocated vs Disaggregated RL &amp; Weight Synchronization</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-synchronous-barrier-and-why-it-wastes-the-fleet">The synchronous barrier and why it wastes the fleet</a></li>
+<li class="toc-l3"><a href="#anatomy-of-the-stall">Anatomy of the stall</a></li>
+<li class="toc-l3"><a href="#the-straggler-tax">The straggler tax</a></li>
+<li class="toc-l2"><a href="#decoupling-generation-from-training-async-off-policy-rl">Decoupling generation from training: async off-policy RL</a></li>
+<li class="toc-l3"><a href="#the-queue-based-architecture">The queue-based architecture</a></li>
+<li class="toc-l3"><a href="#staleness-the-off-policy-gap-and-the-async-hyperparameter">Staleness, the off-policy gap, and the async hyperparameter</a></li>
+<li class="toc-l3"><a href="#why-off-policy-needs-a-correction-the-distribution-mismatch">Why off-policy needs a correction: the distribution mismatch</a></li>
+<li class="toc-l2"><a href="#the-math-of-staleness-importance-sampling-for-off-policy-llm-rl">The math of staleness: importance sampling for off-policy LLM RL</a></li>
+<li class="toc-l3"><a href="#the-token-level-importance-ratio">The token-level importance ratio</a></li>
+<li class="toc-l3"><a href="#a-from-scratch-async-off-policy-loss">A from-scratch async off-policy loss</a></li>
+<li class="toc-l2"><a href="#pipelined-async-rollouts-keeping-every-gpu-busy">Pipelined async rollouts: keeping every GPU busy</a></li>
+<li class="toc-l3"><a href="#sample-level-streaming-instead-of-batch-level-barriers">Sample-level streaming instead of batch-level barriers</a></li>
+<li class="toc-l3"><a href="#throughput-bookkeeping">Throughput bookkeeping</a></li>
+<li class="toc-l2"><a href="#prime-intellects-prime-rl-and-decentralized-rl">Prime Intellect&amp;rsquo;s prime-rl and decentralized RL</a></li>
+<li class="toc-l3"><a href="#what-changes-when-the-workers-leave-the-data-center">What changes when the workers leave the data center</a></li>
+<li class="toc-l3"><a href="#the-new-problem-you-cannot-trust-the-workers">The new problem: you cannot trust the workers</a></li>
+<li class="toc-l2"><a href="#toploc-verifying-that-an-untrusted-gpu-really-ran-the-model">TOPLOC: verifying that an untrusted GPU really ran the model</a></li>
+<li class="toc-l3"><a href="#the-verification-problem-precisely">The verification problem, precisely</a></li>
+<li class="toc-l3"><a href="#how-toploc-works-the-mechanism">How TOPLOC works (the mechanism)</a></li>
+<li class="toc-l3"><a href="#putting-it-together-the-prime-rl-trust-pipeline">Putting it together: the prime-rl trust pipeline</a></li>
+<li class="toc-l2"><a href="#practical-configuration-and-failure-modes">Practical configuration and failure modes</a></li>
+<li class="toc-l2"><a href="#where-the-frontier-is-heading">Where the frontier is heading</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

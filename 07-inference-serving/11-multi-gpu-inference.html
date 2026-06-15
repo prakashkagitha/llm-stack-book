@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-GPU &amp; Multi-Node Inference — The LLM Stack</title>
+<meta name="description" content="Tensor parallelism for serving, pipeline parallelism, expert parallelism (large MoE), data parallel replicas, when each helps latency vs throughput, communicati">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="active" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="711-multi-gpu-multi-node-inference">7.11 Multi-GPU &amp; Multi-Node Inference<a class="headerlink" href="#711-multi-gpu-multi-node-inference" title="Permanent link">¶</a></h1>
+<p>Modern large language models do not fit comfortably on a single GPU. A 70-billion-parameter model in BF16 requires roughly 140 GB of device memory before you account for the KV cache, activations, or framework overhead — far beyond the 80 GB of a single H100. Even when the weights <em>do</em> fit, a single GPU&rsquo;s bandwidth and compute can limit both latency and throughput. Multi-GPU and multi-node serving is therefore not an exotic optimization — it is the default operating mode for anything above about 13 billion parameters in production.</p>
+<p>This chapter builds a complete picture of how inference is distributed: the four parallelism strategies available, what each costs and buys, how communication interacts with the decode loop, how Mixture-of-Experts (MoE) models introduce a fifth axis called expert parallelism, and finally how to size and configure a real deployment. We will implement minimal but correct reference code for each strategy and work through concrete numerical examples.</p>
+<p>Before reading, you may want to review <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a> and <a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a> for the hardware foundations. The training-side treatment of the same parallelism strategies lives in <a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a>; this chapter focuses exclusively on inference-specific trade-offs.</p>
+<hr />
+<h2 id="the-four-parallelism-axes">The Four Parallelism Axes<a class="headerlink" href="#the-four-parallelism-axes" title="Permanent link">¶</a></h2>
+<p>Serving a large model across <span class="arithmatex">\(N\)</span> devices decomposes into four independent (and composable) axes:</p>
+<table>
+<thead>
+<tr>
+<th>Axis</th>
+<th>Abbreviation</th>
+<th>What is sharded</th>
+<th>Primary benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tensor parallelism</td>
+<td>TP</td>
+<td>Weight matrices split column/row-wise within a layer</td>
+<td>Reduces per-GPU memory; can lower latency</td>
+</tr>
+<tr>
+<td>Pipeline parallelism</td>
+<td>PP</td>
+<td>Model split into stages of consecutive layers</td>
+<td>Fits very deep models; primarily a throughput tool</td>
+</tr>
+<tr>
+<td>Expert parallelism</td>
+<td>EP</td>
+<td>MoE expert weights spread across devices</td>
+<td>Enables enormous MoE capacity at constant compute</td>
+</tr>
+<tr>
+<td>Data parallel replicas</td>
+<td>DP</td>
+<td>Full (or TP/PP) model replicated</td>
+<td>Pure throughput scaling; latency unchanged</td>
+</tr>
+</tbody>
+</table>
+<p>The total GPU count satisfies <span class="arithmatex">\(N = \text{TP} \times \text{PP} \times \text{DP}\)</span>, plus any EP expansion on top of TP. Each axis interacts differently with the two phases of inference — prefill (compute-bound, processes the full prompt in one pass) and decode (memory-bandwidth-bound, processes one token per step). We cover both phases throughout.</p>
+<hr />
+<h2 id="tensor-parallelism">Tensor Parallelism<a class="headerlink" href="#tensor-parallelism" title="Permanent link">¶</a></h2>
+<h3 id="mechanism">Mechanism<a class="headerlink" href="#mechanism" title="Permanent link">¶</a></h3>
+<p>Tensor parallelism (TP), introduced at production scale by Megatron-LM (Shoeybi et al., 2019), splits individual weight matrices across GPUs so that each GPU handles a column-partition (for a linear projecting <em>into</em> the hidden dimension) or a row-partition (projecting <em>out</em> of it). Consider a column-parallel linear layer <span class="arithmatex">\(Y = X W\)</span> where <span class="arithmatex">\(W \in \mathbb{R}^{d \times k}\)</span>:</p>
+<div class="arithmatex">\[
+W = \begin{bmatrix} W_1 &amp; W_2 &amp; \cdots &amp; W_T \end{bmatrix}, \quad
+Y_i = X W_i \quad \text{on GPU } i
+\]</div>
+<p>After the column-parallel layer, each GPU holds <span class="arithmatex">\(Y_i \in \mathbb{R}^{B \times k/T}\)</span>. A subsequent row-parallel layer <span class="arithmatex">\(Z = Y W'\)</span> is arranged as <span class="arithmatex">\(W' = \begin{bmatrix} W'_1 \\ \vdots \\ W'_T \end{bmatrix}\)</span> so that GPU <span class="arithmatex">\(i\)</span> computes <span class="arithmatex">\(Z_i = Y_i W'_i\)</span> and the full result is <span class="arithmatex">\(Z = \sum_i Z_i\)</span>, recovered by an <strong>all-reduce</strong>.</p>
+<p>In the attention layer, the <span class="arithmatex">\(Q, K, V\)</span> projections are column-parallel (each GPU owns a disjoint set of attention heads) and the output projection is row-parallel, requiring one all-reduce per attention block. The MLP block follows the same pattern: up-project column-parallel, down-project row-parallel, one all-reduce.</p>
+<p>For a TP degree <span class="arithmatex">\(T\)</span>, there are <strong>two all-reduces per transformer layer</strong> during the forward pass: one after attention, one after the MLP.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Minimal tensor-parallel linear layer (illustrative, not production)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ColParallelLinear</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Column-parallel: each rank holds columns [start:end] of the weight matrix.</span>
+<span class="sd">    Input X is replicated across all ranks; output is partitioned.</span>
+<span class="sd">    No all-reduce needed here — a subsequent RowParallelLinear will reduce.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">in_features</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">out_features</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">world_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">out_features</span> <span class="o">%</span> <span class="n">world_size</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rank</span> <span class="o">=</span> <span class="n">rank</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span> <span class="o">=</span> <span class="n">world_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">local_out</span> <span class="o">=</span> <span class="n">out_features</span> <span class="o">//</span> <span class="n">world_size</span>
+        <span class="c1"># Each rank holds a (in_features x local_out) slice</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">local_out</span><span class="p">,</span> <span class="n">in_features</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">kaiming_uniform_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># x: (batch, seq, in_features) — replicated</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">)</span>  <span class="c1"># (batch, seq, local_out)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RowParallelLinear</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Row-parallel: each rank holds rows [start:end].</span>
+<span class="sd">    Input is partitioned (from ColParallelLinear output); output is all-reduced.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">in_features</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">out_features</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">world_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">in_features</span> <span class="o">%</span> <span class="n">world_size</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">local_in</span> <span class="o">=</span> <span class="n">in_features</span> <span class="o">//</span> <span class="n">world_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">out_features</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">local_in</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">kaiming_uniform_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># x: (batch, seq, local_in) — partitioned; compute partial output</span>
+        <span class="n">partial</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">)</span>  <span class="c1"># (batch, seq, out_features)</span>
+        <span class="c1"># Sum partials across all tensor-parallel ranks</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">all_reduce</span><span class="p">(</span><span class="n">partial</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="n">dist</span><span class="o">.</span><span class="n">ReduceOp</span><span class="o">.</span><span class="n">SUM</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">partial</span>
+</code></pre></div>
+<h3 id="tp-in-the-decode-loop">TP in the Decode Loop<a class="headerlink" href="#tp-in-the-decode-loop" title="Permanent link">¶</a></h3>
+<p>During decode, the batch size is typically small (often 1 to a few hundred). A single all-reduce on a BF16 tensor of shape <code>[B, 1, d_model]</code> transfers roughly <span class="arithmatex">\(2 \times d_{\text{model}} \times B\)</span> bytes per rank over NVLink. For Llama-3 70B with <span class="arithmatex">\(d_{\text{model}} = 8192\)</span> and <span class="arithmatex">\(B = 64\)</span>:</p>
+<div class="arithmatex">\[
+\text{bytes per all-reduce} = 2 \times 8192 \times 64 = 1\,\text{MB}
+\]</div>
+<p>At a NVLink bandwidth of around 900 GB/s between two H100s, that is about <strong>1 µs</strong> per all-reduce, negligible compared with the kernel launch overhead. TP therefore has very low communication overhead on a single NVLink island. Crossing PCIe or Ethernet raises this cost by 10–100×, making TP across nodes generally inadvisable.</p>
+<h3 id="latency-vs-throughput-impact">Latency vs. Throughput Impact<a class="headerlink" href="#latency-vs-throughput-impact" title="Permanent link">¶</a></h3>
+<p>TP reduces the per-GPU memory footprint of weights by a factor of <span class="arithmatex">\(T\)</span> and reduces the per-layer compute time by approximately <span class="arithmatex">\(T\)</span> (each GPU does <span class="arithmatex">\(1/T\)</span> of the matmul). For a latency-sensitive workload (single user, small batch), TP can deliver near-linear speedup up to the NVLink bandwidth wall. For a throughput-sensitive workload, TP is less efficient than data parallelism because the all-reduces do not scale with batch size — you pay the same communication cost regardless.</p>
+<div class="admonition example">
+<p class="admonition-title">TP memory saving for Llama-3 70B</p>
+<p>Llama-3 70B has approximately 70 billion parameters. At BF16 (2 bytes/parameter):</p>
+<div class="arithmatex">\[\text{Weight memory} = 70 \times 10^9 \times 2 = 140 \text{ GB}\]</div>
+<p>With TP = 4 across 4 × H100 80 GB GPUs:</p>
+<div class="arithmatex">\[\text{Per-GPU weight memory} = 140/4 = 35 \text{ GB}\]</div>
+<p>Leaving 45 GB per GPU for the KV cache. At a KV head dimension of 128, 8 KV heads (GQA), 80 layers, and BF16:</p>
+<div class="arithmatex">\[\text{KV cache per token} = 2 \times 8 \times 128 \times 80 \times 2 = 327\,680 \text{ bytes} \approx 320 \text{ KB/token}\]</div>
+<p>So the remaining 45 GB supports roughly <span class="arithmatex">\(45 \times 10^9 / 327{,}680 \approx 137{,}000\)</span> tokens of context. For a maximum context of 8 K tokens, that accommodates about 17 concurrent requests — a reasonable serving batch.</p>
+</div>
+<hr />
+<h2 id="pipeline-parallelism">Pipeline Parallelism<a class="headerlink" href="#pipeline-parallelism" title="Permanent link">¶</a></h2>
+<h3 id="mechanism_1">Mechanism<a class="headerlink" href="#mechanism_1" title="Permanent link">¶</a></h3>
+<p>Pipeline parallelism (PP) divides the model&rsquo;s layers into consecutive <strong>stages</strong> assigned to different devices. GPU 0 holds layers 0–<span class="arithmatex">\(L/P\)</span>, GPU 1 holds layers <span class="arithmatex">\(L/P\)</span>–<span class="arithmatex">\(2L/P\)</span>, and so on. Communication between stages consists of passing activations (the hidden state) from one stage to the next — a single peer-to-peer <code>send</code>/<code>recv</code>, not a collective.</p>
+<p>For a model with hidden size <span class="arithmatex">\(d\)</span> and micro-batch size <span class="arithmatex">\(B\)</span>:</p>
+<div class="arithmatex">\[
+\text{inter-stage activation bytes} = B \times 1 \times d \times \text{dtype\_bytes}
+\]</div>
+<p>For Llama-3 70B with <span class="arithmatex">\(d = 8192\)</span>, <span class="arithmatex">\(B = 1\)</span>, BF16: <span class="arithmatex">\(1 \times 8192 \times 2 = 16\)</span> KB per step. Even over InfiniBand at 25 GB/s, this is about <strong>0.6 µs</strong> — entirely dominated by the GPU compute.</p>
+<h3 id="the-pipeline-bubble-and-decode">The Pipeline Bubble and Decode<a class="headerlink" href="#the-pipeline-bubble-and-decode" title="Permanent link">¶</a></h3>
+<p>During <em>training</em>, PP creates a &ldquo;bubble&rdquo; — idle time while stages wait for activations. In inference, the story is different:</p>
+<ul>
+<li><strong>Prefill</strong>: a single batch passes through the pipeline sequentially. For a PP degree of <span class="arithmatex">\(P\)</span>, each stage processes <span class="arithmatex">\(L/P\)</span> layers, so the total latency is <em>roughly unchanged</em> from a single GPU processing all <span class="arithmatex">\(L\)</span> layers (ignoring inter-stage latency). There is no bubble; the pipeline has only one micro-batch.</li>
+<li><strong>Decode</strong>: each step is sequential by nature. Stage <span class="arithmatex">\(i\)</span> cannot start until stage <span class="arithmatex">\(i-1\)</span> finishes. This makes PP a <strong>latency-neutral</strong> strategy for decode: it does not help per-token latency and may hurt it slightly due to inter-stage synchronization.</li>
+</ul>
+<p>PP&rsquo;s real value is enabling models that do not fit in TP-only memory. For example, a 400B+ dense model with PP = 4 and TP = 8 on 32 GPUs keeps each GPU&rsquo;s memory load manageable while TP handles the per-layer distribution.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Minimal pipeline stage runner (single-process simulation)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PipelineStage</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Holds a contiguous slice of transformer layers.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">layers</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">layers</span> <span class="o">=</span> <span class="n">layers</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">layer</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">layers</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">layer</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">x</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">pipeline_forward_inference</span><span class="p">(</span>
+    <span class="n">stages</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">PipelineStage</span><span class="p">],</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">devices</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Sequential pipeline forward pass (no micro-batching during inference decode).</span>
+<span class="sd">    Each stage resides on a different device; activations are moved between stages.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">stages</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">devices</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">stage</span><span class="p">,</span> <span class="n">device</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">stages</span><span class="p">,</span> <span class="n">devices</span><span class="p">):</span>
+        <span class="c1"># Move activations to the current stage&#39;s device</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">stage</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">x</span>  <span class="c1"># Final output on the last device</span>
+
+
+<span class="c1"># Example: split an 80-layer model into 4 pipeline stages of 20 layers each</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">build_pipeline_example</span><span class="p">(</span>
+    <span class="n">n_layers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">80</span><span class="p">,</span>
+    <span class="n">n_stages</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+    <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span>  <span class="c1"># small for illustration</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">PipelineStage</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">]]:</span>
+    <span class="n">layers_per_stage</span> <span class="o">=</span> <span class="n">n_layers</span> <span class="o">//</span> <span class="n">n_stages</span>
+    <span class="n">devices</span> <span class="o">=</span> <span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">)]</span> <span class="o">*</span> <span class="n">n_stages</span>  <span class="c1"># would be cuda:i in real usage</span>
+    <span class="n">stages</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">stage_idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_stages</span><span class="p">):</span>
+        <span class="n">module_list</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">([</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">TransformerEncoderLayer</span><span class="p">(</span>
+                <span class="n">d_model</span><span class="o">=</span><span class="n">d_model</span><span class="p">,</span> <span class="n">nhead</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">batch_first</span><span class="o">=</span><span class="kc">True</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">layers_per_stage</span><span class="p">)</span>
+        <span class="p">])</span>
+        <span class="n">stages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">PipelineStage</span><span class="p">(</span><span class="n">module_list</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">devices</span><span class="p">[</span><span class="n">stage_idx</span><span class="p">]))</span>
+    <span class="k">return</span> <span class="n">stages</span><span class="p">,</span> <span class="n">devices</span>
+</code></pre></div>
+<h3 id="when-pp-helps">When PP Helps<a class="headerlink" href="#when-pp-helps" title="Permanent link">¶</a></h3>
+<p>PP is most effective when:
+1. The model is too large for TP alone to fit in per-node NVLink islands.
+2. You are willing to trade some decode latency for lower per-GPU memory.
+3. Throughput (tokens/second) matters more than time-to-first-token (TTFT).</p>
+<p>For latency-critical deployments (interactive chat), avoid PP unless forced by memory constraints.</p>
+<hr />
+<h2 id="expert-parallelism-for-moe-models">Expert Parallelism for MoE Models<a class="headerlink" href="#expert-parallelism-for-moe-models" title="Permanent link">¶</a></h2>
+<h3 id="moe-inference-recap">MoE Inference Recap<a class="headerlink" href="#moe-inference-recap" title="Permanent link">¶</a></h3>
+<p>In a Mixture-of-Experts model, each transformer block contains <span class="arithmatex">\(E\)</span> expert FFN sub-networks, of which each token activates <span class="arithmatex">\(k\)</span> (top-<span class="arithmatex">\(k\)</span> routing). The active compute per token is therefore <span class="arithmatex">\(k/E\)</span> of the total expert parameter mass. See <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts (MoE) Architectures</a> for the architecture details.</p>
+<p>Expert parallelism (EP) assigns disjoint subsets of experts to different devices. For EP degree <span class="arithmatex">\(G\)</span> and <span class="arithmatex">\(E\)</span> total experts, each device hosts <span class="arithmatex">\(E/G\)</span> experts. After a router assigns each token to its top-<span class="arithmatex">\(k\)</span> experts, tokens must be <strong>dispatched</strong> to the GPU holding the target expert and <strong>gathered</strong> back after processing. This requires two all-to-all collectives per MoE layer.</p>
+<div class="arithmatex">\[
+\text{all-to-all volume (bytes)} = B \times d_{\text{model}} \times \text{dtype\_bytes} \times k
+\]</div>
+<p>For a batch of 512 tokens, <span class="arithmatex">\(d_{\text{model}} = 7168\)</span> (DeepSeek-V3 style), <span class="arithmatex">\(k = 2\)</span> experts, BF16:</p>
+<div class="arithmatex">\[
+512 \times 7168 \times 2 \times 2 = 14.7 \text{ MB per all-to-all}
+\]</div>
+<p>With two all-to-alls (dispatch and gather) per MoE layer, and 61 MoE layers in DeepSeek-V3, that is about 1.8 GB of network traffic per forward pass — significant but manageable on InfiniBand HDR/NDR at 400 Gb/s.</p>
+<h3 id="wide-expert-parallelism-wide-ep-deepseek-v3-deepseek-r1">Wide Expert Parallelism (Wide-EP): DeepSeek-V3 / DeepSeek-R1<a class="headerlink" href="#wide-expert-parallelism-wide-ep-deepseek-v3-deepseek-r1" title="Permanent link">¶</a></h3>
+<p>DeepSeek-V3 introduced the concept of <strong>wide EP</strong> in the context of serving their 671B MoE model. Standard practice places EP within a single node (using NVLink for all-to-all). Wide-EP extends EP across <em>multiple nodes</em>, using InfiniBand for inter-node all-to-all, allowing a far larger EP degree.</p>
+<p>DeepSeek-V3 has <span class="arithmatex">\(E = 256\)</span> fine-grained experts per MoE layer (plus 1–2 shared experts activated every step), with <span class="arithmatex">\(k = 8\)</span> routed expert activations per token. Wide-EP allows EP = 64 or more, spreading all 256 experts across many GPU nodes. The routing then dispatches tokens across the cluster via RDMA.</p>
+<p>Key trade-offs of wide-EP:</p>
+<ul>
+<li><strong>Benefit</strong>: each GPU holds fewer experts, so expert weight memory per GPU drops proportionally. Total KV-cache memory scales with the cluster.</li>
+<li><strong>Cost</strong>: all-to-all over InfiniBand has 10–50× higher latency than NVLink. For small batches, the network becomes the bottleneck.</li>
+<li><strong>Mitigation</strong>: two techniques help — (1) <strong>compute-communication overlap</strong> (prefetch the next all-to-all while computing the current layer), and (2) <strong>expert load balancing</strong> to avoid hot experts that increase effective network traffic. DeepSeek-V3 also uses an auxiliary loss during training to encourage balanced routing, which directly improves serving efficiency.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Simplified expert-parallel dispatch/gather (pseudocode with real shapes)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">expert_parallel_forward</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>           <span class="c1"># (B, d_model) — token embeddings on this rank</span>
+    <span class="n">router_logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, E) — per-expert logit scores</span>
+    <span class="n">expert_ffns</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">,</span>  <span class="c1"># E/G experts on this rank</span>
+    <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span>                <span class="c1"># top-k routing</span>
+    <span class="n">ep_group</span><span class="p">:</span> <span class="n">dist</span><span class="o">.</span><span class="n">ProcessGroup</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>  <span class="c1"># EP process group</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Single MoE layer with expert parallelism.</span>
+<span class="sd">    Each rank owns experts [rank * E/G : (rank+1) * E/G].</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ep_size</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">get_world_size</span><span class="p">(</span><span class="n">ep_group</span><span class="p">)</span>
+    <span class="n">rank</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">get_rank</span><span class="p">(</span><span class="n">ep_group</span><span class="p">)</span>
+    <span class="n">E</span> <span class="o">=</span> <span class="n">router_logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">experts_per_rank</span> <span class="o">=</span> <span class="n">E</span> <span class="o">//</span> <span class="n">ep_size</span>
+
+    <span class="c1"># Step 1: compute routing weights and expert assignments</span>
+    <span class="n">top_k_weights</span><span class="p">,</span> <span class="n">top_k_indices</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">router_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">),</span> <span class="n">k</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span>
+    <span class="p">)</span>  <span class="c1"># (B, k) each</span>
+
+    <span class="c1"># Step 2: build dispatch tensors — which tokens go to which rank</span>
+    <span class="c1"># For each token, determine which expert rank owns the selected expert</span>
+    <span class="n">expert_ranks</span> <span class="o">=</span> <span class="n">top_k_indices</span> <span class="o">//</span> <span class="n">experts_per_rank</span>  <span class="c1"># (B, k)</span>
+
+    <span class="c1"># Step 3: all-to-all dispatch — send each token to owning expert rank</span>
+    <span class="c1"># (In practice, this involves scatter_to_expert_rank via dist.all_to_all)</span>
+    <span class="c1"># Here we simulate with a gather</span>
+    <span class="n">dispatched</span> <span class="o">=</span> <span class="n">_all_to_all_dispatch</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">expert_ranks</span><span class="p">,</span> <span class="n">top_k_indices</span><span class="p">,</span> <span class="n">ep_group</span><span class="p">)</span>
+    <span class="c1"># dispatched is now on the correct rank, shaped (local_tokens, d_model)</span>
+
+    <span class="c1"># Step 4: compute expert outputs on local experts</span>
+    <span class="n">local_expert_indices</span> <span class="o">=</span> <span class="n">top_k_indices</span> <span class="o">%</span> <span class="n">experts_per_rank</span>  <span class="c1"># local numbering</span>
+    <span class="c1"># This would iterate over local experts and process their assigned tokens</span>
+    <span class="n">expert_out</span> <span class="o">=</span> <span class="n">_apply_local_experts</span><span class="p">(</span><span class="n">dispatched</span><span class="p">,</span> <span class="n">local_expert_indices</span><span class="p">,</span> <span class="n">expert_ffns</span><span class="p">)</span>
+
+    <span class="c1"># Step 5: all-to-all gather — return results to token-owning ranks</span>
+    <span class="n">output</span> <span class="o">=</span> <span class="n">_all_to_all_gather</span><span class="p">(</span><span class="n">expert_out</span><span class="p">,</span> <span class="n">expert_ranks</span><span class="p">,</span> <span class="n">ep_group</span><span class="p">)</span>
+
+    <span class="c1"># Step 6: weighted sum over k experts</span>
+    <span class="c1"># output shape: (B, k, d_model); top_k_weights: (B, k)</span>
+    <span class="n">output</span> <span class="o">=</span> <span class="p">(</span><span class="n">output</span> <span class="o">*</span> <span class="n">top_k_weights</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">output</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_all_to_all_dispatch</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">expert_ranks</span><span class="p">,</span> <span class="n">indices</span><span class="p">,</span> <span class="n">group</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Placeholder — real implementation uses dist.all_to_all.&quot;&quot;&quot;</span>
+    <span class="c1"># In production frameworks (vLLM, SGLang), this is a fused CUDA kernel</span>
+    <span class="k">return</span> <span class="n">x</span>  <span class="c1"># simplified</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_all_to_all_gather</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">expert_ranks</span><span class="p">,</span> <span class="n">group</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Placeholder — real implementation uses dist.all_to_all.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># simplified</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_apply_local_experts</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">local_indices</span><span class="p">,</span> <span class="n">expert_ffns</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply local expert FFNs to dispatched tokens.&quot;&quot;&quot;</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">expert</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">expert_ffns</span><span class="p">):</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="p">(</span><span class="n">local_indices</span> <span class="o">==</span> <span class="n">i</span><span class="p">)</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># tokens routed to expert i</span>
+        <span class="k">if</span> <span class="n">mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+            <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">expert</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">mask</span><span class="p">]))</span>
+    <span class="c1"># Reassemble — simplified</span>
+    <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="ep-load-balancing">EP Load Balancing<a class="headerlink" href="#ep-load-balancing" title="Permanent link">¶</a></h3>
+<p>Router collapse (all tokens routed to a few &ldquo;hot&rdquo; experts) kills EP performance: one GPU is overloaded while others are idle, and the all-to-all becomes unbalanced. Production systems address this with:</p>
+<ol>
+<li><strong>Auxiliary load-balancing loss</strong> during training (balance loss in Switch Transformer, DeepSeek-V2/V3&rsquo;s group-norm softmax).</li>
+<li><strong>Token dropping</strong> when an expert&rsquo;s capacity is exceeded.</li>
+<li><strong>Expert duplication</strong>: replicate popular experts on multiple GPUs at inference time, then route with load awareness.</li>
+<li><strong>Dynamic expert offloading</strong>: for CPU-offloaded MoE inference (useful when GPU count is limited), pre-fetch the next likely experts based on previous routing statistics.</li>
+</ol>
+<hr />
+<h2 id="data-parallel-replicas">Data Parallel Replicas<a class="headerlink" href="#data-parallel-replicas" title="Permanent link">¶</a></h2>
+<p>Data parallelism (DP) for inference is the simplest strategy: run <span class="arithmatex">\(D\)</span> identical copies of the model (each itself potentially TP/PP sharded), each serving independent requests. A load balancer or router distributes incoming requests across replicas.</p>
+<div class="arithmatex">\[
+\text{throughput} \propto D, \quad \text{latency} = \text{const (per replica)}
+\]</div>
+<p>DP is the right choice when:
+- A single replica can already fit in available GPU memory.
+- Throughput matters more than individual request latency.
+- You want fault tolerance (a replica can fail without taking down the service).</p>
+<p>In practice, most production deployments combine all four axes. For example, Llama-3 70B on a cluster of 16 × H100 nodes (8 GPUs each, 128 GPUs total) might use TP = 8 (within a node), PP = 2 (across 2 nodes), giving 16 GPUs per model replica, and DP = 8 replicas.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Illustrative DP request router using asyncio (simplified)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">DPReplica</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Represents a single model replica (TP+PP shard group).&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">replica_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">replica_id</span> <span class="o">=</span> <span class="n">replica_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_queue_depth</span> <span class="o">=</span> <span class="mi">0</span>  <span class="c1"># active requests</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_queue_depth</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="c1"># Simulate inference latency (proportional to output tokens)</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">max_tokens</span> <span class="o">*</span> <span class="mf">0.001</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_queue_depth</span> <span class="o">-=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;[replica=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">replica_id</span><span class="si">}</span><span class="s2">] output for: </span><span class="si">{</span><span class="n">prompt</span><span class="p">[:</span><span class="mi">20</span><span class="p">]</span><span class="si">}</span><span class="s2">...&quot;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">load</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_queue_depth</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LeastLoadedRouter</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Route each request to the least-loaded replica.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">replicas</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">DPReplica</span><span class="p">]):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">replicas</span> <span class="o">=</span> <span class="n">replicas</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">route</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="c1"># Pick the replica with the fewest in-flight requests</span>
+        <span class="n">replica</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">replicas</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">load</span><span class="p">)</span>
+        <span class="k">return</span> <span class="k">await</span> <span class="n">replica</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">max_tokens</span><span class="p">)</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">demo_dp</span><span class="p">():</span>
+    <span class="n">replicas</span> <span class="o">=</span> <span class="p">[</span><span class="n">DPReplica</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">4</span><span class="p">)]</span>
+    <span class="n">router</span> <span class="o">=</span> <span class="n">LeastLoadedRouter</span><span class="p">(</span><span class="n">replicas</span><span class="p">)</span>
+    <span class="n">prompts</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;Explain concept #</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">20</span><span class="p">)]</span>
+    <span class="c1"># Dispatch all 20 requests concurrently</span>
+    <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span><span class="n">router</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prompts</span><span class="p">]</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks</span><span class="p">)</span>
+    <span class="c1"># All replicas contribute; each individual request is fast</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Served </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">results</span><span class="p">)</span><span class="si">}</span><span class="s2"> requests across </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">replicas</span><span class="p">)</span><span class="si">}</span><span class="s2"> replicas&quot;</span><span class="p">)</span>
+
+<span class="c1"># asyncio.run(demo_dp())  # uncomment to run</span>
+</code></pre></div>
+<hr />
+<h2 id="communication-overhead-in-the-decode-step">Communication Overhead in the Decode Step<a class="headerlink" href="#communication-overhead-in-the-decode-step" title="Permanent link">¶</a></h2>
+<p>The decode step is uniquely sensitive to communication latency because it processes <strong>one token at a time</strong>. Each step must complete before the next token can be generated. The total per-step time budget for a latency target of, say, 30 tokens/second is only 33 ms. Within that budget, all communication must fit.</p>
+<h3 id="tp-communication-profile">TP Communication Profile<a class="headerlink" href="#tp-communication-profile" title="Permanent link">¶</a></h3>
+<p>For TP degree <span class="arithmatex">\(T\)</span> and hidden size <span class="arithmatex">\(d\)</span>, the all-reduce each layer transfers <span class="arithmatex">\(2d\)</span> bytes per rank (send <span class="arithmatex">\(d\)</span> bytes, receive <span class="arithmatex">\(d\)</span> bytes in BF16). With <span class="arithmatex">\(L\)</span> layers and <span class="arithmatex">\(A\)</span> all-reduces per layer (<span class="arithmatex">\(A = 2\)</span> for standard TP):</p>
+<div class="arithmatex">\[
+\text{total TP comm per decode step} = 2 \times d \times L \times A \times \text{dtype\_bytes}
+\]</div>
+<p>For Llama-3 70B (<span class="arithmatex">\(d = 8192\)</span>, <span class="arithmatex">\(L = 80\)</span>, <span class="arithmatex">\(A = 2\)</span>, 2 bytes):</p>
+<div class="arithmatex">\[
+2 \times 8192 \times 80 \times 2 \times 2 = 5.2 \text{ MB}
+\]</div>
+<p>On NVLink (900 GB/s bidirectional), this costs roughly <strong>5.8 µs</strong> — negligible. Crossing PCIe (32 GB/s): about <strong>163 µs</strong> per step, or 6 ms per second of generation at 37 tokens/s — still small but not negligible.</p>
+<p>Crossing InfiniBand HDR (25 GB/s effective per rank in a ring): about <strong>208 µs</strong> per step. At 30 tokens/s, that is 6.2 ms/s just in TP communication. This motivates the hard rule: <strong>TP within NVLink islands only</strong>.</p>
+<h3 id="pp-communication-profile">PP Communication Profile<a class="headerlink" href="#pp-communication-profile" title="Permanent link">¶</a></h3>
+<p>PP communication in decode is a single <code>send</code>/<code>recv</code> of the hidden-state tensor: <span class="arithmatex">\(B \times d\)</span> elements. For <span class="arithmatex">\(B = 64\)</span> and <span class="arithmatex">\(d = 8192\)</span> in BF16: <span class="arithmatex">\(64 \times 8192 \times 2 = 1\)</span> MB, sent once per layer per stage boundary. With <span class="arithmatex">\(P - 1\)</span> stage boundaries, this is much smaller than TP all-reduces and is non-blocking (can overlap with compute on next stage).</p>
+<h3 id="ep-wide-communication-profile">EP (Wide) Communication Profile<a class="headerlink" href="#ep-wide-communication-profile" title="Permanent link">¶</a></h3>
+<p>For wide-EP, the all-to-all in the decode step has volume approximately:</p>
+<div class="arithmatex">\[
+\text{dispatch all-to-all} = B \times k \times d \times \text{dtype\_bytes}
+\]</div>
+<p>For <span class="arithmatex">\(B = 1\)</span> (single-user decode), <span class="arithmatex">\(k = 8\)</span>, <span class="arithmatex">\(d = 7168\)</span>, BF16: <span class="arithmatex">\(1 \times 8 \times 7168 \times 2 = 114\)</span> KB. Over InfiniBand (25 GB/s): about 4.5 µs. Still manageable even for single-token decode, but scales linearly with batch size, which is why wide-EP benefits greatly from <em>batched</em> decode.</p>
+<div class="admonition warning">
+<p class="admonition-title">The EP small-batch trap</p>
+<p>For EP deployments, a small decode batch (e.g., B = 1) means most expert GPUs are idle while the single relevant expert GPU works. To amortize the all-to-all cost and keep all GPUs busy, you must batch enough concurrent requests that each expert receives at least one token per step. With <span class="arithmatex">\(E = 256\)</span> experts and <span class="arithmatex">\(k = 8\)</span>, the expected tokens per expert is <span class="arithmatex">\(8B/256 = B/32\)</span>. For every expert to see at least one token, you need <span class="arithmatex">\(B \geq 32\)</span>. In practice, aim for <span class="arithmatex">\(B \geq 4 \times E/k = 128\)</span>.</p>
+</div>
+<hr />
+<h2 id="when-each-strategy-helps-a-decision-framework">When Each Strategy Helps: A Decision Framework<a class="headerlink" href="#when-each-strategy-helps-a-decision-framework" title="Permanent link">¶</a></h2>
+<p>The right combination depends on your SLO (service-level objective), model size, cluster topology, and traffic pattern. Use the following framework:</p>
+<figure class="viz" id="fig-mgpu-decision-tree">
+<style>
+  #fig-mgpu-decision-tree text { font-family: var(--sans, sans-serif); fill: var(--fg, #e6e8ee); }
+  #fig-mgpu-decision-tree .lbl { font: 600 14px var(--sans, sans-serif); }
+  #fig-mgpu-decision-tree .outcome-txt { font: 500 13px var(--sans, sans-serif); fill: #c9f5d8; }
+  #fig-mgpu-decision-tree .branch-lbl { font: 700 11px var(--sans, sans-serif); }
+  #fig-mgpu-decision-tree .legend-txt { font: 500 11px var(--sans, sans-serif); }
+  #fig-mgpu-decision-tree .title-txt { font: 700 18px var(--sans, sans-serif); fill: #fff; }
+</style>
+<svg viewBox="0 0 900 1116" role="img" aria-label="Multi-GPU inference strategy decision tree: a flowchart guiding practitioners from model size and topology through five decision points to a concrete parallelism configuration.">
+  <defs>
+    <marker id="dt-arrow-down" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M1 0 L5 9 L9 0 z" fill="var(--muted,#8b93a7)"/>
+    </marker>
+    <marker id="dt-arrow-right" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--ok,#22c55e)"/>
+    </marker>
+    <marker id="dt-arrow-down-green" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M1 0 L5 9 L9 0 z" fill="var(--ok,#22c55e)"/>
+    </marker>
+    <marker id="dt-arrow-down-accent" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M1 0 L5 9 L9 0 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+  </defs>
+
+
+  <rect x="10" y="8" width="880" height="52" rx="8"
+        fill="var(--accent,#6366f1)" stroke="none"/>
+  <text x="450" y="40" text-anchor="middle" class="title-txt">MULTI-GPU INFERENCE DECISION TREE</text>
+
+
+
+  <polygon points="300,77 440,115 300,153 160,115"
+           fill="var(--surface,#1e2233)" stroke="var(--border,#3a4256)" stroke-width="1.8"/>
+  <text x="300" y="110" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">Model fits on</text>
+  <text x="300" y="128" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">1 GPU?</text>
+
+
+  <text x="448" y="108" class="branch-lbl" fill="var(--ok,#22c55e)">YES</text>
+
+  <line x1="440" y1="115" x2="535" y2="115"
+        stroke="var(--ok,#22c55e)" stroke-width="1.8" marker-end="url(#dt-arrow-right)"/>
+
+
+  <rect x="538" y="88" width="348" height="54" rx="7"
+        fill="#14321f" stroke="var(--ok,#22c55e)" stroke-width="2"/>
+  <text x="712" y="110" text-anchor="middle" class="outcome-txt">Use DP replicas for throughput.</text>
+  <text x="712" y="128" text-anchor="middle" class="outcome-txt">Done.</text>
+
+
+  <text x="268" y="168" class="branch-lbl" fill="var(--muted,#8b93a7)">NO</text>
+  <line x1="300" y1="153" x2="300" y2="210"
+        stroke="var(--muted,#8b93a7)" stroke-width="1.8" marker-end="url(#dt-arrow-down)"/>
+  <text x="308" y="185" class="branch-lbl" fill="var(--muted,#8b93a7)" font-size="10">need model parallelism</text>
+
+
+  <polygon points="300,217 440,255 300,293 160,255"
+           fill="var(--surface,#1e2233)" stroke="var(--border,#3a4256)" stroke-width="1.8"/>
+  <text x="300" y="248" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">Model fits in 1 NVLink</text>
+  <text x="300" y="266" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">island? (e.g., 8×H100)</text>
+
+
+  <text x="448" y="248" class="branch-lbl" fill="var(--ok,#22c55e)">YES</text>
+  <line x1="440" y1="255" x2="535" y2="255"
+        stroke="var(--ok,#22c55e)" stroke-width="1.8" marker-end="url(#dt-arrow-right)"/>
+
+
+  <rect x="538" y="228" width="348" height="54" rx="7"
+        fill="#14321f" stroke="var(--ok,#22c55e)" stroke-width="2"/>
+  <text x="712" y="250" text-anchor="middle" class="outcome-txt">Start with TP=8, PP=1.</text>
+  <text x="712" y="268" text-anchor="middle" class="outcome-txt" font-size="11"> </text>
+
+
+  <text x="268" y="308" class="branch-lbl" fill="var(--muted,#8b93a7)">NO</text>
+  <line x1="300" y1="293" x2="300" y2="336"
+        stroke="var(--muted,#8b93a7)" stroke-width="1.8" marker-end="url(#dt-arrow-down)"/>
+
+
+  <rect x="110" y="338" width="380" height="46" rx="7"
+        fill="var(--surface-3,#252c3e)" stroke="var(--accent,#6366f1)" stroke-width="1.6" stroke-dasharray="5 3"/>
+  <text x="300" y="357" text-anchor="middle" class="outcome-txt" fill="var(--fg,#e6e8ee)">Use TP=8 per node +</text>
+  <text x="300" y="375" text-anchor="middle" class="outcome-txt" fill="var(--fg,#e6e8ee)">PP across nodes.</text>
+
+
+  <line x1="300" y1="384" x2="300" y2="424"
+        stroke="var(--muted,#8b93a7)" stroke-width="1.8" marker-end="url(#dt-arrow-down)"/>
+
+
+  <polygon points="300,424 440,460 300,496 160,460"
+           fill="var(--surface,#1e2233)" stroke="var(--border,#3a4256)" stroke-width="1.8"/>
+  <text x="300" y="453" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">Is it a</text>
+  <text x="300" y="471" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">MoE model?</text>
+
+
+  <text x="448" y="453" class="branch-lbl" fill="var(--ok,#22c55e)">YES</text>
+  <line x1="440" y1="460" x2="535" y2="460"
+        stroke="var(--ok,#22c55e)" stroke-width="1.8" marker-end="url(#dt-arrow-right)"/>
+
+
+  <rect x="538" y="428" width="348" height="64" rx="7"
+        fill="#14321f" stroke="var(--ok,#22c55e)" stroke-width="2"/>
+  <text x="712" y="450" text-anchor="middle" class="outcome-txt">Add EP: EP=G within or across nodes.</text>
+  <text x="712" y="468" text-anchor="middle" class="outcome-txt">Tune EP so each GPU has &gt;=2 experts.</text>
+  <text x="712" y="484" text-anchor="middle" class="outcome-txt" font-size="10"> </text>
+
+
+  <text x="268" y="510" class="branch-lbl" fill="var(--muted,#8b93a7)">NO</text>
+  <line x1="300" y1="496" x2="300" y2="548"
+        stroke="var(--muted,#8b93a7)" stroke-width="1.8" marker-end="url(#dt-arrow-down)"/>
+
+
+  <polygon points="300,556 440,600 300,644 160,600"
+           fill="var(--surface,#1e2233)" stroke="var(--border,#3a4256)" stroke-width="1.8"/>
+  <text x="300" y="591" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">Latency-critical?</text>
+  <text x="300" y="609" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">(TTFT &lt;500ms, TPOT &lt;50ms)</text>
+
+
+  <text x="448" y="591" class="branch-lbl" fill="var(--ok,#22c55e)">YES</text>
+  <line x1="440" y1="600" x2="535" y2="600"
+        stroke="var(--ok,#22c55e)" stroke-width="1.8" marker-end="url(#dt-arrow-right)"/>
+
+
+  <rect x="538" y="568" width="348" height="64" rx="7"
+        fill="#14321f" stroke="var(--ok,#22c55e)" stroke-width="2"/>
+  <text x="712" y="592" text-anchor="middle" class="outcome-txt">Maximize TP, minimize PP,</text>
+  <text x="712" y="610" text-anchor="middle" class="outcome-txt">avoid wide-EP.</text>
+
+
+  <text x="268" y="660" class="branch-lbl" fill="var(--muted,#8b93a7)">NO</text>
+  <line x1="300" y1="644" x2="300" y2="690"
+        stroke="var(--muted,#8b93a7)" stroke-width="1.8" marker-end="url(#dt-arrow-down)"/>
+
+
+  <rect x="110" y="692" width="380" height="46" rx="7"
+        fill="var(--surface-3,#252c3e)" stroke="var(--accent,#6366f1)" stroke-width="1.6" stroke-dasharray="5 3"/>
+  <text x="300" y="711" text-anchor="middle" class="outcome-txt" fill="var(--fg,#e6e8ee)">Can sacrifice latency; add</text>
+  <text x="300" y="729" text-anchor="middle" class="outcome-txt" fill="var(--fg,#e6e8ee)">PP + DP for throughput.</text>
+
+
+  <line x1="300" y1="738" x2="300" y2="778"
+        stroke="var(--muted,#8b93a7)" stroke-width="1.8" marker-end="url(#dt-arrow-down)"/>
+
+
+  <polygon points="300,784 440,820 300,856 160,820"
+           fill="var(--surface,#1e2233)" stroke="var(--border,#3a4256)" stroke-width="1.8"/>
+  <text x="300" y="813" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">High throughput required?</text>
+  <text x="300" y="831" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">(10k+ tokens/sec)</text>
+
+
+  <text x="448" y="813" class="branch-lbl" fill="var(--ok,#22c55e)">YES</text>
+  <line x1="440" y1="820" x2="535" y2="820"
+        stroke="var(--ok,#22c55e)" stroke-width="1.8" marker-end="url(#dt-arrow-right)"/>
+
+
+  <rect x="538" y="793" width="348" height="54" rx="7"
+        fill="#14321f" stroke="var(--ok,#22c55e)" stroke-width="2"/>
+  <text x="712" y="815" text-anchor="middle" class="outcome-txt">Add DP replicas until</text>
+  <text x="712" y="833" text-anchor="middle" class="outcome-txt">throughput SLO met.</text>
+
+
+  <text x="268" y="870" class="branch-lbl" fill="var(--muted,#8b93a7)">NO</text>
+  <line x1="300" y1="856" x2="300" y2="904"
+        stroke="var(--muted,#8b93a7)" stroke-width="1.8" marker-end="url(#dt-arrow-down)"/>
+
+
+  <rect x="168" y="906" width="264" height="48" rx="7"
+        fill="var(--surface,#1e2233)" stroke="var(--border,#3a4256)" stroke-width="1.8"/>
+  <text x="300" y="926" text-anchor="middle" class="lbl" fill="var(--fg,#e6e8ee)">Done — deploy</text>
+  <text x="300" y="944" text-anchor="middle" class="lbl" fill="var(--fg,#e6e8ee)">chosen config.</text>
+
+
+  <rect x="10" y="1000" width="880" height="102" rx="6"
+        fill="var(--surface,#1e2233)" stroke="var(--border,#3a4256)" stroke-width="1"/>
+  <text x="450" y="1020" text-anchor="middle" class="legend-txt" fill="var(--muted,#8b93a7)">LEGEND</text>
+
+
+
+  <polygon points="150,1060 175,1045 200,1060 175,1075"
+           fill="var(--surface,#1e2233)" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="175" y="1062" text-anchor="middle" class="legend-txt" fill="var(--accent,#6366f1)">?</text>
+  <text x="175" y="1090" text-anchor="middle" class="legend-txt" fill="var(--fg,#e6e8ee)">Decision point</text>
+
+
+  <rect x="396" y="1045" width="108" height="28" rx="5"
+        fill="#14321f" stroke="var(--ok,#22c55e)" stroke-width="1.8"/>
+  <text x="450" y="1063" text-anchor="middle" class="legend-txt" fill="#c9f5d8">Outcome</text>
+  <text x="450" y="1090" text-anchor="middle" class="legend-txt" fill="var(--fg,#e6e8ee)">Recommended action / terminal</text>
+
+
+  <rect x="666" y="1045" width="108" height="28" rx="5"
+        fill="var(--surface-3,#252c3e)" stroke="var(--accent,#6366f1)" stroke-width="1.6" stroke-dasharray="5 3"/>
+  <text x="720" y="1063" text-anchor="middle" class="legend-txt" fill="var(--fg,#e6e8ee)">Action</text>
+  <text x="720" y="1090" text-anchor="middle" class="legend-txt" fill="var(--fg,#e6e8ee)">Continue / routing step</text>
+</svg>
+<figcaption><b>Multi-GPU inference strategy decision tree.</b> Starting from whether the model fits on a single GPU, five sequential decision points route a practitioner to the appropriate combination of tensor parallelism (TP), pipeline parallelism (PP), expert parallelism (EP), and data parallelism (DP). Each green box is a terminal recommendation; dashed boxes are intermediate routing actions that feed into the next question.</figcaption>
+</figure>
+
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Helps TTFT</th>
+<th>Helps TPOT</th>
+<th>Helps Throughput</th>
+<th>Communication cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TP (NVLink)</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Modest</td>
+<td>Very low</td>
+</tr>
+<tr>
+<td>TP (PCIe/IB)</td>
+<td>Marginal</td>
+<td>Negative</td>
+<td>Negative</td>
+<td>High</td>
+</tr>
+<tr>
+<td>PP</td>
+<td>No</td>
+<td>No</td>
+<td>Yes (enables larger model)</td>
+<td>Very low</td>
+</tr>
+<tr>
+<td>EP (intra-node)</td>
+<td>No</td>
+<td>No</td>
+<td>Yes (enables larger MoE)</td>
+<td>Low</td>
+</tr>
+<tr>
+<td>EP (wide, inter-node)</td>
+<td>No</td>
+<td>Negative at low batch</td>
+<td>Yes at high batch</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>DP</td>
+<td>No</td>
+<td>No</td>
+<td>Linear</td>
+<td>None</td>
+</tr>
+</tbody>
+</table>
+<p>TTFT = time to first token; TPOT = time per output token.</p>
+<hr />
+<h2 id="sizing-a-multi-gpu-deployment">Sizing a Multi-GPU Deployment<a class="headerlink" href="#sizing-a-multi-gpu-deployment" title="Permanent link">¶</a></h2>
+<h3 id="memory-budget">Memory Budget<a class="headerlink" href="#memory-budget" title="Permanent link">¶</a></h3>
+<p>For a dense model, the GPU memory budget decomposes as:</p>
+<div class="arithmatex">\[
+M_{\text{total}} = M_{\text{weights}} + M_{\text{kv}} + M_{\text{activations}} + M_{\text{framework}}
+\]</div>
+<ul>
+<li><strong>Weights</strong>: <span class="arithmatex">\(P \times \text{dtype\_bytes} / \text{TP}\)</span> per GPU (divided by TP degree).</li>
+<li><strong>KV cache</strong>: <span class="arithmatex">\(2 \times n_{\text{kv\_heads}} \times d_{\text{head}} \times L \times \text{dtype\_bytes} \times S_{\text{max}}\)</span> per request, where <span class="arithmatex">\(S_{\text{max}}\)</span> is max sequence length. Divided by TP if KV heads are sharded.</li>
+<li><strong>Activations</strong>: during prefill, <span class="arithmatex">\(\approx 2 \times B \times S \times d \times L \times \text{dtype\_bytes}\)</span>, transient. Negligible during decode.</li>
+<li><strong>Framework overhead</strong>: typically 1–4 GB for CUDA context, memory allocator, etc.</li>
+</ul>
+<h3 id="throughput-sizing">Throughput Sizing<a class="headerlink" href="#throughput-sizing" title="Permanent link">¶</a></h3>
+<p>The maximum throughput of a DP+TP+PP cluster scales as:</p>
+<div class="arithmatex">\[
+\text{throughput} = D \times \frac{\text{model\_flops\_per\_token}}{\text{GPU\_flops} \times \text{MFU}}
+\]</div>
+<p>where <span class="arithmatex">\(D\)</span> is the DP replica count and MFU (Model FLOP Utilization) is the fraction of peak hardware FLOPs actually achieved. For well-tuned serving stacks (continuous batching, FlashAttention, CUDA graphs), MFU during prefill reaches 40–60% on H100s; during decode with small batches, MFU drops to 5–15% because the workload is memory-bandwidth-bound, not compute-bound (see <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>).</p>
+<div class="admonition example">
+<p class="admonition-title">Deployment sizing for a 70B model</p>
+<p><strong>Target</strong>: serve 100 concurrent users, each generating up to 512 tokens, with TPOT &lt; 50 ms.</p>
+<p><strong>Step 1: GPU count per replica</strong></p>
+<p>Weight memory (BF16): 140 GB. Use TP = 4 on 4 × H100 80 GB.
+Per-GPU weight memory: 35 GB.
+Remaining: 45 GB for KV cache.</p>
+<p>KV cache per token (Llama-3 70B, GQA 8 heads, head_dim 128, 80 layers, BF16):</p>
+<div class="arithmatex">\[2 \times 8 \times 128 \times 80 \times 2 = 327{,}680 \text{ bytes} \approx 320 \text{ KB}\]</div>
+<p>At 45 GB per GPU: <span class="arithmatex">\(45 \times 10^9 / 327{,}680 \approx 137{,}000\)</span> tokens of KV cache per GPU.</p>
+<p>For 100 concurrent users × 512 token context: <span class="arithmatex">\(100 \times 512 = 51{,}200\)</span> tokens. Well within budget — one replica (4 GPUs) can hold all concurrent KV caches.</p>
+<p><strong>Step 2: Latency check</strong></p>
+<p>Decode TPOT for Llama-3 70B at batch size 100:
+FLOPs per token ≈ <span class="arithmatex">\(2 \times 70 \times 10^9 = 140\)</span> GFLOPs (weight loading dominates).
+H100 memory bandwidth: 3.35 TB/s. Weight bytes to load per token: 140 GB (all weights).</p>
+<div class="arithmatex">\[\text{TPOT} \approx \frac{140 \times 10^9}{3.35 \times 10^{12}} \approx 42 \text{ ms}\]</div>
+<p>This meets the 50 ms budget. But this is a single-token-at-a-time estimate; continuous batching with 100 concurrent requests amortizes weight loading, achieving better effective TPOT.</p>
+<p><strong>Step 3: Throughput target</strong></p>
+<p>100 users × 512 tokens / (42 ms/token) ≈ 1,219 tokens/s from one replica.
+If the traffic SLO requires 5,000 tokens/s, deploy DP = 4 replicas (16 GPUs total).</p>
+<p><strong>Final configuration</strong>: 16 × H100 GPUs, TP = 4 per replica, DP = 4 replicas.</p>
+</div>
+<h3 id="practical-vllm-sglang-configuration">Practical vLLM / SGLang Configuration<a class="headerlink" href="#practical-vllm-sglang-configuration" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># vLLM multi-GPU launch example (CLI equivalent shown as Python API)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">vllm</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLM</span><span class="p">,</span> <span class="n">SamplingParams</span>
+
+<span class="c1"># TP = 4, single node (H100 × 4)</span>
+<span class="n">llm</span> <span class="o">=</span> <span class="n">LLM</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;meta-llama/Meta-Llama-3-70B-Instruct&quot;</span><span class="p">,</span>
+    <span class="n">tensor_parallel_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>      <span class="c1"># TP degree: each GPU holds 1/4 of each weight</span>
+    <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;bfloat16&quot;</span><span class="p">,</span>
+    <span class="n">max_model_len</span><span class="o">=</span><span class="mi">8192</span><span class="p">,</span>           <span class="c1"># max context length (determines KV cache allocation)</span>
+    <span class="n">gpu_memory_utilization</span><span class="o">=</span><span class="mf">0.90</span><span class="p">,</span>  <span class="c1"># leave 10% headroom</span>
+    <span class="c1"># For pipeline parallelism across nodes, use:</span>
+    <span class="c1"># pipeline_parallel_size=2,   # PP = 2 across 2 nodes (requires distributed launch)</span>
+    <span class="n">enforce_eager</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>          <span class="c1"># enable CUDA graphs for decode</span>
+<span class="p">)</span>
+
+<span class="n">sampling_params</span> <span class="o">=</span> <span class="n">SamplingParams</span><span class="p">(</span>
+    <span class="n">temperature</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span>
+    <span class="n">top_p</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span>
+    <span class="n">max_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">outputs</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
+    <span class="n">prompts</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Explain tensor parallelism in LLM inference.&quot;</span><span class="p">],</span>
+    <span class="n">sampling_params</span><span class="o">=</span><span class="n">sampling_params</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># Multi-node launch with Ray (2 nodes, TP=8 per node, PP=2 across nodes)</span>
+<span class="c1"># On head node:</span>
+ray<span class="w"> </span>start<span class="w"> </span>--head<span class="w"> </span>--port<span class="o">=</span><span class="m">6379</span>
+
+<span class="c1"># On worker nodes:</span>
+ray<span class="w"> </span>start<span class="w"> </span>--address<span class="o">=</span><span class="s1">&#39;&lt;head-node-ip&gt;:6379&#39;</span>
+
+<span class="c1"># Launch vLLM across both nodes:</span>
+python<span class="w"> </span>-m<span class="w"> </span>vllm.entrypoints.openai.api_server<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model<span class="w"> </span>meta-llama/Meta-Llama-3-70B-Instruct<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--tensor-parallel-size<span class="w"> </span><span class="m">8</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--pipeline-parallel-size<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max-model-len<span class="w"> </span><span class="m">8192</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--port<span class="w"> </span><span class="m">8000</span>
+</code></pre></div>
+<p>For MoE models like Mixtral 8×22B or DeepSeek-V3 on SGLang:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># SGLang launch for a large MoE (DeepSeek-V3-style)</span>
+<span class="c1"># 8 GPUs on one node, TP=8; expert parallelism handled internally</span>
+python<span class="w"> </span>-m<span class="w"> </span>sglang.launch_server<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model-path<span class="w"> </span>deepseek-ai/DeepSeek-V3<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--tp<span class="w"> </span><span class="m">8</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--enable-ep-moe<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--ep-size<span class="w"> </span><span class="m">8</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--port<span class="w"> </span><span class="m">30000</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--trust-remote-code
+</code></pre></div>
+<p>For wide-EP across nodes, SGLang and DeepSeek&rsquo;s own serving infrastructure use a specialized MoE dispatch layer that performs RDMA-based all-to-all via NCCL or a custom communication library.</p>
+<hr />
+<h2 id="cross-cutting-concerns">Cross-Cutting Concerns<a class="headerlink" href="#cross-cutting-concerns" title="Permanent link">¶</a></h2>
+<h3 id="kv-cache-sharding-under-tp">KV Cache Sharding Under TP<a class="headerlink" href="#kv-cache-sharding-under-tp" title="Permanent link">¶</a></h3>
+<p>When TP shards the attention heads, the KV cache is naturally sharded too: each GPU stores only the KV entries for its subset of heads. This is one reason TP improves effective KV cache capacity — the per-GPU KV footprint shrinks by factor <span class="arithmatex">\(T\)</span> for MHA models. GQA (Grouped-Query Attention) complicates this: if the number of KV heads is smaller than TP degree, some GPUs duplicate KV heads rather than sharding them. See <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a> for the head-count arithmetic.</p>
+<h3 id="disaggregated-prefill-and-decode">Disaggregated Prefill and Decode<a class="headerlink" href="#disaggregated-prefill-and-decode" title="Permanent link">¶</a></h3>
+<p>A complementary approach to multi-GPU parallelism is running prefill and decode on separate GPU pools, which allows each pool to be sized independently. This is covered in <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>. In practice, TP degree may differ between the prefill cluster (benefits from larger TP due to compute-bound nature) and the decode cluster (benefits from smaller TP to avoid over-paying all-reduce cost at small batch).</p>
+<h3 id="cuda-graphs-under-tp">CUDA Graphs Under TP<a class="headerlink" href="#cuda-graphs-under-tp" title="Permanent link">¶</a></h3>
+<p>CUDA graphs (capturing the decode step for replay without kernel launch overhead) work transparently under TP: each GPU captures its own graph, and the NCCL all-reduce is part of the captured graph. This requires that the batch size and tensor shapes are fixed at graph capture time, which is why most frameworks maintain a small set of graphs for discrete batch sizes. See <a href="../04-kernels-efficiency/09-compilers-fusion.html">Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a>.</p>
+<h3 id="speculative-decoding-under-tp">Speculative Decoding Under TP<a class="headerlink" href="#speculative-decoding-under-tp" title="Permanent link">¶</a></h3>
+<p>When using speculative decoding (see <a href="../07-inference-serving/06-speculative-decoding.html">Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a>), the draft model can run on a different TP degree from the target model. Draft models are typically small enough for TP = 1. The verification step runs on the target model&rsquo;s TP group and incurs the usual all-reduce cost, but processes multiple tokens simultaneously, so the per-verified-token communication cost is amortized.</p>
+<hr />
+<h2 id="deepseek-v3-wide-ep-a-case-study">DeepSeek-V3 Wide-EP: A Case Study<a class="headerlink" href="#deepseek-v3-wide-ep-a-case-study" title="Permanent link">¶</a></h2>
+<p>DeepSeek-V3 (671B MoE, 37B active parameters per token, 256 routed experts) uses a novel &ldquo;multi-head latent attention&rdquo; (MLA) design that dramatically compresses the KV cache, combined with aggressive wide-EP to distribute experts efficiently. The production serving configuration reported by the DeepSeek team uses:</p>
+<ul>
+<li><strong>TP = 8</strong> within each 8-GPU NVLink island.</li>
+<li><strong>EP = 64</strong> across 64 GPU groups (512 GPUs for a single model instance).</li>
+<li><strong>Compute–communication overlap</strong>: while each GPU computes expert FFNs on received tokens, the next all-to-all is pre-issued using asynchronous NCCL primitives.</li>
+<li><strong>Batch size</strong>: very large batches (hundreds to thousands of requests) are required to keep all 256 × 64 / 8 = 2048 GPU-expert slots busy simultaneously.</li>
+</ul>
+<p>The wide-EP approach trades per-request latency for massive cluster-level throughput, which suits DeepSeek&rsquo;s API traffic patterns. For latency-sensitive workloads, a smaller EP degree on a single node would be preferred.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are serving a 70B dense transformer with TP = 8 on a single 8-GPU node. An interviewer tells you the TPOT is 60 ms and asks you to reduce it to 30 ms without changing the hardware. What are your options and trade-offs?</p>
+<p><strong>A:</strong> The decode step is memory-bandwidth-bound for small batches. At TP = 8, each GPU already loads only &#8539; of the weight parameters per step, so memory bandwidth is partially amortized. To halve TPOT:</p>
+<ol>
+<li><strong>Increase batch size</strong>: if TPOT of 60 ms corresponds to a batch size of 1, batching 2 requests together roughly halves the per-token time by amortizing weight loads — but doubles user latency if requests arrive serially.</li>
+<li><strong>Quantize weights to INT8 or FP8</strong>: halving weight size halves memory traffic, roughly halving TPOT. Tools like GPTQ, AWQ, or TensorRT-LLM&rsquo;s FP8 mode achieve this with minimal quality loss.</li>
+<li><strong>Enable CUDA graphs</strong>: eliminates kernel launch overhead (~1–5 ms per step for 80 layers), especially significant for small-batch decode.</li>
+<li><strong>Use speculative decoding</strong>: draft 3–5 tokens per step with a small draft model, verify in parallel. Effective TPOT drops by the acceptance rate.</li>
+<li><strong>Reduce sequence length / KV cache size</strong>: shorter context means less KV cache memory to load per attention step, slightly improving bandwidth utilization.</li>
+<li><strong>Upgrade to GQA/MQA</strong> if the model variant allows, reducing KV heads loaded per step.</li>
+</ol>
+<p>The first step should be batching + CUDA graphs; quantization is the highest-impact single change if quality allows.</p>
+</div>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Tensor parallelism</strong> splits weight matrices within a layer, requires all-reduce per layer, and is only efficient on NVLink-connected GPUs (within a node). It reduces both memory and latency.</li>
+<li><strong>Pipeline parallelism</strong> splits layers across devices, requires only activation pass between stages, is latency-neutral for decode, and is primarily a memory-capacity tool for very large models.</li>
+<li><strong>Expert parallelism</strong> routes MoE tokens to GPU-resident experts via all-to-all collectives. Wide-EP extends EP across nodes using InfiniBand, enabling massive MoE capacity at the cost of small-batch efficiency.</li>
+<li><strong>Data parallel replicas</strong> are the purest throughput scaling mechanism — identical model copies, independently serving requests, with no communication overhead.</li>
+<li><strong>Decode is memory-bandwidth-bound</strong>: the all-reduce cost of TP at NVLink speeds is negligible, but TP across InfiniBand can introduce measurable per-token latency.</li>
+<li><strong>Communication volume</strong>: TP all-reduce ≈ 2 × d_model bytes per rank per layer; EP all-to-all ≈ B × k × d_model bytes per rank per MoE layer. Both must fit within the per-token time budget.</li>
+<li><strong>Sizing rule of thumb</strong>: allocate enough TP to fit model weights with 40–60% GPU memory headroom for KV cache, then add DP replicas until the throughput SLO is met.</li>
+<li><strong>Wide-EP (DeepSeek-style)</strong> requires large batch sizes to amortize inter-node all-to-all; it excels for high-throughput API serving of enormous MoE models but adds serving infrastructure complexity.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Multi-GPU and multi-node inference is now a mature discipline, with production systems routinely spanning 512+ GPUs using combinations of tensor, pipeline, expert, and data parallelism. The frontier has shifted toward ultra-large MoE models (DeepSeek-V3, Mixtral, Qwen MoE) where wide expert parallelism over InfiniBand and compute–communication overlap are the defining challenges.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1909.08053">Shoeybi et al., <em>Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism</em> (2019)</a> — introduced column/row-parallel tensor parallelism that underpins every major serving framework today.</li>
+<li><a href="https://arxiv.org/abs/2104.04473">Narayanan et al., <em>Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM</em> (2021)</a> — formalizes the composition of TP × PP × DP and the interleaved 1F1B pipeline schedule.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2309.06180">Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (2023)</a> — PagedAttention enables high-throughput multi-GPU serving by eliminating KV-cache fragmentation; foundation of vLLM.</li>
+<li><a href="https://arxiv.org/abs/2312.07104">Zheng et al., <em>SGLang: Efficient Execution of Structured Language Model Programs</em> (2024)</a> — RadixAttention and compressed FSM scheduling for multi-GPU structured-output serving; NeurIPS 2024.</li>
+<li><a href="https://arxiv.org/abs/2412.19437">DeepSeek-AI, <em>DeepSeek-V3 Technical Report</em> (2024)</a> — 671B MoE with EP = 64 across 8 nodes, DualPipe compute–communication overlap, and auxiliary-loss-free expert load balancing.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm</a> — the dominant open-source LLM serving engine; supports TP, PP, and EP with PagedAttention and continuous batching.</li>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — high-performance serving framework with RadixAttention, wide EP support, and strong multi-node scaling.</li>
+<li><a href="https://github.com/NVIDIA/Megatron-LM">NVIDIA/Megatron-LM</a> — canonical reference implementation for TP/PP/DP composition; Megatron Core provides reusable parallelism building blocks.</li>
+<li><a href="https://github.com/NVIDIA/TensorRT-LLM">NVIDIA/TensorRT-LLM</a> — production-grade inference library with FP8/NVFP4 quantization, fused kernels, and multi-node TP + PP + EP via a PyTorch-native API.</li>
+<li><a href="https://github.com/deepseek-ai/FlashMLA">deepseek-ai/FlashMLA</a> — optimized CUDA kernels for Multi-head Latent Attention on H800/H100, achieving up to 640 TFlops prefill and 3 TB/s decode bandwidth.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://developer.nvidia.com/blog/mastering-llm-techniques-inference-optimization/">NVIDIA Technical Blog, <em>Mastering LLM Techniques: Inference Optimization</em></a> — practitioner-level walkthrough of TP, PP, sequence parallelism, and quantization with concrete framework guidance.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Shoeybi et al., &ldquo;Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism,&rdquo; 2019 — original TP formulation.</li>
+<li>Lepikhin et al., &ldquo;GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding,&rdquo; ICLR 2021 — early expert parallelism for Transformers.</li>
+<li>Fedus et al., &ldquo;Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity,&rdquo; JMLR 2022 — capacity factor, expert load balancing.</li>
+<li>DeepSeek-AI, &ldquo;DeepSeek-V3 Technical Report,&rdquo; 2024 — wide-EP serving, MLA, FP8 training, production deployment details.</li>
+<li>Rajbhandari et al., &ldquo;ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning,&rdquo; SC 2021 — memory hierarchy for serving very large models with CPU/NVMe offload.</li>
+<li>vLLM project (Kwon et al., 2023) and SGLang (Zheng et al., 2024) — open-source references for multi-GPU serving implementations; see <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a> and <a href="../07-inference-serving/04-sglang-radixattention.html">SGLang: RadixAttention &amp; Structured Programs</a>.</li>
+<li>Huang et al., &ldquo;GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism,&rdquo; NeurIPS 2019 — pipeline schedule analysis and bubble formulation.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="10-structured-generation.html"><span class="pn-label">← Previous</span><span class="pn-title">Structured &amp; Constrained Generation</span></a>
+<a class="next" href="12-inference-economics.html"><span class="pn-label">Next →</span><span class="pn-title">Inference Economics: Latency, Throughput &amp; Cost</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-four-parallelism-axes">The Four Parallelism Axes</a></li>
+<li class="toc-l2"><a href="#tensor-parallelism">Tensor Parallelism</a></li>
+<li class="toc-l3"><a href="#mechanism">Mechanism</a></li>
+<li class="toc-l3"><a href="#tp-in-the-decode-loop">TP in the Decode Loop</a></li>
+<li class="toc-l3"><a href="#latency-vs-throughput-impact">Latency vs. Throughput Impact</a></li>
+<li class="toc-l2"><a href="#pipeline-parallelism">Pipeline Parallelism</a></li>
+<li class="toc-l3"><a href="#mechanism_1">Mechanism</a></li>
+<li class="toc-l3"><a href="#the-pipeline-bubble-and-decode">The Pipeline Bubble and Decode</a></li>
+<li class="toc-l3"><a href="#when-pp-helps">When PP Helps</a></li>
+<li class="toc-l2"><a href="#expert-parallelism-for-moe-models">Expert Parallelism for MoE Models</a></li>
+<li class="toc-l3"><a href="#moe-inference-recap">MoE Inference Recap</a></li>
+<li class="toc-l3"><a href="#wide-expert-parallelism-wide-ep-deepseek-v3-deepseek-r1">Wide Expert Parallelism (Wide-EP): DeepSeek-V3 / DeepSeek-R1</a></li>
+<li class="toc-l3"><a href="#ep-load-balancing">EP Load Balancing</a></li>
+<li class="toc-l2"><a href="#data-parallel-replicas">Data Parallel Replicas</a></li>
+<li class="toc-l2"><a href="#communication-overhead-in-the-decode-step">Communication Overhead in the Decode Step</a></li>
+<li class="toc-l3"><a href="#tp-communication-profile">TP Communication Profile</a></li>
+<li class="toc-l3"><a href="#pp-communication-profile">PP Communication Profile</a></li>
+<li class="toc-l3"><a href="#ep-wide-communication-profile">EP (Wide) Communication Profile</a></li>
+<li class="toc-l2"><a href="#when-each-strategy-helps-a-decision-framework">When Each Strategy Helps: A Decision Framework</a></li>
+<li class="toc-l2"><a href="#sizing-a-multi-gpu-deployment">Sizing a Multi-GPU Deployment</a></li>
+<li class="toc-l3"><a href="#memory-budget">Memory Budget</a></li>
+<li class="toc-l3"><a href="#throughput-sizing">Throughput Sizing</a></li>
+<li class="toc-l3"><a href="#practical-vllm-sglang-configuration">Practical vLLM / SGLang Configuration</a></li>
+<li class="toc-l2"><a href="#cross-cutting-concerns">Cross-Cutting Concerns</a></li>
+<li class="toc-l3"><a href="#kv-cache-sharding-under-tp">KV Cache Sharding Under TP</a></li>
+<li class="toc-l3"><a href="#disaggregated-prefill-and-decode">Disaggregated Prefill and Decode</a></li>
+<li class="toc-l3"><a href="#cuda-graphs-under-tp">CUDA Graphs Under TP</a></li>
+<li class="toc-l3"><a href="#speculative-decoding-under-tp">Speculative Decoding Under TP</a></li>
+<li class="toc-l2"><a href="#deepseek-v3-wide-ep-a-case-study">DeepSeek-V3 Wide-EP: A Case Study</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

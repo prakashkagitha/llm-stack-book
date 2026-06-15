@@ -1,0 +1,1691 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caching, Routing &amp; Cost Control in Production — The LLM Stack</title>
+<meta name="description" content="Semantic/exact caching, prompt caching economics, model routing/cascades (cheap-then-expensive), speculative routing, quantized fallbacks, batching for cost, sp">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="active" href="03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XII — Production, Systems &amp; MLOps</div>
+<h1 id="123-caching-routing-cost-control-in-production">12.3 Caching, Routing &amp; Cost Control in Production<a class="headerlink" href="#123-caching-routing-cost-control-in-production" title="Permanent link">¶</a></h1>
+<p>LLM inference is expensive. A single frontier-model call can cost anywhere from a fraction of a cent to several dollars depending on context length and model tier, and at even modest traffic (say, ten thousand daily active users sending five messages each) you are looking at meaningful infrastructure spend before you have written a line of business logic. This chapter is about systematically engineering that bill down — not by compromising quality, but by routing work to the cheapest system that can do it well, avoiding redundant computation wherever possible, and squeezing utilisation out of every GPU-second you pay for.</p>
+<p>The techniques here sit at the intersection of distributed systems, economics, and ML: semantic caching, prompt-prefix caching, model routing cascades, speculative routing, quantised fallbacks, intelligent batching, and spot/preemptible GPU scheduling. We will cover the mechanism of each, when to reach for it, and how to wire them together into a coherent cost-control stack.</p>
+<p>Cross-references: <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a> covers the per-token cost model; <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a> covers the low-level KV-cache reuse mechanism; <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a> covers the scheduler side of batching; <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I</a> and <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II</a> cover the quantisation methods we invoke here as fallbacks.</p>
+<hr />
+<h2 id="why-does-this-problem-exist">Why Does This Problem Exist?<a class="headerlink" href="#why-does-this-problem-exist" title="Permanent link">¶</a></h2>
+<p>Token economics follow a simple formula. Let <span class="arithmatex">\(C_\text{input}\)</span> and <span class="arithmatex">\(C_\text{output}\)</span> be per-token prices (in USD), and let a request have <span class="arithmatex">\(n_p\)</span> prompt tokens and <span class="arithmatex">\(n_g\)</span> generated tokens:</p>
+<div class="arithmatex">\[
+\text{cost per request} = C_\text{input} \cdot n_p + C_\text{output} \cdot n_g
+\]</div>
+<p>Output tokens are typically 3–5× more expensive than input tokens because decoding is memory-bandwidth-bound and fundamentally sequential (see <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>). For a 128-token system prompt plus 500-token user message feeding a 300-token response, and illustrative prices of $0.003/1K input and $0.015/1K output, one call costs roughly:</p>
+<div class="arithmatex">\[
+\frac{628 \cdot 0.003 + 300 \cdot 0.015}{1000} \approx \$0.0064
+\]</div>
+<p>That is small. But at 50,000 calls per day the monthly bill is around USD 9,600 — and that is a single, modest product. Production applications routinely run at 10× to 100× that volume, and frontier models are significantly pricier. The levers are: (a) call fewer tokens, (b) reuse previously computed results, &copy; route to a cheaper model when you can, (d) spread load to reduce idle GPU time.</p>
+<hr />
+<h2 id="exact-caching">Exact Caching<a class="headerlink" href="#exact-caching" title="Permanent link">¶</a></h2>
+<p>The simplest optimisation is to remember the answer to a query you have already answered. If you can guarantee that two requests are byte-for-byte identical, you can return the cached response with zero model compute.</p>
+<h3 id="what-to-key-on">What to key on<a class="headerlink" href="#what-to-key-on" title="Permanent link">¶</a></h3>
+<p>The cache key must cover everything that would change the model&rsquo;s output:</p>
+<ul>
+<li>Model ID (and version/commit, not just name)</li>
+<li>Full serialised messages array (role + content)</li>
+<li>Sampling hyperparameters (temperature, top-p, top-k, max tokens)</li>
+<li>Any injected system prompt variables</li>
+</ul>
+<p>A common mistake is to key only on the user message and miss that the system prompt varies per tenant, producing cross-tenant cache poisoning.</p>
+<h3 id="storage-and-eviction">Storage and eviction<a class="headerlink" href="#storage-and-eviction" title="Permanent link">¶</a></h3>
+<p>Redis with a TTL is the standard choice. A SHA-256 hash of the canonicalised request body fits in 32 bytes; the response blob is typically 1–10 KB. With a 90-day TTL and 50,000 RPD the steady-state working set is on the order of a few hundred megabytes — trivially cacheable.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">redis</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">6379</span><span class="p">,</span> <span class="n">decode_responses</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_cache_key</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span> <span class="n">params</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Deterministic SHA-256 key over the full request.</span>
+<span class="sd">    sort_keys=True ensures dict ordering never matters.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span>
+        <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">model</span><span class="p">,</span> <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="n">messages</span><span class="p">,</span> <span class="o">**</span><span class="n">params</span><span class="p">},</span>
+        <span class="n">sort_keys</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot;llm:exact:&quot;</span> <span class="o">+</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">exact_cache_get</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">ttl_seconds</span><span class="o">=</span><span class="mi">86400</span> <span class="o">*</span> <span class="mi">30</span><span class="p">):</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">_cache_key</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+    <span class="n">blob</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">blob</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">blob</span><span class="p">)</span>          <span class="c1"># cache hit: no model call</span>
+    <span class="k">return</span> <span class="kc">None</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">exact_cache_set</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">response</span><span class="p">,</span> <span class="n">ttl_seconds</span><span class="o">=</span><span class="mi">86400</span> <span class="o">*</span> <span class="mi">30</span><span class="p">):</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">_cache_key</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+    <span class="c1"># SETEX: set with expiry atomically</span>
+    <span class="n">client</span><span class="o">.</span><span class="n">setex</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">ttl_seconds</span><span class="p">,</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">response</span><span class="p">))</span>
+</code></pre></div>
+<p>Exact caching has a narrow hit rate for conversational workloads (few requests are truly identical) but extremely high value for specific patterns: FAQ bots, templated document generation, CI/CD pipeline prompts, and embedding calls (which are purely deterministic). For embeddings, exact caching can eliminate 60–90% of API calls if users resubmit the same documents.</p>
+<h3 id="handling-non-determinism">Handling non-determinism<a class="headerlink" href="#handling-non-determinism" title="Permanent link">¶</a></h3>
+<p>If <code>temperature &gt; 0</code>, returning a cached stale response is semantically wrong for freshness-sensitive queries. A common compromise is to cache only when <code>temperature == 0</code>, or to cache with a short TTL (a few hours) to capture burst traffic while not serving stale creative content for long.</p>
+<hr />
+<h2 id="semantic-caching">Semantic Caching<a class="headerlink" href="#semantic-caching" title="Permanent link">¶</a></h2>
+<p>Exact caching misses near-duplicate queries. Semantic caching embeds the user query and checks whether the embedding is close enough to a previously answered query that the cached answer is still valid.</p>
+<figure class="viz" id="fig-cost-semantic-cache-flow">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 980 360" role="img" aria-label="Semantic cache lookup flow: a user query is embedded, an ANN search finds the nearest cached entry, a similarity threshold decides cache hit or miss; on hit the cached response is returned immediately; on miss the LLM is called and the new embedding-response pair is stored back into the index.">
+<defs>
+  <marker id="scf-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" class="v-muted" fill="currentColor"/>
+  </marker>
+  <marker id="scf-arr-hit" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="scf-arr-miss" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+  <marker id="scf-arr-dash" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" class="v-stroke" fill="currentColor" opacity="0.6"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-cost-semantic-cache-flow text { font: 500 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-cost-semantic-cache-flow .lbl { font: 600 12px var(--sans,sans-serif); }
+  #fig-cost-semantic-cache-flow .sub { font: 400 9.5px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-cost-semantic-cache-flow .ann { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cost-semantic-cache-flow .edge-lbl { font: 600 10px var(--sans,sans-serif); }
+  #fig-cost-semantic-cache-flow .hit-lbl { fill: var(--good,#2f9e6e); }
+  #fig-cost-semantic-cache-flow .miss-lbl { fill: var(--warn,#e0a106); }
+  @media (prefers-reduced-motion: reduce) {
+    #scf-anim-token, #scf-anim-token2 { display: none; }
+  }
+</style>
+
+
+<g data-anim="1">
+  <rect x="14" y="30" width="120" height="60" rx="10" class="v-fill v-accent-s" stroke-width="1.5"/>
+  <text x="74" y="57" text-anchor="middle" class="lbl">User query</text>
+</g>
+
+
+<line x1="134" y1="60" x2="172" y2="60" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#scf-arr)"/>
+
+
+<g data-anim="2">
+  <rect x="174" y="26" width="130" height="68" rx="4" class="v-fill v-accent-s" stroke-width="1.5"/>
+  <text x="239" y="52" text-anchor="middle" class="lbl">embed()</text>
+  <text x="239" y="66" text-anchor="middle" class="sub">~1-5 ms</text>
+  <text x="239" y="78" text-anchor="middle" class="sub">(local 22M ST model)</text>
+</g>
+
+
+<line x1="304" y1="60" x2="342" y2="60" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#scf-arr)"/>
+
+
+<g data-anim="3">
+  <rect x="344" y="26" width="130" height="68" rx="4" class="v-fill v-accent-s" stroke-width="1.5"/>
+  <text x="409" y="52" text-anchor="middle" class="lbl">ANN search</text>
+  <text x="409" y="66" text-anchor="middle" class="sub">FAISS / Qdrant</text>
+  <text x="409" y="78" text-anchor="middle" class="sub">~1-10 ms</text>
+</g>
+
+
+<line x1="474" y1="60" x2="508" y2="72" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#scf-arr)"/>
+
+
+<g data-anim="4">
+  <polygon points="580,30 650,80 580,130 510,80" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="580" y="74" text-anchor="middle" class="lbl" font-size="11">cos sim</text>
+  <text x="580" y="90" text-anchor="middle" class="lbl" font-size="11">s &gt;= tau?</text>
+  <text x="580" y="148" text-anchor="middle" class="ann">tau approx 0.92-0.95; s = q-hat . c-hat</text>
+</g>
+
+
+<line x1="650" y1="80" x2="788" y2="52" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#scf-arr-hit)" fill="none"/>
+<text x="718" y="48" text-anchor="middle" class="edge-lbl hit-lbl">yes (hit)</text>
+
+
+<g data-anim="5">
+  <rect x="790" y="22" width="178" height="60" rx="10" stroke="var(--good,#2f9e6e)" stroke-width="2" class="v-fill"/>
+  <text x="879" y="47" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Return cached</text>
+  <text x="879" y="63" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">response</text>
+  <text x="879" y="97" text-anchor="middle" class="ann">fast path: ~2-15 ms total</text>
+</g>
+
+
+<line x1="580" y1="130" x2="580" y2="198" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#scf-arr-miss)" fill="none"/>
+<text x="600" y="170" class="edge-lbl miss-lbl">no (miss)</text>
+
+
+<g data-anim="5">
+  <rect x="512" y="200" width="136" height="60" rx="4" class="v-fill v-accent-s" stroke-width="1.5"/>
+  <text x="580" y="226" text-anchor="middle" class="lbl">Call LLM</text>
+  <text x="580" y="243" text-anchor="middle" class="sub">500 ms - 5 s (~100x slower)</text>
+</g>
+
+
+<line x1="648" y1="230" x2="688" y2="230" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#scf-arr)"/>
+
+
+<g data-anim="5">
+  <rect x="690" y="200" width="210" height="60" rx="10" class="v-fill v-accent-s" stroke-width="1.5"/>
+  <text x="795" y="225" text-anchor="middle" class="lbl">Store (embedding,</text>
+  <text x="795" y="242" text-anchor="middle" class="lbl">response)</text>
+</g>
+
+
+<path d="M 795 260 Q 795 300 580 300 Q 365 300 365 92"
+      stroke="currentColor" stroke-width="1.4"
+      stroke-dasharray="6 4" fill="none" opacity="0.55"
+      class="v-stroke"
+      marker-end="url(#scf-arr-dash)"/>
+<text x="580" y="318" text-anchor="middle" class="ann">populate index</text>
+
+
+<polygon points="580,30 650,80 580,130 510,80" fill="none" stroke="var(--accent,#c15b39)" stroke-width="3" opacity="0">
+  <animate attributeName="opacity" dur="5s" repeatCount="indefinite"
+    keyTimes="0;0.48;0.50;0.56;0.58;1"
+    values="0;0;0.85;0.85;0;0"/>
+</polygon>
+<polygon points="580,30 650,80 580,130 510,80" fill="none" stroke="var(--accent,#c15b39)" stroke-width="3" opacity="0">
+  <animate attributeName="opacity" dur="5s" repeatCount="indefinite" begin="2.5s"
+    keyTimes="0;0.48;0.50;0.56;0.58;1"
+    values="0;0;0.85;0.85;0;0"/>
+</polygon>
+
+
+<g id="scf-anim-token">
+  <circle r="7" fill="var(--accent,#c15b39)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.02;0.60;0.70;1"
+      values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.12;0.24;0.38;0.52;0.62;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 74,60 L 154,60 L 239,60 L 319,60 L 409,60 L 475,60 L 580,80 L 650,80 L 879,52"/>
+  </circle>
+</g>
+
+
+<g id="scf-anim-token2">
+  <circle r="7" fill="var(--warn,#e0a106)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.02;0.78;0.88;1"
+      values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.12;0.24;0.38;0.50;0.60;0.72;0.82;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 74,60 L 239,60 L 409,60 L 475,60 L 580,80 L 580,130 L 580,200 L 648,230 L 795,230"/>
+  </circle>
+</g>
+
+</svg>
+<figcaption><b>Semantic cache lookup flow.</b> The query is embedded (~1-5 ms), compared against stored entries via ANN search (~1-10 ms), and a cosine threshold test (s = q-hat dot c-hat &gt;= tau) decides hit or miss. A cache hit returns the stored response in ~2-15 ms total -- roughly 100x faster than calling the LLM (~500 ms-5 s); on a miss the LLM is called and the new (embedding, response) pair is stored back into the index for future queries.</figcaption>
+</figure>
+
+<h3 id="similarity-threshold-selection">Similarity threshold selection<a class="headerlink" href="#similarity-threshold-selection" title="Permanent link">¶</a></h3>
+<p>Let <span class="arithmatex">\(\hat{q}\)</span> be the unit-normalised query embedding and <span class="arithmatex">\(\hat{c}\)</span> be a cached entry&rsquo;s embedding. The cosine similarity is <span class="arithmatex">\(s = \hat{q} \cdot \hat{c}\)</span>. You admit a cache hit when <span class="arithmatex">\(s \geq \tau\)</span>.</p>
+<p>Choosing <span class="arithmatex">\(\tau\)</span> is a calibration problem. Too low: you return wrong answers (a FAQ about &ldquo;cancel subscription&rdquo; matches &ldquo;delete my account&rdquo; — maybe OK) or dangerously wrong ones (&ldquo;What is the dosage of aspirin&rdquo; matches &ldquo;What is the dosage of ibuprofen&rdquo; — very much not OK). Too high: the hit rate collapses toward exact matching.</p>
+<p>A practical approach:</p>
+<ol>
+<li>Collect a held-out set of (query, gold answer) pairs from your domain.</li>
+<li>For each <span class="arithmatex">\(\tau \in [0.85, 0.99]\)</span> sweep, measure precision (fraction of returned hits that are semantically correct) and recall (fraction of queries served from cache).</li>
+<li>Pick the <span class="arithmatex">\(\tau\)</span> that hits your precision floor (typically 0.97+) while maximising recall.</li>
+</ol>
+<p>For general chat bots a threshold near 0.92–0.95 is common. For medical, legal, or financial applications a higher bar (0.97+) or a human-review loop on borderline hits is appropriate.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SemanticCache</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Minimal semantic cache using cosine similarity.</span>
+<span class="sd">    In production, replace the linear scan with a FAISS/Qdrant ANN index.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">embed_fn</span><span class="p">,</span> <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.93</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">embed_fn</span> <span class="o">=</span> <span class="n">embed_fn</span>      <span class="c1"># callable: str -&gt; np.ndarray (unit-normed)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">threshold</span> <span class="o">=</span> <span class="n">threshold</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>  <span class="c1"># (embedding, entry)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_cosine</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">))</span>    <span class="c1"># assumes unit-norm inputs</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the best cached entry if similarity &gt;= threshold.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="n">q_emb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">embed_fn</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+        <span class="n">best_score</span><span class="p">,</span> <span class="n">best_entry</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+            <span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">_cosine</span><span class="p">(</span><span class="n">q_emb</span><span class="p">,</span> <span class="n">emb</span><span class="p">),</span> <span class="n">entry</span><span class="p">)</span> <span class="k">for</span> <span class="n">emb</span><span class="p">,</span> <span class="n">entry</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="p">),</span>
+            <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">best_score</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">threshold</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">best_entry</span>          <span class="c1"># cache hit</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">put</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">response</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Store a new (query, response) pair.&quot;&quot;&quot;</span>
+        <span class="n">q_emb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">embed_fn</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">q_emb</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;query&quot;</span><span class="p">:</span> <span class="n">query</span><span class="p">,</span> <span class="s2">&quot;response&quot;</span><span class="p">:</span> <span class="n">response</span><span class="p">}))</span>
+</code></pre></div>
+<h3 id="embedding-model-selection-and-latency">Embedding model selection and latency<a class="headerlink" href="#embedding-model-selection-and-latency" title="Permanent link">¶</a></h3>
+<p>The embedding call itself introduces latency. A 100 ms embedding call eats into the savings if the cached path is supposed to be fast. Use a small, locally-hosted embedding model (e.g., a 22M-parameter sentence-transformer) so the embedding call completes in 1–5 ms on CPU. The ANN lookup in a vector store like Qdrant or FAISS is another 1–10 ms at typical scales. Compare that to a frontier model call at 500 ms to 5 s: the speedup is 100×.</p>
+<p>Semantic caching integrates naturally with RAG systems (see <a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a>) — you can cache at both the retrieval step and the generation step.</p>
+<hr />
+<h2 id="prompt-prefix-caching-provider-side-kv-reuse">Prompt-Prefix Caching (Provider-Side KV Reuse)<a class="headerlink" href="#prompt-prefix-caching-provider-side-kv-reuse" title="Permanent link">¶</a></h2>
+<p>Distinct from the application-level caches above, providers like Anthropic (prompt caching) and OpenAI (caching) offer server-side KV-cache reuse for repeated prompt prefixes. If you send a 2,000-token system prompt on every call, the provider can skip recomputing the key-value tensors for that prefix after the first request.</p>
+<p>The economics are significant. Anthropic&rsquo;s prompt caching charges roughly 10% of the normal input price for cache-hit tokens (as of 2025). For a 2,000-token system prompt at $0.003/1K tokens:</p>
+<ul>
+<li>Without caching: 2,000 tokens × $0.003/1K = $0.006 per call</li>
+<li>With caching (after first call): 2,000 tokens × $0.0003/1K = $0.0006 per call</li>
+</ul>
+<p>At 10,000 calls per day this saves approximately USD 18 per day on the system prompt alone — over USD 6,500 per year.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: prompt caching savings</p>
+<p>Scenario: a coding assistant with a 4,000-token system prompt (instructions + code style guide) and an average 800-token user message generating 400-token responses. Traffic: 20,000 calls/day. Prices (illustrative): $0.003/1K input, $0.0003/1K cached input, $0.015/1K output.</p>
+<p><strong>Without prompt caching:</strong></p>
+<div class="arithmatex">\[
+\text{daily cost} = 20{,}000 \times \frac{4800 \times 0.003 + 400 \times 0.015}{1000}
+= 20{,}000 \times (0.0144 + 0.006) = 20{,}000 \times 0.0204 = \$408/\text{day}
+\]</div>
+<p><strong>With prompt caching</strong> (system prompt hits cache 95% of the time):</p>
+<div class="arithmatex">\[
+\text{daily cost} \approx 20{,}000 \times \frac{4000 \times 0.95 \times 0.0003 + 800 \times 0.003 + 400 \times 0.015}{1000}
+\]</div>
+<div class="arithmatex">\[
+= 20{,}000 \times (0.00114 + 0.0024 + 0.006) = 20{,}000 \times 0.00954 = \$190.80/\text{day}
+\]</div>
+<p>Saving: roughly <strong>$217/day</strong> or <strong>$79K/year</strong> — just from restructuring your prompt.</p>
+</div>
+<p>To maximise prefix cache hits, keep the stable part of your prompt at the top (system instructions, few-shot examples, retrieved context) and put the variable part at the bottom (user message). This is covered in more depth in <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a> and <a href="../08-agents-harness/04-context-engineering.html">Context Engineering &amp; Management</a>.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Anthropic prompt caching API usage (Python SDK, 2024+)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">anthropic</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">anthropic</span><span class="o">.</span><span class="n">Anthropic</span><span class="p">()</span>
+
+<span class="c1"># Mark the static system prompt for caching.</span>
+<span class="c1"># The provider will reuse KV tensors for this block across calls.</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">messages</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;claude-opus-4-5&quot;</span><span class="p">,</span>
+    <span class="n">max_tokens</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>
+    <span class="n">system</span><span class="o">=</span><span class="p">[</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">STATIC_SYSTEM_PROMPT</span><span class="p">,</span>          <span class="c1"># 4000+ tokens</span>
+            <span class="s2">&quot;cache_control&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;ephemeral&quot;</span><span class="p">},</span> <span class="c1"># request caching</span>
+        <span class="p">}</span>
+    <span class="p">],</span>
+    <span class="n">messages</span><span class="o">=</span><span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">user_message</span><span class="p">}</span>  <span class="c1"># variable part</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+
+<span class="c1"># Inspect whether you got a cache hit</span>
+<span class="n">usage</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">usage</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Input tokens: </span><span class="si">{</span><span class="n">usage</span><span class="o">.</span><span class="n">input_tokens</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cache read tokens: </span><span class="si">{</span><span class="n">usage</span><span class="o">.</span><span class="n">cache_read_input_tokens</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># billed at 10%</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cache write tokens: </span><span class="si">{</span><span class="n">usage</span><span class="o">.</span><span class="n">cache_creation_input_tokens</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># first call</span>
+</code></pre></div>
+<hr />
+<h2 id="model-routing-and-cascades">Model Routing and Cascades<a class="headerlink" href="#model-routing-and-cascades" title="Permanent link">¶</a></h2>
+<p>Not every query needs your most capable (and most expensive) model. A cascade routes each request to the cheapest model that can answer it correctly, escalating to stronger models only when needed.</p>
+<figure class="viz" id="fig-cost-routing-cascade">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 1000 380" role="img" aria-label="Model routing cascade: a fast classifier routes simple queries directly, escalates to a small 7B model on failure, which escalates to a large 70B model if not confident enough, illustrating sequential cheapest-first routing.">
+<defs>
+  <marker id="crc-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" class="v-stroke" fill="currentColor"/>
+  </marker>
+  <marker id="crc-arr-yes" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="crc-arr-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-cost-routing-cascade text { font: 500 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-cost-routing-cascade .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-cost-routing-cascade .sub { font: 400 10px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-cost-routing-cascade .ann { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cost-routing-cascade .gate { font: 600 10px var(--sans,sans-serif); }
+  #fig-cost-routing-cascade .yes-lbl { fill: var(--good,#2f9e6e); font-weight: 700; }
+  #fig-cost-routing-cascade .no-lbl { fill: var(--warn,#e0a106); font-weight: 700; }
+  @media (prefers-reduced-motion: reduce) {
+    #crc-dot { display: none; }
+  }
+</style>
+
+
+<text x="70" y="22" class="ann">cheaper</text>
+<line x1="115" y1="18" x2="900" y2="18" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="840" y="22" class="ann">more expensive</text>
+<polygon points="900,14 910,18 900,22" fill="var(--muted,#6d675d)" opacity="0.6"/>
+
+
+<g data-anim="1">
+  <rect x="40" y="50" width="160" height="90" rx="6" class="v-fill v-stroke" stroke-width="1.5"/>
+  <text x="120" y="82" text-anchor="middle" class="lbl">Classifier</text>
+  <text x="120" y="100" text-anchor="middle" class="lbl">(fast)</text>
+  <text x="120" y="118" text-anchor="middle" class="sub">classify query</text>
+</g>
+
+
+<text x="310" y="45" text-anchor="middle" class="gate">simple?</text>
+
+
+<line x1="200" y1="75" x2="418" y2="75" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#crc-arr-no)"/>
+<text x="310" y="68" text-anchor="middle" class="no-lbl" font-size="10">no</text>
+
+
+<g data-anim="2">
+  <rect x="420" y="50" width="170" height="90" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.8" opacity="0.85"/>
+  <text x="505" y="82" text-anchor="middle" class="lbl">Small model</text>
+  <text x="505" y="100" text-anchor="middle" class="sub">7B / INT4</text>
+  <text x="505" y="118" text-anchor="middle" class="sub">cheap, fast</text>
+</g>
+
+
+<text x="715" y="45" text-anchor="middle" class="gate">confident?</text>
+
+
+<line x1="590" y1="75" x2="798" y2="75" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#crc-arr-no)"/>
+<text x="695" y="68" text-anchor="middle" class="no-lbl" font-size="10">no</text>
+
+
+<g data-anim="3">
+  <rect x="800" y="50" width="180" height="90" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent-2,#b04e2d)" stroke-width="2.5"/>
+  <text x="890" y="82" text-anchor="middle" class="lbl">Large model</text>
+  <text x="890" y="100" text-anchor="middle" class="sub">70B / FP16</text>
+  <text x="890" y="118" text-anchor="middle" class="sub">frontier quality</text>
+</g>
+
+
+<line x1="120" y1="140" x2="120" y2="238" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#crc-arr-yes)"/>
+<text x="138" y="196" class="yes-lbl" font-size="10">yes</text>
+
+
+<g data-anim="1">
+  <rect x="50" y="240" width="140" height="50" rx="10" stroke="var(--good,#2f9e6e)" stroke-width="2" class="v-fill"/>
+  <text x="120" y="262" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Return</text>
+  <text x="120" y="278" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">directly</text>
+</g>
+
+
+<line x1="505" y1="140" x2="505" y2="238" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#crc-arr-yes)"/>
+<text x="523" y="196" class="yes-lbl" font-size="10">yes</text>
+
+
+<g data-anim="2">
+  <rect x="432" y="240" width="146" height="50" rx="10" stroke="var(--good,#2f9e6e)" stroke-width="2" class="v-fill"/>
+  <text x="505" y="262" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Return</text>
+  <text x="505" y="278" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">directly</text>
+</g>
+
+
+<line x1="890" y1="140" x2="890" y2="238" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#crc-arr-yes)"/>
+<text x="910" y="196" class="yes-lbl" font-size="10">always</text>
+
+
+<g data-anim="3">
+  <rect x="822" y="240" width="136" height="50" rx="10" stroke="var(--good,#2f9e6e)" stroke-width="2" class="v-fill"/>
+  <text x="890" y="262" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Return</text>
+  <text x="890" y="278" text-anchor="middle" class="ann">(final tier, unconditional)</text>
+</g>
+
+
+<line x1="40" y1="340" x2="960" y2="340" class="v-grid" stroke="currentColor" stroke-width="0.8"/>
+<text x="500" y="360" text-anchor="middle" class="ann">E[cost] = c_s + (1-p_s)*c_l; at 70% hit rate: ~2.5x cheaper than always using the large model</text>
+
+
+<g id="crc-dot">
+
+  <circle r="7" fill="var(--accent,#c15b39)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.04;0.72;0.82;1"
+      values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.14;0.22;0.40;0.52;0.70;0.80;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 40,95 L 120,95 L 200,75 L 420,75 L 590,75 L 800,75 L 890,140 L 890,265"/>
+  </circle>
+
+  <rect x="40" y="50" width="160" height="90" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0">
+    <animate attributeName="fill-opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.06;0.12;0.14;1" values="0;0.15;0.15;0;0"/>
+  </rect>
+  <rect x="420" y="50" width="170" height="90" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0">
+    <animate attributeName="fill-opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.38;0.44;0.48;1" values="0;0.15;0.15;0;0"/>
+  </rect>
+  <rect x="800" y="50" width="180" height="90" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0">
+    <animate attributeName="fill-opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.62;0.68;0.72;1" values="0;0.15;0.15;0;0"/>
+  </rect>
+</g>
+
+
+<g id="crc-dot2">
+  <circle r="7" fill="var(--good,#2f9e6e)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.04;0.60;0.72;1"
+      values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.14;0.22;0.38;0.50;0.62;0.74;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 40,95 L 120,95 L 200,75 L 420,75 L 505,95 L 505,140 L 505,265"/>
+  </circle>
+</g>
+
+</svg>
+<figcaption><b>Model routing cascade with sequential escalation.</b> Each request is evaluated by the cheapest stage first: a fast classifier returns directly for simple queries; failures escalate to the small 7B model (which returns if confident); only the remainder reach the large 70B frontier model. At a 70% classifier hit rate the expected cost is approximately 2.5x lower than calling the large model for every request.</figcaption>
+</figure>
+
+<p>The cascade can be implemented in two ways:</p>
+<h3 id="1-quality-based-escalation-sequential">1. Quality-based escalation (sequential)<a class="headerlink" href="#1-quality-based-escalation-sequential" title="Permanent link">¶</a></h3>
+<p>Call the cheap model first; if its output meets a quality gate, return it. Otherwise call the expensive model. This introduces latency for the escalated fraction, so it is best for workloads where most queries are simple (high hit rate on the cheap tier).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Awaitable</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ModelTier</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">call_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Awaitable</span><span class="p">[</span><span class="nb">dict</span><span class="p">]]</span>   <span class="c1"># async function</span>
+    <span class="n">cost_per_1k_tokens</span><span class="p">:</span> <span class="nb">float</span>                 <span class="c1"># illustrative combined cost</span>
+    <span class="n">quality_gate</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">dict</span><span class="p">],</span> <span class="nb">bool</span><span class="p">]</span>      <span class="c1"># returns True iff output is good enough</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">cascade</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">tiers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ModelTier</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Try each tier in order (cheapest first).</span>
+<span class="sd">    Return the first response that passes its quality gate,</span>
+<span class="sd">    or the last tier&#39;s response unconditionally.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">tier</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">tiers</span><span class="p">):</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">tier</span><span class="o">.</span><span class="n">call_fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+        <span class="n">is_last</span> <span class="o">=</span> <span class="p">(</span><span class="n">i</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">tiers</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">is_last</span> <span class="ow">or</span> <span class="n">tier</span><span class="o">.</span><span class="n">quality_gate</span><span class="p">(</span><span class="n">response</span><span class="p">):</span>
+            <span class="n">response</span><span class="p">[</span><span class="s2">&quot;_tier_used&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">tier</span><span class="o">.</span><span class="n">name</span>
+            <span class="k">return</span> <span class="n">response</span>
+    <span class="c1"># unreachable, but satisfies type checker</span>
+    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Empty tier list&quot;</span><span class="p">)</span>
+
+<span class="c1"># ------- Example quality gates -------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">confidence_gate</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">min_logprob</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="o">-</span><span class="mf">0.15</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Accept the cheap model&#39;s output if average log-probability of</span>
+<span class="sd">    output tokens is high (model is &#39;confident&#39;).</span>
+<span class="sd">    Requires logprobs=True in the API call.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logprobs</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;logprobs&quot;</span><span class="p">,</span> <span class="p">[])</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">logprobs</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="n">avg</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">logprobs</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">logprobs</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">avg</span> <span class="o">&gt;=</span> <span class="n">min_logprob</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">length_gate</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">200</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Reject cheap model if it hit the token limit — likely incomplete.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">response</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;finish_reason&quot;</span><span class="p">)</span> <span class="o">!=</span> <span class="s2">&quot;length&quot;</span>
+</code></pre></div>
+<h3 id="2-classifier-based-routing-parallel-or-pre-dispatch">2. Classifier-based routing (parallel or pre-dispatch)<a class="headerlink" href="#2-classifier-based-routing-parallel-or-pre-dispatch" title="Permanent link">¶</a></h3>
+<p>Train a small classifier that predicts which model tier a query belongs to, and route before calling any LLM. This avoids the latency overhead of sequential calls but requires labelled training data (which you can bootstrap from cascade logs: label the query with the cheapest tier that gave good output in the sequential cascade).</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Lightweight routing classifier using a small embedding model + logistic regression.</span>
+<span class="c1"># In practice you might use a fine-tuned DistilBERT or even a rule-based system.</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.linear_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">LogisticRegression</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.preprocessing</span><span class="w"> </span><span class="kn">import</span> <span class="n">LabelEncoder</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RoutingClassifier</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Maps a query embedding to a model tier label.</span>
+<span class="sd">    Train offline on cascade logs; serve online with ~1 ms latency.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">embed_fn</span><span class="p">,</span> <span class="n">labels</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">embed_fn</span> <span class="o">=</span> <span class="n">embed_fn</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">enc</span> <span class="o">=</span> <span class="n">LabelEncoder</span><span class="p">()</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">labels</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">clf</span> <span class="o">=</span> <span class="n">LogisticRegression</span><span class="p">(</span><span class="n">max_iter</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">C</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">queries</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">tier_labels</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">X</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">embed_fn</span><span class="p">(</span><span class="n">q</span><span class="p">)</span> <span class="k">for</span> <span class="n">q</span> <span class="ow">in</span> <span class="n">queries</span><span class="p">])</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">enc</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">tier_labels</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">clf</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">predict</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns (tier_name, confidence).&quot;&quot;&quot;</span>
+        <span class="n">emb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">embed_fn</span><span class="p">(</span><span class="n">query</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">proba</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">clf</span><span class="o">.</span><span class="n">predict_proba</span><span class="p">(</span><span class="n">emb</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">proba</span><span class="p">))</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">enc</span><span class="o">.</span><span class="n">inverse_transform</span><span class="p">([</span><span class="n">idx</span><span class="p">])[</span><span class="mi">0</span><span class="p">],</span> <span class="nb">float</span><span class="p">(</span><span class="n">proba</span><span class="p">[</span><span class="n">idx</span><span class="p">])</span>
+</code></pre></div>
+<h3 id="cascade-economics">Cascade economics<a class="headerlink" href="#cascade-economics" title="Permanent link">¶</a></h3>
+<p>Let <span class="arithmatex">\(p_s\)</span> be the fraction of queries routed to the small model (hit rate), <span class="arithmatex">\(c_s\)</span> the small-model cost per query, and <span class="arithmatex">\(c_l\)</span> the large-model cost per query. Expected cost per query:</p>
+<div class="arithmatex">\[
+\mathbb{E}[\text{cost}] = p_s \cdot c_s + (1 - p_s) \cdot (c_s + c_l)
+= c_s + (1-p_s) \cdot c_l
+\]</div>
+<p>If the small model handles 70% of traffic (on the sequential cascade that also pays <span class="arithmatex">\(c_s\)</span> before escalating), and <span class="arithmatex">\(c_s = \$0.002\)</span>, <span class="arithmatex">\(c_l = \$0.020\)</span>:</p>
+<div class="arithmatex">\[
+\mathbb{E}[\text{cost}] = 0.002 + 0.30 \times 0.020 = 0.002 + 0.006 = \$0.008
+\]</div>
+<p>Versus paying <span class="arithmatex">\(c_l\)</span> for everything: USD 0.020. A <strong>2.5× cost reduction</strong> for a 70% hit rate.</p>
+<hr />
+<h2 id="speculative-routing">Speculative Routing<a class="headerlink" href="#speculative-routing" title="Permanent link">¶</a></h2>
+<p>Speculative routing is the routing analogue of speculative decoding (see <a href="../07-inference-serving/06-speculative-decoding.html">Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a>). Instead of waiting for a sequential cascade decision, you fire both the cheap and expensive models in parallel and discard the expensive result if the cheap one passes the quality gate. This cuts latency to approximately the cheap model&rsquo;s latency for the common case, while guaranteeing large-model quality for the rest.</p>
+<figure class="viz" id="fig-cost-speculative-routing">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 1000 380" role="img" aria-label="Speculative routing: a query fans out to both a fast small model and a slow large model concurrently; if the small model passes a quality gate the large model is cancelled and the small result is returned; if the gate fails the large model result is used.">
+<defs>
+  <marker id="spr-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" class="v-stroke" fill="currentColor"/>
+  </marker>
+  <marker id="spr-arr-yes" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="spr-arr-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+  <marker id="spr-arr-cancel" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--warn,#c0473a)" opacity="0.85"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-cost-speculative-routing text { font: 500 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-cost-speculative-routing .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-cost-speculative-routing .sub { font: 400 10px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-cost-speculative-routing .ann { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cost-speculative-routing .cancel-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--warn,#c0473a); }
+  #fig-cost-speculative-routing .yes-lbl { fill: var(--good,#2f9e6e); font-weight: 700; font-size: 11px; }
+  #fig-cost-speculative-routing .no-lbl { fill: var(--warn,#e0a106); font-weight: 700; font-size: 11px; }
+  @media (prefers-reduced-motion: reduce) {
+    #spr-dot-small, #spr-dot-large, #spr-dot-small2, #spr-dot-large2 { display: none; }
+  }
+</style>
+
+
+<g data-anim="1">
+  <rect x="30" y="150" width="110" height="60" rx="10" class="v-fill v-accent-s" stroke-width="1.5"/>
+  <text x="85" y="178" text-anchor="middle" class="lbl">Query</text>
+</g>
+
+
+<circle cx="175" cy="180" r="5" fill="var(--ink-soft,#45413a)" class="v-stroke" stroke-width="1.5"/>
+
+
+<line x1="140" y1="180" x2="170" y2="180" class="v-stroke" stroke="currentColor" stroke-width="1.5"/>
+
+
+<line x1="175" y1="180" x2="175" y2="95" class="v-stroke" stroke="currentColor" stroke-width="1.5"/>
+<line x1="175" y1="95" x2="294" y2="95" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#spr-arr)"/>
+
+
+<line x1="175" y1="180" x2="175" y2="285" class="v-stroke" stroke="currentColor" stroke-width="1.5"/>
+<line x1="175" y1="285" x2="294" y2="285" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#spr-arr)"/>
+
+
+<text x="80" y="140" text-anchor="middle" class="ann">concurrent</text>
+<text x="80" y="152" text-anchor="middle" class="ann">fan-out</text>
+
+
+<g data-anim="2">
+  <rect x="296" y="58" width="190" height="76" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+  <text x="391" y="88" text-anchor="middle" class="lbl">Small model (fast)</text>
+  <text x="391" y="106" text-anchor="middle" class="sub">finishes first</text>
+  <text x="391" y="120" text-anchor="middle" class="sub">3-10x faster</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="296" y="248" width="190" height="76" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="2.2"/>
+  <text x="391" y="278" text-anchor="middle" class="lbl">Large model (slow)</text>
+  <text x="391" y="296" text-anchor="middle" class="sub">runs concurrently</text>
+  <text x="391" y="310" text-anchor="middle" class="sub">higher cost</text>
+</g>
+
+
+<line x1="486" y1="95" x2="566" y2="130" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#spr-arr)"/>
+
+
+<g data-anim="3">
+  <polygon points="620,115 690,175 620,235 550,175" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="620" y="168" text-anchor="middle" class="lbl" font-size="11">gate:</text>
+  <text x="620" y="184" text-anchor="middle" class="lbl" font-size="11">pass?</text>
+</g>
+
+
+<line x1="690" y1="175" x2="796" y2="95" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#spr-arr-yes)"/>
+<text x="748" y="120" text-anchor="middle" class="yes-lbl">yes</text>
+
+
+<g data-anim="4">
+  <rect x="798" y="58" width="178" height="76" rx="10" stroke="var(--good,#2f9e6e)" stroke-width="2" class="v-fill"/>
+  <text x="887" y="85" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">return</text>
+  <text x="887" y="103" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">(small result)</text>
+  <text x="887" y="122" text-anchor="middle" class="ann">~small-model latency</text>
+</g>
+
+
+<path d="M 575,160 Q 510,200 472,250"
+      stroke="var(--warn,#c0473a)" stroke-width="1.6"
+      stroke-dasharray="7 4" fill="none" opacity="0.85"
+      marker-end="url(#spr-arr-cancel)"/>
+<text x="520" y="150" text-anchor="middle" class="cancel-lbl">cancel large</text>
+<text x="520" y="162" text-anchor="middle" class="cancel-lbl">(stop paying)</text>
+
+
+<line x1="620" y1="235" x2="620" y2="300" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+<line x1="620" y1="300" x2="798" y2="300" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#spr-arr-no)"/>
+<text x="636" y="258" class="no-lbl">no</text>
+
+
+<line x1="486" y1="278" x2="796" y2="278" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#spr-arr)"/>
+
+
+<g data-anim="4">
+  <rect x="798" y="248" width="178" height="76" rx="10" stroke="var(--accent,#c15b39)" stroke-width="2" class="v-fill"/>
+  <text x="887" y="278" text-anchor="middle" class="lbl">use large result</text>
+  <text x="887" y="296" text-anchor="middle" class="ann">latency = large model</text>
+  <text x="887" y="312" text-anchor="middle" class="ann">(small gate failed)</text>
+</g>
+
+
+<line x1="30" y1="348" x2="970" y2="348" class="v-grid" stroke="currentColor" stroke-width="0.8"/>
+<text x="500" y="368" text-anchor="middle" class="ann">Best when small is 3-10x faster, gate is cheap, and cancellation saves long outputs.</text>
+
+
+<g id="spr-dot-small">
+  <circle r="6" fill="var(--good,#2f9e6e)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.04;0.72;0.82;1" values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.12;0.22;0.34;0.46;0.58;0.72;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 85,180 L 175,180 L 175,95 L 296,95 L 391,95 L 486,95 L 570,140 L 620,175 L 690,175 L 887,96"/>
+  </circle>
+</g>
+
+<g id="spr-dot-large">
+
+  <circle r="6" fill="var(--warn,#c0473a)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.04;0.55;0.62;1" values="0;0.65;0.65;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.12;0.26;0.40;0.55;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 85,180 L 175,180 L 175,285 L 296,285 L 420,285 L 450,285"/>
+  </circle>
+</g>
+
+
+<polygon points="620,115 690,175 620,235 550,175" fill="none" stroke="var(--accent,#c15b39)" stroke-width="3" opacity="0">
+  <animate attributeName="opacity" dur="5s" repeatCount="indefinite"
+    keyTimes="0;0.54;0.56;0.62;0.64;1" values="0;0;0.8;0.8;0;0"/>
+</polygon>
+
+
+<g id="spr-dot-small2">
+  <circle r="6" fill="var(--warn,#e0a106)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.04;0.55;0.64;1" values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.12;0.26;0.40;0.52;0.55;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 85,180 L 175,180 L 175,95 L 391,95 L 486,95 L 570,140 L 620,175"/>
+  </circle>
+</g>
+<g id="spr-dot-large2">
+  <circle r="6" fill="var(--accent,#c15b39)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.04;0.78;0.88;1" values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.12;0.26;0.40;0.60;0.78;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 85,180 L 175,180 L 175,285 L 296,285 L 486,285 L 800,285 L 887,285"/>
+  </circle>
+</g>
+
+</svg>
+<figcaption><b>Speculative routing: parallel small and large models with cancellation.</b> Both models fire concurrently from the same query. If the small (fast) model passes the quality gate, the large model is cancelled immediately -- stopping token spend -- and the small result is returned at ~small-model latency. Only when the gate fails does the system fall through to the large model's result. The dashed red cancel arrow is the key economic lever: streaming cancellation prevents paying for tokens that will not be used.</figcaption>
+</figure>
+
+<p>The economics are worse than sequential cascade (you always pay both) unless the large model can be cancelled mid-generation when the small model succeeds. Streaming APIs with cancellation make this viable.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">speculative_route</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">small_fn</span><span class="p">,</span> <span class="n">large_fn</span><span class="p">,</span> <span class="n">gate_fn</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Fires both models concurrently. Returns the small model&#39;s output if it</span>
+<span class="sd">    passes the gate; otherwise waits for (and returns) the large model.</span>
+<span class="sd">    Cancels the large model task if small passes early.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">small_task</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">small_fn</span><span class="p">(</span><span class="n">query</span><span class="p">))</span>
+    <span class="n">large_task</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">large_fn</span><span class="p">(</span><span class="n">query</span><span class="p">))</span>
+
+    <span class="c1"># Await the small model first (it should finish sooner)</span>
+    <span class="n">small_resp</span> <span class="o">=</span> <span class="k">await</span> <span class="n">small_task</span>
+    <span class="k">if</span> <span class="n">gate_fn</span><span class="p">(</span><span class="n">small_resp</span><span class="p">):</span>
+        <span class="n">large_task</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>             <span class="c1"># stop paying for large model</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">await</span> <span class="n">large_task</span>            <span class="c1"># let cancellation propagate cleanly</span>
+        <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+            <span class="k">pass</span>
+        <span class="k">return</span> <span class="n">small_resp</span><span class="p">,</span> <span class="s2">&quot;small&quot;</span>
+
+    <span class="c1"># Small model failed quality gate; wait for large model</span>
+    <span class="n">large_resp</span> <span class="o">=</span> <span class="k">await</span> <span class="n">large_task</span>
+    <span class="k">return</span> <span class="n">large_resp</span><span class="p">,</span> <span class="s2">&quot;large&quot;</span>
+</code></pre></div>
+<p>Speculative routing works best when: (a) the cheap model is 3–10× faster than the expensive one, (b) the quality gate can be evaluated quickly (e.g., a short confidence check, not a slow LLM-as-judge), and &copy; the cancellation saves meaningful tokens (longer outputs).</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are building a cost-optimised LLM API for a customer support product with 100K daily requests. The P95 latency must stay under 2 seconds. Describe the end-to-end cost control architecture you would design.</p>
+<p><strong>A:</strong> Start with a layered cache stack: exact cache (Redis, SHA-256 key over full request) to handle repeated tickets, plus semantic cache (ANN index, threshold ~0.93) to catch near-duplicates — together these can serve 20–40% of traffic with no model call. Persist a static system prompt and FAQ context at the top of every prompt and enable provider-side prompt caching (Anthropic/OpenAI), saving 60–80% on that portion of input tokens.</p>
+<p>For uncached traffic, add a routing classifier: embed the query with a local 22M sentence-transformer, classify into &ldquo;simple&rdquo; (FAQ lookup, binary yes/no, short factual) vs. &ldquo;complex&rdquo; (multi-turn, policy edge cases, complaints). Route simple queries to a cheap 7B quantised (INT4) model hosted on spot instances, and complex queries to a frontier model. With a ~65% simple-route hit rate and a 10× cost gap between tiers, expected cost drops by ~6×.</p>
+<p>For spot/preemptible GPUs: run the cheap tier on spot instances with an on-demand fallback pool; statistically GPU preemptions are rare and requests can retry on the on-demand pool within the 2-second SLA.</p>
+<p>Finally, enable continuous batching on your inference server (vLLM or SGLang) to maximise GPU utilisation, target &gt;80% GPU compute utilisation, and set up cost dashboards with per-tier, per-feature-flag breakdowns so you can detect regressions immediately.</p>
+</div>
+<hr />
+<h2 id="quantised-fallbacks">Quantised Fallbacks<a class="headerlink" href="#quantised-fallbacks" title="Permanent link">¶</a></h2>
+<p>Running a smaller quantised model is not just about model routing to a different API endpoint — you can also host a quantised version of the same model locally as a fallback that trades quality for cost and latency. The quantisation taxonomy is covered in depth in <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a> and <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II</a>; here we focus on deployment economics.</p>
+<h3 id="memory-and-throughput-impact">Memory and throughput impact<a class="headerlink" href="#memory-and-throughput-impact" title="Permanent link">¶</a></h3>
+<p>A 70B parameter model at FP16 requires approximately 140 GB of GPU memory (2 bytes per parameter). The same model quantised to INT4 (with GPTQ or AWQ) requires around 35 GB — fitting on a single 40 GB A100, versus four A100s for FP16. The cost impact of that memory reduction is dramatic:</p>
+<table>
+<thead>
+<tr>
+<th>Quantisation</th>
+<th>Memory (70B model)</th>
+<th>Decode throughput (relative)</th>
+<th>Quality loss (MMLU)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FP16 (baseline)</td>
+<td>~140 GB</td>
+<td>1.0×</td>
+<td>0%</td>
+</tr>
+<tr>
+<td>INT8 (SmoothQuant)</td>
+<td>~70 GB</td>
+<td>1.3–1.5×</td>
+<td>&lt; 0.5%</td>
+</tr>
+<tr>
+<td>INT4 (AWQ/GPTQ)</td>
+<td>~35 GB</td>
+<td>1.8–2.2×</td>
+<td>1–3%</td>
+</tr>
+<tr>
+<td>INT4 + 2-bit outliers (QuIP#)</td>
+<td>~25 GB</td>
+<td>similar to INT4</td>
+<td>2–5%</td>
+</tr>
+</tbody>
+</table>
+<p>For a fallback tier receiving queries that were already routed away from the frontier model, the 1–3% MMLU degradation is often acceptable.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Loading a GPTQ-quantised model with vLLM for cost-effective fallback serving</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">vllm</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLM</span><span class="p">,</span> <span class="n">SamplingParams</span>
+
+<span class="c1"># vLLM natively supports GPTQ/AWQ via the quantization parameter.</span>
+<span class="c1"># This model fits on a single A100 (40GB) vs 4x A100 for FP16.</span>
+<span class="n">fallback_llm</span> <span class="o">=</span> <span class="n">LLM</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;TheBloke/Llama-2-70B-Chat-GPTQ&quot;</span><span class="p">,</span>   <span class="c1"># example quantised checkpoint</span>
+    <span class="n">quantization</span><span class="o">=</span><span class="s2">&quot;gptq&quot;</span><span class="p">,</span>
+    <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;float16&quot;</span><span class="p">,</span>
+    <span class="n">gpu_memory_utilization</span><span class="o">=</span><span class="mf">0.92</span><span class="p">,</span>               <span class="c1"># leave 8% for KV cache headroom</span>
+    <span class="n">max_model_len</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">fallback_params</span> <span class="o">=</span> <span class="n">SamplingParams</span><span class="p">(</span>
+    <span class="n">temperature</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span>
+    <span class="n">top_p</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span>
+    <span class="n">max_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_fallback</span><span class="p">(</span><span class="n">prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="n">outputs</span> <span class="o">=</span> <span class="n">fallback_llm</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">fallback_params</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">o</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">outputs</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="when-to-invoke-a-quantised-fallback">When to invoke a quantised fallback<a class="headerlink" href="#when-to-invoke-a-quantised-fallback" title="Permanent link">¶</a></h3>
+<p>Quantised fallbacks fit into the routing cascade as the cheap-but-hosted tier, between the semantic cache and the frontier API call. You can also use them for latency degradation gracefully: when the frontier API returns a 429 rate-limit or a timeout, fall back to the local quantised model rather than returning an error to the user.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">httpx</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">call_with_quantised_fallback</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="c1"># Attempt frontier model first</span>
+        <span class="n">resp</span> <span class="o">=</span> <span class="k">await</span> <span class="n">call_frontier_api</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mf">3.0</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">resp</span>
+    <span class="k">except</span> <span class="p">(</span><span class="n">httpx</span><span class="o">.</span><span class="n">TimeoutException</span><span class="p">,</span> <span class="n">httpx</span><span class="o">.</span><span class="n">HTTPStatusError</span><span class="p">)</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="c1"># Fall back to locally hosted quantised model</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="n">run_fallback</span><span class="p">([</span><span class="n">prompt</span><span class="p">])[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">text</span><span class="p">,</span> <span class="s2">&quot;_source&quot;</span><span class="p">:</span> <span class="s2">&quot;quantised_fallback&quot;</span><span class="p">}</span>
+</code></pre></div>
+<hr />
+<h2 id="batching-for-cost">Batching for Cost<a class="headerlink" href="#batching-for-cost" title="Permanent link">¶</a></h2>
+<p>Batching is the primary lever for maximising GPU utilisation and therefore amortising fixed GPU cost across more tokens. There are two distinct batching strategies relevant to cost control.</p>
+<h3 id="continuous-in-flight-batching">Continuous (in-flight) batching<a class="headerlink" href="#continuous-in-flight-batching" title="Permanent link">¶</a></h3>
+<p>The inference server (vLLM, SGLang, TGI) uses continuous batching (also called iteration-level batching) to keep the GPU full across requests with different lengths. This is covered architecturally in <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>; the cost angle is that higher effective batch size directly reduces cost per token:</p>
+<div class="arithmatex">\[
+\text{cost per token} \approx \frac{\text{GPU-hour price}}{\text{tokens per GPU-hour}}
+\]</div>
+<p>At batch size 1 a modern GPU may generate on the order of 1,000–5,000 tokens/second for a 7B model. At batch size 32 the same GPU generates 10,000–30,000 tokens/second — a 5–6× throughput improvement for the same hardware cost. This is why GPU utilisation is the KPI: each percentage point of utilisation is free capacity.</p>
+<h3 id="offline-batching-for-async-workloads">Offline batching for async workloads<a class="headerlink" href="#offline-batching-for-async-workloads" title="Permanent link">¶</a></h3>
+<p>Not all LLM workloads are latency-sensitive. Nightly report generation, bulk document summarisation, evaluation runs, and data labelling jobs can tolerate minutes of latency. For these, the cloud provider&rsquo;s batch inference API (Anthropic Batches API, OpenAI Batch API) offers a significant discount — on the order of 50% — in exchange for up to 24-hour turnaround.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">anthropic</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="n">batch_client</span> <span class="o">=</span> <span class="n">anthropic</span><span class="o">.</span><span class="n">Anthropic</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_batch_job</span><span class="p">(</span><span class="n">requests</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Submit a batch of requests to Anthropic Batches API.</span>
+<span class="sd">    Up to 50% cheaper; results available within 24 hours.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Build the batch request list</span>
+    <span class="n">batch_requests</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;custom_id&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;req-</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;claude-opus-4-5&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="mi">1024</span><span class="p">,</span>
+                <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="n">req</span><span class="p">[</span><span class="s2">&quot;messages&quot;</span><span class="p">],</span>
+            <span class="p">},</span>
+        <span class="p">}</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">req</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">requests</span><span class="p">)</span>
+    <span class="p">]</span>
+
+    <span class="c1"># Submit the batch</span>
+    <span class="n">batch</span> <span class="o">=</span> <span class="n">batch_client</span><span class="o">.</span><span class="n">messages</span><span class="o">.</span><span class="n">batches</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">requests</span><span class="o">=</span><span class="n">batch_requests</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Batch created: </span><span class="si">{</span><span class="n">batch</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">, status: </span><span class="si">{</span><span class="n">batch</span><span class="o">.</span><span class="n">processing_status</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Poll until complete (in production: use a webhook or async poller)</span>
+    <span class="k">while</span> <span class="n">batch</span><span class="o">.</span><span class="n">processing_status</span> <span class="o">==</span> <span class="s2">&quot;in_progress&quot;</span><span class="p">:</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">60</span><span class="p">)</span>
+        <span class="n">batch</span> <span class="o">=</span> <span class="n">batch_client</span><span class="o">.</span><span class="n">messages</span><span class="o">.</span><span class="n">batches</span><span class="o">.</span><span class="n">retrieve</span><span class="p">(</span><span class="n">batch</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Status: </span><span class="si">{</span><span class="n">batch</span><span class="o">.</span><span class="n">processing_status</span><span class="si">}</span><span class="s2">, &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;succeeded: </span><span class="si">{</span><span class="n">batch</span><span class="o">.</span><span class="n">request_counts</span><span class="o">.</span><span class="n">succeeded</span><span class="si">}</span><span class="s2">, &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;errored: </span><span class="si">{</span><span class="n">batch</span><span class="o">.</span><span class="n">request_counts</span><span class="o">.</span><span class="n">errored</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Collect results</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">batch_client</span><span class="o">.</span><span class="n">messages</span><span class="o">.</span><span class="n">batches</span><span class="o">.</span><span class="n">results</span><span class="p">(</span><span class="n">batch</span><span class="o">.</span><span class="n">id</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">&quot;succeeded&quot;</span><span class="p">:</span>
+            <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+                <span class="s2">&quot;custom_id&quot;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">custom_id</span><span class="p">,</span>
+                <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span><span class="p">,</span>
+            <span class="p">})</span>
+    <span class="k">return</span> <span class="n">results</span>
+</code></pre></div>
+<p>The batch API is the right choice for any pipeline that is not user-interactive: bulk summarisation, scheduled report generation, embedding generation for new documents, and offline evaluation suites.</p>
+<hr />
+<h2 id="spot-and-preemptible-gpus">Spot and Preemptible GPUs<a class="headerlink" href="#spot-and-preemptible-gpus" title="Permanent link">¶</a></h2>
+<p>Cloud GPUs come in two flavours: on-demand (always available, full price) and spot/preemptible (heavily discounted — typically 60–80% cheaper — but can be reclaimed by the cloud provider with 30–120 seconds notice). For a well-designed LLM serving system, spot instances are highly tractable.</p>
+<h3 id="architecture-for-spot-resilience">Architecture for spot resilience<a class="headerlink" href="#architecture-for-spot-resilience" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-cost-spot-resilience-fleet">
+<svg viewBox="0 0 760 420" role="img" aria-label="Spot/On-Demand GPU fleet architecture: a load balancer distributes traffic via health-aware routing to two dashed-border spot pools (each with 2x A10G at 70% discount) and one solid-border on-demand pool (1x A10G, always available), illustrating the preemption-resilient mixed fleet pattern.">
+<defs>
+  <marker id="srf-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--ink-soft,#94a3b8)"/>
+  </marker>
+</defs>
+<style>
+  #fig-cost-spot-resilience-fleet text { fill: currentColor; }
+  #fig-cost-spot-resilience-fleet .ttl { font: 700 14px var(--sans,sans-serif); }
+  #fig-cost-spot-resilience-fleet .sub { font: 400 11px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-cost-spot-resilience-fleet .badge { font: 700 10px var(--sans,sans-serif); }
+  #fig-cost-spot-resilience-fleet .routing-lbl { font: 400 10px var(--sans,sans-serif); font-style: italic; fill: var(--muted,#94a3b8); }
+  #fig-cost-spot-resilience-fleet .miss-lbl { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+</style>
+
+
+<g data-anim="1">
+  <rect x="220" y="28" width="320" height="58" rx="8" class="v-fill" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="380" y="54" text-anchor="middle" class="ttl">Load Balancer / API Gateway</text>
+  <text x="380" y="72" text-anchor="middle" class="sub">health-aware routing</text>
+</g>
+
+
+<line x1="380" y1="86" x2="380" y2="148" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#srf-arrow)"/>
+
+<line x1="130" y1="148" x2="630" y2="148" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+
+
+<line x1="155" y1="148" x2="155" y2="180" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#srf-arrow)"/>
+<line x1="380" y1="148" x2="380" y2="180" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#srf-arrow)"/>
+<line x1="605" y1="148" x2="605" y2="180" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#srf-arrow)"/>
+
+
+<g data-anim="2">
+  <rect x="40" y="182" width="230" height="160" rx="8" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="2" stroke-dasharray="7 4"/>
+  <text x="155" y="212" text-anchor="middle" class="ttl">Spot pool A</text>
+  <text x="155" y="234" text-anchor="middle" class="sub">2x A10G</text>
+  <text x="155" y="252" text-anchor="middle" class="sub">70% discount</text>
+
+  <rect x="88" y="286" width="134" height="24" rx="12" fill="var(--good,#2f9e6e)" fill-opacity="0.18" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="155" y="303" text-anchor="middle" class="badge" fill="var(--good,#2f9e6e)">-70% spot discount</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="265" y="182" width="230" height="160" rx="8" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="2" stroke-dasharray="7 4"/>
+  <text x="380" y="212" text-anchor="middle" class="ttl">Spot pool B</text>
+  <text x="380" y="234" text-anchor="middle" class="sub">2x A10G</text>
+  <text x="380" y="252" text-anchor="middle" class="sub">70% discount</text>
+
+  <rect x="313" y="286" width="134" height="24" rx="12" fill="var(--good,#2f9e6e)" fill-opacity="0.18" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="380" y="303" text-anchor="middle" class="badge" fill="var(--good,#2f9e6e)">-70% spot discount</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="490" y="182" width="230" height="160" rx="8" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="2.5"/>
+  <text x="605" y="212" text-anchor="middle" class="ttl">On-demand pool</text>
+  <text x="605" y="234" text-anchor="middle" class="sub">1x A10G</text>
+  <text x="605" y="252" text-anchor="middle" class="sub">full price</text>
+  <text x="605" y="270" text-anchor="middle" class="sub">always available</text>
+
+  <rect x="538" y="286" width="134" height="24" rx="12" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="605" y="303" text-anchor="middle" class="badge" fill="var(--accent,#6366f1)">always-on floor</text>
+</g>
+
+
+<g data-anim="3">
+  <text x="380" y="384" text-anchor="middle" class="miss-lbl">dashed = reclaimable spot  |  solid = guaranteed floor</text>
+</g>
+
+</svg>
+<figcaption><b>Spot/on-demand GPU fleet for preemption resilience.</b> Traffic fans out from the load balancer to two cheap-but-volatile spot pools (dashed borders, 70% discount) and one always-available on-demand floor (solid border). Stateless workers and SIGTERM-aware draining let the system absorb spot preemptions invisibly within typical SLA windows.</figcaption>
+</figure>
+
+<p>Key design decisions:</p>
+<ol>
+<li><strong>Stateless inference workers.</strong> Each worker loads the model from shared storage (EFS, GCS) at startup; no local mutable state. Preemption loses nothing.</li>
+<li><strong>Short request timeouts + retries.</strong> Set a 10-second timeout per inference request. If a spot instance is reclaimed mid-request, the load balancer retries on another instance. For a 2-second P95 SLA, this is usually invisible.</li>
+<li><strong>Keep a minimum on-demand floor.</strong> Even 1 on-demand instance per deployment ensures some capacity remains during a spot shortage.</li>
+<li><strong>Preemption signal handling.</strong> Cloud providers send a SIGTERM (GCP) or a metadata flag (AWS) 30–120 seconds before reclamation. The worker should stop accepting new requests and drain in-flight ones.</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">signal</span><span class="o">,</span><span class="w"> </span><span class="nn">sys</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">InferenceWorker</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">accepting_new</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">in_flight</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="c1"># Register spot preemption handler</span>
+        <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGTERM</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_handle_preemption</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_handle_preemption</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">signum</span><span class="p">,</span> <span class="n">frame</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Called ~30-120s before the spot instance is reclaimed.</span>
+<span class="sd">        Stop accepting new requests; let in-flight ones complete.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;SIGTERM received — draining inference worker&quot;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">accepting_new</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="c1"># Health check endpoint will start returning 503,</span>
+        <span class="c1"># causing the load balancer to stop sending new requests.</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">handle_request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">accepting_new</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ServiceUnavailableError</span><span class="p">(</span><span class="s2">&quot;Worker is draining&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">in_flight</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_inference</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">in_flight</span> <span class="o">-=</span> <span class="mi">1</span>
+</code></pre></div>
+<h3 id="spot-instance-cost-modelling">Spot instance cost modelling<a class="headerlink" href="#spot-instance-cost-modelling" title="Permanent link">¶</a></h3>
+<p>Suppose you have a serving system requiring 4 GPU-hours per hour at steady state. On-demand A10G: on the order of USD 1.50/GPU-hour; spot A10G: on the order of USD 0.45/GPU-hour (70% discount). A mixed fleet of 75% spot, 25% on-demand costs:</p>
+<div class="arithmatex">\[
+\text{cost/hour} = 4 \times (0.75 \times 0.45 + 0.25 \times 1.50) = 4 \times (0.3375 + 0.375) = 4 \times 0.7125 = \$2.85
+\]</div>
+<p>Versus all on-demand at USD 6.00/hour. A <strong>2.1× cost reduction</strong> purely from instance type selection, with near-transparent resilience.</p>
+<hr />
+<h2 id="putting-it-all-together-a-production-cost-control-stack">Putting It All Together: A Production Cost-Control Stack<a class="headerlink" href="#putting-it-all-together-a-production-cost-control-stack" title="Permanent link">¶</a></h2>
+<p>The techniques above are not independent — they compose into a layered stack, and the order matters.</p>
+<figure class="viz" id="fig-cost-control-stack-layers">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-cost-control-stack-layers text { fill: currentColor; }
+  #fig-cost-control-stack-layers .ttl { font: 700 13px var(--sans,sans-serif); fill: var(--ink-soft,#e2e8f0); }
+  #fig-cost-control-stack-layers .sub { font: 400 11px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-cost-control-stack-layers .lnum { font: 800 12px var(--sans,sans-serif); }
+  #fig-cost-control-stack-layers .tag  { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-cost-control-stack-layers .badge { font: 700 10px var(--sans,sans-serif); }
+  #fig-cost-control-stack-layers .lbl-muted { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-cost-control-stack-layers .hit-lbl { font: 700 10px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+  #fig-cost-control-stack-layers .miss-lbl { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+
+  /* Animated request dot */
+  #fig-cost-control-stack-layers .req-dot {
+    r: 8;
+    fill: var(--accent,#6366f1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-cost-control-stack-layers .req-dot { display: none; }
+    #fig-cost-control-stack-layers .hit-ghost { display: none; }
+  }
+
+  /* Layer fade-in order */
+  #fig-cost-control-stack-layers [data-anim] { opacity: 0; animation: ccs-fadein 0.5s ease forwards; }
+  #fig-cost-control-stack-layers [data-anim="1"] { animation-delay: 0.1s; }
+  #fig-cost-control-stack-layers [data-anim="2"] { animation-delay: 0.4s; }
+  #fig-cost-control-stack-layers [data-anim="3"] { animation-delay: 0.7s; }
+  #fig-cost-control-stack-layers [data-anim="4"] { animation-delay: 1.0s; }
+  #fig-cost-control-stack-layers [data-anim="5"] { animation-delay: 1.3s; }
+  #fig-cost-control-stack-layers [data-anim="6"] { animation-delay: 1.6s; }
+  #fig-cost-control-stack-layers [data-anim="7"] { animation-delay: 1.9s; }
+  @keyframes ccs-fadein { to { opacity:1; } }
+
+  /* Traveling dot animation */
+  #fig-cost-control-stack-layers .dot-travel {
+    animation: ccs-travel 5s 2.2s ease-in-out infinite;
+    opacity: 0;
+  }
+  @keyframes ccs-travel {
+    0%   { cy:42; opacity:1; }
+    10%  { cy:100; opacity:1; }
+    18%  { cy:108; opacity:1; }
+    26%  { cy:205; opacity:1; }
+    34%  { cy:213; opacity:1; }
+    42%  { cy:310; opacity:1; }
+    55%  { cy:450; opacity:1; }
+    68%  { cy:560; opacity:1; }
+    82%  { cy:660; opacity:1; }
+    95%  { cy:700; opacity:0.7; }
+    100% { cy:700; opacity:0; }
+  }
+
+  /* Hit arrows ghost pulses */
+  #fig-cost-control-stack-layers .hit-pulse {
+    animation: ccs-hit-pulse 5s 2.2s ease-in-out infinite;
+    opacity: 0;
+  }
+  @keyframes ccs-hit-pulse {
+    0%   { opacity: 0; }
+    18%  { opacity: 0; }
+    26%  { opacity: 0.9; }
+    34%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  #fig-cost-control-stack-layers .hit-pulse2 {
+    animation: ccs-hit-pulse2 5s 2.2s ease-in-out infinite;
+    opacity: 0;
+  }
+  @keyframes ccs-hit-pulse2 {
+    0%   { opacity: 0; }
+    34%  { opacity: 0; }
+    42%  { opacity: 0.9; }
+    50%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  /* Feedback loop dashed arrow pulse */
+  #fig-cost-control-stack-layers .feedback-pulse {
+    animation: ccs-fb-pulse 5s 2.2s ease-in-out infinite;
+    opacity: 0;
+  }
+  @keyframes ccs-fb-pulse {
+    0%   { opacity: 0; }
+    82%  { opacity: 0; }
+    90%  { opacity: 0.6; }
+    100% { opacity: 0; }
+  }
+</style>
+<svg viewBox="0 0 820 760" role="img" aria-label="Layered production cost-control stack: incoming requests pass through exact cache, semantic cache, routing classifier, then fan out to cheap/medium/expensive model tiers, converge into async batch queue, and return to client while filling caches.">
+<defs>
+  <marker id="ccs-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--ink-soft,#94a3b8)"/>
+  </marker>
+  <marker id="ccs-arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="ccs-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+</defs>
+
+
+<g data-anim="1">
+  <rect x="320" y="14" width="180" height="34" rx="17" fill="var(--accent,#6366f1)"/>
+  <text x="410" y="36" text-anchor="middle" style="font:700 13px var(--sans,sans-serif); fill:#fff;">Incoming request</text>
+</g>
+
+
+<line x1="410" y1="48" x2="410" y2="78" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)" data-anim="1"/>
+
+
+<g data-anim="2">
+  <rect x="90" y="80" width="640" height="64" rx="8" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+  <text x="134" y="104" class="lnum" fill="var(--accent,#6366f1)">1.</text>
+  <text x="152" y="104" class="ttl">Exact cache (Redis, SHA-256)</text>
+
+  <rect x="590" y="89" width="118" height="20" rx="10" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1"/>
+  <text x="649" y="103" text-anchor="middle" class="tag">~5 ms hit</text>
+  <text x="152" y="128" class="sub">-&gt; cache hit: return immediately</text>
+</g>
+
+
+<g data-anim="2">
+  <path d="M730,112 Q770,112 790,90" stroke="var(--good,#2f9e6e)" stroke-width="1.5" fill="none" stroke-dasharray="4 2" marker-end="url(#ccs-arrow-green)"/>
+  <text x="748" y="107" class="hit-lbl">hit</text>
+</g>
+
+<path d="M730,112 Q770,112 790,90" class="hit-pulse" stroke="var(--good,#2f9e6e)" stroke-width="3" fill="none" opacity="0"/>
+
+
+<g data-anim="2">
+  <line x1="410" y1="144" x2="410" y2="172" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+  <text x="418" y="163" class="miss-lbl">miss</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="90" y="174" width="640" height="64" rx="8" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+  <text x="134" y="198" class="lnum" fill="var(--accent,#6366f1)">2.</text>
+  <text x="152" y="198" class="ttl">Semantic cache (ANN, cosine &gt;= 0.93)</text>
+  <rect x="568" y="183" width="140" height="20" rx="10" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1"/>
+  <text x="638" y="197" text-anchor="middle" class="tag">~15 ms hit</text>
+  <text x="152" y="222" class="sub">-&gt; cache hit: return immediately</text>
+</g>
+
+
+<g data-anim="3">
+  <path d="M730,206 Q770,206 790,184" stroke="var(--good,#2f9e6e)" stroke-width="1.5" fill="none" stroke-dasharray="4 2" marker-end="url(#ccs-arrow-green)"/>
+  <text x="748" y="201" class="hit-lbl">hit</text>
+</g>
+
+<path d="M730,206 Q770,206 790,184" class="hit-pulse2" stroke="var(--good,#2f9e6e)" stroke-width="3" fill="none" opacity="0"/>
+
+
+<g data-anim="3">
+  <line x1="410" y1="238" x2="410" y2="268" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+  <text x="418" y="258" class="miss-lbl">miss</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="90" y="270" width="640" height="64" rx="8" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+  <text x="134" y="294" class="lnum" fill="var(--accent,#6366f1)">3.</text>
+  <text x="152" y="294" class="ttl">Routing classifier (embed + LR)</text>
+  <rect x="604" y="279" width="104" height="20" rx="10" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1"/>
+  <text x="656" y="293" text-anchor="middle" class="tag">~2 ms</text>
+  <text x="152" y="318" class="sub">-&gt; classify: simple / medium / complex</text>
+</g>
+
+
+<g data-anim="4">
+
+  <line x1="410" y1="334" x2="410" y2="354" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="155" y1="354" x2="650" y2="354" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="155" y1="354" x2="155" y2="385" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+  <line x1="410" y1="354" x2="410" y2="385" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+  <line x1="650" y1="354" x2="650" y2="385" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+
+  <text x="155" y="371" text-anchor="middle" class="lbl-muted">[simple]</text>
+  <text x="410" y="371" text-anchor="middle" class="lbl-muted">[medium]</text>
+  <text x="650" y="371" text-anchor="middle" class="lbl-muted">[complex]</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="40" y="388" width="230" height="80" rx="8" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <text x="155" y="412" text-anchor="middle" class="ttl">Quantised INT4</text>
+  <text x="155" y="428" text-anchor="middle" class="sub">on spot GPUs</text>
+
+  <rect x="80" y="440" width="150" height="20" rx="10" fill="var(--good,#2f9e6e)" fill-opacity="0.15" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+  <text x="155" y="454" text-anchor="middle" class="badge" fill="var(--good,#2f9e6e)">cheapest</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="293" y="388" width="234" height="80" rx="8" class="v-fill" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="410" y="412" text-anchor="middle" class="ttl">Small API model</text>
+  <text x="410" y="428" text-anchor="middle" class="sub">7B FP16 API</text>
+
+  <rect x="335" y="440" width="150" height="20" rx="10" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="410" y="454" text-anchor="middle" class="badge" fill="var(--accent,#6366f1)">mid tier</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="540" y="388" width="230" height="80" rx="8" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+  <text x="655" y="412" text-anchor="middle" class="ttl">Frontier model</text>
+  <text x="655" y="428" text-anchor="middle" class="sub">with prompt caching</text>
+
+  <rect x="580" y="440" width="150" height="20" rx="10" fill="var(--warn,#e0a106)" fill-opacity="0.14" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+  <text x="655" y="454" text-anchor="middle" class="badge" fill="var(--warn,#e0a106)">priciest</text>
+</g>
+
+
+<g data-anim="6">
+  <line x1="155" y1="468" x2="155" y2="514" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="410" y1="468" x2="410" y2="514" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="655" y1="468" x2="655" y2="514" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="155" y1="514" x2="655" y2="514" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="410" y1="514" x2="410" y2="528" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+</g>
+
+
+<g data-anim="6">
+  <rect x="200" y="530" width="420" height="64" rx="8" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="2"/>
+  <text x="244" y="555" class="lnum" fill="var(--accent,#6366f1)">4.</text>
+  <text x="262" y="555" class="ttl">Async batch queue</text>
+  <text x="262" y="579" class="sub">(if SLA permits)</text>
+</g>
+
+
+<g data-anim="6">
+  <line x1="410" y1="594" x2="410" y2="628" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+</g>
+
+
+<g data-anim="7">
+  <rect x="200" y="630" width="420" height="56" rx="8" class="v-fill" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="410" y="654" text-anchor="middle" class="ttl">Return to client</text>
+  <text x="410" y="674" text-anchor="middle" class="sub">+ fill exact/semantic cache</text>
+</g>
+
+
+<g data-anim="7">
+  <path d="M200,658 Q40,658 40,112 Q40,80 90,80" stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none" stroke-dasharray="5 4" opacity="0.5" marker-end="url(#ccs-arrow-muted)"/>
+  <text x="26" y="400" text-anchor="middle" class="lbl-muted" transform="rotate(-90,26,400)">fill caches</text>
+</g>
+
+
+<path d="M200,658 Q40,658 40,112 Q40,80 90,80" class="feedback-pulse" stroke="var(--good,#2f9e6e)" stroke-width="2.5" fill="none" stroke-dasharray="5 4" opacity="0"/>
+
+
+<circle class="dot-travel" cx="410" cy="42" r="8" fill="var(--accent,#6366f1)" opacity="0"/>
+
+</svg>
+<figcaption><b>Layered production cost-control stack where order matters.</b> Each incoming request first hits cheap exact and semantic caches (returning immediately on a hit), then a fast routing classifier dispatches it to the cheapest capable model tier, results optionally pass through an async batch queue, and the final response fills both caches for future reuse. Short-circuiting at the earliest possible layer is the key to 50-90% cost reduction.</figcaption>
+</figure>
+
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">CostControlStack</span><span class="p">:</span>
+    <span class="n">exact_cache</span><span class="p">:</span> <span class="s2">&quot;ExactCache&quot;</span>
+    <span class="n">semantic_cache</span><span class="p">:</span> <span class="s2">&quot;SemanticCache&quot;</span>
+    <span class="n">router</span><span class="p">:</span> <span class="s2">&quot;RoutingClassifier&quot;</span>
+    <span class="n">simple_model_fn</span><span class="p">:</span> <span class="nb">callable</span>
+    <span class="n">medium_model_fn</span><span class="p">:</span> <span class="nb">callable</span>
+    <span class="n">frontier_model_fn</span><span class="p">:</span> <span class="nb">callable</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="n">messages</span> <span class="o">=</span> <span class="n">request</span><span class="p">[</span><span class="s2">&quot;messages&quot;</span><span class="p">]</span>
+        <span class="n">query</span> <span class="o">=</span> <span class="n">messages</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;content&quot;</span><span class="p">]</span>          <span class="c1"># last user turn</span>
+
+        <span class="c1"># --- Layer 1: Exact cache ---</span>
+        <span class="n">hit</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">exact_cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">{</span><span class="o">**</span><span class="n">hit</span><span class="p">,</span> <span class="s2">&quot;_source&quot;</span><span class="p">:</span> <span class="s2">&quot;exact_cache&quot;</span><span class="p">}</span>
+
+        <span class="c1"># --- Layer 2: Semantic cache ---</span>
+        <span class="n">hit</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">semantic_cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">{</span><span class="o">**</span><span class="n">hit</span><span class="p">[</span><span class="s2">&quot;response&quot;</span><span class="p">],</span> <span class="s2">&quot;_source&quot;</span><span class="p">:</span> <span class="s2">&quot;semantic_cache&quot;</span><span class="p">}</span>
+
+        <span class="c1"># --- Layer 3: Route to cheapest capable model ---</span>
+        <span class="n">tier</span><span class="p">,</span> <span class="n">confidence</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">router</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">tier</span> <span class="o">==</span> <span class="s2">&quot;simple&quot;</span><span class="p">:</span>
+            <span class="n">resp</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">simple_model_fn</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">tier</span> <span class="o">==</span> <span class="s2">&quot;medium&quot;</span><span class="p">:</span>
+            <span class="n">resp</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">medium_model_fn</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>  <span class="c1"># &quot;complex&quot;</span>
+            <span class="n">resp</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">frontier_model_fn</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+
+        <span class="n">resp</span><span class="p">[</span><span class="s2">&quot;_tier&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">tier</span>
+        <span class="n">resp</span><span class="p">[</span><span class="s2">&quot;_router_confidence&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">confidence</span>
+
+        <span class="c1"># --- Fill both caches for future requests ---</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">exact_cache</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">resp</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">semantic_cache</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">resp</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">resp</span>
+</code></pre></div>
+<h3 id="monitoring-and-continuous-improvement">Monitoring and continuous improvement<a class="headerlink" href="#monitoring-and-continuous-improvement" title="Permanent link">¶</a></h3>
+<p>No cost-control stack is set-and-forget. Wire up the following metrics:</p>
+<ul>
+<li><strong>Cache hit rate</strong> (exact and semantic, separately) — alert if it drops, investigate if query distribution shifted.</li>
+<li><strong>Tier distribution</strong> (fraction of traffic to each model tier) — regressions in routing quality show up as unexpectedly high frontier usage.</li>
+<li><strong>Cost per request</strong> — tagged by product feature, user cohort, model tier. Allows per-feature cost attribution.</li>
+<li><strong>Quality-gate pass rate</strong> — tracks whether the cheap tier is regressing (model update, distribution shift).</li>
+</ul>
+<p>See <a href="../12-production-mlops/02-observability-llmops.html">Observability, Logging &amp; LLMOps</a> for the observability infrastructure that powers these dashboards.</p>
+<div class="admonition warning">
+<p class="admonition-title">Cache invalidation pitfalls</p>
+<p>Semantic caches can serve stale content when your knowledge base changes (new policy, product update). Always include a cache-invalidation hook in your content management system: when a document is updated, delete all semantic cache entries whose source documents include that document&rsquo;s ID. Exact caches keyed on model version should be flushed whenever you update the model.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: bootstrap your routing classifier cheaply</p>
+<p>You do not need labelled data from day one. Deploy the sequential cascade (small-then-large) for the first week, log which tier each request ended up using, and use that as noisy supervision. After 10,000–50,000 examples, train a routing classifier offline and A/B test it against the sequential cascade. Typical result: equal quality, 30–50% lower latency for the majority of traffic.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Cost per request = <span class="arithmatex">\(C_\text{input} \cdot n_p + C_\text{output} \cdot n_g\)</span>; output tokens cost 3–5× more — reduce generated length before reducing input length.</li>
+<li>Exact caching (Redis + SHA-256) is zero-latency and zero-risk; it pays off most for embedding calls and templated workloads.</li>
+<li>Semantic caching adds a 10–20 ms overhead but can serve 20–40% of conversational traffic; calibrate the cosine threshold against your domain&rsquo;s precision floor.</li>
+<li>Provider-side prompt caching (Anthropic, OpenAI) can reduce input costs by up to 90% for repeated long prefixes; restructure prompts to put stable content first.</li>
+<li>Model routing cascades (sequential or classifier-based) deliver 2–6× cost reductions by routing simple queries to cheap models; bootstrap the classifier from cascade logs.</li>
+<li>Speculative routing fires cheap and expensive models in parallel and cancels the expensive one on early success — optimal when cheap model latency &lt;&lt; expensive model latency and cancellation is cheap.</li>
+<li>INT4 quantisation halves GPU memory relative to INT8 and reduces hardware cost 4× relative to FP16, with 1–3% quality loss on standard benchmarks — acceptable for a fallback tier.</li>
+<li>Spot/preemptible GPUs provide 60–80% cost reduction; make workers stateless, handle SIGTERM gracefully, and keep a small on-demand floor.</li>
+<li>Monitor cache hit rate, tier distribution, and cost per request continuously; routing quality degrades silently with distribution shift.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>LLM cost control has matured into a well-structured engineering discipline: semantic caching, model-routing cascades, and provider-side KV-prefix caching can collectively cut production API spend by 50–90% without sacrificing quality. Open frameworks such as RouteLLM and GPTCache have made these techniques production-accessible, while research on non-prefix KV reuse (CacheBlend) and learned routers continues to push the frontier.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2305.05176">Chen et al., <em>FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance</em> (2023)</a> — introduces the LLM cascade framework and cost-quality trade-off analysis that underlies most routing systems.</li>
+<li><a href="https://arxiv.org/abs/2306.02561">Jiang et al., <em>LLM-Blender: Ensembling Large Language Models with Pairwise Ranking and Generative Fusion</em> (2023)</a> — foundational ACL 2023 work on ranking and fusing outputs across model tiers.</li>
+<li><a href="https://arxiv.org/abs/2309.06180">Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (2023)</a> — the vLLM/PagedAttention SOSP paper; explains why continuous batching and KV-cache management are the backbone of cost-efficient serving.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2406.18665">Ong et al., <em>RouteLLM: Learning to Route LLMs with Preference Data</em> (2024)</a> — trained routers reduce costs by up to 85% while maintaining 95% of strong-model quality across MT-Bench, MMLU, and GSM8K.</li>
+<li><a href="https://arxiv.org/abs/2312.07104">Zheng et al., <em>SGLang: Efficient Execution of Structured Language Model Programs</em> (2024)</a> — introduces RadixAttention for automatic KV-prefix reuse across structured programs and multi-turn conversations.</li>
+<li><a href="https://arxiv.org/abs/2405.16444">Yao et al., <em>CacheBlend: Fast LLM Serving for RAG with Cached Knowledge Fusion</em> (2024)</a> — extends prefix caching to non-prefix RAG chunks, reducing time-to-first-token by 2–3× without quality loss.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/zilliztech/GPTCache">zilliztech/GPTCache</a> — pluggable semantic cache library for LLM APIs; supports FAISS, Qdrant, and Milvus backends with drop-in LangChain/LlamaIndex integration.</li>
+<li><a href="https://github.com/lm-sys/routellm">lm-sys/RouteLLM</a> — open-source routing framework from LMSYS; drop-in OpenAI-compatible client that redirects queries to cheap or strong models based on trained preference-data routers.</li>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — high-performance serving framework with RadixAttention prefix caching; achieves up to 6.4× higher throughput than baseline systems.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching">Anthropic Prompt Caching — official docs</a> — canonical reference for enabling server-side KV reuse on the Claude API, including pricing, TTL options, and cache breakpoint rules.</li>
+<li><a href="https://www.lmsys.org/blog/2024-07-01-routellm/">RouteLLM: An Open-Source Framework for Cost-Effective LLM Routing — LMSYS Blog (2024)</a> — practical walkthrough of training, evaluating, and deploying LLM routers in production.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Kang et al., &ldquo;LLM-Blender: Ensembling Large Language Models with Pairwise Ranking and Generative Fusion,&rdquo; ACL 2023</strong> — foundational work on ensembling and routing across LLMs.</li>
+<li><strong>Chen et al., &ldquo;FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance,&rdquo; 2023</strong> — introduces the LLM cascade framework and cost-quality trade-off analysis.</li>
+<li><strong>Vllm project (Kwon et al., &ldquo;Efficient Memory Management for Large Language Model Serving with PagedAttention,&rdquo; SOSP 2023)</strong> — the continuous batching and KV-cache management paper underlying most open-source serving stacks.</li>
+<li><strong>Dao et al., &ldquo;FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning,&rdquo; ICLR 2024</strong> — understanding IO-efficient attention is prerequisite to understanding why KV-cache reuse saves so much.</li>
+<li><strong>Lin et al., &ldquo;AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration,&rdquo; MLSys 2024</strong> — the quantisation method most commonly used in quantised fallback deployments.</li>
+<li><strong>SGLang RadixAttention (Zheng et al., &ldquo;SGLang: Efficient Execution of Structured Language Model Programs,&rdquo; 2024)</strong> — prefix cache reuse at the serving-system level, complementing provider-side caching.</li>
+<li><strong>GPTCache (GitHub: zilliztech/GPTCache)</strong> — open-source semantic cache library with pluggable vector stores and embedding backends, useful as a reference implementation.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-observability-llmops.html"><span class="pn-label">← Previous</span><span class="pn-title">Observability, Logging &amp; LLMOps</span></a>
+<a class="next" href="04-safety-guardrails.html"><span class="pn-label">Next →</span><span class="pn-title">Safety, Guardrails &amp; Content Moderation</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-does-this-problem-exist">Why Does This Problem Exist?</a></li>
+<li class="toc-l2"><a href="#exact-caching">Exact Caching</a></li>
+<li class="toc-l3"><a href="#what-to-key-on">What to key on</a></li>
+<li class="toc-l3"><a href="#storage-and-eviction">Storage and eviction</a></li>
+<li class="toc-l3"><a href="#handling-non-determinism">Handling non-determinism</a></li>
+<li class="toc-l2"><a href="#semantic-caching">Semantic Caching</a></li>
+<li class="toc-l3"><a href="#similarity-threshold-selection">Similarity threshold selection</a></li>
+<li class="toc-l3"><a href="#embedding-model-selection-and-latency">Embedding model selection and latency</a></li>
+<li class="toc-l2"><a href="#prompt-prefix-caching-provider-side-kv-reuse">Prompt-Prefix Caching (Provider-Side KV Reuse)</a></li>
+<li class="toc-l2"><a href="#model-routing-and-cascades">Model Routing and Cascades</a></li>
+<li class="toc-l3"><a href="#1-quality-based-escalation-sequential">1. Quality-based escalation (sequential)</a></li>
+<li class="toc-l3"><a href="#2-classifier-based-routing-parallel-or-pre-dispatch">2. Classifier-based routing (parallel or pre-dispatch)</a></li>
+<li class="toc-l3"><a href="#cascade-economics">Cascade economics</a></li>
+<li class="toc-l2"><a href="#speculative-routing">Speculative Routing</a></li>
+<li class="toc-l2"><a href="#quantised-fallbacks">Quantised Fallbacks</a></li>
+<li class="toc-l3"><a href="#memory-and-throughput-impact">Memory and throughput impact</a></li>
+<li class="toc-l3"><a href="#when-to-invoke-a-quantised-fallback">When to invoke a quantised fallback</a></li>
+<li class="toc-l2"><a href="#batching-for-cost">Batching for Cost</a></li>
+<li class="toc-l3"><a href="#continuous-in-flight-batching">Continuous (in-flight) batching</a></li>
+<li class="toc-l3"><a href="#offline-batching-for-async-workloads">Offline batching for async workloads</a></li>
+<li class="toc-l2"><a href="#spot-and-preemptible-gpus">Spot and Preemptible GPUs</a></li>
+<li class="toc-l3"><a href="#architecture-for-spot-resilience">Architecture for spot resilience</a></li>
+<li class="toc-l3"><a href="#spot-instance-cost-modelling">Spot instance cost modelling</a></li>
+<li class="toc-l2"><a href="#putting-it-all-together-a-production-cost-control-stack">Putting It All Together: A Production Cost-Control Stack</a></li>
+<li class="toc-l3"><a href="#monitoring-and-continuous-improvement">Monitoring and continuous improvement</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

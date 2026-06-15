@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Long-Context Pretraining &amp; Context Extension — The LLM Stack</title>
+<meta name="description" content="Why long context is hard (quadratic + memory), training vs extension; RoPE scaling (PI, NTK, YaRN), continued pretraining on long docs, document packing for lon">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="active" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="313-long-context-pretraining-context-extension">3.13 Long-Context Pretraining &amp; Context Extension<a class="headerlink" href="#313-long-context-pretraining-context-extension" title="Permanent link">¶</a></h1>
+<p>What changes when you train a language model to read 128 thousand tokens at once instead of 2 thousand? The answer turns out to touch nearly every part of the stack: attention arithmetic, positional encoding mathematics, data curation, parallelism strategy, and inference memory management. This chapter develops each of those changes from first principles.</p>
+<p>We will see why a naive extension to long contexts fails, how the community learned to patch positional encodings cheaply via RoPE interpolation, how continued pretraining on long documents consolidates those patches, and finally how ring/context parallelism makes the training computationally tractable. We close by connecting long-context training to the inference KV-cache problem you will likely be asked about in a systems design interview.</p>
+<hr />
+<h2 id="the-two-fundamental-bottlenecks">The Two Fundamental Bottlenecks<a class="headerlink" href="#the-two-fundamental-bottlenecks" title="Permanent link">¶</a></h2>
+<h3 id="quadratic-attention-cost">Quadratic Attention Cost<a class="headerlink" href="#quadratic-attention-cost" title="Permanent link">¶</a></h3>
+<p>Standard self-attention computes a score matrix <span class="arithmatex">\(S \in \mathbb{R}^{T \times T}\)</span> for a sequence of length <span class="arithmatex">\(T\)</span>:</p>
+<div class="arithmatex">\[
+S = \frac{QK^\top}{\sqrt{d_k}}, \quad \text{Attention}(Q,K,V) = \operatorname{softmax}(S)\,V
+\]</div>
+<p>Both the FLOPs for this product and the memory to store <span class="arithmatex">\(S\)</span> grow as <span class="arithmatex">\(\mathcal{O}(T^2)\)</span>. At <span class="arithmatex">\(T = 2048\)</span> this is manageable; at <span class="arithmatex">\(T = 128{,}000\)</span> it becomes painful:</p>
+<table>
+<thead>
+<tr>
+<th>Sequence length</th>
+<th>Score matrix (fp16)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2,048</td>
+<td>16 MB per head</td>
+</tr>
+<tr>
+<td>32,768</td>
+<td>~4 GB per head</td>
+</tr>
+<tr>
+<td>128,000</td>
+<td>~61 GB per head</td>
+</tr>
+</tbody>
+</table>
+<p>A model with 32 heads would need ~2 TB just for score matrices at 128 K. FlashAttention (covered in depth in <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a> and <a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2 &amp; 3</a>) eliminates the need to materialise the full <span class="arithmatex">\(S\)</span> in HBM by fusing the computation in tiles, reducing the HBM requirement to <span class="arithmatex">\(\mathcal{O}(T)\)</span> activations. But the <span class="arithmatex">\(\mathcal{O}(T^2)\)</span> FLOPs remain — you simply compute them faster.</p>
+<h3 id="memory-from-activations-and-kv-cache">Memory From Activations and KV Cache<a class="headerlink" href="#memory-from-activations-and-kv-cache" title="Permanent link">¶</a></h3>
+<p>During training, gradient checkpointing can trade memory for compute, but even with it, intermediate activations scale linearly with <span class="arithmatex">\(T\)</span> per layer. More acutely, training requires storing the full sequence per sample in the attention buffer. At long sequence lengths the per-token memory cost does not shrink; it just shifts from the score matrix to the gradient and activation buffers.</p>
+<p>During inference, all previously computed keys and values must be kept in memory — the KV cache — so the context cost is <span class="arithmatex">\(\mathcal{O}(T)\)</span> per forward pass but persists for the entire generation episode. For a 70 B-parameter model with 8 KV heads (GQA), the KV cache for a single 128 K-token context is roughly:</p>
+<div class="arithmatex">\[
+2 \times 8 \times 128{,}000 \times d_{\text{kv}} \times \text{bytes/value}
+\]</div>
+<p>With <span class="arithmatex">\(d_{\text{kv}} = 128\)</span> and bf16 (2 bytes): <span class="arithmatex">\(2 \times 8 \times 128{,}000 \times 128 \times 2 \approx 524\;\text{MB}\)</span> per layer. With 80 layers that is around 42 GB — comparable to the model weights themselves. Managing this is the focus of <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>.</p>
+<hr />
+<h2 id="rope-and-the-extrapolation-problem">RoPE and the Extrapolation Problem<a class="headerlink" href="#rope-and-the-extrapolation-problem" title="Permanent link">¶</a></h2>
+<h3 id="why-sinusoidal-and-learned-encodings-fail">Why Sinusoidal and Learned Encodings Fail<a class="headerlink" href="#why-sinusoidal-and-learned-encodings-fail" title="Permanent link">¶</a></h3>
+<p>A model trained with absolute positional embeddings at positions <span class="arithmatex">\(\{0, \ldots, T_{\text{train}}-1\}\)</span> has never seen the embedding at position <span class="arithmatex">\(T_{\text{train}} + k\)</span> for any <span class="arithmatex">\(k &gt; 0\)</span>. Learned embeddings simply have no weight there. Sinusoidal embeddings produce a valid vector at any position, but the attention patterns were never trained to use those values, so performance degrades sharply. See <a href="../02-transformer/05-positional-encoding.html">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a> for the full encoding taxonomy.</p>
+<h3 id="rope-refresher">RoPE Refresher<a class="headerlink" href="#rope-refresher" title="Permanent link">¶</a></h3>
+<p>RoPE (Rotary Position Embedding, Su et al., 2022) applies a position-dependent rotation to query and key vectors before the dot product. For a pair of scalars at dimension index <span class="arithmatex">\(2i\)</span> and <span class="arithmatex">\(2i+1\)</span>:</p>
+<div class="arithmatex">\[
+\begin{bmatrix} q_{2i} \\ q_{2i+1} \end{bmatrix}_{\text{rotated}} = \begin{bmatrix} \cos(m\,\theta_i) &amp; -\sin(m\,\theta_i) \\ \sin(m\,\theta_i) &amp; \cos(m\,\theta_i) \end{bmatrix} \begin{bmatrix} q_{2i} \\ q_{2i+1} \end{bmatrix}
+\]</div>
+<p>where <span class="arithmatex">\(m\)</span> is the absolute position and <span class="arithmatex">\(\theta_i = b^{-2i/d}\)</span> with base <span class="arithmatex">\(b = 10{,}000\)</span> by default. The key insight is that the dot product <span class="arithmatex">\(q_m \cdot k_n\)</span> depends only on the <em>relative</em> position <span class="arithmatex">\(m - n\)</span>, because the rotation matrices satisfy <span class="arithmatex">\(R_m^\top R_n = R_{m-n}\)</span>.</p>
+<p>The problem for extrapolation: at training time, <span class="arithmatex">\(m\)</span> never exceeds <span class="arithmatex">\(T_{\text{train}}\)</span>. The angles <span class="arithmatex">\(m \theta_i\)</span> stay within <span class="arithmatex">\([0, T_{\text{train}} \theta_i]\)</span>. For the low-frequency dimensions (large <span class="arithmatex">\(i\)</span>, tiny <span class="arithmatex">\(\theta_i\)</span>) this range can be small — those dimensions barely rotate even within the training window. For the high-frequency dimensions the rotation is well-covered. When you push <span class="arithmatex">\(m &gt; T_{\text{train}}\)</span>, high-frequency dimensions enter completely unseen phase territory, causing attention to produce pathological scores.</p>
+<h3 id="position-interpolation-pi">Position Interpolation (PI)<a class="headerlink" href="#position-interpolation-pi" title="Permanent link">¶</a></h3>
+<p>Chen et al. (2023, <em>Extending Context Window of Large Language Models via Positional Interpolation</em>) propose a one-line fix: rather than feeding position <span class="arithmatex">\(m\)</span> to RoPE, feed the scaled position <span class="arithmatex">\(m' = m \cdot \frac{T_{\text{train}}}{T_{\text{target}}}\)</span>. This linearly rescales positions so the full target window fits inside the training range.</p>
+<p>If the training window is <span class="arithmatex">\(T_{\text{train}} = 4{,}096\)</span> and the target is <span class="arithmatex">\(T_{\text{target}} = 32{,}768\)</span>, every position is divided by <span class="arithmatex">\(32{,}768 / 4{,}096 = 8\)</span>. All angles stay within the trained range.</p>
+<p>The cost: nearby tokens that were originally at relative distance 1 are now at effective distance <span class="arithmatex">\(1/8\)</span>, so the model initially cannot distinguish adjacent tokens well. A small amount of fine-tuning (on the order of 1 000 steps) on long documents restores performance. The work reports good recovery at 8x extension.</p>
+<h3 id="ntk-aware-interpolation">NTK-aware Interpolation<a class="headerlink" href="#ntk-aware-interpolation" title="Permanent link">¶</a></h3>
+<p>NTK-aware interpolation (bloc97, community research 2023) observes that PI uniformly compresses all frequencies, damaging the high-frequency (short-range) components that carry most of the positional signal. Instead, it rescales only the <em>base</em> <span class="arithmatex">\(b\)</span>:</p>
+<div class="arithmatex">\[
+b' = b \cdot \left(\frac{T_{\text{target}}}{T_{\text{train}}}\right)^{d/(d-2)}
+\]</div>
+<p>This increases the base (e.g. from 10 000 to ~500 000 for an 8x extension), making each <span class="arithmatex">\(\theta_i\)</span> smaller and thus each dimension rotate more slowly — effectively stretching the rope. High-frequency dimensions retain their resolution for local dependencies while low-frequency dimensions stretch to cover global distances. NTK-aware interpolation often works <em>without any fine-tuning</em>, giving it a zero-shot extension property.</p>
+<h3 id="yarn">YaRN<a class="headerlink" href="#yarn" title="Permanent link">¶</a></h3>
+<p>YaRN (Peng et al., 2023, <em>YaRN: Efficient Context Window Extension of Large Language Models</em>) builds further on NTK-aware scaling by introducing:</p>
+<ol>
+<li><strong>Frequency ramping.</strong> A smooth interpolation factor <span class="arithmatex">\(\gamma(i)\)</span> that applies no scaling to the highest-frequency (most local) dimensions and full PI scaling to the lowest-frequency (most global) ones:</li>
+</ol>
+<div class="arithmatex">\[
+\theta'_i = \begin{cases} \theta_i &amp; \text{if } \lambda_i \leq \lambda_{\min} \\ \theta_i / s &amp; \text{if } \lambda_i \geq \lambda_{\max} \\ \text{interpolated} &amp; \text{otherwise} \end{cases}
+\]</div>
+<p>where <span class="arithmatex">\(\lambda_i = 2\pi / \theta_i\)</span> is the wavelength and <span class="arithmatex">\(s = T_{\text{target}} / T_{\text{train}}\)</span> is the scale factor.</p>
+<ol start="2">
+<li><strong>Attention temperature correction.</strong> Extended positions produce larger dot products because the effective <span class="arithmatex">\(d_k\)</span> changes. YaRN multiplies the softmax logits by a temperature <span class="arithmatex">\(t \approx 0.1 \ln s + 1\)</span> to compensate.</li>
+</ol>
+<p>YaRN requires only a small amount of continued training (around 400 steps in the original work) and often outperforms PI at the same training budget. It is widely adopted: Mistral, Qwen, and Deepseek use variants of YaRN.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_rope_freqs</span><span class="p">(</span><span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">base</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build standard RoPE inverse frequencies for a given dimension and base.&quot;&quot;&quot;</span>
+    <span class="c1"># Shape: (dim // 2,)</span>
+    <span class="n">inv_freq</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">base</span> <span class="o">**</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">dim</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="n">dim</span><span class="p">))</span>
+    <span class="c1"># Outer product with positions → (seq_len, dim // 2)</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">seq_len</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float</span><span class="p">)</span>
+    <span class="n">freqs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">outer</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">inv_freq</span><span class="p">)</span>      <span class="c1"># shape: (seq_len, dim // 2)</span>
+    <span class="k">return</span> <span class="n">freqs</span>  <span class="c1"># each row is the angles for one position</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_yarn_freqs</span><span class="p">(</span>
+    <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">base</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">orig_max_seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">target_max_seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">beta_fast</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">32.0</span><span class="p">,</span>   <span class="c1"># high-freq boundary (wavelengths)</span>
+    <span class="n">beta_slow</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>    <span class="c1"># low-freq boundary</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    YaRN frequency computation.</span>
+<span class="sd">    Returns per-dimension scaling factor to apply to the standard freqs.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="n">target_max_seq_len</span> <span class="o">/</span> <span class="n">orig_max_seq_len</span>
+
+    <span class="c1"># Standard inverse frequencies</span>
+    <span class="n">inv_freq</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">base</span> <span class="o">**</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">dim</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="n">dim</span><span class="p">))</span>
+
+    <span class="c1"># Wavelength for each dimension: λ = 2π / θ_i</span>
+    <span class="n">wavelengths</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">/</span> <span class="n">inv_freq</span>
+
+    <span class="c1"># Ramp function: 0 for high-freq dims (leave unchanged), 1 for low-freq (full scale)</span>
+    <span class="n">ramp</span> <span class="o">=</span> <span class="p">(</span><span class="n">wavelengths</span> <span class="o">-</span> <span class="n">orig_max_seq_len</span> <span class="o">/</span> <span class="n">beta_fast</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span>
+        <span class="n">orig_max_seq_len</span> <span class="o">/</span> <span class="n">beta_slow</span> <span class="o">-</span> <span class="n">orig_max_seq_len</span> <span class="o">/</span> <span class="n">beta_fast</span>
+    <span class="p">)</span>
+    <span class="n">ramp</span> <span class="o">=</span> <span class="n">ramp</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+
+    <span class="c1"># Blend: high-freq → no interpolation, low-freq → PI scaling</span>
+    <span class="c1"># NTK base for fully-scaled dims: b&#39; = b * scale^(dim/(dim-2))</span>
+    <span class="n">ntk_base</span> <span class="o">=</span> <span class="n">base</span> <span class="o">*</span> <span class="p">(</span><span class="n">scale</span> <span class="o">**</span> <span class="p">(</span><span class="n">dim</span> <span class="o">/</span> <span class="p">(</span><span class="n">dim</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)))</span>
+    <span class="n">ntk_inv_freq</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">ntk_base</span> <span class="o">**</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">dim</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="n">dim</span><span class="p">))</span>
+
+    <span class="c1"># Interpolate between unscaled (ramp=0) and NTK-scaled (ramp=1) per dimension</span>
+    <span class="n">blended_inv_freq</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">ramp</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_freq</span> <span class="o">+</span> <span class="n">ramp</span> <span class="o">*</span> <span class="n">ntk_inv_freq</span>
+
+    <span class="n">t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">target_max_seq_len</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float</span><span class="p">)</span>
+    <span class="n">freqs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">outer</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">blended_inv_freq</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">freqs</span>  <span class="c1"># (target_max_seq_len, dim // 2)</span>
+
+<span class="c1"># --- demo ---</span>
+<span class="c1"># GPT-style model: dim=128, base=10000, trained at 4096, extending to 32768</span>
+<span class="n">orig_freqs</span>  <span class="o">=</span> <span class="n">build_rope_freqs</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">10000</span><span class="p">,</span> <span class="mi">4096</span><span class="p">)</span>
+<span class="n">yarn_freqs</span>  <span class="o">=</span> <span class="n">build_yarn_freqs</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">10000</span><span class="p">,</span> <span class="mi">4096</span><span class="p">,</span> <span class="mi">32768</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Original freq range at pos 4096: [</span><span class="si">{</span><span class="n">orig_freqs</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">orig_freqs</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;YaRN freq range at pos 32768:    [</span><span class="si">{</span><span class="n">yarn_freqs</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">yarn_freqs</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span><span class="p">)</span>
+<span class="c1"># YaRN keeps high-freq dims in known territory; low-freq dims gently scaled.</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Comparing PI vs YaRN angle ranges at 8x extension</p>
+<p>Consider a model with <span class="arithmatex">\(d = 128\)</span> trained at <span class="arithmatex">\(T_{\text{train}} = 4{,}096\)</span>. We extend to <span class="arithmatex">\(T_{\text{target}} = 32{,}768\)</span> (8x).</p>
+<p><strong>Standard RoPE</strong> at position 32 768, dimension <span class="arithmatex">\(i=0\)</span> (highest frequency):
+$<span class="arithmatex">\(\theta_0 = 10000^{0/128} = 1.0, \quad m\theta_0 = 32{,}768 \text{ rad}\)</span>$
+The model was trained only up to <span class="arithmatex">\(4096 \text{ rad}\)</span> for this dimension — over 8x out of distribution.</p>
+<p><strong>Position Interpolation</strong> divides every position by 8:
+$<span class="arithmatex">\(m' = 32{,}768 / 8 = 4{,}096, \quad m'\theta_0 = 4{,}096 \text{ rad}\)</span>$
+Now the highest-frequency dimension is safely in range, but nearby positions at <span class="arithmatex">\(m=1\)</span> and <span class="arithmatex">\(m=2\)</span> now appear at <span class="arithmatex">\(m'=0.125\)</span> and <span class="arithmatex">\(m'=0.25\)</span> — the model can barely tell them apart.</p>
+<p><strong>YaRN</strong> with <span class="arithmatex">\(\beta_{\text{fast}} = 32\)</span> applies <em>no scaling</em> to the highest-frequency dimension (its wavelength <span class="arithmatex">\(\lambda_0 = 2\pi \approx 6.3\)</span> is far below the original context 4096), so nearby tokens remain distinguishable. It applies full NTK-style scaling only to low-frequency dimensions that actually need longer range. The result is the best of both worlds.</p>
+</div>
+<hr />
+<h2 id="continued-pretraining-on-long-documents">Continued Pretraining on Long Documents<a class="headerlink" href="#continued-pretraining-on-long-documents" title="Permanent link">¶</a></h2>
+<h3 id="why-fine-tuning-alone-is-insufficient">Why Fine-Tuning Alone Is Insufficient<a class="headerlink" href="#why-fine-tuning-alone-is-insufficient" title="Permanent link">¶</a></h3>
+<p>RoPE scaling patches the positional encoding but does not teach the model new attention patterns or update MLP weights to reason over document-scale structure. A 4 K-trained model re-encodes positions at 32 K but the attention heads have never learned which distant tokens to attend to: they were never penalised for ignoring tokens at offset &gt;4 096. Continued pretraining on genuinely long documents rectifies this.</p>
+<h3 id="data-curation-for-long-context-training">Data Curation for Long-Context Training<a class="headerlink" href="#data-curation-for-long-context-training" title="Permanent link">¶</a></h3>
+<p>The key challenge is obtaining sufficiently long training documents. The pretraining corpus — described in <a href="../03-pretraining/01-pretraining-data.html">Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a> — mostly consists of web paragraphs shorter than the target context. Long-context continued pretraining typically draws from:</p>
+<ul>
+<li><strong>Books</strong> (Project Gutenberg, Books3): naturally multi-thousand-word.</li>
+<li><strong>Scientific papers</strong> (arXiv full PDFs, Semantic Scholar): 6–20 K tokens each.</li>
+<li><strong>Code repositories</strong> (The Stack, GitHub): single files or whole-repo concatenations.</li>
+<li><strong>Legal and financial documents</strong>: contracts, 10-K filings.</li>
+<li><strong>Long web articles</strong>: Wikipedia pages, journalism.</li>
+</ul>
+<p>A useful rule of thumb from community experimentation: 5–20 billion tokens of continued pretraining at the target context length is often sufficient to unlock the new length. The ratio of long-to-short documents matters — too many short documents and the model never practices long-range attention.</p>
+<h3 id="learning-rate-and-scheduler-strategy">Learning Rate and Scheduler Strategy<a class="headerlink" href="#learning-rate-and-scheduler-strategy" title="Permanent link">¶</a></h3>
+<p>Continued pretraining for context extension typically uses:</p>
+<ul>
+<li>A learning rate <strong>significantly lower</strong> than the original pretraining peak (on the order of 1–5% of it), to avoid catastrophic forgetting of short-context capabilities.</li>
+<li>A <strong>cosine decay</strong> or flat schedule, often without warmup since the model already has stable weights.</li>
+<li>Gradient clipping set conservatively (e.g., <span class="arithmatex">\(\ell_2\)</span> norm of 1.0).</li>
+</ul>
+<p>See <a href="../03-pretraining/10-lr-schedules-hparams.html">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a> for the general scheduling machinery.</p>
+<hr />
+<h2 id="document-packing-for-long-context-training">Document Packing for Long-Context Training<a class="headerlink" href="#document-packing-for-long-context-training" title="Permanent link">¶</a></h2>
+<h3 id="the-problem-with-naive-packing">The Problem With Naïve Packing<a class="headerlink" href="#the-problem-with-naive-packing" title="Permanent link">¶</a></h3>
+<p>Training efficiency requires that every GPU sees a tensor of exactly <span class="arithmatex">\(T_{\text{seq}}\)</span> tokens per step. Short documents must be concatenated to fill the window, and long documents must be split across windows (or within one window). The naïve approach simply concatenates documents end-to-end and slices at <span class="arithmatex">\(T_{\text{seq}}\)</span> boundaries.</p>
+<p>This creates a cross-document attention problem: the model computes attention between the end of document <span class="arithmatex">\(A\)</span> and the beginning of document <span class="arithmatex">\(B\)</span>, even though they are unrelated. At short context lengths this is a minor source of noise; at 128 K context it can mean most of the window is cross-document garbage, actively harming training signal.</p>
+<h3 id="document-masking-in-attention">Document Masking in Attention<a class="headerlink" href="#document-masking-in-attention" title="Permanent link">¶</a></h3>
+<p>The principled fix is a <strong>document attention mask</strong>: each token attends only to tokens that belong to the same document (and obeys causal ordering within that document). This is equivalent to block-diagonal causal masking over the packed sequence.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_packed_attention_mask</span><span class="p">(</span>
+    <span class="n">doc_lengths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cpu&quot;</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Build a boolean causal attention mask for a packed sequence of multiple docs.</span>
+
+<span class="sd">    doc_lengths: list of token counts per document, must sum to seq_len.</span>
+<span class="sd">    Returns: (seq_len, seq_len) bool tensor where True = can attend.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">seq_len</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">doc_lengths</span><span class="p">)</span>
+    <span class="c1"># Start with no attention allowed</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">seq_len</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="n">offset</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">length</span> <span class="ow">in</span> <span class="n">doc_lengths</span><span class="p">:</span>
+        <span class="c1"># Within this document&#39;s block, allow lower-triangular (causal) attention</span>
+        <span class="n">block_end</span> <span class="o">=</span> <span class="n">offset</span> <span class="o">+</span> <span class="n">length</span>
+        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">offset</span><span class="p">,</span> <span class="n">block_end</span><span class="p">):</span>
+            <span class="c1"># Token at &#39;row&#39; can attend to [offset .. row] (same doc, causal)</span>
+            <span class="n">mask</span><span class="p">[</span><span class="n">row</span><span class="p">,</span> <span class="n">offset</span><span class="p">:</span><span class="n">row</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="n">offset</span> <span class="o">=</span> <span class="n">block_end</span>
+
+    <span class="k">return</span> <span class="n">mask</span>  <span class="c1"># (seq_len, seq_len)</span>
+
+<span class="c1"># Example: two docs packed into a single context of length 8 (4 + 4)</span>
+<span class="n">mask</span> <span class="o">=</span> <span class="n">build_packed_attention_mask</span><span class="p">([</span><span class="mi">4</span><span class="p">,</span> <span class="mi">4</span><span class="p">])</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">mask</span><span class="o">.</span><span class="n">int</span><span class="p">())</span>
+<span class="c1"># tensor([[1, 0, 0, 0, 0, 0, 0, 0],</span>
+<span class="c1">#         [1, 1, 0, 0, 0, 0, 0, 0],</span>
+<span class="c1">#         [1, 1, 1, 0, 0, 0, 0, 0],</span>
+<span class="c1">#         [1, 1, 1, 1, 0, 0, 0, 0],</span>
+<span class="c1">#         [0, 0, 0, 0, 1, 0, 0, 0],</span>
+<span class="c1">#         [0, 0, 0, 0, 1, 1, 0, 0],</span>
+<span class="c1">#         [0, 0, 0, 0, 1, 1, 1, 0],</span>
+<span class="c1">#         [0, 0, 0, 0, 1, 1, 1, 1]], dtype=torch.int32)</span>
+</code></pre></div>
+<p>In practice, FlashAttention 2 supports &ldquo;variable-length&rdquo; (varlen) sequences via the <code>cu_seqlens</code> API, which achieves exactly this masking without materialising the full <span class="arithmatex">\(T \times T\)</span> mask tensor:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># FlashAttention varlen API (flash_attn library)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flash_attn</span><span class="w"> </span><span class="kn">import</span> <span class="n">flash_attn_varlen_func</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># Suppose we have a batch of two sequences packed: lengths 512 and 1024</span>
+<span class="n">batch_q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">512</span> <span class="o">+</span> <span class="mi">1024</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>  <span class="c1"># (total_tokens, heads, d_head)</span>
+<span class="n">batch_k</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">batch_q</span><span class="p">)</span>
+<span class="n">batch_v</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">batch_q</span><span class="p">)</span>
+
+<span class="c1"># Cumulative sequence lengths (must start at 0 and end at total_tokens)</span>
+<span class="n">cu_seqlens</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="mi">512</span> <span class="o">+</span> <span class="mi">1024</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+<span class="n">max_seqlen</span> <span class="o">=</span> <span class="mi">1024</span>
+
+<span class="n">out</span> <span class="o">=</span> <span class="n">flash_attn_varlen_func</span><span class="p">(</span>
+    <span class="n">batch_q</span><span class="p">,</span> <span class="n">batch_k</span><span class="p">,</span> <span class="n">batch_v</span><span class="p">,</span>
+    <span class="n">cu_seqlens_q</span><span class="o">=</span><span class="n">cu_seqlens</span><span class="p">,</span>
+    <span class="n">cu_seqlens_k</span><span class="o">=</span><span class="n">cu_seqlens</span><span class="p">,</span>
+    <span class="n">max_seqlen_q</span><span class="o">=</span><span class="n">max_seqlen</span><span class="p">,</span>
+    <span class="n">max_seqlen_k</span><span class="o">=</span><span class="n">max_seqlen</span><span class="p">,</span>
+    <span class="n">causal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>             <span class="c1"># causal within each segment</span>
+<span class="p">)</span>
+<span class="c1"># out.shape == (total_tokens, heads, d_head)</span>
+</code></pre></div>
+<p>The varlen interface ensures that attention computations never cross document boundaries, at zero mask-storage cost.</p>
+<h3 id="loss-masking">Loss Masking<a class="headerlink" href="#loss-masking" title="Permanent link">¶</a></h3>
+<p>The cross-entropy loss should also exclude the first token of each document&rsquo;s continuation <em>from</em> predicting the last token of the previous document. A simple <code>loss_mask</code> tensor of 0/1 per token accomplishes this — set the first token of each document to 0 (do not compute loss for it). See also <a href="../05-posttraining-alignment/02-chat-templates-packing.html">Chat Templates, Data Formatting &amp; Sequence Packing</a> for how the same principle applies to fine-tuning packing.</p>
+<hr />
+<h2 id="evaluating-long-context-models-needle-in-a-haystack">Evaluating Long-Context Models: Needle in a Haystack<a class="headerlink" href="#evaluating-long-context-models-needle-in-a-haystack" title="Permanent link">¶</a></h2>
+<h3 id="the-test">The Test<a class="headerlink" href="#the-test" title="Permanent link">¶</a></h3>
+<p><em>Needle in a Haystack</em> (NIAH) is the canonical evaluation for long-context retrieval fidelity. A single &ldquo;needle&rdquo; sentence containing a unique fact (e.g., &ldquo;The magic phrase is pineapple-strawberry-7.&rdquo;) is inserted at a controlled depth (e.g., 25%, 50%, 75%) inside a long &ldquo;haystack&rdquo; of unrelated text (often Paul Graham essays or Wikipedia). The model must retrieve the needle after reading the full context.</p>
+<p>The result is plotted as a 2D heatmap: the x-axis is context length, the y-axis is needle depth, and color indicates whether the model retrieved it correctly. A well-trained model shows uniform success across the entire grid; a poorly extended model shows failures at long contexts and specific depths.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_haystack_with_needle</span><span class="p">(</span>
+    <span class="n">haystack_text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">needle</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">context_length</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>           <span class="c1"># target total tokens (approx by words)</span>
+    <span class="n">depth_fraction</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>         <span class="c1"># 0.0 = beginning, 1.0 = end</span>
+    <span class="n">tokenizer_approx_ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.3</span><span class="p">,</span>  <span class="c1"># tokens per word (rough)</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Insert a needle sentence at a given depth in the haystack.</span>
+<span class="sd">    Returns (full_text, needle_start_word_index).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">target_words</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">context_length</span> <span class="o">/</span> <span class="n">tokenizer_approx_ratio</span><span class="p">)</span>
+
+    <span class="c1"># Tile haystack words to fill the context</span>
+    <span class="n">words</span> <span class="o">=</span> <span class="n">haystack_text</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">target_words</span><span class="p">:</span>
+        <span class="n">multiplier</span> <span class="o">=</span> <span class="p">(</span><span class="n">target_words</span> <span class="o">//</span> <span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">))</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="n">words</span> <span class="o">=</span> <span class="n">words</span> <span class="o">*</span> <span class="n">multiplier</span>
+    <span class="n">words</span> <span class="o">=</span> <span class="n">words</span><span class="p">[:</span><span class="n">target_words</span><span class="p">]</span>
+
+    <span class="c1"># Determine insertion point</span>
+    <span class="n">insert_idx</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">)</span> <span class="o">*</span> <span class="n">depth_fraction</span><span class="p">)</span>
+
+    <span class="c1"># Insert needle words at that point</span>
+    <span class="n">needle_words</span> <span class="o">=</span> <span class="n">needle</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="n">words</span> <span class="o">=</span> <span class="n">words</span><span class="p">[:</span><span class="n">insert_idx</span><span class="p">]</span> <span class="o">+</span> <span class="n">needle_words</span> <span class="o">+</span> <span class="n">words</span><span class="p">[</span><span class="n">insert_idx</span><span class="p">:]</span>
+
+    <span class="k">return</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">words</span><span class="p">),</span> <span class="n">insert_idx</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">evaluate_niah</span><span class="p">(</span>
+    <span class="n">model_fn</span><span class="p">,</span>           <span class="c1"># callable(text: str) -&gt; str</span>
+    <span class="n">needle</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">answer_keyword</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">context_lengths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+    <span class="n">depths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span>
+    <span class="n">haystack</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run a full NIAH evaluation grid.</span>
+<span class="sd">    Returns dict[(context_len, depth)] -&gt; bool</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">ctx_len</span> <span class="ow">in</span> <span class="n">context_lengths</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">depth</span> <span class="ow">in</span> <span class="n">depths</span><span class="p">:</span>
+            <span class="n">text</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">build_haystack_with_needle</span><span class="p">(</span><span class="n">haystack</span><span class="p">,</span> <span class="n">needle</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">,</span> <span class="n">depth</span><span class="p">)</span>
+            <span class="n">prompt</span> <span class="o">=</span> <span class="n">text</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">What is the magic phrase?&quot;</span>
+            <span class="n">response</span> <span class="o">=</span> <span class="n">model_fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+            <span class="n">results</span><span class="p">[(</span><span class="n">ctx_len</span><span class="p">,</span> <span class="n">depth</span><span class="p">)]</span> <span class="o">=</span> <span class="n">answer_keyword</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">results</span>
+</code></pre></div>
+<p>NIAH is a necessary but not sufficient evaluation: a model can pass NIAH yet still fail at multi-hop reasoning over long contexts because NIAH only requires retrieval of a single salient fact. More challenging variants scatter multiple needles or require combining information from two distant locations.</p>
+<hr />
+<h2 id="ring-attention-and-context-parallelism-for-training">Ring Attention and Context Parallelism for Training<a class="headerlink" href="#ring-attention-and-context-parallelism-for-training" title="Permanent link">¶</a></h2>
+<h3 id="why-we-need-a-new-parallelism-dimension">Why We Need a New Parallelism Dimension<a class="headerlink" href="#why-we-need-a-new-parallelism-dimension" title="Permanent link">¶</a></h3>
+<p>Even with FlashAttention, training a sequence of 128 K tokens on a single GPU is impossible: the tiled attention still needs <span class="arithmatex">\(\mathcal{O}(T)\)</span> intermediate buffers per layer. At 128 K tokens in bf16, the KV activations for one layer with <span class="arithmatex">\(d_{\text{model}} = 4096\)</span> are:</p>
+<div class="arithmatex">\[
+2 \times 4096 \times 128{,}000 \times 2\;\text{bytes} \approx 2\;\text{GB per layer}
+\]</div>
+<p>For 80 layers that is 160 GB, exceeding a single A100 80 GB GPU. We need to shard the sequence across devices — a different axis than the data, tensor, or pipeline parallelism of <a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II</a>.</p>
+<h3 id="ring-attention">Ring Attention<a class="headerlink" href="#ring-attention" title="Permanent link">¶</a></h3>
+<p>Ring Attention (Liu et al., 2023, <em>Ring Attention with Blockwise Transformers</em>) achieves sequence parallelism by distributing non-overlapping chunks of the sequence across <span class="arithmatex">\(N\)</span> GPUs arranged in a logical ring. Each GPU holds <span class="arithmatex">\(T/N\)</span> tokens&rsquo; keys and values locally. Attention is computed as follows:</p>
+<div class="highlight"><pre><span></span><code>Ring of 4 GPUs, each holding T/4 tokens:
+
+Step 0: GPU-i computes attention of its Q chunk against its own KV chunk.
+Step 1: Each GPU sends its KV chunk to the next GPU in the ring.
+        While the data is in flight, each GPU continues computing
+        attention of its Q chunk against the KV chunk it is about to
+        receive (overlap communication with computation).
+Step 2: Repeat for N-1 total rounds.
+After N rounds, each GPU has accumulated the full softmax-normalised
+attention output for its Q chunk.
+</code></pre></div>
+<p>The key algorithmic insight is that FlashAttention&rsquo;s <em>online softmax accumulation</em> is associative: you can accumulate the numerator sums and the log-sum-exp denominators independently across rounds and produce the exact same result as if all KV blocks were available at once. No approximation is involved.</p>
+<p>Communication volume per round: <span class="arithmatex">\(2 \times (T/N) \times d \times 2\;\text{bytes}\)</span> per direction (sending K and V). With <span class="arithmatex">\(N = 8\)</span> GPUs and <span class="arithmatex">\(T = 128{,}000\)</span>, <span class="arithmatex">\(d = 4096\)</span>: each round moves <span class="arithmatex">\(128{,}000/8 \times 4096 \times 2 \times 2 = 256\;\text{MB}\)</span> per GPU. On NVLink at 400 GB/s this takes ~0.6 ms; a single attention kernel at this scale takes much longer, so the overlap is effective.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Pseudocode sketch of ring attention forward pass</span>
+<span class="c1"># (actual implementation uses NCCL send/recv and a FlashAttention tile kernel)</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">ring_attention_forward</span><span class="p">(</span>
+    <span class="n">q_local</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>     <span class="c1"># (T/N, H, D) — this GPU&#39;s query chunk</span>
+    <span class="n">k_local</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>     <span class="c1"># (T/N, H, D) — this GPU&#39;s key chunk (starting KV)</span>
+    <span class="n">v_local</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>     <span class="c1"># (T/N, H, D) — this GPU&#39;s value chunk</span>
+    <span class="n">causal</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+    <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">world_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Simplified ring attention. Real implementations fuse this with FlashAttention.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">T_local</span> <span class="o">=</span> <span class="n">q_local</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">d_model</span> <span class="o">=</span> <span class="n">q_local</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># Accumulators for online softmax (see FlashAttention chapter for derivation)</span>
+    <span class="n">output_acc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">q_local</span><span class="p">)</span>        <span class="c1"># O accumulator</span>
+    <span class="n">lse_acc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">q_local</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">q_local</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>  <span class="c1"># log-sum-exp</span>
+
+    <span class="n">k_chunk</span> <span class="o">=</span> <span class="n">k_local</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+    <span class="n">v_chunk</span> <span class="o">=</span> <span class="n">v_local</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+    <span class="c1"># We track which absolute position offset these k/v come from</span>
+    <span class="n">kv_rank</span> <span class="o">=</span> <span class="n">rank</span>
+
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">world_size</span><span class="p">):</span>
+        <span class="c1"># Compute attention of q_local against k_chunk / v_chunk</span>
+        <span class="c1"># (in reality this calls flash_attn_with_kvcache or equivalent)</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="n">d_model</span> <span class="o">**</span> <span class="o">-</span><span class="mf">0.5</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;thd,khd-&gt;thk&quot;</span><span class="p">,</span> <span class="n">q_local</span><span class="p">,</span> <span class="n">k_chunk</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span>  <span class="c1"># (T, H, T_kv)</span>
+
+        <span class="k">if</span> <span class="n">causal</span><span class="p">:</span>
+            <span class="c1"># Mask out future KV positions relative to each Q position</span>
+            <span class="n">q_global_start</span>  <span class="o">=</span> <span class="n">rank</span> <span class="o">*</span> <span class="n">T_local</span>
+            <span class="n">kv_global_start</span> <span class="o">=</span> <span class="n">kv_rank</span> <span class="o">*</span> <span class="n">T_local</span>
+            <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">T_local</span><span class="p">):</span>
+                <span class="n">q_pos</span> <span class="o">=</span> <span class="n">q_global_start</span> <span class="o">+</span> <span class="n">t</span>
+                <span class="c1"># Cannot attend to kv positions &gt; q_pos</span>
+                <span class="n">cutoff</span> <span class="o">=</span> <span class="n">q_pos</span> <span class="o">-</span> <span class="n">kv_global_start</span> <span class="o">+</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="n">cutoff</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">scores</span><span class="p">[</span><span class="n">t</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">)</span>
+                <span class="k">elif</span> <span class="n">cutoff</span> <span class="o">&lt;</span> <span class="n">T_local</span><span class="p">:</span>
+                    <span class="n">scores</span><span class="p">[</span><span class="n">t</span><span class="p">,</span> <span class="p">:,</span> <span class="n">cutoff</span><span class="p">:]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">)</span>
+
+        <span class="c1"># Online softmax accumulation (simplified; real code tracks m and l)</span>
+        <span class="n">new_lse</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">logsumexp</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>                    <span class="c1"># (T, H)</span>
+        <span class="n">new_out</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span> <span class="o">@</span> <span class="n">v_chunk</span>            <span class="c1"># (T, H, D)</span>
+
+        <span class="c1"># Merge with running accumulator</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">lse_acc</span><span class="p">,</span> <span class="n">new_lse</span><span class="p">)</span>
+        <span class="n">exp_old</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">lse_acc</span> <span class="o">-</span> <span class="n">m</span><span class="p">)</span>
+        <span class="n">exp_new</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">new_lse</span> <span class="o">-</span> <span class="n">m</span><span class="p">)</span>
+        <span class="n">lse_acc</span> <span class="o">=</span> <span class="n">m</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">exp_old</span> <span class="o">+</span> <span class="n">exp_new</span><span class="p">)</span>
+        <span class="n">output_acc</span> <span class="o">=</span> <span class="p">(</span><span class="n">output_acc</span> <span class="o">*</span> <span class="n">exp_old</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">+</span> <span class="n">new_out</span> <span class="o">*</span> <span class="n">exp_new</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="p">(</span><span class="n">exp_old</span> <span class="o">+</span> <span class="n">exp_new</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># Rotate KV to next GPU in ring (overlap with next step&#39;s compute in real code)</span>
+        <span class="n">next_rank</span> <span class="o">=</span> <span class="p">(</span><span class="n">rank</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="n">world_size</span>
+        <span class="n">prev_rank</span> <span class="o">=</span> <span class="p">(</span><span class="n">rank</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="n">world_size</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">k_chunk</span><span class="p">,</span> <span class="n">dst</span><span class="o">=</span><span class="n">next_rank</span><span class="p">)</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="n">k_chunk</span><span class="p">,</span> <span class="n">src</span><span class="o">=</span><span class="n">prev_rank</span><span class="p">)</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">v_chunk</span><span class="p">,</span> <span class="n">dst</span><span class="o">=</span><span class="n">next_rank</span><span class="p">)</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="n">v_chunk</span><span class="p">,</span> <span class="n">src</span><span class="o">=</span><span class="n">prev_rank</span><span class="p">)</span>
+        <span class="n">kv_rank</span> <span class="o">=</span> <span class="p">(</span><span class="n">kv_rank</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="n">world_size</span>  <span class="c1"># the received chunk came from one step earlier</span>
+
+    <span class="k">return</span> <span class="n">output_acc</span>
+</code></pre></div>
+<h3 id="sequence-parallelism-in-megatron-lm">Sequence Parallelism in Megatron-LM<a class="headerlink" href="#sequence-parallelism-in-megatron-lm" title="Permanent link">¶</a></h3>
+<p>Megatron-LM (see <a href="../03-pretraining/07-megatron-deepspeed.html">Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a>) has a separate &ldquo;sequence parallelism&rdquo; mode that shards the LayerNorm and Dropout computations along the sequence dimension while using tensor parallelism for the attention projections. This is distinct from ring attention: it reduces activation memory for non-attention operations by splitting the sequence across tensor-parallel ranks, using <code>all-gather</code> and <code>reduce-scatter</code> at the sequence axis.</p>
+<p>In practice, the two approaches compose: one might use tensor parallelism for weight matrices, ring/context attention for the attention itself, and pipeline parallelism for layers — the &ldquo;4D parallelism&rdquo; configuration used by some large-scale long-context runs.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Memory Budget for 128 K Context Training</p>
+<p>Configuration: 70 B parameter model, <span class="arithmatex">\(d_{\text{model}} = 8192\)</span>, 80 layers, 64 heads, GQA with 8 KV heads, <span class="arithmatex">\(d_{\text{head}} = 128\)</span>, batch size = 1 sequence of 128 K tokens, bf16 (2 bytes).</p>
+<p><strong>Model weights (parameters):</strong> 70 B × 2 bytes = <strong>140 GB</strong>. Requires at minimum 8 × A100 80 GB GPUs under model parallelism.</p>
+<p><strong>Activations per attention layer (without ring attention):</strong>
+- Q, K, V projections: <span class="arithmatex">\(3 \times 128{,}000 \times 8192 \times 2 \approx 6.3\;\text{GB}\)</span>
+- Score matrix (if not FlashAttention): <span class="arithmatex">\(64 \times 128{,}000^2 \times 2 \approx 2\;\text{TB}\)</span> — clearly impossible.
+- With FlashAttention: score matrix never materialised; only <span class="arithmatex">\(O(\text{block size})\)</span> in SRAM.</p>
+<p><strong>Activations per attention layer (with FlashAttention + ring attention over 8 GPUs):</strong>
+- Each GPU holds Q/K/V for <span class="arithmatex">\(128{,}000 / 8 = 16{,}000\)</span> tokens: <span class="arithmatex">\(3 \times 16{,}000 \times 8192 \times 2 \approx 786\;\text{MB}\)</span>
+- The FlashAttention block size is ~128 tokens; only that block of scores lives in SRAM at once.
+- Per-layer ring overhead: 2 × KV chunk per round = <span class="arithmatex">\(2 \times 16{,}000 \times 8 \times 128 \times 2 \approx 65\;\text{MB}\)</span> in transit.</p>
+<p><strong>KV cache during inference</strong> (separate from training):
+Each layer, each token: <span class="arithmatex">\(2 \times 8 \times 128 \times 2 = 4096\;\text{bytes}\)</span> = 4 KB.
+For 128 K tokens: <span class="arithmatex">\(128{,}000 \times 4096 = 524\;\text{MB}\)</span> per layer, <span class="arithmatex">\(\times 80\)</span> layers = <strong>42 GB</strong> total KV cache.</p>
+<p>This is why even at inference time, 128 K context with a 70 B model requires a multi-GPU setup.</p>
+</div>
+<hr />
+<h2 id="connecting-long-context-training-to-the-inference-kv-cache">Connecting Long-Context Training to the Inference KV Cache<a class="headerlink" href="#connecting-long-context-training-to-the-inference-kv-cache" title="Permanent link">¶</a></h2>
+<p>Training and inference share the same fundamental tension: both need to store or compute over <span class="arithmatex">\(T\)</span> keys and values per layer. The training solution (ring attention, gradient checkpointing) addresses the activation memory during the forward-backward pass. The inference solution (paged/chunked KV cache) addresses the persistent memory across generation steps.</p>
+<p>The positional encoding choices made during training directly constrain what the inference engine can do:</p>
+<ul>
+<li><strong>RoPE base and scaling method</strong>: The inference engine must apply the <em>same</em> RoPE modification as training. A mismatch (e.g., serving with standard RoPE a model trained with YaRN) produces garbage scores.</li>
+<li><strong>Maximum context length</strong>: The inference engine&rsquo;s KV cache pre-allocates memory up to <code>max_model_len</code>. Extending this at inference time without retraining is limited by the interpolation range of the chosen scaling method.</li>
+<li><strong>GQA vs MHA</strong>: GQA (8 KV heads instead of 64) cuts the KV cache footprint 8x and is a prerequisite for long contexts at scale. See <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>.</li>
+</ul>
+<p>For chunked prefill — processing a 128 K context in chunks rather than all at once at inference startup — see <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A model was pretrained with a 4 K context. You want to serve it at 32 K. Walk me through the approaches in order of increasing reliability, and explain the tradeoffs.</p>
+<p><strong>A:</strong> Three approaches, ascending in reliability:</p>
+<ol>
+<li>
+<p><strong>Zero-shot RoPE scaling (NTK-aware or Dynamic NTK):</strong> Rescale the RoPE base at inference time with no additional training. Works surprisingly well for modest extensions (~4x) because it keeps high-frequency (short-range) dimensions in-distribution. The model&rsquo;s attention patterns were never trained at long range, so quality degrades on tasks requiring global reasoning, but short-range dependencies remain intact. Zero cost; no GPU required.</p>
+</li>
+<li>
+<p><strong>RoPE + continued pretraining (PI or YaRN):</strong> Apply a scaling method such as YaRN to the positional embeddings, then continue pretraining on long documents for a few hundred to a few thousand steps at a reduced learning rate. The model learns genuine long-range attention patterns, not just in-distribution positional angles. Requires on the order of 5–20 B tokens of long training data and 100–1 000 GPU-hours for a 7 B model. Recovers most of the short-context performance if the mix includes sufficient short documents.</p>
+</li>
+<li>
+<p><strong>Train long contexts from scratch:</strong> Incorporate long documents from the beginning of pretraining, using ring/context attention from the start. Expensive but produces models with consistent performance across the full context window. State-of-the-art long-context models (Claude 3, Gemini 1.5) use this strategy. Tradeoff: each token in a long sequence is more expensive per step (quadratic FLOPs), so you see fewer unique tokens per dollar.</p>
+</li>
+</ol>
+<p>For a 32 K target, approach 2 with YaRN is the sweet spot — achievable by a mid-sized team with a few weeks of compute.</p>
+</div>
+<hr />
+<h2 id="practical-training-recipe">Practical Training Recipe<a class="headerlink" href="#practical-training-recipe" title="Permanent link">¶</a></h2>
+<p>Putting the above together, here is a concrete recipe to extend a pretrained 7 B RoPE model from 4 K to 32 K:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Curate a long-context fine-tuning dataset</span>
+<span class="c1"># Mix: 60% books/papers/code &gt;16 K tokens, 40% original pretraining mix (short docs)</span>
+<span class="c1"># Target total: ~10 B tokens</span>
+
+<span class="c1"># 2. Modify model config to use YaRN</span>
+<span class="c1"># In HuggingFace config.json:</span>
+<span class="c1">#   &quot;rope_scaling&quot;: {&quot;type&quot;: &quot;yarn&quot;, &quot;factor&quot;: 8.0,</span>
+<span class="c1">#                    &quot;original_max_position_embeddings&quot;: 4096}</span>
+
+<span class="c1"># 3. Launch continued pretraining with reduced LR</span>
+torchrun<span class="w"> </span>--nproc_per_node<span class="o">=</span><span class="m">8</span><span class="w"> </span>train.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model_name_or_path<span class="w"> </span>meta-llama/Llama-2-7b-hf<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max_seq_length<span class="w"> </span><span class="m">32768</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--per_device_train_batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--gradient_accumulation_steps<span class="w"> </span><span class="m">4</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--learning_rate<span class="w"> </span>2e-5<span class="w"> </span><span class="se">\ </span><span class="w">          </span><span class="c1"># ~2% of original peak LR</span>
+<span class="w">  </span>--lr_scheduler_type<span class="w"> </span>cosine<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--num_train_epochs<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--warmup_steps<span class="w"> </span><span class="m">20</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--bf16<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--gradient_checkpointing<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--attn_implementation<span class="w"> </span>flash_attention_2<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--dataloader_packing<span class="w"> </span>True<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--packing_loss_mask<span class="w"> </span>True<span class="w">          </span><span class="c1"># mask first token of each document</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># 4. Validate with NIAH sweep before serving</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">plot_niah_heatmap</span><span class="p">(</span><span class="n">results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">context_lengths</span><span class="p">:</span> <span class="nb">list</span><span class="p">,</span> <span class="n">depths</span><span class="p">:</span> <span class="nb">list</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Visualise needle-in-haystack results as a 2D heatmap.</span>
+<span class="sd">    results: dict[(ctx_len, depth)] -&gt; bool</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">grid</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span>
+        <span class="p">[</span><span class="nb">float</span><span class="p">(</span><span class="n">results</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">c</span><span class="p">,</span> <span class="n">d</span><span class="p">),</span> <span class="kc">False</span><span class="p">))</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">context_lengths</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">depths</span>
+    <span class="p">])</span>
+    <span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span>
+    <span class="n">im</span> <span class="o">=</span> <span class="n">ax</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">grid</span><span class="p">,</span> <span class="n">vmin</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">vmax</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;RdYlGn&quot;</span><span class="p">,</span> <span class="n">aspect</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_xticks</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">context_lengths</span><span class="p">)))</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_xticklabels</span><span class="p">([</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">c</span><span class="o">//</span><span class="mi">1000</span><span class="si">}</span><span class="s2">K&quot;</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">context_lengths</span><span class="p">],</span> <span class="n">rotation</span><span class="o">=</span><span class="mi">45</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_yticks</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">depths</span><span class="p">)))</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_yticklabels</span><span class="p">([</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">d</span><span class="o">*</span><span class="mi">100</span><span class="p">)</span><span class="si">}</span><span class="s2">%&quot;</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">depths</span><span class="p">])</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s2">&quot;Context Length&quot;</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">&quot;Needle Depth&quot;</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s2">&quot;Needle-in-Haystack Retrieval Accuracy&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">colorbar</span><span class="p">(</span><span class="n">im</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="s2">&quot;niah_heatmap.png&quot;</span><span class="p">,</span> <span class="n">dpi</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Saved niah_heatmap.png&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">grid</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>  <span class="c1"># return overall accuracy</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: forgetting to update max_position_embeddings</p>
+<p>HuggingFace models cache <code>max_position_embeddings</code> in <code>config.json</code>. If you update the RoPE scaling factor but leave <code>max_position_embeddings = 4096</code>, the model will refuse to generate beyond 4 096 tokens at inference time even though it was trained at 32 K. Always set <code>max_position_embeddings</code> to the <em>new</em> target length. Similarly, vLLM reads <code>max_model_len</code> from the config or CLI; failing to set it will cause silent truncation.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: use dynamic NTK for zero-shot quick evaluation</p>
+<p>Before committing to a full continued pretraining run, validate that your model&rsquo;s architecture is RoPE-compatible with NTK-aware dynamic scaling. Many HuggingFace models accept <code>rope_scaling={"type": "dynamic", "factor": 8.0}</code> which automatically applies NTK scaling for sequences longer than the trained length. Run NIAH at your target length zero-shot. If accuracy is above ~60%, continued pretraining will likely bring it to &gt;90%. If it is near 0%, investigate whether the model uses RoPE at all, or whether there is a positional encoding mismatch.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Quadratic attention FLOPs are manageable with FlashAttention; the real bottleneck is activation memory and positional encoding extrapolation.</li>
+<li>Standard RoPE extrapolates poorly. Position Interpolation (PI) divides positions by the extension ratio; NTK-aware scaling raises the RoPE base; YaRN blends per-frequency to protect both local and global dependencies.</li>
+<li>YaRN is the current practical default: it requires only hundreds of continued pretraining steps and often works zero-shot for modest (~4x) extension.</li>
+<li>Continued pretraining on long documents (5–20 B tokens, LR ~1–5% of peak) teaches genuine long-range attention patterns that positional scaling alone cannot provide.</li>
+<li>Document-aware packing with FlashAttention&rsquo;s varlen API prevents cross-document attention contamination and is critical at long context lengths.</li>
+<li>Ring attention (context parallelism) shards the sequence across GPUs in a ring, overlapping communication with the tiled attention compute to make 128 K+ contexts tractable on multi-GPU clusters.</li>
+<li>Needle-in-haystack is a necessary evaluation sanity check but tests only retrieval, not multi-hop reasoning. Always supplement with longer-context benchmarks.</li>
+<li>Every positional encoding decision made during training propagates directly to the inference KV cache: base, scaling factor, and max length must be consistent end-to-end.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Long-context pretraining has progressed rapidly: production models routinely support 128K–1M token windows using a combination of RoPE-based position extension, continued pretraining on long documents, and ring/context parallelism. The core techniques (PI, NTK-aware scaling, YaRN) are now standard ingredients in every major open-weight recipe, and context windows beyond 2M tokens have been demonstrated in research settings.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2104.09864">Su et al., <em>RoFormer: Enhanced Transformer with Rotary Position Embedding</em> (2021)</a> — original RoPE paper; the rotation-based encoding that all context-extension methods build on.</li>
+<li><a href="https://arxiv.org/abs/2306.15595">Chen et al., <em>Extending Context Window of Large Language Models via Positional Interpolation</em> (2023)</a> — introduced linear position interpolation (PI), the simplest and most-cited RoPE extension recipe.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2309.00071">Peng et al., <em>YaRN: Efficient Context Window Extension of Large Language Models</em> (2023)</a> — per-frequency interpolation + attention temperature scaling; became the practical default adopted by Mistral, Qwen, and DeepSeek.</li>
+<li><a href="https://arxiv.org/abs/2310.01889">Liu et al., <em>Ring Attention with Blockwise Transformers for Near-Infinite Context</em> (2023)</a> — sequence parallelism via a GPU ring; enables training at 128K+ tokens without approximations.</li>
+<li><a href="https://arxiv.org/abs/2309.12307">Chen et al., <em>LongLoRA: Efficient Fine-tuning of Long-Context Large Language Models</em> (2023)</a> — shifted sparse attention cuts the compute cost of long-context fine-tuning 16x while preserving full attention at inference.</li>
+<li><a href="https://arxiv.org/abs/2402.13753">Ding et al., <em>LongRoPE: Extending LLM Context Window Beyond 2 Million Tokens</em> (2024)</a> — non-uniform positional interpolation search pushes verified context to 2M tokens with only 1K fine-tuning steps.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/jquesnelle/yarn">jquesnelle/yarn</a> — reference YaRN implementation with fine-tuned checkpoints for LLaMA 2, Mistral, and SOLAR at 32K–128K.</li>
+<li><a href="https://github.com/lhao499/llm_large_context">lhao499/llm_large_context</a> — official Ring Attention JAX implementation; pip-installable as <code>ringattention</code>.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://blog.eleuther.ai/yarn/">EleutherAI Blog, <em>Extending the RoPE</em> (2023)</a> — the community write-up that introduced NTK-aware interpolation and motivated YaRN; excellent mathematical intuition.</li>
+<li><a href="https://arxiv.org/abs/2308.14508">Bai et al., <em>LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding</em> (2023)</a> — 21-task evaluation suite covering QA, summarisation, and code; goes well beyond needle-in-haystack retrieval.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Su et al., &ldquo;RoFormer: Enhanced Transformer with Rotary Position Embedding&rdquo; (2022)</strong> — original RoPE paper; introduces the rotation formulation and relative-position property.</li>
+<li><strong>Chen et al., &ldquo;Extending Context Window of Large Language Models via Positional Interpolation&rdquo; (2023)</strong> — the PI approach; simple and highly cited.</li>
+<li><strong>Peng et al., &ldquo;YaRN: Efficient Context Window Extension of Large Language Models&rdquo; (2023)</strong> — introduces frequency-ramped interpolation and temperature correction; practical state of the art.</li>
+<li><strong>Liu et al., &ldquo;Ring Attention with Blockwise Transformers for Near-Infinite Context&rdquo; (2023)</strong> — ring attention paper; the foundational sequence-parallelism approach.</li>
+<li><strong>Dao et al., &ldquo;FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning&rdquo; (2023)</strong> — the varlen API for document packing is documented here.</li>
+<li><strong>Anthropic, &ldquo;Claude&rsquo;s Long Context&rdquo; (technical reports, 2024)</strong> — high-level discussion of training recipes for very long contexts (100 K+).</li>
+<li><strong>LongBench (Bai et al., 2023)</strong> — a comprehensive long-context evaluation benchmark covering summarisation, QA, few-shot learning, and code; more demanding than needle-in-haystack alone.</li>
+<li><strong>LLaMA-3 technical report (Meta, 2024)</strong> — describes the multi-stage context extension recipe used in a public large model, including data mix and positional encoding choices.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="12-checkpointing-fault-tolerance.html"><span class="pn-label">← Previous</span><span class="pn-title">Checkpointing, Fault Tolerance &amp; Long-Running Jobs</span></a>
+<a class="next" href="14-data-mixing-curriculum.html"><span class="pn-label">Next →</span><span class="pn-title">Data Mixing, Domain Weighting &amp; Curriculum</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-two-fundamental-bottlenecks">The Two Fundamental Bottlenecks</a></li>
+<li class="toc-l3"><a href="#quadratic-attention-cost">Quadratic Attention Cost</a></li>
+<li class="toc-l3"><a href="#memory-from-activations-and-kv-cache">Memory From Activations and KV Cache</a></li>
+<li class="toc-l2"><a href="#rope-and-the-extrapolation-problem">RoPE and the Extrapolation Problem</a></li>
+<li class="toc-l3"><a href="#why-sinusoidal-and-learned-encodings-fail">Why Sinusoidal and Learned Encodings Fail</a></li>
+<li class="toc-l3"><a href="#rope-refresher">RoPE Refresher</a></li>
+<li class="toc-l3"><a href="#position-interpolation-pi">Position Interpolation (PI)</a></li>
+<li class="toc-l3"><a href="#ntk-aware-interpolation">NTK-aware Interpolation</a></li>
+<li class="toc-l3"><a href="#yarn">YaRN</a></li>
+<li class="toc-l2"><a href="#continued-pretraining-on-long-documents">Continued Pretraining on Long Documents</a></li>
+<li class="toc-l3"><a href="#why-fine-tuning-alone-is-insufficient">Why Fine-Tuning Alone Is Insufficient</a></li>
+<li class="toc-l3"><a href="#data-curation-for-long-context-training">Data Curation for Long-Context Training</a></li>
+<li class="toc-l3"><a href="#learning-rate-and-scheduler-strategy">Learning Rate and Scheduler Strategy</a></li>
+<li class="toc-l2"><a href="#document-packing-for-long-context-training">Document Packing for Long-Context Training</a></li>
+<li class="toc-l3"><a href="#the-problem-with-naive-packing">The Problem With Naïve Packing</a></li>
+<li class="toc-l3"><a href="#document-masking-in-attention">Document Masking in Attention</a></li>
+<li class="toc-l3"><a href="#loss-masking">Loss Masking</a></li>
+<li class="toc-l2"><a href="#evaluating-long-context-models-needle-in-a-haystack">Evaluating Long-Context Models: Needle in a Haystack</a></li>
+<li class="toc-l3"><a href="#the-test">The Test</a></li>
+<li class="toc-l2"><a href="#ring-attention-and-context-parallelism-for-training">Ring Attention and Context Parallelism for Training</a></li>
+<li class="toc-l3"><a href="#why-we-need-a-new-parallelism-dimension">Why We Need a New Parallelism Dimension</a></li>
+<li class="toc-l3"><a href="#ring-attention">Ring Attention</a></li>
+<li class="toc-l3"><a href="#sequence-parallelism-in-megatron-lm">Sequence Parallelism in Megatron-LM</a></li>
+<li class="toc-l2"><a href="#connecting-long-context-training-to-the-inference-kv-cache">Connecting Long-Context Training to the Inference KV Cache</a></li>
+<li class="toc-l2"><a href="#practical-training-recipe">Practical Training Recipe</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

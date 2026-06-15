@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ML System Design: A Framework — ML/LLM Interview Companion</title>
+<meta name="description" content="A repeatable framework: clarify -&gt; requirements/SLOs -&gt; data -&gt; features -&gt; model -&gt; training -&gt; eval -&gt; serving -&gt; monitoring -&gt; iteration. The structure to im">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../interview/index.html"><span class="logo">Λ</span><span class="brand-text">ML/LLM Interview Companion<small>Prep for Top-Tier ML &amp; LLM Engineering Interviews</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="interview-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<a class="sidebar-parent" href="../index.html">← The LLM Stack</a>
+<div class="nav-part" data-part="13-interview-prep">
+<div class="nav-part-title"><span>The ML/LLM Interview — Companion Prep</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-google-ml-interview-format.html"><span class="nav-num">1.1</span>The ML Engineer Interview: Formats &amp; What&#x27;s Tested</a></li>
+<li><a class="" href="02-ml-breadth-rapidfire.html"><span class="nav-num">1.2</span>ML Breadth: Rapid-Fire Concepts &amp; Model Answers</a></li>
+<li><a class="active" href="03-ml-system-design-framework.html"><span class="nav-num">1.3</span>ML System Design: A Framework</a></li>
+<li><a class="" href="04-ml-system-design-cases.html"><span class="nav-num">1.4</span>ML System Design: Worked Cases</a></li>
+<li><a class="" href="05-coding-for-ml-interviews.html"><span class="nav-num">1.5</span>Coding for ML Interviews</a></li>
+<li><a class="" href="06-llm-deepdive-questions.html"><span class="nav-num">1.6</span>LLM-Specific Deep-Dive Questions</a></li>
+<li><a class="" href="07-behavioral-googleyness.html"><span class="nav-num">1.7</span>Behavioral, Leadership &amp; Project Deep-Dive</a></li>
+<li><a class="" href="08-ten-day-study-plan.html"><span class="nav-num">1.8</span>The 10-Day Study Plan &amp; Final Checklist</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">The ML/LLM Interview — Companion Prep</div>
+<h1 id="133-ml-system-design-a-framework">13.3 ML System Design: A Framework<a class="headerlink" href="#133-ml-system-design-a-framework" title="Permanent link">¶</a></h1>
+<p>The ML system design interview is the one round where a strong candidate most often <em>underperforms relative to their ability</em>. The reason is not a lack of knowledge — it is a lack of <strong>structure</strong>. Faced with &ldquo;Design YouTube recommendations&rdquo; or &ldquo;Build a system to detect toxic comments,&rdquo; people dive straight into model architecture, forget the metric, never mention the data, and run out of time before they reach serving. The interviewer is left unable to assess whole categories of skill.</p>
+<p>This chapter gives you a single, repeatable spine you can impose on <em>any</em> ML-design prompt:</p>
+<div class="highlight"><pre><span></span><code>clarify → requirements/SLOs → data → features → model → training → eval → serving → monitoring → iteration
+</code></pre></div>
+<p>That is the whole framework. Memorize it as a chant. Walk the interviewer through it out loud, drawing boxes on the whiteboard as you go. Each stage below comes with the questions to ask, the decisions to make, the tradeoffs to name, and the code or numbers that turn hand-waving into engineering. The companion chapter <a href="04-ml-system-design-cases.html">ML System Design: Worked Cases</a> applies this exact spine to four full prompts; here we build the spine itself. For interview <em>format and timing</em>, see <a href="01-google-ml-interview-format.html">The Google ML Domain Interview: Format &amp; Strategy</a>.</p>
+<h2 id="the-mental-model-a-loop-not-a-pipeline">The Mental Model: A Loop, Not a Pipeline<a class="headerlink" href="#the-mental-model-a-loop-not-a-pipeline" title="Permanent link">¶</a></h2>
+<p>Beginners draw ML system design as a left-to-right assembly line. Senior engineers draw a <strong>loop</strong>. Models decay, data drifts, labels arrive late, and your first metric is almost always slightly wrong. The system that wins is the one designed so that signals from production flow back into the next training run.</p>
+<div class="highlight"><pre><span></span><code>              ┌──────────────────────────────────────────────────┐
+              │                  ITERATION                        │
+              ▼                                                   │
+  ┌─────────┐   ┌──────────────┐   ┌──────┐   ┌──────────┐   ┌───────┐
+  │ Clarify │ → │ Requirements │ → │ Data │ → │ Features │ → │ Model │
+  └─────────┘   │   &amp; SLOs     │   └──────┘   └──────────┘   └───────┘
+                └──────────────┘                                  │
+                                                                  ▼
+  ┌────────────┐   ┌─────────┐   ┌──────────┐   ┌─────────────┐
+  │ Monitoring │ ← │ Serving │ ← │   Eval   │ ← │  Training   │
+  └────────────┘   └─────────┘   └──────────┘   └─────────────┘
+        │                                                ▲
+        └──────────── feedback / data flywheel ──────────┘
+</code></pre></div>
+<p>The most important arrow on the whiteboard is the dashed one from <strong>Monitoring</strong> back to <strong>Data</strong>: the <em>data flywheel</em>. Drawing it early signals seniority. We unpack flywheels in <a href="../12-production-mlops/05-data-flywheel.html">Data Flywheels &amp; Continuous Improvement</a>.</p>
+<p>A practical rule of thumb for how to spend a 45-minute round:</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Time</th>
+<th>What you produce</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Clarify + requirements</td>
+<td>~8 min</td>
+<td>Scope, primary metric, scale, constraints</td>
+</tr>
+<tr>
+<td>Data + features + labels</td>
+<td>~10 min</td>
+<td>Where supervision comes from, leakage map</td>
+</tr>
+<tr>
+<td>Model + training</td>
+<td>~10 min</td>
+<td>Baseline → proposed model, loss, eval split</td>
+</tr>
+<tr>
+<td>Serving + monitoring</td>
+<td>~10 min</td>
+<td>Latency budget, candidate generation, online metrics</td>
+</tr>
+<tr>
+<td>Iteration + Q&amp;A</td>
+<td>~7 min</td>
+<td>Failure modes, next experiments</td>
+</tr>
+</tbody>
+</table>
+<p>If you spend 30 minutes on model architecture, you have failed the round regardless of how clever the architecture is.</p>
+<h2 id="stage-1-clarify-the-problem">Stage 1 — Clarify the Problem<a class="headerlink" href="#stage-1-clarify-the-problem" title="Permanent link">¶</a></h2>
+<p>Never start designing. <strong>Spend the first five minutes turning a vague prompt into a crisp ML problem statement.</strong> Interviewers deliberately under-specify so they can watch you scope. Your job is to convert &ldquo;Design X&rdquo; into a single sentence of the form:</p>
+<blockquote>
+<p><em>Predict <span class="arithmatex">\(y\)</span> for entity <span class="arithmatex">\(z\)</span> in context <span class="arithmatex">\(c\)</span>, optimizing <span class="arithmatex">\(M\)</span>, subject to constraints <span class="arithmatex">\(K\)</span>.</em></p>
+</blockquote>
+<h3 id="the-clarifying-question-checklist">The clarifying-question checklist<a class="headerlink" href="#the-clarifying-question-checklist" title="Permanent link">¶</a></h3>
+<p>Ask these, in roughly this order:</p>
+<ol>
+<li><strong>Business objective.</strong> What outcome are we actually trying to move? (Watch time? Revenue? Harm reduction? Retention?) The <em>business</em> metric is almost never the same as the <em>ML</em> metric, and the gap between them is where most of the interesting design lives.</li>
+<li><strong>User and surface.</strong> Who sees the output, where, and what action can they take? &ldquo;A ranked feed on mobile&rdquo; implies very different latency and slate sizes than &ldquo;a nightly batch email.&rdquo;</li>
+<li><strong>Prediction target.</strong> Classification, regression, ranking, generation, retrieval? Binary or multi-class? Point estimate or full distribution?</li>
+<li><strong>Scale.</strong> How many users, items, queries per second (QPS), events per day? This single number drives almost every later decision — candidate generation, embedding table size, whether you can afford a cross-encoder.</li>
+<li><strong>Latency budget.</strong> Real-time (&lt;100 ms), near-real-time (seconds), or batch (hours)? This is a hard constraint, not a preference.</li>
+<li><strong>Existing system.</strong> Is there a baseline? A heuristic? Logs? &ldquo;We currently rank by recency&rdquo; tells you both your baseline and your initial training data source.</li>
+<li><strong>Constraints.</strong> Privacy, fairness, regulatory, cold-start, multilingual, on-device.</li>
+</ol>
+<p>Frame the prompt as a function you are approximating. For a recommendation system:</p>
+<div class="arithmatex">\[
+\hat{y} = f_\theta(\text{user},\ \text{item},\ \text{context}) \approx P(\text{engage} \mid \text{user},\ \text{item},\ \text{context})
+\]</div>
+<p>State explicitly what &ldquo;engage&rdquo; means — a click, a 30-second watch, a like — because that <em>label definition</em> silently determines everything downstream.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>State your assumptions out loud and write them in a corner of the board: &ldquo;I&rsquo;ll assume ~100M daily active users, ~10M items, a 200 ms p99 budget for ranking, and that we have 6 months of impression/click logs.&rdquo; If the interviewer disagrees, they will correct you — which is <em>exactly</em> the signal you want. Silent assumptions are the number-one way candidates design the wrong system.</p>
+</div>
+<h2 id="stage-2-requirements-metrics-slos">Stage 2 — Requirements, Metrics &amp; SLOs<a class="headerlink" href="#stage-2-requirements-metrics-slos" title="Permanent link">¶</a></h2>
+<p>Now translate the clarified problem into measurable targets. This stage separates engineers from theoreticians.</p>
+<h3 id="functional-vs-non-functional-requirements">Functional vs non-functional requirements<a class="headerlink" href="#functional-vs-non-functional-requirements" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Functional:</strong> what the system does. &ldquo;Return a ranked list of 20 videos personalized to the user.&rdquo;</li>
+<li><strong>Non-functional:</strong> how well it must do it — latency, throughput, availability, cost, freshness, fairness. These are your <strong>SLOs (Service Level Objectives)</strong>.</li>
+</ul>
+<h3 id="choosing-the-metric-the-three-layer-stack">Choosing the metric — the three-layer stack<a class="headerlink" href="#choosing-the-metric-the-three-layer-stack" title="Permanent link">¶</a></h3>
+<p>Every ML system has a metric <em>hierarchy</em>. Name all three layers explicitly; conflating them is a classic mistake.</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Question</th>
+<th>Examples</th>
+<th>Measured by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Business / North Star</strong></td>
+<td>Does the company win?</td>
+<td>DAU, revenue, retention, harm rate</td>
+<td>A/B test, long horizon</td>
+</tr>
+<tr>
+<td><strong>Online / system</strong></td>
+<td>Does the product surface behave?</td>
+<td>CTR, watch time, session length, complaint rate</td>
+<td>A/B test, real traffic</td>
+</tr>
+<tr>
+<td><strong>Offline / model</strong></td>
+<td>Is the model good in isolation?</td>
+<td>AUC, log loss, NDCG, recall@k, F1</td>
+<td>Held-out logs</td>
+</tr>
+</tbody>
+</table>
+<p>The art is choosing an offline metric that <strong>correlates</strong> with the online metric, which in turn moves the business metric. Optimizing offline AUC is worthless if AUC gains do not translate to watch time. Always say: <em>&ldquo;I&rsquo;ll validate the offline→online correlation before trusting offline numbers.&rdquo;</em></p>
+<h3 id="picking-the-offline-metric-to-match-the-task">Picking the offline metric to match the task<a class="headerlink" href="#picking-the-offline-metric-to-match-the-task" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Binary classification, balanced consequences:</strong> ROC-AUC, log loss.</li>
+<li><strong>Binary classification, heavy class imbalance</strong> (fraud, abuse, ads click): <strong>PR-AUC</strong> and precision/recall at a fixed threshold. ROC-AUC is misleadingly optimistic under imbalance.</li>
+<li><strong>Ranking / recommendation:</strong> NDCG@k, MAP, recall@k for the candidate-generation stage, AUC or calibrated log loss for the ranking stage.</li>
+<li><strong>Calibrated probabilities needed</strong> (ads bidding, expected-value decisions): log loss + a calibration metric like Expected Calibration Error (ECE). A well-ranked but mis-calibrated model is useless for an auction.</li>
+<li><strong>Regression:</strong> RMSE (penalizes large errors), MAE (robust), or quantile loss if you need intervals.</li>
+<li><strong>Generation / LLM:</strong> task-specific — exact-match, pass@k, win-rate vs a baseline, or an LLM-as-judge score. See <a href="../11-evaluation/01-eval-landscape.html">The Evaluation Problem &amp; Benchmark Landscape</a> and <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a>.</li>
+</ul>
+<p>NDCG (Normalized Discounted Cumulative Gain) is worth knowing cold for ranking rounds:</p>
+<div class="arithmatex">\[
+\text{DCG@}k = \sum_{i=1}^{k} \frac{2^{\text{rel}_i} - 1}{\log_2(i+1)},
+\qquad
+\text{NDCG@}k = \frac{\text{DCG@}k}{\text{IDCG@}k}
+\]</div>
+<p>where <span class="arithmatex">\(\text{rel}_i\)</span> is the graded relevance of the item at rank <span class="arithmatex">\(i\)</span> and <span class="arithmatex">\(\text{IDCG@}k\)</span> is the DCG of the ideal (perfectly sorted) ranking, which normalizes the score into <span class="arithmatex">\([0,1]\)</span>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dcg_at_k</span><span class="p">(</span><span class="n">relevances</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Discounted Cumulative Gain over the top-k items.</span>
+<span class="sd">    relevances: list of graded relevance scores in the *predicted* order.&quot;&quot;&quot;</span>
+    <span class="n">rel</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">relevances</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)[:</span><span class="n">k</span><span class="p">]</span>
+    <span class="c1"># rank i is 1-indexed; discount = 1 / log2(i + 1)</span>
+    <span class="n">discounts</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">rel</span><span class="o">.</span><span class="n">size</span> <span class="o">+</span> <span class="mi">2</span><span class="p">))</span>
+    <span class="n">gains</span> <span class="o">=</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">**</span> <span class="n">rel</span><span class="p">)</span> <span class="o">-</span> <span class="mf">1.0</span>           <span class="c1"># exponential gain rewards highly-relevant hits</span>
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">gains</span> <span class="o">*</span> <span class="n">discounts</span><span class="p">))</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">ndcg_at_k</span><span class="p">(</span><span class="n">relevances</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;NDCG: DCG of predicted order divided by DCG of the ideal order.&quot;&quot;&quot;</span>
+    <span class="n">actual</span> <span class="o">=</span> <span class="n">dcg_at_k</span><span class="p">(</span><span class="n">relevances</span><span class="p">,</span> <span class="n">k</span><span class="p">)</span>
+    <span class="n">ideal</span> <span class="o">=</span> <span class="n">dcg_at_k</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">relevances</span><span class="p">,</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span> <span class="n">k</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">actual</span> <span class="o">/</span> <span class="n">ideal</span> <span class="k">if</span> <span class="n">ideal</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+
+<span class="c1"># Predicted ranking put a &quot;1&quot; before a &quot;3&quot;: NDCG penalizes that inversion.</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">ndcg_at_k</span><span class="p">([</span><span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="mi">4</span><span class="p">),</span> <span class="mi">4</span><span class="p">))</span>   <span class="c1"># 1.0  (already ideal)</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">ndcg_at_k</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="mi">4</span><span class="p">),</span> <span class="mi">4</span><span class="p">))</span>   <span class="c1"># ~0.79 (good item ranked 2nd)</span>
+</code></pre></div>
+<h3 id="slos-and-the-latency-budget">SLOs and the latency budget<a class="headerlink" href="#slos-and-the-latency-budget" title="Permanent link">¶</a></h3>
+<p>Write down a concrete budget and decompose it. Latency is <em>additive</em> across stages, so the budget must be split:</p>
+<div class="highlight"><pre><span></span><code>End-to-end p99 budget: 200 ms
+  ├─ network + gateway        : 20 ms
+  ├─ feature fetch (store)    : 30 ms
+  ├─ candidate generation     : 40 ms   (ANN over 10M items → 1000 candidates)
+  ├─ ranking model            : 80 ms   (score 1000 candidates)
+  └─ post-processing/dedup    : 30 ms
+</code></pre></div>
+<p>Always reason about <strong>p99, not the mean</strong> — tail latency is what users feel and what pages the on-call engineer. A model with a great median but a fat tail will blow your SLO.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall</p>
+<p>Optimizing a single offline number with no online plan. If you say &ldquo;I&rsquo;d maximize AUC&rdquo; and stop, you have skipped the entire reason the system exists. Always close the loop: offline metric → A/B test → online metric → business metric. And always name a <strong>guardrail metric</strong> (e.g., &ldquo;improve CTR <em>without</em> increasing reported-content rate or p99 latency&rdquo;) so you do not win the battle and lose the war.</p>
+</div>
+<h2 id="stage-3-data-labels">Stage 3 — Data &amp; Labels<a class="headerlink" href="#stage-3-data-labels" title="Permanent link">¶</a></h2>
+<p>Data is where most real ML projects succeed or fail, and where most candidates spend too little time. Slow down here.</p>
+<h3 id="the-four-questions-of-data">The four questions of data<a class="headerlink" href="#the-four-questions-of-data" title="Permanent link">¶</a></h3>
+<ol>
+<li><strong>Where does supervision come from?</strong> Explicit labels (human annotation), implicit feedback (clicks, watches, purchases), or self-supervision? Most large-scale systems run on <em>implicit</em> feedback because it is free and abundant — but it is biased.</li>
+<li><strong>How much do we have, and how fresh?</strong> Volume sets model capacity; freshness sets retraining cadence.</li>
+<li><strong>What is the label, exactly?</strong> &ldquo;Did the user like this video?&rdquo; Is a 2-second view a positive? A skip a negative? Pin down the positive/negative definition — it is a modeling decision disguised as a data question.</li>
+<li><strong>What are the biases?</strong> Position bias, presentation bias, selection bias, feedback loops. You can only learn from items you <em>showed</em>, and you showed them because a previous model thought they were good. This is <strong>survivorship/exposure bias</strong> and it is everywhere in recsys and search.</li>
+</ol>
+<h3 id="implicit-feedback-and-its-traps">Implicit feedback and its traps<a class="headerlink" href="#implicit-feedback-and-its-traps" title="Permanent link">¶</a></h3>
+<p>Position bias is the canonical example: users click the top result more <em>because</em> it is on top, not because it is more relevant. If you train naively on clicks, you teach the model to predict <em>position</em>, not relevance.</p>
+<p>Two standard remedies, both worth naming:</p>
+<ul>
+<li><strong>Inverse Propensity Weighting (IPW).</strong> Weight each training example by the inverse probability that it was <em>shown</em> at its position. If an item at position 5 (rarely examined) got a click, that click is strong evidence and should count more:</li>
+</ul>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{IPW}} = \frac{1}{N}\sum_{i=1}^{N} \frac{1}{p_i}\, \ell(\hat{y}_i, y_i),
+\qquad p_i = P(\text{examined} \mid \text{position}_i)
+\]</div>
+<ul>
+<li><strong>Position as a feature at train time, zeroed at serve time.</strong> Feed position into the model during training so it can &ldquo;explain away&rdquo; the position effect, then set it to a constant (e.g., position 1) at inference. This is the &ldquo;position-debias tower&rdquo; trick used in production ranking systems.</li>
+</ul>
+<h3 id="negative-sampling">Negative sampling<a class="headerlink" href="#negative-sampling" title="Permanent link">¶</a></h3>
+<p>Most large-scale systems have abundant positives (clicks) and an astronomically large <em>implicit</em> negative set (everything not clicked). You cannot train on all of it. Strategies:</p>
+<ul>
+<li><strong>Random negatives</strong> — cheap, but mostly trivially easy; the model learns little.</li>
+<li><strong>In-batch negatives</strong> — use other positives in the mini-batch as negatives for this example. Standard in two-tower retrieval; nearly free because the embeddings are already computed.</li>
+<li><strong>Hard negatives</strong> — items the current model ranks highly but that were not engaged. These sharpen the decision boundary but, if overused, cause instability and false-negative noise. A common recipe mixes ~majority random with a small fraction of hard negatives.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">in_batch_softmax_loss</span><span class="p">(</span><span class="n">user_emb</span><span class="p">,</span> <span class="n">item_emb</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.07</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Two-tower retrieval loss with in-batch negatives (a la sampled softmax).</span>
+<span class="sd">    user_emb, item_emb: (B, d) L2-normalized embeddings; row i is a positive pair.</span>
+<span class="sd">    Every *other* item in the batch acts as a negative for user i.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">user_emb</span> <span class="o">@</span> <span class="n">item_emb</span><span class="o">.</span><span class="n">t</span><span class="p">()</span> <span class="o">/</span> <span class="n">temperature</span>   <span class="c1"># (B, B) similarity matrix</span>
+    <span class="n">labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">user_emb</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">user_emb</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>  <span class="c1"># diagonal = positives</span>
+    <span class="c1"># Cross-entropy pulls the matched pair together, pushes the B-1 negatives apart.</span>
+    <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
+
+<span class="c1"># Sanity check on random data</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">u</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">16</span><span class="p">),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">v</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">16</span><span class="p">),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">in_batch_softmax_loss</span><span class="p">(</span><span class="n">u</span><span class="p">,</span> <span class="n">v</span><span class="p">)))</span>   <span class="c1"># a finite positive scalar</span>
+</code></pre></div>
+<h3 id="the-leakage-map">The leakage map<a class="headerlink" href="#the-leakage-map" title="Permanent link">¶</a></h3>
+<p>Before any modeling, mentally trace every feature back in time and ask: <em>was this knowable at prediction time?</em> <strong>Target leakage</strong> — a feature that encodes the label or post-event information — produces gorgeous offline metrics and catastrophic production failure. Classic leaks: using a &ldquo;final purchase amount&rdquo; to predict whether a purchase happens; using aggregate stats computed over a window that includes the prediction instant; joining a label table that has been updated since the event.</p>
+<p>The cleanest defense is a <strong>point-in-time correct join</strong>: every feature value must reflect the state of the world <em>as of the event timestamp</em>, never later. We return to this in features and again in <a href="../12-production-mlops/03-caching-routing-cost.html">Caching, Routing &amp; Cost Control in Production</a> for the serving side.</p>
+<h2 id="stage-4-features-representation">Stage 4 — Features &amp; Representation<a class="headerlink" href="#stage-4-features-representation" title="Permanent link">¶</a></h2>
+<p>Features are how you encode the world into tensors. Discuss them by <strong>category</strong>, not as a flat list — categories show you understand the <em>kinds</em> of signal available.</p>
+<h3 id="feature-taxonomy">Feature taxonomy<a class="headerlink" href="#feature-taxonomy" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>User features:</strong> demographics, long-term history (embeddings of past interactions), aggregated counts, account age.</li>
+<li><strong>Item features:</strong> content embeddings (text/image/audio), category, age, historical engagement stats.</li>
+<li><strong>Context features:</strong> time of day, day of week, device, locale, network type, position in feed.</li>
+<li><strong>Cross / interaction features:</strong> user-item affinity (has this user engaged with this creator before?), query-document match. These are often the highest-signal features and the hardest to compute online.</li>
+</ul>
+<h3 id="encoding-choices">Encoding choices<a class="headerlink" href="#encoding-choices" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Feature type</th>
+<th>Encoding</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Low-cardinality categorical</td>
+<td>One-hot or learned embedding</td>
+</tr>
+<tr>
+<td>High-cardinality categorical (user IDs, item IDs)</td>
+<td>Embedding table (possibly hashed)</td>
+</tr>
+<tr>
+<td>Numerical, skewed</td>
+<td>Log-transform, then standardize or bucketize</td>
+</tr>
+<tr>
+<td>Numerical, heavy-tailed counts</td>
+<td>Quantile/percentile bucketing</td>
+</tr>
+<tr>
+<td>Text</td>
+<td>Tokenize → embed (see <a href="../09-rag-retrieval/01-embeddings-representation.html">Embeddings &amp; Representation Learning</a>)</td>
+</tr>
+<tr>
+<td>Timestamps</td>
+<td>Cyclical encoding: <span class="arithmatex">\(\sin/\cos\)</span> of hour, day-of-week</td>
+</tr>
+</tbody>
+</table>
+<p>For high-cardinality IDs, embedding tables dominate memory. A worked sizing:</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example — embedding-table memory and the latency budget</p>
+<p>Suppose 100M users and 10M items, each with a 64-dimensional embedding in fp32 (4 bytes).</p>
+<p>User table: <span class="arithmatex">\(100{,}000{,}000 \times 64 \times 4 = 2.56 \times 10^{10}\)</span> bytes <span class="arithmatex">\(\approx\)</span> <strong>25.6 GB</strong>.</p>
+<p>Item table: <span class="arithmatex">\(10{,}000{,}000 \times 64 \times 4 = 2.56 \times 10^{9}\)</span> bytes <span class="arithmatex">\(\approx\)</span> <strong>2.56 GB</strong>.</p>
+<p>Total <span class="arithmatex">\(\approx\)</span> <strong>28 GB</strong> just for two embedding tables — already exceeding a single 24 GB GPU. Mitigations: drop to fp16 (halve to ~14 GB), reduce dim to 32, <strong>hash</strong> user IDs into a smaller table (accepting collisions), or shard the table across hosts via a parameter server. This is exactly the kind of magnitude reasoning interviewers reward — it forces a real architectural decision rather than a hand-wave.</p>
+<p>Now the latency side. Suppose ranking must score <span class="arithmatex">\(N=1000\)</span> candidates within an 80 ms budget on one machine. That is <span class="arithmatex">\(80\text{ ms} / 1000 = 80\ \mu\text{s}\)</span> per candidate end-to-end. A heavy cross-encoder costing 5 ms each would need <span class="arithmatex">\(5000\)</span> ms — <strong>62× over budget</strong>. Conclusion drawn <em>from the numbers</em>: cross-encoders are infeasible at the candidate-generation stage; reserve them for a final re-rank of the top ~20, and use a cheap two-tower dot product for the 1000.</p>
+</div>
+<h3 id="feature-stores-and-trainserve-skew">Feature stores and train/serve skew<a class="headerlink" href="#feature-stores-and-trainserve-skew" title="Permanent link">¶</a></h3>
+<p>The single most common production ML bug is <strong>train/serve skew</strong>: a feature is computed one way in the offline training pipeline (in SQL over a data warehouse) and a subtly different way in the online serving path (in Python over a streaming store). The model sees a distribution at serve time it never trained on.</p>
+<p>The standard fix is a <strong>feature store</strong> that guarantees the <em>same transformation code</em> and <em>point-in-time correctness</em> on both paths:</p>
+<div class="highlight"><pre><span></span><code>                    ┌─────────────────────────┐
+   raw events ─────▶│   Feature transforms     │  (ONE definition of each feature)
+                    │   (shared library)       │
+                    └──────────┬───────┬───────┘
+                               │       │
+                    offline    │       │   online
+              (point-in-time)  ▼       ▼ (low-latency KV)
+                    ┌──────────────┐ ┌──────────────┐
+                    │ Offline store│ │ Online store │
+                    │ (warehouse)  │ │ (Redis/etc.) │
+                    └──────┬───────┘ └──────┬───────┘
+                           ▼                ▼
+                       training          serving
+</code></pre></div>
+<p>State explicitly: <em>&ldquo;I&rsquo;d use a feature store so the exact same transformation defines a feature offline and online, eliminating train/serve skew, and I&rsquo;d materialize features with a point-in-time join keyed on the event timestamp.&rdquo;</em> That one sentence demonstrates production experience.</p>
+<h2 id="stage-5-model-selection-training">Stage 5 — Model Selection &amp; Training<a class="headerlink" href="#stage-5-model-selection-training" title="Permanent link">¶</a></h2>
+<p>Only now do we choose a model — and even here, <strong>start with a baseline</strong>.</p>
+<h3 id="always-propose-a-baseline-first">Always propose a baseline first<a class="headerlink" href="#always-propose-a-baseline-first" title="Permanent link">¶</a></h3>
+<p>State a simple baseline before anything fancy:</p>
+<ul>
+<li><strong>Heuristic / non-ML:</strong> most-popular, recency, rules. Surprisingly hard to beat and free to ship.</li>
+<li><strong>Linear / logistic regression</strong> on hand-crafted features. Interpretable, fast, a real yardstick.</li>
+<li><strong>Gradient-boosted trees (GBDT)</strong> for tabular features — often the strongest non-deep baseline and frequently the production winner for structured data.</li>
+</ul>
+<p>Saying &ldquo;I&rsquo;d ship a popularity baseline in week one and measure it&rdquo; signals that you optimize for <em>impact per unit effort</em>, not novelty. Many interviewers consider failure to propose a baseline a red flag.</p>
+<h3 id="the-complexity-ladder">The complexity ladder<a class="headerlink" href="#the-complexity-ladder" title="Permanent link">¶</a></h3>
+<p>Climb only as far as the data and latency budget justify:</p>
+<ol>
+<li>Logistic regression / GBDT on tabular features.</li>
+<li><strong>Two-tower</strong> (dual-encoder) model for retrieval: a user tower and an item tower producing embeddings whose dot product is the score. Enables sub-linear ANN retrieval over millions of items.</li>
+<li><strong>Deep ranking network</strong> (e.g., a wide-and-deep or DCN-style cross network) for the final ranking of a few hundred candidates, where you can afford richer cross features.</li>
+<li><strong>Sequence models / transformers</strong> when order and long histories matter (session-based recommendation, next-action prediction).</li>
+<li><strong>LLM-based</strong> approaches when the input is language and you need generalization or generation — see <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a> and, for retrieval-augmented designs, <a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a>.</li>
+</ol>
+<h3 id="the-two-stage-candidate-generation-ranking-pattern">The two-stage (candidate generation → ranking) pattern<a class="headerlink" href="#the-two-stage-candidate-generation-ranking-pattern" title="Permanent link">¶</a></h3>
+<p>This is <em>the</em> canonical large-scale recommendation/search architecture and you should be able to draw it from memory. You cannot run an expensive model over millions of items per request, so you split the problem:</p>
+<div class="highlight"><pre><span></span><code>  10M items
+     │
+     ▼
+┌─────────────────────┐   cheap, high-recall
+│ Candidate generation │   (two-tower + ANN index)   →  ~1000 candidates
+└─────────────────────┘
+     │
+     ▼
+┌─────────────────────┐   expensive, high-precision
+│      Ranking         │   (deep net w/ cross feats)  →  ~100 scored
+└─────────────────────┘
+     │
+     ▼
+┌─────────────────────┐   business rules, diversity,
+│   Re-ranking / policy │   freshness, dedup, fairness →  top 20 shown
+└─────────────────────┘
+</code></pre></div>
+<p>The candidate generator optimizes <strong>recall</strong> (don&rsquo;t lose the good item); the ranker optimizes <strong>precision/calibration</strong> (order the survivors correctly); the re-ranker injects <strong>business logic</strong> (diversity, freshness, policy). Each stage trades compute for items: cheap over many, expensive over few. The ANN retrieval underpinning candidate generation is covered in <a href="../09-rag-retrieval/02-vector-databases-ann.html">Vector Databases &amp; Approximate Nearest Neighbor Search</a>.</p>
+<p>A minimal two-tower model, end to end:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Tower</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Maps sparse + dense features to an L2-normalized embedding.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n_ids</span><span class="p">,</span> <span class="n">id_dim</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">n_dense</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">out_dim</span><span class="o">=</span><span class="mi">64</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">id_emb</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">n_ids</span><span class="p">,</span> <span class="n">id_dim</span><span class="p">)</span>        <span class="c1"># hashed ID embedding</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mlp</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">id_dim</span> <span class="o">+</span> <span class="n">n_dense</span><span class="p">,</span> <span class="mi">128</span><span class="p">),</span> <span class="n">nn</span><span class="o">.</span><span class="n">ReLU</span><span class="p">(),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="n">out_dim</span><span class="p">),</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ids</span><span class="p">,</span> <span class="n">dense</span><span class="p">):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">id_emb</span><span class="p">(</span><span class="n">ids</span><span class="p">),</span> <span class="n">dense</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mlp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>          <span class="c1"># unit-norm → dot product == cosine</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TwoTower</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n_users</span><span class="p">,</span> <span class="n">n_items</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">user_tower</span> <span class="o">=</span> <span class="n">Tower</span><span class="p">(</span><span class="n">n_users</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">item_tower</span> <span class="o">=</span> <span class="n">Tower</span><span class="p">(</span><span class="n">n_items</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">u_ids</span><span class="p">,</span> <span class="n">u_dense</span><span class="p">,</span> <span class="n">i_ids</span><span class="p">,</span> <span class="n">i_dense</span><span class="p">):</span>
+        <span class="n">ue</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">user_tower</span><span class="p">(</span><span class="n">u_ids</span><span class="p">,</span> <span class="n">u_dense</span><span class="p">)</span>
+        <span class="n">ie</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">item_tower</span><span class="p">(</span><span class="n">i_ids</span><span class="p">,</span> <span class="n">i_dense</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">ue</span><span class="p">,</span> <span class="n">ie</span>
+
+<span class="c1"># Training step uses the in-batch softmax loss defined earlier.</span>
+<span class="c1"># At SERVE time: precompute ALL item embeddings nightly, build an ANN index,</span>
+<span class="c1"># embed the user online, and retrieve top-k by approximate nearest neighbor.</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">TwoTower</span><span class="p">(</span><span class="n">n_users</span><span class="o">=</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">,</span> <span class="n">n_items</span><span class="o">=</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">)</span>
+<span class="n">u_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">,</span> <span class="p">(</span><span class="mi">8</span><span class="p">,))</span>
+<span class="n">i_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">,</span> <span class="p">(</span><span class="mi">8</span><span class="p">,))</span>
+<span class="n">ue</span><span class="p">,</span> <span class="n">ie</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">u_ids</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="n">i_ids</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ue</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">ie</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>   <span class="c1"># torch.Size([8, 64]) torch.Size([8, 64])</span>
+</code></pre></div>
+<p>The key serving insight, which you should say out loud: <strong>item embeddings are precomputed offline and indexed; only the user tower runs online.</strong> That is what makes retrieval over 10M items feasible inside 40 ms.</p>
+<h3 id="loss-functions-match-the-loss-to-the-metric">Loss functions — match the loss to the metric<a class="headerlink" href="#loss-functions-match-the-loss-to-the-metric" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Pointwise</strong> (binary cross-entropy): predict <span class="arithmatex">\(P(\text{click})\)</span> per item. Simple, gives calibrated probabilities, but ignores relative order.</li>
+<li><strong>Pairwise</strong> (BPR, RankNet): learn that item A should rank above item B. Directly targets ordering.</li>
+<li><strong>Listwise</strong> (LambdaRank/LambdaMART, softmax/sampled-softmax): optimize a whole ranked list, often a surrogate for NDCG. Best ranking quality, more complex.</li>
+</ul>
+<p>If the <em>online</em> metric is ordering quality (NDCG), a pointwise log-loss can be a fine proxy at the ranking stage because well-calibrated probabilities sort well — but name the option to go pairwise/listwise.</p>
+<h3 id="training-data-hygiene">Training-data hygiene<a class="headerlink" href="#training-data-hygiene" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Split by time, not at random</strong>, for any system with temporal structure. Random splits leak the future into the training set and inflate offline metrics. Train on weeks 1–8, validate on week 9, test on week 10.</li>
+<li><strong>Handle class imbalance</strong> with class weights, focal loss, or down-sampling negatives (then calibrate the threshold back).</li>
+<li><strong>Watch for distribution shift</strong> between train and serve; schedule periodic retraining.</li>
+</ul>
+<p>For the deep-learning machinery underneath — optimizers, schedules, regularization, mixed precision — defer to Part III, e.g. <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a>. In an interview, mention Adam/AdamW, a warmup+decay schedule, early stopping on the validation metric, and L2/dropout — then move on. Architecture is <em>not</em> where you should spend your minutes.</p>
+<h2 id="stage-6-evaluation-offline-and-online">Stage 6 — Evaluation: Offline and Online<a class="headerlink" href="#stage-6-evaluation-offline-and-online" title="Permanent link">¶</a></h2>
+<p>Evaluation deserves its own stage because a system you cannot measure is a system you cannot improve.</p>
+<h3 id="offline-evaluation-done-right">Offline evaluation done right<a class="headerlink" href="#offline-evaluation-done-right" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Temporal hold-out</strong>, as above. Report the metric chosen in Stage 2, plus calibration if probabilities matter.</li>
+<li><strong>Slice the metric.</strong> A single aggregate number hides failures. Report performance per segment: new vs returning users, head vs tail items, by locale, by device. A model that is great on average but broken for new users (cold start) is often a non-starter.</li>
+<li><strong>Counterfactual / off-policy evaluation.</strong> Because logs were collected under the <em>old</em> policy, naive replay is biased. Estimators like <strong>Inverse Propensity Scoring (IPS)</strong> and the <strong>doubly-robust</strong> estimator estimate how a <em>new</em> policy would have performed, using logged propensities. Naming this is a strong senior signal.</li>
+</ul>
+<p>The IPS estimator of a new policy&rsquo;s value from logs collected under behavior policy <span class="arithmatex">\(\pi_b\)</span>:</p>
+<div class="arithmatex">\[
+\hat{V}_{\text{IPS}}(\pi_e) = \frac{1}{N}\sum_{i=1}^{N} \frac{\pi_e(a_i \mid x_i)}{\pi_b(a_i \mid x_i)}\, r_i
+\]</div>
+<p>where <span class="arithmatex">\(r_i\)</span> is the logged reward, <span class="arithmatex">\(a_i\)</span> the logged action, and the ratio re-weights each logged event by how much more (or less) likely the <em>new</em> policy was to take that action.</p>
+<h3 id="online-evaluation-the-ab-test">Online evaluation: the A/B test<a class="headerlink" href="#online-evaluation-the-ab-test" title="Permanent link">¶</a></h3>
+<p>Offline gains are a hypothesis; the <strong>A/B test</strong> is the verdict. The structure to recite:</p>
+<ol>
+<li><strong>Hypothesis:</strong> &ldquo;The new ranker increases watch time without raising the report rate.&rdquo;</li>
+<li><strong>Randomization unit:</strong> usually the user (not the request), to avoid contamination and capture within-session effects.</li>
+<li><strong>Primary metric + guardrails:</strong> one metric to move, several that must <em>not</em> regress (latency p99, revenue, complaint rate).</li>
+<li><strong>Power and duration:</strong> size the experiment so it can detect the minimum effect you care about.</li>
+</ol>
+<p>A back-of-envelope sample-size formula for comparing two proportions (e.g., CTR) at 80% power and 5% significance:</p>
+<div class="arithmatex">\[
+n \approx \frac{16\,\bar{p}(1-\bar{p})}{\delta^2} \quad \text{per arm}
+\]</div>
+<p>where <span class="arithmatex">\(\bar p\)</span> is the baseline rate and <span class="arithmatex">\(\delta\)</span> the absolute lift you want to detect.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example — sizing an A/B test</p>
+<p>Baseline CTR <span class="arithmatex">\(\bar p = 0.10\)</span>, and we want to detect an absolute lift of <span class="arithmatex">\(\delta = 0.005\)</span> (i.e., 10.0% → 10.5%, a 5% relative gain).</p>
+<div class="arithmatex">\[
+n \approx \frac{16 \times 0.10 \times 0.90}{(0.005)^2} = \frac{16 \times 0.09}{0.000025} = \frac{1.44}{0.000025} = 57{,}600 \text{ users per arm.}
+\]</div>
+<p>So roughly <strong>115k users total</strong>. At 100M DAU that is a tiny fraction — easy to run. But flip it: to detect a <span class="arithmatex">\(\delta = 0.0005\)</span> (0.5% relative) lift you need <span class="arithmatex">\(100\times\)</span> more users — <strong>5.76M per arm</strong>, which at lower traffic could take weeks. The takeaway to voice: <em>small effects require large samples or long runs</em>, and that constraint is exactly why offline screening and good guardrails matter before you spend traffic.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall</p>
+<p><strong>Peeking.</strong> Repeatedly checking a running A/B test and stopping the moment it crosses significance massively inflates the false-positive rate — you will &ldquo;discover&rdquo; wins that are noise. Fix the sample size and duration in advance, or use a sequential-testing method (e.g., always-valid p-values / mSPRT) designed for continuous monitoring. Mention this and you signal experimentation maturity.</p>
+</div>
+<h2 id="stage-7-serving-scaling-infrastructure">Stage 7 — Serving, Scaling &amp; Infrastructure<a class="headerlink" href="#stage-7-serving-scaling-infrastructure" title="Permanent link">¶</a></h2>
+<p>A trained model is worthless until it serves predictions within budget at scale. Cover four things: topology, latency, scaling, and freshness.</p>
+<h3 id="online-vs-batch-vs-streaming">Online vs batch vs streaming<a class="headerlink" href="#online-vs-batch-vs-streaming" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Batch (offline) inference:</strong> precompute predictions on a schedule, store in a KV store, serve by lookup. Lowest online cost; staleness is the price. Great for &ldquo;users who bought X also bought Y&rdquo; tables or nightly item embeddings.</li>
+<li><strong>Online (real-time) inference:</strong> run the model per request. Necessary when the input is only known at request time (current query, session context). Bounded by your latency SLO.</li>
+<li><strong>Streaming / near-real-time:</strong> update features (and sometimes the model) continuously from an event stream — important for freshness-sensitive systems (trending, fraud).</li>
+</ul>
+<p>Most production systems are <strong>hybrid</strong>: batch-precompute the heavy parts (item embeddings, candidate pools), do the light, personalized part online.</p>
+<h3 id="serving-topology-for-the-two-stage-system">Serving topology for the two-stage system<a class="headerlink" href="#serving-topology-for-the-two-stage-system" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code>   request
+      │
+      ▼
+ ┌──────────┐    ┌──────────────┐    ┌───────────────┐    ┌──────────┐
+ │ Gateway  │──▶ │ Feature store │──▶ │ Candidate gen │──▶ │ Ranker   │──▶ response
+ │ (auth,   │    │ (online KV)   │    │ (ANN index)   │    │ (deep nn │
+ │  rate-lim)│   └──────────────┘    └───────────────┘    │  on GPU/ │
+ └──────────┘                                              │  CPU)    │
+                                                           └──────────┘
+        ▲                                                       │
+        └────────────────── logging / metrics ──────────────────┘
+</code></pre></div>
+<p>For the LLM-specific serving stack — continuous batching, KV-cache management, autoscaling, cost — see <a href="../12-production-mlops/01-serving-system-design.html">Designing an LLM Serving System</a> and <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a>. The principles below apply to any model.</p>
+<h3 id="scaling-levers">Scaling levers<a class="headerlink" href="#scaling-levers" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Horizontal scaling + load balancing:</strong> stateless model servers behind a balancer; scale replicas with QPS.</li>
+<li><strong>Caching:</strong> cache features, candidate sets, even full responses for hot/popular queries. A cache hit is the cheapest prediction there is. See <a href="../12-production-mlops/03-caching-routing-cost.html">Caching, Routing &amp; Cost Control in Production</a>.</li>
+<li><strong>Model compression:</strong> quantization and distillation shrink the serving footprint and cut latency. See <a href="../05-posttraining-alignment/12-distillation-compression.html">Distillation, Model Compression &amp; Knowledge Transfer</a> and <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a>.</li>
+<li><strong>Hardware:</strong> CPU is fine for trees and small nets; GPU/accelerators for deep models and LLMs.</li>
+<li><strong>Batching:</strong> group concurrent requests to amortize fixed cost — a latency/throughput tradeoff to state explicitly.</li>
+</ul>
+<h3 id="a-tiny-capacity-calculation">A tiny capacity calculation<a class="headerlink" href="#a-tiny-capacity-calculation" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">replicas_needed</span><span class="p">(</span><span class="n">qps</span><span class="p">,</span> <span class="n">per_request_ms</span><span class="p">,</span> <span class="n">target_utilization</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span>
+                    <span class="n">concurrency_per_replica</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;How many model-server replicas to hold p99 under load.</span>
+<span class="sd">    qps: expected peak queries/sec</span>
+<span class="sd">    per_request_ms: model latency per request (ms)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># One replica with C-way concurrency serves: 1000/latency * C requests/sec.</span>
+    <span class="n">throughput_per_replica</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1000.0</span> <span class="o">/</span> <span class="n">per_request_ms</span><span class="p">)</span> <span class="o">*</span> <span class="n">concurrency_per_replica</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">qps</span> <span class="o">/</span> <span class="n">throughput_per_replica</span>
+    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">raw</span> <span class="o">/</span> <span class="n">target_utilization</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>   <span class="c1"># headroom so we don&#39;t run hot</span>
+
+<span class="c1"># 50k QPS, 80 ms per request, single-threaded, run at 70% utilization:</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">replicas_needed</span><span class="p">(</span><span class="mi">50_000</span><span class="p">,</span> <span class="mi">80</span><span class="p">))</span>     <span class="c1"># -&gt; ~5715 replicas (!) ⇒ must batch or compress</span>
+</code></pre></div>
+<p>That eye-watering number is itself the lesson: at 50k QPS and 80 ms, single-request serving is absurdly expensive, which <em>forces</em> you to batch, cache, distill, or push work into the offline path. Let the arithmetic drive the architecture.</p>
+<h3 id="cold-start">Cold start<a class="headerlink" href="#cold-start" title="Permanent link">¶</a></h3>
+<p>Always raise it unprompted — it is a favorite follow-up. <strong>New users</strong> (no history): fall back to popularity, context-only features, or an onboarding flow that collects preferences. <strong>New items</strong> (no engagement): rely on content features (text/image embeddings) so the item tower can place them in embedding space before any clicks exist. Content-based features bridge the gap until collaborative signal accumulates.</p>
+<h2 id="stage-8-monitoring-iteration-the-flywheel">Stage 8 — Monitoring, Iteration &amp; The Flywheel<a class="headerlink" href="#stage-8-monitoring-iteration-the-flywheel" title="Permanent link">¶</a></h2>
+<p>Shipping is the <em>start</em>, not the end. The system must watch itself and feed the next iteration.</p>
+<h3 id="what-to-monitor-three-tiers">What to monitor — three tiers<a class="headerlink" href="#what-to-monitor-three-tiers" title="Permanent link">¶</a></h3>
+<ol>
+<li><strong>System health:</strong> latency (p50/p99), QPS, error rate, saturation. Standard SRE signals.</li>
+<li><strong>Data &amp; feature health:</strong> feature distribution drift, null/NaN rates, schema changes, training-vs-serving feature-value mismatches. Most silent model failures are upstream <em>data</em> failures.</li>
+<li><strong>Model quality:</strong> online metric vs baseline, prediction-score distribution drift, calibration drift, and per-slice performance. Watch for <strong>feedback loops</strong> — a recommender that only ever shows popular items starves the tail of training data and ossifies.</li>
+</ol>
+<p>A cheap, deployable drift detector using <strong>Population Stability Index (PSI)</strong>:</p>
+<div class="arithmatex">\[
+\text{PSI} = \sum_{b=1}^{B} (a_b - e_b)\,\ln\!\frac{a_b}{e_b}
+\]</div>
+<p>where <span class="arithmatex">\(e_b\)</span> and <span class="arithmatex">\(a_b\)</span> are the expected (training) and actual (live) fractions of traffic in bin <span class="arithmatex">\(b\)</span>. Rules of thumb: <span class="arithmatex">\(\text{PSI} &lt; 0.1\)</span> stable, <span class="arithmatex">\(0.1\)</span>–<span class="arithmatex">\(0.25\)</span> moderate shift, <span class="arithmatex">\(&gt; 0.25\)</span> significant — investigate and consider retraining.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">psi</span><span class="p">(</span><span class="n">expected</span><span class="p">,</span> <span class="n">actual</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Population Stability Index between a reference and a live sample.</span>
+<span class="sd">    Quantile bins from the *reference* distribution; compare mass in each bin.&quot;&quot;&quot;</span>
+    <span class="n">quantiles</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">quantile</span><span class="p">(</span><span class="n">expected</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">bins</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span>
+    <span class="n">quantiles</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">quantiles</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span>      <span class="c1"># open the outer edges</span>
+    <span class="n">e_counts</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">histogram</span><span class="p">(</span><span class="n">expected</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="n">quantiles</span><span class="p">)</span>
+    <span class="n">a_counts</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">histogram</span><span class="p">(</span><span class="n">actual</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="n">quantiles</span><span class="p">)</span>
+    <span class="n">e</span> <span class="o">=</span> <span class="n">e_counts</span> <span class="o">/</span> <span class="n">e_counts</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">+</span> <span class="n">eps</span>                 <span class="c1"># avoid log(0) / div-by-0</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">a_counts</span> <span class="o">/</span> <span class="n">a_counts</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">+</span> <span class="n">eps</span>
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">a</span> <span class="o">-</span> <span class="n">e</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">a</span> <span class="o">/</span> <span class="n">e</span><span class="p">)))</span>
+
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">ref</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">10_000</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">psi</span><span class="p">(</span><span class="n">ref</span><span class="p">,</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">10_000</span><span class="p">)),</span> <span class="mi">4</span><span class="p">))</span>  <span class="c1"># ~0.00  no shift</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">psi</span><span class="p">(</span><span class="n">ref</span><span class="p">,</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mf">0.6</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">10_000</span><span class="p">)),</span> <span class="mi">4</span><span class="p">))</span>  <span class="c1"># large  ⇒ drift, alert</span>
+</code></pre></div>
+<h3 id="the-data-flywheel">The data flywheel<a class="headerlink" href="#the-data-flywheel" title="Permanent link">¶</a></h3>
+<p>Close the loop you drew at the start. Production interactions become <em>labels</em> for the next model: shown items + engagement become training data, corrected predictions become a curated set, and hard cases (where the model was confident and wrong) get prioritized for human labeling. This compounding advantage — better model → better product → more/better data → better model — is the moat. Detail in <a href="../12-production-mlops/05-data-flywheel.html">Data Flywheels &amp; Continuous Improvement</a>. Beware degenerate loops: if you only train on what the model chose to show, you reinforce its blind spots; inject <strong>exploration</strong> (a small fraction of randomized or epsilon-greedy traffic) to keep collecting unbiased signal.</p>
+<h3 id="retraining-cadence">Retraining cadence<a class="headerlink" href="#retraining-cadence" title="Permanent link">¶</a></h3>
+<p>State a trigger policy, not just a schedule: retrain on a fixed cadence (daily/weekly) <strong>and</strong> on a drift trigger (PSI breach, online-metric drop). Always <strong>shadow</strong> or <strong>canary</strong> a new model — serve it to a small slice or in log-only mode — before full rollout, and keep an instant rollback path.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Your offline AUC jumped from 0.82 to 0.86 with a new feature, but the A/B test shows <em>no</em> change in click-through and a slight rise in p99 latency. What&rsquo;s going on and what do you do?</p>
+<p><strong>A:</strong> Several hypotheses, which I&rsquo;d test in order. (1) <strong>Offline/online mismatch / leakage</strong> — a +4 point AUC jump from a single feature is suspiciously large; the feature may leak label information unavailable at serve time, or be computed differently online (train/serve skew). I&rsquo;d audit it for point-in-time correctness and confirm the serving path reproduces the offline value. (2) <strong>Metric mismatch</strong> — AUC measures ranking of the <em>whole</em> candidate pool, but users only see the top few; gains may be on items that never get impressed, so they don&rsquo;t move CTR. NDCG@k or a top-slot metric would reflect the user experience better. (3) <strong>Saturation / ceiling</strong> — the existing model may already rank the top slots well, so improving the tail is invisible online. (4) <strong>Latency regression</strong> — the new feature added p99 latency, and slower responses can <em>depress</em> engagement enough to cancel a real quality gain; I&rsquo;d check whether a latency-neutral version recovers the win. Decision: do <strong>not</strong> ship on offline AUC alone. Diagnose the leakage/skew first (most likely culprit), align the offline metric to the served surface, and only roll out if a latency-controlled A/B shows a real, guardrail-safe lift.</p>
+</div>
+<h3 id="a-reusable-checklist">A reusable checklist<a class="headerlink" href="#a-reusable-checklist" title="Permanent link">¶</a></h3>
+<p>Keep this in your head as the closing sweep of any design round:</p>
+<div class="highlight"><pre><span></span><code>[ ] Restated the problem as predict-y-for-z-optimizing-M-subject-to-K
+[ ] Named business, online, and offline metrics + their correlation plan
+[ ] Stated scale (users/items/QPS) and a p99 latency budget, decomposed
+[ ] Said where labels come from; addressed bias (position/selection)
+[ ] Drew a leakage/point-in-time map; chose a time-based split
+[ ] Proposed a baseline before the fancy model
+[ ] Used two-stage retrieval→rank if items are large
+[ ] Matched loss to metric; matched model to data size &amp; latency
+[ ] Offline eval with slices + an A/B plan with guardrails &amp; power
+[ ] Serving topology, caching, cold-start, capacity numbers
+[ ] Monitoring (system/data/model), drift detection, retraining triggers
+[ ] Drew the data-flywheel arrow with an exploration mechanism
+</code></pre></div>
+<h2 id="tradeoff-talking-points-say-these-out-loud">Tradeoff Talking Points (Say These Out Loud)<a class="headerlink" href="#tradeoff-talking-points-say-these-out-loud" title="Permanent link">¶</a></h2>
+<p>Interviewers grade <em>how you reason about tradeoffs</em>. Have these ready as reflexes:</p>
+<ul>
+<li><strong>Latency vs accuracy:</strong> bigger models rank better but blow the budget → two-stage retrieval, distillation, quantization.</li>
+<li><strong>Precision vs recall:</strong> candidate generation maximizes recall; ranking maximizes precision. The <em>threshold</em> is a business decision tied to the cost of a false positive vs false negative.</li>
+<li><strong>Freshness vs cost:</strong> real-time features and frequent retraining cost compute and complexity; batch is cheap but stale. Pick per-feature.</li>
+<li><strong>Bias vs variance:</strong> simple models (high bias) are robust and cheap; deep models (high variance) need more data and regularization. More on this in <a href="../01-foundations/05-ml-fundamentals.html">Machine Learning Fundamentals</a>.</li>
+<li><strong>Build vs buy:</strong> a heuristic shipped this week often beats a transformer shipped next quarter — measure the gap before paying for it.</li>
+<li><strong>Exploration vs exploitation:</strong> pure exploitation ossifies the model and starves the data flywheel; budget a slice of traffic for exploration.</li>
+<li><strong>Personalization vs privacy:</strong> richer user features improve predictions but raise privacy/regulatory exposure; consider on-device, aggregation, or differential privacy.</li>
+<li><strong>Global vs per-segment models:</strong> one model is simpler to operate; per-segment (or multi-task) models fit heterogeneity better at higher operational cost.</li>
+</ul>
+<p>The meta-point: <strong>there is rarely a single right answer.</strong> The signal you send is that you can enumerate the options, state the axis of tradeoff, and justify a choice <em>given the stated constraints</em>. When in doubt, tie every decision back to the metric and SLOs from Stage 2.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Impose one spine on every prompt: <strong>clarify → requirements/SLOs → data → features → model → training → eval → serving → monitoring → iteration</strong> — and budget your time so you actually reach serving and monitoring.</li>
+<li><strong>Clarify before you design.</strong> Convert a vague prompt into &ldquo;predict <span class="arithmatex">\(y\)</span> for <span class="arithmatex">\(z\)</span>, optimizing <span class="arithmatex">\(M\)</span>, subject to constraints <span class="arithmatex">\(K\)</span>,&rdquo; and write your assumptions (scale, latency, baseline) on the board.</li>
+<li>Name <strong>all three metric layers</strong> — business, online, offline — and commit to validating the offline→online correlation rather than trusting AUC alone.</li>
+<li>Spend real time on <strong>data and labels</strong>: where supervision comes from, position/selection bias and its fixes (IPW, in-batch/hard negatives), and a <strong>point-in-time leakage map</strong> to kill train/serve skew.</li>
+<li><strong>Propose a baseline first</strong> (popularity, logistic, GBDT), then climb the complexity ladder only as far as data and latency justify; reach for the <strong>two-stage retrieval→rank</strong> pattern whenever the item set is large.</li>
+<li>Evaluate offline with <strong>time-based splits and per-slice metrics</strong>, then decide with a <strong>properly powered A/B test</strong> that has guardrails and no peeking.</li>
+<li><strong>Do the arithmetic</strong> — embedding-table GB, per-candidate microseconds, replica counts, A/B sample sizes — and let the magnitudes force architectural decisions.</li>
+<li>Close the loop: monitor system/data/model health, detect drift (PSI), retrain on cadence <em>and</em> trigger, and draw the <strong>data-flywheel</strong> arrow with an exploration budget.</li>
+<li>Verbalize <strong>tradeoffs</strong> (latency↔accuracy, precision↔recall, freshness↔cost, explore↔exploit) and justify each choice against the stated SLOs.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Covington, Adams &amp; Sargin, <em>Deep Neural Networks for YouTube Recommendations</em> (2016) — the canonical two-stage candidate-generation/ranking architecture.</li>
+<li>Cheng et al., <em>Wide &amp; Deep Learning for Recommender Systems</em> (2016) — memorization vs generalization in ranking models.</li>
+<li>Joachims, Swaminathan &amp; Schnabel, <em>Unbiased Learning-to-Rank with Biased Feedback</em> — propensity weighting for position bias.</li>
+<li>Kohavi, Tang &amp; Xu, <em>Trustworthy Online Controlled Experiments</em> — the practitioner&rsquo;s bible on A/B testing, guardrails, and pitfalls.</li>
+<li>Sculley et al., <em>Hidden Technical Debt in Machine Learning Systems</em> (2015) — why the model is the small part of a real ML system.</li>
+<li>Huyen, <em>Designing Machine Learning Systems</em> — an end-to-end treatment of the lifecycle this chapter frames.</li>
+<li>Google, <em>Rules of Machine Learning</em> (Zinkevich) — battle-tested heuristics, especially &ldquo;do the simple thing first.&rdquo;</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-ml-breadth-rapidfire.html"><span class="pn-label">← Previous</span><span class="pn-title">ML Breadth: Rapid-Fire Concepts &amp; Model Answers</span></a>
+<a class="next" href="04-ml-system-design-cases.html"><span class="pn-label">Next →</span><span class="pn-title">ML System Design: Worked Cases</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>ML/LLM Interview Companion · Prep for Top-Tier ML &amp; LLM Engineering Interviews</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-mental-model-a-loop-not-a-pipeline">The Mental Model: A Loop, Not a Pipeline</a></li>
+<li class="toc-l2"><a href="#stage-1-clarify-the-problem">Stage 1 — Clarify the Problem</a></li>
+<li class="toc-l3"><a href="#the-clarifying-question-checklist">The clarifying-question checklist</a></li>
+<li class="toc-l2"><a href="#stage-2-requirements-metrics-slos">Stage 2 — Requirements, Metrics &amp;amp; SLOs</a></li>
+<li class="toc-l3"><a href="#functional-vs-non-functional-requirements">Functional vs non-functional requirements</a></li>
+<li class="toc-l3"><a href="#choosing-the-metric-the-three-layer-stack">Choosing the metric — the three-layer stack</a></li>
+<li class="toc-l3"><a href="#picking-the-offline-metric-to-match-the-task">Picking the offline metric to match the task</a></li>
+<li class="toc-l3"><a href="#slos-and-the-latency-budget">SLOs and the latency budget</a></li>
+<li class="toc-l2"><a href="#stage-3-data-labels">Stage 3 — Data &amp;amp; Labels</a></li>
+<li class="toc-l3"><a href="#the-four-questions-of-data">The four questions of data</a></li>
+<li class="toc-l3"><a href="#implicit-feedback-and-its-traps">Implicit feedback and its traps</a></li>
+<li class="toc-l3"><a href="#negative-sampling">Negative sampling</a></li>
+<li class="toc-l3"><a href="#the-leakage-map">The leakage map</a></li>
+<li class="toc-l2"><a href="#stage-4-features-representation">Stage 4 — Features &amp;amp; Representation</a></li>
+<li class="toc-l3"><a href="#feature-taxonomy">Feature taxonomy</a></li>
+<li class="toc-l3"><a href="#encoding-choices">Encoding choices</a></li>
+<li class="toc-l3"><a href="#feature-stores-and-trainserve-skew">Feature stores and train/serve skew</a></li>
+<li class="toc-l2"><a href="#stage-5-model-selection-training">Stage 5 — Model Selection &amp;amp; Training</a></li>
+<li class="toc-l3"><a href="#always-propose-a-baseline-first">Always propose a baseline first</a></li>
+<li class="toc-l3"><a href="#the-complexity-ladder">The complexity ladder</a></li>
+<li class="toc-l3"><a href="#the-two-stage-candidate-generation-ranking-pattern">The two-stage (candidate generation → ranking) pattern</a></li>
+<li class="toc-l3"><a href="#loss-functions-match-the-loss-to-the-metric">Loss functions — match the loss to the metric</a></li>
+<li class="toc-l3"><a href="#training-data-hygiene">Training-data hygiene</a></li>
+<li class="toc-l2"><a href="#stage-6-evaluation-offline-and-online">Stage 6 — Evaluation: Offline and Online</a></li>
+<li class="toc-l3"><a href="#offline-evaluation-done-right">Offline evaluation done right</a></li>
+<li class="toc-l3"><a href="#online-evaluation-the-ab-test">Online evaluation: the A/B test</a></li>
+<li class="toc-l2"><a href="#stage-7-serving-scaling-infrastructure">Stage 7 — Serving, Scaling &amp;amp; Infrastructure</a></li>
+<li class="toc-l3"><a href="#online-vs-batch-vs-streaming">Online vs batch vs streaming</a></li>
+<li class="toc-l3"><a href="#serving-topology-for-the-two-stage-system">Serving topology for the two-stage system</a></li>
+<li class="toc-l3"><a href="#scaling-levers">Scaling levers</a></li>
+<li class="toc-l3"><a href="#a-tiny-capacity-calculation">A tiny capacity calculation</a></li>
+<li class="toc-l3"><a href="#cold-start">Cold start</a></li>
+<li class="toc-l2"><a href="#stage-8-monitoring-iteration-the-flywheel">Stage 8 — Monitoring, Iteration &amp;amp; The Flywheel</a></li>
+<li class="toc-l3"><a href="#what-to-monitor-three-tiers">What to monitor — three tiers</a></li>
+<li class="toc-l3"><a href="#the-data-flywheel">The data flywheel</a></li>
+<li class="toc-l3"><a href="#retraining-cadence">Retraining cadence</a></li>
+<li class="toc-l3"><a href="#a-reusable-checklist">A reusable checklist</a></li>
+<li class="toc-l2"><a href="#tradeoff-talking-points-say-these-out-loud">Tradeoff Talking Points (Say These Out Loud)</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

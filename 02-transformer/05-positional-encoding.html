@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi — The LLM Stack</title>
+<meta name="description" content="Why transformers need position info; absolute sinusoidal, learned; relative; RoPE derivation and implementation; ALiBi; NoPE; context-length extension via RoPE ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="active" href="05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part II — The Transformer Architecture</div>
+<h1 id="25-positional-encodings-sinusoidal-learned-rope-alibi">2.5 Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi<a class="headerlink" href="#25-positional-encodings-sinusoidal-learned-rope-alibi" title="Permanent link">¶</a></h1>
+<p>Take the attention equation from the previous chapter and stare at it for a moment:</p>
+<div class="arithmatex">\[
+\operatorname{Attention}(Q, K, V) = \operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V.
+\]</div>
+<p>Now permute the rows of the input — swap token 2 with token 17, reverse the whole sequence, shuffle it like a deck of cards. What happens to the output? <strong>The output permutes in exactly the same way and nothing else changes.</strong> Attention is <em>permutation-equivariant</em>: it treats its input as a <strong>set</strong>, not a <strong>sequence</strong>. The dot product <span class="arithmatex">\(q_i \cdot k_j\)</span> depends on <em>what</em> token <span class="arithmatex">\(i\)</span> and token <span class="arithmatex">\(j\)</span> are, never on <em>where</em> they sit. To attention, &ldquo;dog bites man&rdquo; and &ldquo;man bites dog&rdquo; are the same bag of three vectors. The MLPs that follow are applied independently per position and do not mix anything across the sequence either. So a bare Transformer is, astonishingly, <strong>blind to word order</strong>.</p>
+<p>That is a disaster for language, code, and basically every sequence we care about. The cure is <strong>positional encoding</strong>: we inject information about each token&rsquo;s position so the model can tell <em>where</em> every token is and, more importantly, <em>how far apart</em> any two tokens are. This chapter is the complete tour of how that is done — from the original sinusoidal scheme, through learned tables, to <strong>Rotary Position Embedding (RoPE)</strong> and <strong>ALiBi</strong>, the two designs that dominate modern LLMs — and then the practical art of stretching a model trained on 4K tokens to run at 128K via <strong>position interpolation, NTK-aware scaling, and YaRN</strong>. We build RoPE entirely from scratch, twice, and verify its defining mathematical property numerically.</p>
+<p>This chapter assumes the <a href="../02-transformer/03-attention-from-scratch.html">attention mechanism</a> and the <a href="../02-transformer/02-embeddings-input.html">embedding pipeline</a>. It pairs tightly with <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a> (RoPE is applied per head) and feeds directly into <a href="../03-pretraining/13-long-context-pretraining.html">Long-Context Pretraining &amp; Context Extension</a>.</p>
+<h2 id="why-attention-needs-position-and-the-two-ways-to-add-it">Why Attention Needs Position, and the Two Ways to Add It<a class="headerlink" href="#why-attention-needs-position-and-the-two-ways-to-add-it" title="Permanent link">¶</a></h2>
+<p>Let us nail down the permutation-equivariance claim, because it is the entire reason this chapter exists. Let <span class="arithmatex">\(P\)</span> be a permutation matrix that reorders the rows of the input <span class="arithmatex">\(X \in \mathbb{R}^{n \times d}\)</span>. Self-attention computes <span class="arithmatex">\(Q = XW_Q\)</span>, <span class="arithmatex">\(K = XW_K\)</span>, <span class="arithmatex">\(V = XW_V\)</span>, then <span class="arithmatex">\(\operatorname{softmax}(QK^\top/\sqrt{d_k})V\)</span>. Permute the input to <span class="arithmatex">\(PX\)</span> and every projection permutes: <span class="arithmatex">\(Q \to PQ\)</span>, <span class="arithmatex">\(K \to PK\)</span>, <span class="arithmatex">\(V \to PV\)</span>. The score matrix becomes <span class="arithmatex">\(PQ(PK)^\top = PQK^\top P^\top\)</span>, the softmax (applied row-wise) commutes with the row/column permutation, and the final output is <span class="arithmatex">\(P \cdot \operatorname{Attention}(Q,K,V)\)</span>. In words: <strong>shuffle the input, and the output is the same vectors shuffled the same way.</strong> There is nowhere in this computation for absolute or relative order to enter. We must add it ourselves.</p>
+<p>There are two fundamentally different places to inject position, and the entire chapter is organized around this fork:</p>
+<div class="highlight"><pre><span></span><code>  APPROACH A: add to the representation        APPROACH B: add to the attention score
+  --------------------------------------       --------------------------------------
+  x_i  -&gt;  x_i + p_i   (before attention)       S_ij = (q_i · k_j)/√d_k  +  bias(i, j)
+  sinusoidal, learned absolute                  relative bias, ALiBi
+  RoPE rotates q,k (a hybrid: see §RoPE)         T5 relative position bias
+</code></pre></div>
+<p><strong>Approach A — modify the inputs.</strong> Give every position <span class="arithmatex">\(i\)</span> a vector <span class="arithmatex">\(p_i\)</span> and fold it into the token representation, classically by addition: <span class="arithmatex">\(\tilde{x}_i = x_i + p_i\)</span>. The model then sees a representation that <em>encodes</em> position, and attention can learn to use it. Sinusoidal and learned absolute encodings live here.</p>
+<p><strong>Approach B — modify the attention scores.</strong> Leave the token representations alone and instead add a position-dependent term directly to the pre-softmax scores <span class="arithmatex">\(S_{ij}\)</span>. Because attention&rsquo;s only cross-token interaction is that score, this is the most surgical place to inject <em>relative</em> position <span class="arithmatex">\((i - j)\)</span>. ALiBi and T5&rsquo;s relative bias live here.</p>
+<p><strong>RoPE is the brilliant hybrid.</strong> It modifies <span class="arithmatex">\(q_i\)</span> and <span class="arithmatex">\(k_j\)</span> (Approach A&rsquo;s locus — the inputs to the score) but does so with a position-dependent <em>rotation</em> engineered so that the resulting dot product <span class="arithmatex">\(q_i \cdot k_j\)</span> depends only on the relative offset <span class="arithmatex">\(i - j\)</span> (Approach B&rsquo;s goal). It gets the implementation simplicity of touching <span class="arithmatex">\(Q\)</span> and <span class="arithmatex">\(K\)</span> with the semantics of a relative scheme. We will see exactly how.</p>
+<p>Three properties separate good schemes from bad ones, and we will grade every method against them:</p>
+<ol>
+<li><strong>Relative awareness.</strong> Language cares about <em>distance</em> (&ldquo;the adjective modifies the next noun&rdquo;), not absolute index. A scheme that makes the score depend on <span class="arithmatex">\(i-j\)</span> rather than on <span class="arithmatex">\(i\)</span> and <span class="arithmatex">\(j\)</span> separately is structurally aligned with language.</li>
+<li><strong>Extrapolation / length generalization.</strong> If we train on sequences of length 4096 and run on 32768, does the model fall apart? Schemes with a learned table per position <em>cannot</em> extrapolate at all (there is no row for position 5000). Smooth functional schemes can, to varying degrees.</li>
+<li><strong>Efficiency and KV-cache friendliness.</strong> The encoding must be cheap and must not break the <a href="../07-inference-serving/01-anatomy-inference.html">KV cache</a>: the key for token <span class="arithmatex">\(j\)</span> must be the same whether the sequence currently has length 100 or 100000, so we can compute it once and reuse it forever.</li>
+</ol>
+<h2 id="sinusoidal-and-learned-absolute-encodings">Sinusoidal and Learned Absolute Encodings<a class="headerlink" href="#sinusoidal-and-learned-absolute-encodings" title="Permanent link">¶</a></h2>
+<h3 id="the-original-sinusoidal-encoding">The original sinusoidal encoding<a class="headerlink" href="#the-original-sinusoidal-encoding" title="Permanent link">¶</a></h3>
+<p>The 2017 Transformer of Vaswani et al. used a fixed, parameter-free encoding. For position <span class="arithmatex">\(\text{pos} \in \{0, 1, \dots\}\)</span> and embedding dimension index <span class="arithmatex">\(i \in \{0, \dots, d-1\}\)</span>, define</p>
+<div class="arithmatex">\[
+PE_{\text{pos},\,2k} = \sin\!\left(\frac{\text{pos}}{10000^{\,2k/d}}\right), \qquad
+PE_{\text{pos},\,2k+1} = \cos\!\left(\frac{\text{pos}}{10000^{\,2k/d}}\right).
+\]</div>
+<p>Each <em>pair</em> of dimensions <span class="arithmatex">\((2k, 2k+1)\)</span> is a sine/cosine at its own frequency. The frequencies form a geometric progression: dimension pair <span class="arithmatex">\(k=0\)</span> oscillates fastest (wavelength <span class="arithmatex">\(2\pi\)</span>), and the wavelengths grow geometrically up to <span class="arithmatex">\(2\pi \cdot 10000\)</span> for the last pair. The intuition is a <strong>binary-clock for continuous space</strong>: just as the bits of an integer toggle at frequencies <span class="arithmatex">\(1, 2, 4, 8, \dots\)</span>, the dimensions of <span class="arithmatex">\(PE_{\text{pos}}\)</span> oscillate at a spectrum of frequencies, so the full vector encodes the position with high resolution (fast dims) and long range (slow dims) simultaneously.</p>
+<p>The clever part is <em>why sinusoids specifically</em>. For any fixed offset <span class="arithmatex">\(\Delta\)</span>, <span class="arithmatex">\(PE_{\text{pos}+\Delta}\)</span> is a <strong>linear function</strong> of <span class="arithmatex">\(PE_{\text{pos}}\)</span> — a rotation, in fact. Using the angle-addition formulas,</p>
+<div class="arithmatex">\[
+\begin{bmatrix} \sin(\omega(\text{pos}+\Delta)) \\ \cos(\omega(\text{pos}+\Delta)) \end{bmatrix}
+=
+\begin{bmatrix} \cos(\omega\Delta) &amp; \sin(\omega\Delta) \\ -\sin(\omega\Delta) &amp; \cos(\omega\Delta) \end{bmatrix}
+\begin{bmatrix} \sin(\omega\,\text{pos}) \\ \cos(\omega\,\text{pos}) \end{bmatrix}.
+\]</div>
+<p>The shift-by-<span class="arithmatex">\(\Delta\)</span> operator is a <span class="arithmatex">\(2\times 2\)</span> rotation that <strong>does not depend on <span class="arithmatex">\(\text{pos}\)</span></strong>, only on <span class="arithmatex">\(\Delta\)</span>. So a linear attention projection can in principle learn to detect <em>relative</em> offsets even though the encoding is absolute. (Hold onto this rotation matrix — RoPE is exactly this idea, moved from the input embedding into <span class="arithmatex">\(q\)</span> and <span class="arithmatex">\(k\)</span>.)</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sinusoidal_encoding</span><span class="p">(</span><span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">base</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10000.0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Classic Vaswani et al. (2017) sinusoidal positional encoding.</span>
+
+<span class="sd">    Returns an (seq_len, d_model) matrix PE where PE[pos] is added to the</span>
+<span class="sd">    token embedding at position `pos`. Parameter-free and deterministic.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pe</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">seq_len</span><span class="p">,</span> <span class="n">d_model</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">position</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">seq_len</span><span class="p">)[:,</span> <span class="kc">None</span><span class="p">]</span>                 <span class="c1"># (seq_len, 1)</span>
+    <span class="c1"># 10000^(2k/d) for k = 0,1,...,d/2-1 -&gt; the per-pair wavelengths.</span>
+    <span class="n">div_term</span> <span class="o">=</span> <span class="n">base</span> <span class="o">**</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="n">d_model</span><span class="p">)</span>  <span class="c1"># (d_model/2,)</span>
+    <span class="n">pe</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">::</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">position</span> <span class="o">/</span> <span class="n">div_term</span><span class="p">)</span>              <span class="c1"># even dims: sin</span>
+    <span class="n">pe</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">::</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">position</span> <span class="o">/</span> <span class="n">div_term</span><span class="p">)</span>              <span class="c1"># odd  dims: cos</span>
+    <span class="k">return</span> <span class="n">pe</span>
+
+<span class="n">PE</span> <span class="o">=</span> <span class="n">sinusoidal_encoding</span><span class="p">(</span><span class="n">seq_len</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span> <span class="n">d_model</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">PE</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">3</span><span class="p">))</span>
+<span class="c1"># Add to embeddings: x_tilde = token_embedding + PE[:seq_len]</span>
+</code></pre></div>
+<p><strong>Grading sinusoidal.</strong> Relative awareness: <em>implicit and weak</em> — the structure is there (the rotation property) but the model must learn to exploit it, and empirically it does so only partially. Extrapolation: <em>poor</em> — the sinusoids are defined for any position so there is no crash, but trained attention heads simply have not seen the high-position patterns and generalize badly past the training length. Efficiency: <em>excellent</em> — zero parameters, precompute once. It was a fine first design; the field has largely moved past it.</p>
+<h3 id="learned-absolute-encodings">Learned absolute encodings<a class="headerlink" href="#learned-absolute-encodings" title="Permanent link">¶</a></h3>
+<p>GPT, GPT-2, BERT, and most early large models replaced the fixed sinusoids with a <strong>learned lookup table</strong>: a trainable matrix <span class="arithmatex">\(W_{\text{pos}} \in \mathbb{R}^{L_{\max} \times d}\)</span> where row <span class="arithmatex">\(i\)</span> is the embedding for position <span class="arithmatex">\(i\)</span>, learned by gradient descent exactly like a token embedding. You pick a maximum context length <span class="arithmatex">\(L_{\max}\)</span> (e.g., 1024 for GPT-2, 512 for BERT), allocate that many rows, and add <span class="arithmatex">\(W_{\text{pos}}[i]\)</span> to the token embedding at position <span class="arithmatex">\(i\)</span>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LearnedAbsolutePositionalEmbedding</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;GPT-2 style learned position embeddings: a trainable (L_max, d) table.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pos_emb</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">max_len</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>  <span class="c1"># one learned vector per position</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_len</span> <span class="o">=</span> <span class="n">max_len</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">token_embeddings</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># token_embeddings: (batch, seq_len, d_model)</span>
+        <span class="n">seq_len</span> <span class="o">=</span> <span class="n">token_embeddings</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="n">seq_len</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_len</span><span class="p">,</span> <span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;seq_len=</span><span class="si">{</span><span class="n">seq_len</span><span class="si">}</span><span class="s2"> exceeds max_len=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">max_len</span><span class="si">}</span><span class="s2">: &quot;</span>
+            <span class="s2">&quot;learned absolute encodings CANNOT extrapolate — there is no row for this position.&quot;</span>
+        <span class="p">)</span>
+        <span class="n">positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">seq_len</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">token_embeddings</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">token_embeddings</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">pos_emb</span><span class="p">(</span><span class="n">positions</span><span class="p">)</span>  <span class="c1"># broadcast over batch</span>
+</code></pre></div>
+<p>Learned tables are flexible — the model carves out whatever positional geometry minimizes loss — and they were the workhorse for years. But they have a fatal flaw for the long-context era, made explicit by the <code>assert</code> above: <strong>they cannot extrapolate even one token past <span class="arithmatex">\(L_{\max}\)</span>.</strong> There is simply no parameter for position 1025 in a model with 1024 rows. Worse, they tend to overfit absolute index and underperform on relative reasoning. This is <em>the</em> reason the field abandoned them.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: the off-by-one and the hard length ceiling</p>
+<p>With learned absolute encodings, the maximum sequence length is a <em>hard architectural ceiling baked into the parameter shapes</em>, not a soft preference. Feeding a longer sequence indexes out of bounds and crashes (or, worse, silently wraps if you forget the assert). You cannot fine-tune your way past it without adding rows and retraining those rows from scratch. This brittleness — plus the lack of relative structure — is why nearly every model since roughly 2021 (Llama, GPT-NeoX, PaLM, Mistral, Qwen, DeepSeek, Gemma) uses RoPE or ALiBi instead.</p>
+</div>
+<h2 id="relative-position-and-the-road-to-rope">Relative Position and the Road to RoPE<a class="headerlink" href="#relative-position-and-the-road-to-rope" title="Permanent link">¶</a></h2>
+<p>The insight that reorganized the field: <em>what attention actually needs is the relative offset <span class="arithmatex">\(i - j\)</span>, not the absolute indices.</em> A relative scheme makes the score between query <span class="arithmatex">\(i\)</span> and key <span class="arithmatex">\(j\)</span> a function of <span class="arithmatex">\((i-j)\)</span>, which is automatically translation-invariant (&ldquo;two tokens apart&rdquo; means the same thing at the start and end of a document) and naturally extrapolates (offset <span class="arithmatex">\(-3\)</span> is the same operation everywhere).</p>
+<p>The first influential realization, from Shaw et al. (2018) and refined in Transformer-XL (Dai et al., 2019), added learned vectors indexed by the <em>clipped relative distance</em> into the keys and values. T5 (Raffel et al., 2019) simplified this to a pure <strong>scalar bias on the score</strong> (Approach B):</p>
+<div class="arithmatex">\[
+S_{ij} = \frac{q_i \cdot k_j}{\sqrt{d_k}} + b_{\,\text{bucket}(i-j)},
+\]</div>
+<p>where <span class="arithmatex">\(\text{bucket}(\cdot)\)</span> maps relative distances into a modest number of learned buckets (logarithmically spaced, so nearby offsets get fine resolution and far ones get coarse, shared buckets), and <span class="arithmatex">\(b\)</span> is a learned scalar per bucket <em>per head</em>. T5&rsquo;s scheme is genuinely relative, parameter-light, and extrapolates moderately (far distances share a bucket). Its weaknesses: the bias is added to <em>every</em> layer&rsquo;s scores (a small but real cost), and the bucketing is a discretization with hand-tuned hyperparameters.</p>
+<p>This sets the stage. We want a relative scheme that is (a) continuous, not bucketed; (b) needs no extra learned parameters; &copy; is cheap; and (d) plays perfectly with the KV cache. <strong>RoPE is that scheme.</strong></p>
+<h2 id="rope-rotary-position-embedding-from-scratch">RoPE: Rotary Position Embedding From Scratch<a class="headerlink" href="#rope-rotary-position-embedding-from-scratch" title="Permanent link">¶</a></h2>
+<p>RoPE (Su et al., <em>RoFormer</em>, 2021) is the dominant positional encoding in modern LLMs, and it deserves a careful derivation because the idea is genuinely elegant. The goal is stated as a constraint: find functions <span class="arithmatex">\(f_q(x, m)\)</span> and <span class="arithmatex">\(f_k(x, n)\)</span> that encode position into the query at position <span class="arithmatex">\(m\)</span> and the key at position <span class="arithmatex">\(n\)</span> such that their inner product depends <em>only on the relative position <span class="arithmatex">\(m - n\)</span></em> and the original vectors:</p>
+<div class="arithmatex">\[
+\langle f_q(x_m, m),\; f_k(x_n, n) \rangle = g(x_m, x_n, m - n).
+\]</div>
+<figure class="viz" id="fig-rope-rotation">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 380" role="img" aria-label="RoPE rotates a feature pair as a 2-D vector by an angle that grows linearly with token position; the dot product between a query and key depends only on the difference of their angles, i.e. their relative position.">
+  <defs>
+    <marker id="rr-tip" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="rr-axis" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-rope-rotation text{ fill:var(--ink-soft); }
+    #fig-rope-rotation .ttl{ font:600 13px var(--sans,sans-serif); }
+    #fig-rope-rotation .ax{ font:500 11px var(--mono,monospace); fill:var(--muted); }
+    #fig-rope-rotation .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rope-rotation .vec{ font:600 11.5px var(--mono,monospace); }
+    #fig-rope-rotation .ang{ font:600 11px var(--mono,monospace); }
+    #fig-rope-rotation .big{ font:600 12.5px var(--sans,sans-serif); }
+  </style>
+
+
+
+  <g data-anim="1">
+    <text x="58" y="30" class="ttl">Feature pair (x₁, x₂) rotated by <tspan class="vec" fill="var(--accent)">m·θ</tspan></text>
+
+
+    <circle cx="190" cy="200" r="130" fill="none" class="v-grid" stroke-width="1.1" stroke-dasharray="3 4"/>
+
+
+    <line x1="40" y1="200" x2="350" y2="200" class="v-muted" stroke="currentColor" stroke-width="1.2" marker-end="url(#rr-axis)"/>
+    <line x1="190" y1="350" x2="190" y2="50" class="v-muted" stroke="currentColor" stroke-width="1.2" marker-end="url(#rr-axis)"/>
+    <text x="356" y="204" class="ax">x₁</text>
+    <text x="190" y="46" text-anchor="middle" class="ax">x₂</text>
+  </g>
+
+
+  <g data-anim="3">
+
+    <path d="M 258 200 A 68 68 0 0 0 245.7 160.0" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="1.4"/>
+
+    <path d="M 245.7 160.0 A 68 68 0 0 0 213.3 138.0" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="270" y="172" class="ang" fill="var(--accent)">θ</text>
+    <text x="238" y="142" class="ang" fill="var(--accent)">θ</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="190" y1="200" x2="307" y2="200" stroke="var(--good,#2f9e6e)" stroke-width="2.6" marker-end="url(#rr-tip)" color="var(--good,#2f9e6e)" class="viz-draw" style="--len:117"/>
+    <circle cx="307" cy="200" r="3.4" fill="var(--good,#2f9e6e)"/>
+    <text x="312" y="222" class="vec" fill="var(--good,#2f9e6e)">m=0</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="190" y1="200" x2="285.8" y2="132.9" stroke="var(--accent)" stroke-width="2.6" marker-end="url(#rr-tip)" color="var(--accent)" class="viz-draw" style="--len:117"/>
+    <circle cx="285.8" cy="132.9" r="3.4" fill="var(--accent)"/>
+    <text x="292" y="126" class="vec" fill="var(--accent)">m=1</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="190" y1="200" x2="230.0" y2="90.0" stroke="var(--accent)" stroke-width="2.6" marker-end="url(#rr-tip)" color="var(--accent)" class="viz-draw" style="--len:117"/>
+    <circle cx="230.0" cy="90.0" r="3.4" fill="var(--accent)"/>
+    <text x="225" y="80" text-anchor="middle" class="vec" fill="var(--accent)">m=2</text>
+  </g>
+
+  <text x="190" y="368" text-anchor="middle" class="sm">length preserved — only the angle grows with m</text>
+
+
+  <g data-anim="4">
+    <rect x="420" y="58" width="320" height="150" rx="10" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="436" y="82" class="big">Query m vs. key n</text>
+
+
+    <circle cx="492" cy="150" r="40" fill="none" class="v-grid" stroke-width="1" stroke-dasharray="2 3"/>
+    <line x1="448" y1="150" x2="540" y2="150" class="v-muted" stroke="currentColor" stroke-width="1"/>
+    <line x1="492" y1="194" x2="492" y2="106" class="v-muted" stroke="currentColor" stroke-width="1"/>
+
+    <line x1="492" y1="150" x2="528.3" y2="133.1" stroke="var(--accent2,#3b82f6)" stroke-width="2.3" marker-end="url(#rr-tip)" color="var(--accent2,#3b82f6)"/>
+    <text x="534" y="132" class="ang" fill="var(--accent2,#3b82f6)">k·nθ</text>
+
+    <line x1="492" y1="150" x2="508.9" y2="113.7" stroke="var(--accent)" stroke-width="2.3" marker-end="url(#rr-tip)" color="var(--accent)"/>
+    <text x="486" y="104" text-anchor="end" class="ang" fill="var(--accent)">q·mθ</text>
+
+    <path d="M 528.3 133.1 A 40 40 0 0 0 508.9 113.7" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8" class="viz-pulse"/>
+
+    <text x="560" y="148" class="vec" fill="var(--warn,#e0a106)">Δ = (m-n)·θ</text>
+    <text x="560" y="170" class="sm">angle difference =</text>
+    <text x="560" y="184" class="sm">relative position</text>
+  </g>
+
+  <g data-anim="5">
+    <rect x="420" y="224" width="320" height="92" rx="10" class="v-fill" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="436" y="250" class="ttl" fill="var(--accent)">dot( q·rot(mθ) , k·rot(nθ) )</text>
+    <text x="436" y="276" class="vec">= g(q, k, <tspan fill="var(--warn,#e0a106)">m - n</tspan>)</text>
+    <text x="436" y="302" class="sm">absolute angles cancel; only offset matters.</text>
+  </g>
+</svg>
+<figcaption><b>RoPE encodes position as rotation.</b> Each feature pair (x₁, x₂) is rotated by an angle <b>m·θ</b> that grows linearly with the token's position m — the vector keeps its length and only spins. Because two rotations compose into one, the query–key dot product collapses to a function of the <b>angle difference (m − n)θ</b>: the absolute positions cancel and only the <b>relative</b> offset survives.</figcaption>
+</figure>
+
+<h3 id="the-2-d-derivation">The 2-D derivation<a class="headerlink" href="#the-2-d-derivation" title="Permanent link">¶</a></h3>
+<p>Start in two dimensions (<span class="arithmatex">\(d=2\)</span>). Treat a 2-vector <span class="arithmatex">\(x = (x_0, x_1)\)</span> as a complex number <span class="arithmatex">\(x_0 + i x_1\)</span>. Define the encoding as <strong>multiplication by a unit complex number whose angle is proportional to the position</strong>:</p>
+<div class="arithmatex">\[
+f(x, m) = x \cdot e^{i m \theta} \quad\text{(complex)} \;\;\Longleftrightarrow\;\;
+\begin{bmatrix} x_0' \\ x_1' \end{bmatrix} =
+\underbrace{\begin{bmatrix} \cos m\theta &amp; -\sin m\theta \\ \sin m\theta &amp; \cos m\theta \end{bmatrix}}_{R(m\theta)}
+\begin{bmatrix} x_0 \\ x_1 \end{bmatrix}.
+\]</div>
+<p>This is just <strong>rotating the 2-D vector by an angle <span class="arithmatex">\(m\theta\)</span> that grows linearly with position.</strong> Now compute the inner product of a rotated query (position <span class="arithmatex">\(m\)</span>) with a rotated key (position <span class="arithmatex">\(n\)</span>). In complex form, the real inner product of two complex numbers <span class="arithmatex">\(a\)</span> and <span class="arithmatex">\(b\)</span> is <span class="arithmatex">\(\operatorname{Re}(a \bar{b})\)</span>, so</p>
+<div class="arithmatex">\[
+\langle f(q, m), f(k, n) \rangle
+= \operatorname{Re}\!\big( (q e^{i m\theta})\,\overline{(k e^{i n\theta})} \big)
+= \operatorname{Re}\!\big( q \bar{k}\, e^{i(m - n)\theta} \big).
+\]</div>
+<p>The position dependence collapsed to a single factor <span class="arithmatex">\(e^{i(m-n)\theta}\)</span> — <strong>it depends only on <span class="arithmatex">\(m - n\)</span>.</strong> That is the defining property, achieved exactly, with no learned parameters and no approximation. Equivalently, in matrix form, <span class="arithmatex">\(R(m\theta)^\top R(n\theta) = R((n-m)\theta)\)</span> because rotation matrices satisfy <span class="arithmatex">\(R(\alpha)^\top R(\beta) = R(\beta - \alpha)\)</span>. The two absolute rotations combine into one relative rotation.</p>
+<h3 id="lifting-to-d-dimensions">Lifting to <span class="arithmatex">\(d\)</span> dimensions<a class="headerlink" href="#lifting-to-d-dimensions" title="Permanent link">¶</a></h3>
+<p>A head dimension <span class="arithmatex">\(d\)</span> is much larger than 2, so RoPE <strong>partitions the <span class="arithmatex">\(d\)</span>-dimensional vector into <span class="arithmatex">\(d/2\)</span> consecutive pairs and rotates each pair by its own frequency.</strong> Pair <span class="arithmatex">\(k\)</span> (dimensions <span class="arithmatex">\(2k, 2k+1\)</span>) gets angular frequency</p>
+<div class="arithmatex">\[
+\theta_k = \text{base}^{-2k/d}, \qquad k = 0, 1, \dots, d/2 - 1,
+\]</div>
+<p>with <span class="arithmatex">\(\text{base} = 10000\)</span> by default — the <em>same</em> geometric frequency ladder as the sinusoidal encoding, which is no coincidence. Low-index pairs rotate fast (encode fine, local position); high-index pairs rotate slowly (encode coarse, long-range position). The full RoPE transform is a block-diagonal rotation matrix:</p>
+<div class="arithmatex">\[
+R_{\Theta}(m) = \begin{bmatrix}
+R(m\theta_0) &amp; &amp; \\
+&amp; \ddots &amp; \\
+&amp; &amp; R(m\theta_{d/2 - 1})
+\end{bmatrix} \in \mathbb{R}^{d \times d},
+\]</div>
+<p>and because each <span class="arithmatex">\(2\times 2\)</span> block individually satisfies the relative property, the whole thing does: <span class="arithmatex">\(R_\Theta(m)^\top R_\Theta(n) = R_\Theta(n - m)\)</span>. The score becomes</p>
+<div class="arithmatex">\[
+S_{mn} = \big(R_\Theta(m)\,q_m\big)^\top \big(R_\Theta(n)\,k_n\big) = q_m^\top R_\Theta(n - m)\, k_n,
+\]</div>
+<p>a function of <span class="arithmatex">\(q_m\)</span>, <span class="arithmatex">\(k_n\)</span>, and the <strong>relative</strong> offset <span class="arithmatex">\(n - m\)</span> alone. RoPE is applied to <span class="arithmatex">\(q\)</span> and <span class="arithmatex">\(k\)</span> <strong>after the QKV projection and before the dot product, independently in every head and every layer</strong>; the value vectors <span class="arithmatex">\(V\)</span> are <em>not</em> rotated (only the <em>similarity</em> needs position; the payload does not).</p>
+<h3 id="implementation-the-rotate-half-trick">Implementation: the rotate-half trick<a class="headerlink" href="#implementation-the-rotate-half-trick" title="Permanent link">¶</a></h3>
+<p>We never materialize the <span class="arithmatex">\(d \times d\)</span> matrix <span class="arithmatex">\(R_\Theta(m)\)</span> — it is <span class="arithmatex">\(99.6\%\)</span> zeros. Instead we precompute per-position <span class="arithmatex">\(\cos\)</span> and <span class="arithmatex">\(\sin\)</span> vectors and apply the rotation elementwise. There are two equivalent conventions for <em>which</em> dimensions form a pair:</p>
+<ul>
+<li><strong>Interleaved</strong> (original RoPE paper): pairs are adjacent dims <span class="arithmatex">\((0,1), (2,3), \dots\)</span>.</li>
+<li><strong><code>rotate_half</code></strong> (GPT-NeoX / Llama / HuggingFace): pairs are dim <span class="arithmatex">\(k\)</span> with dim <span class="arithmatex">\(k + d/2\)</span>, i.e., the first half is paired with the second half. This permits a vectorized <code>rotate_half</code> that is friendlier to hardware.</li>
+</ul>
+<p>Both produce mathematically equivalent models <em>as long as you are consistent</em> (you can permute one into the other). The Llama-style <code>rotate_half</code> is by far the most common in practice, so we implement that, with the interleaved version as a from-scratch reference.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_rope_cache</span><span class="p">(</span><span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">base</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10000.0</span><span class="p">,</span>
+                     <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Precompute cos/sin tables for RoPE (Llama / rotate_half convention).</span>
+
+<span class="sd">    Returns cos, sin of shape (seq_len, head_dim). The first half of the</span>
+<span class="sd">    frequency ladder is *duplicated* into the second half so that the same</span>
+<span class="sd">    cos/sin vector multiplies x and rotate_half(x) elementwise.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">assert</span> <span class="n">head_dim</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;RoPE needs an even head dimension.&quot;</span>
+    <span class="c1"># inv_freq[k] = base^(-2k/d) for k = 0..d/2-1  (the angular frequencies)</span>
+    <span class="n">half</span> <span class="o">=</span> <span class="n">head_dim</span> <span class="o">//</span> <span class="mi">2</span>
+    <span class="n">inv_freq</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">base</span> <span class="o">**</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">half</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="n">half</span><span class="p">))</span>
+    <span class="n">pos</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">seq_len</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>           <span class="c1"># (seq_len,)</span>
+    <span class="n">freqs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">outer</span><span class="p">(</span><span class="n">pos</span><span class="p">,</span> <span class="n">inv_freq</span><span class="p">)</span>                           <span class="c1"># (seq_len, d/2): angle = pos * theta_k</span>
+    <span class="n">emb</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">freqs</span><span class="p">,</span> <span class="n">freqs</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>                      <span class="c1"># (seq_len, d): duplicate the half</span>
+    <span class="k">return</span> <span class="n">emb</span><span class="o">.</span><span class="n">cos</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="p">),</span> <span class="n">emb</span><span class="o">.</span><span class="n">sin</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rotate_half</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Map (x1, x2) -&gt; (-x2, x1) where x1,x2 are the two halves of the last dim.&quot;&quot;&quot;</span>
+    <span class="n">half</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">//</span> <span class="mi">2</span>
+    <span class="n">x1</span><span class="p">,</span> <span class="n">x2</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="p">:</span><span class="n">half</span><span class="p">],</span> <span class="n">x</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">half</span><span class="p">:]</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="o">-</span><span class="n">x2</span><span class="p">,</span> <span class="n">x1</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_rope</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">cos</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">sin</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply RoPE to x of shape (batch, n_heads, seq_len, head_dim).</span>
+
+<span class="sd">    cos, sin: (seq_len, head_dim). We unsqueeze to broadcast over batch &amp; heads.</span>
+<span class="sd">    The elementwise formula  x * cos + rotate_half(x) * sin  is exactly the</span>
+<span class="sd">    per-pair 2x2 rotation, written without ever forming the dense matrix.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">cos</span> <span class="o">=</span> <span class="n">cos</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:]</span>   <span class="c1"># (1, 1, seq_len, head_dim)</span>
+    <span class="n">sin</span> <span class="o">=</span> <span class="n">sin</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:]</span>
+    <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="n">cos</span> <span class="o">+</span> <span class="n">rotate_half</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">*</span> <span class="n">sin</span>
+
+<span class="c1"># --- Wire it into a single attention head ---</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">64</span>          <span class="c1"># batch, heads, seq_len, head_dim</span>
+<span class="n">q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+<span class="n">k</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+<span class="n">v</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+
+<span class="n">cos</span><span class="p">,</span> <span class="n">sin</span> <span class="o">=</span> <span class="n">build_rope_cache</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+<span class="n">q_rot</span> <span class="o">=</span> <span class="n">apply_rope</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">cos</span><span class="p">,</span> <span class="n">sin</span><span class="p">)</span>   <span class="c1"># rotate queries by their positions</span>
+<span class="n">k_rot</span> <span class="o">=</span> <span class="n">apply_rope</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">cos</span><span class="p">,</span> <span class="n">sin</span><span class="p">)</span>   <span class="c1"># rotate keys   by their positions</span>
+<span class="c1"># Now do ordinary scaled-dot-product attention with q_rot, k_rot, and *unrotated* v:</span>
+<span class="n">scores</span> <span class="o">=</span> <span class="p">(</span><span class="n">q_rot</span> <span class="o">@</span> <span class="n">k_rot</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="n">D</span> <span class="o">**</span> <span class="mf">0.5</span>
+<span class="c1"># ... add causal mask, softmax, multiply by v (see Chapter 2.3) ...</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;q_rot shape:&quot;</span><span class="p">,</span> <span class="n">q_rot</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>   <span class="c1"># torch.Size([2, 4, 16, 64])</span>
+</code></pre></div>
+<p>Let us verify the defining property directly — that two <em>absolutely</em> rotated vectors yield a dot product depending only on the <em>relative</em> offset.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rope_single</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">pos</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mf">10000.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply RoPE (rotate_half convention) to a single vector x at position `pos`.&quot;&quot;&quot;</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">half</span> <span class="o">=</span> <span class="n">d</span> <span class="o">//</span> <span class="mi">2</span>
+    <span class="n">inv_freq</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">base</span> <span class="o">**</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">half</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="n">half</span><span class="p">))</span>
+    <span class="n">ang</span> <span class="o">=</span> <span class="n">pos</span> <span class="o">*</span> <span class="n">inv_freq</span>                       <span class="c1"># (d/2,)</span>
+    <span class="n">emb</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">ang</span><span class="p">,</span> <span class="n">ang</span><span class="p">])</span>                <span class="c1"># (d,)</span>
+    <span class="n">cos</span><span class="p">,</span> <span class="n">sin</span> <span class="o">=</span> <span class="n">emb</span><span class="o">.</span><span class="n">cos</span><span class="p">(),</span> <span class="n">emb</span><span class="o">.</span><span class="n">sin</span><span class="p">()</span>
+    <span class="n">x1</span><span class="p">,</span> <span class="n">x2</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="n">half</span><span class="p">],</span> <span class="n">x</span><span class="p">[</span><span class="n">half</span><span class="p">:]</span>
+    <span class="n">rot</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="o">-</span><span class="n">x2</span><span class="p">,</span> <span class="n">x1</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="n">cos</span> <span class="o">+</span> <span class="n">rot</span> <span class="o">*</span> <span class="n">sin</span>
+
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">7</span><span class="p">)</span>
+<span class="n">d</span> <span class="o">=</span> <span class="mi">64</span>
+<span class="n">q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">d</span><span class="p">);</span> <span class="n">k</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+<span class="n">m</span><span class="p">,</span> <span class="n">n</span> <span class="o">=</span> <span class="mi">25</span><span class="p">,</span> <span class="mi">10</span>                                  <span class="c1"># query at 25, key at 10  -&gt; offset 15</span>
+<span class="n">lhs</span> <span class="o">=</span> <span class="n">rope_single</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span> <span class="o">@</span> <span class="n">rope_single</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>    <span class="c1"># absolute positions 25 and 10</span>
+<span class="n">rhs</span> <span class="o">=</span> <span class="n">rope_single</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">m</span> <span class="o">-</span> <span class="n">n</span><span class="p">)</span> <span class="o">@</span> <span class="n">rope_single</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>  <span class="c1"># relative: offset 15 and 0</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">lhs</span><span class="p">),</span> <span class="nb">float</span><span class="p">(</span><span class="n">rhs</span><span class="p">))</span>                  <span class="c1"># the two numbers match</span>
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">lhs</span><span class="p">,</span> <span class="n">rhs</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">),</span> <span class="s2">&quot;RoPE relative property failed!&quot;</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;RoPE relative-position property verified.&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>This runs and prints two essentially identical numbers: the score from rotating <span class="arithmatex">\(q\)</span> at position 25 and <span class="arithmatex">\(k\)</span> at position 10 equals the score from rotating <span class="arithmatex">\(q\)</span> at offset 15 and <span class="arithmatex">\(k\)</span> at offset 0. <strong>The absolute positions cancel; only the offset <span class="arithmatex">\(15 = 25 - 10\)</span> survives.</strong></p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: how fast does each RoPE dimension spin?</p>
+<p>Take head dimension <span class="arithmatex">\(d = 128\)</span>, base <span class="arithmatex">\(= 10000\)</span>, so there are <span class="arithmatex">\(64\)</span> frequency pairs with <span class="arithmatex">\(\theta_k = 10000^{-2k/128} = 10000^{-k/64}\)</span>.</p>
+<ul>
+<li><strong>Fastest pair, <span class="arithmatex">\(k=0\)</span>:</strong> <span class="arithmatex">\(\theta_0 = 1\)</span> radian/token. Its wavelength is <span class="arithmatex">\(2\pi \approx 6.28\)</span> tokens — it completes a full rotation every <span class="arithmatex">\(\approx 6\)</span> tokens. This pair encodes very local position.</li>
+<li><strong>Slowest pair, <span class="arithmatex">\(k=63\)</span>:</strong> <span class="arithmatex">\(\theta_{63} = 10000^{-63/64} \approx 10000^{-0.984} \approx 1.16 \times 10^{-4}\)</span> radian/token. Its wavelength is <span class="arithmatex">\(2\pi / \theta_{63} \approx 5.4 \times 10^{4} \approx 54{,}000\)</span> tokens — it barely turns across the whole context. This pair encodes coarse, long-range position.</li>
+</ul>
+<p>Now the key extrapolation observation: at the <em>original</em> training length 4096, the slow pairs never complete even a fraction of a turn (4096 / 54000 ≈ 0.076 of a cycle), so the model has only ever seen them in a narrow angular range. Push the context to 100,000 tokens and those slow dimensions suddenly rotate into angles the model has <em>never observed during training</em> — which is precisely why naive RoPE degrades past the training length, and exactly what NTK/YaRN scaling (next section) repairs by adjusting the frequency ladder.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Aside: why rotate Q and K but not V</p>
+<p>Position should modulate <em>who attends to whom</em> (the similarity), not <em>what content is retrieved</em> (the payload). The score <span class="arithmatex">\(q_m^\top R_\Theta(n-m) k_n\)</span> is where relative position belongs. The value <span class="arithmatex">\(v_n\)</span> is the information token <span class="arithmatex">\(n\)</span> hands back once it has been selected; rotating it would entangle position into the retrieved content and break the clean &ldquo;values are a convex blend of payloads&rdquo; picture from <a href="../02-transformer/03-attention-from-scratch.html">the attention chapter</a>. So RoPE touches <span class="arithmatex">\(Q\)</span> and <span class="arithmatex">\(K\)</span> only.</p>
+</div>
+<p><strong>Grading RoPE.</strong> Relative awareness: <em>exact, by construction</em>. Extrapolation: <em>good and tunable</em> (the basis for the scaling tricks below). Efficiency: <em>excellent</em> — no parameters, a cheap elementwise op, and it is <strong>fully KV-cache compatible</strong> because the rotation applied to key <span class="arithmatex">\(n\)</span> depends only on <span class="arithmatex">\(n\)</span>, never on the current sequence length, so cached keys never need recomputation. This combination is why RoPE won.</p>
+<h2 id="alibi-and-nope-biasing-the-score-or-nothing-at-all">ALiBi and NoPE: Biasing the Score, or Nothing at All<a class="headerlink" href="#alibi-and-nope-biasing-the-score-or-nothing-at-all" title="Permanent link">¶</a></h2>
+<h3 id="alibi-a-linear-distance-penalty">ALiBi: a linear distance penalty<a class="headerlink" href="#alibi-a-linear-distance-penalty" title="Permanent link">¶</a></h3>
+<p><strong>ALiBi</strong> (Attention with Linear Biases; Press, Smith, Lewis, 2021) takes the radical Approach-B route: add <em>no</em> positional information to the embeddings or to <span class="arithmatex">\(q\)</span>/<span class="arithmatex">\(k\)</span> at all, and instead subtract a penalty from each attention score that grows <strong>linearly with the distance</strong> between query and key:</p>
+<div class="arithmatex">\[
+S_{ij} = \frac{q_i \cdot k_j}{\sqrt{d_k}} \;-\; m_h \cdot |i - j| \quad (\text{causal: only } j \le i).
+\]</div>
+<p>Here <span class="arithmatex">\(|i - j|\)</span> is the relative distance and <span class="arithmatex">\(m_h\)</span> is a fixed, <em>non-learned</em> slope assigned per head. The slopes form a geometric sequence; for a model with <span class="arithmatex">\(H\)</span> heads they are typically <span class="arithmatex">\(m_h = 2^{-8h/H}\)</span> for <span class="arithmatex">\(h = 1, \dots, H\)</span> — so some heads have a steep penalty (sharply local, attend only to very recent tokens) and others have a shallow penalty (nearly global). The bias is added to the score matrix and otherwise the attention is ordinary.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">alibi_slopes</span><span class="p">(</span><span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Geometric slopes m_h = 2^(-8h/H), the standard ALiBi schedule (power-of-two heads).&quot;&quot;&quot;</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="mi">8</span> <span class="o">/</span> <span class="n">n_heads</span><span class="p">)</span>             <span class="c1"># ratio so that head 1 gets 2^(-8/H), head H gets 2^-8</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">start</span> <span class="o">**</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_heads</span><span class="p">)])</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">alibi_bias</span><span class="p">(</span><span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Per-head additive bias of shape (n_heads, seq_len, seq_len): -m_h * |i - j|.&quot;&quot;&quot;</span>
+    <span class="n">slopes</span> <span class="o">=</span> <span class="n">alibi_slopes</span><span class="p">(</span><span class="n">n_heads</span><span class="p">)</span>                                  <span class="c1"># (n_heads,)</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">seq_len</span><span class="p">)[:,</span> <span class="kc">None</span><span class="p">]</span>                              <span class="c1"># query index (rows)</span>
+    <span class="n">j</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">seq_len</span><span class="p">)[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:]</span>                              <span class="c1"># key   index (cols)</span>
+    <span class="n">distance</span> <span class="o">=</span> <span class="p">(</span><span class="n">j</span> <span class="o">-</span> <span class="n">i</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">max</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>                  <span class="c1"># causal: |i-j| for j&lt;=i, else 0</span>
+    <span class="n">causal</span> <span class="o">=</span> <span class="p">(</span><span class="n">j</span> <span class="o">&lt;=</span> <span class="n">i</span><span class="p">)</span>                                              <span class="c1"># boolean causal mask</span>
+    <span class="n">bias</span> <span class="o">=</span> <span class="o">-</span><span class="n">slopes</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">distance</span><span class="p">[</span><span class="kc">None</span><span class="p">]</span>                <span class="c1"># (n_heads, seq_len, seq_len)</span>
+    <span class="n">bias</span> <span class="o">=</span> <span class="n">bias</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="o">~</span><span class="n">causal</span><span class="p">[</span><span class="kc">None</span><span class="p">],</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">))</span>         <span class="c1"># forbid attending to the future</span>
+    <span class="k">return</span> <span class="n">bias</span>
+
+<span class="n">bias</span> <span class="o">=</span> <span class="n">alibi_bias</span><span class="p">(</span><span class="n">seq_len</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">n_heads</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+<span class="c1"># Usage: scores = q @ k.transpose(-2,-1) / sqrt(d); scores = scores + bias; softmax(scores) @ v</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">bias</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>   <span class="c1"># torch.Size([4, 8, 8])</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">alibi_slopes</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">decimals</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
+</code></pre></div>
+<p>ALiBi&rsquo;s headline virtue is <strong>length extrapolation</strong>: because the penalty is a smooth linear function of distance defined for <em>any</em> distance, a model trained at length 1024 runs at length 4096+ with little degradation — the bias at distance 3000 is just a bigger version of the bias at distance 800, nothing the model has not effectively seen the shape of. It is also dead simple and cheap. Its limitation is that the strict monotonic decay with distance is an <em>inductive bias toward recency</em> — fine for left-to-right language modeling, but a poor fit for tasks needing strong long-range retrieval, where a far-away token must sometimes dominate. ALiBi powered BLOOM and MPT; RoPE ultimately became more popular for frontier models partly because of this retrieval ceiling, though ALiBi remains an excellent, robust choice.</p>
+<h3 id="nope-maybe-you-need-nothing">NoPE: maybe you need nothing<a class="headerlink" href="#nope-maybe-you-need-nothing" title="Permanent link">¶</a></h3>
+<p>A genuinely surprising 2023 result (Kazemnejad et al., <em>The Impact of Positional Encoding on Length Generalization</em>): a <strong>decoder-only</strong> Transformer with a causal mask and <em>no positional encoding at all</em> (NoPE) can still learn position — and sometimes generalizes to longer lengths <em>better</em> than explicit schemes. How? The causal mask itself breaks permutation symmetry: token <span class="arithmatex">\(i\)</span> can attend to <span class="arithmatex">\(\{0, \dots, i\}\)</span> but token <span class="arithmatex">\(j &gt; i\)</span> can attend to a strictly larger set. The model can count how many tokens are visible (e.g., via attention patterns that effectively measure the size of the attended set), recovering absolute position implicitly. NoPE is mostly a research curiosity and a clarifying conceptual point — it proves position info is <em>latent in causality</em> — rather than a production default, but it is a favorite interview probe and a reminder that the causal mask is itself doing positional work.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Modern LLMs overwhelmingly use RoPE. Explain <em>why</em> RoPE beat learned absolute and sinusoidal encodings, and name a concrete situation where you would still reach for ALiBi instead.</p>
+<p><strong>A:</strong> RoPE wins on the three axes that matter. (1) <strong>It is exactly relative</strong>: rotating <span class="arithmatex">\(q\)</span> at position <span class="arithmatex">\(m\)</span> and <span class="arithmatex">\(k\)</span> at position <span class="arithmatex">\(n\)</span> makes their dot product a function of <span class="arithmatex">\(m-n\)</span> only — <span class="arithmatex">\(q_m^\top R_\Theta(n-m)k_n\)</span> — which matches how language uses position (distance, not absolute index) and is translation-invariant. (2) <strong>It extrapolates and is <em>tunable</em></strong> — you can stretch the frequency ladder post-hoc with NTK/YaRN/position-interpolation to go from 4K to 128K with light or no fine-tuning, something a learned table (hard ceiling at <span class="arithmatex">\(L_{\max}\)</span>, no row for new positions) simply cannot do. (3) <strong>It is cheap and KV-cache-friendly</strong>: zero parameters, an elementwise rotate-half, and the rotation on key <span class="arithmatex">\(n\)</span> depends only on <span class="arithmatex">\(n\)</span>, so cached keys are never invalidated as the sequence grows. Sinusoidal-add encodings have the right rotational structure but bury it in the residual stream where the model only weakly recovers it; learned absolute encodings can&rsquo;t extrapolate at all. <strong>When would I pick ALiBi?</strong> When robust, train-short-test-long extrapolation with minimal fuss is the priority and the workload is recency-dominated left-to-right generation (e.g., streaming) rather than precise long-range retrieval — ALiBi&rsquo;s linear-distance penalty extrapolates gracefully out of the box with no scaling machinery. The flip side, and a good thing to volunteer: ALiBi&rsquo;s monotonic recency bias hurts tasks that need a distant token to dominate (needle-in-a-haystack retrieval), which is one reason frontier long-context models lean RoPE-plus-YaRN.</p>
+</div>
+<h2 id="context-length-extension-stretching-rope-to-128k">Context-Length Extension: Stretching RoPE to 128K<a class="headerlink" href="#context-length-extension-stretching-rope-to-128k" title="Permanent link">¶</a></h2>
+<p>You have a model pretrained with RoPE at 4096 tokens. You want it to handle 32K or 128K. Retraining from scratch at long context is enormously expensive (attention is <span class="arithmatex">\(\mathcal{O}(n^2)\)</span>; see the <a href="../03-pretraining/13-long-context-pretraining.html">long-context chapter</a>). The RoPE-scaling family lets you extend context with <em>little or no</em> additional training, by manipulating the frequency ladder. This is one of the most practically important — and interview-hot — topics in the chapter.</p>
+<p>The core problem, restated from the worked example: at inference position <span class="arithmatex">\(p &gt; L_{\text{train}}\)</span>, the slow RoPE dimensions rotate into angles never seen in training. There are three families of fixes, best understood through the metaphor of an instrument with many strings tuned to different frequencies.</p>
+<h3 id="position-interpolation-pi">Position Interpolation (PI)<a class="headerlink" href="#position-interpolation-pi" title="Permanent link">¶</a></h3>
+<p><strong>Position Interpolation</strong> (Chen et al., 2023) is the simplest idea: if the model was trained to understand positions <span class="arithmatex">\(0\)</span> to <span class="arithmatex">\(L\)</span>, <em>don&rsquo;t let positions exceed <span class="arithmatex">\(L\)</span></em> — instead <strong>squeeze</strong> the longer sequence into the trained range. To extend to length <span class="arithmatex">\(L' = s \cdot L\)</span> (scale factor <span class="arithmatex">\(s = L'/L\)</span>), replace each position <span class="arithmatex">\(m\)</span> with <span class="arithmatex">\(m / s\)</span> before computing rotations:</p>
+<div class="arithmatex">\[
+\theta_k^{\text{PI}}(m) = \frac{m}{s}\,\theta_k.
+\]</div>
+<p>Geometrically, you compress all positions so position 8000 in a 2× extension is <em>treated like</em> position 4000 — an angle the model has seen. Every dimension&rsquo;s rotation now stays within the trained angular range. The cost: you have reduced the <em>resolution</em> of position (adjacent tokens are now only <span class="arithmatex">\(\theta_k/s\)</span> apart in angle, so the model must distinguish finer differences). PI works remarkably well but typically needs a short fine-tune (a few hundred steps) to recover the lost fine-grained resolution.</p>
+<h3 id="ntk-aware-scaling">NTK-aware scaling<a class="headerlink" href="#ntk-aware-scaling" title="Permanent link">¶</a></h3>
+<p>PI&rsquo;s flaw is that it scales <em>every</em> frequency uniformly, including the fast (high-frequency, local) dimensions that were <em>not</em> the problem — squeezing them needlessly destroys local resolution. <strong>NTK-aware scaling</strong> (named for Neural Tangent Kernel intuitions; originally a community/blog contribution, &ldquo;bloc97&rdquo;) fixes this by scaling <strong>non-uniformly</strong>: change the RoPE <em>base</em> instead of the positions, which stretches slow dimensions a lot and fast dimensions barely at all.</p>
+<div class="arithmatex">\[
+\text{base}' = \text{base} \cdot s^{\,d / (d - 2)} \quad\Longrightarrow\quad \theta_k' = (\text{base}')^{-2k/d}.
+\]</div>
+<p>The high-frequency pairs (small <span class="arithmatex">\(k\)</span>) are nearly unchanged (local precision preserved); the low-frequency pairs (large <span class="arithmatex">\(k\)</span>) are stretched the most (so they don&rsquo;t run off into unseen angles). The headline practical fact: <strong>NTK-aware scaling often extends context with <em>zero</em> fine-tuning</strong> — you can sometimes 2–4× a model&rsquo;s context by changing one number, the base, at inference time. This is why &ldquo;rope_theta&rdquo; appears as a config knob in every modern serving stack.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">ntk_aware_inv_freq</span><span class="p">(</span><span class="n">head_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">base</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10000.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;NTK-aware RoPE: stretch the base by scale^(d/(d-2)), then recompute frequencies.</span>
+
+<span class="sd">    `scale` = target_len / train_len. High-freq dims barely change;</span>
+<span class="sd">    low-freq dims stretch the most, keeping their angles in the trained range.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">base_prime</span> <span class="o">=</span> <span class="n">base</span> <span class="o">*</span> <span class="p">(</span><span class="n">scale</span> <span class="o">**</span> <span class="p">(</span><span class="n">head_dim</span> <span class="o">/</span> <span class="p">(</span><span class="n">head_dim</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)))</span>
+    <span class="n">half</span> <span class="o">=</span> <span class="n">head_dim</span> <span class="o">//</span> <span class="mi">2</span>
+    <span class="k">return</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">base_prime</span> <span class="o">**</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">half</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="n">half</span><span class="p">))</span>
+
+<span class="c1"># Extend a d=128 model&#39;s context 4x with ZERO retraining, just by changing the base:</span>
+<span class="n">orig</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">10000.0</span> <span class="o">**</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="mi">64</span><span class="p">))</span>
+<span class="n">ntk</span>  <span class="o">=</span> <span class="n">ntk_aware_inv_freq</span><span class="p">(</span><span class="n">head_dim</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="mf">4.0</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;fast dim ratio (k=0): &quot;</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">ntk</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">/</span> <span class="n">orig</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>    <span class="c1"># ~1.0  (local: unchanged)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;slow dim ratio (k=63):&quot;</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">ntk</span><span class="p">[</span><span class="mi">63</span><span class="p">]</span> <span class="o">/</span> <span class="n">orig</span><span class="p">[</span><span class="mi">63</span><span class="p">]))</span>  <span class="c1"># &lt;1.0  (long-range: stretched)</span>
+</code></pre></div>
+<h3 id="yarn-the-production-grade-combination">YaRN: the production-grade combination<a class="headerlink" href="#yarn-the-production-grade-combination" title="Permanent link">¶</a></h3>
+<p><strong>YaRN</strong> (Yet another RoPE extensioN; Peng et al., 2023) is the method most long-context production models actually ship. It refines NTK with two extra ideas:</p>
+<ol>
+<li><strong>NTK-by-parts (per-dimension ramp).</strong> Instead of one global rule, classify each frequency dimension by its wavelength relative to the training context. Dimensions whose wavelength is <em>short</em> compared to <span class="arithmatex">\(L\)</span> (they complete many full rotations within the trained window) are left <strong>untouched</strong> — they already generalize. Dimensions whose wavelength is <em>long</em> (they never complete a rotation in <span class="arithmatex">\(L\)</span>) get <strong>interpolated</strong> like PI. A smooth ramp blends the two regimes for in-between dimensions. This is strictly better than treating all dimensions identically.</li>
+<li><strong>Attention temperature scaling.</strong> As you stretch context, the softmax distribution over many more keys tends to flatten and entropy rises. YaRN multiplies the attention logits by a constant <span class="arithmatex">\(\frac{1}{t} = 0.1 \ln(s) + 1\)</span> (a function of the scale <span class="arithmatex">\(s\)</span>) to <em>sharpen</em> the distribution back, recovering effective attention. Crucially this is a single scalar that can be folded into the RoPE <span class="arithmatex">\(\cos/\sin\)</span> magnitudes, so it costs nothing at runtime.</li>
+</ol>
+<p>The empirical result is that YaRN extends context further than PI or plain NTK <em>and</em> with less fine-tuning — it is the basis of many &ldquo;32K → 128K&rdquo; and &ldquo;128K → 1M&rdquo; model releases. The lineage is worth memorizing: <strong>PI</strong> (uniform squeeze, needs fine-tune) → <strong>NTK-aware</strong> (non-uniform via base, often training-free) → <strong>YaRN</strong> (per-dimension ramp + logit temperature, the production default). Linear/dynamic-NTK variants in HuggingFace (<code>rope_scaling={"type": "yarn"/"linear"/"dynamic", ...}</code>) implement these; the <code>dynamic</code> variant recomputes the scale on the fly so short sequences stay un-degraded.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rope_scaling_summary</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The decision the lineage encodes, in code-as-table form.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;linear / PI&quot;</span><span class="p">:</span>  <span class="s2">&quot;pos -&gt; pos/s; uniform squeeze; simplest; usually needs a short fine-tune&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;ntk-aware&quot;</span><span class="p">:</span>    <span class="s2">&quot;base -&gt; base * s^(d/(d-2)); non-uniform; OFTEN training-free for 2-4x&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;yarn&quot;</span><span class="p">:</span>         <span class="s2">&quot;per-dim ramp (NTK-by-parts) + logit temperature; best quality, longest reach&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;dynamic-ntk&quot;</span><span class="p">:</span>  <span class="s2">&quot;recompute scale per actual seq_len; no penalty on short inputs&quot;</span><span class="p">,</span>
+    <span class="p">}</span>
+<span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">rope_scaling_summary</span><span class="p">()</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">k</span><span class="si">:</span><span class="s2">14s</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">v</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: always evaluate the extended model on long-range <em>retrieval</em>, not just perplexity</p>
+<p>A context-extended model can have a deceptively low perplexity at 128K — perplexity is dominated by the easy local tokens — while completely failing to <em>use</em> information from the far end of the context. Always validate with a targeted long-range probe such as needle-in-a-haystack (plant a fact at a random depth, ask for it) or RULER-style synthetic tasks. It is common to see PI/NTK pass perplexity but flunk retrieval at the new length, which then guides whether you need YaRN, more fine-tuning data at length, or a larger scale factor. See <a href="../03-pretraining/13-long-context-pretraining.html">Long-Context Pretraining &amp; Context Extension</a> for the full evaluation playbook.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: re-applying RoPE scaling on top of a model already trained long</p>
+<p>RoPE scaling configs are <em>not</em> idempotent and <em>not</em> always composable. If a model was already pretrained or fine-tuned with, say, a YaRN factor of 8, layering another linear scale of 4 at serving time does not give you 32× — it double-counts the frequency stretch and usually <em>destroys</em> quality. Check the model&rsquo;s published <code>rope_theta</code> and <code>rope_scaling</code> in its config before adding your own. When in doubt, set the scale relative to the <em>original pretraining</em> length, not the current advertised context.</p>
+</div>
+<h2 id="putting-it-together-choosing-and-reasoning-about-position">Putting It Together: Choosing and Reasoning About Position<a class="headerlink" href="#putting-it-together-choosing-and-reasoning-about-position" title="Permanent link">¶</a></h2>
+<p>We have traversed the whole landscape. Step back and the design space is a small, comprehensible table.</p>
+<table>
+<thead>
+<tr>
+<th>Scheme</th>
+<th>Where injected</th>
+<th>Relative?</th>
+<th>Extrapolation</th>
+<th>Params</th>
+<th>KV-cache-safe</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sinusoidal</td>
+<td>input (<span class="arithmatex">\(x + p\)</span>)</td>
+<td>implicit/weak</td>
+<td>poor</td>
+<td>0</td>
+<td>yes</td>
+<td>orig. Transformer</td>
+</tr>
+<tr>
+<td>Learned absolute</td>
+<td>input (<span class="arithmatex">\(x + p\)</span>)</td>
+<td>no</td>
+<td><strong>none</strong> (hard ceiling)</td>
+<td><span class="arithmatex">\(L_{\max}\!\cdot d\)</span></td>
+<td>yes</td>
+<td>GPT-2, BERT</td>
+</tr>
+<tr>
+<td>T5 relative bias</td>
+<td>score <span class="arithmatex">\(S_{ij}\)</span></td>
+<td>yes</td>
+<td>moderate</td>
+<td>few/head</td>
+<td>yes</td>
+<td>T5</td>
+</tr>
+<tr>
+<td><strong>RoPE</strong></td>
+<td>rotate <span class="arithmatex">\(q,k\)</span></td>
+<td><strong>exact</strong></td>
+<td>good + <strong>tunable</strong></td>
+<td>0</td>
+<td>yes</td>
+<td>Llama, Qwen, GPT-NeoX, DeepSeek, Mistral, Gemma</td>
+</tr>
+<tr>
+<td><strong>ALiBi</strong></td>
+<td>score <span class="arithmatex">\(S_{ij}\)</span></td>
+<td>yes</td>
+<td><strong>excellent</strong></td>
+<td>0</td>
+<td>yes</td>
+<td>BLOOM, MPT</td>
+</tr>
+<tr>
+<td>NoPE</td>
+<td>nothing</td>
+<td>implicit (causal)</td>
+<td>surprisingly good</td>
+<td>0</td>
+<td>yes</td>
+<td>research</td>
+</tr>
+</tbody>
+</table>
+<p>The story of the field is a march from Approach A&rsquo;s absolute encodings (sinusoidal, learned) toward relative ones, with the two survivors being RoPE (rotate <span class="arithmatex">\(q,k\)</span> — exact relative, tunable extrapolation, the default for almost all frontier models) and ALiBi (a linear score penalty — supremely simple and robust extrapolation, recency-biased). The context-extension toolkit — PI, NTK-aware, YaRN — exists <em>because</em> RoPE&rsquo;s frequency ladder is a continuous, manipulable object, turning &ldquo;train short, serve long&rdquo; from impossible (learned tables) into a config flag.</p>
+<p>From here, RoPE&rsquo;d attention slots into <a href="../02-transformer/06-transformer-block.html">a full Transformer block</a> and a <a href="../02-transformer/07-build-gpt-from-scratch.html">from-scratch GPT</a>; its interaction with <a href="../02-transformer/04-mha-gqa-mla.html">GQA/MLA</a> matters because RoPE is applied per-head and MLA must carefully preserve the rotation through its low-rank compression; and the long-context economics it enables drive <a href="../07-inference-serving/01-anatomy-inference.html">inference</a> and <a href="../03-pretraining/04-scaling-laws.html">scaling-law</a> decisions throughout the stack.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Bare attention is permutation-equivariant</strong> — it sees a set, not a sequence. Without an explicit positional scheme, a Transformer cannot tell &ldquo;dog bites man&rdquo; from &ldquo;man bites dog.&rdquo; Position must be injected.</li>
+<li><strong>Two injection sites:</strong> add to the representation (sinusoidal, learned absolute — Approach A) or add a bias to the attention score (T5 relative, ALiBi — Approach B). RoPE is the hybrid: it rotates <span class="arithmatex">\(q,k\)</span> (Approach A&rsquo;s locus) so the dot product depends on relative offset (Approach B&rsquo;s goal).</li>
+<li><strong>Learned absolute encodings have a hard length ceiling</strong> (<span class="arithmatex">\(L_{\max}\)</span> baked into parameter shapes) and cannot extrapolate by even one token — the central reason the field abandoned them.</li>
+<li><strong>RoPE rotates each <span class="arithmatex">\(q,k\)</span> pair by an angle proportional to position</strong>, so <span class="arithmatex">\(q_m^\top R_\Theta(n-m)k_n\)</span> depends only on the relative offset <span class="arithmatex">\(n-m\)</span>. It has zero parameters, is a cheap rotate-half elementwise op, and is fully KV-cache compatible (key <span class="arithmatex">\(n\)</span>&rsquo;s rotation depends only on <span class="arithmatex">\(n\)</span>). It is the modern default.</li>
+<li><strong>ALiBi</strong> adds a per-head linear distance penalty <span class="arithmatex">\(-m_h|i-j|\)</span> to the score, with no embedding-side position at all. It extrapolates beautifully out of the box but encodes a recency bias that can hurt long-range retrieval.</li>
+<li><strong>NoPE</strong> shows the causal mask alone leaks enough information for a decoder-only model to recover position — a clarifying result, not a production default.</li>
+<li><strong>Context extension manipulates RoPE&rsquo;s frequency ladder:</strong> Position Interpolation (uniform squeeze, needs fine-tune) → NTK-aware (stretch the base non-uniformly, often training-free for 2–4×) → YaRN (per-dimension ramp + attention-logit temperature, the production-grade method behind most long-context releases).</li>
+<li><strong>Always validate extended context with long-range <em>retrieval</em> probes</strong> (needle-in-a-haystack), not perplexity, which is dominated by easy local tokens. And never blindly stack a second RoPE-scaling factor on an already-scaled model.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>RoPE is now the default positional encoding in virtually every frontier LLM (Llama, Mistral, Qwen, DeepSeek, Gemma). The active frontier is context extension: LongRoPE and YaRN variants push trained-at-4K models to 1M+ tokens, and NoPE&rsquo;s surprising results continue to sharpen our theoretical understanding of what position encodings actually do.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al., <em>Attention Is All You Need</em> (2017)</a> — introduces sinusoidal positional encodings and the original Transformer; the fixed-frequency rotation property motivates RoPE.</li>
+<li><a href="https://arxiv.org/abs/2104.09864">Su et al., <em>RoFormer: Enhanced Transformer with Rotary Position Embedding</em> (2021)</a> — the RoPE paper; derives the complex-multiplication rotation and proves the exact relative-position property.</li>
+<li><a href="https://arxiv.org/abs/2108.12409">Press, Smith &amp; Lewis, <em>Train Short, Test Long: Attention with Linear Biases</em> (2021)</a> — introduces ALiBi; demonstrates robust out-of-the-box length extrapolation via a simple linear distance penalty on attention scores.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2306.15595">Chen et al., <em>Extending Context Window via Positional Interpolation</em> (2023)</a> — Position Interpolation: linearly squeeze positions into the trained range to extend RoPE context with ~1000 fine-tuning steps.</li>
+<li><a href="https://arxiv.org/abs/2309.00071">Peng et al., <em>YaRN: Efficient Context Window Extension</em> (2023)</a> — per-dimension NTK-by-parts ramp plus attention temperature scaling; the production-grade method behind most 32K→128K model releases.</li>
+<li><a href="https://arxiv.org/abs/2305.19466">Kazemnejad et al., <em>The Impact of Positional Encoding on Length Generalization</em> (NeurIPS 2023)</a> — shows decoder-only Transformers with no explicit positional encoding (NoPE) can outperform RoPE and ALiBi on out-of-distribution lengths.</li>
+<li><a href="https://arxiv.org/abs/2402.13753">Ding et al., <em>LongRoPE: Extending LLM Context Window Beyond 2 Million Tokens</em> (2024)</a> — non-uniform per-dimension rescaling with evolutionary search; used in Microsoft Phi-3 to reach 2M-token context.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/microsoft/LongRoPE">microsoft/LongRoPE</a> — official LongRoPE implementation and evolution-search code; integrated into the Phi-3 model series.</li>
+<li><a href="https://huggingface.co/docs/transformers/main/en/internal/rope_utils">HuggingFace Transformers: Utilities for Rotary Embedding</a> — canonical reference for <code>rope_scaling</code> config (linear, dynamic, yarn, longrope, llama3 variants) used across the HF ecosystem.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://blog.eleuther.ai/rotary-embeddings/">EleutherAI Blog: <em>Rotary Embeddings — A Relative Revolution</em></a> — the accessible explainer that popularized RoPE in the English-language ML community; includes PyTorch and JAX implementations.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, Polosukhin — <em>Attention Is All You Need</em> (2017). Introduces the sinusoidal positional encoding and the rotation-by-fixed-offset property.</li>
+<li>Su, Lu, Pan, Murtadha, Wen, Liu — <em>RoFormer: Enhanced Transformer with Rotary Position Embedding</em> (2021). The RoPE paper; the 2-D complex-multiplication derivation and the <span class="arithmatex">\(d\)</span>-dimensional block-rotation construction.</li>
+<li>Press, Smith, Lewis — <em>Train Short, Test Long: Attention with Linear Biases Enables Input Length Extrapolation</em> (2021). The ALiBi method and its extrapolation story.</li>
+<li>Raffel, Shazeer, Roberts, et al. — <em>Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer</em> (T5, 2019). The bucketed relative-position scalar bias on attention scores.</li>
+<li>Shaw, Uszkoreit, Vaswani — <em>Self-Attention with Relative Position Representations</em> (2018), and Dai et al. — <em>Transformer-XL</em> (2019). The origins of relative position representations.</li>
+<li>Chen, Wong, Chen, Tian — <em>Extending Context Window of Large Language Models via Positional Interpolation</em> (2023). Position Interpolation.</li>
+<li>Peng, Quesnelle, Fan, Shippole — <em>YaRN: Efficient Context Window Extension of Large Language Models</em> (2023). NTK-by-parts plus attention temperature; the dominant production extension method.</li>
+<li>Kazemnejad, Padhi, Natesan Ramamurthy, Das, Reddy — <em>The Impact of Positional Encoding on Length Generalization in Transformers</em> (2023). The NoPE result for decoder-only models.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="04-mha-gqa-mla.html"><span class="pn-label">← Previous</span><span class="pn-title">Multi-Head Attention, MQA, GQA &amp; MLA</span></a>
+<a class="next" href="06-transformer-block.html"><span class="pn-label">Next →</span><span class="pn-title">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-attention-needs-position-and-the-two-ways-to-add-it">Why Attention Needs Position, and the Two Ways to Add It</a></li>
+<li class="toc-l2"><a href="#sinusoidal-and-learned-absolute-encodings">Sinusoidal and Learned Absolute Encodings</a></li>
+<li class="toc-l3"><a href="#the-original-sinusoidal-encoding">The original sinusoidal encoding</a></li>
+<li class="toc-l3"><a href="#learned-absolute-encodings">Learned absolute encodings</a></li>
+<li class="toc-l2"><a href="#relative-position-and-the-road-to-rope">Relative Position and the Road to RoPE</a></li>
+<li class="toc-l2"><a href="#rope-rotary-position-embedding-from-scratch">RoPE: Rotary Position Embedding From Scratch</a></li>
+<li class="toc-l3"><a href="#the-2-d-derivation">The 2-D derivation</a></li>
+<li class="toc-l3"><a href="#lifting-to-d-dimensions">Lifting to \(d\) dimensions</a></li>
+<li class="toc-l3"><a href="#implementation-the-rotate-half-trick">Implementation: the rotate-half trick</a></li>
+<li class="toc-l2"><a href="#alibi-and-nope-biasing-the-score-or-nothing-at-all">ALiBi and NoPE: Biasing the Score, or Nothing at All</a></li>
+<li class="toc-l3"><a href="#alibi-a-linear-distance-penalty">ALiBi: a linear distance penalty</a></li>
+<li class="toc-l3"><a href="#nope-maybe-you-need-nothing">NoPE: maybe you need nothing</a></li>
+<li class="toc-l2"><a href="#context-length-extension-stretching-rope-to-128k">Context-Length Extension: Stretching RoPE to 128K</a></li>
+<li class="toc-l3"><a href="#position-interpolation-pi">Position Interpolation (PI)</a></li>
+<li class="toc-l3"><a href="#ntk-aware-scaling">NTK-aware scaling</a></li>
+<li class="toc-l3"><a href="#yarn-the-production-grade-combination">YaRN: the production-grade combination</a></li>
+<li class="toc-l2"><a href="#putting-it-together-choosing-and-reasoning-about-position">Putting It Together: Choosing and Reasoning About Position</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

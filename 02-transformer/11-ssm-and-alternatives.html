@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention — The LLM Stack</title>
+<meta name="description" content="Quadratic attention bottleneck; linear attention; state space models (S4, Mamba/Mamba-2 selective scan); RWKV; RetNet; hybrid architectures (Jamba, hybrid Mamba">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="active" href="11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part II — The Transformer Architecture</div>
+<h1 id="211-beyond-attention-ssms-mamba-rwkv-linear-attention">2.11 Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention<a class="headerlink" href="#211-beyond-attention-ssms-mamba-rwkv-linear-attention" title="Permanent link">¶</a></h1>
+<p>The transformer has dominated language modeling since Vaswani et al. introduced it in 2017. Yet it carries a fundamental cost: the standard attention mechanism scales quadratically in both compute and memory with sequence length. For a 128 K-token context, a naive attention over a single head requires computing an <span class="arithmatex">\(N \times N\)</span> score matrix with <span class="arithmatex">\(N = 131072\)</span> — about 128 billion floating-point multiplications before the value aggregation step. At that scale, alternatives to attention stop being academic curiosities and start being engineering necessities.</p>
+<p>This chapter is about those alternatives. We will study what makes attention expensive, then tour the major architectural families that attempt to fix the scaling problem: linear attention, structured state space models (SSMs) like S4 and Mamba, recurrent language models like RWKV, and the Retention mechanism behind RetNet. We end by looking at hybrid architectures that mix attention and these alternatives — a pragmatic approach that is finding real adoption in production LLMs.</p>
+<p>Before diving in, note that the upstream machinery these models plug into — tokenization, embeddings, residual-stream design, layer normalization — is shared with standard transformers, covered in <a href="../02-transformer/01-tokenization.html">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a>, <a href="../02-transformer/02-embeddings-input.html">Embeddings &amp; The Input Pipeline</a>, and <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a>. The KV-cache implications of inference are discussed in depth in <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>.</p>
+<hr />
+<h2 id="the-quadratic-bottleneck">The Quadratic Bottleneck<a class="headerlink" href="#the-quadratic-bottleneck" title="Permanent link">¶</a></h2>
+<p>Let us be precise about what &ldquo;quadratic attention&rdquo; actually means and where the cost comes from.</p>
+<p>For a sequence of <span class="arithmatex">\(N\)</span> tokens with model dimension <span class="arithmatex">\(d\)</span> and head dimension <span class="arithmatex">\(d_k\)</span>, the attention computation is:</p>
+<div class="arithmatex">\[
+\text{Attention}(Q, K, V) = \operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right) V
+\]</div>
+<p>The <span class="arithmatex">\(QK^\top\)</span> product produces an <span class="arithmatex">\(N \times N\)</span> matrix. This single step costs <span class="arithmatex">\(O(N^2 d_k)\)</span> FLOPs and requires <span class="arithmatex">\(O(N^2)\)</span> memory to store the attention weights. For <span class="arithmatex">\(H\)</span> heads:</p>
+<ul>
+<li><strong>FLOPs per layer</strong>: <span class="arithmatex">\(O(H \cdot N^2 d_k) = O(N^2 d)\)</span></li>
+<li><strong>Memory</strong>: <span class="arithmatex">\(O(N^2)\)</span> attention matrix, which dominates for large <span class="arithmatex">\(N\)</span></li>
+</ul>
+<p>At inference, the autoregressive KV cache grows as <span class="arithmatex">\(O(N \cdot d)\)</span> per layer, which is linear — but the <em>prefill</em> step still reads <span class="arithmatex">\(O(N^2)\)</span> attention weights. FlashAttention (covered in <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a>) tames the memory cost by not materializing the full matrix, but does not reduce the FLOP count.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: attention FLOPs vs sequence length</p>
+<p>Consider a 7B-parameter GPT-style model: <span class="arithmatex">\(d = 4096\)</span>, <span class="arithmatex">\(H = 32\)</span> heads, <span class="arithmatex">\(d_k = 128\)</span>, 32 layers.</p>
+<ul>
+<li>
+<p>At <span class="arithmatex">\(N = 2048\)</span> (typical pretraining): attention FLOPs per layer <span class="arithmatex">\(\approx 2 \times 32 \times 2048^2 \times 128 \approx 34\)</span> GFLOPs.
+  Feed-forward FLOPs per layer <span class="arithmatex">\(\approx 2 \times 2048 \times 4096 \times 16384 \approx 275\)</span> GFLOPs.
+  So attention is ~11% of compute at this length.</p>
+</li>
+<li>
+<p>At <span class="arithmatex">\(N = 131072\)</span> (128 K context): attention FLOPs per layer scale to <span class="arithmatex">\(\approx 34 \times (131072/2048)^2 \approx 139\)</span> TFLOPs per layer — more than <strong>500×</strong> larger while the MLP cost only grows linearly.
+  Now attention dominates by more than 500× over the MLP at 2048 length.</p>
+</li>
+</ul>
+<p>This is why long-context models and streaming applications motivate <span class="arithmatex">\(O(N)\)</span> alternatives.</p>
+</div>
+<hr />
+<h2 id="linear-attention-the-kernel-trick">Linear Attention: The Kernel Trick<a class="headerlink" href="#linear-attention-the-kernel-trick" title="Permanent link">¶</a></h2>
+<p>The core insight of linear attention, introduced by Katharopoulos et al. (2020), is that the softmax in standard attention is not strictly necessary — it just ensures the output is a weighted sum of values with non-negative, normalized weights. If we can approximate the softmax with a kernel function, we can rewrite the computation to change the order of operations and get <span class="arithmatex">\(O(N)\)</span> cost.</p>
+<h3 id="the-reformulation">The Reformulation<a class="headerlink" href="#the-reformulation" title="Permanent link">¶</a></h3>
+<p>Define a feature map <span class="arithmatex">\(\phi: \mathbb{R}^{d_k} \rightarrow \mathbb{R}^r\)</span> such that</p>
+<div class="arithmatex">\[
+\exp(q^\top k / \sqrt{d_k}) \approx \phi(q)^\top \phi(k)
+\]</div>
+<p>Then:</p>
+<div class="arithmatex">\[
+\text{Linear-Attention}(Q, K, V) = \frac{\phi(Q)\left(\phi(K)^\top V\right)}{\phi(Q)\left(\phi(K)^\top \mathbf{1}\right)}
+\]</div>
+<p>The key: compute <span class="arithmatex">\(\phi(K)^\top V\)</span> first. This is an <span class="arithmatex">\(r \times d_v\)</span> matrix that requires <span class="arithmatex">\(O(N r d_v)\)</span> operations and can be computed once. Then multiplying by <span class="arithmatex">\(\phi(Q)\)</span> (shape <span class="arithmatex">\(N \times r\)</span>) costs another <span class="arithmatex">\(O(N r d_v)\)</span>. Total is <span class="arithmatex">\(O(N)\)</span> rather than <span class="arithmatex">\(O(N^2)\)</span>.</p>
+<p>The price: vanilla linear attention drops the softmax normalization, losing the &ldquo;focusing&rdquo; ability that makes attention heads specialize. Empirically, models trained with simple linear attention tend to underperform transformers on tasks requiring selective copying of distant tokens.</p>
+<h3 id="the-recurrent-form">The Recurrent Form<a class="headerlink" href="#the-recurrent-form" title="Permanent link">¶</a></h3>
+<p>Linear attention has an equivalent recurrent interpretation that is crucial for efficient inference. Define the outer-product state matrix:</p>
+<div class="arithmatex">\[
+S_t = \sum_{i=1}^{t} \phi(k_i) \otimes v_i \in \mathbb{R}^{r \times d_v}
+\]</div>
+<p>Then the output at time step <span class="arithmatex">\(t\)</span> is:</p>
+<div class="arithmatex">\[
+y_t = \frac{\phi(q_t)^\top S_t}{\phi(q_t)^\top z_t}
+\]</div>
+<p>where <span class="arithmatex">\(z_t = \sum_{i=1}^t \phi(k_i)\)</span> is a normalizer vector.</p>
+<p>This recurrent form processes one token at a time in <span class="arithmatex">\(O(r d_v)\)</span> operations with <span class="arithmatex">\(O(r d_v)\)</span> state — analogous to an RNN. During training, the parallel form is faster; during autoregressive inference, the recurrent form is constant cost per step regardless of sequence length. This training-parallel / inference-recurrent duality is a recurring theme in this entire chapter.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">elu_feature_map</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;ELU+1 feature map: keeps positivity, cheap to compute.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">elu</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1.0</span>  <span class="c1"># shape preserved; always &gt; 0</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">linear_attention_parallel</span><span class="p">(</span>
+    <span class="n">Q</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, N, H, d_k)</span>
+    <span class="n">K</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, N, H, d_k)</span>
+    <span class="n">V</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, N, H, d_v)</span>
+    <span class="n">causal</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Parallel (training) form of linear attention.</span>
+<span class="sd">    For causal (autoregressive) models we cannot simply do K^T V first —</span>
+<span class="sd">    we need the cumulative version. Here we show the non-causal form for clarity.</span>
+<span class="sd">    The causal form requires a cumulative outer-product scan.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">d_k</span> <span class="o">=</span> <span class="n">Q</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">d_v</span> <span class="o">=</span> <span class="n">V</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="n">phi_Q</span> <span class="o">=</span> <span class="n">elu_feature_map</span><span class="p">(</span><span class="n">Q</span><span class="p">)</span>  <span class="c1"># (B, N, H, d_k)</span>
+    <span class="n">phi_K</span> <span class="o">=</span> <span class="n">elu_feature_map</span><span class="p">(</span><span class="n">K</span><span class="p">)</span>  <span class="c1"># (B, N, H, d_k)</span>
+
+    <span class="c1"># Compute K^T V: (B, H, d_k, d_v)</span>
+    <span class="c1"># phi_K: (B, N, H, d_k) -&gt; reshape to (B, H, N, d_k)</span>
+    <span class="n">phi_K_t</span> <span class="o">=</span> <span class="n">phi_K</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>  <span class="c1"># (B, H, N, d_k)</span>
+    <span class="n">V_t</span>     <span class="o">=</span> <span class="n">V</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>       <span class="c1"># (B, H, N, d_v)</span>
+    <span class="n">KV</span>      <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;bhnk,bhnv-&gt;bhkv&#39;</span><span class="p">,</span> <span class="n">phi_K_t</span><span class="p">,</span> <span class="n">V_t</span><span class="p">)</span>  <span class="c1"># (B, H, d_k, d_v)</span>
+
+    <span class="c1"># Normalizer: sum of phi_K over N</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="n">phi_K_t</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>  <span class="c1"># (B, H, d_k)</span>
+
+    <span class="c1"># Compute output</span>
+    <span class="n">phi_Q_t</span> <span class="o">=</span> <span class="n">phi_Q</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>  <span class="c1"># (B, H, N, d_k)</span>
+    <span class="c1"># Numerator: phi(Q) @ KV -&gt; (B, H, N, d_v)</span>
+    <span class="n">num</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;bhnk,bhkv-&gt;bhnv&#39;</span><span class="p">,</span> <span class="n">phi_Q_t</span><span class="p">,</span> <span class="n">KV</span><span class="p">)</span>
+    <span class="c1"># Denominator: phi(Q) @ z -&gt; (B, H, N)</span>
+    <span class="n">den</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;bhnk,bhk-&gt;bhn&#39;</span><span class="p">,</span> <span class="n">phi_Q_t</span><span class="p">,</span> <span class="n">z</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="c1"># Clamp for numerical stability</span>
+    <span class="n">den</span> <span class="o">=</span> <span class="n">den</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">)</span>
+
+    <span class="n">out</span> <span class="o">=</span> <span class="p">(</span><span class="n">num</span> <span class="o">/</span> <span class="n">den</span><span class="p">)</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>  <span class="c1"># back to (B, N, H, d_v)</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">linear_attention_recurrent_step</span><span class="p">(</span>
+    <span class="n">q_t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, H, d_k) — current query</span>
+    <span class="n">k_t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, H, d_k) — current key</span>
+    <span class="n">v_t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, H, d_v) — current value</span>
+    <span class="n">S</span><span class="p">:</span>   <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, H, d_k, d_v) — running state</span>
+    <span class="n">z</span><span class="p">:</span>   <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, H, d_k)       — running normalizer</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single-step recurrent update — O(d_k * d_v) per step, O(d_k * d_v) memory.&quot;&quot;&quot;</span>
+    <span class="n">phi_q</span> <span class="o">=</span> <span class="n">elu_feature_map</span><span class="p">(</span><span class="n">q_t</span><span class="p">)</span>  <span class="c1"># (B, H, d_k)</span>
+    <span class="n">phi_k</span> <span class="o">=</span> <span class="n">elu_feature_map</span><span class="p">(</span><span class="n">k_t</span><span class="p">)</span>  <span class="c1"># (B, H, d_k)</span>
+
+    <span class="c1"># Update state: S += phi_k outer v</span>
+    <span class="n">S</span> <span class="o">=</span> <span class="n">S</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;bhk,bhv-&gt;bhkv&#39;</span><span class="p">,</span> <span class="n">phi_k</span><span class="p">,</span> <span class="n">v_t</span><span class="p">)</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="n">z</span> <span class="o">+</span> <span class="n">phi_k</span>  <span class="c1"># (B, H, d_k)</span>
+
+    <span class="c1"># Output</span>
+    <span class="n">num</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;bhk,bhkv-&gt;bhv&#39;</span><span class="p">,</span> <span class="n">phi_q</span><span class="p">,</span> <span class="n">S</span><span class="p">)</span>   <span class="c1"># (B, H, d_v)</span>
+    <span class="n">den</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;bhk,bhk-&gt;bh&#39;</span><span class="p">,</span> <span class="n">phi_q</span><span class="p">,</span> <span class="n">z</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">num</span> <span class="o">/</span> <span class="n">den</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">z</span>
+</code></pre></div>
+<hr />
+<h2 id="structured-state-space-models-s4">Structured State Space Models: S4<a class="headerlink" href="#structured-state-space-models-s4" title="Permanent link">¶</a></h2>
+<p>State space models (SSMs) originate in control theory. A continuous-time linear SSM maps an input signal <span class="arithmatex">\(u(t)\)</span> to an output signal <span class="arithmatex">\(y(t)\)</span> through a hidden state <span class="arithmatex">\(x(t)\)</span>:</p>
+<div class="arithmatex">\[
+\dot{x}(t) = A x(t) + B u(t)
+\]</div>
+<div class="arithmatex">\[
+y(t) = C x(t) + D u(t)
+\]</div>
+<p>where <span class="arithmatex">\(A \in \mathbb{R}^{N \times N}\)</span>, <span class="arithmatex">\(B \in \mathbb{R}^{N \times 1}\)</span>, <span class="arithmatex">\(C \in \mathbb{R}^{1 \times N}\)</span>, and <span class="arithmatex">\(D\)</span> is a skip connection scalar. The Structured State Space Sequence model (S4), introduced by Gu et al. (2021), discretizes this system and makes <span class="arithmatex">\(A\)</span> efficiently structured (specifically, a Hippo matrix designed to preserve long-range history) so that the entire sequence can be computed as a convolution in <span class="arithmatex">\(O(N \log N)\)</span> time during training, or as a recurrence in <span class="arithmatex">\(O(1)\)</span> per step during inference.</p>
+<h3 id="discretization">Discretization<a class="headerlink" href="#discretization" title="Permanent link">¶</a></h3>
+<p>The zero-order hold discretization with step size <span class="arithmatex">\(\Delta\)</span> gives:</p>
+<div class="arithmatex">\[
+\bar{A} = e^{\Delta A}, \quad \bar{B} = (e^{\Delta A} - I) A^{-1} B, \quad \bar{C} = C
+\]</div>
+<p>The recurrence becomes:</p>
+<div class="arithmatex">\[
+x_t = \bar{A} x_{t-1} + \bar{B} u_t, \quad y_t = \bar{C} x_t
+\]</div>
+<p>And the convolutional kernel is <span class="arithmatex">\(\bar{K} = (\bar{C}\bar{B},\, \bar{C}\bar{A}\bar{B},\, \bar{C}\bar{A}^2\bar{B},\, \ldots)\)</span>, enabling <span class="arithmatex">\(y = u * \bar{K}\)</span> to be computed with an FFT in <span class="arithmatex">\(O(N \log N)\)</span>.</p>
+<p>The HiPPO (High-order Polynomial Projection Operator) initialization of <span class="arithmatex">\(A\)</span> — specifically the LegS HiPPO matrix — is what makes S4 effective at remembering distant tokens. The eigenvalue structure of the HiPPO-LegS matrix means the state <span class="arithmatex">\(x_t\)</span> projects the history <span class="arithmatex">\(u_{\leq t}\)</span> onto Legendre polynomials, giving near-optimal compression of the signal over time.</p>
+<hr />
+<h2 id="mamba-selective-state-space-models">Mamba: Selective State Space Models<a class="headerlink" href="#mamba-selective-state-space-models" title="Permanent link">¶</a></h2>
+<p>S4 and its relatives (S5, DSS, GSS) proved that SSMs can model long sequences efficiently, but they struggled on tasks requiring selective recall — like looking up a specific value from a long context. The state matrix <span class="arithmatex">\(A\)</span>, <span class="arithmatex">\(B\)</span>, <span class="arithmatex">\(C\)</span> in S4 are fixed for all time steps (content-independent), so the model cannot decide <em>which</em> inputs to focus on.</p>
+<p>Mamba (Gu &amp; Dao, 2023) introduces <strong>input-dependent (selective) parameters</strong>: <span class="arithmatex">\(B_t\)</span>, <span class="arithmatex">\(C_t\)</span>, and <span class="arithmatex">\(\Delta_t\)</span> are now functions of the input <span class="arithmatex">\(u_t\)</span>, computed through a linear projection. This selectivity mechanism is the central innovation.</p>
+<figure class="viz" id="fig-ssm-scan">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 372" role="img" aria-label="A state-space model carries one fixed-size state left to right, updating it with h_t = A h_{t-1} + B x_t in O(N) sequential steps, while attention instead connects every token to every other token in O(N squared) pairs.">
+  <defs>
+    <marker id="ss-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-ssm-scan text{ fill:var(--ink-soft); }
+    #fig-ssm-scan .ttl{ font:700 13px var(--sans,sans-serif); }
+    #fig-ssm-scan .sub{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-ssm-scan .tok{ font:600 12px var(--mono,monospace); }
+    #fig-ssm-scan .st{ font:700 13px var(--mono,monospace); }
+    #fig-ssm-scan .rec{ font:600 12.5px var(--mono,monospace); }
+    #fig-ssm-scan .tag{ font:600 10px var(--mono,monospace); fill:var(--muted); }
+    #fig-ssm-scan .big{ font:700 12px var(--sans,sans-serif); }
+  </style>
+
+
+  <g data-anim="1">
+    <text x="20" y="24" class="ttl" fill="var(--accent)">State-space scan</text>
+    <text x="146" y="24" class="ttl" fill="var(--accent)">— one rolling state, left to right</text>
+    <rect x="630" y="11" width="112" height="20" rx="10" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="686" y="25" text-anchor="middle" class="big" fill="var(--good,#2f9e6e)">O(N) · 4 steps</text>
+  </g>
+
+
+  <g data-anim="1">
+    <rect x="20" y="40" width="356" height="26" rx="6" class="v-fill v-grid" stroke-width="1.1"/>
+    <text x="34" y="58" class="rec"><tspan fill="var(--accent)">h</tspan><tspan baseline-shift="sub" font-size="9">t</tspan> = A·h<tspan baseline-shift="sub" font-size="9">t-1</tspan> + B·x<tspan baseline-shift="sub" font-size="9">t</tspan><tspan dx="14" fill="var(--muted)">·</tspan><tspan dx="14"> y</tspan><tspan baseline-shift="sub" font-size="9">t</tspan> = C·h<tspan baseline-shift="sub" font-size="9">t</tspan></text>
+  </g>
+
+
+  <g data-anim="2">
+    <g class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.3">
+      <rect x="74"  y="84" width="40" height="26" rx="5"/>
+      <rect x="234" y="84" width="40" height="26" rx="5"/>
+      <rect x="394" y="84" width="40" height="26" rx="5"/>
+      <rect x="554" y="84" width="40" height="26" rx="5"/>
+    </g>
+    <text x="94"  y="102" text-anchor="middle" class="tok" fill="var(--accent2,#3b82f6)">x₁</text>
+    <text x="254" y="102" text-anchor="middle" class="tok" fill="var(--accent2,#3b82f6)">x₂</text>
+    <text x="414" y="102" text-anchor="middle" class="tok" fill="var(--accent2,#3b82f6)">x₃</text>
+    <text x="574" y="102" text-anchor="middle" class="tok" fill="var(--accent2,#3b82f6)">x₄</text>
+    <text x="638" y="102" class="tag">inputs</text>
+  </g>
+
+
+  <g data-anim="3" class="v-accent2" color="var(--accent2,#3b82f6)">
+    <g fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.4" marker-end="url(#ss-arrow)">
+      <line x1="94"  y1="110" x2="94"  y2="146"/>
+      <line x1="254" y1="110" x2="254" y2="146"/>
+      <line x1="414" y1="110" x2="414" y2="146"/>
+      <line x1="574" y1="110" x2="574" y2="146"/>
+    </g>
+    <text x="116" y="132" class="tag" fill="var(--accent2,#3b82f6)">B·x₁</text>
+  </g>
+
+
+  <g data-anim="3">
+
+    <g class="v-accent-s viz-draw" style="--len:150" fill="none" stroke="var(--accent)" stroke-width="2" marker-end="url(#ss-arrow)" color="var(--accent)">
+      <line x1="58"  y1="170" x2="70"  y2="170"/>
+      <line x1="118" y1="170" x2="228" y2="170"/>
+      <line x1="278" y1="170" x2="388" y2="170"/>
+      <line x1="438" y1="170" x2="548" y2="170"/>
+      <line x1="598" y1="170" x2="618" y2="170"/>
+    </g>
+
+    <text x="173" y="162" text-anchor="middle" class="tag" fill="var(--accent)">A</text>
+    <text x="333" y="162" text-anchor="middle" class="tag" fill="var(--accent)">A</text>
+    <text x="493" y="162" text-anchor="middle" class="tag" fill="var(--accent)">A</text>
+
+
+    <text x="44" y="174" text-anchor="middle" class="tag" fill="var(--muted)">h₀</text>
+
+
+    <g>
+      <rect x="74"  y="150" width="40" height="40" rx="7" class="v-fill" stroke="var(--accent)" stroke-width="1.7"/>
+      <rect x="234" y="150" width="40" height="40" rx="7" class="v-fill" stroke="var(--accent)" stroke-width="1.7"/>
+      <rect x="394" y="150" width="40" height="40" rx="7" class="v-fill" stroke="var(--accent)" stroke-width="1.7"/>
+      <rect x="554" y="150" width="40" height="40" rx="7" class="v-fill" stroke="var(--accent)" stroke-width="1.7"/>
+    </g>
+    <rect x="554" y="150" width="40" height="40" rx="7" class="viz-pulse" fill="var(--accent)" fill-opacity="0.18"/>
+    <text x="94"  y="175" text-anchor="middle" class="st" fill="var(--accent)">h₁</text>
+    <text x="254" y="175" text-anchor="middle" class="st" fill="var(--accent)">h₂</text>
+    <text x="414" y="175" text-anchor="middle" class="st" fill="var(--accent)">h₃</text>
+    <text x="574" y="175" text-anchor="middle" class="st" fill="var(--accent)">h₄</text>
+    <text x="630" y="158" class="tag">fixed-size</text>
+    <text x="630" y="186" class="tag">state</text>
+  </g>
+
+
+  <g data-anim="4">
+    <g fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.4" marker-end="url(#ss-arrow)">
+      <line x1="94"  y1="190" x2="94"  y2="226"/>
+      <line x1="254" y1="190" x2="254" y2="226"/>
+      <line x1="414" y1="190" x2="414" y2="226"/>
+      <line x1="574" y1="190" x2="574" y2="226"/>
+    </g>
+    <text x="116" y="212" class="tag" fill="var(--good,#2f9e6e)">C·h₁</text>
+  </g>
+
+
+  <g data-anim="4">
+    <g class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.3">
+      <rect x="74"  y="230" width="40" height="26" rx="5"/>
+      <rect x="234" y="230" width="40" height="26" rx="5"/>
+      <rect x="394" y="230" width="40" height="26" rx="5"/>
+      <rect x="554" y="230" width="40" height="26" rx="5"/>
+    </g>
+    <text x="94"  y="248" text-anchor="middle" class="tok" fill="var(--good,#2f9e6e)">y₁</text>
+    <text x="254" y="248" text-anchor="middle" class="tok" fill="var(--good,#2f9e6e)">y₂</text>
+    <text x="414" y="248" text-anchor="middle" class="tok" fill="var(--good,#2f9e6e)">y₃</text>
+    <text x="574" y="248" text-anchor="middle" class="tok" fill="var(--good,#2f9e6e)">y₄</text>
+    <text x="638" y="248" class="tag">outputs</text>
+  </g>
+
+
+  <line x1="20" y1="276" x2="740" y2="276" class="v-grid" stroke-width="1"/>
+
+
+  <g data-anim="5">
+    <text x="20" y="300" class="ttl">Attention</text>
+    <text x="92" y="300" class="ttl">— every token looks at every other token</text>
+    <rect x="606" y="287" width="136" height="20" rx="10" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+    <text x="674" y="301" text-anchor="middle" class="big" fill="var(--warn,#e0a106)">O(N²) · 10 pairs</text>
+  </g>
+
+
+  <g data-anim="5">
+    <g fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.3" opacity="0.9">
+
+      <path d="M94 348 Q174 326 254 348"/>
+      <path d="M254 348 Q334 326 414 348"/>
+      <path d="M414 348 Q494 326 574 348"/>
+
+      <path d="M94 348 Q254 318 414 348"/>
+      <path d="M254 348 Q414 318 574 348"/>
+
+      <path d="M94 348 Q334 312 574 348"/>
+    </g>
+    <g class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.3">
+      <rect x="74"  y="348" width="40" height="14" rx="5"/>
+      <rect x="234" y="348" width="40" height="14" rx="5"/>
+      <rect x="394" y="348" width="40" height="14" rx="5"/>
+      <rect x="554" y="348" width="40" height="14" rx="5"/>
+    </g>
+    <text x="94"  y="358" text-anchor="middle" class="tok" fill="var(--warn,#e0a106)">x₁</text>
+    <text x="254" y="358" text-anchor="middle" class="tok" fill="var(--warn,#e0a106)">x₂</text>
+    <text x="414" y="358" text-anchor="middle" class="tok" fill="var(--warn,#e0a106)">x₃</text>
+    <text x="574" y="358" text-anchor="middle" class="tok" fill="var(--warn,#e0a106)">x₄</text>
+    <text x="624" y="358" class="sub">pairs grow as N²</text>
+  </g>
+</svg>
+<figcaption><b>A scan, not all-pairs.</b> An SSM compresses the whole past into one fixed-size state and updates it left to right with <b>h<sub>t</sub> = A·h<sub>t-1</sub> + B·x<sub>t</sub></b>, reading out <b>y<sub>t</sub> = C·h<sub>t</sub></b> — a linear O(N) sweep with constant per-step cost. Attention instead wires every token to every earlier token, so the work and memory grow as O(N²).</figcaption>
+</figure>
+
+<h3 id="the-selective-scan">The Selective Scan<a class="headerlink" href="#the-selective-scan" title="Permanent link">¶</a></h3>
+<p>The Mamba recurrence for a single channel is:</p>
+<div class="arithmatex">\[
+h_t = \bar{A}_t h_{t-1} + \bar{B}_t x_t
+\]</div>
+<div class="arithmatex">\[
+y_t = C_t h_t
+\]</div>
+<p>where <span class="arithmatex">\(\bar{A}_t = \exp(\Delta_t A)\)</span> and <span class="arithmatex">\(\bar{B}_t = (\exp(\Delta_t A) - I) A^{-1} B_t\)</span>. Now <span class="arithmatex">\(\Delta_t\)</span>, <span class="arithmatex">\(B_t\)</span>, <span class="arithmatex">\(C_t\)</span> are all computed from the input, giving the model the ability to selectively gate what information flows into the state.</p>
+<p>Critically, <span class="arithmatex">\(A\)</span> is kept diagonal (not the full HiPPO matrix) for efficiency, and initialized with a specific negative-real diagonal structure that encourages stable long-range memory.</p>
+<div class="highlight"><pre><span></span><code>Mamba Block (per layer):
+
+Input x: (B, L, D)
+         |
+    Linear proj → z: (B, L, D)   [skip branch, gated by SiLU]
+         |
+    Linear proj → u: (B, L, expand*D)   [SSM branch]
+         |
+    Depthwise conv (width 4)
+         |
+    SiLU activation
+         |
+    Selective SSM:
+      Linear proj → delta: (B, L, expand*D)
+      Linear proj → B:     (B, L, N)      [state dim N ~16]
+      Linear proj → C:     (B, L, N)
+      Discretize (A fixed diagonal, per-channel)
+      Selective scan recurrence
+         |
+    Multiply by z (gating)
+         |
+    Linear proj back to D
+         |
+Output: (B, L, D)
+</code></pre></div>
+<p>The selective scan is the computationally hot path. Naively it is <span class="arithmatex">\(O(L \cdot D \cdot N)\)</span> with <span class="arithmatex">\(O(D \cdot N)\)</span> state, but running it sequentially on a GPU is extremely memory-bandwidth-bound. Mamba solves this with a custom parallel scan algorithm (prefix sum / work-efficient parallel scan) and a hardware-aware kernel that fuses the scan, keeps intermediate activations in SRAM, and avoids materializing the full state sequence in HBM.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SelectiveSSM</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Simplified Mamba-style selective SSM for one feature dimension.</span>
+<span class="sd">    Full Mamba also uses depthwise conv before this and expand*D channels;</span>
+<span class="sd">    this illustrates the core selective scan logic.</span>
+
+<span class="sd">    d_model: input/output dimension</span>
+<span class="sd">    d_state: SSM state dimension N (Mamba uses 16)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_state</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span> <span class="n">dt_rank</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_model</span> <span class="o">=</span> <span class="n">d_model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_state</span> <span class="o">=</span> <span class="n">d_state</span>
+        <span class="n">dt_rank</span> <span class="o">=</span> <span class="n">dt_rank</span> <span class="ow">or</span> <span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">d_model</span> <span class="o">/</span> <span class="mi">16</span><span class="p">)</span>
+
+        <span class="c1"># Log of A diagonal: initialized to evenly spaced negative reals</span>
+        <span class="c1"># A = -exp(log_A), kept negative for stability</span>
+        <span class="n">A_log</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">d_state</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+                          <span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">A_log</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">A_log</span><span class="p">)</span>  <span class="c1"># (d_model, d_state)</span>
+
+        <span class="c1"># D skip connection (one per channel)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">D</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">d_model</span><span class="p">))</span>
+
+        <span class="c1"># Projections for input-dependent parameters</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">x_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">dt_rank</span> <span class="o">+</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">d_state</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dt_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">dt_rank</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        x: (B, L, d_model)</span>
+<span class="sd">        returns: (B, L, d_model)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">N</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">d_state</span>
+
+        <span class="c1"># A: (D, N), kept negative for stability</span>
+        <span class="n">A</span> <span class="o">=</span> <span class="o">-</span><span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">A_log</span><span class="p">)</span>  <span class="c1"># (D, N)</span>
+
+        <span class="c1"># Compute input-dependent B, C, delta</span>
+        <span class="n">x_dbl</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">x_proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># (B, L, dt_rank + 2*N)</span>
+        <span class="n">dt</span><span class="p">,</span> <span class="n">B_ssm</span><span class="p">,</span> <span class="n">C</span> <span class="o">=</span> <span class="n">x_dbl</span><span class="o">.</span><span class="n">split</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">dt_proj</span><span class="o">.</span><span class="n">in_features</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">N</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">dt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">softplus</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt_proj</span><span class="p">(</span><span class="n">dt</span><span class="p">))</span>  <span class="c1"># (B, L, D), positive</span>
+
+        <span class="c1"># Discretize: zero-order hold</span>
+        <span class="c1"># dA[t] = exp(dt[t] * A)  — shape (B, L, D, N)</span>
+        <span class="n">dA</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">A</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>  <span class="c1"># (B,L,D,N)</span>
+        <span class="c1"># dB[t] = dt[t] * B[t] (simplified ZOH for diagonal A)</span>
+        <span class="n">dB</span> <span class="o">=</span> <span class="n">dt</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">B_ssm</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>  <span class="c1"># (B, L, D, N)</span>
+
+        <span class="c1"># Sequential scan (simple version — production uses parallel scan)</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="n">ys</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">L</span><span class="p">):</span>
+            <span class="c1"># h: (B, D, N), dA[:,t]: (B, D, N), dB[:,t]: (B, D, N)</span>
+            <span class="c1"># x[:,t]: (B, D)</span>
+            <span class="n">h</span> <span class="o">=</span> <span class="n">dA</span><span class="p">[:,</span> <span class="n">t</span><span class="p">]</span> <span class="o">*</span> <span class="n">h</span> <span class="o">+</span> <span class="n">dB</span><span class="p">[:,</span> <span class="n">t</span><span class="p">]</span> <span class="o">*</span> <span class="n">x</span><span class="p">[:,</span> <span class="n">t</span><span class="p">]</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="c1"># y: (B, D) via C projection</span>
+            <span class="n">y</span> <span class="o">=</span> <span class="p">(</span><span class="n">h</span> <span class="o">*</span> <span class="n">C</span><span class="p">[:,</span> <span class="n">t</span><span class="p">]</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B, D)</span>
+            <span class="n">ys</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
+
+        <span class="c1"># Stack and add skip connection</span>
+        <span class="n">y_seq</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">ys</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B, L, D)</span>
+        <span class="n">y_seq</span> <span class="o">=</span> <span class="n">y_seq</span> <span class="o">+</span> <span class="n">x</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">D</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">y_seq</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MambaBlock</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Full Mamba block with expansion, depthwise conv, gating, and SSM.</span>
+<span class="sd">    expand: expansion factor (Mamba uses 2)</span>
+<span class="sd">    d_conv: depthwise conv width (Mamba uses 4)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_state</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>
+                 <span class="n">expand</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="n">d_conv</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_model</span> <span class="o">=</span> <span class="n">d_model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_inner</span> <span class="o">=</span> <span class="n">d_model</span> <span class="o">*</span> <span class="n">expand</span>
+
+        <span class="c1"># Input projection: split into SSM branch (d_inner) and gate (d_inner)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">in_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">d_inner</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="c1"># Causal depthwise convolution over sequence dimension</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">conv1d</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Conv1d</span><span class="p">(</span>
+            <span class="n">in_channels</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">d_inner</span><span class="p">,</span>
+            <span class="n">out_channels</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">d_inner</span><span class="p">,</span>
+            <span class="n">kernel_size</span><span class="o">=</span><span class="n">d_conv</span><span class="p">,</span>
+            <span class="n">padding</span><span class="o">=</span><span class="n">d_conv</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span>          <span class="c1"># left-pad for causality</span>
+            <span class="n">groups</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">d_inner</span><span class="p">,</span>         <span class="c1"># depthwise</span>
+            <span class="n">bias</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">act</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">SiLU</span><span class="p">()</span>
+
+        <span class="c1"># SSM</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ssm</span> <span class="o">=</span> <span class="n">SelectiveSSM</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">d_inner</span><span class="p">,</span> <span class="n">d_state</span><span class="o">=</span><span class="n">d_state</span><span class="p">)</span>
+
+        <span class="c1"># Output projection</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">out_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">d_inner</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;x: (B, L, d_model) -&gt; (B, L, d_model)&quot;&quot;&quot;</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+
+        <span class="c1"># Split into SSM branch u and gate z</span>
+        <span class="n">xz</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">in_proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                   <span class="c1"># (B, L, 2*d_inner)</span>
+        <span class="n">u</span><span class="p">,</span> <span class="n">z</span> <span class="o">=</span> <span class="n">xz</span><span class="o">.</span><span class="n">chunk</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>             <span class="c1"># each (B, L, d_inner)</span>
+
+        <span class="c1"># Depthwise conv (operates on L dimension)</span>
+        <span class="n">u</span> <span class="o">=</span> <span class="n">u</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>                  <span class="c1"># (B, d_inner, L)</span>
+        <span class="n">u</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">conv1d</span><span class="p">(</span><span class="n">u</span><span class="p">)[</span><span class="o">...</span><span class="p">,</span> <span class="p">:</span><span class="n">L</span><span class="p">]</span>            <span class="c1"># causal: trim right</span>
+        <span class="n">u</span> <span class="o">=</span> <span class="n">u</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>                  <span class="c1"># (B, L, d_inner)</span>
+        <span class="n">u</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">act</span><span class="p">(</span><span class="n">u</span><span class="p">)</span>
+
+        <span class="c1"># SSM</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ssm</span><span class="p">(</span><span class="n">u</span><span class="p">)</span>                        <span class="c1"># (B, L, d_inner)</span>
+
+        <span class="c1"># Gate: multiply by SiLU(z)</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">y</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">act</span><span class="p">(</span><span class="n">z</span><span class="p">)</span>
+
+        <span class="c1"># Output projection</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">out_proj</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>                <span class="c1"># (B, L, d_model)</span>
+</code></pre></div>
+<h3 id="mamba-2-and-the-state-space-duality">Mamba-2 and the State Space Duality<a class="headerlink" href="#mamba-2-and-the-state-space-duality" title="Permanent link">¶</a></h3>
+<p>Mamba-2 (Dao &amp; Gu, 2024) reframes the selective SSM as a special case of <strong>structured matrix multiplication</strong>, revealing a duality between SSMs and linear attention. Specifically, with a scalar <span class="arithmatex">\(A_t\)</span> (instead of a diagonal matrix), the Mamba-2 selective scan is mathematically equivalent to linear attention with a specific data-dependent decay mask. This insight leads to a cleaner algorithm, better hardware utilization (tiled matrix multiplications instead of a sequential scan), and strong theoretical grounding.</p>
+<p>The key operation in Mamba-2 is the <strong>SSD (State Space Duality) layer</strong>, which computes:</p>
+<div class="arithmatex">\[
+Y = (L \circ M) V, \quad L_{ij} = C_i^\top h_j \text{ (if using state expansion)}
+\]</div>
+<p>where <span class="arithmatex">\(M\)</span> is a lower-triangular mask with elements <span class="arithmatex">\(M_{ij} = \prod_{k=j+1}^{i} a_k\)</span> (the cumulative product of scalar decays). This can be computed efficiently using block-diagonal structured matrix multiplications.</p>
+<hr />
+<h2 id="rwkv-rnns-strike-back">RWKV: RNNs Strike Back<a class="headerlink" href="#rwkv-rnns-strike-back" title="Permanent link">¶</a></h2>
+<p>RWKV (Peng et al., 2023) takes a different philosophical approach: it revisits the recurrent neural network (RNN) architecture but designs it to be trainable in parallel (like a transformer) by expressing the recurrence as a time-weighted attention.</p>
+<h3 id="the-wkv-attention">The WKV Attention<a class="headerlink" href="#the-wkv-attention" title="Permanent link">¶</a></h3>
+<p>The central operation in RWKV is WKV (time-mixing through weighted key-value aggregation):</p>
+<div class="arithmatex">\[
+\text{wkv}_t = \frac{\sum_{i=1}^{t-1} e^{-(t-1-i)w + k_i} v_i + e^{u + k_t} v_t}{\sum_{i=1}^{t-1} e^{-(t-1-i)w + k_i} + e^{u + k_t}}
+\]</div>
+<p>Here <span class="arithmatex">\(w \in \mathbb{R}^d\)</span> is a <em>learned decay</em> vector (one per channel), <span class="arithmatex">\(u \in \mathbb{R}^d\)</span> is a <em>bonus</em> for the current token, and <span class="arithmatex">\(k_t, v_t \in \mathbb{R}^d\)</span> are per-token key and value vectors. This is essentially exponentially-decayed attention, where older tokens get exponentially down-weighted by a channel-wise learned rate.</p>
+<p>The recurrent form has a scalar state per channel and can be written as:</p>
+<div class="arithmatex">\[
+a_t = e^{w} a_{t-1} + e^{k_t} v_t, \quad b_t = e^{w} b_{t-1} + e^{k_t}
+\]</div>
+<div class="arithmatex">\[
+\text{wkv}_t = \frac{e^{u+k_t} v_t + a_{t-1}}{e^{u+k_t} + b_{t-1}}
+\]</div>
+<p>This recurrence runs in <span class="arithmatex">\(O(1)\)</span> per step with <span class="arithmatex">\(O(d)\)</span> state — vastly smaller state than a transformer&rsquo;s KV cache.</p>
+<h3 id="rwkv-versions">RWKV Versions<a class="headerlink" href="#rwkv-versions" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th>Key change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RWKV-4</td>
+<td>Original architecture; WKV + channel-mixing</td>
+</tr>
+<tr>
+<td>RWKV-5</td>
+<td>Multi-head WKV; matrix-valued state per head</td>
+</tr>
+<tr>
+<td>RWKV-6</td>
+<td>Input-dependent time decay (dynamic <span class="arithmatex">\(w_t\)</span>); closer to Mamba</td>
+</tr>
+<tr>
+<td>RWKV-7</td>
+<td>Revised gating; drops the explicit <span class="arithmatex">\(u\)</span> bonus; further SSM alignment</td>
+</tr>
+</tbody>
+</table>
+<p>RWKV-6 and RWKV-7 introduce <em>data-dependent</em> decays, similar to Mamba&rsquo;s selectivity, and represent a convergence of the two design philosophies.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RWKVTimeMixing</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    RWKV-4 style time mixing block.</span>
+<span class="sd">    n_embd: model dimension</span>
+<span class="sd">    layer_id: used to initialize w differently per layer</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n_embd</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">layer_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_embd</span> <span class="o">=</span> <span class="n">n_embd</span>
+
+        <span class="c1"># Learned time decay (w): initialized to negative values (decay)</span>
+        <span class="c1"># Stored as log(-w) for stability; w should be &lt; 0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">w</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_embd</span><span class="p">))</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">uniform_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">w</span><span class="p">,</span> <span class="o">-</span><span class="mf">8.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.5</span><span class="p">)</span>
+
+        <span class="c1"># Time-first (u): bonus for current token</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">u</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_embd</span><span class="p">))</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">uniform_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">u</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
+
+        <span class="c1"># Token shift mixing ratios</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">time_mix_k</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">n_embd</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">time_mix_v</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">n_embd</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">time_mix_r</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">n_embd</span><span class="p">))</span>
+
+        <span class="c1"># Projections</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">key</span>    <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">n_embd</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">value</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">n_embd</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">receptance</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">n_embd</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">output</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">n_embd</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        x: (B, T, n_embd)</span>
+<span class="sd">        Token shift: mix current and previous token for k, v, r inputs.</span>
+<span class="sd">        Then run the WKV scan.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">C</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+
+        <span class="c1"># Token shift: concat zero-padded version of x (shifted right by 1)</span>
+        <span class="n">x_prev</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">C</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">),</span> <span class="n">x</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">]],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># Compute K, V, R with time-mixed inputs</span>
+        <span class="n">xk</span> <span class="o">=</span> <span class="n">x</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">time_mix_k</span> <span class="o">+</span> <span class="n">x_prev</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">time_mix_k</span><span class="p">)</span>
+        <span class="n">xv</span> <span class="o">=</span> <span class="n">x</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">time_mix_v</span> <span class="o">+</span> <span class="n">x_prev</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">time_mix_v</span><span class="p">)</span>
+        <span class="n">xr</span> <span class="o">=</span> <span class="n">x</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">time_mix_r</span> <span class="o">+</span> <span class="n">x_prev</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">time_mix_r</span><span class="p">)</span>
+
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="n">xk</span><span class="p">)</span>        <span class="c1"># (B, T, C)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">(</span><span class="n">xv</span><span class="p">)</span>      <span class="c1"># (B, T, C)</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">receptance</span><span class="p">(</span><span class="n">xr</span><span class="p">))</span>  <span class="c1"># gating</span>
+
+        <span class="c1"># WKV computation (simplified sequential loop over T)</span>
+        <span class="c1"># In practice this is a custom CUDA kernel for speed</span>
+        <span class="n">w</span> <span class="o">=</span> <span class="o">-</span><span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">w</span><span class="p">)</span>   <span class="c1"># (C,), negative → exponential decay</span>
+        <span class="n">u</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">u</span>               <span class="c1"># (C,)</span>
+
+        <span class="c1"># Running accumulators</span>
+        <span class="n">aa</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">C</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>  <span class="c1"># numerator state</span>
+        <span class="n">bb</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">C</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>  <span class="c1"># denominator state</span>
+        <span class="n">pp</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">B</span><span class="p">,</span> <span class="n">C</span><span class="p">),</span> <span class="o">-</span><span class="mf">1e38</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>  <span class="c1"># log-sum for numerical stability</span>
+
+        <span class="n">wkv_outputs</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">T</span><span class="p">):</span>
+            <span class="n">kt</span> <span class="o">=</span> <span class="n">k</span><span class="p">[:,</span> <span class="n">t</span><span class="p">]</span>  <span class="c1"># (B, C)</span>
+            <span class="n">vt</span> <span class="o">=</span> <span class="n">v</span><span class="p">[:,</span> <span class="n">t</span><span class="p">]</span>  <span class="c1"># (B, C)</span>
+
+            <span class="c1"># Numerically stable WKV update using log-space</span>
+            <span class="n">qq</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">pp</span> <span class="o">+</span> <span class="n">w</span><span class="p">,</span> <span class="n">kt</span> <span class="o">+</span> <span class="n">u</span><span class="p">)</span>     <span class="c1"># (B, C)</span>
+            <span class="n">a</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">pp</span> <span class="o">+</span> <span class="n">w</span> <span class="o">-</span> <span class="n">qq</span><span class="p">)</span> <span class="o">*</span> <span class="n">aa</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">kt</span> <span class="o">+</span> <span class="n">u</span> <span class="o">-</span> <span class="n">qq</span><span class="p">)</span> <span class="o">*</span> <span class="n">vt</span>
+            <span class="n">b</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">pp</span> <span class="o">+</span> <span class="n">w</span> <span class="o">-</span> <span class="n">qq</span><span class="p">)</span> <span class="o">*</span> <span class="n">bb</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">kt</span> <span class="o">+</span> <span class="n">u</span> <span class="o">-</span> <span class="n">qq</span><span class="p">)</span>
+            <span class="n">wkv_outputs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">a</span> <span class="o">/</span> <span class="n">b</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">))</span>
+
+            <span class="c1"># Update state</span>
+            <span class="n">qq2</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">pp</span> <span class="o">+</span> <span class="n">w</span><span class="p">,</span> <span class="n">kt</span><span class="p">)</span>
+            <span class="n">aa</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">pp</span> <span class="o">+</span> <span class="n">w</span> <span class="o">-</span> <span class="n">qq2</span><span class="p">)</span> <span class="o">*</span> <span class="n">aa</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">kt</span> <span class="o">-</span> <span class="n">qq2</span><span class="p">)</span> <span class="o">*</span> <span class="n">vt</span>
+            <span class="n">bb</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">pp</span> <span class="o">+</span> <span class="n">w</span> <span class="o">-</span> <span class="n">qq2</span><span class="p">)</span> <span class="o">*</span> <span class="n">bb</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">kt</span> <span class="o">-</span> <span class="n">qq2</span><span class="p">)</span>
+            <span class="n">pp</span>  <span class="o">=</span> <span class="n">qq2</span>
+
+        <span class="n">wkv</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">wkv_outputs</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B, T, C)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">r</span> <span class="o">*</span> <span class="n">wkv</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="retnet-and-the-retention-mechanism">RetNet and the Retention Mechanism<a class="headerlink" href="#retnet-and-the-retention-mechanism" title="Permanent link">¶</a></h2>
+<p>RetNet (Sun et al., 2023) proposes <strong>Retention</strong> — a recurrence-free, attention-free sequence model that explicitly targets the &ldquo;training parallelism vs. inference efficiency&rdquo; tradeoff with what the authors call the &ldquo;impossible triangle&rdquo; — the claim that retention achieves all three: training parallelism, <span class="arithmatex">\(O(1)\)</span> inference, and good performance.</p>
+<p>The retention score between query <span class="arithmatex">\(q_i\)</span> and key <span class="arithmatex">\(k_j\)</span> is:</p>
+<div class="arithmatex">\[
+\text{Retention}(Q, K, V) = \left(\sum_{m,n} (Q_m K_n^\top) \gamma^{m-n} \cdot \mathbf{1}_{m \geq n}\right) V
+\]</div>
+<p>where <span class="arithmatex">\(\gamma \in (0, 1)\)</span> is a per-head decay constant (not learned — fixed at training time based on head index). This can equivalently be written in a parallel (training) form as a lower-triangular masked matrix or in a recurrent (inference) form as an <span class="arithmatex">\(O(d_k \times d_v)\)</span> state matrix updated at each step.</p>
+<p>Multi-scale retention uses different <span class="arithmatex">\(\gamma\)</span> values per head, allowing different heads to specialize in short-range versus long-range dependencies. Chunk-wise retention computes retention over fixed-size chunks, balancing the efficiency of both forms.</p>
+<p>RetNet replaces the softmax normalization with a group normalization applied to the retention output — a practical fix for the scale instability of un-normalized attention.</p>
+<hr />
+<h2 id="the-flop-memory-trade-off-table">The FLOP / Memory Trade-off Table<a class="headerlink" href="#the-flop-memory-trade-off-table" title="Permanent link">¶</a></h2>
+<p>Before we look at hybrids, it is worth summarizing the algorithmic tradeoffs:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Training FLOPs</th>
+<th>Training Memory</th>
+<th>Inference per step</th>
+<th>State size</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Transformer (full attn)</td>
+<td><span class="arithmatex">\(O(N^2 d)\)</span></td>
+<td><span class="arithmatex">\(O(N^2)\)</span></td>
+<td><span class="arithmatex">\(O(N d)\)</span> (grows)</td>
+<td><span class="arithmatex">\(O(N d)\)</span> KV cache</td>
+</tr>
+<tr>
+<td>FlashAttention Transformer</td>
+<td><span class="arithmatex">\(O(N^2 d)\)</span></td>
+<td><span class="arithmatex">\(O(N d)\)</span> (recomputed)</td>
+<td><span class="arithmatex">\(O(N d)\)</span> (grows)</td>
+<td><span class="arithmatex">\(O(N d)\)</span> KV cache</td>
+</tr>
+<tr>
+<td>Linear Attention</td>
+<td><span class="arithmatex">\(O(N d^2)\)</span> (causal)</td>
+<td><span class="arithmatex">\(O(N d)\)</span></td>
+<td><span class="arithmatex">\(O(d^2)\)</span> (constant)</td>
+<td><span class="arithmatex">\(O(d_k \times d_v)\)</span></td>
+</tr>
+<tr>
+<td>S4 / Mamba</td>
+<td><span class="arithmatex">\(O(N d N_s)\)</span></td>
+<td><span class="arithmatex">\(O(N d)\)</span></td>
+<td><span class="arithmatex">\(O(d N_s)\)</span> (constant)</td>
+<td><span class="arithmatex">\(O(d N_s)\)</span></td>
+</tr>
+<tr>
+<td>RWKV</td>
+<td><span class="arithmatex">\(O(N d)\)</span></td>
+<td><span class="arithmatex">\(O(N d)\)</span></td>
+<td><span class="arithmatex">\(O(d)\)</span> (constant)</td>
+<td><span class="arithmatex">\(O(d)\)</span></td>
+</tr>
+<tr>
+<td>RetNet</td>
+<td><span class="arithmatex">\(O(N d^2)\)</span> (chunk)</td>
+<td><span class="arithmatex">\(O(N d)\)</span></td>
+<td><span class="arithmatex">\(O(d^2)\)</span> (constant)</td>
+<td><span class="arithmatex">\(O(d_k \times d_v)\)</span></td>
+</tr>
+</tbody>
+</table>
+<p><span class="arithmatex">\(N_s\)</span> denotes SSM state dimension (e.g., 16 in Mamba). Note that Mamba/SSM state size is far smaller than the KV cache of a transformer at long sequences.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: inference memory comparison at 32K context</p>
+<p>Consider a 7B model, 32 layers, <span class="arithmatex">\(d = 4096\)</span>, 32 heads, <span class="arithmatex">\(d_k = d_v = 128\)</span>, fp16.</p>
+<p><strong>Transformer KV cache at N=32768:</strong>
+- Per layer: <span class="arithmatex">\(2 \times N \times d \times 2\)</span> bytes <span class="arithmatex">\(= 2 \times 32768 \times 4096 \times 2 = 512\)</span> MB
+- 32 layers: <span class="arithmatex">\(512 \times 32 = 16384\)</span> MB <span class="arithmatex">\(\approx\)</span> <strong>16 GB</strong> just for the KV cache!</p>
+<p><strong>Mamba state at any N:</strong>
+- Per layer: <span class="arithmatex">\(d \times N_s \times 2\)</span> bytes <span class="arithmatex">\(= 4096 \times 16 \times 2 = 128\)</span> KB
+- 32 layers: <span class="arithmatex">\(128 \times 32 = 4\)</span> MB — <strong>constant, regardless of N</strong></p>
+<p><strong>RWKV state at any N:</strong>
+- Per layer: <span class="arithmatex">\(d \times 2\)</span> bytes <span class="arithmatex">\(= 4096 \times 2 = 8\)</span> KB (scalar state per channel)
+- 32 layers: <span class="arithmatex">\(8 \times 32 = 256\)</span> KB</p>
+<p>This is the fundamental inference memory advantage of SSM/recurrent models: they can handle arbitrarily long sequences at deployment time with a fixed memory footprint.</p>
+</div>
+<hr />
+<h2 id="hybrid-architectures-jamba-zamba-beyond">Hybrid Architectures: Jamba, Zamba &amp; Beyond<a class="headerlink" href="#hybrid-architectures-jamba-zamba-beyond" title="Permanent link">¶</a></h2>
+<p>Pure SSM models have one well-documented weakness: they struggle at tasks requiring <strong>precise in-context retrieval</strong> — looking up an exact value from the context, copying specific tokens, or doing multi-hop reasoning across distant facts. This is because the fixed-size SSM state is a lossy compression of the history, while softmax attention can attend to exact past tokens.</p>
+<p>The natural solution is to combine attention and SSM layers in the same model.</p>
+<h3 id="jamba-ai21-labs-2024">Jamba (AI21 Labs, 2024)<a class="headerlink" href="#jamba-ai21-labs-2024" title="Permanent link">¶</a></h3>
+<p>Jamba interleaves Mamba SSM blocks and transformer (attention + MLP) blocks, with a ratio heavily weighted toward Mamba (roughly 1 attention layer per 8 Mamba layers). It also incorporates MoE (Mixture-of-Experts; see <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts (MoE) Architectures</a>) in the MLP blocks to increase model capacity without proportionally increasing compute.</p>
+<p>The key design insight: a small number of attention layers provides the exact-retrieval capability that SSMs lack, while the majority of layers being Mamba keeps memory and compute efficient. Jamba demonstrated that this hybrid could match or exceed pure transformer models on standard benchmarks while using far less KV-cache memory at long contexts.</p>
+<h3 id="zamba-and-other-hybrids">Zamba and Other Hybrids<a class="headerlink" href="#zamba-and-other-hybrids" title="Permanent link">¶</a></h3>
+<p>Zamba (Zyphra, 2024) uses a 1-attention-per-6-Mamba ratio with a shared global attention block that is applied at multiple depths in the network (parameter sharing). This reduces the number of attention-induced KV cache entries further.</p>
+<p>The general design space for hybrids can be parameterized by:
+1. <strong>Attention-to-SSM ratio</strong>: how many attention layers vs. SSM layers
+2. <strong>Placement</strong>: interleaved evenly, attention at top/bottom, or clustered
+3. <strong>Attention type</strong>: full attention, sliding window attention, or grouped-query attention (see <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>)
+4. <strong>SSM variant</strong>: Mamba-1, Mamba-2, GLA, or RWKV blocks</p>
+<h3 id="a-minimal-hybrid-model">A Minimal Hybrid Model<a class="headerlink" href="#a-minimal-hybrid-model" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+
+<span class="c1"># We assume MambaBlock and a standard TransformerBlock are already defined.</span>
+<span class="c1"># Below shows how to compose them in a hybrid model.</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">HybridBlock</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A single hybrid layer that is either an SSM block or an Attention block.</span>
+<span class="sd">    block_type: &#39;mamba&#39; | &#39;attention&#39;</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">block_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;mamba&quot;</span><span class="p">,</span> <span class="s2">&quot;attention&quot;</span><span class="p">],</span>
+        <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span>
+        <span class="n">d_state</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">block_type</span> <span class="o">=</span> <span class="n">block_type</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">RMSNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">block_type</span> <span class="o">==</span> <span class="s2">&quot;mamba&quot;</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">block</span> <span class="o">=</span> <span class="n">MambaBlock</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_state</span><span class="o">=</span><span class="n">d_state</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">block_type</span> <span class="o">==</span> <span class="s2">&quot;attention&quot;</span><span class="p">:</span>
+            <span class="c1"># Minimal multi-head self-attention</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">block</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">MultiheadAttention</span><span class="p">(</span>
+                <span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">batch_first</span><span class="o">=</span><span class="kc">True</span>
+            <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">attn_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">residual</span> <span class="o">=</span> <span class="n">x</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_type</span> <span class="o">==</span> <span class="s2">&quot;mamba&quot;</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">block</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">x</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">block</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">attn_mask</span><span class="o">=</span><span class="n">attn_mask</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">residual</span> <span class="o">+</span> <span class="n">x</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">HybridLanguageModel</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A hybrid SSM-Attention language model.</span>
+<span class="sd">    attn_every: place an attention layer every N layers (rest are Mamba).</span>
+<span class="sd">    E.g. attn_every=8 → 1 attention layer per 7 Mamba layers.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">vocab_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">n_layers</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">attn_every</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span>
+        <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span>
+        <span class="n">d_state</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">embed</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">vocab_size</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+
+        <span class="n">layers</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_layers</span><span class="p">):</span>
+            <span class="c1"># Place attention layers at fixed intervals</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="n">attn_every</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">block_type</span> <span class="o">=</span> <span class="s2">&quot;attention&quot;</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">block_type</span> <span class="o">=</span> <span class="s2">&quot;mamba&quot;</span>
+            <span class="n">layers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">HybridBlock</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">block_type</span><span class="p">,</span> <span class="n">n_heads</span><span class="o">=</span><span class="n">n_heads</span><span class="p">,</span> <span class="n">d_state</span><span class="o">=</span><span class="n">d_state</span><span class="p">)</span>
+            <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">layers</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">(</span><span class="n">layers</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm_out</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">RMSNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lm_head</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">vocab_size</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tokens</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;tokens: (B, L) -&gt; logits (B, L, vocab_size)&quot;&quot;&quot;</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">embed</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>  <span class="c1"># (B, L, d_model)</span>
+        <span class="k">for</span> <span class="n">layer</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">layers</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">layer</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm_out</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">lm_head</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+
+<span class="c1"># Quick sanity check</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">HybridLanguageModel</span><span class="p">(</span>
+        <span class="n">vocab_size</span><span class="o">=</span><span class="mi">32000</span><span class="p">,</span> <span class="n">d_model</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">n_layers</span><span class="o">=</span><span class="mi">12</span><span class="p">,</span> <span class="n">attn_every</span><span class="o">=</span><span class="mi">4</span>
+    <span class="p">)</span>
+    <span class="c1"># Count attention vs Mamba layers</span>
+    <span class="n">attn_count</span>  <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">layers</span> <span class="k">if</span> <span class="n">l</span><span class="o">.</span><span class="n">block_type</span> <span class="o">==</span> <span class="s2">&quot;attention&quot;</span><span class="p">)</span>
+    <span class="n">mamba_count</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">layers</span> <span class="k">if</span> <span class="n">l</span><span class="o">.</span><span class="n">block_type</span> <span class="o">==</span> <span class="s2">&quot;mamba&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Attention layers: </span><span class="si">{</span><span class="n">attn_count</span><span class="si">}</span><span class="s2">, Mamba layers: </span><span class="si">{</span><span class="n">mamba_count</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># → Attention layers: 3, Mamba layers: 9</span>
+
+    <span class="n">tokens</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">32000</span><span class="p">,</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">128</span><span class="p">))</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output shape: </span><span class="si">{</span><span class="n">logits</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># (2, 128, 32000)</span>
+</code></pre></div>
+<hr />
+<h2 id="gated-linear-attention-and-the-convergence">Gated Linear Attention and the Convergence<a class="headerlink" href="#gated-linear-attention-and-the-convergence" title="Permanent link">¶</a></h2>
+<p>The theoretical connections between all these architectures have become clearer over 2024-2025. The <strong>Gated Linear Attention (GLA)</strong> formulation (Yang et al., 2023) provides a unified view: all of these models can be seen as linear attention variants with different forms of <em>gating</em> and <em>decay</em>.</p>
+<p>The general GLA recurrence is:</p>
+<div class="arithmatex">\[
+S_t = G_t \odot S_{t-1} + k_t^\top v_t
+\]</div>
+<div class="arithmatex">\[
+o_t = q_t S_t
+\]</div>
+<p>where <span class="arithmatex">\(G_t \in (0,1)^{d_k \times d_v}\)</span> is a data-dependent gate (or decay) matrix. Different choices of <span class="arithmatex">\(G_t\)</span> recover different architectures:</p>
+<ul>
+<li><span class="arithmatex">\(G_t = \text{diag}(\gamma)\)</span> (constant) → RetNet</li>
+<li><span class="arithmatex">\(G_t = \text{diag}(\exp(-\exp(w)))\)</span> (input-dependent scalar per channel) → RWKV-style</li>
+<li><span class="arithmatex">\(G_t = \text{diag}(\exp(\Delta_t A))\)</span> (Mamba-style discretization) → Mamba / selective SSM</li>
+<li><span class="arithmatex">\(G_t = I\)</span> (no decay) → linear attention</li>
+</ul>
+<p>This convergence has practical implications: hardware-efficient kernels developed for one variant (e.g., GLA&rsquo;s chunked parallel scan) can be adapted for others, and model designers can tune the gate expressiveness/cost tradeoff without changing the high-level architecture.</p>
+<h3 id="hgrn-and-hawkgriffin">HGRN and Hawk/Griffin<a class="headerlink" href="#hgrn-and-hawkgriffin" title="Permanent link">¶</a></h3>
+<p>Other notable entries in this space include:</p>
+<ul>
+<li><strong>HGRN / HGRN-2</strong> (Qin et al.): Hierarchical Gated Recurrent Network, using input-dependent forget gates similar to LSTM but designed for parallelism.</li>
+<li><strong>Hawk / Griffin</strong> (De et al., Google DeepMind, 2024): A hybrid recurrent + local-attention model with a &ldquo;Real Gated Linear Recurrence&rdquo; (RGLR) layer that has been trained at the scale of multi-billion parameter models, demonstrating competitive performance with transformers.</li>
+</ul>
+<hr />
+<h2 id="where-the-frontier-is-heading">Where the Frontier Is Heading<a class="headerlink" href="#where-the-frontier-is-heading" title="Permanent link">¶</a></h2>
+<p>As of mid-2026, the field has reached some pragmatic conclusions:</p>
+<p><strong>Hybrids win in practice.</strong> Pure SSM models have not displaced transformers in production LLMs. The combination of a small fraction of attention layers with SSM/linear-attention layers appears to offer the best tradeoff: the exact-retrieval capability of attention for a small fraction of total compute, with the memory efficiency of SSMs for the bulk of the sequence processing.</p>
+<p><strong>The long-context use case is where alternatives shine.</strong> For standard (up to 8K token) language modeling, modern transformers with FlashAttention are hard to beat. The advantage of SSM and linear-attention models grows dramatically as context exceeds 32K tokens.</p>
+<p><strong>Training dynamics differ.</strong> SSMs and RWKV models have different sensitivity to hyperparameters than transformers. The learning rate schedule, initialization, and gradient clipping values that work for transformers often need significant adjustment for recurrent models.</p>
+<p><strong>Scaling laws are being remeasured.</strong> Early (2022-2023) Chinchilla-style scaling laws were derived for transformers. Whether SSMs follow the same laws is an open research question. Preliminary results suggest competitive scaling, but the optimal model size / data tradeoff may differ.</p>
+<p><strong>Hardware matters.</strong> Modern GPUs are optimized for dense matrix multiplication — the operation that attention and dense linear layers perform. SSM-specific operations (sequential scans, depthwise convolutions) are less naturally mapped to tensor cores. This gives transformers an implementation advantage that partially offsets the algorithmic advantage of SSMs at long sequences. Future ASICs or NPUs designed for recurrent inference could shift this calculus.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Mamba uses a selective scan where <span class="arithmatex">\(B_t\)</span>, <span class="arithmatex">\(C_t\)</span>, <span class="arithmatex">\(\Delta_t\)</span> are input-dependent. Why is this selectivity important, and what would happen without it?</p>
+<p><strong>A:</strong> Without selectivity (as in S4), the state transition matrices are fixed — every input updates the hidden state identically regardless of content. This means the model cannot selectively ignore irrelevant tokens or precisely copy specific values from context. In practice, content-independent SSMs underperform on tasks like selective copying, associative recall, or multi-hop lookup — tasks where transformers excel because softmax attention can precisely attend to specific past positions. Mamba&rsquo;s selectivity allows the model to set <span class="arithmatex">\(\Delta_t \approx 0\)</span> for irrelevant tokens (effectively not updating the state) and set <span class="arithmatex">\(\Delta_t\)</span> large for important tokens (strongly writing them into the state). This recovers much of the associative recall capability while maintaining the <span class="arithmatex">\(O(1)\)</span>-per-step inference cost. Empirically, selective SSMs show much smaller gaps versus transformers on in-context learning benchmarks compared to non-selective SSMs.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: confusing training and inference complexity</p>
+<p>A common mistake is to say &ldquo;Mamba is <span class="arithmatex">\(O(N)\)</span>&rdquo; without qualification. During training with parallel scan, Mamba is <span class="arithmatex">\(O(N \cdot D \cdot N_s)\)</span> FLOPs — linear in sequence length, which is better than the <span class="arithmatex">\(O(N^2)\)</span> of attention for long <span class="arithmatex">\(N\)</span>, but not negligible. During inference (autoregressive generation), Mamba is <span class="arithmatex">\(O(D \cdot N_s)\)</span> per step — <em>constant</em>, independent of how many tokens have been generated. The transformer at inference is <span class="arithmatex">\(O(N \cdot D)\)</span> per step because each new token must attend to all <span class="arithmatex">\(N\)</span> previous KV entries. So the inference advantage grows linearly with sequence length.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Standard softmax attention is <span class="arithmatex">\(O(N^2)\)</span> in both FLOPs and memory, making it a bottleneck for sequences beyond tens of thousands of tokens.</li>
+<li>Linear attention rewrites the attention computation using a kernel feature map, enabling <span class="arithmatex">\(O(N)\)</span> parallel training and <span class="arithmatex">\(O(1)\)</span> per-step inference, at the cost of reduced &ldquo;focusing&rdquo; ability.</li>
+<li>S4 introduced the HiPPO matrix for stable long-range memory via an SSM; Mamba extended this with input-dependent (selective) parameters, allowing the model to filter irrelevant inputs.</li>
+<li>RWKV achieves RNN-like inference cost with transformer-like training by expressing attention as an exponentially-decayed weighted sum, trainable in parallel via log-space prefix scans.</li>
+<li>RetNet uses a fixed decay <span class="arithmatex">\(\gamma\)</span> per head, enabling three equivalent computation forms: parallel (training), recurrent (inference), and chunkwise (balanced).</li>
+<li>Mamba-2/SSD and GLA reveal that SSMs, linear attention, and RWKV-style models are instances of the same gated linear recurrence framework, differing only in how the gate <span class="arithmatex">\(G_t\)</span> is parameterized.</li>
+<li>Hybrid architectures (Jamba, Zamba, Griffin) that interleave a small number of attention layers with many SSM layers currently represent the practical state of the art: combining exact-retrieval capability with long-context memory efficiency.</li>
+<li>The SSM inference advantage is most pronounced at context lengths exceeding 32K tokens, where the KV cache of a transformer can consume tens of gigabytes of memory while an SSM&rsquo;s state stays constant.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>SSMs and linear-attention alternatives have rapidly matured from research curiosities into production-ready components. Hybrid architectures that mix a small fraction of full attention layers with Mamba or GLA blocks now represent the practical frontier, matching transformer quality at a fraction of the KV-cache cost for long contexts.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2006.16236">Katharopoulos et al., <em>Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention</em> (2020)</a> — introduced the kernel-feature-map reformulation that enables O(N) training and O(1) inference.</li>
+<li><a href="https://arxiv.org/abs/2111.00396">Gu et al., <em>Efficiently Modeling Long Sequences with Structured State Spaces (S4)</em> (2021)</a> — established the HiPPO-initialized SSM as a competitive sequence model with O(N log N) training via convolution.</li>
+<li><a href="https://arxiv.org/abs/2312.00752">Gu &amp; Dao, <em>Mamba: Linear-Time Sequence Modeling with Selective State Spaces</em> (2023)</a> — added input-dependent selectivity to SSMs, closing the recall gap with transformers on associative tasks.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2405.21060">Dao &amp; Gu, <em>Transformers are SSMs: Structured State Space Duality (Mamba-2)</em> (2024)</a> — unified SSMs and linear attention under the SSD framework; enables 2–8× faster training via tiled matmuls.</li>
+<li><a href="https://arxiv.org/abs/2312.06635">Yang et al., <em>Gated Linear Attention Transformers with Hardware-Efficient Training</em> (2023)</a> — general GLA framework that subsumes RetNet, RWKV, and Mamba as special cases; ships a CUDA/Triton implementation.</li>
+<li><a href="https://arxiv.org/abs/2402.19427">De et al. (Google DeepMind), <em>Griffin: Mixing Gated Linear Recurrences with Local Attention</em> (2024)</a> — demonstrates that Real Gated Linear Recurrences with sparse local attention match or beat transformers at multi-billion parameter scale.</li>
+<li><a href="https://arxiv.org/abs/2403.19887">Lieber et al. (AI21 Labs), <em>Jamba: A Hybrid Transformer-Mamba Language Model</em> (2024)</a> — first large-scale hybrid Mamba+MoE model; fits in 80 GB while handling 256 K context.</li>
+<li><a href="https://arxiv.org/abs/2305.13048">Peng et al., <em>RWKV: Reinventing RNNs for the Transformer Era</em> (2023)</a> — WKV time-mixing enables transformer-quality LLMs with O(1) constant-size inference state.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/state-spaces/mamba">state-spaces/mamba</a> — official Mamba/Mamba-2 implementation with hardware-aware selective-scan CUDA kernels and pretrained checkpoints.</li>
+<li><a href="https://github.com/BlinkDL/RWKV-LM">BlinkDL/RWKV-LM</a> — official RWKV training codebase (now at RWKV-7 &ldquo;Goose&rdquo;); Linux Foundation AI project.</li>
+<li><a href="https://github.com/fla-org/flash-linear-attention">fla-org/flash-linear-attention</a> — Triton-based library with hardware-efficient kernels for GLA, Mamba, RetNet, and hybrid architectures across NVIDIA/AMD/Intel.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://tridao.me/blog/2024/mamba2-part1-model/">Tri Dao, <em>State Space Duality (Mamba-2) Part I — The Model</em> (2024)</a> — the authors&rsquo; own blog walkthrough of the SSD theory and how Mamba-2 achieves faster training through the SSM–linear-attention duality.</li>
+<li><a href="https://thegradient.pub/mamba-explained/">Ayonrinde, <em>Mamba Explained</em> — The Gradient (2024)</a> — accessible conceptual overview of Mamba&rsquo;s selective scan and why selectivity is the key innovation over S4.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Gu, A., Goel, K., &amp; Ré, C. (2021). <strong>Efficiently Modeling Long Sequences with Structured State Spaces (S4).</strong> ICLR 2022.</li>
+<li>Gu, A., &amp; Dao, T. (2023). <strong>Mamba: Linear-Time Sequence Modeling with Selective State Spaces.</strong> arXiv:2312.00752.</li>
+<li>Dao, T., &amp; Gu, A. (2024). <strong>Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality (Mamba-2).</strong> ICML 2024.</li>
+<li>Peng, B., et al. (2023). <strong>RWKV: Reinventing RNNs for the Transformer Era.</strong> EMNLP 2023 Findings.</li>
+<li>Sun, Y., et al. (2023). <strong>Retentive Network: A Successor to Transformer for Large Language Models (RetNet).</strong> arXiv:2307.08621.</li>
+<li>Katharopoulos, A., et al. (2020). <strong>Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention.</strong> ICML 2020.</li>
+<li>Yang, S., et al. (2023). <strong>Gated Linear Attention Transformers with Hardware-Efficient Training.</strong> arXiv:2312.06635.</li>
+<li>De, S., et al. (Google DeepMind, 2024). <strong>Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models.</strong> arXiv:2402.19427.</li>
+<li>AI21 Labs (2024). <strong>Jamba: A Hybrid Transformer-Mamba Language Model.</strong> arXiv:2403.19887.</li>
+<li>GitHub: <strong>state-spaces/mamba</strong> — official Mamba implementation and selective scan CUDA kernels.</li>
+<li>GitHub: <strong>BlinkDL/RWKV-LM</strong> — official RWKV training code.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="10-modern-arch-improvements.html"><span class="pn-label">← Previous</span><span class="pn-title">Modern Architecture Improvements &amp; Design Choices</span></a>
+<a class="next" href="12-diffusion-nonAR-lms.html"><span class="pn-label">Next →</span><span class="pn-title">Diffusion &amp; Non-Autoregressive Language Models</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-quadratic-bottleneck">The Quadratic Bottleneck</a></li>
+<li class="toc-l2"><a href="#linear-attention-the-kernel-trick">Linear Attention: The Kernel Trick</a></li>
+<li class="toc-l3"><a href="#the-reformulation">The Reformulation</a></li>
+<li class="toc-l3"><a href="#the-recurrent-form">The Recurrent Form</a></li>
+<li class="toc-l2"><a href="#structured-state-space-models-s4">Structured State Space Models: S4</a></li>
+<li class="toc-l3"><a href="#discretization">Discretization</a></li>
+<li class="toc-l2"><a href="#mamba-selective-state-space-models">Mamba: Selective State Space Models</a></li>
+<li class="toc-l3"><a href="#the-selective-scan">The Selective Scan</a></li>
+<li class="toc-l3"><a href="#mamba-2-and-the-state-space-duality">Mamba-2 and the State Space Duality</a></li>
+<li class="toc-l2"><a href="#rwkv-rnns-strike-back">RWKV: RNNs Strike Back</a></li>
+<li class="toc-l3"><a href="#the-wkv-attention">The WKV Attention</a></li>
+<li class="toc-l3"><a href="#rwkv-versions">RWKV Versions</a></li>
+<li class="toc-l2"><a href="#retnet-and-the-retention-mechanism">RetNet and the Retention Mechanism</a></li>
+<li class="toc-l2"><a href="#the-flop-memory-trade-off-table">The FLOP / Memory Trade-off Table</a></li>
+<li class="toc-l2"><a href="#hybrid-architectures-jamba-zamba-beyond">Hybrid Architectures: Jamba, Zamba &amp;amp; Beyond</a></li>
+<li class="toc-l3"><a href="#jamba-ai21-labs-2024">Jamba (AI21 Labs, 2024)</a></li>
+<li class="toc-l3"><a href="#zamba-and-other-hybrids">Zamba and Other Hybrids</a></li>
+<li class="toc-l3"><a href="#a-minimal-hybrid-model">A Minimal Hybrid Model</a></li>
+<li class="toc-l2"><a href="#gated-linear-attention-and-the-convergence">Gated Linear Attention and the Convergence</a></li>
+<li class="toc-l3"><a href="#hgrn-and-hawkgriffin">HGRN and Hawk/Griffin</a></li>
+<li class="toc-l2"><a href="#where-the-frontier-is-heading">Where the Frontier Is Heading</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

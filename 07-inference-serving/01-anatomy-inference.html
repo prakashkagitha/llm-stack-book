@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache — The LLM Stack</title>
+<meta name="description" content="The two phases (compute-bound prefill vs memory-bound decode), the KV cache and its size math, why decode is bandwidth-bound, tokens/sec ceilings, the latency m">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="active" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="71-the-anatomy-of-llm-inference-prefill-decode-the-kv-cache">7.1 The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache<a class="headerlink" href="#71-the-anatomy-of-llm-inference-prefill-decode-the-kv-cache" title="Permanent link">¶</a></h1>
+<p>Training a large language model is a one-time (or occasional) capital expense. <em>Serving</em> it is a recurring operational cost that runs every second of every day, for every user, forever. Most of the money a deployed LLM ever consumes is spent here, in the inference loop. So if you want to understand why inference systems look the way they do — why vLLM and SGLang and TensorRT-LLM exist, why &ldquo;continuous batching&rdquo; is a phrase people say with reverence, why everyone obsesses over a thing called the KV cache — you have to start at the bottom, with the raw mechanics of how a transformer turns a prompt into tokens.</p>
+<p>This chapter is the foundation for all of <a href="../07-inference-serving/02-continuous-batching.html">Part VII</a>. We will dissect a single forward-generation request into its two physically distinct phases — <strong>prefill</strong> and <strong>decode</strong> — and show that they have <em>opposite</em> performance characteristics. We will derive the <strong>KV cache</strong> from first principles, compute its size in gigabytes for real models, and prove why decode is bandwidth-bound rather than compute-bound. From there the latency vocabulary (TTFT, TPOT, ITL), the tokens-per-second ceiling, and Little&rsquo;s law for throughput will all fall out as consequences of two or three simple physical facts. By the end you should be able to look at a GPU spec sheet and a model config and estimate, on a napkin, how fast it can serve.</p>
+<p>We assume you already understand the transformer forward pass; if attention itself is fuzzy, revisit <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a>. We lean heavily on the <a href="../04-kernels-efficiency/01-roofline-performance.html">Roofline Model</a> and on <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>, so keep those mental models handy.</p>
+<h2 id="two-phases-one-model">Two Phases, One Model<a class="headerlink" href="#two-phases-one-model" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-kv-cache" >
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 300" role="img" aria-label="Prefill processes the whole prompt in one parallel pass; decode then generates one token per step, appending to a KV cache that grows linearly and is re-read every step.">
+  <style>
+    #fig-kv-cache text{ fill:var(--ink-soft); }
+    #fig-kv-cache .lbl{ font:600 12px var(--sans,sans-serif); }
+    #fig-kv-cache .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-kv-cache .mono{ font:500 10.5px var(--mono,monospace); }
+    #fig-kv-cache .tok{ font:500 11px var(--mono,monospace); fill:var(--ink-soft); }
+  </style>
+
+
+  <path d="M40 50 v-8 h186 v8" fill="none" class="v-accent2" stroke="var(--accent2,#3b82f6)" stroke-width="1.3"/>
+  <text x="133" y="34" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">Prefill — one parallel pass</text>
+  <path d="M236 50 v-8 h196 v8" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="1.3"/>
+  <text x="334" y="34" text-anchor="middle" class="lbl" fill="var(--accent)">Decode — one token per step</text>
+
+
+  <g data-anim="1">
+    <g class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.3">
+      <rect x="40" y="58" width="34" height="28" rx="5"/><rect x="78" y="58" width="34" height="28" rx="5"/>
+      <rect x="116" y="58" width="34" height="28" rx="5"/><rect x="154" y="58" width="34" height="28" rx="5"/>
+      <rect x="192" y="58" width="34" height="28" rx="5"/>
+    </g>
+    <text x="133" y="100" text-anchor="middle" class="sm">prompt tokens (length L)</text>
+  </g>
+  <g class="v-fill" stroke="var(--accent)" stroke-width="1.3">
+    <rect data-anim="2" x="236" y="58" width="34" height="28" rx="5"/>
+    <rect data-anim="3" x="274" y="58" width="34" height="28" rx="5"/>
+    <rect data-anim="4" x="312" y="58" width="34" height="28" rx="5"/>
+    <rect data-anim="5" x="350" y="58" width="34" height="28" rx="5"/>
+  </g>
+  <text data-anim="2" x="253" y="78" text-anchor="middle" class="tok" fill="var(--accent)">▸</text>
+
+
+  <text x="40" y="150" class="lbl">KV cache</text>
+  <g>
+
+    <g data-anim="1" fill="var(--accent2,#3b82f6)" fill-opacity="0.30" stroke="var(--accent2,#3b82f6)" stroke-width="1">
+      <rect x="40" y="160" width="34" height="40" rx="4"/><rect x="78" y="160" width="34" height="40" rx="4"/>
+      <rect x="116" y="160" width="34" height="40" rx="4"/><rect x="154" y="160" width="34" height="40" rx="4"/>
+      <rect x="192" y="160" width="34" height="40" rx="4"/>
+    </g>
+
+    <g fill="var(--accent)" fill-opacity="0.34" stroke="var(--accent)" stroke-width="1">
+      <rect data-anim="2" x="236" y="160" width="34" height="40" rx="4"/>
+      <rect data-anim="3" x="274" y="160" width="34" height="40" rx="4"/>
+      <rect data-anim="4" x="312" y="160" width="34" height="40" rx="4"/>
+      <rect data-anim="5" x="350" y="160" width="34" height="40" rx="4"/>
+    </g>
+  </g>
+
+
+  <g data-anim="5">
+    <path d="M40 210 h344" fill="none" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="4 3" class="viz-pulse"/>
+    <text x="212" y="226" text-anchor="middle" class="sm">every decode step re-reads the <tspan font-family="var(--mono,monospace)">entire</tspan> KV cache</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="430" y="108" width="270" height="150" rx="10" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="446" y="130" class="lbl" fill="var(--accent2,#3b82f6)">Prefill</text>
+    <text x="446" y="148" class="sm">compute-bound: big matmuls, high</text>
+    <text x="446" y="162" class="sm">arithmetic intensity, GPU saturated.</text>
+    <text x="446" y="188" class="lbl" fill="var(--accent)">Decode</text>
+    <text x="446" y="206" class="sm">memory-bandwidth-bound: 1 token,</text>
+    <text x="446" y="220" class="sm">tiny matmul, must stream all weights</text>
+    <text x="446" y="234" class="sm">+ the whole (growing) KV cache.</text>
+    <text x="446" y="250" class="mono v-accent" fill="var(--accent)">KV = 2·L·n_layer·n_kv·d_head·bytes</text>
+  </g>
+</svg>
+<figcaption><b>Two regimes, one bottleneck story.</b> Prefill ingests the entire prompt in a single parallel pass (compute-bound). Decode then emits one token at a time; each step appends a key/value to the <b>KV cache</b> and must re-read the whole cache, so decode is <b>memory-bandwidth-bound</b> and gets slower as the sequence grows. This is why KV-cache size and bandwidth — not raw FLOPs — dominate inference cost.</figcaption>
+</figure>
+
+<p>A decoder-only LLM generates text <strong>autoregressively</strong>: it produces one token at a time, and each new token is conditioned on every token that came before it. Given a prompt of <span class="arithmatex">\(S\)</span> tokens, generating <span class="arithmatex">\(T\)</span> new tokens, the model effectively runs a forward pass for positions <span class="arithmatex">\(S+1, S+2, \dots, S+T\)</span>. The crucial observation is that these positions are <em>not</em> all generated the same way.</p>
+<p>The very first forward pass — the one that ingests the entire prompt — is special. The model sees all <span class="arithmatex">\(S\)</span> prompt tokens <strong>at once</strong> and produces the first output token. This is <strong>prefill</strong> (also called the &ldquo;prompt&rdquo; or &ldquo;context encoding&rdquo; phase). Every subsequent step ingests exactly <strong>one</strong> token (the one just generated) and produces the next. This is <strong>decode</strong> (the &ldquo;generation&rdquo; or &ldquo;extension&rdquo; phase).</p>
+<figure class="viz" id="fig-anatomy-prefill-decode-flow">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 920 340" role="img" aria-label="Prefill vs. Decode: one big parallel forward pass over S tokens emits the first token tS+1, which then feeds a strictly sequential decode loop that emits tS+2, tS+3, tS+4 one token at a time.">
+<defs>
+  <marker id="pd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#6b7280)"/>
+  </marker>
+  <marker id="pd-arrow-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#0891b2)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-anatomy-prefill-decode-flow text { fill: var(--ink-soft,#374151); font-family: var(--sans,sans-serif); }
+  #fig-anatomy-prefill-decode-flow .hdr  { font: 700 13px var(--sans,sans-serif); }
+  #fig-anatomy-prefill-decode-flow .sub  { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-anatomy-prefill-decode-flow .cap  { font: 400 9px var(--sans,sans-serif); }
+  #fig-anatomy-prefill-decode-flow .chip { font: 600 9px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+  #fig-anatomy-prefill-decode-flow .elbl { font: 400 8px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-anatomy-prefill-decode-flow .sinr { font: 400 8.5px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+</style>
+
+
+<line x1="400" y1="8" x2="400" y2="306"
+      stroke="var(--border-2,#d1d5db)" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.6"/>
+<text x="404" y="18" style="font:400 8px var(--sans,sans-serif);fill:var(--muted,#9ca3af)">phase boundary</text>
+
+
+<g data-anim="1">
+  <text x="200" y="16" text-anchor="middle" class="hdr" fill="var(--accent,#4f46e5)">PREFILL</text>
+  <text x="200" y="28" text-anchor="middle" class="sub">(prompt / context encoding)</text>
+</g>
+<g data-anim="1">
+  <text x="658" y="16" text-anchor="middle" class="hdr" fill="var(--accent-2,#0891b2)">DECODE  (repeated T times)</text>
+  <text x="658" y="28" text-anchor="middle" class="sub">(generation / extension)</text>
+</g>
+
+
+<text x="475" y="44" text-anchor="middle"
+      style="font:400 8px var(--sans,sans-serif);fill:var(--muted,#9ca3af)" data-anim="4">step 1</text>
+<text x="610" y="44" text-anchor="middle"
+      style="font:400 8px var(--sans,sans-serif);fill:var(--muted,#9ca3af)" data-anim="5">step 2</text>
+<text x="745" y="44" text-anchor="middle"
+      style="font:400 8px var(--sans,sans-serif);fill:var(--muted,#9ca3af)" data-anim="6">step 3</text>
+
+
+<g data-anim="2">
+  <rect x="40" y="50" width="320" height="86" rx="8"
+        fill="var(--surface,#f9fafb)" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+  <rect x="55"  y="66" width="34" height="22" rx="4" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="72"  y="82" text-anchor="middle" class="chip">t1</text>
+  <rect x="97"  y="66" width="34" height="22" rx="4" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="114" y="82" text-anchor="middle" class="chip">t2</text>
+  <rect x="139" y="66" width="34" height="22" rx="4" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="156" y="82" text-anchor="middle" class="chip">t3</text>
+  <text x="197" y="82" text-anchor="middle" class="chip" fill="var(--muted,#9ca3af)">...</text>
+  <rect x="215" y="66" width="34" height="22" rx="4" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="232" y="82" text-anchor="middle" class="chip">tS</text>
+  <text x="200" y="116" text-anchor="middle"
+        style="font:500 8.5px var(--sans,sans-serif);fill:var(--muted,#9ca3af)">S tokens seen AT ONCE</text>
+</g>
+
+
+<g data-anim="2">
+  <text x="200" y="146" text-anchor="middle" class="cap" fill="var(--accent,#4f46e5)">one big parallel masked matmul over S tokens</text>
+  <text x="200" y="157" text-anchor="middle" class="cap" fill="var(--accent,#4f46e5)">(compute-bound)</text>
+</g>
+
+
+
+
+
+<g data-anim="5">
+  <line x1="533" y1="84" x2="551" y2="84"
+        stroke="var(--accent-2,#0891b2)" stroke-width="1.4"
+        marker-end="url(#pd-arrow-teal)"/>
+</g>
+
+<g data-anim="6">
+  <line x1="668" y1="84" x2="686" y2="84"
+        stroke="var(--accent-2,#0891b2)" stroke-width="1.4"
+        marker-end="url(#pd-arrow-teal)"/>
+</g>
+
+
+<g data-anim="4">
+  <rect x="416" y="50" width="116" height="68" rx="7"
+        fill="var(--surface,#f9fafb)" stroke="var(--accent-2,#0891b2)" stroke-width="1.5"/>
+  <rect x="434" y="60" width="42" height="18" rx="3" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="455" y="73" text-anchor="middle" class="sinr">tS+1</text>
+  <line x1="455" y1="79" x2="455" y2="94" stroke="var(--ink-soft,#6b7280)" stroke-width="1.2" marker-end="url(#pd-arrow)"/>
+  <rect x="434" y="95" width="42" height="18" rx="3" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="455" y="108" text-anchor="middle" class="sinr">tS+2</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="551" y="50" width="116" height="68" rx="7"
+        fill="var(--surface,#f9fafb)" stroke="var(--accent-2,#0891b2)" stroke-width="1.5"/>
+  <rect x="569" y="60" width="42" height="18" rx="3" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="590" y="73" text-anchor="middle" class="sinr">tS+2</text>
+  <line x1="590" y1="79" x2="590" y2="94" stroke="var(--ink-soft,#6b7280)" stroke-width="1.2" marker-end="url(#pd-arrow)"/>
+  <rect x="569" y="95" width="42" height="18" rx="3" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="590" y="108" text-anchor="middle" class="sinr">tS+3</text>
+</g>
+
+
+<g data-anim="6">
+  <rect x="686" y="50" width="116" height="68" rx="7"
+        fill="var(--surface,#f9fafb)" stroke="var(--accent-2,#0891b2)" stroke-width="1.5"/>
+  <rect x="704" y="60" width="42" height="18" rx="3" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="725" y="73" text-anchor="middle" class="sinr">tS+3</text>
+  <line x1="725" y1="79" x2="725" y2="94" stroke="var(--ink-soft,#6b7280)" stroke-width="1.2" marker-end="url(#pd-arrow)"/>
+  <rect x="704" y="95" width="42" height="18" rx="3" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="725" y="108" text-anchor="middle" class="sinr">tS+4</text>
+</g>
+
+
+<g data-anim="6">
+  <text x="814" y="88" text-anchor="middle"
+        style="font:700 14px var(--sans,sans-serif);fill:var(--muted,#9ca3af)">...</text>
+</g>
+
+
+<g data-anim="5">
+  <text x="544" y="130" text-anchor="middle" class="elbl" fill="var(--accent-2,#0891b2)">append + feed next</text>
+</g>
+
+
+<g data-anim="4">
+  <text x="608" y="146" text-anchor="middle" class="cap" fill="var(--accent-2,#0891b2)">each step: 1 token in, streams full weights from HBM</text>
+  <text x="608" y="157" text-anchor="middle" class="cap" fill="var(--accent-2,#0891b2)">(memory-bound)</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="110" y1="170" x2="110" y2="187"
+        stroke="var(--ink-soft,#6b7280)" stroke-width="1.4"
+        marker-end="url(#pd-arrow)"/>
+  <text x="138" y="180" class="elbl" text-anchor="start">first output token</text>
+  <rect x="86" y="188" width="48" height="22" rx="5"
+        fill="var(--surface-3,#f3f4f6)" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+  <text x="110" y="204" text-anchor="middle" class="chip">tS+1</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="134" y1="199" x2="414" y2="199"
+        stroke="var(--accent-2,#0891b2)" stroke-width="1.4"
+        marker-end="url(#pd-arrow-teal)"/>
+  <text x="274" y="194" text-anchor="middle" class="elbl">feeds into decode</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="416" y="188" width="452" height="26" rx="5"
+        fill="none" stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="642" y="199" text-anchor="middle"
+        style="font:400 8.5px var(--sans,sans-serif);fill:var(--muted,#9ca3af)">each step depends on previous output — cannot be parallelized</text>
+  <text x="642" y="209" text-anchor="middle"
+        style="font:400 8.5px var(--sans,sans-serif);fill:var(--muted,#9ca3af)">(sequential dependency chain)</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="40" y="234" width="320" height="22" rx="5"
+        fill="var(--surface,#f9fafb)" stroke="var(--accent,#4f46e5)" stroke-width="1"/>
+  <text x="200" y="250" text-anchor="middle"
+        style="font:500 9px var(--sans,sans-serif);fill:var(--accent,#4f46e5)">wide single box = parallelism over S tokens</text>
+</g>
+<g data-anim="4">
+  <rect x="416" y="234" width="452" height="22" rx="5"
+        fill="var(--surface,#f9fafb)" stroke="var(--accent-2,#0891b2)" stroke-width="1"/>
+  <text x="642" y="250" text-anchor="middle"
+        style="font:500 9px var(--sans,sans-serif);fill:var(--accent-2,#0891b2)">chain of narrow boxes = sequential, one token each</text>
+</g>
+
+<style>
+@media (prefers-reduced-motion: reduce) {
+  #fig-anatomy-prefill-decode-flow [data-anim] { opacity: 1 !important; animation: none !important; }
+}
+</style>
+</svg>
+<figcaption><b>Prefill processes all S prompt tokens simultaneously (compute-bound); decode emits one token per step in a strictly sequential chain (memory-bound).</b> The bridge token tS+1 is simultaneously the output of prefill and the first input to decode. Because each decode step depends on the previous output, the loop cannot be parallelized — the full weights must be streamed from HBM once per token, making memory bandwidth the binding constraint.</figcaption>
+</figure>
+
+<p>Why split it this way? Because of the <strong>causal attention mask</strong>. Token at position <span class="arithmatex">\(i\)</span> may attend only to positions <span class="arithmatex">\(\le i\)</span>. During prefill, we have all <span class="arithmatex">\(S\)</span> tokens in hand, so we can compute their attention in a single batched, masked matrix multiply — the whole prompt is processed in parallel, the same way a training forward pass works. During decode, we are generating position <span class="arithmatex">\(S+t\)</span> and <em>do not yet have</em> positions beyond it, so we are forced into a strictly sequential loop: one token, then the next, then the next.</p>
+<p>These two phases run the <em>same weights</em> through the <em>same layers</em>. What differs is the <strong>shape of the activation tensors</strong> flowing through them, and that single difference — a sequence dimension of <span class="arithmatex">\(S\)</span> versus a sequence dimension of <span class="arithmatex">\(1\)</span> — flips the bottleneck from compute to memory. Everything in this chapter is a downstream consequence of that flip.</p>
+<h3 id="a-naive-generation-loop-and-why-it-is-quadratically-wasteful">A naive generation loop (and why it is quadratically wasteful)<a class="headerlink" href="#a-naive-generation-loop-and-why-it-is-quadratically-wasteful" title="Permanent link">¶</a></h3>
+<p>Let us write the simplest possible autoregressive loop, with no cache at all, to expose the redundancy that the KV cache later eliminates.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">generate_naive</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">input_ids</span><span class="p">,</span> <span class="n">max_new_tokens</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    The simplest correct autoregressive decoder: re-run the FULL forward</span>
+<span class="sd">    pass on the entire growing sequence at every step. Correct, but O(T^2)</span>
+<span class="sd">    in attention work because we recompute K and V for all old tokens</span>
+<span class="sd">    every single step. This is what the KV cache fixes.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_new_tokens</span><span class="p">):</span>
+        <span class="c1"># logits over the WHOLE sequence; we only need the last position</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span>        <span class="c1"># [B, seq_len, vocab]</span>
+        <span class="n">next_token</span> <span class="o">=</span> <span class="n">logits</span><span class="p">[:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># greedy</span>
+        <span class="n">input_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">next_token</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># grow seq</span>
+    <span class="k">return</span> <span class="n">input_ids</span>
+</code></pre></div>
+<p>This is correct but catastrophically slow. At decode step <span class="arithmatex">\(t\)</span>, the sequence has length <span class="arithmatex">\(S + t\)</span>, and we recompute the keys and values for <em>all</em> of those positions even though only the newest token is new. The cumulative attention work scales like <span class="arithmatex">\(\sum_{t} (S+t)^2\)</span> — quadratic in total length and full of redundant recomputation. Almost everything from the previous step is identical and could have been saved. That observation is the entire motivation for the KV cache.</p>
+<h2 id="the-kv-cache-mechanism-and-math">The KV Cache: Mechanism and Math<a class="headerlink" href="#the-kv-cache-mechanism-and-math" title="Permanent link">¶</a></h2>
+<p>Recall a single attention head. For query, key, and value projections, each token&rsquo;s hidden state <span class="arithmatex">\(x_i \in \mathbb{R}^{d}\)</span> is mapped to:</p>
+<div class="arithmatex">\[
+q_i = x_i W_Q, \qquad k_i = x_i W_K, \qquad v_i = x_i W_V
+\]</div>
+<p>The attention output for query position <span class="arithmatex">\(i\)</span> is a softmax-weighted sum over the keys and values of all positions <span class="arithmatex">\(j \le i\)</span>:</p>
+<div class="arithmatex">\[
+o_i = \sum_{j \le i} \operatorname{softmax}_j\!\left(\frac{q_i \cdot k_j}{\sqrt{d_k}}\right) v_j
+\]</div>
+<p>Here is the key structural fact: <strong>the keys <span class="arithmatex">\(k_j\)</span> and values <span class="arithmatex">\(v_j\)</span> for past positions do not depend on the current query position <span class="arithmatex">\(i\)</span>.</strong> Once we have computed <span class="arithmatex">\(k_3\)</span> and <span class="arithmatex">\(v_3\)</span> for token 3, those vectors are fixed forever — they are reused, unchanged, by every future query. The query <span class="arithmatex">\(q_i\)</span> changes each step, but the <span class="arithmatex">\(K\)</span> and <span class="arithmatex">\(V\)</span> of the past are constant.</p>
+<p>So we cache them. The <strong>KV cache</strong> is exactly the running collection of all <span class="arithmatex">\(k_j\)</span> and <span class="arithmatex">\(v_j\)</span> computed so far, for every layer and every head. At each decode step we:</p>
+<ol>
+<li>compute <span class="arithmatex">\(q, k, v\)</span> for the <em>single</em> new token only,</li>
+<li><strong>append</strong> its <span class="arithmatex">\(k\)</span> and <span class="arithmatex">\(v\)</span> to the cache,</li>
+<li>compute attention of the one new query against the <em>entire</em> cached <span class="arithmatex">\(K\)</span> and <span class="arithmatex">\(V\)</span>.</li>
+</ol>
+<p>This turns the per-step attention from &ldquo;recompute everything&rdquo; into &ldquo;compute one new KV and read the rest.&rdquo; The recomputation is gone; the price is the memory to hold the cache. We have made the classic systems trade: <strong>spend memory to save compute.</strong></p>
+<h3 id="a-from-scratch-kv-cached-attention-step">A from-scratch KV-cached attention step<a class="headerlink" href="#a-from-scratch-kv-cached-attention-step" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">CachedSelfAttention</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Single-head causal self-attention with an explicit KV cache.</span>
+<span class="sd">    Strips away batching/multi-head bookkeeping to expose the mechanism.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">d_head</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">Wq</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_head</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">Wk</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_head</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">Wv</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_head</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">=</span> <span class="n">d_head</span> <span class="o">**</span> <span class="o">-</span><span class="mf">0.5</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">k_cache</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># [seq_so_far, d_head]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">v_cache</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">k_cache</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">v_cache</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="c1"># x: [n_new_tokens, d_model].</span>
+        <span class="c1">#   - prefill: n_new_tokens == S (the whole prompt)</span>
+        <span class="c1">#   - decode:  n_new_tokens == 1 (just the last token)</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">Wq</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                      <span class="c1"># [n_new, d_head]</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">Wk</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                      <span class="c1"># [n_new, d_head]</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">Wv</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                      <span class="c1"># [n_new, d_head]</span>
+
+        <span class="c1"># Append the new keys/values to the cache (the whole trick).</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_cache</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">k_cache</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">v_cache</span> <span class="o">=</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">k_cache</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">k_cache</span><span class="p">,</span> <span class="n">k</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">v_cache</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">v_cache</span><span class="p">,</span> <span class="n">v</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+
+        <span class="c1"># Attend the new query(ies) against ALL cached keys/values.</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="p">(</span><span class="n">q</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_cache</span><span class="o">.</span><span class="n">T</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span>  <span class="c1"># [n_new, seq_so_far]</span>
+
+        <span class="c1"># Causal mask: needed during prefill (n_new = S) so that token i</span>
+        <span class="c1"># cannot see j &gt; i. During decode (n_new = 1) the single new query</span>
+        <span class="c1"># is allowed to see everything in the cache, so no mask is required.</span>
+        <span class="k">if</span> <span class="n">q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">seq</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_cache</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">past</span> <span class="o">=</span> <span class="n">seq</span> <span class="o">-</span> <span class="n">q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">i</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">+</span> <span class="n">past</span>
+            <span class="n">j</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">seq</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+            <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">j</span> <span class="o">&gt;</span> <span class="n">i</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">))</span>
+
+        <span class="n">attn</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">attn</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">v_cache</span>          <span class="c1"># [n_new, d_head]</span>
+</code></pre></div>
+<p>Notice the asymmetry baked into the shapes. In prefill, <code>x</code> has <span class="arithmatex">\(S\)</span> rows and the attention score matrix is <span class="arithmatex">\(S \times S\)</span> — a big matmul. In decode, <code>x</code> has a single row and the score matrix is <span class="arithmatex">\(1 \times (\text{seq\_so\_far})\)</span> — a skinny matrix-times-matrix that is really a sequence of dot products. That shape difference is the whole story of why the two phases behave so differently, which we quantify next.</p>
+<h3 id="kv-cache-size-the-formula-that-governs-everything">KV cache size: the formula that governs everything<a class="headerlink" href="#kv-cache-size-the-formula-that-governs-everything" title="Permanent link">¶</a></h3>
+<p>The cache must store, for every transformer layer, a key and a value vector for every token seen so far. Let:</p>
+<ul>
+<li><span class="arithmatex">\(L\)</span> = number of layers,</li>
+<li><span class="arithmatex">\(H_{kv}\)</span> = number of <strong>key/value</strong> heads (with Multi-Query or Grouped-Query Attention this is fewer than the number of query heads — see <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>),</li>
+<li><span class="arithmatex">\(d_h\)</span> = dimension per head,</li>
+<li><span class="arithmatex">\(S\)</span> = sequence length (tokens cached),</li>
+<li><span class="arithmatex">\(B\)</span> = batch size (number of concurrent sequences),</li>
+<li><span class="arithmatex">\(P\)</span> = bytes per element (2 for fp16/bf16, 1 for fp8/int8).</li>
+</ul>
+<p>The factor of 2 below is for storing <strong>both</strong> K and V. The total KV-cache size in bytes is:</p>
+<div class="arithmatex">\[
+\text{KV bytes} = 2 \cdot B \cdot S \cdot L \cdot H_{kv} \cdot d_h \cdot P
+\]</div>
+<p>It is worth dwelling on what this formula says and does <em>not</em> say. The KV cache grows <strong>linearly</strong> with sequence length and <strong>linearly</strong> with batch size. It does <strong>not</strong> depend on the model&rsquo;s MLP width, vocabulary, or the number of <em>query</em> heads — only the <em>KV</em> heads matter, which is precisely why GQA/MQA were invented to shrink it. And note <span class="arithmatex">\(H_{kv} \cdot d_h\)</span> is the total KV hidden dimension, often written <span class="arithmatex">\(d_{kv}\)</span>.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">kv_cache_bytes</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">n_layers</span><span class="p">,</span> <span class="n">n_kv_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">,</span> <span class="n">dtype_bytes</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;KV-cache size in bytes. Factor 2 = keys AND values.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">batch</span> <span class="o">*</span> <span class="n">seq_len</span> <span class="o">*</span> <span class="n">n_layers</span> <span class="o">*</span> <span class="n">n_kv_heads</span> <span class="o">*</span> <span class="n">head_dim</span> <span class="o">*</span> <span class="n">dtype_bytes</span>
+
+<span class="c1"># Llama-3-style 8B: 32 layers, 8 KV heads (GQA), head_dim 128, bf16.</span>
+<span class="n">gib</span> <span class="o">=</span> <span class="n">kv_cache_bytes</span><span class="p">(</span><span class="n">batch</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">seq_len</span><span class="o">=</span><span class="mi">8192</span><span class="p">,</span> <span class="n">n_layers</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+                     <span class="n">n_kv_heads</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">head_dim</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">dtype_bytes</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="o">**</span><span class="mi">30</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">gib</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GiB per 8k-token sequence&quot;</span><span class="p">)</span>   <span class="c1"># ~1.0 GiB</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: how many concurrent users fit in an A100?</p>
+<p>Take a Llama-3-8B-class model with 32 layers, 8 KV heads (GQA), head dimension 128, served in bf16 (2 bytes). Per token, the cache costs:</p>
+<div class="arithmatex">\[
+2 \cdot 32 \cdot 8 \cdot 128 \cdot 2 = 131{,}072 \text{ bytes} \approx 128 \text{ KiB/token}.
+\]</div>
+<p>A single 8,192-token context therefore needs <span class="arithmatex">\(8192 \times 128\,\text{KiB} \approx 1.0\)</span> GiB of KV cache.</p>
+<p>Now budget an 80 GB A100. The weights take <span class="arithmatex">\(8\text{B} \times 2\,\text{bytes} = 16\)</span> GB. Leave ~4 GB for activations, CUDA context, and fragmentation. That leaves roughly <span class="arithmatex">\(80 - 16 - 4 = 60\)</span> GB for KV cache. At 1 GiB per full 8k context, you can hold about <strong>60 concurrent 8k sequences</strong> — or many more short ones, or fewer long ones.</p>
+<p>Contrast with a model that used full Multi-Head Attention with 32 KV heads instead of 8: the per-token cost would be <span class="arithmatex">\(4\times\)</span> larger, ~512 KiB/token, and you would fit only ~15 concurrent sequences. <strong>This single ratio is why every modern serving model uses GQA or MLA.</strong> The KV cache, not the weights, is usually what limits how many users you can serve at once.</p>
+</div>
+<p>The collapse from &ldquo;weights are the big thing&rdquo; to &ldquo;the KV cache is the big thing&rdquo; is the central surprise of inference engineering. For long contexts and high concurrency, the cache can dwarf the model itself. Managing it well — packing it tightly, paging it, reusing shared prefixes — is the subject of <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a> and <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>. This chapter just establishes <em>why</em> it matters so much.</p>
+<h2 id="why-decode-is-memory-bound-and-prefill-is-compute-bound">Why Decode Is Memory-Bound and Prefill Is Compute-Bound<a class="headerlink" href="#why-decode-is-memory-bound-and-prefill-is-compute-bound" title="Permanent link">¶</a></h2>
+<p>This is the most important concept in the whole of inference serving, so we will derive it carefully using the <strong>arithmetic intensity</strong> lens from the <a href="../04-kernels-efficiency/01-roofline-performance.html">Roofline Model</a>. Arithmetic intensity is the ratio of floating-point operations performed to bytes of memory moved:</p>
+<div class="arithmatex">\[
+I = \frac{\text{FLOPs}}{\text{bytes moved}} \quad \left[\frac{\text{FLOP}}{\text{byte}}\right]
+\]</div>
+<p>A GPU has two relevant peak rates: compute throughput (FLOP/s) and memory bandwidth (bytes/s). The <strong>ridge point</strong> is their ratio, <span class="arithmatex">\(I^\* = \text{FLOP/s} \div \text{bytes/s}\)</span>. If a kernel&rsquo;s intensity <span class="arithmatex">\(I &gt; I^\*\)</span> it is <strong>compute-bound</strong> (limited by the math units); if <span class="arithmatex">\(I &lt; I^\*\)</span> it is <strong>memory-bound</strong> (limited by how fast you can feed data from HBM). For a modern data-center GPU the ridge point is on the order of a few hundred FLOP/byte. An A100 delivers roughly 312 TFLOP/s of bf16 tensor-core compute against roughly 2.0 TB/s of HBM bandwidth, giving a ridge near <span class="arithmatex">\(\sim\)</span>150 FLOP/byte. An H100 is higher on both axes but the ridge is in the same ballpark. Hold that &ldquo;~100–300 FLOP/byte&rdquo; number in your head.</p>
+<h3 id="the-decisive-quantity-tokens-per-forward-pass">The decisive quantity: tokens per forward pass<a class="headerlink" href="#the-decisive-quantity-tokens-per-forward-pass" title="Permanent link">¶</a></h3>
+<p>Consider one matrix multiply that dominates the transformer: a token&rsquo;s hidden vector times a weight matrix <span class="arithmatex">\(W \in \mathbb{R}^{d \times d}\)</span>. If we process <span class="arithmatex">\(N\)</span> tokens at once, we compute <span class="arithmatex">\(X W\)</span> where <span class="arithmatex">\(X\)</span> is <span class="arithmatex">\(N \times d\)</span>. The cost is:</p>
+<ul>
+<li><strong>FLOPs:</strong> <span class="arithmatex">\(2 N d^2\)</span> (multiply-add over an <span class="arithmatex">\(N\times d\)</span> by <span class="arithmatex">\(d \times d\)</span> matmul).</li>
+<li><strong>Bytes moved:</strong> we must read <span class="arithmatex">\(W\)</span> once (<span class="arithmatex">\(d^2\)</span> elements <span class="arithmatex">\(\times P\)</span> bytes) plus the activations (<span class="arithmatex">\(N d \cdot P\)</span>). For the large weight matrices that dominate an LLM, the weight read dominates when <span class="arithmatex">\(N\)</span> is small, so bytes <span class="arithmatex">\(\approx d^2 P\)</span>.</li>
+</ul>
+<p>Arithmetic intensity is therefore approximately:</p>
+<div class="arithmatex">\[
+I \approx \frac{2 N d^2}{d^2 P} = \frac{2N}{P}
+\]</div>
+<p><strong>The intensity scales with <span class="arithmatex">\(N\)</span>, the number of tokens processed together.</strong> That is the entire argument. Read it twice.</p>
+<ul>
+<li>
+<p><strong>Prefill</strong> processes the whole prompt at once: <span class="arithmatex">\(N = S\)</span>, often hundreds or thousands of tokens. Even modest <span class="arithmatex">\(S\)</span> pushes <span class="arithmatex">\(I = 2N/P\)</span> well above the ridge point, so prefill is <strong>compute-bound</strong> — it saturates the tensor cores. Doubling your FLOPs roughly doubles prefill throughput; the weights are read once and amortized over many tokens.</p>
+</li>
+<li>
+<p><strong>Decode</strong> processes exactly one token per sequence: <span class="arithmatex">\(N = 1\)</span> (for a single request). Then <span class="arithmatex">\(I \approx 2/P = 1\)</span> FLOP/byte for fp16 — <em>two orders of magnitude</em> below the ridge point. Decode is therefore deeply <strong>memory-bound</strong>. The GPU spends its time streaming the entire weight matrix (and the entire KV cache) from HBM to perform a tiny amount of arithmetic, and the tensor cores sit mostly idle.</p>
+</li>
+</ul>
+<figure class="viz" id="fig-anatomy-roofline-intensity-numberline">
+<svg viewBox="0 0 900 290" role="img" aria-label="Arithmetic intensity number line on a log scale. Decode (N=1, I approx 1 FLOP/byte) sits far left in the memory-bound region. Prefill (N=512, I approx 1000 FLOP/byte) sits right of the ridge point (~150 FLOP/byte on an A100) in the compute-bound region.">
+
+<style>
+  #fig-anatomy-roofline-intensity-numberline text { fill: var(--ink-soft,#374151); font-family: var(--sans,sans-serif); }
+  #fig-anatomy-roofline-intensity-numberline .title  { font: 600 12px var(--sans,sans-serif); }
+  #fig-anatomy-roofline-intensity-numberline .axlbl  { font: 500 10px var(--sans,sans-serif); }
+  #fig-anatomy-roofline-intensity-numberline .tickl  { font: 400 9.5px var(--mono,monospace); fill: var(--muted,#9ca3af); }
+  #fig-anatomy-roofline-intensity-numberline .chiph  { font: 700 10.5px var(--sans,sans-serif); }
+  #fig-anatomy-roofline-intensity-numberline .chipsb { font: 400 9px var(--mono,monospace); fill: var(--muted,#9ca3af); }
+  #fig-anatomy-roofline-intensity-numberline .reglbl { font: 700 10.5px var(--sans,sans-serif); }
+  #fig-anatomy-roofline-intensity-numberline .cap    { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-anatomy-roofline-intensity-numberline .fnt    { font: 400 8.5px var(--mono,monospace); fill: var(--muted,#9ca3af); }
+</style>
+
+<defs>
+  <marker id="rl-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#6b7280)"/>
+  </marker>
+  <marker id="rl-arr-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#0891b2)"/>
+  </marker>
+  <marker id="rl-arr-indigo" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+</defs>
+
+
+
+
+<text x="18" y="20" class="title">Arithmetic intensity  (FLOP / byte) — log scale</text>
+
+
+<rect x="70" y="116" width="537" height="44" fill="var(--accent-2,#0891b2)" fill-opacity="0.07"/>
+<rect x="607" y="116" width="213" height="44" fill="var(--accent,#4f46e5)" fill-opacity="0.07"/>
+
+
+<line x1="70" y1="145" x2="820" y2="145"
+      stroke="var(--ink-soft,#6b7280)" stroke-width="2"
+      marker-end="url(#rl-arr)"/>
+<text x="834" y="149" class="axlbl" text-anchor="start">FLOP/B</text>
+
+
+<line x1="100" y1="139" x2="100" y2="151" stroke="var(--ink-soft,#6b7280)" stroke-width="1.5"/>
+<text x="100" y="163" text-anchor="middle" class="tickl">~1</text>
+
+
+<line x1="333" y1="141" x2="333" y2="149" stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="333" y="163" text-anchor="middle" class="tickl">10</text>
+
+
+<line x1="566" y1="141" x2="566" y2="149" stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="566" y="163" text-anchor="middle" class="tickl">100</text>
+
+
+<line x1="607" y1="139" x2="607" y2="151" stroke="var(--warn,#e0a106)" stroke-width="2.5"/>
+<text x="607" y="163" text-anchor="middle" class="tickl" fill="var(--warn,#e0a106)">150</text>
+
+
+<line x1="799" y1="141" x2="799" y2="149" stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="799" y="163" text-anchor="middle" class="tickl">1000</text>
+
+
+<line x1="607" y1="48" x2="607" y2="218"
+      stroke="var(--warn,#e0a106)" stroke-width="1.8" stroke-dasharray="6 4"/>
+<text x="612" y="44" class="tickl" fill="var(--warn,#e0a106)" text-anchor="start">ridge point</text>
+<text x="612" y="55" class="tickl" fill="var(--warn,#e0a106)" text-anchor="start">(~150 on A100)</text>
+
+
+<circle cx="100" cy="145" r="6" fill="var(--accent-2,#0891b2)"/>
+<line x1="100" y1="139" x2="100" y2="95" stroke="var(--accent-2,#0891b2)" stroke-width="1.4" stroke-dasharray="3 3"/>
+<rect x="22" y="58" width="157" height="33" rx="6"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent-2,#0891b2)" stroke-width="1.8"/>
+<text x="100" y="76" text-anchor="middle" class="chiph" fill="var(--accent-2,#0891b2)">decode  (N=1)</text>
+<text x="100" y="88" text-anchor="middle" class="chipsb">I ~= 1 FLOP/byte</text>
+
+
+<circle cx="799" cy="145" r="6" fill="var(--accent,#4f46e5)"/>
+<line x1="799" y1="139" x2="799" y2="95" stroke="var(--accent,#4f46e5)" stroke-width="1.4" stroke-dasharray="3 3"/>
+<rect x="718" y="58" width="163" height="33" rx="6"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+<text x="800" y="76" text-anchor="middle" class="chiph" fill="var(--accent,#4f46e5)">prefill  (N=512)</text>
+<text x="800" y="88" text-anchor="middle" class="chipsb">I ~= 1000 FLOP/byte</text>
+
+
+<line x1="72" y1="186" x2="601" y2="186" stroke="var(--accent-2,#0891b2)" stroke-width="1.5" marker-start="url(#rl-arr-teal)"/>
+<text x="336" y="199" text-anchor="middle" class="reglbl" fill="var(--accent-2,#0891b2)">MEMORY-BOUND</text>
+
+<line x1="613" y1="186" x2="832" y2="186" stroke="var(--accent,#4f46e5)" stroke-width="1.5" marker-end="url(#rl-arr-indigo)"/>
+<text x="722" y="199" text-anchor="middle" class="reglbl" fill="var(--accent,#4f46e5)">COMPUTE-BOUND</text>
+
+
+<text x="336" y="212" text-anchor="middle" class="cap">weights stream from HBM;</text>
+<text x="336" y="223" text-anchor="middle" class="cap">tensor cores idle</text>
+
+<text x="722" y="212" text-anchor="middle" class="cap">tensor cores saturated;</text>
+<text x="722" y="223" text-anchor="middle" class="cap">HBM amortized over many tokens</text>
+
+
+<text x="450" y="248" text-anchor="middle" class="fnt">A100: ~312 TFLOP/s / ~2.0 TB/s  =>  ridge ~= 150 FLOP/byte</text>
+<text x="450" y="262" text-anchor="middle"
+      style="font:400 8.5px var(--sans,sans-serif);fill:var(--muted,#9ca3af)">same model weights — only N (tokens per pass) shifts intensity across the ridge</text>
+
+</svg>
+<figcaption><b>Arithmetic intensity number line (log scale): decode at N=1 sits far left in the memory-bound region while prefill at N=512 sits past the ridge point in the compute-bound region.</b> The same model and weights produce two radically different operating regimes purely because decode processes one token per forward pass while prefill processes the whole prompt at once. Memory bandwidth is the binding constraint for decode; tensor-core compute is the binding constraint for prefill.</figcaption>
+</figure>
+
+<p>This is why <strong>batching helps decode enormously but barely helps prefill.</strong> Prefill already saturates compute, so cramming more sequences in does not raise per-token throughput much (and can even hurt latency). Decode, by contrast, reads the <em>same weights</em> regardless of how many sequences share the step — so if you decode <span class="arithmatex">\(B\)</span> sequences together, you read <span class="arithmatex">\(W\)</span> once and reuse it across all <span class="arithmatex">\(B\)</span> tokens, lifting <span class="arithmatex">\(N\)</span> from <span class="arithmatex">\(1\)</span> to <span class="arithmatex">\(B\)</span> and intensity from <span class="arithmatex">\(\approx 2/P\)</span> to <span class="arithmatex">\(\approx 2B/P\)</span>. Batching decode is essentially free FLOPs riding on memory traffic you were paying for anyway. <strong>This single insight is the entire reason continuous batching exists</strong> — see <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>.</p>
+<h3 id="a-measurement-you-can-run">A measurement you can run<a class="headerlink" href="#a-measurement-you-can-run" title="Permanent link">¶</a></h3>
+<p>You can <em>feel</em> the memory-bound nature of decode directly. The following microbenchmark shows that decode latency per token is nearly flat as batch size grows (because you are bandwidth-limited, not compute-limited), until the batch gets large enough to finally start saturating compute.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="o">,</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bench_decode</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">batch_sizes</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Single-token (decode-shaped) forward passes at several batch sizes.</span>
+<span class="sd">    Memory-bound behavior =&gt; per-step latency stays ~flat as batch grows,</span>
+<span class="sd">    so tokens/sec scales almost linearly with batch. Compute-bound behavior</span>
+<span class="sd">    would instead show latency rising proportionally with batch.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">B</span> <span class="ow">in</span> <span class="n">batch_sizes</span><span class="p">:</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+        <span class="c1"># warmup (CUDA lazy init, autotuning, caches)</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">):</span>
+            <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+                <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+        <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_steps</span><span class="p">):</span>
+            <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+                <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+        <span class="n">dt</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">/</span> <span class="n">n_steps</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;B=</span><span class="si">{</span><span class="n">B</span><span class="si">:</span><span class="s2">4d</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">dt</span><span class="o">*</span><span class="mf">1e3</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms/step  &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">B</span><span class="o">/</span><span class="n">dt</span><span class="si">:</span><span class="s2">8.0f</span><span class="si">}</span><span class="s2"> tok/s  </span><span class="si">{</span><span class="n">dt</span><span class="o">*</span><span class="mf">1e3</span><span class="o">/</span><span class="n">B</span><span class="si">:</span><span class="s2">6.3f</span><span class="si">}</span><span class="s2"> ms/tok&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>On real hardware you will see the per-token time barely move from <span class="arithmatex">\(B=1\)</span> to <span class="arithmatex">\(B=16\)</span> or <span class="arithmatex">\(B=32\)</span> — you are getting those extra tokens &ldquo;for free&rdquo; off the same weight reads — and only at large batch do you finally cross into the compute-bound regime where latency climbs. That flat region is the memory-bound signature, and exploiting it is the single biggest lever in throughput-oriented serving.</p>
+<h2 id="the-tokens-per-second-ceiling">The Tokens-Per-Second Ceiling<a class="headerlink" href="#the-tokens-per-second-ceiling" title="Permanent link">¶</a></h2>
+<p>Because single-stream decode is memory-bound, we can compute a remarkably tight upper bound on generation speed using nothing but the model size and the GPU&rsquo;s memory bandwidth. Every decode step must read <strong>every weight</strong> of the model from HBM at least once (each weight participates in some matmul for the new token). So the time for one decode step is bounded below by the time to stream all the weights:</p>
+<div class="arithmatex">\[
+t_{\text{step}} \;\ge\; \frac{\text{model bytes}}{\text{memory bandwidth}}
+= \frac{N_{\text{params}} \cdot P}{\text{BW}}
+\]</div>
+<p>and the per-stream decode throughput is bounded above by the reciprocal:</p>
+<div class="arithmatex">\[
+\text{tokens/sec} \;\le\; \frac{\text{BW}}{N_{\text{params}} \cdot P}
+\]</div>
+<p>This &ldquo;weights divided by bandwidth&rdquo; estimate is one of the most useful back-of-envelope tools in the field. (At large context lengths you must also add the KV-cache bytes read per step; for short contexts the weight read dominates.)</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: the speed-of-light decode rate</p>
+<p>A 70B-parameter model in fp16 occupies <span class="arithmatex">\(70 \times 10^9 \times 2 = 140\)</span> GB of weights. On an A100 with ~2.0 TB/s of HBM bandwidth, a single decode step cannot be faster than:</p>
+<div class="arithmatex">\[
+t_{\text{step}} \ge \frac{140 \times 10^9}{2.0 \times 10^{12}} = 0.070\ \text{s} = 70\ \text{ms}.
+\]</div>
+<p>That caps single-stream decode at about <span class="arithmatex">\(1/0.070 \approx 14\)</span> tokens/sec — and that is the <em>optimistic</em> ceiling assuming perfect bandwidth utilization (real kernels hit perhaps 60–80% of peak). This is exactly why a 70B model &ldquo;feels slow&rdquo; token-by-token and why people quantize weights to int4: dropping <span class="arithmatex">\(P\)</span> from 2 to 0.5 bytes shrinks the weight read 4×, lifting the decode ceiling to ~55 tokens/sec on the same GPU. Quantization buys <em>decode speed</em> primarily by shrinking memory traffic, not by adding FLOPs — see <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II</a>.</p>
+<p>Compare an 8B model: <span class="arithmatex">\(16\)</span> GB of weights at 2.0 TB/s gives <span class="arithmatex">\(t_{\text{step}} \ge 8\)</span> ms, a ceiling near 125 tokens/sec. Smaller models are not just cheaper to train — they decode proportionally faster because there is less to stream.</p>
+</div>
+<p>The flip side: this ceiling is <strong>per stream</strong>. If you batch <span class="arithmatex">\(B\)</span> independent sequences, you still read the weights only once per step and serve <span class="arithmatex">\(B\)</span> tokens, so <strong>aggregate</strong> throughput is roughly <span class="arithmatex">\(B \times\)</span> the single-stream rate, right up until you exhaust KV-cache memory or finally saturate compute. Single-stream latency and aggregate throughput are different axes, and batching trades one for the other. Hold this thought — it is the seed of Little&rsquo;s law below.</p>
+<h2 id="the-latency-vocabulary-ttft-tpot-itl">The Latency Vocabulary: TTFT, TPOT, ITL<a class="headerlink" href="#the-latency-vocabulary-ttft-tpot-itl" title="Permanent link">¶</a></h2>
+<p>Streaming LLM applications (a chat UI typing tokens at you) are not characterized by a single &ldquo;latency&rdquo; number. The user&rsquo;s experience splits along the prefill/decode boundary, and the industry has settled on a small, precise vocabulary. Learn these exact definitions — they appear in every serving SLA and every interview.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Name</th>
+<th>What it measures</th>
+<th>Dominated by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>TTFT</strong></td>
+<td>Time To First Token</td>
+<td>Request arrival → first output token streamed</td>
+<td>Prefill (compute-bound) + queueing</td>
+</tr>
+<tr>
+<td><strong>TPOT</strong></td>
+<td>Time Per Output Token</td>
+<td>Average time between subsequent tokens</td>
+<td>Decode (memory-bound)</td>
+</tr>
+<tr>
+<td><strong>ITL</strong></td>
+<td>Inter-Token Latency</td>
+<td>Per-step gap between tokens (often used interchangeably with TPOT, but ITL is the per-step value while TPOT is the mean)</td>
+<td>Decode + scheduling jitter</td>
+</tr>
+<tr>
+<td><strong>E2E</strong></td>
+<td>End-to-End Latency</td>
+<td>Arrival → last token</td>
+<td><span class="arithmatex">\(\text{TTFT} + (T-1)\cdot\text{TPOT}\)</span></td>
+</tr>
+</tbody>
+</table>
+<p>The decomposition is clean and worth memorizing:</p>
+<div class="arithmatex">\[
+\text{Latency}_{\text{E2E}} \approx \underbrace{\text{TTFT}}_{\text{prefill of } S \text{ tokens}} + \underbrace{(T-1)\cdot\text{TPOT}}_{\text{decode of } T-1 \text{ more tokens}}
+\]</div>
+<p><strong>TTFT</strong> is what the user feels as &ldquo;responsiveness&rdquo; — how long the cursor blinks before text appears. It is governed by prefill, so it scales with prompt length <span class="arithmatex">\(S\)</span> (longer prompts take longer to encode) and by queueing delay under load. Because prefill is compute-bound, TTFT is improved by more FLOPs, by <strong>chunked prefill</strong> (slicing a long prompt so it interleaves with ongoing decodes), and by <strong>prefix caching</strong> (skipping prefill entirely for a shared prompt prefix). See <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>.</p>
+<p><strong>TPOT</strong> is what the user feels as &ldquo;typing speed&rdquo; — the steady cadence once text starts flowing. It is governed by decode, so it is memory-bound and follows the tokens/sec ceiling above. A common product target is to keep TPOT below the human reading rate (very roughly 5–10 tokens/sec is readable, so a TPOT under ~100–200 ms feels smooth). Crucially, batching <em>raises aggregate throughput but can raise per-stream TPOT</em>, because a larger decode batch takes slightly longer per step. This tension — throughput versus per-user latency — is the central knob of serving.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">measure_streaming_latency</span><span class="p">(</span><span class="n">stream_fn</span><span class="p">,</span> <span class="n">prompt</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Wrap a streaming generation call and report TTFT, mean TPOT, and the</span>
+<span class="sd">    per-token ITL series. `stream_fn(prompt)` must yield one token at a time.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+    <span class="n">t_start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="n">t_prev</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">ttft</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">itls</span> <span class="o">=</span> <span class="p">[]</span>                      <span class="c1"># inter-token latencies (seconds)</span>
+    <span class="n">n_tokens</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">_token</span> <span class="ow">in</span> <span class="n">stream_fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">):</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">ttft</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">ttft</span> <span class="o">=</span> <span class="n">now</span> <span class="o">-</span> <span class="n">t_start</span>   <span class="c1"># arrival -&gt; first token</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">itls</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">now</span> <span class="o">-</span> <span class="n">t_prev</span><span class="p">)</span>
+        <span class="n">t_prev</span> <span class="o">=</span> <span class="n">now</span>
+        <span class="n">n_tokens</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="n">tpot</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">itls</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">itls</span><span class="p">)</span> <span class="k">if</span> <span class="n">itls</span> <span class="k">else</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;nan&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;ttft_ms&quot;</span><span class="p">:</span> <span class="n">ttft</span> <span class="o">*</span> <span class="mf">1e3</span><span class="p">,</span>
+        <span class="s2">&quot;tpot_ms&quot;</span><span class="p">:</span> <span class="n">tpot</span> <span class="o">*</span> <span class="mf">1e3</span><span class="p">,</span>                <span class="c1"># mean inter-token latency</span>
+        <span class="s2">&quot;p99_itl_ms&quot;</span><span class="p">:</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">itls</span><span class="p">)[</span><span class="nb">int</span><span class="p">(</span><span class="mf">0.99</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">itls</span><span class="p">))</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="mf">1e3</span> <span class="k">if</span> <span class="n">itls</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="s2">&quot;output_tokens&quot;</span><span class="p">:</span> <span class="n">n_tokens</span><span class="p">,</span>
+        <span class="s2">&quot;decode_tps&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">n_tokens</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="nb">sum</span><span class="p">(</span><span class="n">itls</span><span class="p">)</span> <span class="k">if</span> <span class="n">itls</span> <span class="k">else</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;nan&quot;</span><span class="p">),</span>
+    <span class="p">}</span>
+</code></pre></div>
+<p>When you benchmark a serving system, you report these as <strong>distributions, not point values</strong> — p50 and p99 TTFT, p50 and p99 TPOT — because tail latency under load is what breaks SLAs. A system with great median TPOT but a terrible p99 (caused by, say, a giant prompt prefill blocking the decode batch) feels janky and stutters. This is exactly the pathology chunked prefill was designed to cure.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: optimizing the wrong metric</p>
+<p>Throughput (tokens/sec aggregated across all users) and per-user latency (TTFT, TPOT) are <strong>in tension</strong>, and you cannot maximize both. Bigger batches and longer scheduling windows raise throughput (better USD-per-token economics) but worsen tail latency. A batch-offline summarization job should be tuned for throughput; an interactive chat assistant must protect TTFT and p99 TPOT. The classic mistake is to quote a single &ldquo;tokens/sec&rdquo; number with no batch size, no context length, and no latency constraint — it is almost meaningless. Always specify the operating point. We unpack the cost side of this trade in <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a>.</p>
+</div>
+<h2 id="littles-law-from-latency-to-throughput">Little&rsquo;s Law: From Latency to Throughput<a class="headerlink" href="#littles-law-from-latency-to-throughput" title="Permanent link">¶</a></h2>
+<p>To reason about a <em>fleet</em> serving many users — not a single request — we borrow a result from queueing theory. <strong>Little&rsquo;s law</strong> states that for any stable system in steady state, the average number of in-flight requests equals the arrival rate times the average time each request spends in the system:</p>
+<div class="arithmatex">\[
+L = \lambda \cdot W
+\]</div>
+<p>where <span class="arithmatex">\(L\)</span> is the average number of concurrent requests resident in the system, <span class="arithmatex">\(\lambda\)</span> is the throughput (requests completed per second, which in steady state equals the arrival rate), and <span class="arithmatex">\(W\)</span> is the average latency (time in system). It is astonishingly general — it assumes nothing about the arrival distribution or service discipline, only stability.</p>
+<p>For LLM serving we apply it at the <em>token</em> level, which makes the bandwidth story precise. Let <span class="arithmatex">\(L\)</span> be the number of sequences we can hold concurrently (capped by KV-cache memory), let <span class="arithmatex">\(W\)</span> be the average time a sequence stays resident (roughly its total generation time, <span class="arithmatex">\(\approx T \cdot \text{TPOT}\)</span>), and let <span class="arithmatex">\(\lambda\)</span> be the sequence completion rate. Rearranged:</p>
+<div class="arithmatex">\[
+\lambda = \frac{L}{W} \quad\Longrightarrow\quad \text{throughput (req/s)} = \frac{\text{max concurrent sequences}}{\text{avg time per sequence}}
+\]</div>
+<p>This ties the whole chapter together. The numerator <span class="arithmatex">\(L\)</span> is set by <strong>KV-cache memory</strong> — the formula from earlier directly bounds how many sequences fit. The denominator <span class="arithmatex">\(W\)</span> is set by <strong>decode speed</strong> — the bandwidth-bound TPOT ceiling. So your serving throughput is fundamentally governed by the two physical facts we derived: how much KV cache fits in HBM, and how fast HBM bandwidth lets you decode.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: sizing a fleet with Little&rsquo;s law</p>
+<p>Suppose our 8B model on an 80 GB A100 holds <span class="arithmatex">\(L \approx 60\)</span> concurrent 8k-token sequences (from the earlier KV-cache budget). Suppose each request generates on average <span class="arithmatex">\(T = 500\)</span> tokens and our batched decode achieves a per-stream TPOT of about 20 ms (decode steps are fast because batching amortizes the weight read). Then the average time-in-system per sequence is:</p>
+<div class="arithmatex">\[
+W \approx 500 \times 0.020\ \text{s} = 10\ \text{s (decode)} \; + \; \text{TTFT} \approx 10\text{–}11\ \text{s}.
+\]</div>
+<p>By Little&rsquo;s law the sustainable request throughput is:</p>
+<div class="arithmatex">\[
+\lambda = \frac{L}{W} = \frac{60}{10.5} \approx 5.7\ \text{requests/sec}.
+\]</div>
+<p>At 500 output tokens each that is about <strong>2,850 output tokens/sec</strong> of aggregate decode throughput from one GPU. Push arrival rate above <span class="arithmatex">\(\lambda\)</span> and the queue grows without bound — TTFT climbs, the system becomes unstable, and you must add GPUs or shorten outputs. This back-of-envelope is exactly how capacity planners size inference fleets, and it shows concretely how KV-cache capacity (<span class="arithmatex">\(L\)</span>) and decode bandwidth (<span class="arithmatex">\(W\)</span>) jointly set the ceiling.</p>
+</div>
+<p>The practical consequence: to raise throughput you either <strong>increase <span class="arithmatex">\(L\)</span></strong> (shrink the KV cache via GQA/MLA, quantize the cache, page it more tightly, share prefixes) or <strong>decrease <span class="arithmatex">\(W\)</span></strong> (faster decode via quantized weights, speculative decoding, better kernels). Every serving optimization in Part VII is, underneath, an attack on one of these two terms. Continuous batching keeps <span class="arithmatex">\(L\)</span> as full as possible at all times; PagedAttention lets you pack <span class="arithmatex">\(L\)</span> tighter without fragmentation; speculative decoding shrinks <span class="arithmatex">\(W\)</span> by emitting multiple tokens per forward pass.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A teammate says &ldquo;our 7B model only generates 30 tokens/sec on an H100, the GPU must be broken — it has 1000 TFLOPS.&rdquo; How do you respond?</p>
+<p><strong>A:</strong> The GPU is almost certainly fine; single-stream decode is <em>memory-bandwidth-bound, not compute-bound</em>, so TFLOPS is the wrong number to look at. Each decode step generates one token but must stream all ~14 GB of fp16 weights from HBM. At ~3 TB/s that is a hard floor of roughly <span class="arithmatex">\(14/3000 \approx 4.7\)</span> ms per step, i.e. a single-stream ceiling around 200 tokens/sec; 30 tokens/sec just means we are achieving a fraction of peak bandwidth (kernel overhead, small context, or an unfused implementation). The tensor cores are mostly <em>idle</em> during decode — their 1000 TFLOPS is unused because arithmetic intensity is about 1 FLOP/byte, two orders of magnitude below the H100&rsquo;s ridge point. The fix is not &ldquo;a faster GPU&rsquo;s FLOPS&rdquo; but to (1) raise arithmetic intensity by <strong>batching</strong> many sequences so one weight read serves many tokens, (2) shrink the weight bytes via <strong>int4/int8 quantization</strong>, or (3) emit multiple tokens per pass via <strong>speculative decoding</strong>. I&rsquo;d also confirm we are actually using a KV cache and a fused-attention kernel, since a naive O(<span class="arithmatex">\(T^2\)</span>) loop or an unfused path can leave bandwidth on the table.</p>
+</div>
+<h2 id="putting-it-together-an-annotated-generation-loop">Putting It Together: An Annotated Generation Loop<a class="headerlink" href="#putting-it-together-an-annotated-generation-loop" title="Permanent link">¶</a></h2>
+<p>To consolidate everything, here is a complete, cache-using generation loop with the prefill/decode split made explicit and annotated with the performance regime of each phase. This is the conceptual skeleton inside every production engine; what vLLM and SGLang add is <em>scheduling many of these loops together</em> and <em>managing the KV memory</em>, which later chapters cover.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>
+             <span class="n">eos_id</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    KV-cached autoregressive generation, prefill/decode split made explicit.</span>
+<span class="sd">    Uses a HF-style model whose forward() accepts past_key_values and</span>
+<span class="sd">    returns updated ones (use_cache=True). Greedy for clarity; swap in</span>
+<span class="sd">    your sampler from the decoding chapter for real use.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">input_ids</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">S</span> <span class="o">=</span> <span class="n">input_ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># ---- PREFILL ----------------------------------------------------------</span>
+    <span class="c1"># One big forward pass over all S prompt tokens. COMPUTE-BOUND: the SxS</span>
+    <span class="c1"># attention and the S-row matmuls saturate the tensor cores. This builds</span>
+    <span class="c1"># the initial KV cache and produces the first output token. Its cost is</span>
+    <span class="c1"># what the user experiences as TTFT.</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">input_ids</span><span class="o">=</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">past</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">past_key_values</span>                      <span class="c1"># the KV cache, all layers</span>
+    <span class="n">next_id</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">logits</span><span class="p">[:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">generated</span> <span class="o">=</span> <span class="p">[</span><span class="n">next_id</span><span class="p">]</span>
+
+    <span class="c1"># ---- DECODE -----------------------------------------------------------</span>
+    <span class="c1"># Loop, one token at a time. MEMORY-BOUND: each step feeds a single token,</span>
+    <span class="c1"># so it streams the full weights + KV cache from HBM to do tiny math. The</span>
+    <span class="c1"># per-step time is TPOT. We pass only the NEW token plus the cache, never</span>
+    <span class="c1"># the whole sequence again -- that is the KV cache doing its job.</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_new_tokens</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">input_ids</span><span class="o">=</span><span class="n">next_id</span><span class="p">,</span> <span class="n">past_key_values</span><span class="o">=</span><span class="n">past</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">past</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">past_key_values</span>                  <span class="c1"># cache grew by one token</span>
+        <span class="n">next_id</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">logits</span><span class="p">[:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">generated</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">next_id</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">eos_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">next_id</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">==</span> <span class="n">eos_id</span><span class="p">:</span>
+            <span class="k">break</span>
+
+    <span class="k">return</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">generated</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">])</span>
+</code></pre></div>
+<p>Three things to internalize from this skeleton. First, <strong>prefill runs once, decode runs hundreds of times</strong> — for a typical chat turn with a 1,000-token prompt and a 300-token answer, almost all wall-clock time is in the decode loop even though prefill touches more tokens, because decode is the slow, memory-bound part repeated 300 times. Second, <strong>the cache (<code>past</code>) is the entire state</strong> — its size is the formula we derived, and managing it is the hardest part of real serving. Third, <strong>the only input to each decode step is one token plus the cache</strong> — which is exactly why many sequences can share a decode step (continuous batching) and why the weight read can be amortized across them.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: profile the split before optimizing</p>
+<p>Before reaching for any fancy technique, measure how your real traffic divides between prefill and decode. A retrieval-augmented or long-document workload with 8k-token prompts and 200-token answers is <strong>prefill-heavy</strong> — your wins come from chunked prefill, prefix caching, and prefill FLOPs. A chatty agent loop with short prompts and long reasoning traces is <strong>decode-heavy</strong> — your wins come from batching, weight quantization, and speculative decoding. The same GPU, the same model, two completely different optimization playbooks. The ratio <span class="arithmatex">\(S : T\)</span> in your traffic tells you which knobs matter, and it is the first thing a good serving engineer measures.</p>
+</div>
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>LLM inference has <strong>two phases with opposite characteristics</strong>: prefill processes the whole prompt in parallel and is <strong>compute-bound</strong>; decode generates one token at a time and is <strong>memory-bandwidth-bound</strong>. The flip comes entirely from the per-pass token count <span class="arithmatex">\(N\)</span> collapsing from <span class="arithmatex">\(S\)</span> to <span class="arithmatex">\(1\)</span>.</li>
+<li>The <strong>KV cache</strong> stores keys and values for all past tokens so they need not be recomputed each step, trading memory for compute. Its size is <span class="arithmatex">\(2 \cdot B \cdot S \cdot L \cdot H_{kv} \cdot d_h \cdot P\)</span> bytes — linear in batch and sequence length, and the usual <em>binding constraint</em> on how many users you can serve.</li>
+<li>Decode&rsquo;s arithmetic intensity is <span class="arithmatex">\(\approx 2N/P\)</span> FLOP/byte; at <span class="arithmatex">\(N=1\)</span> it sits ~100× below a data-center GPU&rsquo;s ridge point, so the tensor cores idle while HBM streams the weights. <strong>Batching raises <span class="arithmatex">\(N\)</span> and is therefore nearly free throughput</strong> — the foundation of continuous batching.</li>
+<li>The single-stream <strong>decode speed ceiling</strong> is <span class="arithmatex">\(\text{BW} / (N_{\text{params}} \cdot P)\)</span> — model weight bytes divided by memory bandwidth. This is why big models feel slow and why quantization (smaller <span class="arithmatex">\(P\)</span>) primarily buys decode speed.</li>
+<li>The latency vocabulary: <strong>TTFT</strong> (prefill-bound, the responsiveness the user feels first), <strong>TPOT/ITL</strong> (decode-bound, the typing cadence), and <strong>E2E</strong> <span class="arithmatex">\(\approx\)</span> TTFT <span class="arithmatex">\(+ (T-1)\cdot\)</span>TPOT. Always report distributions (p50/p99), not point values.</li>
+<li><strong>Throughput and per-user latency are in tension.</strong> Larger batches and longer scheduling windows raise aggregate tokens/sec but worsen tail latency; pick the operating point for your workload.</li>
+<li><strong>Little&rsquo;s law</strong> ties it together: throughput <span class="arithmatex">\(\approx\)</span> (max concurrent sequences) / (avg time per sequence) — numerator set by KV-cache capacity, denominator by decode bandwidth. Every Part VII optimization attacks one of these two terms.</li>
+<li>Before optimizing, <strong>profile your prefill:decode split</strong> (<span class="arithmatex">\(S:T\)</span>): prefill-heavy and decode-heavy traffic need entirely different playbooks.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Production LLM serving in 2026 is shaped by two dominant insights from this chapter: decode is memory-bandwidth-bound, so every major system optimizes KV-cache packing and weight access; and prefill and decode have opposite bottlenecks, so disaggregating them onto separate hardware is now a mainstream strategy. The open-source ecosystem — led by vLLM and SGLang — has made these ideas broadly accessible while research continues to push KV-cache compression and speculative decoding further.</p>
+<p><strong>Foundational papers</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2309.06180">Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (2023)</a> — introduces PagedAttention (OS-style virtual memory for KV cache), the basis of vLLM and continuous batching at scale.</li>
+<li><a href="https://arxiv.org/abs/2211.17192">Leviathan et al., <em>Fast Inference from Transformers via Speculative Decoding</em> (2022)</a> — shows that a small draft model plus parallel verification can emit multiple tokens per forward pass, directly attacking the memory-bound decode bottleneck.</li>
+</ul>
+<p><strong>Pushing the frontier (2024–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2401.09670">Zhong et al., <em>DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving</em> (2024)</a> — assigns prefill and decode to separate GPU pools, eliminating phase interference and enabling independent scaling; accepted OSDI 2024.</li>
+<li><a href="https://arxiv.org/abs/2311.18677">Patel et al., <em>Splitwise: Efficient Generative LLM Inference Using Phase Splitting</em> (2024)</a> — concurrent Microsoft Research work reaching the same disaggregation conclusion; presented at ISCA 2024.</li>
+<li><a href="https://arxiv.org/abs/2402.02750">Liu et al., <em>KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache</em> (2024)</a> — quantizes KV cache to 2-bit per element without fine-tuning, shrinking cache footprint 2.6× and enabling larger batch sizes; ICML 2024.</li>
+<li><a href="https://arxiv.org/abs/2401.18079">Hooper et al., <em>KVQuant: Towards 10 Million Context Length LLM Inference with KV Cache Quantization</em> (2024)</a> — per-channel and non-uniform quantization strategies enabling extreme-context inference; NeurIPS 2024.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm</a> — the de facto standard high-throughput serving engine; implements PagedAttention, continuous batching, prefix caching, and speculative decoding.</li>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — SGLang runtime with RadixAttention for automatic KV-cache reuse across requests sharing common prefixes.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2312.07104">Zheng et al., <em>SGLang: Efficient Execution of Structured Language Model Programs</em> (2023)</a> — the RadixAttention paper; shows prefix-aware KV-cache management integrated directly into the serving runtime; NeurIPS 2024.</li>
+<li><a href="https://docs.vllm.ai/en/latest/">vLLM Documentation</a> — official docs covering PagedAttention internals, automatic prefix caching design, and deployment guides.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Vaswani et al., <em>Attention Is All You Need</em> (2017) — the original transformer and the attention computation whose K/V we cache.</li>
+<li>Pope et al., <em>Efficiently Scaling Transformer Inference</em> (Google, 2022) — the canonical analysis of inference arithmetic, memory-bound decode, and the prefill/decode distinction; the source of much of this chapter&rsquo;s framing.</li>
+<li>Dao et al., <em>FlashAttention</em> and <em>FlashAttention-2</em> — IO-aware attention kernels that make prefill (and long-context decode) memory-efficient; see <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I</a>.</li>
+<li>Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (vLLM, 2023) — the paper that reframed KV-cache memory as a paging problem; see <a href="../07-inference-serving/03-vllm-internals.html">vLLM Internals</a>.</li>
+<li>Shazeer, <em>Fast Transformer Decoding: One Write-Head is All You Need</em> (2019) — introduces Multi-Query Attention, the first major attack on KV-cache size; see <a href="../02-transformer/04-mha-gqa-mla.html">MHA, MQA, GQA &amp; MLA</a>.</li>
+<li>Williams, Waterman &amp; Patterson, <em>Roofline: An Insightful Visual Performance Model</em> (2009) — the arithmetic-intensity model underpinning the compute- vs memory-bound argument; see <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model</a>.</li>
+<li>Little, <em>A Proof for the Queuing Formula <span class="arithmatex">\(L = \lambda W\)</span></em> (1961) — the throughput law used for fleet sizing.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="pn-label">← Previous</span><span class="pn-title">RL Data, Curriculum &amp; Replay Management</span></a>
+<a class="next" href="02-continuous-batching.html"><span class="pn-label">Next →</span><span class="pn-title">Continuous Batching &amp; Request Scheduling</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#two-phases-one-model">Two Phases, One Model</a></li>
+<li class="toc-l3"><a href="#a-naive-generation-loop-and-why-it-is-quadratically-wasteful">A naive generation loop (and why it is quadratically wasteful)</a></li>
+<li class="toc-l2"><a href="#the-kv-cache-mechanism-and-math">The KV Cache: Mechanism and Math</a></li>
+<li class="toc-l3"><a href="#a-from-scratch-kv-cached-attention-step">A from-scratch KV-cached attention step</a></li>
+<li class="toc-l3"><a href="#kv-cache-size-the-formula-that-governs-everything">KV cache size: the formula that governs everything</a></li>
+<li class="toc-l2"><a href="#why-decode-is-memory-bound-and-prefill-is-compute-bound">Why Decode Is Memory-Bound and Prefill Is Compute-Bound</a></li>
+<li class="toc-l3"><a href="#the-decisive-quantity-tokens-per-forward-pass">The decisive quantity: tokens per forward pass</a></li>
+<li class="toc-l3"><a href="#a-measurement-you-can-run">A measurement you can run</a></li>
+<li class="toc-l2"><a href="#the-tokens-per-second-ceiling">The Tokens-Per-Second Ceiling</a></li>
+<li class="toc-l2"><a href="#the-latency-vocabulary-ttft-tpot-itl">The Latency Vocabulary: TTFT, TPOT, ITL</a></li>
+<li class="toc-l2"><a href="#littles-law-from-latency-to-throughput">Little&amp;rsquo;s Law: From Latency to Throughput</a></li>
+<li class="toc-l2"><a href="#putting-it-together-an-annotated-generation-loop">Putting It Together: An Annotated Generation Loop</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

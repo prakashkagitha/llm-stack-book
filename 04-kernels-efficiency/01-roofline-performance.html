@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Roofline Model &amp; Performance Engineering — The LLM Stack</title>
+<meta name="description" content="Arithmetic intensity, memory-bound vs compute-bound, the roofline; FLOPs of attention vs FFN; how to estimate model FLOPs and MFU; profiling (nsight, torch prof">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="active" href="01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IV — Kernels, Efficiency &amp; Quantization</div>
+<h1 id="41-the-roofline-model-performance-engineering">4.1 The Roofline Model &amp; Performance Engineering<a class="headerlink" href="#41-the-roofline-model-performance-engineering" title="Permanent link">¶</a></h1>
+<p>Every performance optimization you will ever apply to a large language model — FlashAttention, quantization, kernel fusion, continuous batching, paged KV caches — is a move in one of two games: <em>do less work</em>, or <em>move less data</em>. The roofline model is the single mental picture that tells you, for any given kernel on any given GPU, which of those two games you are actually playing. Get this right and the rest of Part IV becomes a sequence of &ldquo;obvious in hindsight&rdquo; optimizations. Get it wrong and you will spend a week shaving FLOPs off a kernel whose runtime is dominated entirely by memory traffic, and watch your &ldquo;improvement&rdquo; change nothing.</p>
+<p>This chapter builds that mental model from first principles. We define arithmetic intensity, draw the roofline, derive where attention and the feed-forward network (FFN) sit on it, estimate the FLOPs of a full transformer, compute Model FLOPs Utilization (MFU) for a real training run, and finally profile a kernel with both the PyTorch profiler and NVIDIA Nsight to confirm the theory against silicon. Everything here rests on the hardware described in <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>; if the terms <em>HBM</em>, <em>SM</em>, and <em>L2</em> are unfamiliar, read that first.</p>
+<h2 id="two-speed-limits-compute-and-bandwidth">Two Speed Limits: Compute and Bandwidth<a class="headerlink" href="#two-speed-limits-compute-and-bandwidth" title="Permanent link">¶</a></h2>
+<p>A GPU has two fundamental resources that bound how fast a computation can run. The first is <strong>arithmetic throughput</strong>: how many floating-point operations per second (FLOP/s) the arithmetic units can retire. The second is <strong>memory bandwidth</strong>: how many bytes per second can be moved between high-bandwidth memory (HBM) — the multi-gigabyte DRAM stacked next to the die — and the on-chip registers and SRAM where arithmetic actually happens.</p>
+<p>These two numbers are wildly mismatched, and that mismatch <em>is</em> the entire story. Consider an NVIDIA A100 (80 GB, SXM). Its peak HBM bandwidth is on the order of 2.0 TB/s, and its peak bf16/fp16 tensor-core throughput is on the order of 312 TFLOP/s. Take the ratio:</p>
+<div class="arithmatex">\[
+\frac{312 \times 10^{12}\ \text{FLOP/s}}{2.0 \times 10^{12}\ \text{B/s}} \approx 156\ \frac{\text{FLOP}}{\text{B}}.
+\]</div>
+<p>This number — call it the machine&rsquo;s <strong>ridge point</strong> <span class="arithmatex">\(\pi/\beta\)</span>, where <span class="arithmatex">\(\pi\)</span> is peak FLOP/s and <span class="arithmatex">\(\beta\)</span> is peak bytes/s — says: <em>the hardware can perform about 156 floating-point operations in the time it takes to read one byte from HBM.</em> If your kernel does fewer than ~156 FLOP per byte it touches, it will finish its arithmetic and then sit idle waiting for the next bytes to arrive. It is <strong>memory-bound</strong>. If it does more, the memory system keeps up and the arithmetic units are the bottleneck; it is <strong>compute-bound</strong>.</p>
+<p>On an H100 (SXM) the imbalance is even more extreme: roughly 3.35 TB/s of HBM3 bandwidth against close to 990 TFLOP/s of dense bf16 tensor-core throughput, for a ridge of roughly 295 FLOP/B. Each GPU generation has pushed FLOP/s up faster than bandwidth, so the ridge point keeps climbing and <strong>more and more kernels fall into the memory-bound regime</strong>. This is why so much of modern LLM systems work is about data movement, not arithmetic.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: why the asymmetry exists</p>
+<p>Adding more multiply-accumulate units to a die is comparatively cheap — they are small and regular. Increasing DRAM bandwidth means more pins, more power for the I/O, exotic packaging (HBM is stacked DRAM bonded with through-silicon vias), and it bumps against fundamental physical limits. So vendors add FLOPs faster than bytes/s, generation over generation. The roofline&rsquo;s ridge point drifts right, and the engineer&rsquo;s job drifts toward minimizing bytes moved.</p>
+</div>
+<h3 id="arithmetic-intensity">Arithmetic intensity<a class="headerlink" href="#arithmetic-intensity" title="Permanent link">¶</a></h3>
+<p>The property of <em>your kernel</em> that we compare against the machine ridge is its <strong>arithmetic intensity</strong> (AI), also called <em>operational intensity</em>:</p>
+<div class="arithmatex">\[
+I = \frac{\text{FLOPs performed}}{\text{bytes moved to/from HBM}}\quad \left[\frac{\text{FLOP}}{\text{B}}\right].
+\]</div>
+<p>Crucially, &ldquo;bytes moved&rdquo; means traffic to the slow, large memory (HBM / DRAM), <em>not</em> traffic within registers or shared memory. Data you keep resident on-chip and reuse is free in this accounting — which is precisely the lever FlashAttention pulls (see <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a>).</p>
+<p>A worked feel for the magnitudes:</p>
+<ul>
+<li><strong>Element-wise add</strong> (<span class="arithmatex">\(z = x + y\)</span> over <span class="arithmatex">\(N\)</span> fp16 elements): <span class="arithmatex">\(N\)</span> FLOPs, but <span class="arithmatex">\(3N \times 2\)</span> bytes moved (read <span class="arithmatex">\(x\)</span>, read <span class="arithmatex">\(y\)</span>, write <span class="arithmatex">\(z\)</span>). <span class="arithmatex">\(I = N / 6N = 0.17\)</span> FLOP/B. Hopelessly memory-bound.</li>
+<li><strong>A GEMM</strong> (general matrix-matrix multiply) <span class="arithmatex">\(C_{m\times n} = A_{m\times k} B_{k\times n}\)</span>: about <span class="arithmatex">\(2mnk\)</span> FLOPs, and (read <span class="arithmatex">\(A\)</span>, read <span class="arithmatex">\(B\)</span>, write <span class="arithmatex">\(C\)</span>) <span class="arithmatex">\(\approx 2(mk + kn + mn)\)</span> bytes. For large square matrices <span class="arithmatex">\(I \approx 2m^3 / (6m^2) = m/3\)</span>, which grows with size — big GEMMs are compute-bound.</li>
+</ul>
+<p>The contrast is the whole point: matrix multiplication has <em>reuse</em> (each loaded element participates in many FLOPs), while element-wise ops have none. The transformer is a tug-of-war between big reuse-heavy GEMMs and a swarm of tiny reuse-free element-wise and normalization ops.</p>
+<h2 id="the-roofline-model">The Roofline Model<a class="headerlink" href="#the-roofline-model" title="Permanent link">¶</a></h2>
+<p>Now we combine the two machine limits and the kernel&rsquo;s intensity into one diagram. Plot achievable performance <span class="arithmatex">\(P\)</span> (FLOP/s, <span class="arithmatex">\(y\)</span>-axis, log scale) against arithmetic intensity <span class="arithmatex">\(I\)</span> (FLOP/B, <span class="arithmatex">\(x\)</span>-axis, log scale). The peak attainable performance is:</p>
+<div class="arithmatex">\[
+P(I) = \min\bigl(\pi,\; \beta \cdot I\bigr),
+\]</div>
+<p>where <span class="arithmatex">\(\pi\)</span> is peak compute (FLOP/s) and <span class="arithmatex">\(\beta\)</span> is peak bandwidth (B/s). The <span class="arithmatex">\(\beta \cdot I\)</span> term is the <strong>memory roof</strong> — a diagonal line of slope <span class="arithmatex">\(\beta\)</span> in log-log space (bandwidth times intensity = achievable FLOP/s). The flat <span class="arithmatex">\(\pi\)</span> term is the <strong>compute roof</strong>. They meet at the ridge point <span class="arithmatex">\(I^\* = \pi/\beta\)</span>.</p>
+<figure class="viz" id="fig-roofline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 470" role="img" aria-label="A roofline plot in log-log axes: a sloped memory-bandwidth roof rises to a flat compute-peak ceiling, meeting at the ridge point; a memory-bound decode/attention point sits on the slope and a compute-bound big-GEMM point sits on the ceiling.">
+  <defs>
+    <marker id="rf-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-roofline .ax{ font:600 12px var(--sans,sans-serif); }
+    #fig-roofline .tick{ font:500 10.5px var(--mono,monospace); }
+    #fig-roofline .roof{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-roofline .pt{ font:700 12px var(--sans,sans-serif); }
+    #fig-roofline .sub{ font:500 10.5px var(--sans,sans-serif); }
+    #fig-roofline text{ fill: var(--ink-soft); }
+    #fig-roofline .dim{ fill: var(--muted); }
+  </style>
+
+
+  <g data-anim="1">
+
+    <g class="v-grid" stroke-width="0.8" opacity="0.55">
+      <line x1="80" y1="60" x2="640" y2="60"/>
+      <line x1="80" y1="115" x2="640" y2="115"/>
+      <line x1="80" y1="170" x2="640" y2="170"/>
+      <line x1="80" y1="280" x2="640" y2="280"/>
+      <line x1="80" y1="335" x2="640" y2="335"/>
+      <line x1="220" y1="60" x2="220" y2="390"/>
+      <line x1="360" y1="60" x2="360" y2="390"/>
+      <line x1="500" y1="60" x2="500" y2="390"/>
+      <line x1="570" y1="60" x2="570" y2="390"/>
+    </g>
+
+    <line x1="80" y1="60" x2="80" y2="390" class="v-stroke" stroke-width="1.6" marker-start="url(#rf-arrow)"/>
+    <line x1="80" y1="390" x2="640" y2="390" class="v-stroke" stroke-width="1.6" marker-end="url(#rf-arrow)"/>
+
+    <text x="26" y="225" class="ax" text-anchor="middle" transform="rotate(-90 26 225)">attainable FLOP/s &#8202;(log)</text>
+
+    <text x="360" y="425" class="ax" text-anchor="middle">arithmetic intensity&#8201; I = FLOP / byte &#8202;(log)</text>
+    <text x="360" y="442" class="sub dim" text-anchor="middle">how many ops you do per byte read from HBM</text>
+  </g>
+
+
+  <g data-anim="2">
+
+
+    <line x1="80" y1="390" x2="360" y2="115" class="viz-draw v-accent-s" style="--len:480" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>
+
+    <line x1="360" y1="115" x2="640" y2="115" class="viz-draw v-accent-s" style="--len:280" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>
+
+
+    <path d="M80 390 L360 115 L640 115 L640 60 L80 60 Z" fill="var(--accent)" fill-opacity="0.06"/>
+
+
+    <line x1="80" y1="115" x2="360" y2="115" class="v-grid" stroke-width="1" stroke-dasharray="4 4" opacity="0.8"/>
+    <text x="500" y="104" class="roof v-accent" fill="var(--accent)" text-anchor="middle">compute roof&#8201;:&#8201; &#960;</text>
+    <text x="500" y="135" class="sub" text-anchor="middle">flat ceiling — peak FLOP/s</text>
+
+
+    <text x="250" y="318" class="roof v-accent" fill="var(--accent)" text-anchor="start" transform="rotate(-44 250 318)">memory roof = &#946;&#183;I</text>
+    <text x="252" y="334" class="sub" text-anchor="start" transform="rotate(-44 252 334)">slope = bandwidth &#946;</text>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="360" y1="115" x2="360" y2="390" class="v-stroke" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>
+    <circle cx="360" cy="115" r="4.5" class="v-stroke" fill="var(--surface,#fff)" stroke-width="2"/>
+    <text x="360" y="406" class="tick" text-anchor="middle">I* = &#960;/&#946;</text>
+    <text x="318" y="92" class="sub dim" text-anchor="middle">ridge point</text>
+    <line x1="340" y1="98" x2="358" y2="114" class="v-grid" stroke-width="1" opacity="0.8"/>
+  </g>
+
+
+  <g data-anim="4">
+
+
+    <circle cx="190" cy="282" r="7" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="190" cy="282" r="11" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.4" class="viz-pulse" opacity="0.6"/>
+
+    <line x1="190" y1="282" x2="190" y2="390" class="v-grid" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>
+    <text x="190" y="406" class="tick dim" text-anchor="middle">I ~ 1  (I &lt; I*)</text>
+
+    <g>
+      <rect x="96" y="170" width="156" height="58" rx="7" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+      <text x="174" y="190" class="pt" fill="var(--accent2,#3b82f6)" text-anchor="middle">memory-bound</text>
+      <text x="174" y="206" class="sub" text-anchor="middle">decode (GEMV),</text>
+      <text x="174" y="220" class="sub" text-anchor="middle">attention scores</text>
+    </g>
+    <line x1="174" y1="228" x2="190" y2="276" class="v-stroke" stroke-width="1" opacity="0.7"/>
+
+    <line x1="200" y1="276" x2="252" y2="225" class="v-stroke" stroke="var(--accent2,#3b82f6)" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#rf-arrow)" opacity="0.9"/>
+    <text x="346" y="180" class="sub" fill="var(--accent2,#3b82f6)" text-anchor="middle">batch / fuse / quantize:</text>
+    <text x="346" y="194" class="sub" fill="var(--accent2,#3b82f6)" text-anchor="middle">raise I, climb the roof</text>
+  </g>
+
+
+  <g data-anim="5">
+
+    <circle cx="540" cy="115" r="7" fill="var(--good,#2f9e6e)"/>
+    <circle cx="540" cy="115" r="11" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.4" class="viz-pulse" opacity="0.6"/>
+    <line x1="540" y1="115" x2="540" y2="390" class="v-grid" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>
+    <text x="540" y="406" class="tick dim" text-anchor="middle">I &gt; I*</text>
+
+    <g>
+      <rect x="468" y="148" width="160" height="58" rx="7" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+      <text x="548" y="168" class="pt" fill="var(--good,#2f9e6e)" text-anchor="middle">compute-bound</text>
+      <text x="548" y="184" class="sub" text-anchor="middle">big GEMM &#8212; FFN,</text>
+      <text x="548" y="198" class="sub" text-anchor="middle">prefill, batched decode</text>
+    </g>
+    <line x1="548" y1="148" x2="541" y2="123" class="v-stroke" stroke-width="1" opacity="0.7"/>
+  </g>
+</svg>
+<figcaption><b>The roofline: one picture that tells you whether to chase FLOPs or bytes.</b> Attainable performance is <b>P(I) = min(&#960;, &#946;&#183;I)</b> — a sloped <b>memory roof</b> (bandwidth &#946; times arithmetic intensity I) that rises to a flat <b>compute ceiling</b> &#960;, meeting at the ridge <b>I* = &#960;/&#946;</b>. Kernels left of the ridge (decode, attention scores) are memory-bound and only go faster by raising intensity; kernels right of it (big GEMMs, prefill) sit on the compute ceiling.</figcaption>
+</figure>
+
+<div class="highlight"><pre><span></span><code>  Performance (FLOP/s, log)
+   ^
+ π |..................______________________  compute roof (π)
+   |                 /
+   |                /  &lt;- you want kernels here (compute-bound)
+   |  memory roof  /
+   |   (slope β)  /
+   |            ./  &lt;- ridge point  I* = π/β
+   |          ./
+   |        ./   kernels here are memory-bound:
+   |      ./     P = β·I  (raise I to go faster)
+   |    ./
+   +--/-------------------------------------&gt; Arithmetic intensity (FLOP/B, log)
+        I*
+</code></pre></div>
+<p>Reading the diagram is a three-step ritual you will repeat constantly:</p>
+<ol>
+<li>Compute the kernel&rsquo;s intensity <span class="arithmatex">\(I\)</span>.</li>
+<li>Compare to the machine ridge <span class="arithmatex">\(I^\* = \pi/\beta\)</span>. If <span class="arithmatex">\(I &lt; I^\*\)</span>, you are <strong>memory-bound</strong> and your performance ceiling is <span class="arithmatex">\(\beta I\)</span> — far below peak FLOP/s. If <span class="arithmatex">\(I &gt; I^\*\)</span>, you are <strong>compute-bound</strong>, ceiling <span class="arithmatex">\(\pi\)</span>.</li>
+<li>Choose the optimization that <em>moves you up the roof</em>. For memory-bound kernels: raise <span class="arithmatex">\(I\)</span> (fuse ops, keep data on-chip, recompute instead of reload, quantize to move fewer bytes). For compute-bound kernels: use faster math (tensor cores, lower precision) or simply do fewer FLOPs.</li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: optimizing the wrong axis</p>
+<p>The single most common performance mistake is reducing FLOPs on a memory-bound kernel and expecting a speedup. If a LayerNorm is bandwidth-limited (it is — intensity well under 1 FLOP/B), then rewriting it to do 20% fewer arithmetic ops changes its runtime by ~0%, because it was never waiting on arithmetic. The roofline tells you <em>which</em> resource is saturated; optimize that one. Conversely, fusing a memory-bound op into an adjacent kernel (so its inputs are already in registers) can give a large speedup with zero FLOP reduction.</p>
+</div>
+<h3 id="a-naive-vs-real-roofline">A naive vs. real roofline<a class="headerlink" href="#a-naive-vs-real-roofline" title="Permanent link">¶</a></h3>
+<p>The simple roofline above assumes a kernel can hit either roof. Real kernels rarely touch peak because of additional ceilings: insufficient occupancy to hide latency, no use of tensor cores (relegating you to the much lower CUDA-core FP32 roof), bank conflicts in shared memory, or imperfect overlap of load and compute. A <em>hierarchical roofline</em> draws several compute roofs (tensor-core peak, FMA peak, no-vectorization peak) and several memory roofs (HBM, L2, L1/shared). Your kernel&rsquo;s measured point sitting under the HBM roof but far below the tensor-core ceiling is a diagnosis: &ldquo;I am compute-bound but not using tensor cores,&rdquo; or &ldquo;I am bandwidth-bound on L2, not HBM.&rdquo; Nsight Compute can plot exactly this, which we use in the profiling section.</p>
+<h2 id="counting-flops-the-transformer-from-the-top">Counting FLOPs: The Transformer From the Top<a class="headerlink" href="#counting-flops-the-transformer-from-the-top" title="Permanent link">¶</a></h2>
+<p>To place transformer kernels on the roofline we need their FLOP and byte costs. We adopt the standard convention that one multiply-accumulate (MAC) is <strong>2 FLOPs</strong> (a multiply and an add). A matrix multiply <span class="arithmatex">\(A_{m\times k}B_{k\times n}\)</span> therefore costs <span class="arithmatex">\(2mnk\)</span> FLOPs.</p>
+<p>Consider a decoder-only transformer with hidden size <span class="arithmatex">\(d\)</span> (a.k.a. <span class="arithmatex">\(d_{\text{model}}\)</span>), FFN inner size <span class="arithmatex">\(d_{\text{ff}}\)</span> (commonly <span class="arithmatex">\(4d\)</span>), <span class="arithmatex">\(L\)</span> layers, vocabulary <span class="arithmatex">\(V\)</span>, sequence length <span class="arithmatex">\(s\)</span>, and batch <span class="arithmatex">\(B\)</span>. We count the forward pass for one token position and then scale.</p>
+<h3 id="the-ffn-the-flop-hog">The FFN (the FLOP hog)<a class="headerlink" href="#the-ffn-the-flop-hog" title="Permanent link">¶</a></h3>
+<p>Each transformer block has an FFN: an up-projection <span class="arithmatex">\(d \to d_{\text{ff}}\)</span>, a nonlinearity, and a down-projection <span class="arithmatex">\(d_{\text{ff}} \to d\)</span>. Per token, the two GEMMs cost:</p>
+<div class="arithmatex">\[
+\text{FLOPs}_{\text{FFN}} = 2 \cdot (d \cdot d_{\text{ff}}) + 2 \cdot (d_{\text{ff}} \cdot d) = 4\, d\, d_{\text{ff}} = 16\, d^2 \quad (\text{when } d_{\text{ff}}=4d).
+\]</div>
+<p>(A gated FFN like SwiGLU has three matrices — gate, up, down — so it is <span class="arithmatex">\(6\,d\,d_{\text{ff}}\)</span>; see <a href="../02-transformer/06-transformer-block.html">The Transformer Block</a>.)</p>
+<h3 id="attention-projections-vs-the-attention-score">Attention projections vs. the attention score<a class="headerlink" href="#attention-projections-vs-the-attention-score" title="Permanent link">¶</a></h3>
+<p>Attention has two FLOP populations that behave very differently on the roofline. First, the <strong>projections</strong>: computing <span class="arithmatex">\(Q,K,V\)</span> from the input (<span class="arithmatex">\(3\)</span> matmuls of <span class="arithmatex">\(d\to d\)</span>) and the output projection (<span class="arithmatex">\(d\to d\)</span>). Per token:</p>
+<div class="arithmatex">\[
+\text{FLOPs}_{\text{QKVO}} = 4 \cdot 2 d^2 = 8\, d^2.
+\]</div>
+<p>Second, the <strong>score-and-value</strong> computation: <span class="arithmatex">\(QK^\top\)</span> and the <span class="arithmatex">\(\text{softmax}\cdot V\)</span>. For a single query attending over <span class="arithmatex">\(s\)</span> keys with head dimension summing to <span class="arithmatex">\(d\)</span>, this costs about <span class="arithmatex">\(2 \cdot 2\, s\, d = 4\, s\, d\)</span> FLOPs per query token. Summed over a sequence of length <span class="arithmatex">\(s\)</span> (each of <span class="arithmatex">\(s\)</span> queries attends to up to <span class="arithmatex">\(s\)</span> keys), the score computation for the whole sequence is <span class="arithmatex">\(\propto s^2 d\)</span> — the famous quadratic. Per <em>token</em>, it is <span class="arithmatex">\(\approx 4 s d\)</span>.</p>
+<p>Putting the per-token, per-layer forward cost together:</p>
+<div class="arithmatex">\[
+\text{FLOPs/token/layer} \approx \underbrace{8 d^2}_{\text{QKVO}} + \underbrace{4 s d}_{\text{scores}} + \underbrace{16 d^2}_{\text{FFN}} = 24 d^2 + 4 s d.
+\]</div>
+<p>The headline observation: <strong>for typical <span class="arithmatex">\(d\)</span> and moderate <span class="arithmatex">\(s\)</span>, the <span class="arithmatex">\(d^2\)</span> terms dominate.</strong> With <span class="arithmatex">\(d = 4096\)</span> and <span class="arithmatex">\(s = 2048\)</span>, <span class="arithmatex">\(24 d^2 \approx 4.0\times 10^8\)</span> while <span class="arithmatex">\(4 s d \approx 3.4\times 10^7\)</span> — the dense projections and FFN are ~12× the attention-score FLOPs. The quadratic attention score only <em>dominates the FLOP budget</em> once <span class="arithmatex">\(s\)</span> becomes comparable to <span class="arithmatex">\(6d\)</span>. But — and this is the subtlety that motivates FlashAttention — even when attention is a minority of FLOPs, it can dominate <em>runtime</em>, because its score matrix is enormous and memory-bound. FLOPs and time are not the same thing; that gap is exactly what the roofline exists to expose.</p>
+<h3 id="the-famous-6n-rule-for-training">The famous <span class="arithmatex">\(6N\)</span> rule for training<a class="headerlink" href="#the-famous-6n-rule-for-training" title="Permanent link">¶</a></h3>
+<p>Summing layers and adding the embedding/unembedding, the forward pass of a model with <span class="arithmatex">\(N\)</span> non-embedding parameters costs about <span class="arithmatex">\(2N\)</span> FLOPs per token (every parameter participates in one MAC = 2 FLOPs). The backward pass costs about twice the forward — you compute gradients with respect to both inputs and weights — giving roughly <span class="arithmatex">\(4N\)</span>. Hence the rule every LLM engineer memorizes:</p>
+<div class="arithmatex">\[
+C_{\text{train}} \approx 6N \cdot D \quad\text{FLOPs},
+\]</div>
+<p>for a full training run over <span class="arithmatex">\(D\)</span> tokens with <span class="arithmatex">\(N\)</span> parameters. This is the same <span class="arithmatex">\(6N\)</span> that underlies Chinchilla-style scaling analysis in <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>. For inference (forward only), it is <span class="arithmatex">\(\approx 2N\)</span> FLOPs per generated token. These two constants — <span class="arithmatex">\(6\)</span> for training, <span class="arithmatex">\(2\)</span> for inference — are the back-of-the-envelope tools you will reach for in any capacity-planning or interview setting.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">transformer_flops_per_token</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">,</span> <span class="n">n_layers</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span>
+                                <span class="n">vocab</span><span class="p">,</span> <span class="n">gated</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Approximate forward-pass FLOPs for ONE token, training-style accounting.</span>
+<span class="sd">    Returns a dict so we can see where the FLOPs live. 1 MAC = 2 FLOPs.&quot;&quot;&quot;</span>
+    <span class="c1"># --- per layer ---</span>
+    <span class="n">qkvo</span> <span class="o">=</span> <span class="mi">4</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">d_model</span><span class="o">**</span><span class="mi">2</span>                 <span class="c1"># Q,K,V,O projections (4 GEMMs d-&gt;d)</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">seq_len</span> <span class="o">*</span> <span class="n">d_model</span><span class="p">)</span>      <span class="c1"># QK^T  and  softmax@V  ~ 4*s*d</span>
+    <span class="n">ffn_mul</span> <span class="o">=</span> <span class="mi">6</span> <span class="k">if</span> <span class="n">gated</span> <span class="k">else</span> <span class="mi">4</span>               <span class="c1"># SwiGLU has 3 mats; vanilla has 2</span>
+    <span class="n">ffn</span> <span class="o">=</span> <span class="n">ffn_mul</span> <span class="o">*</span> <span class="n">d_model</span> <span class="o">*</span> <span class="n">d_ff</span>            <span class="c1"># up (+gate) and down projections</span>
+    <span class="n">per_layer</span> <span class="o">=</span> <span class="n">qkvo</span> <span class="o">+</span> <span class="n">scores</span> <span class="o">+</span> <span class="n">ffn</span>
+
+    <span class="c1"># --- whole stack ---</span>
+    <span class="n">layers</span> <span class="o">=</span> <span class="n">n_layers</span> <span class="o">*</span> <span class="n">per_layer</span>
+    <span class="n">unembed</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">d_model</span> <span class="o">*</span> <span class="n">vocab</span>             <span class="c1"># final logits projection (per token)</span>
+    <span class="n">fwd</span> <span class="o">=</span> <span class="n">layers</span> <span class="o">+</span> <span class="n">unembed</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;fwd_per_token&quot;</span><span class="p">:</span> <span class="n">fwd</span><span class="p">,</span>
+        <span class="s2">&quot;qkvo_total&quot;</span><span class="p">:</span>  <span class="n">n_layers</span> <span class="o">*</span> <span class="n">qkvo</span><span class="p">,</span>
+        <span class="s2">&quot;scores_total&quot;</span><span class="p">:</span> <span class="n">n_layers</span> <span class="o">*</span> <span class="n">scores</span><span class="p">,</span>
+        <span class="s2">&quot;ffn_total&quot;</span><span class="p">:</span>   <span class="n">n_layers</span> <span class="o">*</span> <span class="n">ffn</span><span class="p">,</span>
+        <span class="s2">&quot;unembed&quot;</span><span class="p">:</span>     <span class="n">unembed</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="c1"># Llama-2-7B-ish config</span>
+<span class="n">cfg</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">d_model</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span> <span class="n">d_ff</span><span class="o">=</span><span class="mi">11008</span><span class="p">,</span> <span class="n">n_layers</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">seq_len</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span>
+           <span class="n">vocab</span><span class="o">=</span><span class="mi">32000</span><span class="p">,</span> <span class="n">gated</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">f</span> <span class="o">=</span> <span class="n">transformer_flops_per_token</span><span class="p">(</span><span class="o">**</span><span class="n">cfg</span><span class="p">)</span>
+<span class="n">fwd</span> <span class="o">=</span> <span class="n">f</span><span class="p">[</span><span class="s2">&quot;fwd_per_token&quot;</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;forward FLOPs / token : </span><span class="si">{</span><span class="n">fwd</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">8.2f</span><span class="si">}</span><span class="s2"> GFLOP&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  in FFN              : </span><span class="si">{</span><span class="n">f</span><span class="p">[</span><span class="s1">&#39;ffn_total&#39;</span><span class="p">]</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">8.2f</span><span class="si">}</span><span class="s2"> GFLOP &quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="mi">100</span><span class="o">*</span><span class="n">f</span><span class="p">[</span><span class="s1">&#39;ffn_total&#39;</span><span class="p">]</span><span class="o">/</span><span class="n">fwd</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">%)&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  in QKVO proj        : </span><span class="si">{</span><span class="n">f</span><span class="p">[</span><span class="s1">&#39;qkvo_total&#39;</span><span class="p">]</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">8.2f</span><span class="si">}</span><span class="s2"> GFLOP &quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="mi">100</span><span class="o">*</span><span class="n">f</span><span class="p">[</span><span class="s1">&#39;qkvo_total&#39;</span><span class="p">]</span><span class="o">/</span><span class="n">fwd</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">%)&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  in attn scores      : </span><span class="si">{</span><span class="n">f</span><span class="p">[</span><span class="s1">&#39;scores_total&#39;</span><span class="p">]</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">8.2f</span><span class="si">}</span><span class="s2"> GFLOP &quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="mi">100</span><span class="o">*</span><span class="n">f</span><span class="p">[</span><span class="s1">&#39;scores_total&#39;</span><span class="p">]</span><span class="o">/</span><span class="n">fwd</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">%)&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;training FLOPs / token (~3x fwd): </span><span class="si">{</span><span class="mi">3</span><span class="o">*</span><span class="n">fwd</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">8.2f</span><span class="si">}</span><span class="s2"> GFLOP&quot;</span><span class="p">)</span>
+
+<span class="c1"># Cross-check against the 6N rule using true param count (~6.7B):</span>
+<span class="n">N</span> <span class="o">=</span> <span class="mf">6.7e9</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;6N per token (N=6.7B): </span><span class="si">{</span><span class="mi">6</span><span class="o">*</span><span class="n">N</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">8.2f</span><span class="si">}</span><span class="s2"> GFLOP&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Running this prints a forward cost on the order of a few GFLOP/token, with the FFN taking the largest slice, the projections second, and attention scores a small minority at this sequence length — and the <span class="arithmatex">\(\approx 3\times\)</span> forward estimate landing close to the <span class="arithmatex">\(6N\)</span> figure. Two independent methods agreeing within ~10–20% is exactly the confidence you want from a FLOP estimate.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: why <span class="arithmatex">\(3\times\)</span> forward, not <span class="arithmatex">\(3\times\)</span> everything</p>
+<p>The <span class="arithmatex">\(6N\)</span> rule bundles forward (<span class="arithmatex">\(2N\)</span>) and backward (<span class="arithmatex">\(4N\)</span>). Our per-token function counts forward only, so we multiply by <span class="arithmatex">\(3\)</span> to approximate forward+backward. The attention-score term technically scales differently in the backward pass (and recomputation in activation checkpointing adds an extra forward), so treat <span class="arithmatex">\(3\times\)</span> as a planning estimate, not a guarantee. For exact accounting, libraries like <code>torch.utils.flop_counter</code> or DeepSpeed&rsquo;s FLOPs profiler instrument the real graph.</p>
+</div>
+<h2 id="bytes-intensity-and-the-two-regimes-of-inference">Bytes, Intensity, and the Two Regimes of Inference<a class="headerlink" href="#bytes-intensity-and-the-two-regimes-of-inference" title="Permanent link">¶</a></h2>
+<p>FLOPs alone don&rsquo;t tell you where a kernel lands on the roofline — you need bytes. The cleanest place to see this is LLM inference, which splits into two phases with opposite roofline character (covered operationally in <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference</a>).</p>
+<p><strong>Prefill</strong> processes the whole prompt at once. With a prompt of <span class="arithmatex">\(s\)</span> tokens, every weight matrix is reused across all <span class="arithmatex">\(s\)</span> tokens — a GEMM with a big <span class="arithmatex">\(s\)</span> dimension. High reuse means high arithmetic intensity, so prefill is <strong>compute-bound</strong>. This is where the GPU&rsquo;s FLOP/s actually matter.</p>
+<p><strong>Decode</strong> generates one token at a time. Each step multiplies a single activation vector (<span class="arithmatex">\(1\times d\)</span>) against every weight matrix. That is a matrix-<em>vector</em> product (GEMV): you stream the entire weight matrix from HBM to produce one output vector, with essentially no reuse. For a weight matrix of <span class="arithmatex">\(d\times k\)</span> in bf16, you do <span class="arithmatex">\(2dk\)</span> FLOPs but move <span class="arithmatex">\(2dk\)</span> bytes — intensity <span class="arithmatex">\(\approx 1\)</span> FLOP/B. Far below any modern ridge point, so single-stream decode is brutally <strong>memory-bound</strong>.</p>
+<p>This is why decode throughput is governed by <em>how fast you can read the weights</em>, and why the only way to make decode efficient is to <strong>batch</strong> many requests so the same loaded weights serve many tokens at once — raising the effective intensity. It is also why the KV cache, not the weights, often becomes the bandwidth bottleneck at long context; see <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: how many tokens/sec can a single decode stream produce?</p>
+<p>Take Llama-2-7B in bf16 on one A100-80GB. Decode reads (approximately) every weight once per generated token. Model weights <span class="arithmatex">\(\approx 6.7\text{B} \times 2\,\text{bytes} = 13.4\,\text{GB}\)</span>.</p>
+<p>At peak HBM bandwidth <span class="arithmatex">\(\beta = 2.0\,\text{TB/s}\)</span>, the time to stream the weights once is</p>
+<div class="arithmatex">\[
+t_{\text{token}} \ge \frac{13.4\times 10^9\,\text{B}}{2.0\times 10^{12}\,\text{B/s}} \approx 6.7\,\text{ms}.
+\]</div>
+<p>So the <em>hardware ceiling</em> for single-stream decode is about <span class="arithmatex">\(1/0.0067 \approx 150\)</span> tokens/s, and real systems hit perhaps 60–70% of that. Notice what this says: the GPU&rsquo;s 312 TFLOP/s is almost irrelevant here. The decode FLOPs are <span class="arithmatex">\(2N \approx 1.34\times 10^{10}\)</span> per token; at 150 tok/s that&rsquo;s <span class="arithmatex">\(\approx 2\,\text{TFLOP/s}\)</span> — under <strong>1%</strong> of peak compute. The chip is starved on bandwidth.</p>
+<p>Now batch 64 requests. The weights are read once and reused across all 64 tokens, so per-token weight traffic drops ~64×, intensity rises above the ridge, and the workload becomes compute-bound — <em>until</em> the per-request KV cache traffic and capacity start to dominate. This single example is the entire economic argument for continuous batching (<a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>).</p>
+</div>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">decode_roofline</span><span class="p">(</span><span class="n">num_params</span><span class="p">,</span> <span class="n">bytes_per_param</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+                    <span class="n">hbm_bw_TBs</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">peak_tflops</span><span class="o">=</span><span class="mi">312</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single-stream decode is GEMV-like: ~1 weight read per token.</span>
+<span class="sd">    Returns the bandwidth-bound token rate and the implied compute use.&quot;&quot;&quot;</span>
+    <span class="n">weight_bytes</span> <span class="o">=</span> <span class="n">num_params</span> <span class="o">*</span> <span class="n">bytes_per_param</span>
+    <span class="n">t_token</span> <span class="o">=</span> <span class="n">weight_bytes</span> <span class="o">/</span> <span class="p">(</span><span class="n">hbm_bw_TBs</span> <span class="o">*</span> <span class="mf">1e12</span><span class="p">)</span>      <span class="c1"># seconds, bw-bound</span>
+    <span class="n">tok_per_s</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">t_token</span>
+    <span class="n">flops_per_token</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">num_params</span>                   <span class="c1"># 2N inference rule</span>
+    <span class="n">achieved_tflops</span> <span class="o">=</span> <span class="n">flops_per_token</span> <span class="o">*</span> <span class="n">tok_per_s</span> <span class="o">/</span> <span class="mf">1e12</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;weight_GB&quot;</span><span class="p">:</span> <span class="n">weight_bytes</span> <span class="o">/</span> <span class="mf">1e9</span><span class="p">,</span>
+        <span class="s2">&quot;ms_per_token&quot;</span><span class="p">:</span> <span class="n">t_token</span> <span class="o">*</span> <span class="mf">1e3</span><span class="p">,</span>
+        <span class="s2">&quot;tok_per_s_ceiling&quot;</span><span class="p">:</span> <span class="n">tok_per_s</span><span class="p">,</span>
+        <span class="s2">&quot;achieved_TFLOPs&quot;</span><span class="p">:</span> <span class="n">achieved_tflops</span><span class="p">,</span>
+        <span class="s2">&quot;pct_of_peak_compute&quot;</span><span class="p">:</span> <span class="mi">100</span> <span class="o">*</span> <span class="n">achieved_tflops</span> <span class="o">/</span> <span class="n">peak_tflops</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="p">(</span><span class="mf">6.7e9</span><span class="p">,</span> <span class="mf">13e9</span><span class="p">,</span> <span class="mf">70e9</span><span class="p">):</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">decode_roofline</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">n</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">5.1f</span><span class="si">}</span><span class="s2">B params: </span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;tok_per_s_ceiling&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> tok/s ceiling, &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;using </span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;pct_of_peak_compute&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">% of peak FLOP/s &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;weight_GB&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> GB weights)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="model-flops-utilization-mfu">Model FLOPs Utilization (MFU)<a class="headerlink" href="#model-flops-utilization-mfu" title="Permanent link">¶</a></h2>
+<p>For <em>training</em> we want a single dimensionless number that says how well a run uses the hardware. <strong>Model FLOPs Utilization</strong> (MFU), introduced in the PaLM paper, is:</p>
+<div class="arithmatex">\[
+\text{MFU} = \frac{\text{useful model FLOP/s achieved}}{\text{peak FLOP/s of the hardware}} = \frac{6 N \cdot (\text{tokens/s})}{\text{GPUs} \times \pi}.
+\]</div>
+<p>The numerator uses the <span class="arithmatex">\(6N\)</span> rule on the <em>model&rsquo;s</em> FLOPs (the math the model defines), deliberately <em>excluding</em> any extra work like activation-recomputation. A related metric, <strong>HFU</strong> (Hardware FLOPs Utilization), <em>includes</em> recomputation FLOPs and so is always <span class="arithmatex">\(\ge\)</span> MFU; the gap tells you how much you&rsquo;re paying for activation checkpointing (<a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training</a>). MFU is the honest &ldquo;how close to the speed of light are we&rdquo; number; large, well-tuned LLM training runs land in roughly the 40–55% MFU range, and anything below ~30% usually signals a fixable bottleneck (small batch, comms-bound, bad kernels, or memory-bound element-wise ops).</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">mfu</span><span class="p">(</span><span class="n">num_params</span><span class="p">,</span> <span class="n">tokens_per_sec</span><span class="p">,</span> <span class="n">num_gpus</span><span class="p">,</span> <span class="n">peak_tflops_per_gpu</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Model FLOPs Utilization for a training run (6N convention).&quot;&quot;&quot;</span>
+    <span class="n">model_flops_per_s</span> <span class="o">=</span> <span class="mi">6</span> <span class="o">*</span> <span class="n">num_params</span> <span class="o">*</span> <span class="n">tokens_per_sec</span>
+    <span class="n">peak</span> <span class="o">=</span> <span class="n">num_gpus</span> <span class="o">*</span> <span class="n">peak_tflops_per_gpu</span> <span class="o">*</span> <span class="mf">1e12</span>
+    <span class="k">return</span> <span class="n">model_flops_per_s</span> <span class="o">/</span> <span class="n">peak</span>
+
+<span class="c1"># Example: 7B model, 256 A100s (312 TFLOP/s bf16 peak each).</span>
+<span class="c1"># Suppose we measure global throughput of 1.5M tokens/sec.</span>
+<span class="n">util</span> <span class="o">=</span> <span class="n">mfu</span><span class="p">(</span><span class="n">num_params</span><span class="o">=</span><span class="mf">6.7e9</span><span class="p">,</span> <span class="n">tokens_per_sec</span><span class="o">=</span><span class="mf">1.5e6</span><span class="p">,</span>
+           <span class="n">num_gpus</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span> <span class="n">peak_tflops_per_gpu</span><span class="o">=</span><span class="mi">312</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;MFU = </span><span class="si">{</span><span class="n">util</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+
+<span class="c1"># Inverting: at a target MFU, what throughput do we expect?</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">expected_tokens_per_sec</span><span class="p">(</span><span class="n">num_params</span><span class="p">,</span> <span class="n">num_gpus</span><span class="p">,</span> <span class="n">peak_tflops</span><span class="p">,</span> <span class="n">target_mfu</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">target_mfu</span> <span class="o">*</span> <span class="n">num_gpus</span> <span class="o">*</span> <span class="n">peak_tflops</span> <span class="o">*</span> <span class="mf">1e12</span> <span class="o">/</span> <span class="p">(</span><span class="mi">6</span> <span class="o">*</span> <span class="n">num_params</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;At 50% MFU we&#39;d expect &quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">expected_tokens_per_sec</span><span class="p">(</span><span class="mf">6.7e9</span><span class="p">,</span><span class="w"> </span><span class="mi">256</span><span class="p">,</span><span class="w"> </span><span class="mi">312</span><span class="p">,</span><span class="w"> </span><span class="mf">0.50</span><span class="p">)</span><span class="o">/</span><span class="mf">1e6</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> M tok/s&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: MFU is your north-star regression test</p>
+<p>Track MFU on every training run, not just loss. A code change that drops MFU from 48% to 31% with no architectural reason is a performance regression — maybe a kernel stopped fusing, a collective started blocking, or a tensor fell off the tensor-core path (wrong dtype, a non-multiple-of-8 dimension). MFU catches these where wall-clock-per-step might be noisy. Compute it from first principles (<span class="arithmatex">\(6N \cdot \text{tok/s}\)</span>) so it&rsquo;s independent of any framework&rsquo;s possibly-wrong internal counter.</p>
+</div>
+<h3 id="why-low-precision-raises-the-roof">Why low precision raises the roof<a class="headerlink" href="#why-low-precision-raises-the-roof" title="Permanent link">¶</a></h3>
+<p>Tensor cores run dramatically faster at lower precision: an H100&rsquo;s FP8 tensor-core throughput is roughly double its bf16 throughput, which is itself far above FP32. Dropping precision does two things on the roofline simultaneously — it raises the <strong>compute roof</strong> <span class="arithmatex">\(\pi\)</span> (faster math) <em>and</em> lowers bytes moved (smaller dtype), which raises <strong>intensity</strong> for memory-bound kernels. That double win is why FP8 training and INT4/INT8 inference are central to Part IV; the numerics and failure modes are in <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a> and <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a>. The roofline is precisely the tool that quantifies the payoff: a kernel sitting on the memory roof at <span class="arithmatex">\(I=1\)</span> FLOP/B doubles its ceiling if you halve its byte width.</p>
+<h2 id="profiling-confronting-the-model-with-reality">Profiling: Confronting the Model With Reality<a class="headerlink" href="#profiling-confronting-the-model-with-reality" title="Permanent link">¶</a></h2>
+<p>Theory places kernels on the roofline; profiling tells you where they <em>actually</em> land and why. Two tools cover almost everything an LLM engineer needs: the <strong>PyTorch profiler</strong> (operator-level, framework-aware) and <strong>NVIDIA Nsight</strong> (Systems for timeline/overlap, Compute for per-kernel roofline).</p>
+<h3 id="the-pytorch-profiler">The PyTorch profiler<a class="headerlink" href="#the-pytorch-profiler" title="Permanent link">¶</a></h3>
+<p>Start here. It attributes time to PyTorch ops and CUDA kernels, captures shapes, and exports a Chrome trace you can open in <code>chrome://tracing</code> or Perfetto.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.profiler</span><span class="w"> </span><span class="kn">import</span> <span class="n">profile</span><span class="p">,</span> <span class="n">ProfilerActivity</span><span class="p">,</span> <span class="n">schedule</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">build_model</span><span class="p">()</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>          <span class="c1"># your nn.Module</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">32000</span><span class="p">,</span> <span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">2048</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+
+<span class="c1"># Warm up: trigger cuDNN/cuBLAS autotuning, allocator, and torch.compile</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+
+<span class="c1"># schedule: skip 1 step, warm up 1, then record 3 active steps, repeat once</span>
+<span class="n">prof_schedule</span> <span class="o">=</span> <span class="n">schedule</span><span class="p">(</span><span class="n">wait</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">active</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">repeat</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="k">with</span> <span class="n">profile</span><span class="p">(</span>
+    <span class="n">activities</span><span class="o">=</span><span class="p">[</span><span class="n">ProfilerActivity</span><span class="o">.</span><span class="n">CPU</span><span class="p">,</span> <span class="n">ProfilerActivity</span><span class="o">.</span><span class="n">CUDA</span><span class="p">],</span>
+    <span class="n">schedule</span><span class="o">=</span><span class="n">prof_schedule</span><span class="p">,</span>
+    <span class="n">record_shapes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>        <span class="c1"># capture input shapes per op</span>
+    <span class="n">profile_memory</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>       <span class="c1"># track allocator activity</span>
+    <span class="n">with_stack</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>          <span class="c1"># set True for source attribution (slower)</span>
+<span class="p">)</span> <span class="k">as</span> <span class="n">prof</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">6</span><span class="p">):</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>   <span class="c1"># accurate per-step boundaries</span>
+        <span class="n">prof</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+
+<span class="c1"># Rank kernels by total CUDA time — this is your hot list.</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">prof</span><span class="o">.</span><span class="n">key_averages</span><span class="p">()</span><span class="o">.</span><span class="n">table</span><span class="p">(</span>
+    <span class="n">sort_by</span><span class="o">=</span><span class="s2">&quot;cuda_time_total&quot;</span><span class="p">,</span> <span class="n">row_limit</span><span class="o">=</span><span class="mi">15</span><span class="p">))</span>
+
+<span class="c1"># Export a timeline you can inspect visually:</span>
+<span class="n">prof</span><span class="o">.</span><span class="n">export_chrome_trace</span><span class="p">(</span><span class="s2">&quot;trace.json&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>What to look for in the output table:</p>
+<ul>
+<li><strong>The top few CUDA kernels by total time</strong> — that&rsquo;s where optimization pays. Usually some flavor of GEMM (<code>ampere_..._gemm</code>, <code>cutlass</code>) and the attention kernel.</li>
+<li><strong>A long tail of tiny element-wise/normalization kernels.</strong> If their <em>summed</em> time is large, you have a fusion opportunity (<code>torch.compile</code>, see <a href="../04-kernels-efficiency/09-compilers-fusion.html">Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a>). Many small memory-bound kernels back-to-back = bandwidth-bound program.</li>
+<li><strong>Gaps where the GPU is idle</strong> in the Chrome trace — that&rsquo;s CPU launch overhead or a synchronizing <code>.item()</code>/<code>.cpu()</code> call stalling the pipeline. CUDA graphs or removing host syncs fix these.</li>
+</ul>
+<h3 id="turning-a-profile-into-a-roofline-verdict">Turning a profile into a roofline verdict<a class="headerlink" href="#turning-a-profile-into-a-roofline-verdict" title="Permanent link">¶</a></h3>
+<p>A measured kernel time plus its FLOP and byte counts gives an <em>achieved</em> intensity and <em>achieved</em> FLOP/s, which you drop onto the roofline.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">kernel_verdict</span><span class="p">(</span><span class="n">flops</span><span class="p">,</span> <span class="n">bytes_moved</span><span class="p">,</span> <span class="n">seconds</span><span class="p">,</span>
+                   <span class="n">peak_tflops</span><span class="o">=</span><span class="mi">312</span><span class="p">,</span> <span class="n">hbm_TBs</span><span class="o">=</span><span class="mf">2.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Given measured time + analytic FLOPs/bytes, classify the kernel.&quot;&quot;&quot;</span>
+    <span class="n">intensity</span> <span class="o">=</span> <span class="n">flops</span> <span class="o">/</span> <span class="n">bytes_moved</span>                      <span class="c1"># FLOP/B</span>
+    <span class="n">ridge</span> <span class="o">=</span> <span class="p">(</span><span class="n">peak_tflops</span> <span class="o">*</span> <span class="mf">1e12</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">hbm_TBs</span> <span class="o">*</span> <span class="mf">1e12</span><span class="p">)</span>      <span class="c1"># machine ridge</span>
+    <span class="n">achieved</span> <span class="o">=</span> <span class="n">flops</span> <span class="o">/</span> <span class="n">seconds</span> <span class="o">/</span> <span class="mf">1e12</span>                    <span class="c1"># TFLOP/s achieved</span>
+    <span class="n">roof</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">peak_tflops</span><span class="p">,</span> <span class="n">hbm_TBs</span> <span class="o">*</span> <span class="mf">1e12</span> <span class="o">*</span> <span class="n">intensity</span> <span class="o">/</span> <span class="mf">1e12</span><span class="p">)</span>  <span class="c1"># the ceiling</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;intensity_FLOP_per_B&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">intensity</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+        <span class="s2">&quot;machine_ridge&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">ridge</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+        <span class="s2">&quot;bound&quot;</span><span class="p">:</span> <span class="s2">&quot;compute&quot;</span> <span class="k">if</span> <span class="n">intensity</span> <span class="o">&gt;</span> <span class="n">ridge</span> <span class="k">else</span> <span class="s2">&quot;memory&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;achieved_TFLOPs&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">achieved</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+        <span class="s2">&quot;roofline_ceiling_TFLOPs&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">roof</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+        <span class="s2">&quot;efficiency_vs_ceiling_%&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="n">achieved</span> <span class="o">/</span> <span class="n">roof</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+    <span class="p">}</span>
+
+<span class="c1"># A LayerNorm over (8, 2048, 4096) bf16, measured at, say, 90 microseconds.</span>
+<span class="n">n</span> <span class="o">=</span> <span class="mi">8</span> <span class="o">*</span> <span class="mi">2048</span> <span class="o">*</span> <span class="mi">4096</span>
+<span class="n">ln_flops</span> <span class="o">=</span> <span class="mi">8</span> <span class="o">*</span> <span class="n">n</span>            <span class="c1"># rough: a handful of ops per element</span>
+<span class="n">ln_bytes</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">n</span><span class="p">)</span>      <span class="c1"># read x, write y in bf16 (ignoring the tiny γ,β)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;LayerNorm:&quot;</span><span class="p">,</span> <span class="n">kernel_verdict</span><span class="p">(</span><span class="n">ln_flops</span><span class="p">,</span> <span class="n">ln_bytes</span><span class="p">,</span> <span class="mf">90e-6</span><span class="p">))</span>
+
+<span class="c1"># A big FFN GEMM (8*2048 tokens) x (4096 -&gt; 11008), bf16, measured 1.1 ms.</span>
+<span class="n">m</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">nn</span> <span class="o">=</span> <span class="mi">8</span><span class="o">*</span><span class="mi">2048</span><span class="p">,</span> <span class="mi">4096</span><span class="p">,</span> <span class="mi">11008</span>
+<span class="n">gemm_flops</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">m</span> <span class="o">*</span> <span class="n">k</span> <span class="o">*</span> <span class="n">nn</span>
+<span class="n">gemm_bytes</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="p">(</span><span class="n">m</span><span class="o">*</span><span class="n">k</span> <span class="o">+</span> <span class="n">k</span><span class="o">*</span><span class="n">nn</span> <span class="o">+</span> <span class="n">m</span><span class="o">*</span><span class="n">nn</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;FFN GEMM :&quot;</span><span class="p">,</span> <span class="n">kernel_verdict</span><span class="p">(</span><span class="n">gemm_flops</span><span class="p">,</span> <span class="n">gemm_bytes</span><span class="p">,</span> <span class="mf">1.1e-3</span><span class="p">))</span>
+</code></pre></div>
+<p>The LayerNorm comes back with intensity well under 1 FLOP/B and &ldquo;memory&rdquo;-bound — confirming it is hopeless to optimize its arithmetic and ripe for fusion. The GEMM comes back compute-bound with an efficiency you can compare against peak; if it&rsquo;s at 70% of the compute roof, that&rsquo;s healthy, and chasing the last 30% means kernel-level work (CUTLASS, better tiling) rather than algorithmic change.</p>
+<h3 id="nvidia-nsight-systems-and-compute">NVIDIA Nsight: Systems and Compute<a class="headerlink" href="#nvidia-nsight-systems-and-compute" title="Permanent link">¶</a></h3>
+<p>When the PyTorch profiler isn&rsquo;t enough — you need to see multi-GPU overlap, NVLink/NCCL traffic, or a true hardware roofline — drop to Nsight.</p>
+<p><strong>Nsight Systems</strong> (<code>nsys</code>) captures a full timeline: CUDA kernels, memory copies, NCCL collectives, CPU threads, and the gaps between them. It&rsquo;s the tool for &ldquo;why is my GPU only 60% busy&rdquo; — usually the answer is a comms bubble or a host-side stall.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Capture a timeline of a training step (limit duration to keep the file small).</span>
+nsys<span class="w"> </span>profile<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--trace<span class="o">=</span>cuda,nvtx,osrt,cudnn,cublas<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--capture-range<span class="o">=</span>cudaProfilerApi<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--output<span class="o">=</span>run_timeline<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>python<span class="w"> </span>train.py<span class="w"> </span>--max-steps<span class="w"> </span><span class="m">20</span>
+
+<span class="c1"># Open run_timeline.nsys-rep in the Nsight Systems GUI, or get a CLI summary:</span>
+nsys<span class="w"> </span>stats<span class="w"> </span>run_timeline.nsys-rep
+</code></pre></div>
+<p>Annotate regions with NVTX so the timeline is readable:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch.cuda.nvtx</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nvtx</span>
+<span class="k">with</span> <span class="n">nvtx</span><span class="o">.</span><span class="n">range</span><span class="p">(</span><span class="s2">&quot;attention&quot;</span><span class="p">):</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">attn</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="k">with</span> <span class="n">nvtx</span><span class="o">.</span><span class="n">range</span><span class="p">(</span><span class="s2">&quot;ffn&quot;</span><span class="p">):</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">ffn</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+<span class="c1"># These ranges appear as labeled blocks on the Nsight timeline.</span>
+</code></pre></div>
+<p><strong>Nsight Compute</strong> (<code>ncu</code>) profiles a <em>single kernel</em> in microscopic detail — and it can draw the hierarchical roofline directly, placing your kernel&rsquo;s point under the tensor-core, FMA, and memory roofs. It is heavyweight (replays the kernel many times to collect every counter), so target one kernel:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Profile just the kernels whose mangled name matches &#39;gemm&#39;, collect the</span>
+<span class="c1"># full set including the roofline section, write a report file.</span>
+ncu<span class="w"> </span>--set<span class="w"> </span>full<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--kernel-name-base<span class="w"> </span>demangled<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--kernel-name<span class="w"> </span>regex:<span class="s2">&quot;.*gemm.*&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--launch-count<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--export<span class="w"> </span>gemm_report<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>python<span class="w"> </span>forward_once.py
+</code></pre></div>
+<p>In the resulting report, the key panels are <strong>Compute (SM) Throughput</strong> and <strong>Memory Throughput</strong> (each as % of peak), the <strong>Roofline</strong> chart (your dot vs. the roofs), and the <strong>Warp State</strong> / <strong>Occupancy</strong> sections that explain <em>why</em> a compute-bound kernel still misses peak (stalls on memory dependency, low occupancy, etc.). If SM throughput is ~90% you&rsquo;re compute-bound and near the roof — done. If memory throughput is ~90% but SM is low, you&rsquo;re bandwidth-bound and the fix is data movement, not math. This is the roofline, measured on silicon.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: measuring without warmup or synchronization</p>
+<p>CUDA kernel launches are asynchronous. If you time with <code>time.time()</code> around a forward pass and forget <code>torch.cuda.synchronize()</code>, you measure <em>launch</em> time, not <em>execution</em> time — often 100× too fast. And the first few iterations include one-time costs: cuBLAS/cuDNN autotuning, <code>torch.compile</code> JIT, allocator growth, and clock spin-up. Always warm up (3–10 iters) and synchronize at every measurement boundary. For micro-benchmarks prefer <code>torch.cuda.Event</code> timing or <code>torch.utils.benchmark.Timer</code>, which handle this correctly.</p>
+</div>
+<h2 id="putting-it-together-a-performance-debugging-playbook">Putting It Together: A Performance-Debugging Playbook<a class="headerlink" href="#putting-it-together-a-performance-debugging-playbook" title="Permanent link">¶</a></h2>
+<p>The roofline turns &ldquo;my model is slow&rdquo; into a directed search. Here is the loop, in order:</p>
+<div class="highlight"><pre><span></span><code>1. MEASURE end-to-end throughput (tokens/s) and compute MFU = 6N·tok_s / (GPUs·π).
+        |
+        v
+2. Is MFU healthy (&gt;~40%)?  --yes--&gt; ship it; revisit only if cost demands.
+        | no
+        v
+3. PROFILE one step (torch.profiler / nsys). Find the top time sinks.
+        |
+        +--&gt; Big GEMMs dominate, GPU ~saturated? =&gt; compute-bound.
+        |       Fix: lower precision (bf16/fp8), better GEMM (cuBLAS/CUTLASS),
+        |            fewer FLOPs (MoE, smaller d_ff), tensor-core-friendly shapes.
+        |
+        +--&gt; Many tiny element-wise/norm kernels sum large? =&gt; memory-bound.
+        |       Fix: fuse (torch.compile), keep data on-chip, recompute&gt;reload,
+        |            quantize activations to move fewer bytes.
+        |
+        +--&gt; GPU idle gaps on the timeline? =&gt; overhead/comms-bound.
+                Fix: CUDA graphs, remove host syncs (.item()/.cpu()),
+                     overlap comms with compute, bigger batch, better parallelism.
+        |
+        v
+4. ncu the single worst kernel: read SM% vs Memory%; place it on the roofline;
+   apply the matching fix; remeasure MFU. Repeat.
+</code></pre></div>
+<p>Notice that <em>every</em> branch maps to a roofline regime: compute-bound (raise the compute roof or do fewer FLOPs), memory-bound (raise intensity / move fewer bytes), or overhead-bound (a third axis the simple roofline doesn&rsquo;t draw — launch/sync/comms latency — fixed by overlap and batching). Internalizing this triage is what separates &ldquo;I tried <code>torch.compile</code> and it didn&rsquo;t help&rdquo; from &ldquo;the timeline showed an NCCL bubble, so I overlapped the all-reduce.&rdquo;</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re serving a 13B-parameter model in bf16 on a single A100-80GB and getting only ~50 tokens/second on single-stream decode. Your colleague proposes pruning 20% of the FLOPs by removing attention heads. Will that help, and what would you do instead?</p>
+<p><strong>A:</strong> Pruning FLOPs won&rsquo;t meaningfully help, because single-stream decode is <em>memory-bound</em>, not compute-bound. Each generated token requires reading essentially all 26 GB of weights (<span class="arithmatex">\(13\text{B}\times 2\)</span> bytes) from HBM. At ~2 TB/s that&rsquo;s a ~13 ms floor, i.e. a ceiling around 75 tok/s before overhead — exactly the regime we&rsquo;re in. Decode does only <span class="arithmatex">\(2N \approx 2.6\times10^{10}\)</span> FLOPs/token, well under 1% of the A100&rsquo;s 312 TFLOP/s, so the arithmetic units are already idle; removing 20% of FLOPs leaves runtime essentially unchanged. The right fixes attack <em>bytes moved</em>, not FLOPs: (1) <strong>batch</strong> requests with continuous batching so one weight read serves many tokens, pushing intensity above the ridge; (2) <strong>quantize</strong> weights to INT8/INT4 to halve or quarter the bytes streamed per token — this directly raises the bandwidth-bound token rate; (3) <strong>speculative decoding</strong> to verify several tokens per weight-read pass. The general principle: identify which roofline regime you&rsquo;re in <em>first</em>; decode is bandwidth-bound, so optimize data movement.</p>
+</div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: MFU of a concrete training step</p>
+<p>A 7B model (<span class="arithmatex">\(N = 6.7\times10^9\)</span>) trains on 64 H100s (bf16 peak <span class="arithmatex">\(\approx 990\)</span> TFLOP/s each). We measure one global step processing a batch of <span class="arithmatex">\(4{,}096\)</span> sequences <span class="arithmatex">\(\times\,4{,}096\)</span> tokens <span class="arithmatex">\(= 1.68\times10^{7}\)</span> tokens in <span class="arithmatex">\(2.4\)</span> seconds.</p>
+<p>Throughput: <span class="arithmatex">\(1.68\times10^{7} / 2.4 \approx 7.0\times10^{6}\)</span> tokens/s.</p>
+<p>Model FLOP/s: <span class="arithmatex">\(6N \times \text{tok/s} = 6 \times 6.7\times10^{9} \times 7.0\times10^{6} \approx 2.8\times10^{17}\)</span> FLOP/s <span class="arithmatex">\(= 281\)</span> PFLOP/s.</p>
+<p>Peak: <span class="arithmatex">\(64 \times 990\times10^{12} = 6.3\times10^{16}\times ... = 6.34\times10^{16}\)</span>? Recompute: <span class="arithmatex">\(64 \times 990 = 63{,}360\)</span> TFLOP/s <span class="arithmatex">\(= 6.34\times10^{16}\)</span> FLOP/s <span class="arithmatex">\(= 63.4\)</span> PFLOP/s.</p>
+<div class="arithmatex">\[
+\text{MFU} = \frac{281\ \text{PFLOP/s}}{63.4\ \text{PFLOP/s}} \approx 0.44 = 44\%.
+\]</div>
+<p>A 44% MFU is solidly in the healthy band for a large bf16 run. If we&rsquo;d measured 22%, the playbook says profile: likely a comms bubble (try better overlap or a different parallelism split, see <a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II</a>) or a memory-bound activation path begging for fusion.</p>
+</div>
+<h2 id="limits-and-refinements-of-the-roofline">Limits and Refinements of the Roofline<a class="headerlink" href="#limits-and-refinements-of-the-roofline" title="Permanent link">¶</a></h2>
+<p>The roofline is a <em>first-order</em> model, and knowing its blind spots keeps you honest. It assumes (1) a single dominant memory level — but real kernels also hit L2 and shared-memory roofs, which is why hierarchical rooflines exist; (2) perfect overlap of compute and memory — real kernels lose time to latency that isn&rsquo;t hidden by enough in-flight work (low occupancy), which the basic model can&rsquo;t see; (3) that latency-bound, low-parallelism regimes don&rsquo;t exist — but a tiny kernel with one CTA touches neither roof, bottlenecked purely on launch and latency. For LLM serving specifically, the simple two-resource picture omits a critical third axis — <strong>comms</strong> (NVLink/InfiniBand bandwidth and latency for tensor/pipeline/data parallelism), which deserves its own roofline-like analysis (<a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a>).</p>
+<p>Despite these caveats, the roofline remains the most valuable single tool in performance engineering because it forces the right <em>first</em> question — &ldquo;am I compute-bound or memory-bound?&rdquo; — and that question, answered correctly, eliminates the majority of wasted optimization effort. Everything in the rest of Part IV is, in one way or another, a technique for moving a transformer kernel up and to the right on this diagram.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The roofline is <span class="arithmatex">\(P(I) = \min(\pi, \beta I)\)</span>: a flat <strong>compute roof</strong> <span class="arithmatex">\(\pi\)</span> (peak FLOP/s) and a sloped <strong>memory roof</strong> <span class="arithmatex">\(\beta I\)</span> (bandwidth <span class="arithmatex">\(\times\)</span> arithmetic intensity), meeting at the <strong>ridge</strong> <span class="arithmatex">\(I^\* = \pi/\beta\)</span> (~156 FLOP/B on A100, ~295 on H100).</li>
+<li><strong>Arithmetic intensity</strong> <span class="arithmatex">\(I = \text{FLOPs}/\text{HBM bytes}\)</span> decides everything: <span class="arithmatex">\(I &lt; I^\*\)</span> is memory-bound (raise intensity, move fewer bytes), <span class="arithmatex">\(I &gt; I^\*\)</span> is compute-bound (faster math, fewer FLOPs).</li>
+<li>Transformer FLOPs are dominated by the <span class="arithmatex">\(d^2\)</span> terms (FFN + QKVO projections); attention scores are <span class="arithmatex">\(\propto s^2\)</span> and only dominate the FLOP budget at very long context — yet can dominate <em>runtime</em> because the score matrix is memory-bound.</li>
+<li>Memorize the constants: training <span class="arithmatex">\(\approx 6N\!\cdot\!D\)</span> FLOPs, inference <span class="arithmatex">\(\approx 2N\)</span> FLOPs/token. They power every capacity and cost estimate.</li>
+<li><strong>Decode is memory-bound</strong> (GEMV, <span class="arithmatex">\(I\approx1\)</span>): single-stream speed is set by weight-read bandwidth, not FLOP/s. Batching and quantization, not FLOP pruning, are the fixes.</li>
+<li><strong>MFU</strong> <span class="arithmatex">\(= 6N\!\cdot\!\text{tok/s} / (\text{GPUs}\times\pi)\)</span> is your north-star efficiency metric; healthy large runs sit ~40–55%, and a drop with no architectural cause is a regression.</li>
+<li>Profile with the <strong>PyTorch profiler</strong> for operator-level hot lists and <strong>Nsight Systems/Compute</strong> for timelines and hardware rooflines — and always <strong>warm up + synchronize</strong> or your measurements are fiction.</li>
+<li>Lower precision raises the compute roof <em>and</em> the effective intensity simultaneously — the double win behind FP8/INT4.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>The roofline model remains the dominant first-order framework for GPU performance analysis in 2026, and recent work has extended it to LLM-specific settings — characterizing prefill vs. decode regimes, on-device SLMs, and multi-level memory hierarchies. Automated roofline tools now ship inside NVIDIA&rsquo;s official profilers, making the methodology accessible end-to-end without manual FLOP counting.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://dl.acm.org/doi/10.1145/1498765.1498785">Williams, Waterman &amp; Patterson, <em>Roofline: An Insightful Visual Performance Model for Multicore Architectures</em> (2009)</a> — the original paper that defined arithmetic intensity, the memory roof, and the compute roof; every GPU performance conversation still references it.</li>
+<li><a href="https://arxiv.org/abs/2204.02311">Chowdhery et al., <em>PaLM: Scaling Language Modeling with Pathways</em> (2022)</a> — introduces Model FLOPs Utilization (MFU) and Hardware FLOPs Utilization (HFU) as standard training-efficiency metrics for large-scale LLM runs.</li>
+<li><a href="https://arxiv.org/abs/2211.05102">Pope et al., <em>Efficiently Scaling Transformer Inference</em> (2022)</a> — derives analytical models for LLM inference efficiency, showing how the prefill/decode split maps onto compute-bound vs. memory-bound roofline regimes on TPU slices.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2205.14135">Dao et al., <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022)</a> — the canonical roofline-driven kernel redesign: avoids materializing the full attention matrix in HBM to cross the memory roof.</li>
+<li><a href="https://arxiv.org/abs/2407.08608">Shah et al., <em>FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision</em> (2024)</a> — extends IO-aware attention to H100 hardware, exploiting async WGMMA and TMA instructions to push closer to the H100 compute roof.</li>
+<li><a href="https://arxiv.org/abs/2402.16363">Yuan et al., <em>LLM Inference Unveiled: Survey and Roofline Model Insights</em> (2024)</a> — systematic survey that places every major LLM inference optimization (quantization, speculative decoding, sparsity) on a shared roofline framework with worked hardware numbers.</li>
+<li><a href="https://arxiv.org/abs/2602.11506">Bi et al., <em>RooflineBench: A Benchmarking Framework for On-Device LLMs via Roofline Analysis</em> (2026)</a> — extends roofline analysis to edge/mobile hardware, identifies the operational-intensity regression as model depth grows, and evaluates MLA as a fix.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/Dao-AILab/flash-attention">Dao-AILab/flash-attention</a> — official FlashAttention repo (v1–v4); the reference IO-aware CUDA kernel used in virtually every production LLM training stack.</li>
+<li><a href="https://github.com/hahnyuan/LLM-Viewer">hahnyuan/LLM-Viewer</a> — open-source tool that computes per-layer arithmetic intensity, roofline position, and memory traffic for arbitrary LLM configs across hardware targets; companion to the Yuan et al. 2024 survey.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://docs.nvidia.com/nsight-compute/NsightCompute/index.html">NVIDIA Nsight Compute Documentation</a> — official guide to the GPU kernel profiler that renders hierarchical roofline charts directly from hardware counters; covers the <code>--set full</code> roofline section used throughout this chapter.</li>
+<li><a href="https://docs.nersc.gov/tools/performance/roofline/">NERSC Roofline Performance Model Guide</a> — practical tutorial on the Empirical Roofline Toolkit (ERT), hierarchical rooflines, and measuring arithmetic intensity with Nsight Compute on real GPU workloads.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Williams, Waterman &amp; Patterson, <em>Roofline: An Insightful Visual Performance Model for Multicore Architectures</em> (2009) — the original roofline paper.</li>
+<li>Chowdhery et al., <em>PaLM: Scaling Language Modeling with Pathways</em> (2022) — defines and popularizes Model FLOPs Utilization (MFU) and Hardware FLOPs Utilization (HFU).</li>
+<li>Kaplan et al., <em>Scaling Laws for Neural Language Models</em> (2020) and Hoffmann et al., <em>Training Compute-Optimal Large Language Models</em> (Chinchilla, 2022) — origin of the <span class="arithmatex">\(6N\)</span> training-FLOP convention used throughout.</li>
+<li>Dao et al., <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022) — the canonical example of an IO-aware, roofline-driven kernel redesign.</li>
+<li>NVIDIA <em>Nsight Systems</em> and <em>Nsight Compute</em> documentation, and the <em>CUDA C++ Programming Guide</em> — the practical profiling tools, including Nsight Compute&rsquo;s built-in roofline analysis.</li>
+<li>PyTorch documentation for <code>torch.profiler</code> and <code>torch.utils.flop_counter</code> — operator-level profiling and exact FLOP accounting on a real graph.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="../03-pretraining/16-continual-pretraining.html"><span class="pn-label">← Previous</span><span class="pn-title">Continual &amp; Domain-Adaptive Pretraining</span></a>
+<a class="next" href="02-flash-attention-1.html"><span class="pn-label">Next →</span><span class="pn-title">FlashAttention I: IO-Awareness &amp; The Online Softmax</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#two-speed-limits-compute-and-bandwidth">Two Speed Limits: Compute and Bandwidth</a></li>
+<li class="toc-l3"><a href="#arithmetic-intensity">Arithmetic intensity</a></li>
+<li class="toc-l2"><a href="#the-roofline-model">The Roofline Model</a></li>
+<li class="toc-l3"><a href="#a-naive-vs-real-roofline">A naive vs. real roofline</a></li>
+<li class="toc-l2"><a href="#counting-flops-the-transformer-from-the-top">Counting FLOPs: The Transformer From the Top</a></li>
+<li class="toc-l3"><a href="#the-ffn-the-flop-hog">The FFN (the FLOP hog)</a></li>
+<li class="toc-l3"><a href="#attention-projections-vs-the-attention-score">Attention projections vs. the attention score</a></li>
+<li class="toc-l3"><a href="#the-famous-6n-rule-for-training">The famous \(6N\) rule for training</a></li>
+<li class="toc-l2"><a href="#bytes-intensity-and-the-two-regimes-of-inference">Bytes, Intensity, and the Two Regimes of Inference</a></li>
+<li class="toc-l2"><a href="#model-flops-utilization-mfu">Model FLOPs Utilization (MFU)</a></li>
+<li class="toc-l3"><a href="#why-low-precision-raises-the-roof">Why low precision raises the roof</a></li>
+<li class="toc-l2"><a href="#profiling-confronting-the-model-with-reality">Profiling: Confronting the Model With Reality</a></li>
+<li class="toc-l3"><a href="#the-pytorch-profiler">The PyTorch profiler</a></li>
+<li class="toc-l3"><a href="#turning-a-profile-into-a-roofline-verdict">Turning a profile into a roofline verdict</a></li>
+<li class="toc-l3"><a href="#nvidia-nsight-systems-and-compute">NVIDIA Nsight: Systems and Compute</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-performance-debugging-playbook">Putting It Together: A Performance-Debugging Playbook</a></li>
+<li class="toc-l2"><a href="#limits-and-refinements-of-the-roofline">Limits and Refinements of the Roofline</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

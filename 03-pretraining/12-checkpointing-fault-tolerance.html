@@ -1,0 +1,1782 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkpointing, Fault Tolerance &amp; Long-Running Jobs — The LLM Stack</title>
+<meta name="description" content="Sharded/distributed checkpointing, async checkpointing, save/restore optimizer+RNG state, resuming, elastic training, hardware failure rates at scale, in-memory">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="active" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="312-checkpointing-fault-tolerance-long-running-jobs">3.12 Checkpointing, Fault Tolerance &amp; Long-Running Jobs<a class="headerlink" href="#312-checkpointing-fault-tolerance-long-running-jobs" title="Permanent link">¶</a></h1>
+<p>Training a frontier LLM is one of the longest-running computational jobs in existence. Runs lasting weeks or months across thousands of GPUs are now routine. At that scale, hardware failure is not an exception — it is a certainty. This chapter is a systems-engineering deep dive into how you keep those jobs running, how you save state correctly, and how you resume training without losing work or introducing subtle bugs.</p>
+<p>We build from the basics of what state must be saved, through sharded and asynchronous checkpointing for distributed training, to the mathematics of expected loss from hardware failures, elastic training, and deterministic reproducibility.</p>
+<p>For the distributed training infrastructure that checkpointing sits on top of, see <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a> and <a href="../03-pretraining/07-megatron-deepspeed.html">Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a>. For the optimizer state that must be saved, see <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a>. Memory-efficient techniques that reduce checkpoint sizes are covered in <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a>.</p>
+<hr />
+<h2 id="3121-what-state-must-be-saved">3.12.1 What State Must Be Saved?<a class="headerlink" href="#3121-what-state-must-be-saved" title="Permanent link">¶</a></h2>
+<p>A complete checkpoint for a training job contains four categories of state:</p>
+<p><strong>1. Model parameters</strong> — the weight tensors themselves. For a model with <span class="arithmatex">\(P\)</span> parameters stored in bf16, that is <span class="arithmatex">\(2P\)</span> bytes. A 70B-parameter model uses approximately 140 GB.</p>
+<p><strong>2. Optimizer state</strong> — for Adam, two additional copies of every parameter (the first and second moment estimates <span class="arithmatex">\(m_t\)</span> and <span class="arithmatex">\(v_t\)</span>), typically kept in fp32 even when the model is in bf16. That is <span class="arithmatex">\(4 \times P \times 4 = 16P\)</span> bytes — for the 70B model, roughly 1.1 TB.</p>
+<p><strong>3. Random-number generator (RNG) state</strong> — the state of every RNG in the system: the CPU <code>torch</code> RNG, the CUDA RNG on each device, and potentially the data-loader&rsquo;s Python <code>random</code> and <code>numpy</code> RNG states. This is tiny (a few kilobytes per device) but critical for reproducibility.</p>
+<p><strong>4. Training metadata</strong> — the global step number, the current learning-rate schedule position, data shard cursors (which files and offsets have been consumed), and any other loop variables needed to resume identically.</p>
+<p>Failing to save any of these correctly produces a run that resumes but silently diverges. A common mistake is saving only the model weights (sufficient for inference) while discarding optimizer state, which causes the resumed run to re-warm momentum from zero, effectively restarting learning-rate warmup.</p>
+<div class="admonition warning">
+<p class="admonition-title">Optimizer state mismatch is silent</p>
+<p>If you save model weights but not optimizer moments, the resumed run will not crash. Loss will simply be higher than expected for hundreds of steps as the optimizer re-accumulates momentum. This is extremely hard to debug after the fact. Always save and reload optimizer state.</p>
+</div>
+<h3 id="what-about-gradient-scaler-state">What About Gradient Scaler State?<a class="headerlink" href="#what-about-gradient-scaler-state" title="Permanent link">¶</a></h3>
+<p>When training in fp16 with dynamic loss scaling (see <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a>), the <code>GradScaler</code> object carries its own state: the current scale factor and a step counter. In bf16 training, which does not require dynamic scaling, there is no scaler to save.</p>
+<hr />
+<h2 id="3122-checkpoint-size-and-the-distributed-complication">3.12.2 Checkpoint Size and the Distributed Complication<a class="headerlink" href="#3122-checkpoint-size-and-the-distributed-complication" title="Permanent link">¶</a></h2>
+<p>On a single GPU, saving a checkpoint with <code>torch.save(state_dict, path)</code> is straightforward. The complication arises when model state is sharded across thousands of devices using FSDP, ZeRO-3, or tensor/pipeline parallelism.</p>
+<h3 id="the-sharding-problem">The Sharding Problem<a class="headerlink" href="#the-sharding-problem" title="Permanent link">¶</a></h3>
+<p>In FSDP (Fully Sharded Data Parallel), each rank holds a disjoint shard of every parameter. Rank <span class="arithmatex">\(r\)</span> holds parameters indexed roughly as:</p>
+<div class="arithmatex">\[
+\text{shard}_r = \left\{ w_i : i \bmod N_{\text{ranks}} = r \right\}
+\]</div>
+<p>If we naively call <code>torch.save</code> on each rank&rsquo;s local shard, we produce <span class="arithmatex">\(N_{\text{ranks}}\)</span> separate files that cannot be loaded without the same <span class="arithmatex">\(N_{\text{ranks}}\)</span> configuration. Changing cluster size during a resume becomes impossible.</p>
+<p>There are two canonical approaches:</p>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Description</th>
+<th>Trade-offs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Consolidated checkpoint</strong></td>
+<td>Rank 0 gathers all shards, saves a single file</td>
+<td>Load/save is serialized; bottleneck at all-gather; requires full model in rank-0 RAM</td>
+</tr>
+<tr>
+<td><strong>Sharded checkpoint</strong></td>
+<td>Each rank saves its own shard independently</td>
+<td>Parallelizes I/O; format is topology-dependent; requires resharding at resume if topology changes</td>
+</tr>
+<tr>
+<td><strong>Topology-agnostic sharded</strong></td>
+<td>Save shards in a normalized layout (e.g., DTensor) that can be redistributed to any topology</td>
+<td>Best of both; used by PyTorch Distributed Checkpoint (DCP)</td>
+</tr>
+</tbody>
+</table>
+<p>PyTorch&rsquo;s <code>torch.distributed.checkpoint</code> (DCP), introduced in PyTorch 2.x, implements the third strategy. It uses a uniform storage layout where parameters are saved as named chunks that can be remapped to any new device layout on load.</p>
+<h3 id="checkpoint-storage-layout">Checkpoint Storage Layout<a class="headerlink" href="#checkpoint-storage-layout" title="Permanent link">¶</a></h3>
+<p>A well-designed sharded checkpoint directory looks like this:</p>
+<figure class="viz" id="fig-ckpt-sharded-dir-layout">
+<svg viewBox="0 0 880 590" role="img" aria-label="Anatomy of a topology-agnostic sharded checkpoint directory: root folder, metadata.json, per-rank RNG state files, model_optim subdirectory with DCP shard files, and a COMPLETE sentinel file written last.">
+  <defs>
+    <marker id="csd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#888)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-ckpt-sharded-dir-layout text { fill: var(--ink-soft, #374151); }
+    #fig-ckpt-sharded-dir-layout .mono { font: 600 12px var(--mono,monospace); }
+    #fig-ckpt-sharded-dir-layout .sans { font: 400 11px var(--sans,sans-serif); }
+    #fig-ckpt-sharded-dir-layout .sans-sm { font: 400 10px var(--sans,sans-serif); }
+    #fig-ckpt-sharded-dir-layout .label-bold { font: 600 12px var(--sans,sans-serif); }
+    #fig-ckpt-sharded-dir-layout .legend-txt { font: 400 10px var(--sans,sans-serif); }
+    #fig-ckpt-sharded-dir-layout .muted-txt { fill: var(--muted,#9ca3af); }
+    #fig-ckpt-sharded-dir-layout .ok-txt { fill: var(--good,#16a34a); }
+    #fig-ckpt-sharded-dir-layout .accent-txt { fill: var(--accent,#6366f1); }
+  </style>
+
+
+  <rect x="20" y="16" width="290" height="40" rx="6" class="v-fill v-accent-s" stroke="var(--accent,#6366f1)" stroke-width="1.8" fill="var(--surface,#f8f8fb)"/>
+
+  <rect x="28" y="24" width="16" height="12" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.25" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <rect x="28" y="20" width="8" height="5" rx="1" fill="var(--accent,#6366f1)" fill-opacity="0.4"/>
+  <text x="52" y="41" class="mono accent-txt">checkpoint_step_5000/</text>
+
+  <text x="320" y="34" class="sans muted-txt">one directory per checkpoint</text>
+  <text x="320" y="47" class="sans muted-txt">(named by global step)</text>
+
+
+  <line x1="44" y1="56" x2="44" y2="498" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+
+
+
+  <line x1="44" y1="88" x2="78" y2="88" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="68" width="200" height="38" rx="5" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1.2" fill="var(--surface,#f8f8fb)"/>
+  <text x="178" y="92" text-anchor="middle" class="mono">metadata.json</text>
+
+  <rect x="296" y="60" width="570" height="52" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.08" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="308" y="77" class="sans accent-txt">global step, LR-schedule state, data-loader cursor,</text>
+  <text x="308" y="91" class="sans accent-txt">topology hint. Written by rank 0 only.</text>
+
+  <line x1="278" y1="88" x2="296" y2="88" stroke="var(--ink-soft,#9ca3af)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+
+  <line x1="44" y1="160" x2="78" y2="160" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="140" width="200" height="38" rx="5" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1.2" fill="var(--surface,#f8f8fb)"/>
+  <text x="178" y="164" text-anchor="middle" class="mono">rng_state_rank0.pt</text>
+
+
+  <line x1="44" y1="210" x2="78" y2="210" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="190" width="200" height="38" rx="5" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1.2" fill="var(--surface,#f8f8fb)"/>
+  <text x="178" y="214" text-anchor="middle" class="mono">rng_state_rank1.pt</text>
+
+
+  <line x1="68" y1="144" x2="68" y2="256" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <line x1="68" y1="144" x2="76" y2="144" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <line x1="68" y1="256" x2="76" y2="256" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <text x="24" y="205" class="sans-sm muted-txt" transform="rotate(-90,24,205)">one per rank</text>
+
+
+  <line x1="44" y1="258" x2="78" y2="258" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="240" width="200" height="34" rx="5" fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="178" y="263" text-anchor="middle" class="mono muted-txt">...</text>
+
+
+  <rect x="296" y="136" width="570" height="62" rx="5" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="308" y="154" class="sans">per-rank RNG state (Python / NumPy / torch CPU / CUDA).</text>
+  <text x="308" y="168" class="sans">One file PER RANK. Tiny (~KB) but critical for</text>
+  <text x="308" y="182" class="sans">exact resumability.</text>
+
+  <line x1="278" y1="160" x2="296" y2="160" stroke="var(--ink-soft,#9ca3af)" stroke-width="0.8" stroke-dasharray="3 2"/>
+  <line x1="278" y1="210" x2="296" y2="195" stroke="var(--ink-soft,#9ca3af)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+
+  <line x1="44" y1="326" x2="78" y2="326" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="304" width="200" height="42" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+
+  <rect x="86" y="312" width="13" height="9" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.35" stroke="var(--accent,#6366f1)" stroke-width="0.8"/>
+  <rect x="86" y="309" width="6" height="4" rx="1" fill="var(--accent,#6366f1)" fill-opacity="0.5"/>
+  <text x="178" y="330" text-anchor="middle" class="mono accent-txt">model_optim/</text>
+
+  <rect x="296" y="296" width="570" height="56" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="308" y="314" class="label-bold accent-txt">PyTorch DCP sharded model + optimizer state.</text>
+  <text x="308" y="330" class="sans accent-txt">All ranks write IN PARALLEL.</text>
+  <text x="308" y="344" class="sans-sm accent-txt">Topology-agnostic: loads onto ANY device layout.</text>
+  <line x1="278" y1="326" x2="296" y2="326" stroke="var(--accent,#6366f1)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+
+  <line x1="110" y1="346" x2="110" y2="470" stroke="var(--border-2,#d1d5db)" stroke-width="1.1"/>
+
+
+  <line x1="110" y1="368" x2="144" y2="368" stroke="var(--border-2,#d1d5db)" stroke-width="1.1"/>
+  <rect x="144" y="352" width="180" height="32" rx="4" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1" fill="var(--surface,#f8f8fb)"/>
+  <text x="234" y="372" text-anchor="middle" class="mono" style="font-size:11px">__0_0.distcp</text>
+
+
+  <line x1="110" y1="402" x2="144" y2="402" stroke="var(--border-2,#d1d5db)" stroke-width="1.1"/>
+  <rect x="144" y="386" width="180" height="32" rx="4" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1" fill="var(--surface,#f8f8fb)"/>
+  <text x="234" y="406" text-anchor="middle" class="mono" style="font-size:11px">__0_1.distcp</text>
+
+
+  <line x1="110" y1="434" x2="144" y2="434" stroke="var(--border-2,#d1d5db)" stroke-width="1.1"/>
+  <rect x="144" y="418" width="180" height="32" rx="4" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1" fill="var(--surface,#f8f8fb)"/>
+  <text x="234" y="438" text-anchor="middle" class="mono" style="font-size:11px">__1_0.distcp</text>
+
+
+  <line x1="110" y1="466" x2="144" y2="466" stroke="var(--border-2,#d1d5db)" stroke-width="1.1"/>
+  <rect x="144" y="452" width="180" height="28" rx="4" fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="234" y="471" text-anchor="middle" class="mono muted-txt" style="font-size:11px">...</text>
+
+
+  <rect x="340" y="352" width="526" height="120" rx="5" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="352" y="372" class="sans">Flat binary blobs of tensor chunk bytes,</text>
+  <text x="352" y="387" class="sans">named by chunk index. A companion index</text>
+  <text x="352" y="402" class="sans">file maps logical tensor names to physical</text>
+  <text x="352" y="417" class="sans">byte ranges, so chunks can be remapped</text>
+  <text x="352" y="432" class="sans">to ANY new device layout on load.</text>
+  <line x1="324" y1="390" x2="340" y2="390" stroke="var(--ink-soft,#9ca3af)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+
+  <line x1="44" y1="514" x2="78" y2="514" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="496" width="200" height="38" rx="5" fill="var(--good,#16a34a)" fill-opacity="0.12" stroke="var(--good,#16a34a)" stroke-width="2"/>
+
+  <path d="M88 514 l4 5 l8 -10" fill="none" stroke="var(--good,#16a34a)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="182" y="519" text-anchor="middle" class="mono ok-txt">COMPLETE</text>
+
+
+  <rect x="296" y="488" width="570" height="60" rx="5" fill="var(--good,#16a34a)" fill-opacity="0.10" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+  <text x="308" y="505" class="label-bold ok-txt">Atomic sentinel written LAST, after dist.barrier().</text>
+  <text x="308" y="520" class="sans ok-txt">A checkpoint without it is treated as incomplete /</text>
+  <text x="308" y="535" class="sans ok-txt">corrupt and never loaded.</text>
+  <line x1="278" y1="514" x2="296" y2="514" stroke="var(--good,#16a34a)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+
+  <rect x="20" y="558" width="290" height="22" rx="4" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="0.8"/>
+
+  <rect x="28" y="563" width="14" height="10" rx="2" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1" fill="var(--surface,#f8f8fb)"/>
+  <text x="46" y="572" class="legend-txt">file</text>
+
+  <rect x="70" y="563" width="14" height="10" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.18" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="88" y="572" class="legend-txt">directory</text>
+
+  <rect x="150" y="563" width="14" height="10" rx="2" fill="var(--good,#16a34a)" fill-opacity="0.18" stroke="var(--good,#16a34a)" stroke-width="1.2"/>
+  <text x="168" y="572" class="legend-txt">sentinel (COMPLETE)</text>
+</svg>
+<figcaption><b>Anatomy of a topology-agnostic sharded checkpoint directory.</b> Four conceptual layers are stored: shared metadata (rank-0 only), per-rank RNG state (one tiny file each), DCP-sharded model and optimizer tensors (all ranks write in parallel), and a <code>COMPLETE</code> sentinel written atomically last. The sentinel enforces the all-or-nothing invariant: any checkpoint missing it is discarded on resume.</figcaption>
+</figure>
+
+<p>Each <code>.distcp</code> file is a flat binary blob containing the tensor chunk bytes, with a companion index file mapping logical tensor names to physical byte ranges.</p>
+<hr />
+<h2 id="3123-saving-and-loading-concrete-pytorch-code">3.12.3 Saving and Loading: Concrete PyTorch Code<a class="headerlink" href="#3123-saving-and-loading-concrete-pytorch-code" title="Permanent link">¶</a></h2>
+<p>Let us build a minimal but production-grade checkpointing harness for FSDP training.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">checkpoint.py — Production-grade FSDP checkpointing utilities.</span>
+
+<span class="sd">Requirements: PyTorch &gt;= 2.1, torchdata, FSDP model and optimizer.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.distributed.fsdp</span><span class="w"> </span><span class="kn">import</span> <span class="n">FullyShardedDataParallel</span> <span class="k">as</span> <span class="n">FSDP</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.distributed.fsdp.fully_sharded_data_parallel</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">StateDictType</span><span class="p">,</span>
+    <span class="n">FullStateDictConfig</span><span class="p">,</span>
+    <span class="n">ShardedStateDictConfig</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.distributed.checkpoint</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">save</span><span class="p">,</span>
+    <span class="n">load</span><span class="p">,</span>
+    <span class="n">FileSystemWriter</span><span class="p">,</span>
+    <span class="n">FileSystemReader</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.distributed.checkpoint.metadata</span><span class="w"> </span><span class="kn">import</span> <span class="n">BytesStorageMetadata</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+
+<span class="c1"># --------------------------------------------------------------------------</span>
+<span class="c1"># RNG state helpers</span>
+<span class="c1"># --------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_rng_state</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Capture all RNG states on the current rank.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;python&quot;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">getstate</span><span class="p">(),</span>
+        <span class="s2">&quot;numpy&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">get_state</span><span class="p">(),</span>
+        <span class="s2">&quot;torch_cpu&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">get_rng_state</span><span class="p">(),</span>
+        <span class="s2">&quot;torch_cuda&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_rng_state</span><span class="p">(),</span>  <span class="c1"># current device only</span>
+    <span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">restore_rng_state</span><span class="p">(</span><span class="n">state</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Restore RNG states — must be called on the same rank.&quot;&quot;&quot;</span>
+    <span class="n">random</span><span class="o">.</span><span class="n">setstate</span><span class="p">(</span><span class="n">state</span><span class="p">[</span><span class="s2">&quot;python&quot;</span><span class="p">])</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">set_state</span><span class="p">(</span><span class="n">state</span><span class="p">[</span><span class="s2">&quot;numpy&quot;</span><span class="p">])</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">set_rng_state</span><span class="p">(</span><span class="n">state</span><span class="p">[</span><span class="s2">&quot;torch_cpu&quot;</span><span class="p">])</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">set_rng_state</span><span class="p">(</span><span class="n">state</span><span class="p">[</span><span class="s2">&quot;torch_cuda&quot;</span><span class="p">])</span>
+
+
+<span class="c1"># --------------------------------------------------------------------------</span>
+<span class="c1"># Sharded checkpoint save (topology-agnostic via DCP)</span>
+<span class="c1"># --------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">save_checkpoint</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">FSDP</span><span class="p">,</span>
+    <span class="n">optimizer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Optimizer</span><span class="p">,</span>
+    <span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">lr_scheduler</span><span class="p">,</span>
+    <span class="n">data_loader_state</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+    <span class="n">checkpoint_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Save a complete training checkpoint using PyTorch Distributed Checkpoint.</span>
+<span class="sd">    All ranks participate; I/O is parallel across ranks.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        model:            The FSDP-wrapped model.</span>
+<span class="sd">        optimizer:        The optimizer (may also be FSDP-sharded).</span>
+<span class="sd">        step:             Global training step.</span>
+<span class="sd">        lr_scheduler:     LR scheduler object.</span>
+<span class="sd">        data_loader_state: Dict with shard file index and byte offset.</span>
+<span class="sd">        checkpoint_dir:   Root directory for all checkpoints.</span>
+<span class="sd">        rank:             Current rank (for per-rank files).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ckpt_path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">checkpoint_dir</span><span class="p">)</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;step_</span><span class="si">{</span><span class="n">step</span><span class="si">:</span><span class="s2">08d</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="n">ckpt_path</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># 1. Collect sharded model + optimizer state dict (stays sharded, no gather)</span>
+    <span class="k">with</span> <span class="n">FSDP</span><span class="o">.</span><span class="n">state_dict_type</span><span class="p">(</span>
+        <span class="n">model</span><span class="p">,</span>
+        <span class="n">StateDictType</span><span class="o">.</span><span class="n">SHARDED_STATE_DICT</span><span class="p">,</span>
+        <span class="n">ShardedStateDictConfig</span><span class="p">(</span><span class="n">offload_to_cpu</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">model_state</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span>
+        <span class="n">optim_state</span> <span class="o">=</span> <span class="n">FSDP</span><span class="o">.</span><span class="n">optim_state_dict</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">)</span>
+
+    <span class="c1"># 2. Parallel distributed save — every rank writes its own shards</span>
+    <span class="n">save</span><span class="p">(</span>
+        <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">model_state</span><span class="p">,</span> <span class="s2">&quot;optimizer&quot;</span><span class="p">:</span> <span class="n">optim_state</span><span class="p">},</span>
+        <span class="n">storage_writer</span><span class="o">=</span><span class="n">FileSystemWriter</span><span class="p">(</span><span class="n">ckpt_path</span> <span class="o">/</span> <span class="s2">&quot;model_optim&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 3. Per-rank RNG state (tiny, but critical for exact reproducibility)</span>
+    <span class="n">rng_path</span> <span class="o">=</span> <span class="n">ckpt_path</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;rng_state_rank</span><span class="si">{</span><span class="n">rank</span><span class="si">}</span><span class="s2">.pt&quot;</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">get_rng_state</span><span class="p">(),</span> <span class="n">rng_path</span><span class="p">)</span>
+
+    <span class="c1"># 4. Training metadata — only rank 0 writes the shared metadata file</span>
+    <span class="k">if</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">metadata</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;step&quot;</span><span class="p">:</span> <span class="n">step</span><span class="p">,</span>
+            <span class="s2">&quot;lr_scheduler&quot;</span><span class="p">:</span> <span class="n">lr_scheduler</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span>
+            <span class="s2">&quot;data_loader&quot;</span><span class="p">:</span> <span class="n">data_loader_state</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">ckpt_path</span> <span class="o">/</span> <span class="s2">&quot;metadata.json&quot;</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">metadata</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+
+    <span class="c1"># 5. Synchronise: all ranks must finish before we consider the checkpoint</span>
+    <span class="c1">#    &quot;complete&quot;. Write an atomic sentinel file last.</span>
+    <span class="n">dist</span><span class="o">.</span><span class="n">barrier</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="p">(</span><span class="n">ckpt_path</span> <span class="o">/</span> <span class="s2">&quot;COMPLETE&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">touch</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[rank 0] Checkpoint saved: </span><span class="si">{</span><span class="n">ckpt_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># --------------------------------------------------------------------------</span>
+<span class="c1"># Sharded checkpoint load</span>
+<span class="c1"># --------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_checkpoint</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">FSDP</span><span class="p">,</span>
+    <span class="n">optimizer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Optimizer</span><span class="p">,</span>
+    <span class="n">checkpoint_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Load a checkpoint. Returns metadata dict (step, scheduler state, etc.).</span>
+<span class="sd">    Works even if the current topology differs from the saved topology.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ckpt_path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">checkpoint_dir</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="p">(</span><span class="n">ckpt_path</span> <span class="o">/</span> <span class="s2">&quot;COMPLETE&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">(),</span> \
+        <span class="sa">f</span><span class="s2">&quot;Checkpoint at </span><span class="si">{</span><span class="n">ckpt_path</span><span class="si">}</span><span class="s2"> is incomplete or corrupted!&quot;</span>
+
+    <span class="c1"># 1. Load model + optimizer via DCP (handles resharding automatically)</span>
+    <span class="k">with</span> <span class="n">FSDP</span><span class="o">.</span><span class="n">state_dict_type</span><span class="p">(</span>
+        <span class="n">model</span><span class="p">,</span>
+        <span class="n">StateDictType</span><span class="o">.</span><span class="n">SHARDED_STATE_DICT</span><span class="p">,</span>
+        <span class="n">ShardedStateDictConfig</span><span class="p">(</span><span class="n">offload_to_cpu</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">state_dict</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="s2">&quot;optimizer&quot;</span><span class="p">:</span> <span class="p">{}}</span>
+        <span class="n">load</span><span class="p">(</span>
+            <span class="n">state_dict</span><span class="p">,</span>
+            <span class="n">storage_reader</span><span class="o">=</span><span class="n">FileSystemReader</span><span class="p">(</span><span class="n">ckpt_path</span> <span class="o">/</span> <span class="s2">&quot;model_optim&quot;</span><span class="p">),</span>
+        <span class="p">)</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">state_dict</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">])</span>
+        <span class="n">optim_state</span> <span class="o">=</span> <span class="n">FSDP</span><span class="o">.</span><span class="n">optim_state_dict_to_load</span><span class="p">(</span>
+            <span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">state_dict</span><span class="p">[</span><span class="s2">&quot;optimizer&quot;</span><span class="p">]</span>
+        <span class="p">)</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">optim_state</span><span class="p">)</span>
+
+    <span class="c1"># 2. Restore per-rank RNG state</span>
+    <span class="n">rng_path</span> <span class="o">=</span> <span class="n">ckpt_path</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;rng_state_rank</span><span class="si">{</span><span class="n">rank</span><span class="si">}</span><span class="s2">.pt&quot;</span>
+    <span class="k">if</span> <span class="n">rng_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+        <span class="n">restore_rng_state</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">rng_path</span><span class="p">,</span> <span class="n">map_location</span><span class="o">=</span><span class="s2">&quot;cpu&quot;</span><span class="p">))</span>
+
+    <span class="c1"># 3. Load shared metadata (every rank reads it for the scheduler / step)</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">ckpt_path</span> <span class="o">/</span> <span class="s2">&quot;metadata.json&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">metadata</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+    <span class="n">dist</span><span class="o">.</span><span class="n">barrier</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">metadata</span>
+
+
+<span class="c1"># --------------------------------------------------------------------------</span>
+<span class="c1"># Checkpoint manager: keeps last K checkpoints, rotates older ones</span>
+<span class="c1"># --------------------------------------------------------------------------</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">CheckpointManager</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">root_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">keep_last_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">root_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">root_dir</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">root_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">keep_last_k</span> <span class="o">=</span> <span class="n">keep_last_k</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_saved</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">save</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">step</span><span class="p">,</span> <span class="n">lr_scheduler</span><span class="p">,</span>
+             <span class="n">data_loader_state</span><span class="p">,</span> <span class="n">rank</span><span class="p">):</span>
+        <span class="n">save_checkpoint</span><span class="p">(</span>
+            <span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">step</span><span class="p">,</span> <span class="n">lr_scheduler</span><span class="p">,</span>
+            <span class="n">data_loader_state</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">root_dir</span><span class="p">),</span> <span class="n">rank</span>
+        <span class="p">)</span>
+        <span class="n">ckpt_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">root_dir</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;step_</span><span class="si">{</span><span class="n">step</span><span class="si">:</span><span class="s2">08d</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_saved</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ckpt_path</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_saved</span><span class="o">.</span><span class="n">sort</span><span class="p">()</span>
+
+        <span class="c1"># Remove checkpoints older than keep_last_k</span>
+        <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_saved</span><span class="p">)</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">keep_last_k</span><span class="p">:</span>
+            <span class="n">old</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_saved</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">old</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+                <span class="kn">import</span><span class="w"> </span><span class="nn">shutil</span>
+                <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">old</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[rank 0] Removed old checkpoint: </span><span class="si">{</span><span class="n">old</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">latest</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Find the most recent COMPLETE checkpoint under root_dir.&quot;&quot;&quot;</span>
+        <span class="n">candidates</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">root_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">&quot;step_*&quot;</span><span class="p">))</span>
+        <span class="k">for</span> <span class="n">ckpt</span> <span class="ow">in</span> <span class="nb">reversed</span><span class="p">(</span><span class="n">candidates</span><span class="p">):</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">ckpt</span> <span class="o">/</span> <span class="s2">&quot;COMPLETE&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+                <span class="k">return</span> <span class="n">ckpt</span>
+        <span class="k">return</span> <span class="kc">None</span>
+</code></pre></div>
+<p>The <code>COMPLETE</code> sentinel file pattern is critical: it prevents a partially written checkpoint from being mistakenly loaded after a crash mid-save.</p>
+<hr />
+<h2 id="3124-asynchronous-background-checkpointing">3.12.4 Asynchronous (Background) Checkpointing<a class="headerlink" href="#3124-asynchronous-background-checkpointing" title="Permanent link">¶</a></h2>
+<p>Synchronous checkpointing blocks all GPUs while state is serialized and written to disk. For large models this pause can be measured in minutes — entirely &ldquo;dead&rdquo; compute time.</p>
+<h3 id="the-async-pipeline">The Async Pipeline<a class="headerlink" href="#the-async-pipeline" title="Permanent link">¶</a></h3>
+<p>Asynchronous checkpointing runs the save in a background thread or process so that training continues immediately:</p>
+<figure class="viz" id="fig-ckpt-async-vs-sync-timeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 900 420" role="img" aria-label="Synchronous checkpointing blocks all GPUs for ~4 minutes while saving; asynchronous checkpointing only blocks for a ~30-second CPU snapshot then continues training while the disk write runs in the background.">
+<defs>
+  <marker id="cas-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+  <marker id="cas-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="cas-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+  <pattern id="cas-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+    <line x1="0" y1="0" x2="0" y2="8" stroke="var(--warn,#e0a106)" stroke-width="1.5" stroke-opacity="0.4"/>
+  </pattern>
+  <clipPath id="cas-clip-sync-save">
+    <rect id="cas-sync-save-clip-rect" x="152" y="60" width="0" height="56"/>
+  </clipPath>
+  <clipPath id="cas-clip-step-n1">
+    <rect id="cas-step-n1-clip-rect" x="622" y="60" width="0" height="56"/>
+  </clipPath>
+  <clipPath id="cas-clip-snapshot">
+    <rect id="cas-snapshot-clip-rect" x="152" y="248" width="0" height="44"/>
+  </clipPath>
+  <clipPath id="cas-clip-async-steps">
+    <rect id="cas-async-steps-clip-rect" x="252" y="248" width="0" height="44"/>
+  </clipPath>
+  <clipPath id="cas-clip-bg-write">
+    <rect id="cas-bg-write-clip-rect" x="252" y="325" width="0" height="44"/>
+  </clipPath>
+</defs>
+<style>
+  #fig-ckpt-async-vs-sync-timeline text { fill: var(--ink-soft, #374151); }
+  #fig-ckpt-async-vs-sync-timeline .lbl { font: 600 12px var(--sans,sans-serif); }
+  #fig-ckpt-async-vs-sync-timeline .lbl-sm { font: 500 10px var(--sans,sans-serif); }
+  #fig-ckpt-async-vs-sync-timeline .row-lbl { font: 700 13px var(--sans,sans-serif); }
+  #fig-ckpt-async-vs-sync-timeline .caption { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-ckpt-async-vs-sync-timeline .warn-caption { font: 600 10px var(--sans,sans-serif); fill: var(--warn,#e0a106); }
+  #fig-ckpt-async-vs-sync-timeline .good-caption { font: 500 10px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+
+  @keyframes cas-widen {
+    from { width: 0; }
+  }
+  @keyframes cas-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes cas-pulse-warn {
+    0%, 100% { opacity: 0.18; }
+    50% { opacity: 0.38; }
+  }
+
+  /* Sync row: phase A */
+  #fig-ckpt-async-vs-sync-timeline .cas-phase-a-1 {
+    animation: cas-fade-in 0.4s ease 0.2s both;
+  }
+  #fig-ckpt-async-vs-sync-timeline #cas-sync-save-clip-rect {
+    animation: cas-widen 0.8s ease 0.8s both;
+    animation-fill-mode: both;
+  }
+  /* Override: fill to 470px wide */
+  #fig-ckpt-async-vs-sync-timeline #cas-sync-save-clip-rect {
+    animation: cas-sync-save-grow 0.8s ease 0.8s both;
+  }
+  @keyframes cas-sync-save-grow {
+    from { width: 0; }
+    to { width: 470; }
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-sync-save-g {
+    clip-path: url(#cas-clip-sync-save);
+  }
+  #fig-ckpt-async-vs-sync-timeline #cas-step-n1-clip-rect {
+    animation: cas-step-n1-grow 0.3s ease 1.8s both;
+  }
+  @keyframes cas-step-n1-grow {
+    from { width: 0; }
+    to { width: 80; }
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-sync-step-n1-g {
+    clip-path: url(#cas-clip-step-n1);
+  }
+  /* warn pulse on the save block */
+  #fig-ckpt-async-vs-sync-timeline .cas-warn-fill {
+    animation: cas-pulse-warn 1.5s ease 0.8s 4;
+  }
+
+  /* Async row: phase B */
+  #fig-ckpt-async-vs-sync-timeline .cas-phase-b-1 {
+    animation: cas-fade-in 0.4s ease 2.4s both;
+  }
+  #fig-ckpt-async-vs-sync-timeline #cas-snapshot-clip-rect {
+    animation: cas-snapshot-grow 0.25s ease 2.9s both;
+  }
+  @keyframes cas-snapshot-grow {
+    from { width: 0; }
+    to { width: 100; }
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-snapshot-g {
+    clip-path: url(#cas-clip-snapshot);
+  }
+  #fig-ckpt-async-vs-sync-timeline #cas-async-steps-clip-rect {
+    animation: cas-async-steps-grow 0.7s ease 3.3s both;
+  }
+  @keyframes cas-async-steps-grow {
+    from { width: 0; }
+    to { width: 390; }
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-async-steps-g {
+    clip-path: url(#cas-clip-async-steps);
+  }
+  #fig-ckpt-async-vs-sync-timeline #cas-bg-write-clip-rect {
+    animation: cas-bg-write-grow 0.7s ease 3.3s both;
+  }
+  @keyframes cas-bg-write-grow {
+    from { width: 0; }
+    to { width: 390; }
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-bg-write-g {
+    clip-path: url(#cas-clip-bg-write);
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-phase-b-labels {
+    animation: cas-fade-in 0.4s ease 4.2s both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-ckpt-async-vs-sync-timeline * {
+      animation: none !important;
+      clip-path: none !important;
+      opacity: 1 !important;
+    }
+    #fig-ckpt-async-vs-sync-timeline .cas-warn-fill {
+      opacity: 0.25 !important;
+    }
+  }
+</style>
+
+
+
+<text x="12" y="44" class="row-lbl" fill="var(--ink-soft,#374151)">Synchronous</text>
+
+
+<line x1="70" y1="135" x2="840" y2="135" stroke="var(--muted,#6b7280)" stroke-width="1" marker-end="url(#cas-arrow-muted)"/>
+<text x="845" y="139" class="caption" text-anchor="start">time</text>
+
+
+<g class="cas-phase-a-1">
+  <rect x="70" y="62" width="82" height="52" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--border-2,#d0d0d0)" stroke-width="1.5"/>
+  <text x="111" y="93" text-anchor="middle" class="lbl">step N</text>
+</g>
+
+
+<g class="cas-phase-a-1">
+  <line x1="152" y1="88" x2="160" y2="88" stroke="var(--muted,#6b7280)" stroke-width="1.4" marker-end="url(#cas-arrow-muted)"/>
+</g>
+
+
+<g class="cas-sync-save-g">
+
+  <rect x="152" y="62" width="470" height="52" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.12" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+
+  <rect x="152" y="62" width="470" height="52" rx="4" fill="url(#cas-hatch)" class="cas-warn-fill"/>
+  <text x="387" y="83" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">SAVE — all GPUs blocked</text>
+  <text x="387" y="101" text-anchor="middle" class="lbl-sm" fill="var(--warn,#e0a106)">~4 min</text>
+</g>
+
+
+<g class="cas-sync-save-g">
+  <text x="387" y="57" text-anchor="middle" class="warn-caption">dead compute time</text>
+</g>
+
+
+<g class="cas-sync-step-n1-g">
+  <line x1="622" y1="88" x2="630" y2="88" stroke="var(--muted,#6b7280)" stroke-width="1.4" marker-end="url(#cas-arrow-muted)"/>
+  <rect x="632" y="62" width="70" height="52" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--border-2,#d0d0d0)" stroke-width="1.5"/>
+  <text x="667" y="93" text-anchor="middle" class="lbl">step N+1</text>
+</g>
+
+
+
+<text x="12" y="230" class="row-lbl" fill="var(--ink-soft,#374151)">Asynchronous</text>
+
+
+<line x1="70" y1="400" x2="840" y2="400" stroke="var(--muted,#6b7280)" stroke-width="1" marker-end="url(#cas-arrow-muted)"/>
+<text x="845" y="404" class="caption" text-anchor="start">time</text>
+
+
+<text x="12" y="278" class="caption" text-anchor="start">training</text>
+<text x="12" y="349" class="caption" text-anchor="start">disk I/O</text>
+
+
+<g class="cas-phase-b-1">
+  <rect x="70" y="248" width="82" height="44" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+  <text x="111" y="275" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">step N</text>
+</g>
+
+
+<g class="cas-phase-b-1">
+  <line x1="152" y1="270" x2="160" y2="270" stroke="var(--accent,#4f46e5)" stroke-width="1.4" marker-end="url(#cas-arrow-acc)"/>
+</g>
+
+
+<g class="cas-snapshot-g">
+  <rect x="152" y="248" width="100" height="44" rx="4" fill="var(--accent,#4f46e5)" fill-opacity="0.28" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+  <text x="202" y="265" text-anchor="middle" class="lbl-sm" fill="var(--accent,#4f46e5)">snapshot to</text>
+  <text x="202" y="277" text-anchor="middle" class="lbl-sm" fill="var(--accent,#4f46e5)">CPU RAM</text>
+  <text x="202" y="289" text-anchor="middle" class="lbl-sm" fill="var(--accent,#4f46e5)">(~30s, blocks)</text>
+</g>
+
+
+<g class="cas-snapshot-g">
+  <line x1="252" y1="270" x2="260" y2="270" stroke="var(--accent,#4f46e5)" stroke-width="1.4" marker-end="url(#cas-arrow-acc)"/>
+
+  <line x1="202" y1="292" x2="202" y2="323" stroke="var(--muted,#6b7280)" stroke-width="1.2" stroke-dasharray="3 2" marker-end="url(#cas-arrow-muted)"/>
+  <text x="212" y="309" class="caption" text-anchor="start">hand off</text>
+  <text x="212" y="320" class="caption" text-anchor="start">CPU copy</text>
+</g>
+
+
+<g class="cas-async-steps-g">
+
+  <rect x="252" y="248" width="86" height="44" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+  <text x="295" y="275" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">step N+1</text>
+  <line x1="338" y1="270" x2="346" y2="270" stroke="var(--accent,#4f46e5)" stroke-width="1.4" marker-end="url(#cas-arrow-acc)"/>
+
+  <rect x="348" y="248" width="86" height="44" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+  <text x="391" y="275" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">step N+2</text>
+  <line x1="434" y1="270" x2="442" y2="270" stroke="var(--accent,#4f46e5)" stroke-width="1.4" marker-end="url(#cas-arrow-acc)"/>
+
+  <rect x="444" y="248" width="86" height="44" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+  <text x="487" y="275" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">step N+3</text>
+  <line x1="530" y1="270" x2="538" y2="270" stroke="var(--accent,#4f46e5)" stroke-width="1.4" marker-end="url(#cas-arrow-acc)"/>
+
+  <rect x="540" y="248" width="100" height="44" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5" stroke-dasharray="4 2"/>
+  <text x="590" y="276" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">...</text>
+</g>
+
+
+<g class="cas-bg-write-g">
+  <rect x="252" y="325" width="390" height="44" rx="4" fill="var(--muted,#6b7280)" fill-opacity="0.14" stroke="var(--muted,#6b7280)" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="447" y="345" text-anchor="middle" class="caption">background thread: serialize + write to disk</text>
+  <text x="447" y="360" text-anchor="middle" class="caption">(~4 min)</text>
+</g>
+
+
+<g class="cas-phase-b-labels">
+  <text x="447" y="385" text-anchor="middle" class="good-caption">overlaps with training — no GPUs idle</text>
+</g>
+
+
+<g class="cas-phase-b-labels" opacity="0.25">
+  <line x1="252" y1="292" x2="252" y2="325" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="2 2"/>
+  <line x1="642" y1="292" x2="642" y2="325" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="2 2"/>
+</g>
+
+
+<line x1="40" y1="160" x2="860" y2="160" stroke="var(--muted,#6b7280)" stroke-width="0.5" stroke-dasharray="4 4" opacity="0.3"/>
+
+</svg>
+<figcaption><b>Synchronous checkpointing blocks all GPUs for the full ~4-minute save; asynchronous checkpointing only stalls for a fast ~30-second GPU→CPU snapshot, then resumes training immediately while a background thread writes to disk.</b> The key insight is that the slow disk write (bottom bar, ~4 min) runs concurrently with training steps N+1, N+2, N+3 — recovering nearly all the "dead compute" of the synchronous approach.</figcaption>
+</figure>
+
+<p>The key insight: if we can take a fast in-memory snapshot of all GPU tensors (copy to pinned CPU memory), we can resume training while the background thread writes to persistent storage.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">async_checkpoint.py — Async checkpointing with background I/O thread.</span>
+
+<span class="sd">The snapshot step (GPU -&gt; CPU copy) is the only synchronisation point.</span>
+<span class="sd">Disk I/O runs concurrently with the next training steps.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">copy</span><span class="w"> </span><span class="kn">import</span> <span class="n">deepcopy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">AsyncCheckpointer</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Async checkpointing: copies state to CPU, then writes in a background</span>
+<span class="sd">    thread so training can continue immediately.</span>
+
+<span class="sd">    Usage:</span>
+<span class="sd">        checkpointer = AsyncCheckpointer(save_fn=save_checkpoint, ...)</span>
+<span class="sd">        # In training loop:</span>
+<span class="sd">        checkpointer.save_if_due(step, model, optimizer, ...)</span>
+<span class="sd">        # At the end of training:</span>
+<span class="sd">        checkpointer.wait()</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">save_fn</span><span class="p">,</span> <span class="n">checkpoint_interval</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">root_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">save_fn</span> <span class="o">=</span> <span class="n">save_fn</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">interval</span> <span class="o">=</span> <span class="n">checkpoint_interval</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">root_dir</span> <span class="o">=</span> <span class="n">root_dir</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span><span class="p">:</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_pending_error</span><span class="p">:</span> <span class="ne">Exception</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_check_for_errors</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Propagate any exception from the background thread.&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pending_error</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pending_error</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_snapshot_to_cpu</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">dict</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Move all tensors to pinned CPU RAM.</span>
+<span class="sd">        This is the only step that blocks training.</span>
+<span class="sd">        Fast because it&#39;s a device-to-host copy, not a disk write.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># model.state_dict() returns CPU copies when called with</span>
+        <span class="c1"># FSDP + SHARDED_STATE_DICT + offload_to_cpu=True</span>
+        <span class="n">model_state</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>  <span class="c1"># .clone() ensures no shared memory</span>
+            <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="p">}</span>
+        <span class="n">optim_state</span> <span class="o">=</span> <span class="n">deepcopy</span><span class="p">(</span><span class="n">optimizer</span><span class="o">.</span><span class="n">state_dict</span><span class="p">())</span>
+        <span class="k">return</span> <span class="n">model_state</span><span class="p">,</span> <span class="n">optim_state</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_background_save</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_state</span><span class="p">,</span> <span class="n">optim_state</span><span class="p">,</span> <span class="n">step</span><span class="p">,</span> <span class="n">metadata</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Runs in background thread: pure I/O, no GPU interaction.&quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+            <span class="n">ckpt_path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">root_dir</span><span class="p">)</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;step_</span><span class="si">{</span><span class="n">step</span><span class="si">:</span><span class="s2">08d</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="n">ckpt_path</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span>
+                <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">model_state</span><span class="p">,</span> <span class="s2">&quot;optimizer&quot;</span><span class="p">:</span> <span class="n">optim_state</span><span class="p">,</span>
+                 <span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="n">metadata</span><span class="p">},</span>
+                <span class="n">ckpt_path</span> <span class="o">/</span> <span class="s2">&quot;checkpoint.pt&quot;</span>
+            <span class="p">)</span>
+            <span class="p">(</span><span class="n">ckpt_path</span> <span class="o">/</span> <span class="s2">&quot;COMPLETE&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">touch</span><span class="p">()</span>
+            <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[async ckpt] step </span><span class="si">{</span><span class="n">step</span><span class="si">}</span><span class="s2"> written in </span><span class="si">{</span><span class="n">elapsed</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_pending_error</span> <span class="o">=</span> <span class="n">e</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">save_if_due</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">step</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">metadata</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Call this every training step. Launches async save when due.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_check_for_errors</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">interval</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Wait for any previous background save to finish before starting new</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span><span class="o">.</span><span class="n">is_alive</span><span class="p">():</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_check_for_errors</span><span class="p">()</span>
+
+        <span class="c1"># Snapshot — this blocks, but is fast (GPU-&gt;CPU copy)</span>
+        <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="n">model_state</span><span class="p">,</span> <span class="n">optim_state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_snapshot_to_cpu</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">)</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">barrier</span><span class="p">()</span>  <span class="c1"># All ranks finish snapshot before any continues</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[async ckpt] snapshot took </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">t0</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">s, &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;background write starting...&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Launch background write thread</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span>
+            <span class="n">target</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_background_save</span><span class="p">,</span>
+            <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">model_state</span><span class="p">,</span> <span class="n">optim_state</span><span class="p">,</span> <span class="n">step</span><span class="p">,</span> <span class="n">metadata</span><span class="p">),</span>
+            <span class="n">daemon</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">wait</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Block until any in-flight async checkpoint is written.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_check_for_errors</span><span class="p">()</span>
+</code></pre></div>
+<p>Modern training frameworks (PyTorch&rsquo;s <code>AsyncCheckpointing</code> in <code>torch.distributed.checkpoint</code>, DeepSpeed&rsquo;s <code>async_checkpoint_engine</code>) implement variations of this pattern. The <code>dist.barrier()</code> inside the snapshot step ensures all ranks have finished their CPU copy before training resumes, which is critical — you cannot have rank 0 already on step <span class="arithmatex">\(N+1\)</span> while rank 3 is still copying rank-<span class="arithmatex">\(N\)</span> tensors.</p>
+<h3 id="in-memory-checkpointing">In-Memory Checkpointing<a class="headerlink" href="#in-memory-checkpointing" title="Permanent link">¶</a></h3>
+<p>For the most aggressive fault tolerance, some systems keep the most recent checkpoint entirely in CPU DRAM across all nodes, writing to persistent storage (NFS, distributed filesystem) only for long-term retention. This is called <strong>in-memory checkpointing</strong>.</p>
+<p>The trade-off: recovery from a GPU failure can proceed in seconds (reload from DRAM) rather than minutes (reload from disk), but a full node failure (including CPU DRAM) still requires loading from persistent storage.</p>
+<p>PyTorch&rsquo;s <code>torch.distributed.checkpoint</code> supports a <code>StorageWriter</code> / <code>StorageReader</code> interface. You can implement an in-memory backend:</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">in_memory_storage.py — Minimal in-memory checkpoint storage backend.</span>
+
+<span class="sd">Stores checkpoint bytes in a shared dict on each rank.</span>
+<span class="sd">Production systems use more sophisticated shared-memory mechanisms</span>
+<span class="sd">(e.g., mmap, Ray&#39;s plasma store).</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.distributed.checkpoint.storage</span><span class="w"> </span><span class="kn">import</span> <span class="n">StorageWriter</span><span class="p">,</span> <span class="n">StorageReader</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.distributed.checkpoint.metadata</span><span class="w"> </span><span class="kn">import</span> <span class="n">Metadata</span><span class="p">,</span> <span class="n">StorageMeta</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">io</span><span class="w"> </span><span class="kn">import</span> <span class="n">BytesIO</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">io</span>
+
+
+<span class="n">_IN_MEMORY_STORE</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>  <span class="c1"># In a real system: cross-rank store</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">InMemoryWriter</span><span class="p">(</span><span class="n">StorageWriter</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_buffers</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_up_storage_writer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">is_coordinator</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">pass</span>  <span class="c1"># no-op for in-memory</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">prepare_local_plan</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">plan</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">plan</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">prepare_global_plan</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">global_plans</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">global_plans</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">write_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">plan</span><span class="p">,</span> <span class="n">planner</span><span class="p">):</span>
+        <span class="c1"># Write each planned chunk to an in-memory buffer</span>
+        <span class="n">futures</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">bucket</span> <span class="ow">in</span> <span class="n">plan</span><span class="o">.</span><span class="n">items</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">planner</span><span class="o">.</span><span class="n">resolve_data</span><span class="p">(</span><span class="n">bucket</span><span class="p">)</span>
+            <span class="n">buf</span> <span class="o">=</span> <span class="n">BytesIO</span><span class="p">()</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">buf</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_buffers</span><span class="p">[</span><span class="n">bucket</span><span class="o">.</span><span class="n">storage_index</span><span class="o">.</span><span class="n">fqn</span><span class="p">]</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">getvalue</span><span class="p">()</span>
+        <span class="n">_IN_MEMORY_STORE</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_buffers</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">finish</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">metadata</span><span class="p">,</span> <span class="n">results</span><span class="p">):</span>
+        <span class="n">_IN_MEMORY_STORE</span><span class="p">[</span><span class="s2">&quot;__metadata__&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">metadata</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">InMemoryReader</span><span class="p">(</span><span class="n">StorageReader</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read_metadata</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Metadata</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_IN_MEMORY_STORE</span><span class="p">[</span><span class="s2">&quot;__metadata__&quot;</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_up_storage_reader</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">metadata</span><span class="p">,</span> <span class="n">is_coordinator</span><span class="p">):</span>
+        <span class="k">pass</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">prepare_local_plan</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">plan</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">plan</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">prepare_global_plan</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">global_plans</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">global_plans</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">read_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">plan</span><span class="p">,</span> <span class="n">planner</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">req</span> <span class="ow">in</span> <span class="n">plan</span><span class="o">.</span><span class="n">items</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">BytesIO</span><span class="p">(</span><span class="n">_IN_MEMORY_STORE</span><span class="p">[</span><span class="n">req</span><span class="o">.</span><span class="n">storage_index</span><span class="o">.</span><span class="n">fqn</span><span class="p">]))</span>
+            <span class="n">planner</span><span class="o">.</span><span class="n">commit_tensor</span><span class="p">(</span><span class="n">req</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="3125-hardware-failure-rates-at-scale-the-math">3.12.5 Hardware Failure Rates at Scale: The Math<a class="headerlink" href="#3125-hardware-failure-rates-at-scale-the-math" title="Permanent link">¶</a></h2>
+<p>Why does fault tolerance matter so much? Let us quantify the expected time between failures.</p>
+<p>Let <span class="arithmatex">\(\lambda\)</span> be the hourly failure rate of a single node (GPU host). For modern GPU clusters, <span class="arithmatex">\(\lambda\)</span> is on the order of <span class="arithmatex">\(10^{-3}\)</span> failures per node per hour (i.e., a single node fails roughly every 40–50 days on average). For a cluster of <span class="arithmatex">\(N\)</span> nodes, the cluster-level failure rate is approximately <span class="arithmatex">\(N\lambda\)</span>, and the expected time between any failure is:</p>
+<div class="arithmatex">\[
+\mathbb{E}[\text{MTBF}_{\text{cluster}}] = \frac{1}{N \lambda}
+\]</div>
+<div class="admonition example">
+<p class="admonition-title">Expected failure frequency for a 1024-node cluster</p>
+<p>Suppose <span class="arithmatex">\(\lambda = 1/1000\)</span> failures per node per hour (each node fails on average once every 1000 hours, roughly 42 days).</p>
+<p>For <span class="arithmatex">\(N = 1024\)</span> nodes:</p>
+<div class="arithmatex">\[
+\mathbb{E}[\text{MTBF}_{\text{cluster}}] = \frac{1}{1024 \times 10^{-3}} \approx 0.977 \text{ hours} \approx 59 \text{ minutes}
+\]</div>
+<p>That is, on a 1024-node cluster, you expect a failure somewhere in the cluster roughly every hour. Training runs lasting weeks will experience dozens to hundreds of failures. Without checkpointing, a single failure restarts training from scratch.</p>
+<p>The fraction of useful compute wasted by a failure with checkpoint interval <span class="arithmatex">\(T_{\text{ckpt}}\)</span> steps and checkpoint save time <span class="arithmatex">\(T_{\text{save}}\)</span> is approximately:</p>
+<div class="arithmatex">\[
+\text{waste fraction} \approx \frac{T_{\text{ckpt}}/2 + T_{\text{save}}}{T_{\text{MTBF}}}
+\]</div>
+<p>For <span class="arithmatex">\(T_{\text{ckpt}} = 1000\)</span> steps at 10 steps/min (100 min of work), <span class="arithmatex">\(T_{\text{save}} = 5\)</span> min, and <span class="arithmatex">\(T_{\text{MTBF}} = 60\)</span> min:</p>
+<div class="arithmatex">\[
+\text{waste} \approx \frac{50 + 5}{60} \approx 92\%
+\]</div>
+<p>This motivates more frequent checkpoints and faster (async) saves.</p>
+</div>
+<p>The optimal checkpoint interval <span class="arithmatex">\(T^*\)</span> that minimises expected wasted compute can be derived (Young 1974, commonly called &ldquo;Daly&rsquo;s formula&rdquo; in HPC):</p>
+<div class="arithmatex">\[
+T^* \approx \sqrt{2 \cdot T_{\text{save}} \cdot T_{\text{MTBF}}}
+\]</div>
+<p>Plugging in <span class="arithmatex">\(T_{\text{save}} = 5\)</span> min and <span class="arithmatex">\(T_{\text{MTBF}} = 60\)</span> min: <span class="arithmatex">\(T^* \approx \sqrt{600} \approx 24\)</span> minutes. The lesson: frequent, fast checkpoints beat infrequent slow ones.</p>
+<hr />
+<h2 id="3126-resuming-training-correctly">3.12.6 Resuming Training Correctly<a class="headerlink" href="#3126-resuming-training-correctly" title="Permanent link">¶</a></h2>
+<p>Correctly resuming training is harder than it appears. The goal is that a run which was interrupted and resumed should produce identical model weights (given identical hardware) to an uninterrupted run. We call this <strong>exact resumability</strong>.</p>
+<h3 id="data-loader-state">Data Loader State<a class="headerlink" href="#data-loader-state" title="Permanent link">¶</a></h3>
+<p>If the data loader does not restore its position, the resumed run will see data out of order or repeat data from earlier in the epoch. For a pre-shuffled dataset stored as shards, we need to track:</p>
+<ul>
+<li>Which shard files have been fully consumed.</li>
+<li>The offset (in tokens or samples) into the current shard.</li>
+<li>The random seed used for any in-flight shuffling.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">stateful_dataloader.py — A minimal stateful data loader that saves/restores</span>
+<span class="sd">its position within a sharded dataset.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.data</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataLoader</span><span class="p">,</span> <span class="n">IterableDataset</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ShardedTextDataset</span><span class="p">(</span><span class="n">IterableDataset</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Streams tokens from pre-tokenised shard files (.pt tensors).</span>
+<span class="sd">    Saves and restores its cursor for exact reproducibility.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">shard_paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">start_shard</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+        <span class="n">start_offset</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">shard_paths</span> <span class="o">=</span> <span class="n">shard_paths</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">seq_len</span> <span class="o">=</span> <span class="n">seq_len</span>
+        <span class="c1"># Restored cursor positions</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">start_shard</span> <span class="o">=</span> <span class="n">start_shard</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">start_offset</span> <span class="o">=</span> <span class="n">start_offset</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_state</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Call after every batch to get the current cursor state.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;current_shard&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_current_shard</span><span class="p">,</span>
+            <span class="s2">&quot;current_offset&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_current_offset</span><span class="p">,</span>
+        <span class="p">}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__iter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_current_shard</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">start_shard</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_current_offset</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">start_offset</span>
+
+        <span class="k">for</span> <span class="n">shard_idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">start_shard</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">shard_paths</span><span class="p">)):</span>
+            <span class="n">tokens</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">shard_paths</span><span class="p">[</span><span class="n">shard_idx</span><span class="p">])</span>  <span class="c1"># 1D tensor</span>
+            <span class="n">start</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">start_offset</span> <span class="k">if</span> <span class="n">shard_idx</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">start_shard</span> <span class="k">else</span> <span class="mi">0</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_current_shard</span> <span class="o">=</span> <span class="n">shard_idx</span>
+
+            <span class="n">pos</span> <span class="o">=</span> <span class="n">start</span>
+            <span class="k">while</span> <span class="n">pos</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">seq_len</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">&lt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">):</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[</span><span class="n">pos</span> <span class="p">:</span> <span class="n">pos</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">seq_len</span><span class="p">]</span>
+                <span class="n">y</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[</span><span class="n">pos</span> <span class="o">+</span> <span class="mi">1</span> <span class="p">:</span> <span class="n">pos</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">seq_len</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_current_offset</span> <span class="o">=</span> <span class="n">pos</span>
+                <span class="k">yield</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span>
+                <span class="n">pos</span> <span class="o">+=</span> <span class="bp">self</span><span class="o">.</span><span class="n">seq_len</span>
+
+            <span class="c1"># Move to next shard</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">start_offset</span> <span class="o">=</span> <span class="mi">0</span>  <span class="c1"># only use start_offset for first shard</span>
+</code></pre></div>
+<h3 id="resuming-across-different-topologies">Resuming Across Different Topologies<a class="headerlink" href="#resuming-across-different-topologies" title="Permanent link">¶</a></h3>
+<p>A practical need: a run crashes on 512 GPUs and is restarted on 256 GPUs because some nodes are under repair. This is called <strong>elastic training</strong>.</p>
+<p>PyTorch DCP&rsquo;s topology-agnostic format makes this straightforward for the model and optimizer state. The data loader must also handle the change: if the number of data-parallel ranks changes, each rank&rsquo;s portion of the dataset changes, so we cannot simply restore the old per-rank shard cursor. The simplest approach is to track a global token offset and recompute each rank&rsquo;s starting position from it.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">compute_rank_start_offset</span><span class="p">(</span>
+    <span class="n">global_token_offset</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">world_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">tokens_per_rank_per_step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Given the global number of tokens consumed so far, compute the</span>
+<span class="sd">    starting offset for this rank in the new topology.</span>
+
+<span class="sd">    global_token_offset: total tokens processed before the crash</span>
+<span class="sd">    world_size: new number of data-parallel ranks</span>
+<span class="sd">    rank: this rank&#39;s index in the new topology</span>
+<span class="sd">    tokens_per_rank_per_step: seq_len * micro_batch_size</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Tokens consumed per global step</span>
+    <span class="n">tokens_per_step</span> <span class="o">=</span> <span class="n">tokens_per_rank_per_step</span> <span class="o">*</span> <span class="n">world_size</span>
+    <span class="c1"># Completed steps so far</span>
+    <span class="n">steps_done</span> <span class="o">=</span> <span class="n">global_token_offset</span> <span class="o">//</span> <span class="n">tokens_per_step</span>
+    <span class="c1"># This rank&#39;s start offset in the new topology</span>
+    <span class="k">return</span> <span class="n">steps_done</span> <span class="o">*</span> <span class="n">tokens_per_rank_per_step</span> <span class="o">+</span> <span class="n">rank</span> <span class="o">*</span> <span class="n">tokens_per_rank_per_step</span>
+</code></pre></div>
+<p>Truly elastic training — dynamically adding or removing nodes mid-run without restarting — is more complex. PyTorch&rsquo;s <code>torchrun</code> with <code>--nnodes=MIN:MAX</code> and <code>torch.distributed.elastic</code> (TorchElastic) support this. DeepSpeed also has elastic training support. The key mechanisms are:</p>
+<ol>
+<li><strong>Rendezvous</strong>: nodes join and leave a rendezvous barrier; membership changes trigger a re-initialisation of process groups.</li>
+<li><strong>Checkpoint-on-membership-change</strong>: a micro-checkpoint is taken whenever the membership changes, ensuring no work is lost.</li>
+<li><strong>Rebalancing</strong>: the optimizer state sharding is updated to reflect the new world size.</li>
+</ol>
+<hr />
+<h2 id="3127-determinism-and-reproducibility">3.12.7 Determinism and Reproducibility<a class="headerlink" href="#3127-determinism-and-reproducibility" title="Permanent link">¶</a></h2>
+<p>A training run is <strong>reproducible</strong> if, given identical hardware and the same checkpoint, two resumed runs produce identical weight trajectories. This is harder to achieve than it sounds.</p>
+<h3 id="sources-of-non-determinism">Sources of Non-Determinism<a class="headerlink" href="#sources-of-non-determinism" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Cause</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RNG state not saved</td>
+<td>Python/NumPy/PyTorch/CUDA RNG diverges</td>
+<td>Save and restore all RNG states per rank</td>
+</tr>
+<tr>
+<td><code>cudnn.benchmark</code> mode</td>
+<td>cuDNN picks fastest algorithm, which may vary run-to-run</td>
+<td>Set <code>torch.backends.cudnn.deterministic = True</code> and <code>benchmark = False</code></td>
+</tr>
+<tr>
+<td>Non-deterministic kernels</td>
+<td>Some CUDA kernels (e.g., atomics in scatter) are non-deterministic</td>
+<td><code>torch.use_deterministic_algorithms(True)</code> — may slow training</td>
+</tr>
+<tr>
+<td>Data loader ordering</td>
+<td>Workers pick up examples in different orders depending on timing</td>
+<td>Use a fixed seed and deterministic data pipeline</td>
+</tr>
+<tr>
+<td>Gradient accumulation float ordering</td>
+<td>Floating-point addition is not associative; order of partial sums changes</td>
+<td>Usually negligible numerically; exact bit-reproducibility requires fixed order</td>
+</tr>
+<tr>
+<td>NCCL all-reduce ordering</td>
+<td>Non-deterministic reduce ordering across rings</td>
+<td>Set <code>NCCL_ALGO=Ring</code> and fixed chunk sizes (usually not worth it)</td>
+</tr>
+</tbody>
+</table>
+<p>For production pretraining, <strong>strict bit-for-bit reproducibility</strong> is often abandoned in favor of <strong>statistical reproducibility</strong>: the loss curve and final model quality match closely even if exact values differ. The RNG state and checkpoint integrity are preserved for resume correctness, but strict determinism in CUDA kernels is not enforced because it incurs a 10–30% performance penalty.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">determinism_setup.py — Configure determinism at various strictness levels.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">configure_determinism</span><span class="p">(</span><span class="n">level</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;soft&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Configure PyTorch determinism.</span>
+
+<span class="sd">    level=&quot;soft&quot;   — restore RNG, no strict kernel determinism.</span>
+<span class="sd">                     Fast. Resumable runs track closely but not bit-exactly.</span>
+<span class="sd">    level=&quot;strict&quot; — full determinism. Slower; use for debugging.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">level</span> <span class="o">==</span> <span class="s2">&quot;strict&quot;</span><span class="p">:</span>
+        <span class="c1"># Force deterministic CUDA kernels</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">backends</span><span class="o">.</span><span class="n">cudnn</span><span class="o">.</span><span class="n">deterministic</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">backends</span><span class="o">.</span><span class="n">cudnn</span><span class="o">.</span><span class="n">benchmark</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">use_deterministic_algorithms</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+        <span class="c1"># Required for some deterministic ops on CUDA</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;CUBLAS_WORKSPACE_CONFIG&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;:4096:8&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Strict determinism enabled (expect ~15</span><span class="si">% s</span><span class="s2">lowdown).&quot;</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">level</span> <span class="o">==</span> <span class="s2">&quot;soft&quot;</span><span class="p">:</span>
+        <span class="c1"># Allow cuDNN to pick optimal (non-deterministic) algorithms</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">backends</span><span class="o">.</span><span class="n">cudnn</span><span class="o">.</span><span class="n">benchmark</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">use_deterministic_algorithms</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Soft determinism: RNG states saved, kernels non-deterministic.&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown level: </span><span class="si">{</span><span class="n">level</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="seeding-strategy-for-distributed-training">Seeding Strategy for Distributed Training<a class="headerlink" href="#seeding-strategy-for-distributed-training" title="Permanent link">¶</a></h3>
+<p>Each rank must have a unique but reproducible seed to avoid all ranks processing identical random augmentations:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">seed_everything</span><span class="p">(</span><span class="n">base_seed</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Set all RNG seeds deterministically for a given rank.</span>
+<span class="sd">    The per-rank seed is derived from the base seed and rank index,</span>
+<span class="sd">    ensuring different seeds across ranks but reproducibility from</span>
+<span class="sd">    a given base seed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+    <span class="n">rank_seed</span> <span class="o">=</span> <span class="n">base_seed</span> <span class="o">+</span> <span class="n">rank</span> <span class="o">*</span> <span class="mi">31337</span>  <span class="c1"># prime offset per rank</span>
+    <span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="n">rank_seed</span><span class="p">)</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="n">rank_seed</span> <span class="o">%</span> <span class="p">(</span><span class="mi">2</span><span class="o">**</span><span class="mi">31</span><span class="p">))</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="n">rank_seed</span><span class="p">)</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">manual_seed_all</span><span class="p">(</span><span class="n">rank_seed</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="3128-production-hardening-and-operational-patterns">3.12.8 Production Hardening and Operational Patterns<a class="headerlink" href="#3128-production-hardening-and-operational-patterns" title="Permanent link">¶</a></h2>
+<p>Beyond the core save/load mechanism, production-grade pretraining systems incorporate a range of hardening techniques.</p>
+<h3 id="checkpoint-integrity-verification">Checkpoint Integrity Verification<a class="headerlink" href="#checkpoint-integrity-verification" title="Permanent link">¶</a></h3>
+<p>Disk I/O errors, network interruptions to a shared filesystem, or process crashes can produce silently corrupt checkpoint files. Compute a checksum at save time and verify it at load time:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sha256_file</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute SHA-256 hash of a file.&quot;&quot;&quot;</span>
+    <span class="n">h</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">()</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="nb">iter</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">),</span> <span class="sa">b</span><span class="s2">&quot;&quot;</span><span class="p">):</span>  <span class="c1"># 1 MB chunks</span>
+            <span class="n">h</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">h</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">write_checksums</span><span class="p">(</span><span class="n">ckpt_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Write SHA-256 checksums for all checkpoint files.&quot;&quot;&quot;</span>
+    <span class="n">checksums</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">ckpt_dir</span><span class="o">.</span><span class="n">rglob</span><span class="p">(</span><span class="s2">&quot;*&quot;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">is_file</span><span class="p">()</span> <span class="ow">and</span> <span class="n">p</span><span class="o">.</span><span class="n">name</span> <span class="o">!=</span> <span class="s2">&quot;checksums.json&quot;</span><span class="p">:</span>
+            <span class="n">checksums</span><span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">relative_to</span><span class="p">(</span><span class="n">ckpt_dir</span><span class="p">))]</span> <span class="o">=</span> <span class="n">sha256_file</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">ckpt_dir</span> <span class="o">/</span> <span class="s2">&quot;checksums.json&quot;</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">checksums</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">verify_checksums</span><span class="p">(</span><span class="n">ckpt_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return True if all files match their saved checksums.&quot;&quot;&quot;</span>
+    <span class="n">checksum_file</span> <span class="o">=</span> <span class="n">ckpt_dir</span> <span class="o">/</span> <span class="s2">&quot;checksums.json&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">checksum_file</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+        <span class="k">return</span> <span class="kc">False</span>  <span class="c1"># No checksums — cannot verify</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">checksum_file</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">expected</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">rel_path</span><span class="p">,</span> <span class="n">expected_hash</span> <span class="ow">in</span> <span class="n">expected</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">actual</span> <span class="o">=</span> <span class="n">sha256_file</span><span class="p">(</span><span class="n">ckpt_dir</span> <span class="o">/</span> <span class="n">rel_path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">actual</span> <span class="o">!=</span> <span class="n">expected_hash</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;CHECKSUM MISMATCH: </span><span class="si">{</span><span class="n">rel_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">return</span> <span class="kc">True</span>
+</code></pre></div>
+<h3 id="rotation-and-retention-strategy">Rotation and Retention Strategy<a class="headerlink" href="#rotation-and-retention-strategy" title="Permanent link">¶</a></h3>
+<p>Keeping every checkpoint for a months-long run is prohibitively expensive. A typical rotation policy:</p>
+<figure class="viz" id="fig-ckpt-gfs-retention-timeline">
+<svg viewBox="0 0 960 420" role="img" aria-label="Grandfather-father-son checkpoint retention timeline: dense recent checkpoints on the left thinning to sparse weekly checkpoints on the right, with permanent milestone markers that are never deleted.">
+  <style>
+    #fig-ckpt-gfs-retention-timeline text { fill: var(--ink-soft, #374151); }
+    #fig-ckpt-gfs-retention-timeline .hdr { font: 700 11px var(--sans,sans-serif); }
+    #fig-ckpt-gfs-retention-timeline .sub { font: 400 10px var(--sans,sans-serif); }
+    #fig-ckpt-gfs-retention-timeline .axis-lbl { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+    #fig-ckpt-gfs-retention-timeline .caption { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+    #fig-ckpt-gfs-retention-timeline .muted-txt { fill: var(--muted,#9ca3af); }
+    #fig-ckpt-gfs-retention-timeline .accent-txt { fill: var(--accent,#6366f1); }
+    #fig-ckpt-gfs-retention-timeline .amber-txt { fill: var(--warn,#f59e0b); }
+  </style>
+
+
+
+  <rect x="36" y="48" width="220" height="282" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.05"/>
+
+  <rect x="260" y="48" width="190" height="282" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.03"/>
+
+  <rect x="454" y="48" width="180" height="282" rx="4" fill="var(--muted,#9ca3af)" fill-opacity="0.06"/>
+
+  <rect x="638" y="48" width="302" height="282" rx="4" fill="var(--warn,#f59e0b)" fill-opacity="0.05"/>
+
+
+  <line x1="258" y1="48" x2="258" y2="330" stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="5 3"/>
+  <line x1="452" y1="48" x2="452" y2="330" stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="5 3"/>
+  <line x1="636" y1="48" x2="636" y2="330" stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="5 3"/>
+
+
+
+  <text x="146" y="66" text-anchor="middle" class="hdr accent-txt">Recent</text>
+  <text x="146" y="79" text-anchor="middle" class="sub accent-txt">keep EVERY checkpoint</text>
+  <text x="146" y="91" text-anchor="middle" class="sub accent-txt">(last 24h)</text>
+
+  <line x1="90" y1="70" x2="202" y2="70" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+
+
+  <text x="356" y="66" text-anchor="middle" class="hdr" style="fill:var(--accent,#6366f1);opacity:0.8">Daily</text>
+  <text x="356" y="79" text-anchor="middle" class="sub" style="fill:var(--ink-soft,#374151)">1 per day</text>
+  <text x="356" y="91" text-anchor="middle" class="sub" style="fill:var(--ink-soft,#374151)">(last 7 days)</text>
+  <line x1="300" y1="70" x2="412" y2="70" stroke="var(--accent,#6366f1)" stroke-width="1" opacity="0.6"/>
+
+
+  <text x="544" y="66" text-anchor="middle" class="hdr muted-txt">Weekly</text>
+  <text x="544" y="79" text-anchor="middle" class="sub muted-txt">1 per week</text>
+  <text x="544" y="91" text-anchor="middle" class="sub muted-txt">(last 4 weeks)</text>
+  <line x1="488" y1="70" x2="600" y2="70" stroke="var(--muted,#9ca3af)" stroke-width="1"/>
+
+
+  <text x="789" y="66" text-anchor="middle" class="hdr amber-txt">Permanent</text>
+  <text x="789" y="79" text-anchor="middle" class="sub amber-txt">never deleted</text>
+  <line x1="660" y1="70" x2="920" y2="70" stroke="var(--warn,#f59e0b)" stroke-width="1.5"/>
+
+
+
+  <defs>
+    <marker id="gfs-arrow-l" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M10 0 L0 5 L10 10 z" fill="var(--ink-soft,#9ca3af)"/>
+    </marker>
+    <marker id="gfs-arrow-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#9ca3af)"/>
+    </marker>
+
+    <polygon id="gfs-star" points="0,-10 3,-3 10,0 3,3 0,10 -3,3 -10,0 -3,-3" fill="var(--warn,#f59e0b)"/>
+  </defs>
+  <line x1="36" y1="245" x2="940" y2="245" stroke="var(--border-2,#d1d5db)" stroke-width="2" marker-start="url(#gfs-arrow-l)" marker-end="url(#gfs-arrow-r)"/>
+
+
+  <text x="36" y="264" class="axis-lbl" text-anchor="middle" style="fill:var(--accent,#6366f1);font-weight:700">NOW</text>
+
+  <text x="930" y="262" class="axis-lbl" text-anchor="end" style="font-style:italic">older</text>
+
+
+  <text x="146" y="290" text-anchor="middle" class="axis-lbl">last 24h</text>
+  <text x="356" y="290" text-anchor="middle" class="axis-lbl">last 7 days</text>
+  <text x="544" y="290" text-anchor="middle" class="axis-lbl">last 4 weeks</text>
+  <text x="789" y="290" text-anchor="middle" class="axis-lbl">whole run (training start at right)</text>
+
+
+
+
+  <g fill="var(--accent,#6366f1)" stroke="none">
+    <line x1="52"  y1="185" x2="52"  y2="245" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <circle cx="52"  cy="183" r="5"/>
+    <line x1="72"  y1="195" x2="72"  y2="245" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <circle cx="72"  cy="193" r="5"/>
+    <line x1="92"  y1="178" x2="92"  y2="245" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <circle cx="92"  cy="176" r="5"/>
+    <line x1="112" y1="190" x2="112" y2="245" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <circle cx="112" cy="188" r="5"/>
+    <line x1="132" y1="183" x2="132" y2="245" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <circle cx="132" cy="181" r="5"/>
+    <line x1="152" y1="192" x2="152" y2="245" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <circle cx="152" cy="190" r="5"/>
+    <line x1="172" y1="180" x2="172" y2="245" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <circle cx="172" cy="178" r="5"/>
+    <line x1="192" y1="188" x2="192" y2="245" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <circle cx="192" cy="186" r="5"/>
+    <line x1="214" y1="185" x2="214" y2="245" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <circle cx="214" cy="183" r="5"/>
+    <line x1="236" y1="180" x2="236" y2="245" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <circle cx="236" cy="178" r="5"/>
+  </g>
+
+
+
+  <g fill="var(--accent,#6366f1)" fill-opacity="0.6" stroke="none">
+    <line x1="272" y1="185" x2="272" y2="245" stroke="var(--accent,#6366f1)" stroke-opacity="0.6" stroke-width="1.2"/>
+    <circle cx="272" cy="183" r="5" fill="var(--accent,#6366f1)" fill-opacity="0.6"/>
+    <line x1="300" y1="178" x2="300" y2="245" stroke="var(--accent,#6366f1)" stroke-opacity="0.6" stroke-width="1.2"/>
+    <circle cx="300" cy="176" r="5" fill="var(--accent,#6366f1)" fill-opacity="0.6"/>
+    <line x1="328" y1="190" x2="328" y2="245" stroke="var(--accent,#6366f1)" stroke-opacity="0.6" stroke-width="1.2"/>
+    <circle cx="328" cy="188" r="5" fill="var(--accent,#6366f1)" fill-opacity="0.6"/>
+    <line x1="356" y1="182" x2="356" y2="245" stroke="var(--accent,#6366f1)" stroke-opacity="0.6" stroke-width="1.2"/>
+    <circle cx="356" cy="180" r="5" fill="var(--accent,#6366f1)" fill-opacity="0.6"/>
+    <line x1="384" y1="188" x2="384" y2="245" stroke="var(--accent,#6366f1)" stroke-opacity="0.6" stroke-width="1.2"/>
+    <circle cx="384" cy="186" r="5" fill="var(--accent,#6366f1)" fill-opacity="0.6"/>
+    <line x1="412" y1="178" x2="412" y2="245" stroke="var(--accent,#6366f1)" stroke-opacity="0.6" stroke-width="1.2"/>
+    <circle cx="412" cy="176" r="5" fill="var(--accent,#6366f1)" fill-opacity="0.6"/>
+    <line x1="440" y1="185" x2="440" y2="245" stroke="var(--accent,#6366f1)" stroke-opacity="0.6" stroke-width="1.2"/>
+    <circle cx="440" cy="183" r="5" fill="var(--accent,#6366f1)" fill-opacity="0.6"/>
+  </g>
+
+
+
+  <g>
+    <line x1="472" y1="185" x2="472" y2="245" stroke="var(--muted,#9ca3af)" stroke-width="1.2"/>
+    <circle cx="472" cy="183" r="5" fill="var(--muted,#9ca3af)"/>
+    <line x1="515" y1="178" x2="515" y2="245" stroke="var(--muted,#9ca3af)" stroke-width="1.2"/>
+    <circle cx="515" cy="176" r="5" fill="var(--muted,#9ca3af)"/>
+    <line x1="558" y1="188" x2="558" y2="245" stroke="var(--muted,#9ca3af)" stroke-width="1.2"/>
+    <circle cx="558" cy="186" r="5" fill="var(--muted,#9ca3af)"/>
+    <line x1="602" y1="182" x2="602" y2="245" stroke="var(--muted,#9ca3af)" stroke-width="1.2"/>
+    <circle cx="602" cy="180" r="5" fill="var(--muted,#9ca3af)"/>
+  </g>
+
+
+
+  <line x1="42" y1="310" x2="938" y2="310" stroke="var(--warn,#f59e0b)" stroke-width="1" stroke-dasharray="6 4" opacity="0.5"/>
+  <line x1="42" y1="306" x2="42" y2="314" stroke="var(--warn,#f59e0b)" stroke-width="1" opacity="0.5"/>
+  <line x1="938" y1="306" x2="938" y2="314" stroke="var(--warn,#f59e0b)" stroke-width="1" opacity="0.5"/>
+  <text x="490" y="325" text-anchor="middle" class="sub amber-txt" style="font-size:9px">kept regardless of age</text>
+
+
+  <line x1="900" y1="175" x2="900" y2="245" stroke="var(--warn,#f59e0b)" stroke-width="1.5"/>
+  <circle cx="900" cy="245" r="10" fill="none" stroke="var(--warn,#f59e0b)" stroke-width="1.5" opacity="0.4"/>
+  <polygon points="900,164 904,173 914,173 906,179 909,189 900,183 891,189 894,179 886,173 896,173" fill="var(--warn,#f59e0b)"/>
+  <text x="900" y="160" text-anchor="middle" class="sub amber-txt" style="font-size:9px;font-weight:700">step 0</text>
+
+
+  <line x1="800" y1="175" x2="800" y2="245" stroke="var(--warn,#f59e0b)" stroke-width="1.5"/>
+  <circle cx="800" cy="245" r="10" fill="none" stroke="var(--warn,#f59e0b)" stroke-width="1.5" opacity="0.4"/>
+  <polygon points="800,164 804,173 814,173 806,179 809,189 800,183 791,189 794,179 786,173 796,173" fill="var(--warn,#f59e0b)"/>
+  <text x="800" y="158" text-anchor="middle" class="sub amber-txt" style="font-size:9px;font-weight:700">mid-training</text>
+  <text x="800" y="168" text-anchor="middle" class="sub amber-txt" style="font-size:9px;font-weight:700">milestone</text>
+
+
+  <line x1="680" y1="175" x2="680" y2="245" stroke="var(--warn,#f59e0b)" stroke-width="1.5"/>
+  <circle cx="680" cy="245" r="10" fill="none" stroke="var(--warn,#f59e0b)" stroke-width="1.5" opacity="0.4"/>
+  <polygon points="680,164 684,173 694,173 686,179 689,189 680,183 671,189 674,179 666,173 676,173" fill="var(--warn,#f59e0b)"/>
+  <text x="680" y="160" text-anchor="middle" class="sub amber-txt" style="font-size:9px;font-weight:700">final</text>
+
+
+  <text x="480" y="356" text-anchor="middle" class="caption">Analogous to grandfather-father-son (GFS) backup rotation: fine-grained recently, coarsening with age,</text>
+  <text x="480" y="369" text-anchor="middle" class="caption">with a few permanent anchors. Keeping every checkpoint of a months-long run is prohibitively expensive.</text>
+</svg>
+<figcaption><b>Grandfather-father-son checkpoint retention over time.</b> Reading left (now) to right (older), checkpoints are dense in the recent band and thin out monotonically through daily and weekly windows, while three permanent milestones — initial, mid-run, and final — are preserved regardless of age. The gradient from dense to sparse makes the storage trade-off concrete: fine-grained rollback for recent failures, coarse coverage of distant history.</figcaption>
+</figure>
+
+<p>This is analogous to grandfather-father-son (GFS) backup rotation schemes.</p>
+<h3 id="watchdog-and-auto-restart">Watchdog and Auto-Restart<a class="headerlink" href="#watchdog-and-auto-restart" title="Permanent link">¶</a></h3>
+<p>At scale, manual restarts are unacceptable. A production training launcher includes a watchdog process that monitors for failures and automatically restarts the job from the latest checkpoint:</p>
+<div class="highlight"><pre><span></span><code><span class="ch">#!/bin/bash</span>
+<span class="c1"># watchdog_launch.sh — Auto-restart training on failure.</span>
+<span class="c1"># Uses torchrun with fault-tolerant options.</span>
+
+<span class="nv">MAX_RESTARTS</span><span class="o">=</span><span class="m">20</span>
+<span class="nv">RESTART_COUNT</span><span class="o">=</span><span class="m">0</span>
+<span class="nv">CHECKPOINT_DIR</span><span class="o">=</span><span class="s2">&quot;/mnt/checkpoints/my_run&quot;</span>
+
+<span class="k">while</span><span class="w"> </span><span class="o">[</span><span class="w"> </span><span class="nv">$RESTART_COUNT</span><span class="w"> </span>-lt<span class="w"> </span><span class="nv">$MAX_RESTARTS</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Starting training attempt </span><span class="k">$((</span><span class="nv">RESTART_COUNT</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="m">1</span><span class="k">))</span><span class="s2">...&quot;</span>
+
+<span class="w">    </span>torchrun<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--nnodes<span class="o">=</span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">NNODES</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--nproc_per_node<span class="o">=</span><span class="m">8</span><span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--rdzv_backend<span class="o">=</span>c10d<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--rdzv_endpoint<span class="o">=</span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">MASTER_ADDR</span><span class="si">}</span><span class="s2">:29500&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--max_restarts<span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>train.py<span class="w"> </span><span class="se">\</span>
+<span class="w">            </span>--checkpoint_dir<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">CHECKPOINT_DIR</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">            </span>--resume_from_latest
+
+<span class="w">    </span><span class="nv">EXIT_CODE</span><span class="o">=</span><span class="nv">$?</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span><span class="nv">$EXIT_CODE</span><span class="w"> </span>-eq<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">        </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Training completed successfully.&quot;</span>
+<span class="w">        </span><span class="k">break</span>
+<span class="w">    </span><span class="k">else</span>
+<span class="w">        </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Training failed (exit code </span><span class="nv">$EXIT_CODE</span><span class="s2">). Restarting...&quot;</span>
+<span class="w">        </span><span class="nv">RESTART_COUNT</span><span class="o">=</span><span class="k">$((</span><span class="nv">RESTART_COUNT</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="m">1</span><span class="k">))</span>
+<span class="w">        </span>sleep<span class="w"> </span><span class="m">30</span><span class="w">  </span><span class="c1"># Brief pause to allow failed nodes to be replaced</span>
+<span class="w">    </span><span class="k">fi</span>
+<span class="k">done</span>
+
+<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span><span class="nv">$RESTART_COUNT</span><span class="w"> </span>-eq<span class="w"> </span><span class="nv">$MAX_RESTARTS</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;ERROR: Exceeded max restarts. Manual intervention required.&quot;</span>
+<span class="w">    </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<span class="k">fi</span>
+</code></pre></div>
+<h3 id="training-heartbeat-and-dead-man-switch">Training Heartbeat and Dead-Man Switch<a class="headerlink" href="#training-heartbeat-and-dead-man-switch" title="Permanent link">¶</a></h3>
+<p>A common pattern for detecting stuck (not crashed, just hung) jobs is a heartbeat: the training loop writes a timestamp to a file every N steps. A separate watchdog process kills and restarts the job if the timestamp is older than a threshold.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TrainingHeartbeat</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Write a heartbeat file periodically so external monitors can detect</span>
+<span class="sd">    hung jobs (e.g., deadlocked collectives).&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">heartbeat_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">interval_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">heartbeat_path</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">interval</span> <span class="o">=</span> <span class="n">interval_steps</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">beat</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">interval</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span>
+                <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&quot;step&quot;</span><span class="p">:</span> <span class="n">step</span><span class="p">,</span> <span class="s2">&quot;ts&quot;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()})</span>
+            <span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="3129-connecting-the-pieces-a-complete-training-loop">3.12.9 Connecting the Pieces: A Complete Training Loop<a class="headerlink" href="#3129-connecting-the-pieces-a-complete-training-loop" title="Permanent link">¶</a></h2>
+<p>The following shows how all the components above fit together in a real training loop.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">train_loop.py — Fault-tolerant pretraining main loop sketch.</span>
+
+<span class="sd">Assumes: FSDP model, AdamW optimizer, cosine LR schedule,</span>
+<span class="sd">         sharded data loader, CheckpointManager, AsyncCheckpointer.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="c1"># --- Distributed init ---</span>
+    <span class="n">dist</span><span class="o">.</span><span class="n">init_process_group</span><span class="p">(</span><span class="s2">&quot;nccl&quot;</span><span class="p">)</span>
+    <span class="n">rank</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">get_rank</span><span class="p">()</span>
+    <span class="n">world_size</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">get_world_size</span><span class="p">()</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cuda:</span><span class="si">{</span><span class="n">rank</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">8</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">set_device</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="c1"># --- Build model, optimizer, scheduler (not shown for brevity) ---</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">build_fsdp_model</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">3e-4</span><span class="p">,</span> <span class="n">betas</span><span class="o">=</span><span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">))</span>
+    <span class="n">scheduler</span> <span class="o">=</span> <span class="n">get_cosine_schedule</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">warmup_steps</span><span class="o">=</span><span class="mi">2000</span><span class="p">,</span> <span class="n">total_steps</span><span class="o">=</span><span class="mi">500_000</span><span class="p">)</span>
+
+    <span class="c1"># --- Checkpoint manager ---</span>
+    <span class="n">ckpt_manager</span> <span class="o">=</span> <span class="n">CheckpointManager</span><span class="p">(</span>
+        <span class="n">root_dir</span><span class="o">=</span><span class="s2">&quot;/mnt/checkpoints/my_run&quot;</span><span class="p">,</span>
+        <span class="n">keep_last_k</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">heartbeat</span> <span class="o">=</span> <span class="n">TrainingHeartbeat</span><span class="p">(</span>
+        <span class="s2">&quot;/mnt/checkpoints/my_run/heartbeat.json&quot;</span><span class="p">,</span>
+        <span class="n">interval_steps</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># --- Resume from latest checkpoint if available ---</span>
+    <span class="n">start_step</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">latest_ckpt</span> <span class="o">=</span> <span class="n">ckpt_manager</span><span class="o">.</span><span class="n">latest</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">latest_ckpt</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Resuming from checkpoint: </span><span class="si">{</span><span class="n">latest_ckpt</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">metadata</span> <span class="o">=</span> <span class="n">load_checkpoint</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">latest_ckpt</span><span class="p">),</span> <span class="n">rank</span><span class="p">)</span>
+        <span class="n">start_step</span> <span class="o">=</span> <span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="n">scheduler</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;lr_scheduler&quot;</span><span class="p">])</span>
+        <span class="c1"># Restore data loader cursor</span>
+        <span class="n">data_loader_state</span> <span class="o">=</span> <span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;data_loader&quot;</span><span class="p">,</span> <span class="p">{})</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">data_loader_state</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;current_shard&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;current_offset&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">}</span>
+
+    <span class="c1"># --- Data loader ---</span>
+    <span class="n">dataset</span> <span class="o">=</span> <span class="n">ShardedTextDataset</span><span class="p">(</span>
+        <span class="n">shard_paths</span><span class="o">=</span><span class="n">get_shard_paths</span><span class="p">(),</span>
+        <span class="n">seq_len</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span>
+        <span class="n">start_shard</span><span class="o">=</span><span class="n">data_loader_state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;current_shard&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+        <span class="n">start_offset</span><span class="o">=</span><span class="n">data_loader_state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;current_offset&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">loader</span> <span class="o">=</span> <span class="nb">iter</span><span class="p">(</span><span class="n">DataLoader</span><span class="p">(</span><span class="n">dataset</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">num_workers</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
+
+    <span class="c1"># --- Training loop ---</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">start_step</span><span class="p">,</span> <span class="mi">500_000</span><span class="p">):</span>
+        <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">loader</span><span class="p">)</span>
+        <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span> <span class="n">y</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">y</span><span class="p">)</span><span class="o">.</span><span class="n">loss</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+        <span class="c1"># Gradient clipping — important for training stability</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">max_norm</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+
+        <span class="c1"># Heartbeat so external watchdog knows we&#39;re alive</span>
+        <span class="n">heartbeat</span><span class="o">.</span><span class="n">beat</span><span class="p">(</span><span class="n">step</span><span class="p">)</span>
+
+        <span class="c1"># Periodic logging</span>
+        <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="mi">100</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;step=</span><span class="si">{</span><span class="n">step</span><span class="si">:</span><span class="s2">6d</span><span class="si">}</span><span class="s2">  loss=</span><span class="si">{</span><span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">  &quot;</span>
+                  <span class="sa">f</span><span class="s2">&quot;lr=</span><span class="si">{</span><span class="n">scheduler</span><span class="o">.</span><span class="n">get_last_lr</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Save checkpoint</span>
+        <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="mi">1000</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">ckpt_manager</span><span class="o">.</span><span class="n">save</span><span class="p">(</span>
+                <span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">step</span><span class="p">,</span> <span class="n">scheduler</span><span class="p">,</span>
+                <span class="n">dataset</span><span class="o">.</span><span class="n">get_state</span><span class="p">(),</span> <span class="n">rank</span>
+            <span class="p">)</span>
+
+    <span class="c1"># Ensure final async checkpoint write completes</span>
+    <span class="n">dist</span><span class="o">.</span><span class="n">barrier</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Training complete.&quot;</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</code></pre></div>
+<hr />
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are training a 70B parameter model on 2048 GPUs and the job fails every 90 minutes on average. Your checkpoint takes 8 minutes to save synchronously. How would you design the checkpointing strategy to minimise wasted GPU hours, and what are the key correctness requirements?</p>
+<p><strong>A:</strong> Several layers of improvement are available.</p>
+<p>First, apply Daly&rsquo;s formula for optimal checkpoint interval: <span class="arithmatex">\(T^* \approx \sqrt{2 \cdot T_{\text{save}} \cdot T_{\text{MTBF}}} = \sqrt{2 \times 8 \times 90} \approx 38\)</span> minutes. So checkpoint every ~38 minutes, not every 90.</p>
+<p>Second, switch to asynchronous checkpointing. The critical path is the GPU-to-CPU tensor snapshot (roughly 30–60 seconds for a 70B model, since the 1.1 TB of optimizer state must be copied to pinned CPU RAM). Once on CPU, disk write happens in the background while training continues. This reduces the hard blocking time from 8 minutes to ~1 minute.</p>
+<p>Third, use PyTorch DCP sharded checkpoints: all 2048 ranks write in parallel to a distributed filesystem, achieving near-linear I/O scaling versus serialised saves through rank 0.</p>
+<p>Key correctness requirements: (a) save optimizer state and LR schedule, not just weights; (b) save per-rank RNG state for reproducibility; &copy; save data loader cursor (shard index and byte offset) so training resumes exactly where it stopped; (d) write a COMPLETE sentinel file atomically after all writes finish so a crashed mid-save is never loaded; (e) verify checkpoint integrity with checksums before releasing GPUs after a restore.</p>
+</div>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>A complete checkpoint contains four components: model weights, optimizer state (including moments), per-rank RNG states, and training metadata (step, scheduler, data cursor). Omitting any one causes silent divergence or incorrect resumption.</li>
+<li>At scale (1000+ GPUs), expect a hardware failure somewhere in the cluster every hour or less. Fault tolerance is not optional.</li>
+<li>Daly&rsquo;s formula gives the optimal checkpoint interval: <span class="arithmatex">\(T^* \approx \sqrt{2 \cdot T_{\text{save}} \cdot T_{\text{MTBF}}}\)</span>. More frequent, faster checkpoints reduce wasted work better than infrequent saves.</li>
+<li>Async checkpointing decouples the GPU-to-CPU snapshot (fast, ~seconds) from the CPU-to-disk write (slow, minutes), dramatically reducing dead compute time.</li>
+<li>PyTorch Distributed Checkpoint (DCP) uses a topology-agnostic sharded format, enabling resume with a different number of GPUs without manual resharding.</li>
+<li>Write a COMPLETE sentinel file last; never load a checkpoint that lacks it. Verify files with checksums.</li>
+<li>Strict bit-for-bit CUDA determinism costs 10–30% performance; production runs typically opt for soft determinism (save RNG, allow non-deterministic kernels) and rely on statistical reproducibility instead.</li>
+<li>Elastic training (TorchElastic, <code>torchrun --nnodes=MIN:MAX</code>) enables dynamic cluster resize; the global token offset is the currency for recalculating each rank&rsquo;s data cursor after a topology change.</li>
+<li>Combine checkpointing with a heartbeat watchdog and auto-restart launcher to turn hardware failures from catastrophic events into short, automated interruptions.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Checkpointing and fault tolerance for LLM pretraining has become a first-class systems research area: with 1000+ GPU runs lasting weeks, the field has moved from epoch-level saves to sub-minute asynchronous in-memory checkpoints, topology-agnostic sharded formats, and per-step fault tolerance with zero training interruption.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2304.11277">Zhao et al., <em>PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel</em> (2023)</a> — canonical paper on FSDP state-dict types and the engineering decisions behind sharded checkpointing; basis for PyTorch DCP.</li>
+<li><a href="https://www.amazon.science/publications/gemini-fast-failure-recovery-in-distributed-training-with-in-memory-checkpoints">Wang et al., <em>GEMINI: Fast Failure Recovery in Distributed Training with In-Memory Checkpoints</em> (SOSP 2023)</a> — landmark systems paper showing 13× faster recovery via near-optimal in-memory checkpoint placement across CPU DRAM of neighbor nodes.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2310.12670">Wang et al., <em>Fault-Tolerant Hybrid-Parallel Training at Scale with Reliable and Efficient In-memory Checkpointing</em> (2023)</a> — hierarchical async snapshotting and intra-node redundancy for near-zero checkpoint overhead on 512-GPU Llama-2-34B runs.</li>
+<li><a href="https://arxiv.org/abs/2406.18820">Lian et al., <em>Universal Checkpointing: A Flexible and Efficient Distributed Checkpointing System for Large-Scale DNN Training</em> (2024)</a> — decouples checkpoint structure from parallelism topology, enabling resume on arbitrary GPU counts; basis for DeepSpeed Universal Checkpoint.</li>
+<li><a href="https://arxiv.org/abs/2406.10707">Maurya et al., <em>DataStates-LLM: Lazy Asynchronous Checkpointing for Large Language Models</em> (2024)</a> — exploits tensor immutability between optimizer steps for up to 48× faster checkpointing with minimal training interference.</li>
+<li><a href="https://arxiv.org/abs/2410.06511">Liang et al., <em>TorchTitan: One-stop PyTorch Native Solution for Production-Ready LLM Pre-Training</em> (2024)</a> — describes the full production checkpointing pipeline (DCP + async + local storage) achieving &lt;2 s overhead on Llama-3 405B at 432 H200 GPUs.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/pytorch/torchtitan">pytorch/torchtitan</a> — PyTorch&rsquo;s reference LLM pretraining platform; includes production-grade DCP checkpointing, async saves, and fault-tolerance hooks.</li>
+<li><a href="https://github.com/meta-pytorch/torchft">meta-pytorch/torchft</a> — per-step fault tolerance primitives (HSDP, DiLoCo, LocalSGD) with a Lighthouse coordinator for zero-interruption recovery.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://pytorch.org/blog/distributed-checkpoint-efficient-checkpointing-in-large-scale-jobs/"><em>Distributed Checkpoint: Efficient Checkpointing in Large-Scale Jobs</em> (PyTorch Blog, 2025)</a> — official write-up of DCP optimizations (process-based async, pinned-memory staging, local checkpointing) with measured badput results on H200 clusters.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Young, J.C. (1974)</strong> — &ldquo;A first order approximation to the optimum checkpoint interval.&rdquo; <em>Communications of the ACM</em>. The original derivation of optimal checkpoint interval (Daly&rsquo;s formula).</li>
+<li><strong>Daly, J.T. (2006)</strong> — &ldquo;A higher order estimate of the optimum checkpoint interval for restart dumps.&rdquo; <em>Future Generation Computer Systems</em>. Extended and widely cited version.</li>
+<li><strong>PyTorch Distributed Checkpoint documentation</strong> — <code>torch.distributed.checkpoint</code> in the official PyTorch docs; covers DCP&rsquo;s topology-agnostic format, <code>FileSystemWriter/Reader</code>, and async save APIs.</li>
+<li><strong>Zhao et al. (2023)</strong> — &ldquo;PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel.&rdquo; <em>VLDB</em>. Describes FSDP state dict types and the engineering decisions behind sharded checkpointing.</li>
+<li><strong>Rajbhandari et al. (2020)</strong> — &ldquo;ZeRO: Memory Optimizations Toward Training Trillion Parameter Models.&rdquo; <em>SC&lsquo;20</em>. Covers ZeRO optimizer state sharding, which directly informs checkpoint design in DeepSpeed.</li>
+<li><strong>DeepSpeed <code>checkpoint_engine</code></strong> — DeepSpeed&rsquo;s async checkpoint engine and its <code>AsyncTensorSwapper</code> are described in the DeepSpeed GitHub repository and blog posts.</li>
+<li><strong>Lian et al. (2022)</strong> — &ldquo;GEMINI: Fast Failure Recovery in Distributed Training with In-Memory Checkpoints.&rdquo; <em>SOSP 2022</em>. A landmark systems paper on in-memory checkpointing with neighbor-replica redundancy.</li>
+<li><strong>Eisenbud et al. (2022)</strong> — &ldquo;Pathways: Asynchronous Distributed Dataflow for ML.&rdquo; Describes Google&rsquo;s approach to fault tolerance in large-scale ML infrastructure.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="11-training-stability.html"><span class="pn-label">← Previous</span><span class="pn-title">Training Stability, Loss Spikes &amp; Debugging Large Runs</span></a>
+<a class="next" href="13-long-context-pretraining.html"><span class="pn-label">Next →</span><span class="pn-title">Long-Context Pretraining &amp; Context Extension</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#3121-what-state-must-be-saved">3.12.1 What State Must Be Saved?</a></li>
+<li class="toc-l3"><a href="#what-about-gradient-scaler-state">What About Gradient Scaler State?</a></li>
+<li class="toc-l2"><a href="#3122-checkpoint-size-and-the-distributed-complication">3.12.2 Checkpoint Size and the Distributed Complication</a></li>
+<li class="toc-l3"><a href="#the-sharding-problem">The Sharding Problem</a></li>
+<li class="toc-l3"><a href="#checkpoint-storage-layout">Checkpoint Storage Layout</a></li>
+<li class="toc-l2"><a href="#3123-saving-and-loading-concrete-pytorch-code">3.12.3 Saving and Loading: Concrete PyTorch Code</a></li>
+<li class="toc-l2"><a href="#3124-asynchronous-background-checkpointing">3.12.4 Asynchronous (Background) Checkpointing</a></li>
+<li class="toc-l3"><a href="#the-async-pipeline">The Async Pipeline</a></li>
+<li class="toc-l3"><a href="#in-memory-checkpointing">In-Memory Checkpointing</a></li>
+<li class="toc-l2"><a href="#3125-hardware-failure-rates-at-scale-the-math">3.12.5 Hardware Failure Rates at Scale: The Math</a></li>
+<li class="toc-l2"><a href="#3126-resuming-training-correctly">3.12.6 Resuming Training Correctly</a></li>
+<li class="toc-l3"><a href="#data-loader-state">Data Loader State</a></li>
+<li class="toc-l3"><a href="#resuming-across-different-topologies">Resuming Across Different Topologies</a></li>
+<li class="toc-l2"><a href="#3127-determinism-and-reproducibility">3.12.7 Determinism and Reproducibility</a></li>
+<li class="toc-l3"><a href="#sources-of-non-determinism">Sources of Non-Determinism</a></li>
+<li class="toc-l3"><a href="#seeding-strategy-for-distributed-training">Seeding Strategy for Distributed Training</a></li>
+<li class="toc-l2"><a href="#3128-production-hardening-and-operational-patterns">3.12.8 Production Hardening and Operational Patterns</a></li>
+<li class="toc-l3"><a href="#checkpoint-integrity-verification">Checkpoint Integrity Verification</a></li>
+<li class="toc-l3"><a href="#rotation-and-retention-strategy">Rotation and Retention Strategy</a></li>
+<li class="toc-l3"><a href="#watchdog-and-auto-restart">Watchdog and Auto-Restart</a></li>
+<li class="toc-l3"><a href="#training-heartbeat-and-dead-man-switch">Training Heartbeat and Dead-Man Switch</a></li>
+<li class="toc-l2"><a href="#3129-connecting-the-pieces-a-complete-training-loop">3.12.9 Connecting the Pieces: A Complete Training Loop</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

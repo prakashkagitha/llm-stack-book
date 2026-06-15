@@ -1,0 +1,1439 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family — The LLM Stack</title>
+<meta name="description" content="Low-rank adaptation math (W+BA, rank r, alpha scaling, init), where to apply, merging; QLoRA (NF4 + paged optimizers + double quant); DoRA, rsLoRA, LoRA+, VeRA;">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="active" href="03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part V — Post-Training &amp; Alignment</div>
+<h1 id="53-peft-i-lora-qlora-dora-the-adapter-family">5.3 PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family<a class="headerlink" href="#53-peft-i-lora-qlora-dora-the-adapter-family" title="Permanent link">¶</a></h1>
+<p>In <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a> we fine-tuned a model the obvious way: load every weight, compute a loss, backpropagate, and update <em>all</em> of the parameters with an optimizer. For a 7-billion-parameter model in bf16 that is already a budget problem. The weights are 14 GB. Adam keeps two more states per parameter — first and second moment — and those, plus a master fp32 copy of the weights, push the <em>training</em> footprint to roughly 16 bytes per parameter: about 112 GB for a 7B model, before a single activation is stored. A 70B model is out of reach of anything but a multi-node cluster. And you pay this for <em>every</em> fine-tune: a separate 14 GB checkpoint per customer, per task, per experiment.</p>
+<p><strong>Parameter-Efficient Fine-Tuning (PEFT)</strong> is the family of methods that sidesteps this. The bet is simple and, empirically, correct: you do not need to move all the weights to adapt a pretrained model to a downstream task. You can freeze the giant pretrained backbone and train a <em>tiny</em> number of new parameters — often well under 1% of the total — and recover most, sometimes all, of the quality of full fine-tuning. The dominant member of this family, by a wide margin, is <strong>LoRA</strong> (Low-Rank Adaptation), and its quantization-aware cousin <strong>QLoRA</strong> is what made fine-tuning a 65B model on a single consumer GPU a reality.</p>
+<p>This chapter is the deep dive on the <em>low-rank</em> branch of PEFT: the math of <span class="arithmatex">\(W + BA\)</span>, where to apply it, how alpha scaling and initialization actually work, merging adapters back into the base weights, the four-bit machinery of QLoRA (NF4, double quantization, paged optimizers), and the 2023–2025 refinements — DoRA, rsLoRA, LoRA+, VeRA. We finish with a from-scratch LoRA implementation you can read end to end, and with how to <em>serve</em> hundreds of LoRAs on one GPU. The prompt/prefix-tuning and model-merging branches of PEFT live in the next chapter, <a href="../05-posttraining-alignment/04-peft-prompt-merging.html">PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a>.</p>
+<h2 id="the-intrinsic-dimension-intuition-why-low-rank-works-at-all">The intrinsic-dimension intuition: why low rank works at all<a class="headerlink" href="#the-intrinsic-dimension-intuition-why-low-rank-works-at-all" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-lora">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 360" role="img" aria-label="LoRA: a frozen d-by-d weight matrix W computes Wx, while a parallel trainable low-rank path projects x down to rank r with A then up to d with B; the two outputs are summed to give h equals Wx plus B times A times x.">
+  <defs>
+    <marker id="lora-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-lora text{ fill:var(--ink-soft); }
+    #fig-lora .lbl{ font:700 14px var(--sans,sans-serif); }
+    #fig-lora .dim{ font:500 10.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-lora .op{ font:600 20px var(--serif,serif); }
+    #fig-lora .cap{ font:600 11px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-lora .tag{ font:700 11px var(--sans,sans-serif); }
+    #fig-lora .eq{ font:600 16px var(--mono,monospace); }
+    #fig-lora .lock{ font:13px var(--sans,sans-serif); }
+  </style>
+
+
+  <g data-anim="1">
+    <rect x="16" y="150" width="40" height="60" rx="6" class="v-fill v-stroke" stroke-width="1.5"/>
+    <text x="36" y="186" text-anchor="middle" class="lbl">x</text>
+    <text x="36" y="226" text-anchor="middle" class="dim">d</text>
+  </g>
+
+
+  <circle cx="84" cy="180" r="3.5" fill="currentColor"/>
+  <line x1="56" y1="180" x2="84" y2="180" stroke="currentColor" stroke-width="1.5"/>
+
+
+  <g data-anim="2">
+
+    <path d="M84 180 L84 96 L150 96" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#lora-arrow)"/>
+
+    <rect x="152" y="60" width="116" height="92" rx="8" class="v-fill" stroke="var(--muted)" stroke-width="1.6"/>
+    <text x="210" y="96" text-anchor="middle" class="lbl" fill="var(--ink-soft)">W</text>
+
+    <g transform="translate(187,114)" stroke="var(--muted)" stroke-width="1.3" fill="none">
+      <rect x="0" y="4" width="10" height="7" rx="1.5" fill="var(--muted)" stroke="none"/>
+      <path d="M2.2 4 V2.6 a2.8 2.8 0 0 1 5.6 0 V4"/>
+    </g>
+    <text x="226" y="124" text-anchor="middle" class="cap">frozen</text>
+    <text x="210" y="170" text-anchor="middle" class="dim">d × d  (full rank)</text>
+
+    <text x="210" y="46" text-anchor="middle" class="tag" fill="var(--muted)">d² params · 0 trained</text>
+
+    <path d="M268 96 L560 96 L560 168" fill="none" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#lora-arrow)"/>
+    <text x="320" y="88" class="cap">W x</text>
+  </g>
+
+
+  <g data-anim="3">
+
+    <path d="M84 180 L84 270 L150 270" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#lora-arrow)"/>
+
+
+    <rect x="152" y="252" width="92" height="36" rx="6" class="v-fill v-accent-s" stroke-width="1.6"/>
+    <text x="198" y="276" text-anchor="middle" class="lbl" fill="var(--accent)">A</text>
+    <text x="198" y="306" text-anchor="middle" class="dim">r × d</text>
+    <text x="198" y="320" text-anchor="middle" class="cap">down-project</text>
+
+
+    <path d="M244 270 L300 270" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#lora-arrow)"/>
+    <text x="272" y="261" text-anchor="middle" class="tag" fill="var(--accent)">rank r</text>
+    <text x="272" y="290" text-anchor="middle" class="dim">r ≪ d</text>
+
+
+    <rect x="308" y="252" width="92" height="36" rx="6" class="v-fill v-accent-s" stroke-width="1.6"/>
+    <text x="354" y="276" text-anchor="middle" class="lbl" fill="var(--accent)">B</text>
+    <text x="354" y="306" text-anchor="middle" class="dim">d × r</text>
+    <text x="354" y="320" text-anchor="middle" class="cap">up-project</text>
+
+
+    <text x="276" y="238" text-anchor="middle" class="tag" fill="var(--accent)">2 d r params · all trained</text>
+
+
+    <path d="M400 270 L560 270 L560 196" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#lora-arrow)"/>
+    <text x="430" y="262" class="cap" fill="var(--accent)">B(A x)</text>
+  </g>
+
+
+  <g data-anim="4">
+    <circle cx="560" cy="182" r="18" class="v-fill v-stroke" stroke-width="1.6"/>
+    <text x="560" y="189" text-anchor="middle" class="op">+</text>
+    <path d="M578 182 L636 182" fill="none" stroke="currentColor" stroke-width="1.6" marker-end="url(#lora-arrow)"/>
+
+
+    <rect x="640" y="152" width="40" height="60" rx="6" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <text x="660" y="188" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">h</text>
+    <text x="660" y="228" text-anchor="middle" class="dim">d</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="16" y1="338" x2="744" y2="338" class="v-grid" stroke-width="1"/>
+    <text y="356" text-anchor="middle" class="eq">
+      <tspan x="288" fill="var(--ink-soft)">h  =  W x</tspan><tspan x="372">+</tspan><tspan x="468" fill="var(--accent)">(α/r)·B(A x)</tspan>
+    </text>
+  </g>
+</svg>
+<figcaption><b>LoRA adds a tiny trainable low-rank path beside a frozen weight matrix.</b> The full-rank <b>W</b> (d × d) stays locked and contributes <b>Wx</b> unchanged, while the parallel adapter squeezes <b>x</b> down to rank <b>r ≪ d</b> through <b>A</b> and back up through <b>B</b>; their sum is the output <b>h</b>. Only A and B train — just <b>2dr</b> parameters versus W's <b>d²</b>, the entire source of LoRA's savings.</figcaption>
+</figure>
+
+<p>Before the mechanics, the <em>why</em>. The empirical premise behind LoRA, articulated by Hu et al. (<em>LoRA: Low-Rank Adaptation of Large Language Models</em>, 2021) and grounded in earlier work by Aghajanyan et al. on the <em>intrinsic dimension</em> of fine-tuning, is that <strong>the change a fine-tune makes to a pretrained weight matrix has low effective rank.</strong></p>
+<p>Think about what fine-tuning does. The pretrained model already encodes a vast amount of general knowledge. Adapting it to &ldquo;answer politely in a customer-support voice&rdquo; or &ldquo;format outputs as JSON&rdquo; is a small <em>delta</em> on top of that knowledge, not a wholesale relearning. Formally, if a layer&rsquo;s pretrained weight is <span class="arithmatex">\(W_0 \in \mathbb{R}^{d \times k}\)</span>, full fine-tuning learns an update <span class="arithmatex">\(\Delta W\)</span> and uses <span class="arithmatex">\(W_0 + \Delta W\)</span>. The hypothesis is that <span class="arithmatex">\(\Delta W\)</span>, though it is a <span class="arithmatex">\(d \times k\)</span> matrix and could in principle have rank <span class="arithmatex">\(\min(d,k)\)</span>, in practice lies very close to a matrix of rank <span class="arithmatex">\(r \ll \min(d,k)\)</span>.</p>
+<p>Any rank-<span class="arithmatex">\(r\)</span> matrix factors as a product of two thin matrices:</p>
+<div class="arithmatex">\[
+\Delta W = B A, \qquad B \in \mathbb{R}^{d \times r}, \quad A \in \mathbb{R}^{r \times k}, \quad r \ll \min(d, k).
+\]</div>
+<p>Instead of learning the <span class="arithmatex">\(d \times k\)</span> entries of <span class="arithmatex">\(\Delta W\)</span> directly, we learn the <span class="arithmatex">\(d r + r k\)</span> entries of <span class="arithmatex">\(B\)</span> and <span class="arithmatex">\(A\)</span>. For a typical attention projection with <span class="arithmatex">\(d = k = 4096\)</span> and <span class="arithmatex">\(r = 16\)</span>, that is <span class="arithmatex">\(4096^2 = 16{,}777{,}216\)</span> parameters reduced to <span class="arithmatex">\(2 \cdot 4096 \cdot 16 = 131{,}072\)</span> — a <strong>128×</strong> reduction for that layer. The factorization is the entire trick. Everything else is engineering.</p>
+<figure class="viz" id="fig-lora-fullft-vs-lora-parallel-path">
+<svg viewBox="0 0 760 360" role="img" aria-label="Side-by-side comparison: full fine-tuning uses one large trainable matrix W0+DW, while LoRA keeps W0 frozen and adds a tiny low-rank parallel path through matrices A and B that sum into the output.">
+  <defs>
+    <marker id="lft-arrow" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+    </marker>
+    <marker id="lft-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-lora-fullft-vs-lora-parallel-path .ttl  { font:600 14px var(--sans,sans-serif); fill:var(--ink-soft,#e2e8f0); }
+    #fig-lora-fullft-vs-lora-parallel-path .lbl  { font:600 13px var(--mono,monospace);  fill:var(--ink-soft,#e2e8f0); }
+    #fig-lora-fullft-vs-lora-parallel-path .dim  { font:400 11px var(--mono,monospace);  fill:var(--muted,#94a3b8); }
+    #fig-lora-fullft-vs-lora-parallel-path .cap  { font:400 11px var(--sans,sans-serif); fill:var(--muted,#94a3b8); }
+    #fig-lora-fullft-vs-lora-parallel-path .node { font:700 14px var(--mono,monospace);  fill:var(--ink-soft,#e2e8f0); }
+  </style>
+
+
+  <line x1="380" y1="20" x2="380" y2="320" stroke="var(--border-2,#334155)" stroke-width="1" stroke-dasharray="4 3"/>
+
+
+  <text x="190" y="34" text-anchor="middle" class="ttl">Full fine-tuning</text>
+
+
+  <rect x="100" y="65" width="168" height="170" rx="8"
+        fill="var(--accent,#6c8cff)" fill-opacity="0.18"
+        stroke="var(--accent,#6c8cff)" stroke-width="2"/>
+  <text x="184" y="118" text-anchor="middle" class="lbl" fill="var(--accent,#6c8cff)">W&#x2080; + &#x394;W</text>
+  <text x="184" y="152" text-anchor="middle" class="dim">d &#xD7; k</text>
+  <text x="184" y="196" text-anchor="middle" class="dim">ALL trained</text>
+
+
+  <text x="36" y="155" text-anchor="middle" class="node">x</text>
+  <line x1="50" y1="150" x2="98" y2="150"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.6"
+        marker-end="url(#lft-arrow)"/>
+
+
+  <line x1="268" y1="150" x2="316" y2="150"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.6"
+        marker-end="url(#lft-arrow)"/>
+  <text x="330" y="155" text-anchor="middle" class="node">h</text>
+
+
+  <text x="570" y="34" text-anchor="middle" class="ttl">LoRA</text>
+
+
+  <rect x="466" y="65" width="188" height="72" rx="6"
+        fill="var(--surface,#1e293b)" fill-opacity="1"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+  <text x="560" y="98" text-anchor="middle" class="lbl" fill="var(--muted,#94a3b8)">W&#x2080; (frozen)</text>
+  <text x="560" y="120" text-anchor="middle" class="dim">d &#xD7; k</text>
+
+
+  <rect x="484" y="192" width="62" height="44" rx="6"
+        fill="var(--accent,#6c8cff)" fill-opacity="0.18"
+        stroke="var(--accent,#6c8cff)" stroke-width="2"/>
+  <text x="515" y="219" text-anchor="middle" class="lbl" fill="var(--accent,#6c8cff)">A</text>
+  <text x="515" y="250" text-anchor="middle" class="dim">r &#xD7; k</text>
+
+
+  <rect x="566" y="192" width="62" height="44" rx="6"
+        fill="var(--accent,#6c8cff)" fill-opacity="0.18"
+        stroke="var(--accent,#6c8cff)" stroke-width="2"/>
+  <text x="597" y="219" text-anchor="middle" class="lbl" fill="var(--accent,#6c8cff)">B</text>
+  <text x="597" y="250" text-anchor="middle" class="dim">d &#xD7; r</text>
+
+
+  <text x="408" y="155" text-anchor="middle" class="node">x</text>
+
+
+  <circle cx="430" cy="150" r="4" fill="var(--muted,#94a3b8)"/>
+
+
+  <polyline points="430,150 430,100 464,100"
+            fill="none" stroke="var(--muted,#94a3b8)" stroke-width="1.6"
+            marker-end="url(#lft-arrow)"/>
+
+
+  <polyline points="430,150 430,214 482,214"
+            fill="none" stroke="var(--muted,#94a3b8)" stroke-width="1.6"
+            marker-end="url(#lft-arrow)"/>
+
+
+  <line x1="420" y1="150" x2="428" y2="150"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.6"/>
+
+
+  <line x1="546" y1="214" x2="564" y2="214"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.6"
+        marker-end="url(#lft-arrow)"/>
+
+
+  <circle cx="688" cy="150" r="14" fill="var(--surface,#1e293b)"
+          stroke="var(--accent,#6c8cff)" stroke-width="1.8"/>
+  <text x="688" y="155" text-anchor="middle" class="lbl" fill="var(--accent,#6c8cff)">+</text>
+
+
+  <line x1="654" y1="100" x2="688" y2="100"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.6"/>
+  <line x1="688" y1="100" x2="688" y2="134"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.6"
+        marker-end="url(#lft-arrow)"/>
+
+
+  <polyline points="628,214 688,214 688,166"
+            fill="none" stroke="var(--muted,#94a3b8)" stroke-width="1.6"
+            marker-end="url(#lft-arrow)"/>
+
+
+  <line x1="702" y1="150" x2="730" y2="150"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.6"
+        marker-end="url(#lft-arrow)"/>
+  <text x="744" y="155" text-anchor="middle" class="node">h</text>
+
+
+  <text x="570" y="272" text-anchor="middle" class="cap">only A, B trained —</text>
+  <text x="570" y="286" text-anchor="middle" class="cap">tiny low-rank path added in parallel</text>
+
+
+  <text x="380" y="322" text-anchor="middle" class="cap">LoRA keeps W&#x2080; frozen and learns &#x394;W = BA in a rank-r bottleneck.</text>
+</svg>
+<figcaption><b>Full fine-tuning vs. LoRA: the parallel low-rank path.</b> Full fine-tuning moves every entry of <b>W&#x2080;+&#x394;W</b>; LoRA freezes W&#x2080; (grey, desaturated) and adds a tiny bottleneck path through <b>A</b> (r&amp;times;k) then <b>B</b> (d&amp;times;r), summing both paths at the output. Only A and B are trained, reducing trainable parameters by up to 128&amp;times; per layer.</figcaption>
+</figure>
+
+<p>It is worth being precise about a subtlety: LoRA assumes the <em>update</em> is low rank, <strong>not</strong> that the pretrained weight <span class="arithmatex">\(W_0\)</span> is low rank. <span class="arithmatex">\(W_0\)</span> is full rank and we keep it exactly. We only constrain the <em>adaptation</em>. This is why LoRA can match full fine-tuning on many tasks while a naive &ldquo;compress the model to low rank&rdquo; approach would destroy it.</p>
+<h2 id="lora-mechanics-forward-pass-alpha-scaling-and-initialization">LoRA mechanics: forward pass, alpha scaling, and initialization<a class="headerlink" href="#lora-mechanics-forward-pass-alpha-scaling-and-initialization" title="Permanent link">¶</a></h2>
+<h3 id="the-forward-pass">The forward pass<a class="headerlink" href="#the-forward-pass" title="Permanent link">¶</a></h3>
+<p>Take any linear layer in the network whose forward map is <span class="arithmatex">\(h = W_0 x\)</span> (we drop the bias for clarity; biases are tiny and usually left trainable or frozen as-is). LoRA replaces it with</p>
+<div class="arithmatex">\[
+h = W_0 x + \Delta W x = W_0 x + \frac{\alpha}{r}\, B A\, x.
+\]</div>
+<p>The frozen base path <span class="arithmatex">\(W_0 x\)</span> is untouched. In parallel we add a <em>bottleneck</em>: <span class="arithmatex">\(x\)</span> (dimension <span class="arithmatex">\(k\)</span>) is projected <strong>down</strong> to rank <span class="arithmatex">\(r\)</span> by <span class="arithmatex">\(A\)</span>, then <strong>up</strong> to dimension <span class="arithmatex">\(d\)</span> by <span class="arithmatex">\(B\)</span>, and the result is scaled by <span class="arithmatex">\(\alpha / r\)</span>. The two paths are summed. During training only <span class="arithmatex">\(A\)</span> and <span class="arithmatex">\(B\)</span> receive gradients; <span class="arithmatex">\(W_0\)</span> is frozen, so no optimizer state is allocated for it and — crucially — its gradient is never computed.</p>
+<p>Two practical consequences fall out immediately. First, because <span class="arithmatex">\(W_0\)</span> is frozen, we can store it in a <em>lower precision</em> (this is exactly the door QLoRA walks through). Second, because the LoRA path is just an extra matrix multiply, at inference time we can <em>fold</em> it into <span class="arithmatex">\(W_0\)</span> and pay <strong>zero</strong> extra latency — more on merging below.</p>
+<h3 id="the-alphar-scaling-factor-what-it-is-and-why-it-exists">The <span class="arithmatex">\(\alpha/r\)</span> scaling factor — what it is and why it exists<a class="headerlink" href="#the-alphar-scaling-factor-what-it-is-and-why-it-exists" title="Permanent link">¶</a></h3>
+<p>The scalar <span class="arithmatex">\(\frac{\alpha}{r}\)</span> in front of <span class="arithmatex">\(BA\)</span> is the single most misunderstood knob in LoRA. Here is the honest explanation.</p>
+<p><span class="arithmatex">\(\alpha\)</span> (alpha) is a constant you choose; <span class="arithmatex">\(r\)</span> is the rank. The factor decouples the <em>magnitude</em> of the adaptation from the <em>rank</em>. Suppose you tuned everything beautifully at <span class="arithmatex">\(r = 8\)</span> and now want to try <span class="arithmatex">\(r = 16\)</span> to give the adapter more capacity. If there were no scaling, doubling <span class="arithmatex">\(r\)</span> would roughly double the typical norm of <span class="arithmatex">\(BA x\)</span> (more rank-1 terms summing up), which effectively changes your learning rate and forces you to re-tune. By dividing by <span class="arithmatex">\(r\)</span>, the <em>effective scale</em> of the update stays roughly constant as you sweep <span class="arithmatex">\(r\)</span>, so the learning rate you found transfers. The authors recommend setting <span class="arithmatex">\(\alpha\)</span> once (commonly <span class="arithmatex">\(\alpha = 2r\)</span>, i.e. an effective scale of 2, or <span class="arithmatex">\(\alpha = r\)</span> for a scale of 1) and then sweeping <span class="arithmatex">\(r\)</span> freely.</p>
+<p>A common practitioner convention is &ldquo;set <span class="arithmatex">\(\alpha = 2r\)</span>.&rdquo; It is not magic — it just means the effective scale <span class="arithmatex">\(\alpha/r = 2\)</span>. If you ever see a config with <span class="arithmatex">\(r=16, \alpha=32\)</span>, that is exactly this. We will revisit this in the <strong>rsLoRA</strong> section, where Kalajdzievski (2023) shows the <span class="arithmatex">\(1/r\)</span> scaling is actually <em>suboptimal</em> at high rank and <span class="arithmatex">\(1/\sqrt{r}\)</span> is the principled choice.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall</p>
+<p>Changing <code>r</code> and <code>alpha</code> together in the same ratio is <em>not</em> a no-op even though the scale is constant, because rank changes capacity. And changing <code>alpha</code> alone with <code>r</code> fixed is <em>exactly</em> like changing the learning rate of the LoRA path. People burn days re-tuning learning rate when they have implicitly already changed it by editing alpha. Pin the effective scale <code>alpha/r</code> first, then treat rank as a capacity knob and learning rate as a learning-rate knob.</p>
+</div>
+<h3 id="initialization-and-why-one-matrix-starts-at-zero">Initialization — and why one matrix starts at zero<a class="headerlink" href="#initialization-and-why-one-matrix-starts-at-zero" title="Permanent link">¶</a></h3>
+<p>At the very start of training we need the adapted model to be <em>identical</em> to the pretrained model, so that <span class="arithmatex">\(\Delta W = BA = 0\)</span>. If both <span class="arithmatex">\(A\)</span> and <span class="arithmatex">\(B\)</span> started random, the model would be perturbed before learning anything and the initial loss would spike. LoRA achieves <span class="arithmatex">\(BA = 0\)</span> at init by setting <strong>one</strong> of the two matrices to zero:</p>
+<ul>
+<li><span class="arithmatex">\(A\)</span> is initialized with small random values (Kaiming/He uniform, as for any linear layer&rsquo;s weight).</li>
+<li><span class="arithmatex">\(B\)</span> is initialized to <strong>all zeros</strong>.</li>
+</ul>
+<p>So <span class="arithmatex">\(BA = B \cdot A = 0 \cdot A = 0\)</span> at step 0: the LoRA path contributes nothing and the forward pass equals the base model exactly. As training proceeds, gradients flow into <span class="arithmatex">\(B\)</span> (because <span class="arithmatex">\(A\)</span> is nonzero, <span class="arithmatex">\(\partial(BAx)/\partial B \neq 0\)</span>) and into <span class="arithmatex">\(A\)</span> (once <span class="arithmatex">\(B\)</span> becomes nonzero). Why not the reverse — <span class="arithmatex">\(B\)</span> random, <span class="arithmatex">\(A\)</span> zero? Either choice gives <span class="arithmatex">\(BA = 0\)</span>, but with <span class="arithmatex">\(A=0\)</span> the gradient to <span class="arithmatex">\(B\)</span> is initially zero (<span class="arithmatex">\(\partial(BAx)/\partial B = (Ax)^\top = 0\)</span>), so <span class="arithmatex">\(B\)</span> would be stuck for the first step. Initializing <span class="arithmatex">\(A\)</span> random and <span class="arithmatex">\(B\)</span> zero gives an immediate gradient signal to <span class="arithmatex">\(B\)</span>. Both conventions appear in the wild; the <span class="arithmatex">\(A\)</span>-random, <span class="arithmatex">\(B\)</span>-zero convention is the original and the most common.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: parameter and memory savings on a 7B model</p>
+<p>Consider a LLaMA-style 7B model: hidden size <span class="arithmatex">\(d = 4096\)</span>, 32 layers. Suppose we apply LoRA with rank <span class="arithmatex">\(r = 16\)</span> to the four attention projections (<span class="arithmatex">\(W_q, W_k, W_v, W_o\)</span>), each <span class="arithmatex">\(4096 \times 4096\)</span>.</p>
+<p><strong>Trainable LoRA params per projection:</strong> <span class="arithmatex">\(B\)</span> is <span class="arithmatex">\(4096 \times 16\)</span> and <span class="arithmatex">\(A\)</span> is <span class="arithmatex">\(16 \times 4096\)</span>, so <span class="arithmatex">\(2 \cdot 4096 \cdot 16 = 131{,}072\)</span> params. With 4 projections × 32 layers: <span class="arithmatex">\(4 \times 32 \times 131{,}072 \approx 16.8\text{M}\)</span> trainable params.</p>
+<p>Against the full model of <span class="arithmatex">\(\sim 6.7\text{B}\)</span> params, that is <strong>about 0.25%</strong> trainable. If we also adapt the three MLP projections (gate, up, down — each roughly <span class="arithmatex">\(4096 \times 11008\)</span>), the count rises but typically stays <strong>under 1%</strong>.</p>
+<p><strong>Optimizer-memory effect.</strong> Full fine-tuning with Adam in mixed precision costs <span class="arithmatex">\(\approx 16\)</span> bytes/param (fp32 master weight 4, two Adam moments 8, plus the bf16 weight 2 and bf16 grad 2). For 6.7B that is <span class="arithmatex">\(\approx 107\)</span> GB just for weights+states. LoRA pays the 16 bytes/param <em>only on the 16.8M trainable params</em> — <span class="arithmatex">\(\approx 270\)</span> MB — plus the <strong>frozen</strong> base weights, which need only their bf16 copy (<span class="arithmatex">\(\approx 13.4\)</span> GB) and <strong>no</strong> gradient, <strong>no</strong> moments, <strong>no</strong> fp32 master copy. The optimizer-state line item drops from <span class="arithmatex">\(\sim 80\)</span> GB to well under 1 GB.</p>
+</div>
+<h2 id="where-to-apply-lora-and-how-merging-works">Where to apply LoRA, and how merging works<a class="headerlink" href="#where-to-apply-lora-and-how-merging-works" title="Permanent link">¶</a></h2>
+<h3 id="which-layers-the-targeting-decision">Which layers? The targeting decision<a class="headerlink" href="#which-layers-the-targeting-decision" title="Permanent link">¶</a></h3>
+<p>LoRA can wrap <em>any</em> linear layer. The original paper found that adapting only the attention projections — and within those, often just the query and value projections <span class="arithmatex">\(W_q, W_v\)</span> — was enough to match full fine-tuning on their benchmarks, at minimal cost. That made &ldquo;attention-only LoRA&rdquo; the early default.</p>
+<p>The modern (2024–2025) consensus, driven by the QLoRA ablations and a great deal of community experience, is broader: <strong>apply LoRA to <em>all</em> linear layers</strong> — the four attention projections <em>and</em> the three MLP projections (gate/up/down in a SwiGLU block; see <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a>). This &ldquo;LoRA everywhere&rdquo; setting closes most of the remaining gap to full fine-tuning, because the MLP holds the majority of a transformer&rsquo;s parameters and a lot of its task-relevant capacity. The cost is still tiny in absolute terms.</p>
+<p>What you do <strong>not</strong> wrap: LayerNorm/RMSNorm scales (you may train these directly — they are vectors, almost free), the token embedding and the LM head (sometimes trained directly if the task needs new tokens), and biases. A common recipe is &ldquo;LoRA on all linears + train the norms.&rdquo;</p>
+<figure class="viz" id="fig-lora-transformer-block-attach-points">
+<svg viewBox="0 0 860 410" role="img" aria-label="Transformer block showing LoRA attach points: Wq Wk Wv and Wo in the attention sub-block, and W_gate W_up W_down in the MLP sub-block, are LoRA-wrapped in accent color. RMSNorm, attention op, SwiGLU, and residual adds stay as-is in neutral color.">
+  <defs>
+    <marker id="tab-arr" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-lora-transformer-block-attach-points .ttl  { font:700 13px var(--sans,sans-serif); fill:var(--ink-soft,#e2e8f0); }
+    #fig-lora-transformer-block-attach-points .lbl  { font:600 11.5px var(--sans,sans-serif); fill:var(--ink-soft,#e2e8f0); }
+    #fig-lora-transformer-block-attach-points .dim  { font:400 9.5px var(--sans,sans-serif); fill:var(--muted,#94a3b8); }
+    #fig-lora-transformer-block-attach-points .badge{ font:700 8px var(--sans,sans-serif); }
+    #fig-lora-transformer-block-attach-points .node { font:700 13px var(--mono,monospace); fill:var(--ink-soft,#e2e8f0); }
+    #fig-lora-transformer-block-attach-points .cap  { font:400 10px var(--sans,sans-serif); fill:var(--muted,#94a3b8); }
+    #fig-lora-transformer-block-attach-points .leg  { font:500 10.5px var(--sans,sans-serif); fill:var(--ink-soft,#e2e8f0); }
+  </style>
+
+
+  <rect x="8" y="8" width="686" height="320" rx="10"
+        fill="var(--surface,#1e293b)" fill-opacity="0.35"
+        stroke="var(--border-2,#334155)" stroke-width="1.4"/>
+  <text x="24" y="30" class="ttl">Transformer block</text>
+
+
+
+
+  <text x="22" y="122" class="node">x</text>
+  <line x1="34" y1="117" x2="46" y2="117"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#tab-arr)"/>
+
+
+  <rect x="48" y="103" width="78" height="28" rx="5"
+        fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+  <text x="87" y="121" text-anchor="middle" class="lbl">RMSNorm</text>
+
+  <line x1="126" y1="117" x2="138" y2="117"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#tab-arr)"/>
+
+
+  <rect x="140" y="103" width="116" height="28" rx="5"
+        fill="var(--accent,#6c8cff)" fill-opacity="0.18"
+        stroke="var(--accent,#6c8cff)" stroke-width="1.7"/>
+  <text x="198" y="121" text-anchor="middle" class="lbl">Wq  Wk  Wv</text>
+
+  <rect x="212" y="92" width="44" height="13" rx="3"
+        fill="var(--accent,#6c8cff)"/>
+  <text x="234" y="102" text-anchor="middle" class="badge" fill="var(--surface,#0f172a)">+LoRA</text>
+
+  <line x1="256" y1="117" x2="268" y2="117"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#tab-arr)"/>
+
+
+  <rect x="270" y="103" width="66" height="28" rx="5"
+        fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+  <text x="303" y="121" text-anchor="middle" class="lbl">attn</text>
+
+  <line x1="336" y1="117" x2="348" y2="117"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#tab-arr)"/>
+
+
+  <rect x="350" y="103" width="94" height="28" rx="5"
+        fill="var(--accent,#6c8cff)" fill-opacity="0.18"
+        stroke="var(--accent,#6c8cff)" stroke-width="1.7"/>
+  <text x="397" y="121" text-anchor="middle" class="lbl">Wo</text>
+
+  <rect x="400" y="92" width="44" height="13" rx="3"
+        fill="var(--accent,#6c8cff)"/>
+  <text x="422" y="102" text-anchor="middle" class="badge" fill="var(--surface,#0f172a)">+LoRA</text>
+
+  <line x1="444" y1="117" x2="456" y2="117"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#tab-arr)"/>
+
+
+  <circle cx="470" cy="117" r="13"
+          fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+  <text x="470" y="122" text-anchor="middle" class="lbl">+</text>
+
+
+  <path d="M 34 110 Q 34 56 470 56 L 470 103"
+        fill="none" stroke="var(--muted,#94a3b8)" stroke-width="1.2"
+        stroke-dasharray="5 3" marker-end="url(#tab-arr)"/>
+
+
+  <line x1="470" y1="130" x2="470" y2="162"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.3" stroke-dasharray="3 2"/>
+  <line x1="22" y1="162" x2="470" y2="162"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.3" stroke-dasharray="3 2"/>
+  <line x1="22" y1="162" x2="22" y2="272"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.3" stroke-dasharray="3 2"/>
+
+
+
+
+  <text x="22" y="294" class="node" style="font-size:10px">h&#x2090;</text>
+  <line x1="34" y1="289" x2="46" y2="289"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#tab-arr)"/>
+
+
+  <rect x="48" y="275" width="78" height="28" rx="5"
+        fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+  <text x="87" y="293" text-anchor="middle" class="lbl">RMSNorm</text>
+
+  <line x1="126" y1="289" x2="138" y2="289"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#tab-arr)"/>
+
+
+  <rect x="140" y="275" width="132" height="28" rx="5"
+        fill="var(--accent,#6c8cff)" fill-opacity="0.18"
+        stroke="var(--accent,#6c8cff)" stroke-width="1.7"/>
+  <text x="206" y="293" text-anchor="middle" class="lbl">W_gate  W_up</text>
+
+  <rect x="228" y="264" width="44" height="13" rx="3"
+        fill="var(--accent,#6c8cff)"/>
+  <text x="250" y="274" text-anchor="middle" class="badge" fill="var(--surface,#0f172a)">+LoRA</text>
+
+  <line x1="272" y1="289" x2="284" y2="289"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#tab-arr)"/>
+
+
+  <rect x="286" y="275" width="74" height="28" rx="5"
+        fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+  <text x="323" y="293" text-anchor="middle" class="lbl">SwiGLU</text>
+
+  <line x1="360" y1="289" x2="372" y2="289"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#tab-arr)"/>
+
+
+  <rect x="374" y="275" width="94" height="28" rx="5"
+        fill="var(--accent,#6c8cff)" fill-opacity="0.18"
+        stroke="var(--accent,#6c8cff)" stroke-width="1.7"/>
+  <text x="421" y="293" text-anchor="middle" class="lbl">W_down</text>
+
+  <rect x="424" y="264" width="44" height="13" rx="3"
+        fill="var(--accent,#6c8cff)"/>
+  <text x="446" y="274" text-anchor="middle" class="badge" fill="var(--surface,#0f172a)">+LoRA</text>
+
+  <line x1="468" y1="289" x2="480" y2="289"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#tab-arr)"/>
+
+
+  <circle cx="494" cy="289" r="13"
+          fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+  <text x="494" y="294" text-anchor="middle" class="lbl">+</text>
+
+
+  <path d="M 34 282 Q 34 228 494 228 L 494 275"
+        fill="none" stroke="var(--muted,#94a3b8)" stroke-width="1.2"
+        stroke-dasharray="5 3" marker-end="url(#tab-arr)"/>
+
+
+  <line x1="507" y1="289" x2="534" y2="289"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#tab-arr)"/>
+  <text x="548" y="294" class="node" style="font-size:10px">out</text>
+
+
+
+
+  <rect x="706" y="110" width="14" height="14" rx="3"
+        fill="var(--accent,#6c8cff)" fill-opacity="0.18"
+        stroke="var(--accent,#6c8cff)" stroke-width="1.7"/>
+  <text x="725" y="120" class="leg">LoRA-wrapped</text>
+  <text x="725" y="133" class="leg">linear (trainable)</text>
+
+
+  <rect x="706" y="150" width="14" height="14" rx="3"
+        fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+  <text x="725" y="160" class="leg">kept as-is</text>
+  <text x="725" y="173" class="leg">(norms, SwiGLU)</text>
+
+
+  <line x1="706" y1="196" x2="720" y2="196"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.3" stroke-dasharray="5 3"/>
+  <text x="725" y="200" class="leg">residual skip</text>
+
+
+  <text x="430" y="356" text-anchor="middle" class="cap">LoRA wraps 7 linears (Wq, Wk, Wv, Wo, W_gate, W_up, W_down);</text>
+  <text x="430" y="370" text-anchor="middle" class="cap">norms, activation ops, and residuals stay as-is.</text>
+</svg>
+<figcaption><b>Where LoRA attaches inside a transformer block.</b> Accent-bordered boxes mark the seven linear projections wrapped by LoRA adapters: Wq, Wk, Wv, and Wo in the attention sub-block, and W_gate, W_up, W_down in the SwiGLU MLP. Grey-bordered components (RMSNorm, the attention operation, SwiGLU, and residual adds) are kept exactly as pretrained — adapting them adds cost without meaningful quality gain.</figcaption>
+</figure>
+
+<h3 id="merging-zero-overhead-inference">Merging: zero-overhead inference<a class="headerlink" href="#merging-zero-overhead-inference" title="Permanent link">¶</a></h3>
+<p>Because the LoRA contribution is linear and parallel to the base path, the trained adapter can be <strong>merged</strong> into the base weights once training is done:</p>
+<div class="arithmatex">\[
+W_{\text{merged}} = W_0 + \frac{\alpha}{r} B A.
+\]</div>
+<p>After merging, the layer is again a single ordinary linear with weight <span class="arithmatex">\(W_{\text{merged}}\)</span>, indistinguishable from a fully fine-tuned model at inference time. There is <strong>no extra matmul, no extra memory, no added latency</strong> — this is LoRA&rsquo;s killer property over earlier adapter methods (Houlsby et al., 2019), which inserted <em>serial</em> bottleneck modules that could not be folded away and thus added inference cost.</p>
+<p>Merging is exact in full precision. The subtlety is <strong>merging into a quantized base</strong> (QLoRA): if <span class="arithmatex">\(W_0\)</span> was stored in 4-bit and you merge a bf16 adapter, you must either (a) dequantize <span class="arithmatex">\(W_0\)</span> to bf16, add <span class="arithmatex">\(\frac{\alpha}{r}BA\)</span>, and keep the merged weight in bf16/fp16 (giving up the 4-bit memory win at inference), or (b) merge then <em>re-quantize</em>, which introduces a small additional quantization error. Most production paths that need 4-bit serving keep the adapter <em>unmerged</em> and serve it dynamically (see the multi-LoRA serving section).</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>Keep an <em>unmerged</em> copy of your adapter forever. The merged checkpoint is convenient for a single-task deployment, but the 30–100 MB adapter file is the thing you actually want to version, share, A/B test, and hot-swap. Adapters are composable artifacts; merged weights are not.</p>
+</div>
+<h2 id="a-from-scratch-lora-implementation">A from-scratch LoRA implementation<a class="headerlink" href="#a-from-scratch-lora-implementation" title="Permanent link">¶</a></h2>
+<p>Let us build LoRA with no library magic — just PyTorch — so the mechanics are unambiguous. This is a drop-in <code>nn.Linear</code> replacement plus the helper that walks a model and swaps layers. It is correct and runnable. (For the broader memory story this implements, see <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a>.)</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LoRALinear</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A frozen base Linear with a trainable low-rank adapter in parallel.</span>
+
+<span class="sd">    Forward computes:  h = W0 @ x  +  (alpha / r) * B @ (A @ x)</span>
+<span class="sd">    Only A and B are trainable; W0 (and bias) are frozen.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">base</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">,</span> <span class="n">r</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span> <span class="n">alpha</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span>
+                 <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">in_features</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">in_features</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">out_features</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">out_features</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">r</span> <span class="o">=</span> <span class="n">r</span>
+        <span class="c1"># The effective scale alpha/r decouples magnitude from rank.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scaling</span> <span class="o">=</span> <span class="n">alpha</span> <span class="o">/</span> <span class="n">r</span>
+
+        <span class="c1"># --- Frozen base weight (this is W0). Keep the original tensor. ---</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base</span> <span class="o">=</span> <span class="n">base</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>        <span class="c1"># freeze: no grad, no optimizer state</span>
+
+        <span class="c1"># --- Trainable low-rank factors. ---</span>
+        <span class="c1"># A: (r, in)  initialized random (Kaiming);  B: (out, r) initialized ZERO.</span>
+        <span class="c1"># So B @ A = 0 at init  -&gt;  the adapter starts as a no-op.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">in_features</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">out_features</span><span class="p">,</span> <span class="n">r</span><span class="p">))</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">kaiming_uniform_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">,</span> <span class="n">a</span><span class="o">=</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mi">5</span><span class="p">))</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">)</span> <span class="k">if</span> <span class="n">dropout</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="n">nn</span><span class="o">.</span><span class="n">Identity</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">merged</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># tracks whether the adapter is folded into base</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">base_out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                      <span class="c1"># frozen W0 @ x  (+ bias)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">merged</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">base_out</span>                          <span class="c1"># adapter already folded in</span>
+        <span class="c1"># Low-rank path: down-project with A, up-project with B, scale.</span>
+        <span class="n">lora_out</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">)</span>   <span class="c1"># (..., r)</span>
+        <span class="n">lora_out</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">lora_out</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span><span class="p">)</span>          <span class="c1"># (..., out)</span>
+        <span class="k">return</span> <span class="n">base_out</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">scaling</span> <span class="o">*</span> <span class="n">lora_out</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">merge</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Fold (alpha/r) * B @ A into the base weight for zero-overhead inference.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">merged</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="n">delta</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">scaling</span> <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">)</span>  <span class="c1"># (out, in)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">delta</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">merged</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">unmerge</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Reverse merge() — useful for hot-swapping adapters on a shared base.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">merged</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="n">delta</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">scaling</span> <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">sub_</span><span class="p">(</span><span class="n">delta</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">merged</span> <span class="o">=</span> <span class="kc">False</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">inject_lora</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">target_names</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;q_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;k_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;v_proj&quot;</span><span class="p">,</span>
+                                                 <span class="s2">&quot;o_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;gate_proj&quot;</span><span class="p">,</span>
+                                                 <span class="s2">&quot;up_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;down_proj&quot;</span><span class="p">),</span>
+                <span class="n">r</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span> <span class="n">alpha</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span> <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Walk the module tree and replace matching nn.Linear layers with LoRALinear.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">module</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_modules</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">child_name</span><span class="p">,</span> <span class="n">child</span> <span class="ow">in</span> <span class="n">module</span><span class="o">.</span><span class="n">named_children</span><span class="p">():</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">child</span><span class="p">,</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">)</span> <span class="ow">and</span> <span class="n">child_name</span> <span class="ow">in</span> <span class="n">target_names</span><span class="p">:</span>
+                <span class="nb">setattr</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">child_name</span><span class="p">,</span> <span class="n">LoRALinear</span><span class="p">(</span><span class="n">child</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">dropout</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">model</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">mark_only_lora_trainable</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Freeze everything, then unfreeze only the LoRA factors. Returns trainable count.&quot;&quot;&quot;</span>
+    <span class="n">n_trainable</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">():</span>
+        <span class="k">if</span> <span class="s2">&quot;lora_A&quot;</span> <span class="ow">in</span> <span class="n">name</span> <span class="ow">or</span> <span class="s2">&quot;lora_B&quot;</span> <span class="ow">in</span> <span class="n">name</span><span class="p">:</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+            <span class="n">n_trainable</span> <span class="o">+=</span> <span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">n_trainable</span>
+</code></pre></div>
+<p>A tiny end-to-end sanity check — overfit a single batch and confirm only the adapter moves:</p>
+<div class="highlight"><pre><span></span><code><span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="c1"># A toy &quot;model&quot;: two linears we will adapt.</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+    <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
+    <span class="n">nn</span><span class="o">.</span><span class="n">ReLU</span><span class="p">(),</span>
+    <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="c1"># Name the children so inject_lora can find them.</span>
+<span class="n">model</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span>  <span class="c1"># still nn.Linear; we target by attribute name instead:</span>
+
+<span class="c1"># Manually wrap (the helper targets by child attribute name; here we wrap directly):</span>
+<span class="n">model</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">LoRALinear</span><span class="p">(</span><span class="n">model</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">r</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+<span class="n">model</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">LoRALinear</span><span class="p">(</span><span class="n">model</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">r</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+<span class="n">n</span> <span class="o">=</span> <span class="n">mark_only_lora_trainable</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
+<span class="n">total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;trainable </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2"> / </span><span class="si">{</span><span class="n">total</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="mi">100</span><span class="o">*</span><span class="n">n</span><span class="o">/</span><span class="n">total</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">%)&quot;</span><span class="p">)</span>   <span class="c1"># ~ a few % on this toy</span>
+
+<span class="c1"># Snapshot a frozen base weight to prove it does NOT change.</span>
+<span class="n">W0_before</span> <span class="o">=</span> <span class="n">model</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+
+<span class="n">opt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">([</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">],</span> <span class="n">lr</span><span class="o">=</span><span class="mf">1e-2</span><span class="p">)</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">200</span><span class="p">):</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">mse_loss</span><span class="p">(</span><span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">y</span><span class="p">)</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;final loss </span><span class="si">{</span><span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">equal</span><span class="p">(</span><span class="n">W0_before</span><span class="p">,</span> <span class="n">model</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">weight</span><span class="p">),</span> <span class="s2">&quot;base weight must stay frozen!&quot;</span>
+
+<span class="c1"># Merging must not change the output (within float tolerance).</span>
+<span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">out_unmerged</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="n">model</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">merge</span><span class="p">();</span> <span class="n">model</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">merge</span><span class="p">()</span>
+    <span class="n">out_merged</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;merge max-diff:&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">out_unmerged</span> <span class="o">-</span> <span class="n">out_merged</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>  <span class="c1"># ~1e-6</span>
+</code></pre></div>
+<p>The two assertions are the heart of LoRA&rsquo;s contract: <strong>the base weight never moves during training</strong>, and <strong>merging is output-preserving</strong>. If you ever fork LoRA code, these are the first two tests to write.</p>
+<h3 id="the-gradient-flow-made-explicit">The gradient flow, made explicit<a class="headerlink" href="#the-gradient-flow-made-explicit" title="Permanent link">¶</a></h3>
+<p>It helps to see the backward pass. With <span class="arithmatex">\(h = W_0 x + s\,BAx\)</span> where <span class="arithmatex">\(s = \alpha/r\)</span>, and an upstream gradient <span class="arithmatex">\(g = \partial \mathcal{L}/\partial h\)</span>, the LoRA gradients are</p>
+<div class="arithmatex">\[
+\frac{\partial \mathcal{L}}{\partial B} = s\, g\, (A x)^\top, \qquad
+\frac{\partial \mathcal{L}}{\partial A} = s\, (B^\top g)\, x^\top, \qquad
+\frac{\partial \mathcal{L}}{\partial W_0} = \text{(not computed — frozen)}.
+\]</div>
+<p>Two things to notice. First, computing these requires the <em>activation</em> <span class="arithmatex">\(x\)</span> and the cheap intermediate <span class="arithmatex">\(Ax\)</span>, but <strong>not</strong> a gradient w.r.t. the giant <span class="arithmatex">\(W_0\)</span>, which is why the backward pass is cheap. Second, the input <span class="arithmatex">\(x\)</span> to the layer must still be saved for the backward of the <em>frozen</em> path&rsquo;s contribution to upstream layers — LoRA reduces <em>optimizer</em> and <em>gradient</em> memory dramatically but does not by itself reduce <em>activation</em> memory. For that you combine LoRA with gradient checkpointing (see <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training</a>).</p>
+<h2 id="qlora-fine-tuning-a-65b-model-on-one-gpu">QLoRA: fine-tuning a 65B model on one GPU<a class="headerlink" href="#qlora-fine-tuning-a-65b-model-on-one-gpu" title="Permanent link">¶</a></h2>
+<p>LoRA shrinks the <em>optimizer and gradient</em> memory. But the frozen base weights still sit in memory — 13 GB for 7B in bf16, 130 GB for 65B. <strong>QLoRA</strong> (Dettmers et al., <em>QLoRA: Efficient Finetuning of Quantized LLMs</em>, 2023) attacks that last term: store the frozen base in <strong>4-bit</strong>, train the LoRA adapter in bf16 on top. Suddenly a 65B base fits in ~35 GB, and you can fine-tune it on a single 48 GB GPU. QLoRA is, more than any other single method, why fine-tuning frontier-scale models became democratized. It rests on three innovations.</p>
+<h3 id="1-nf4-the-4-bit-normalfloat-data-type">1. NF4 — the 4-bit NormalFloat data type<a class="headerlink" href="#1-nf4-the-4-bit-normalfloat-data-type" title="Permanent link">¶</a></h3>
+<p>Standard 4-bit integer quantization splits a weight&rsquo;s range into 16 evenly spaced bins. But neural-network weights are not uniformly distributed — they are approximately <strong>zero-mean Gaussian</strong>. Spending equal numbers of bins on the dense center and the sparse tails wastes precision where the data actually is.</p>
+<p><strong>NF4 (4-bit NormalFloat)</strong> is an <em>information-theoretically optimal</em> quantization for normally distributed data. The 16 quantization levels are placed at the <em>quantiles</em> of a standard normal distribution, so each bin holds roughly the same <em>probability mass</em> rather than the same <em>width</em>. Concretely: estimate the quantiles of <span class="arithmatex">\(\mathcal{N}(0,1)\)</span> that split it into 16 equal-mass regions, take the bin midpoints as the codebook, and make it symmetric with an exact zero. Because weights are first normalized to <span class="arithmatex">\([-1, 1]\)</span> (by dividing by their block-wise absmax), they match the standard-normal assumption well, and NF4 reproduces them with markedly less error than INT4 at the same 4 bits. The dequantization is just a 16-entry lookup. See <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a> for the broader quantization toolbox.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># The 16 NF4 codebook values (bin midpoints at the quantiles of N(0,1),</span>
+<span class="c1"># normalized to [-1, 1] with an exact zero). These are constants in bitsandbytes.</span>
+<span class="n">NF4_CODEBOOK</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span>
+    <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.6961928009986877</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.5250730514526367</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.39491748809814453</span><span class="p">,</span>
+    <span class="o">-</span><span class="mf">0.28444138169288635</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.18477343022823334</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.09105003625154495</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span>
+     <span class="mf">0.07958029955625534</span><span class="p">,</span> <span class="mf">0.16093020141124725</span><span class="p">,</span> <span class="mf">0.24611230194568634</span><span class="p">,</span>
+     <span class="mf">0.33791524171829224</span><span class="p">,</span> <span class="mf">0.44070982933044434</span><span class="p">,</span> <span class="mf">0.5626170039176941</span><span class="p">,</span>
+     <span class="mf">0.7229568362236023</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span>
+<span class="p">])</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">quantize_nf4_block</span><span class="p">(</span><span class="n">w_block</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Quantize one block of weights to NF4. Returns 4-bit codes + the fp scale.&quot;&quot;&quot;</span>
+    <span class="n">absmax</span> <span class="o">=</span> <span class="n">w_block</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>                  <span class="c1"># block-wise scale (one fp number)</span>
+    <span class="n">w_norm</span> <span class="o">=</span> <span class="n">w_block</span> <span class="o">/</span> <span class="p">(</span><span class="n">absmax</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>            <span class="c1"># normalize to ~[-1, 1]</span>
+    <span class="c1"># Nearest codebook entry for each weight -&gt; 4-bit index in [0, 15].</span>
+    <span class="n">dist</span> <span class="o">=</span> <span class="p">(</span><span class="n">w_norm</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">-</span> <span class="n">NF4_CODEBOOK</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span>
+    <span class="n">codes</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span>   <span class="c1"># store these 4-bit codes</span>
+    <span class="k">return</span> <span class="n">codes</span><span class="p">,</span> <span class="n">absmax</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dequantize_nf4_block</span><span class="p">(</span><span class="n">codes</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">absmax</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Reconstruct bf16 weights from 4-bit codes and the block scale (a lookup).&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">NF4_CODEBOOK</span><span class="p">[</span><span class="n">codes</span><span class="o">.</span><span class="n">long</span><span class="p">()]</span> <span class="o">*</span> <span class="n">absmax</span>
+
+<span class="c1"># Demo: NF4 beats INT4 on Gaussian data.</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">w</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4096</span><span class="p">)</span>                              <span class="c1"># one block of Gaussian weights</span>
+<span class="n">codes</span><span class="p">,</span> <span class="n">scale</span> <span class="o">=</span> <span class="n">quantize_nf4_block</span><span class="p">(</span><span class="n">w</span><span class="p">)</span>
+<span class="n">w_hat</span> <span class="o">=</span> <span class="n">dequantize_nf4_block</span><span class="p">(</span><span class="n">codes</span><span class="p">,</span> <span class="n">scale</span><span class="p">)</span>
+<span class="n">nf4_err</span> <span class="o">=</span> <span class="p">(</span><span class="n">w</span> <span class="o">-</span> <span class="n">w_hat</span><span class="p">)</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>
+
+<span class="c1"># Plain symmetric INT4 for comparison.</span>
+<span class="n">s</span> <span class="o">=</span> <span class="n">w</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">/</span> <span class="mi">7</span>
+<span class="n">w_int4</span> <span class="o">=</span> <span class="p">(</span><span class="n">w</span> <span class="o">/</span> <span class="n">s</span><span class="p">)</span><span class="o">.</span><span class="n">round</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="o">-</span><span class="mi">7</span><span class="p">,</span> <span class="mi">7</span><span class="p">)</span> <span class="o">*</span> <span class="n">s</span>
+<span class="n">int4_err</span> <span class="o">=</span> <span class="p">(</span><span class="n">w</span> <span class="o">-</span> <span class="n">w_int4</span><span class="p">)</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;NF4 RMSE </span><span class="si">{</span><span class="n">nf4_err</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">   INT4 RMSE </span><span class="si">{</span><span class="n">int4_err</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># NF4 noticeably lower</span>
+</code></pre></div>
+<h3 id="2-double-quantization-quantizing-the-quantization-constants">2. Double quantization — quantizing the quantization constants<a class="headerlink" href="#2-double-quantization-quantizing-the-quantization-constants" title="Permanent link">¶</a></h3>
+<p>NF4 uses a separate fp32 <code>absmax</code> scale <strong>per block</strong> (block size 64 in QLoRA). That is one 32-bit number for every 64 weights — an overhead of <span class="arithmatex">\(32/64 = 0.5\)</span> bits <em>per weight</em>, which is large when the weights themselves are 4 bits. <strong>Double quantization (DQ)</strong> quantizes those scales too: the per-block fp32 absmax values are themselves grouped (256 of them) and quantized to 8-bit, with one fp32 second-level scale per group. This drops the scale overhead from 0.5 bits/param to roughly <span class="arithmatex">\(8/64 + 32/(64\cdot 256) \approx 0.127\)</span> bits/param — saving on the order of 0.4 bits per parameter, which over a 65B model is several gigabytes. It is a small idea with a real payoff at scale.</p>
+<h3 id="3-paged-optimizers-surviving-the-memory-spikes">3. Paged optimizers — surviving the memory spikes<a class="headerlink" href="#3-paged-optimizers-surviving-the-memory-spikes" title="Permanent link">¶</a></h3>
+<p>Even with a 4-bit base and a tiny adapter, long sequences cause <strong>activation-memory spikes</strong> during the backward pass that can momentarily exceed GPU memory and OOM the job. QLoRA borrows the OS idea of <strong>paging</strong>: the optimizer states live in a <em>paged</em> allocation backed by CPU RAM, using NVIDIA&rsquo;s unified memory. When the GPU is about to run out, pages are automatically evicted to CPU and paged back in when needed — exactly like virtual memory swapping to disk. The job survives a transient spike instead of crashing, at the cost of some PCIe traffic during the spike. This is what makes single-GPU fine-tuning of very large models <em>robust</em>, not just nominally possible.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># QLoRA in practice with HuggingFace + bitsandbytes + PEFT (the real path).</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">BitsAndBytesConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">peft</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoraConfig</span><span class="p">,</span> <span class="n">get_peft_model</span><span class="p">,</span> <span class="n">prepare_model_for_kbit_training</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="n">bnb_config</span> <span class="o">=</span> <span class="n">BitsAndBytesConfig</span><span class="p">(</span>
+    <span class="n">load_in_4bit</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>                       <span class="c1"># store the frozen base in 4-bit</span>
+    <span class="n">bnb_4bit_quant_type</span><span class="o">=</span><span class="s2">&quot;nf4&quot;</span><span class="p">,</span>               <span class="c1"># NormalFloat-4 (not plain int4)</span>
+    <span class="n">bnb_4bit_use_double_quant</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>          <span class="c1"># double quantization on the scales</span>
+    <span class="n">bnb_4bit_compute_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>   <span class="c1"># matmuls dequant to bf16 on the fly</span>
+<span class="p">)</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="s2">&quot;meta-llama/Llama-2-7b-hf&quot;</span><span class="p">,</span> <span class="n">quantization_config</span><span class="o">=</span><span class="n">bnb_config</span><span class="p">,</span> <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">prepare_model_for_kbit_training</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>   <span class="c1"># enable grad ckpt, cast norms, etc.</span>
+
+<span class="n">lora_config</span> <span class="o">=</span> <span class="n">LoraConfig</span><span class="p">(</span>
+    <span class="n">r</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">lora_alpha</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">lora_dropout</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="n">task_type</span><span class="o">=</span><span class="s2">&quot;CAUSAL_LM&quot;</span><span class="p">,</span>
+    <span class="n">target_modules</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;q_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;k_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;v_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;o_proj&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;gate_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;up_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;down_proj&quot;</span><span class="p">],</span>   <span class="c1"># LoRA everywhere</span>
+<span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">get_peft_model</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">lora_config</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">print_trainable_parameters</span><span class="p">()</span>
+<span class="c1"># -&gt; trainable params: ~40M || all params: ~6.7B || trainable%: ~0.6</span>
+<span class="c1"># Train with paged optimizer:  optim=&quot;paged_adamw_8bit&quot;  in your TrainingArguments.</span>
+</code></pre></div>
+<p>The key mental model for QLoRA: <strong>the frozen base is stored in NF4, but every matmul dequantizes the relevant weights to bf16 on the fly</strong> (the <code>compute_dtype</code>). The 4-bit form is a <em>storage</em> format, not a <em>compute</em> format. The LoRA adapter is always full-precision bf16 and is where all the learning happens. Quantization error in the frozen base is &ldquo;absorbed&rdquo; by the adapter, which learns on top of the slightly-noisy base — this is a large part of why QLoRA matches 16-bit LoRA quality despite the aggressive compression.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall</p>
+<p>QLoRA saves <em>training</em> memory by quantizing the base, but a merged QLoRA adapter does <strong>not</strong> give you a 4-bit <em>inference</em> model for free. If you merge the bf16 adapter into a dequantized base, you get a bf16 model (full size). If you want 4-bit serving, keep the adapter unmerged and serve it on top of the quantized base, or quantize the <em>merged</em> model afresh with a PTQ method (GPTQ/AWQ — see <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I</a>). Do not assume &ldquo;I trained with QLoRA&rdquo; means &ldquo;I have a 4-bit deployable model.&rdquo;</p>
+</div>
+<h2 id="the-lora-family-dora-rslora-lora-vera">The LoRA family: DoRA, rsLoRA, LoRA+, VeRA<a class="headerlink" href="#the-lora-family-dora-rslora-lora-vera" title="Permanent link">¶</a></h2>
+<p>LoRA&rsquo;s simplicity invited a wave of refinements. The four below are the ones a 2025 practitioner should know by name and mechanism.</p>
+<h3 id="rslora-fixing-the-scaling-factor-at-high-rank">rsLoRA — fixing the scaling factor at high rank<a class="headerlink" href="#rslora-fixing-the-scaling-factor-at-high-rank" title="Permanent link">¶</a></h3>
+<p>Recall the <span class="arithmatex">\(\alpha/r\)</span> scaling. Kalajdzievski (<em>A Rank-Stabilized Scaling Factor for LoRA</em>, 2023) showed analytically that dividing by <span class="arithmatex">\(r\)</span> over-shrinks the adapter as rank grows: the variance of <span class="arithmatex">\(BAx\)</span> scales such that the <em>gradient</em> through the adapter vanishes with large <span class="arithmatex">\(r\)</span>, so increasing rank stops helping and can even hurt. The fix — <strong>rank-stabilized LoRA (rsLoRA)</strong> — is to scale by <span class="arithmatex">\(1/\sqrt{r}\)</span> instead:</p>
+<div class="arithmatex">\[
+h = W_0 x + \frac{\alpha}{\sqrt{r}} B A x.
+\]</div>
+<p>This keeps the magnitude of the adapter&rsquo;s contribution and its gradient stable across ranks, so high-rank LoRA (<span class="arithmatex">\(r = 64, 128, 256\)</span>) actually delivers the extra capacity you paid for. If you are using small ranks (<span class="arithmatex">\(r \le 16\)</span>) the difference is minor; if you are pushing rank to chase quality, switch to rsLoRA. It is a one-line change (<code>use_rslora=True</code> in PEFT).</p>
+<h3 id="lora-different-learning-rates-for-a-and-b">LoRA+ — different learning rates for A and B<a class="headerlink" href="#lora-different-learning-rates-for-a-and-b" title="Permanent link">¶</a></h3>
+<p>Hayou et al. (<em>LoRA+: Efficient Low Rank Adaptation</em>, 2024) observed that <span class="arithmatex">\(A\)</span> and <span class="arithmatex">\(B\)</span> play <em>asymmetric</em> roles — <span class="arithmatex">\(B\)</span> starts at zero and must grow, <span class="arithmatex">\(A\)</span> starts populated — and that using the <em>same</em> learning rate for both is suboptimal in a way that gets worse as the model width grows. The fix is to give <span class="arithmatex">\(B\)</span> a <strong>larger</strong> learning rate than <span class="arithmatex">\(A\)</span>, by a fixed ratio <span class="arithmatex">\(\lambda\)</span> (often <span class="arithmatex">\(\lambda = 16\)</span>):</p>
+<div class="arithmatex">\[
+\eta_B = \lambda\, \eta_A, \qquad \lambda &gt; 1.
+\]</div>
+<p>This typically improves both convergence speed and final quality at no extra parameter cost — it is purely an optimizer-grouping change. It composes with everything else (you can do LoRA+ on a QLoRA run).</p>
+<h3 id="dora-decomposing-weight-magnitude-and-direction">DoRA — decomposing weight magnitude and direction<a class="headerlink" href="#dora-decomposing-weight-magnitude-and-direction" title="Permanent link">¶</a></h3>
+<p><strong>DoRA (Weight-Decomposed Low-Rank Adaptation;</strong> Liu et al., 2024) is the most important post-LoRA refinement. The insight: a weight update changes both the <em>direction</em> of weight vectors and their <em>magnitude</em>, and full fine-tuning tends to make large changes to magnitude that plain LoRA struggles to express. DoRA decomposes each weight matrix into a magnitude vector <span class="arithmatex">\(m\)</span> and a direction matrix <span class="arithmatex">\(V\)</span>:</p>
+<div class="arithmatex">\[
+W = m \cdot \frac{V}{\lVert V \rVert_c},
+\]</div>
+<p>where <span class="arithmatex">\(\lVert \cdot \rVert_c\)</span> is the column-wise norm. DoRA then trains the magnitude <span class="arithmatex">\(m\)</span> (a small trainable vector, one scalar per column) <strong>directly</strong>, while adapting the <em>direction</em> with a LoRA-style low-rank update:</p>
+<div class="arithmatex">\[
+W' = m \cdot \frac{W_0 + \frac{\alpha}{r} B A}{\lVert W_0 + \frac{\alpha}{r} B A \rVert_c}.
+\]</div>
+<p>By separating &ldquo;how big&rdquo; from &ldquo;which way,&rdquo; DoRA&rsquo;s learning dynamics more closely resemble full fine-tuning, and it consistently beats LoRA at the <em>same</em> rank — often letting you reach LoRA-<span class="arithmatex">\(r\)</span> quality at <span class="arithmatex">\(r/2\)</span>. The cost is a slightly more expensive forward (the column-norm and the magnitude rescale) and a few extra trainable parameters (<span class="arithmatex">\(m\)</span>). DoRA can be merged just like LoRA. Here is the core forward in code:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="o">,</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span><span class="o">,</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">DoRALinear</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;DoRA: train direction via low-rank A,B and magnitude m directly.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">base</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">,</span> <span class="n">r</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mi">32</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base</span> <span class="o">=</span> <span class="n">base</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scaling</span> <span class="o">=</span> <span class="n">alpha</span> <span class="o">/</span> <span class="n">r</span>
+        <span class="n">out_f</span><span class="p">,</span> <span class="n">in_f</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">shape</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">in_f</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">out_f</span><span class="p">,</span> <span class="n">r</span><span class="p">))</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">kaiming_uniform_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">,</span> <span class="n">a</span><span class="o">=</span><span class="mi">5</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>
+        <span class="c1"># Magnitude m = the column-wise norm of the pretrained weight (init so W&#39;=W0).</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">m</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">base</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>  <span class="c1"># (1, in)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="c1"># Effective directional weight = W0 + scaled low-rank update.</span>
+        <span class="n">delta</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">scaling</span> <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">)</span>          <span class="c1"># (out, in)</span>
+        <span class="n">V</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">weight</span> <span class="o">+</span> <span class="n">delta</span>                                 <span class="c1"># direction (unnormalized)</span>
+        <span class="n">V_norm</span> <span class="o">=</span> <span class="n">V</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-8</span>                  <span class="c1"># column norms (1, in)</span>
+        <span class="n">W_eff</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">m</span> <span class="o">*</span> <span class="p">(</span><span class="n">V</span> <span class="o">/</span> <span class="n">V_norm</span><span class="p">)</span>                                <span class="c1"># rescale to magnitude m</span>
+        <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">W_eff</span><span class="p">)</span>                                    <span class="c1"># (no separate base path)</span>
+</code></pre></div>
+<p>At init, <code>delta = 0</code> (because <code>lora_B = 0</code>), so <code>V = W0</code>, <code>V_norm = ||W0||_c</code>, <code>m = ||W0||_c</code>, and therefore <code>W_eff = ||W0||_c * (W0 / ||W0||_c) = W0</code> — the adapter is again a perfect no-op at step 0, as it must be.</p>
+<h3 id="vera-sharing-frozen-random-matrices-across-layers">VeRA — sharing frozen random matrices across layers<a class="headerlink" href="#vera-sharing-frozen-random-matrices-across-layers" title="Permanent link">¶</a></h3>
+<p><strong>VeRA (Vector-based Random Matrix Adaptation;</strong> Kopiczko et al., 2024) pushes parameter-efficiency to an extreme. Observe that in LoRA the matrices <span class="arithmatex">\(A\)</span> and <span class="arithmatex">\(B\)</span> are large; what if we <em>froze</em> a single pair of <strong>random</strong> <span class="arithmatex">\(A\)</span> and <span class="arithmatex">\(B\)</span> — shared across <em>all</em> layers — and only trained two tiny <em>scaling vectors</em> <span class="arithmatex">\(d\)</span> and <span class="arithmatex">\(b\)</span> that re-weight the rows/columns?</p>
+<div class="arithmatex">\[
+h = W_0 x + \Lambda_b\, B\, \Lambda_d\, A\, x,
+\]</div>
+<p>where <span class="arithmatex">\(B, A\)</span> are random, frozen, and shared, and <span class="arithmatex">\(\Lambda_d = \operatorname{diag}(d)\)</span>, <span class="arithmatex">\(\Lambda_b = \operatorname{diag}(b)\)</span> are the only trainable parameters (two vectors per layer). Because the big matrices are frozen random projections (and can even be regenerated from a seed rather than stored), VeRA&rsquo;s trainable footprint can be <strong>10–100× smaller</strong> than LoRA&rsquo;s at comparable quality on many tasks. It trades a little peak quality for an enormous reduction in adapter size — attractive when you must store thousands of per-user adapters. The lineage here connects to random-projection ideas (Johnson–Lindenstrauss) and to the intrinsic-dimension framing we opened with.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Trainable params</th>
+<th>Key idea</th>
+<th>When to reach for it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LoRA</td>
+<td><span class="arithmatex">\(2 d r\)</span> per layer</td>
+<td>Low-rank <span class="arithmatex">\(W+BA\)</span></td>
+<td>Default; well-supported everywhere</td>
+</tr>
+<tr>
+<td>QLoRA</td>
+<td>LoRA + 4-bit base</td>
+<td>NF4 + DQ + paging</td>
+<td>Big model, small GPU</td>
+</tr>
+<tr>
+<td>rsLoRA</td>
+<td>same as LoRA</td>
+<td><span class="arithmatex">\(1/\sqrt{r}\)</span> scaling</td>
+<td>High rank (<span class="arithmatex">\(r \ge 64\)</span>)</td>
+</tr>
+<tr>
+<td>LoRA+</td>
+<td>same as LoRA</td>
+<td><span class="arithmatex">\(\eta_B &gt; \eta_A\)</span></td>
+<td>Free convergence boost</td>
+</tr>
+<tr>
+<td>DoRA</td>
+<td>LoRA + magnitude <span class="arithmatex">\(m\)</span></td>
+<td>Split magnitude/direction</td>
+<td>Want full-FT quality at low rank</td>
+</tr>
+<tr>
+<td>VeRA</td>
+<td>two vectors/layer</td>
+<td>Frozen shared random <span class="arithmatex">\(A,B\)</span></td>
+<td>Thousands of tiny adapters</td>
+</tr>
+</tbody>
+</table>
+<h2 id="serving-many-loras-on-one-gpu">Serving many LoRAs on one GPU<a class="headerlink" href="#serving-many-loras-on-one-gpu" title="Permanent link">¶</a></h2>
+<p>Here is the deployment scenario that makes LoRA a <em>systems</em> topic and not just a training trick. You run a platform with one base model and <strong>hundreds or thousands</strong> of fine-tuned variants — one per customer, per task, per language. Loading a full merged model per variant is impossible: 1,000 customers × 14 GB = 14 TB. But each <em>adapter</em> is only 30–100 MB. The opportunity: keep <strong>one</strong> copy of the base model on the GPU and <em>swap adapters per request</em>.</p>
+<p>The challenge is that requests in a single batch want <em>different</em> adapters. Naively you would have to run one batch per adapter, destroying throughput (see <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>). The solution, introduced by <strong>S-LoRA</strong> (Sheng et al., 2023) and now standard in vLLM and friends, is a <strong>batched, multi-adapter kernel</strong>: compute the shared base matmul <span class="arithmatex">\(W_0 X\)</span> once for the whole batch, then apply <em>each request&rsquo;s own</em> <span class="arithmatex">\(BA\)</span> in a single grouped/segmented GEMM that gathers the right adapter per row.</p>
+<figure class="viz" id="fig-lora-multi-lora-batched-serving">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 900 480" role="img" aria-label="Multi-LoRA batched inference (S-LoRA style): four batch rows each tagged with a different adapter (A, B, A, C) feed a single shared base GEMM W0 X for all rows, then each row's own adapter is fetched from a paged pool and applied via a segmented GEMM, and the two results are summed into the final output.">
+  <defs>
+    <marker id="mlb-arr" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+    </marker>
+    <marker id="mlb-arr-a" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6c8cff)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-lora-multi-lora-batched-serving .ttl  { font:600 13px var(--sans,sans-serif); fill:var(--ink-soft,#e2e8f0); }
+    #fig-lora-multi-lora-batched-serving .lbl  { font:600 12px var(--sans,sans-serif); fill:var(--ink-soft,#e2e8f0); }
+    #fig-lora-multi-lora-batched-serving .sub  { font:400 10px var(--sans,sans-serif); fill:var(--muted,#94a3b8); }
+    #fig-lora-multi-lora-batched-serving .mono { font:600 11px var(--mono,monospace);  fill:var(--ink-soft,#e2e8f0); }
+    #fig-lora-multi-lora-batched-serving .cap  { font:400 10.5px var(--sans,sans-serif); fill:var(--muted,#94a3b8); }
+    #fig-lora-multi-lora-batched-serving .badge{ font:700 9px var(--sans,sans-serif);  fill:var(--surface,#0f172a); }
+    #fig-lora-multi-lora-batched-serving .node { font:700 12px var(--mono,monospace);  fill:var(--ink-soft,#e2e8f0); }
+
+    /* animation phases */
+    #fig-lora-multi-lora-batched-serving [data-anim] { opacity:0; }
+
+    @media (prefers-reduced-motion: no-preference) {
+      #fig-lora-multi-lora-batched-serving [data-anim="1"] {
+        animation: mlb-fade 0.6s 0.3s ease forwards;
+      }
+      #fig-lora-multi-lora-batched-serving [data-anim="2"] {
+        animation: mlb-fade 0.6s 1.2s ease forwards;
+      }
+      #fig-lora-multi-lora-batched-serving [data-anim="3"] {
+        animation: mlb-fade 0.6s 2.2s ease forwards;
+      }
+      #fig-lora-multi-lora-batched-serving [data-anim="4"] {
+        animation: mlb-fade 0.6s 3.2s ease forwards;
+      }
+      #fig-lora-multi-lora-batched-serving [data-anim="5"] {
+        animation: mlb-fade 0.6s 4.0s ease forwards;
+      }
+      @keyframes mlb-fade {
+        from { opacity:0; transform: translateY(6px); }
+        to   { opacity:1; transform: translateY(0); }
+      }
+      /* pulse on shared GEMM box */
+      #fig-lora-multi-lora-batched-serving .pulse-box {
+        animation: mlb-pulse 1s 1.2s ease-in-out 2 alternate;
+      }
+      @keyframes mlb-pulse {
+        from { fill-opacity: 0.12; }
+        to   { fill-opacity: 0.32; }
+      }
+      /* flowing dash on fetch arrows */
+      #fig-lora-multi-lora-batched-serving .flow-dash {
+        stroke-dasharray: 5 4;
+        animation: mlb-dash 1.2s 2.2s linear infinite;
+      }
+      @keyframes mlb-dash {
+        to { stroke-dashoffset: -18; }
+      }
+    }
+    /* static fallback: show everything */
+    @media (prefers-reduced-motion: reduce) {
+      #fig-lora-multi-lora-batched-serving [data-anim] { opacity:1; }
+    }
+  </style>
+
+
+
+
+  <g data-anim="1">
+
+    <rect x="46" y="28" width="110" height="46" rx="6"
+          fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+    <text x="101" y="50" text-anchor="middle" class="lbl">r1</text>
+    <text x="101" y="64" text-anchor="middle" class="sub">adpt A</text>
+    <rect x="80" y="24" width="36" height="14" rx="4"
+          fill="var(--accent,#6c8cff)" fill-opacity="0.85"/>
+    <text x="98" y="34" text-anchor="middle" class="badge">A</text>
+
+
+    <rect x="206" y="28" width="110" height="46" rx="6"
+          fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+    <text x="261" y="50" text-anchor="middle" class="lbl">r2</text>
+    <text x="261" y="64" text-anchor="middle" class="sub">adpt B</text>
+    <rect x="238" y="24" width="36" height="14" rx="4"
+          fill="var(--accent,#6c8cff)" fill-opacity="0.45"/>
+    <text x="256" y="34" text-anchor="middle" class="badge">B</text>
+
+
+    <rect x="366" y="28" width="110" height="46" rx="6"
+          fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+    <text x="421" y="50" text-anchor="middle" class="lbl">r3</text>
+    <text x="421" y="64" text-anchor="middle" class="sub">adpt A</text>
+    <rect x="398" y="24" width="36" height="14" rx="4"
+          fill="var(--accent,#6c8cff)" fill-opacity="0.85"/>
+    <text x="416" y="34" text-anchor="middle" class="badge">A</text>
+
+
+    <rect x="526" y="28" width="110" height="46" rx="6"
+          fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+    <text x="581" y="50" text-anchor="middle" class="lbl">r4</text>
+    <text x="581" y="64" text-anchor="middle" class="sub">adpt C</text>
+    <rect x="556" y="24" width="36" height="14" rx="4"
+          fill="var(--muted,#94a3b8)" fill-opacity="0.7"/>
+    <text x="574" y="34" text-anchor="middle" class="badge">C</text>
+  </g>
+
+
+  <g data-anim="1">
+    <line x1="101" y1="74" x2="101" y2="143"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="261" y1="74" x2="261" y2="143"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="421" y1="74" x2="421" y2="143"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="581" y1="74" x2="581" y2="143"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="46" y="145" width="600" height="64" rx="8"
+          class="pulse-box"
+          fill="var(--accent,#6c8cff)" fill-opacity="0.12"
+          stroke="var(--ink-soft,#e2e8f0)" stroke-width="1.8"/>
+    <text x="346" y="172" text-anchor="middle" class="ttl">Shared base GEMM:  W&#x2080; X</text>
+    <text x="346" y="192" text-anchor="middle" class="sub">ONE large matrix multiply for all rows in the batch</text>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="101" y1="209" x2="101" y2="258"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="261" y1="209" x2="261" y2="258"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="421" y1="209" x2="421" y2="258"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="581" y1="209" x2="581" y2="258"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+  </g>
+
+
+  <g data-anim="3">
+
+    <text x="346" y="250" text-anchor="middle" class="sub">segmented GEMM: each row uses its own adapter (bgmv/sgmv kernel)</text>
+
+
+    <rect x="46" y="260" width="110" height="50" rx="6"
+          fill="var(--accent,#6c8cff)" fill-opacity="0.18"
+          stroke="var(--accent,#6c8cff)" stroke-width="1.8"/>
+    <text x="101" y="280" text-anchor="middle" class="mono">B_A A_A x</text>
+    <text x="101" y="297" text-anchor="middle" class="sub">adapter A</text>
+
+
+    <rect x="206" y="260" width="110" height="50" rx="6"
+          fill="var(--accent,#6c8cff)" fill-opacity="0.10"
+          stroke="var(--accent,#6c8cff)" stroke-width="1.3" stroke-opacity="0.5"/>
+    <text x="261" y="280" text-anchor="middle" class="mono">B_B A_B x</text>
+    <text x="261" y="297" text-anchor="middle" class="sub">adapter B</text>
+
+
+    <rect x="366" y="260" width="110" height="50" rx="6"
+          fill="var(--accent,#6c8cff)" fill-opacity="0.18"
+          stroke="var(--accent,#6c8cff)" stroke-width="1.8"/>
+    <text x="421" y="280" text-anchor="middle" class="mono">B_A A_A x</text>
+    <text x="421" y="297" text-anchor="middle" class="sub">adapter A</text>
+
+
+    <rect x="526" y="260" width="110" height="50" rx="6"
+          fill="var(--muted,#94a3b8)" fill-opacity="0.10"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.3"/>
+    <text x="581" y="280" text-anchor="middle" class="mono">B_C A_C x</text>
+    <text x="581" y="297" text-anchor="middle" class="sub">adapter C</text>
+  </g>
+
+
+  <g data-anim="4">
+
+    <line x1="101" y1="310" x2="101" y2="346"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="261" y1="310" x2="261" y2="346"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="421" y1="310" x2="421" y2="346"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="581" y1="310" x2="581" y2="346"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+
+
+    <rect x="46" y="348" width="600" height="42" rx="8"
+          fill="var(--surface,#1e293b)" stroke="var(--ink-soft,#e2e8f0)" stroke-width="1.6"/>
+    <text x="346" y="364" text-anchor="middle" class="ttl">W&#x2080;X  +  B&#x1D62;A&#x1D62;x  for each row</text>
+    <text x="346" y="381" text-anchor="middle" class="sub">summed into output (base + adapter contribution)</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="101" y1="390" x2="101" y2="428"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="261" y1="390" x2="261" y2="428"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="421" y1="390" x2="421" y2="428"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <line x1="581" y1="390" x2="581" y2="428"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#mlb-arr)"/>
+    <text x="101" y="444" text-anchor="middle" class="node">out r1</text>
+    <text x="261" y="444" text-anchor="middle" class="node">out r2</text>
+    <text x="421" y="444" text-anchor="middle" class="node">out r3</text>
+    <text x="581" y="444" text-anchor="middle" class="node">out r4</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="660" y="90" width="225" height="285" rx="10"
+          fill="var(--surface,#1e293b)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+    <text x="772" y="112" text-anchor="middle" class="ttl">Unified adapter pool</text>
+    <text x="772" y="126" text-anchor="middle" class="sub">(paged GPU memory)</text>
+
+
+    <rect x="675" y="138" width="90" height="32" rx="5"
+          fill="var(--accent,#6c8cff)" fill-opacity="0.25"
+          stroke="var(--accent,#6c8cff)" stroke-width="1.5"/>
+    <text x="720" y="156" text-anchor="middle" class="lbl">Adapter A</text>
+    <text x="720" y="167" text-anchor="middle" style="font:400 9px var(--sans,sans-serif);fill:var(--accent,#6c8cff)">resident</text>
+
+
+    <rect x="675" y="180" width="90" height="32" rx="5"
+          fill="var(--accent,#6c8cff)" fill-opacity="0.12"
+          stroke="var(--accent,#6c8cff)" stroke-width="1" stroke-opacity="0.5"/>
+    <text x="720" y="198" text-anchor="middle" class="lbl">Adapter B</text>
+    <text x="720" y="209" text-anchor="middle" style="font:400 9px var(--sans,sans-serif);fill:var(--accent,#6c8cff)">resident</text>
+
+
+    <rect x="675" y="222" width="90" height="32" rx="5"
+          fill="var(--muted,#94a3b8)" fill-opacity="0.12"
+          stroke="var(--muted,#94a3b8)" stroke-width="1"/>
+    <text x="720" y="240" text-anchor="middle" class="lbl">Adapter C</text>
+    <text x="720" y="251" text-anchor="middle" style="font:400 9px var(--sans,sans-serif);fill:var(--muted,#94a3b8)">resident</text>
+
+
+    <rect x="675" y="266" width="90" height="28" rx="5"
+          fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1"
+          stroke-dasharray="4 2"/>
+    <text x="720" y="283" text-anchor="middle" class="sub">Adapter D</text>
+    <text x="720" y="293" text-anchor="middle" style="font:400 9px var(--sans,sans-serif);fill:var(--muted,#94a3b8)">cold</text>
+
+
+    <line x1="765" y1="280" x2="840" y2="280"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.2" stroke-dasharray="4 2"
+          marker-end="url(#mlb-arr)"/>
+    <rect x="842" y="266" width="36" height="28" rx="4"
+          fill="var(--surface,#1e293b)" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="860" y="283" text-anchor="middle" class="sub">CPU</text>
+    <text x="860" y="293" text-anchor="middle" class="sub">RAM</text>
+
+    <text x="772" y="336" text-anchor="middle" class="cap">cold adapters spill to CPU,</text>
+    <text x="772" y="348" text-anchor="middle" class="cap">page back on demand</text>
+  </g>
+
+
+  <g data-anim="3">
+
+    <line x1="675" y1="154" x2="160" y2="285"
+          stroke="var(--accent,#6c8cff)" stroke-width="1" stroke-opacity="0.5"
+          stroke-dasharray="5 4" class="flow-dash"
+          marker-end="url(#mlb-arr-a)"/>
+
+    <line x1="675" y1="158" x2="478" y2="285"
+          stroke="var(--accent,#6c8cff)" stroke-width="1" stroke-opacity="0.5"
+          stroke-dasharray="5 4" class="flow-dash"
+          marker-end="url(#mlb-arr-a)"/>
+
+    <line x1="675" y1="196" x2="318" y2="285"
+          stroke="var(--accent,#6c8cff)" stroke-width="1" stroke-opacity="0.3"
+          stroke-dasharray="5 4" class="flow-dash"
+          marker-end="url(#mlb-arr-a)"/>
+
+    <line x1="675" y1="238" x2="638" y2="285"
+          stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-opacity="0.5"
+          stroke-dasharray="5 4" class="flow-dash"
+          marker-end="url(#mlb-arr)"/>
+  </g>
+</svg>
+<figcaption><b>Multi-LoRA batched inference (S-LoRA / Punica style).</b> A mixed batch of four requests — each needing a different adapter (A, B, or C) — is served with a <em>single shared base GEMM</em> (W&#x2080;X, run once for all rows) followed by a lightweight segmented GEMM that applies each request's own low-rank adapter in parallel, fetching adapter weights on-demand from a paged GPU memory pool. Cold adapters spill to CPU and page back when needed, keeping thousands of adapter variants available at near-base throughput.</figcaption>
+</figure>
+
+<p>Three systems ideas make this fast:</p>
+<ol>
+<li><strong>Separate the base and adapter compute.</strong> The base GEMM is large, dense, and shared — run it once at full efficiency. The adapter contribution is small and per-request — run it with a specialized grouped kernel (often called a <strong>Batched/Segmented Gather-Matmul</strong>, e.g. the <code>bgmv</code>/<code>sgmv</code> kernels in vLLM and Punica). Punica (Chen et al., 2024) contributed the SGMV kernel that makes the per-adapter step nearly free.</li>
+<li><strong>A unified adapter memory pool.</strong> Hold many adapters in a paged GPU buffer; the <em>active</em> ones stay resident, <em>cold</em> ones spill to CPU and page back on demand — the same paging idea as QLoRA&rsquo;s optimizer, applied to adapter weights at serve time.</li>
+<li><strong>Rank-heterogeneous batching.</strong> Different adapters can have different ranks. A good multi-LoRA kernel pads/segments by rank so a batch can mix an <span class="arithmatex">\(r=8\)</span> and an <span class="arithmatex">\(r=64\)</span> adapter without serializing.</li>
+</ol>
+<p>In practice you enable this with a flag — e.g. vLLM&rsquo;s <code>enable_lora=True</code> plus a per-request <code>lora_request</code> — and the engine handles the gather/scatter. The result: thousands of customers, <em>near</em> base-model throughput, sub-second adapter hot-swap, and a memory bill of (one base) + (a small adapter cache). This is the economic backbone of &ldquo;fine-tuned model&rdquo; SaaS offerings.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A candidate says &ldquo;LoRA reduces memory because we only store a small adapter.&rdquo; An interviewer pushes: <em>during training</em>, what specifically gets smaller, what does <strong>not</strong>, and why can QLoRA fine-tune a 65B model on one 48 GB GPU when plain LoRA cannot?</p>
+<p><strong>A:</strong> LoRA&rsquo;s main <em>training</em> saving is on <strong>optimizer state and gradients</strong>, not on the base weights. Because the base is frozen, you compute no gradient for it and store no Adam moments or fp32 master copy for it — those 12–14 bytes/param vanish for the 99%+ of frozen parameters; you pay them only on the &lt;1% trainable adapter. What does <strong>not</strong> shrink under plain LoRA: (1) the frozen base weights themselves still sit in memory (e.g. 13 GB in bf16 for 7B, ~130 GB for 65B), and (2) activation memory is essentially unchanged, since you still forward through the full network — that is why you combine LoRA with gradient checkpointing. QLoRA&rsquo;s extra move is to quantize the <strong>frozen base to 4-bit (NF4)</strong>, cutting the base term ~4× (130 GB → ~35 GB for 65B), with double-quantization shaving the scale overhead and a paged optimizer surviving transient activation spikes. So: plain LoRA can&rsquo;t fit 65B because the <em>base</em> alone overflows 48 GB; QLoRA fits because the base is now 4-bit while the adapter and its optimizer states stay tiny in bf16.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Aside: LoRA&rsquo;s regularization side-effect</p>
+<p>Constraining the update to rank <span class="arithmatex">\(r\)</span> is also a <em>regularizer</em>. On small fine-tuning datasets, full fine-tuning can over-fit and degrade the base model&rsquo;s general capabilities (&ldquo;catastrophic forgetting&rdquo;). LoRA&rsquo;s limited capacity often makes it <em>more</em> robust to forgetting and to small-data over-fitting — a quality benefit, not just an efficiency one. The flip side: on tasks that genuinely require large weight changes (e.g. learning a new domain from scratch, or extending to a new language), low rank can <em>underfit</em>, and full fine-tuning or a higher rank wins. Match the rank to how big the required update actually is.</p>
+</div>
+<h2 id="choosing-hyperparameters-in-practice">Choosing hyperparameters in practice<a class="headerlink" href="#choosing-hyperparameters-in-practice" title="Permanent link">¶</a></h2>
+<p>A compact decision guide, distilled from the QLoRA ablations and broad community experience (treat numbers as starting points, not laws):</p>
+<ul>
+<li><strong>Target modules:</strong> start with <em>all</em> linear layers (attention + MLP). Attention-only is fine for cheap experiments but leaves quality on the table.</li>
+<li><strong>Rank <span class="arithmatex">\(r\)</span>:</strong> 8–16 for most instruction/style tasks; 32–64 when the task is harder or the dataset large; 64+ only with rsLoRA. More rank is not free quality — it is more capacity that can over-fit.</li>
+<li><strong>Alpha:</strong> set the effective scale <span class="arithmatex">\(\alpha/r \approx 2\)</span> (so <span class="arithmatex">\(\alpha = 2r\)</span>) and leave it; do not co-vary it casually with rank.</li>
+<li><strong>Dropout:</strong> 0.05–0.1 on the LoRA path helps on smaller datasets; 0 is fine on large ones.</li>
+<li><strong>Learning rate:</strong> LoRA tolerates <strong>higher</strong> LR than full fine-tuning — on the order of <span class="arithmatex">\(1\text{e}{-4}\)</span> to <span class="arithmatex">\(3\text{e}{-4}\)</span> is common, vs. <span class="arithmatex">\(\sim 1\text{e}{-5}\)</span> for full FT — because you are training a small, well-conditioned subspace. Use LoRA+ (<span class="arithmatex">\(\eta_B = 16\,\eta_A\)</span>) for a free bump.</li>
+<li><strong>Quantize when memory-bound:</strong> reach for QLoRA (NF4 + double-quant + paged AdamW-8bit) the moment the base doesn&rsquo;t fit; the quality cost vs. 16-bit LoRA is small in practice.</li>
+<li><strong>Upgrade path:</strong> if LoRA underfits at your best rank, try <strong>DoRA</strong> (better quality per rank) before jumping to full fine-tuning.</li>
+</ul>
+<p>This connects directly to the data-formatting and templating choices in <a href="../05-posttraining-alignment/02-chat-templates-packing.html">Chat Templates, Data Formatting &amp; Sequence Packing</a> — PEFT changes <em>which</em> parameters move, not <em>what</em> you train on, so your SFT data pipeline is identical.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>LoRA freezes the base and learns a low-rank update</strong> <span class="arithmatex">\(\Delta W = \frac{\alpha}{r} BA\)</span> in parallel; only <span class="arithmatex">\(A\)</span> (random init) and <span class="arithmatex">\(B\)</span> (zero init) train, so the adapter is a no-op at step 0 and the base never moves.</li>
+<li>The premise is <strong>low intrinsic rank of the <em>update</em></strong>, not of the weight: <span class="arithmatex">\(W_0\)</span> stays full-rank and exact; only the adaptation is constrained.</li>
+<li><strong><span class="arithmatex">\(\alpha/r\)</span> is an effective-scale knob</strong>, not magic. Pin <span class="arithmatex">\(\alpha/r\)</span> (e.g. 2), sweep <span class="arithmatex">\(r\)</span> as a capacity knob; editing <span class="arithmatex">\(\alpha\)</span> alone is just changing the LoRA learning rate.</li>
+<li>LoRA&rsquo;s main <em>training</em> saving is <strong>optimizer state + gradients</strong> on the frozen base (no Adam moments, no fp32 master, no base grad); activation memory is unchanged, so pair it with gradient checkpointing.</li>
+<li><strong>Merging</strong> folds <span class="arithmatex">\(BA\)</span> into <span class="arithmatex">\(W_0\)</span> for <strong>zero inference overhead</strong> — LoRA&rsquo;s edge over serial adapters; keep the unmerged adapter as the portable artifact.</li>
+<li><strong>QLoRA</strong> = 4-bit <strong>NF4</strong> frozen base + <strong>double quantization</strong> of scales + <strong>paged optimizer</strong>; it makes single-GPU fine-tuning of 65B-class models routine, with the bf16 adapter absorbing quantization error.</li>
+<li>Know the family: <strong>rsLoRA</strong> (<span class="arithmatex">\(1/\sqrt{r}\)</span> scaling for high rank), <strong>LoRA+</strong> (<span class="arithmatex">\(\eta_B &gt; \eta_A\)</span>), <strong>DoRA</strong> (split magnitude/direction, best quality per rank), <strong>VeRA</strong> (shared frozen random matrices, tiny adapters).</li>
+<li><strong>Multi-LoRA serving</strong> (S-LoRA/Punica) runs the shared base GEMM once and applies per-request adapters with a segmented kernel — thousands of tuned variants on one base at near-base throughput.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>LoRA and QLoRA remain the dominant parameter-efficient fine-tuning approaches in production as of 2026, with DoRA and rsLoRA the leading quality upgrades; multi-adapter serving (S-LoRA/vLLM) has made LoRA-based SaaS economically standard at scale.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2106.09685">Hu et al., <em>LoRA: Low-Rank Adaptation of Large Language Models</em> (2021)</a> — the original method: freeze the base, train a rank-<span class="arithmatex">\(r\)</span> delta <span class="arithmatex">\(BA\)</span> in parallel; adapter merges for zero inference overhead.</li>
+<li><a href="https://arxiv.org/abs/2012.13255">Aghajanyan et al., <em>Intrinsic Dimensionality Explains the Effectiveness of Language Model Fine-Tuning</em> (2020)</a> — empirical grounding for why fine-tuning updates are low-rank: the optimization landscape has far lower intrinsic dimension than the parameter count.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2305.14314">Dettmers et al., <em>QLoRA: Efficient Finetuning of Quantized LLMs</em> (2023)</a> — NF4 4-bit frozen base + double quantization + paged optimizer; made single-GPU fine-tuning of 65B models routine.</li>
+<li><a href="https://arxiv.org/abs/2402.09353">Liu et al., <em>DoRA: Weight-Decomposed Low-Rank Adaptation</em> (2024)</a> — decomposes weights into magnitude and direction, trains magnitude directly; consistently beats LoRA at the same rank (ICML 2024 oral).</li>
+<li><a href="https://arxiv.org/abs/2312.03732">Kalajdzievski, <em>A Rank Stabilization Scaling Factor for Fine-Tuning with LoRA</em> (rsLoRA, 2023)</a> — replaces <span class="arithmatex">\(1/r\)</span> scaling with <span class="arithmatex">\(1/\sqrt{r}\)</span> so high-rank adapters (<span class="arithmatex">\(r \ge 64\)</span>) actually deliver the extra capacity.</li>
+<li><a href="https://arxiv.org/abs/2402.12354">Hayou et al., <em>LoRA+: Efficient Low Rank Adaptation of Large Models</em> (2024)</a> — sets a higher learning rate for the <span class="arithmatex">\(B\)</span> matrix than <span class="arithmatex">\(A\)</span>; free convergence speed-up (ICML 2024).</li>
+<li><a href="https://arxiv.org/abs/2310.11454">Kopiczko et al., <em>VeRA: Vector-based Random Matrix Adaptation</em> (2024)</a> — shares frozen random <span class="arithmatex">\(A, B\)</span> across all layers; only tiny per-layer scaling vectors are trained, cutting adapter size 10–100× vs. LoRA (ICLR 2024).</li>
+<li><a href="https://arxiv.org/abs/2311.03285">Sheng et al., <em>S-LoRA: Serving Thousands of Concurrent LoRA Adapters</em> (2023)</a> — unified paging + segmented GEMM kernel to serve thousands of adapters on one GPU at near-base throughput; design now integrated in vLLM.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/huggingface/peft">huggingface/peft</a> — the reference implementation of LoRA, QLoRA, DoRA, rsLoRA, VeRA, and a dozen other PEFT methods; integrates directly with Transformers and TRL.</li>
+<li><a href="https://github.com/bitsandbytes-foundation/bitsandbytes">bitsandbytes-foundation/bitsandbytes</a> — NF4/INT8 quantization primitives and 8-bit paged optimizers that power QLoRA in practice.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/blog/4bit-transformers-bitsandbytes">HuggingFace Blog: <em>Making LLMs even more accessible with bitsandbytes, 4-bit quantization and QLoRA</em> (2023)</a> — practical walkthrough of the full QLoRA stack with runnable code and memory benchmarks.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Chen — <em>LoRA: Low-Rank Adaptation of Large Language Models</em> (2021). The original method and intrinsic-rank argument.</li>
+<li>Aghajanyan, Zettlemoyer, Gupta — <em>Intrinsic Dimensionality Explains the Effectiveness of Language Model Fine-Tuning</em> (2020). The empirical groundwork for &ldquo;fine-tuning is low-dimensional.&rdquo;</li>
+<li>Dettmers, Pagnoni, Holtzman, Zettlemoyer — <em>QLoRA: Efficient Finetuning of Quantized LLMs</em> (2023). NF4, double quantization, paged optimizers.</li>
+<li>Liu, Wang, Yin, Molchanov, Wang, Cheng, Chen — <em>DoRA: Weight-Decomposed Low-Rank Adaptation</em> (2024).</li>
+<li>Kalajdzievski — <em>A Rank-Stabilized Scaling Factor for Low-Rank Adaptation</em> (rsLoRA, 2023).</li>
+<li>Hayou, Ghosh, Yu — <em>LoRA+: Efficient Low Rank Adaptation of Large Models</em> (2024).</li>
+<li>Kopiczko, Blankevoort, Asano — <em>VeRA: Vector-based Random Matrix Adaptation</em> (2024).</li>
+<li>Houlsby et al. — <em>Parameter-Efficient Transfer Learning for NLP</em> (2019). The original (serial) adapter modules LoRA improved upon.</li>
+<li>Sheng et al. — <em>S-LoRA: Serving Thousands of Concurrent LoRA Adapters</em> (2023); Chen et al. — <em>Punica: Multi-Tenant LoRA Serving</em> (2024). The multi-adapter serving systems.</li>
+<li>The HuggingFace <strong>PEFT</strong> library and <strong>bitsandbytes</strong> repository — the reference implementations of everything in this chapter.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-chat-templates-packing.html"><span class="pn-label">← Previous</span><span class="pn-title">Chat Templates, Data Formatting &amp; Sequence Packing</span></a>
+<a class="next" href="04-peft-prompt-merging.html"><span class="pn-label">Next →</span><span class="pn-title">PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-intrinsic-dimension-intuition-why-low-rank-works-at-all">The intrinsic-dimension intuition: why low rank works at all</a></li>
+<li class="toc-l2"><a href="#lora-mechanics-forward-pass-alpha-scaling-and-initialization">LoRA mechanics: forward pass, alpha scaling, and initialization</a></li>
+<li class="toc-l3"><a href="#the-forward-pass">The forward pass</a></li>
+<li class="toc-l3"><a href="#the-alphar-scaling-factor-what-it-is-and-why-it-exists">The \(\alpha/r\) scaling factor — what it is and why it exists</a></li>
+<li class="toc-l3"><a href="#initialization-and-why-one-matrix-starts-at-zero">Initialization — and why one matrix starts at zero</a></li>
+<li class="toc-l2"><a href="#where-to-apply-lora-and-how-merging-works">Where to apply LoRA, and how merging works</a></li>
+<li class="toc-l3"><a href="#which-layers-the-targeting-decision">Which layers? The targeting decision</a></li>
+<li class="toc-l3"><a href="#merging-zero-overhead-inference">Merging: zero-overhead inference</a></li>
+<li class="toc-l2"><a href="#a-from-scratch-lora-implementation">A from-scratch LoRA implementation</a></li>
+<li class="toc-l3"><a href="#the-gradient-flow-made-explicit">The gradient flow, made explicit</a></li>
+<li class="toc-l2"><a href="#qlora-fine-tuning-a-65b-model-on-one-gpu">QLoRA: fine-tuning a 65B model on one GPU</a></li>
+<li class="toc-l3"><a href="#1-nf4-the-4-bit-normalfloat-data-type">1. NF4 — the 4-bit NormalFloat data type</a></li>
+<li class="toc-l3"><a href="#2-double-quantization-quantizing-the-quantization-constants">2. Double quantization — quantizing the quantization constants</a></li>
+<li class="toc-l3"><a href="#3-paged-optimizers-surviving-the-memory-spikes">3. Paged optimizers — surviving the memory spikes</a></li>
+<li class="toc-l2"><a href="#the-lora-family-dora-rslora-lora-vera">The LoRA family: DoRA, rsLoRA, LoRA+, VeRA</a></li>
+<li class="toc-l3"><a href="#rslora-fixing-the-scaling-factor-at-high-rank">rsLoRA — fixing the scaling factor at high rank</a></li>
+<li class="toc-l3"><a href="#lora-different-learning-rates-for-a-and-b">LoRA+ — different learning rates for A and B</a></li>
+<li class="toc-l3"><a href="#dora-decomposing-weight-magnitude-and-direction">DoRA — decomposing weight magnitude and direction</a></li>
+<li class="toc-l3"><a href="#vera-sharing-frozen-random-matrices-across-layers">VeRA — sharing frozen random matrices across layers</a></li>
+<li class="toc-l2"><a href="#serving-many-loras-on-one-gpu">Serving many LoRAs on one GPU</a></li>
+<li class="toc-l2"><a href="#choosing-hyperparameters-in-practice">Choosing hyperparameters in practice</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

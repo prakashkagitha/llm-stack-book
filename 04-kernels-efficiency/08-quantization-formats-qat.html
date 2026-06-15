@@ -1,0 +1,1302 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT — The LLM Stack</title>
+<meta name="description" content="Weight-only vs weight+activation, INT4/NF4, FP8 inference, GGUF/llama.cpp k-quants, bitsandbytes, double quantization; quantization-aware training, QLoRA&#x27;s NF4;">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="active" href="08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IV — Kernels, Efficiency &amp; Quantization</div>
+<h1 id="48-quantization-ii-int4int8fp8-gguf-bitsandbytes-qat">4.8 Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT<a class="headerlink" href="#48-quantization-ii-int4int8fp8-gguf-bitsandbytes-qat" title="Permanent link">¶</a></h1>
+<p>Post-training quantization (PTQ) compresses a trained model by changing the numeric format of its weights and, optionally, its activations. The previous chapter, <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a>, covered the calibration-based algorithms that decide <em>how</em> to pick the right scale factors. This chapter covers the <em>formats</em> those algorithms produce — INT4, NF4, INT8, FP8, and the GGUF k-quant family — and the inference runtimes and training techniques built around them. We also cover quantization-aware training (QAT) and QLoRA, which push accuracy further at the cost of more compute during training.</p>
+<p>The core tension throughout is this: modern LLMs are memory-bandwidth-bound during autoregressive decoding (see <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>), so using fewer bits per weight almost always helps throughput, but every bit removed increases the chance that the rounding error degrades generation quality beyond an acceptable threshold.</p>
+<hr />
+<h2 id="the-quantization-landscape-a-taxonomy">The Quantization Landscape: A Taxonomy<a class="headerlink" href="#the-quantization-landscape-a-taxonomy" title="Permanent link">¶</a></h2>
+<p>Before diving into formats, it helps to fix terminology.</p>
+<p><strong>Granularity</strong> refers to how many weights share a single scale (and zero-point). Options range from per-tensor (one scalar), to per-row/per-column, to per-group (e.g., a block of 128 consecutive weights). Finer granularity costs more metadata but reduces quantization error dramatically — INT4 per-group-128 loses far less information than INT4 per-tensor.</p>
+<p><strong>Scope</strong> refers to what gets quantized:</p>
+<ul>
+<li><strong>Weight-only quantization (W-only):</strong> Weights are stored in low precision; activations remain in BF16/FP16 at runtime. The kernel dequantizes weights on-the-fly and performs the GEMM in FP16. Memory footprint shrinks; arithmetic intensity of the GEMM itself is unchanged, but you win because you now move fewer bytes from HBM.</li>
+<li><strong>Weight + activation quantization (W+A):</strong> Both weights and activations are quantized, usually to INT8 or INT8+INT4. The entire matrix multiply happens in low-precision integer arithmetic on hardware integer units, which can deliver higher TFLOP/s than FP16 on some GPU generations. The tradeoff is that activation distributions are much more dynamic and harder to quantize accurately.</li>
+</ul>
+<p><strong>Symmetric vs. asymmetric:</strong> Symmetric quantization maps <span class="arithmatex">\([-\alpha, +\alpha]\)</span> linearly to <span class="arithmatex">\([-2^{b-1}, 2^{b-1}-1]\)</span> — the zero-point is always 0, which simplifies dequantization math. Asymmetric allows a nonzero zero-point <span class="arithmatex">\(z\)</span> to shift the representable range, accommodating one-sided activation distributions (e.g., post-ReLU activations that are all positive).</p>
+<p>The linear quantize-dequantize pair for a weight <span class="arithmatex">\(w\)</span> with scale <span class="arithmatex">\(s\)</span> and zero-point <span class="arithmatex">\(z\)</span> is:</p>
+<div class="arithmatex">\[
+q = \operatorname{round}\!\left(\frac{w}{s}\right) + z, \quad \hat{w} = s \cdot (q - z)
+\]</div>
+<p>The quantization error per element is bounded by <span class="arithmatex">\(\frac{s}{2}\)</span>, so the goal of calibration (GPTQ, AWQ, SmoothQuant) is to minimize <span class="arithmatex">\(s\)</span> for the most sensitive weight groups.</p>
+<hr />
+<h2 id="int8-the-safe-harbor">INT8: The Safe Harbor<a class="headerlink" href="#int8-the-safe-harbor" title="Permanent link">¶</a></h2>
+<p>INT8 is the most widely deployed quantization format because the accuracy penalty is usually negligible and both Tensor Core (via <code>mma.sync</code>) and integer ALU paths are mature.</p>
+<h3 id="int8-weight-only-llmint8">INT8 Weight-Only (LLM.int8)<a class="headerlink" href="#int8-weight-only-llmint8" title="Permanent link">¶</a></h3>
+<p>Tim Dettmers et al. introduced LLM.int8() as part of bitsandbytes. The key insight was that large language models have a small fraction of <em>outlier</em> activation channels — typically 0.1–1 % of channels depending on model size — that take values far outside the typical range. Quantizing these outliers with per-tensor INT8 causes catastrophic error.</p>
+<p>The solution is <strong>mixed-precision decomposition</strong>: identify the handful of outlier columns at runtime, keep those multiplications in FP16, and quantize the rest as INT8 per-column. At 6.7 B parameters and above, this approach nearly eliminates the accuracy gap with FP16 while halving the memory footprint.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># bitsandbytes INT8 weight-only quantization (load_in_8bit)</span>
+<span class="c1"># Requires: pip install bitsandbytes transformers accelerate</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+
+<span class="n">model_id</span> <span class="o">=</span> <span class="s2">&quot;meta-llama/Meta-Llama-3-8B-Instruct&quot;</span>
+
+<span class="c1"># `load_in_8bit=True` triggers LLM.int8() decomposition via bitsandbytes</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="n">model_id</span><span class="p">,</span>
+    <span class="n">load_in_8bit</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>       <span class="c1"># weight-only INT8; activations remain FP16</span>
+    <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>       <span class="c1"># spread layers across available GPUs</span>
+    <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_id</span><span class="p">)</span>
+
+<span class="c1"># The model is now ~8 GB instead of ~16 GB for BF16</span>
+<span class="c1"># Linear layers become bitsandbytes.nn.Linear8bitLt modules</span>
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">module</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_modules</span><span class="p">():</span>
+    <span class="k">if</span> <span class="s2">&quot;Linear8bitLt&quot;</span> <span class="ow">in</span> <span class="nb">type</span><span class="p">(</span><span class="n">module</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: weight dtype=</span><span class="si">{</span><span class="n">module</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">dtype</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">break</span>
+</code></pre></div>
+<h3 id="int8-weight-activation-smoothquant-tensorrt-llm">INT8 Weight + Activation (SmoothQuant / TensorRT-LLM)<a class="headerlink" href="#int8-weight-activation-smoothquant-tensorrt-llm" title="Permanent link">¶</a></h3>
+<p>For weight+activation INT8, the serving stack typically uses per-token dynamic quantization of activations: at each layer, collect the max absolute value of the current token&rsquo;s activation vector, compute a scale, quantize to INT8, run the INT8 GEMM on Tensor Cores, and dequantize the output. This is done via CUTLASS or TensorRT-LLM&rsquo;s <code>int8_sq</code> plugin.</p>
+<p>SmoothQuant (Xiao et al., 2022) migrates some of the per-channel outlier variance from activations into weights by applying a per-channel scaling factor <span class="arithmatex">\(s_j\)</span> before quantization:</p>
+<div class="arithmatex">\[
+\mathbf{Y} = (\mathbf{X} \operatorname{diag}(\mathbf{s})^{-1}) \cdot (\operatorname{diag}(\mathbf{s}) \mathbf{W}^\top)
+\]</div>
+<p>After rescaling, both sides are smoother and quantize more cleanly. This is detailed further in <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a>.</p>
+<hr />
+<h2 id="int4-nf4-pushing-to-4-bits">INT4 &amp; NF4: Pushing to 4 Bits<a class="headerlink" href="#int4-nf4-pushing-to-4-bits" title="Permanent link">¶</a></h2>
+<p>4-bit quantization halves memory relative to INT8, enabling a 70 B model to fit on a single 80 GB A100 at around 35 GB. The challenge is that rounding errors are much larger with only 16 representable values.</p>
+<h3 id="per-group-int4">Per-Group INT4<a class="headerlink" href="#per-group-int4" title="Permanent link">¶</a></h3>
+<p>The standard INT4 scheme uses <strong>group quantization</strong>: every <span class="arithmatex">\(g\)</span> consecutive weights (often <span class="arithmatex">\(g = 128\)</span>) share one scale (and optionally one zero-point). The metadata overhead is <span class="arithmatex">\(\frac{16}{g}\)</span> bits per weight (one FP16 scale per group), negligible at <span class="arithmatex">\(g = 128\)</span>.</p>
+<p>For a weight matrix <span class="arithmatex">\(\mathbf{W} \in \mathbb{R}^{d_\text{out} \times d_\text{in}}\)</span>, each row is split into <span class="arithmatex">\(\frac{d_\text{in}}{g}\)</span> groups. Each group is quantized to INT4 values in <span class="arithmatex">\([-8, 7]\)</span> (signed) or <span class="arithmatex">\([0, 15]\)</span> (unsigned with zero-point). GPTQ and AWQ both output this format; the difference is only in <em>how</em> the scales are found.</p>
+<p>Dequantization at inference time:</p>
+<div class="arithmatex">\[
+\hat{w}_i = s_{\lfloor i/g \rfloor} \cdot (q_i - z_{\lfloor i/g \rfloor})
+\]</div>
+<p>where <span class="arithmatex">\(s\)</span> and <span class="arithmatex">\(z\)</span> are the group scale and zero-point. The kernel unpacks two 4-bit values from each byte, dequantizes to FP16, and then calls the FP16 GEMM.</p>
+<h3 id="nf4-normal-float-4">NF4: Normal Float 4<a class="headerlink" href="#nf4-normal-float-4" title="Permanent link">¶</a></h3>
+<p>NF4 (Dettmers et al., QLoRA, 2023) is an <em>information-theoretically optimal</em> 4-bit data type for normally distributed weights. Instead of uniform spacing between the 16 quantization levels, NF4 spaces them at the quantiles of a standard normal distribution <span class="arithmatex">\(\mathcal{N}(0,1)\)</span>. This minimizes expected squared quantization error for weights that are normally distributed (which pretrained LLM weights approximately are).</p>
+<p>The 16 NF4 code points are the values <span class="arithmatex">\(q_i\)</span> such that:</p>
+<div class="arithmatex">\[
+q_i = Q_\mathcal{N}\!\left(\frac{2i + 1}{2 \times 16}\right), \quad i = 0, 1, \ldots, 15
+\]</div>
+<p>where <span class="arithmatex">\(Q_\mathcal{N}\)</span> is the quantile function of the standard normal. At runtime, each weight group is rescaled by <span class="arithmatex">\(s = \max(|\mathbf{w}|) / 0.9677\)</span> (the scale that maps the group&rsquo;s maximum to the most extreme NF4 code point), then the nearest code point index is stored.</p>
+<p>NF4 is the weight format used by QLoRA for the frozen base model. It achieves slightly lower perplexity than INT4 per-group on the same model at the same 4-bit budget, because its code points are better matched to the actual weight distribution.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># bitsandbytes NF4 quantization (load_in_4bit with bnb_4bit_quant_type=&quot;nf4&quot;)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">BitsAndBytesConfig</span>
+
+<span class="n">bnb_config</span> <span class="o">=</span> <span class="n">BitsAndBytesConfig</span><span class="p">(</span>
+    <span class="n">load_in_4bit</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">bnb_4bit_quant_type</span><span class="o">=</span><span class="s2">&quot;nf4&quot;</span><span class="p">,</span>       <span class="c1"># vs &quot;fp4&quot; (less accurate but faster unpacking)</span>
+    <span class="n">bnb_4bit_compute_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>  <span class="c1"># dtype for the dequantized compute</span>
+    <span class="n">bnb_4bit_use_double_quant</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># double quantization (see below)</span>
+<span class="p">)</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="s2">&quot;meta-llama/Meta-Llama-3-8B-Instruct&quot;</span><span class="p">,</span>
+    <span class="n">quantization_config</span><span class="o">=</span><span class="n">bnb_config</span><span class="p">,</span>
+    <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="c1"># Model is now ~4 GB instead of ~16 GB</span>
+</code></pre></div>
+<h3 id="double-quantization">Double Quantization<a class="headerlink" href="#double-quantization" title="Permanent link">¶</a></h3>
+<p>Double quantization (also from QLoRA) applies a second quantization step to the scale factors themselves. Each group-128 scale is an FP32 value. With <span class="arithmatex">\(g_2 = 256\)</span> scales sharing a second-level scale (stored in FP8), the per-weight overhead of the primary scale is reduced from <span class="arithmatex">\(32/128 = 0.25\)</span> bits/weight to roughly <span class="arithmatex">\(8/256 + 32/(256 \cdot 256) \approx 0.031 + 0.001 \approx 0.032\)</span> bits/weight — an additional saving of about 0.22 bits/weight across the whole model.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: memory budget for a 70 B model</p>
+<p>A Llama-2-70B model has approximately 70 billion parameters. Let&rsquo;s compute memory under different quantization schemes.</p>
+<p><strong>BF16 baseline:</strong> <span class="arithmatex">\(70 \times 10^9 \times 2 \text{ bytes} = 140 \text{ GB}\)</span>. Requires two 80 GB A100s minimum.</p>
+<p><strong>INT8 weight-only (no scales overhead approx.):</strong> <span class="arithmatex">\(70 \times 10^9 \times 1 \text{ byte} \approx 70 \text{ GB}\)</span>. Fits on a single 80 GB A100 (with room for activations and KV cache).</p>
+<p><strong>INT4 per-group-128 (with FP16 scales):</strong> Weights = <span class="arithmatex">\(70 \times 10^9 \times 0.5 \text{ bytes} = 35 \text{ GB}\)</span>. Scales add <span class="arithmatex">\(70 \times 10^9 / 128 \times 2 \text{ bytes} \approx 1.1 \text{ GB}\)</span>. Total: <span class="arithmatex">\(\approx 36 \text{ GB}\)</span>.</p>
+<p><strong>NF4 + double quantization:</strong> Weights <span class="arithmatex">\(\approx 35\)</span> GB. First-level FP8 scales: <span class="arithmatex">\(70 \times 10^9 / 128 \times 1 \text{ byte} \approx 0.55\)</span> GB. Second-level FP32 meta-scale: <span class="arithmatex">\(70 \times 10^9 / (128 \times 256) \times 4 \text{ bytes} \approx 0.009\)</span> GB. Total: <span class="arithmatex">\(\approx 35.6\)</span> GB — essentially the same as INT4, with a small extra saving from compressing the scales.</p>
+<p>In practice, a 70 B NF4+DQ model fits comfortably in 36–40 GB with overhead for the KV cache and activations, enabling single-GPU deployment on an A100-80GB or H100-80GB.</p>
+</div>
+<hr />
+<h2 id="fp8-inference">FP8 Inference<a class="headerlink" href="#fp8-inference" title="Permanent link">¶</a></h2>
+<p>FP8 introduces a floating-point format at 8 bits. Two variants exist:</p>
+<ul>
+<li><strong>E4M3:</strong> 4 exponent bits, 3 mantissa bits. Dynamic range: roughly <span class="arithmatex">\([5.96 \times 10^{-8}, 448]\)</span>. Better for weights (need a wider range).</li>
+<li><strong>E5M2:</strong> 5 exponent bits, 2 mantissa bits. Wider dynamic range, less precision per number. Better for gradients during training.</li>
+</ul>
+<p>NVIDIA Hopper GPUs (H100, H200) introduced native FP8 Tensor Core support. The hardware performs FP8 × FP8 multiplications and accumulates in FP32, then scales and stores results in FP8 or FP16.</p>
+<p>FP8 differs from INT8 in one crucial way: the scale granularity is coarser (per-tensor or per-row) and is baked into the hardware instruction as a scaling factor, rather than per-group. This makes FP8 better suited to weights and activations that are roughly uniform in magnitude, which is why FP8 shines for inference on GEMM-heavy forward passes (attention and FFN projections) but can degrade more than INT8 on outlier-heavy activations unless paired with SmoothQuant-style smoothing.</p>
+<p>FP8 training is discussed in <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a> and <a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a>.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># FP8 inference via TensorRT-LLM (conceptual API sketch)</span>
+<span class="c1"># In practice, TRT-LLM&#39;s quantization workflow handles the conversion</span>
+<span class="c1"># The snippet below shows the key concepts using transformer_engine directly.</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">transformer_engine.pytorch</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">te</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformer_engine.common.recipe</span><span class="w"> </span><span class="kn">import</span> <span class="n">Format</span><span class="p">,</span> <span class="n">DelayedScaling</span>
+
+<span class="c1"># Create FP8 recipe: E4M3 for forward, E5M2 for backward (if training)</span>
+<span class="n">fp8_recipe</span> <span class="o">=</span> <span class="n">DelayedScaling</span><span class="p">(</span>
+    <span class="n">fp8_format</span><span class="o">=</span><span class="n">Format</span><span class="o">.</span><span class="n">E4M3</span><span class="p">,</span>
+    <span class="n">amax_history_len</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>      <span class="c1"># track amax over last 16 iters to set scale</span>
+    <span class="n">amax_compute_algo</span><span class="o">=</span><span class="s2">&quot;max&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># A TransformerEngine linear layer that uses FP8 GEMM on Hopper</span>
+<span class="n">linear</span> <span class="o">=</span> <span class="n">te</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">4096</span><span class="p">,</span> <span class="mi">4096</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="k">with</span> <span class="n">te</span><span class="o">.</span><span class="n">fp8_autocast</span><span class="p">(</span><span class="n">enabled</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fp8_recipe</span><span class="o">=</span><span class="n">fp8_recipe</span><span class="p">):</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="mi">4096</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># internally uses FP8 GEMM</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output dtype: </span><span class="si">{</span><span class="n">y</span><span class="o">.</span><span class="n">dtype</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># still BF16 after cast-back</span>
+</code></pre></div>
+<p>For practical FP8 inference with vLLM:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Enable FP8 quantization in vLLM (requires H100/H200 or Ada generation)</span>
+python<span class="w"> </span>-m<span class="w"> </span>vllm.entrypoints.openai.api_server<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model<span class="w"> </span>meta-llama/Meta-Llama-3-70B-Instruct<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--quantization<span class="w"> </span>fp8<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--gpu-memory-utilization<span class="w"> </span><span class="m">0</span>.92
+</code></pre></div>
+<hr />
+<h2 id="gguf-llamacpp-k-quants">GGUF &amp; llama.cpp K-Quants<a class="headerlink" href="#gguf-llamacpp-k-quants" title="Permanent link">¶</a></h2>
+<p>GGUF (GPT-Generated Unified Format) is the binary container format used by llama.cpp, the most widely deployed CPU/edge inference engine. It replaces the older GGML format and stores model weights alongside all necessary metadata (tokenizer, architecture hyperparameters, rope parameters, etc.) in a single self-describing file.</p>
+<h3 id="the-k-quant-family">The K-Quant Family<a class="headerlink" href="#the-k-quant-family" title="Permanent link">¶</a></h3>
+<p>llama.cpp&rsquo;s k-quants are a family of mixed-precision block quantization schemes. The name comes from the original author&rsquo;s handle and the &ldquo;k&rdquo; for the block size. The key innovation is <strong>block-level mixed precision</strong>: within each block of 256 weights, the scheme uses different bit widths for the &ldquo;super-block scale&rdquo; (stored at higher precision) versus the individual weight quantization steps.</p>
+<p>The available k-quant types and their approximate sizes per weight:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Bits/weight (approx)</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Q2_K</td>
+<td>2.6 bits</td>
+<td>Very aggressive; noticeable quality loss</td>
+</tr>
+<tr>
+<td>Q3_K_S/M/L</td>
+<td>3.0–3.5 bits</td>
+<td>S=small scales, M=medium, L=large scales</td>
+</tr>
+<tr>
+<td>Q4_K_S/M</td>
+<td>4.1–4.6 bits</td>
+<td>Most popular tradeoff; M has larger super-block</td>
+</tr>
+<tr>
+<td>Q5_K_S/M</td>
+<td>5.0–5.5 bits</td>
+<td>Near-BF16 quality on most models</td>
+</tr>
+<tr>
+<td>Q6_K</td>
+<td>6.6 bits</td>
+<td>Essentially lossless for 7–13 B models</td>
+</tr>
+<tr>
+<td>Q8_0</td>
+<td>8.0 bits</td>
+<td>INT8, simple scale-per-32-weights</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Q4_K_M internal structure:</strong> Each super-block covers 256 weights. It stores 2 high-precision (6-bit) scales and mins, covering 8 sub-blocks of 32 weights each. Each sub-block has a 4-bit scale. Individual weights are stored as 4-bit unsigned integers. The dequantization formula per weight is:</p>
+<div class="arithmatex">\[
+\hat{w} = s_\text{super} \cdot s_\text{sub} \cdot q - (m_\text{super} \cdot m_\text{sub})
+\]</div>
+<p>where <span class="arithmatex">\(s_\text{super}\)</span> and <span class="arithmatex">\(m_\text{super}\)</span> are the 6-bit super-block scale and min, <span class="arithmatex">\(s_\text{sub}\)</span> is the 4-bit sub-block scale, and <span class="arithmatex">\(q \in [0, 15]\)</span> is the stored weight.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Convert a Hugging Face model to GGUF Q4_K_M using llama.cpp&#39;s converter</span>
+<span class="c1"># First clone llama.cpp and install dependencies:</span>
+<span class="c1"># git clone https://github.com/ggerganov/llama.cpp &amp;&amp; cd llama.cpp</span>
+<span class="c1"># pip install -r requirements.txt &amp;&amp; make -j</span>
+
+<span class="c1"># Step 1: Convert HF model to GGUF F16 (lossless intermediate)</span>
+<span class="c1"># (Run from the llama.cpp directory)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># Step 1: Lossless F16 conversion</span>
+python<span class="w"> </span>convert_hf_to_gguf.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>/path/to/meta-llama/Meta-Llama-3-8B-Instruct<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--outfile<span class="w"> </span>llama3-8b-f16.gguf<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--outtype<span class="w"> </span>f16
+
+<span class="c1"># Step 2: Quantize to Q4_K_M (the recommended default for CPU/edge)</span>
+./llama-quantize<span class="w"> </span>llama3-8b-f16.gguf<span class="w"> </span>llama3-8b-Q4_K_M.gguf<span class="w"> </span>Q4_K_M
+
+<span class="c1"># Step 3: Run inference</span>
+./llama-cli<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-m<span class="w"> </span>llama3-8b-Q4_K_M.gguf<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-n<span class="w"> </span><span class="m">256</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-p<span class="w"> </span><span class="s2">&quot;Explain quantization to a 5 year old:&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--n-gpu-layers<span class="w"> </span><span class="m">33</span><span class="w">   </span><span class="c1"># offload 33 layers to GPU; rest runs on CPU RAM</span>
+</code></pre></div>
+<p>The <code>--n-gpu-layers</code> flag enables <strong>GPU+CPU split inference</strong>: the first <span class="arithmatex">\(n\)</span> layers run on the GPU (fast), remaining layers on the CPU (using system RAM). This allows running a 70 B model with 24 GB VRAM + 32 GB system RAM — unthinkable with any other stack.</p>
+<h3 id="why-gguf-for-edge-deployment">Why GGUF for Edge Deployment?<a class="headerlink" href="#why-gguf-for-edge-deployment" title="Permanent link">¶</a></h3>
+<p>GGUF&rsquo;s portability is unmatched: the same binary runs on macOS (Metal), Linux (CUDA or CPU), Windows (DirectML or CUDA), and even Android/iOS via llama.cpp bindings. For edge deployment, the k-quant Q4_K_M format on a 7 B model typically results in a ~4.1 GB file that runs at 20–40 tokens/second on a modern CPU — no GPU required.</p>
+<hr />
+<h2 id="bitsandbytes-the-pytorch-native-quantization-library">bitsandbytes: The PyTorch-Native Quantization Library<a class="headerlink" href="#bitsandbytes-the-pytorch-native-quantization-library" title="Permanent link">¶</a></h2>
+<p>bitsandbytes (bnb) provides drop-in quantized linear layers for PyTorch. It is the primary quantization backend for Hugging Face Transformers and the PEFT library (used by QLoRA).</p>
+<h3 id="architecture-of-bnb-linear-layers">Architecture of bnb Linear Layers<a class="headerlink" href="#architecture-of-bnb-linear-layers" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-quant-bnb-linear-dataflow">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 640 630" role="img" aria-label="Anatomy of a bitsandbytes quantized linear layer: FP16/BF16 activations flow in, weights are stored as INT8/NF4 in HBM, then on-chip dequantization to FP16 feeds a FP16/BF16 GEMM, and FP16/BF16 activations flow out.">
+<defs>
+  <marker id="bnb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#cbd5e1)"/>
+  </marker>
+  <marker id="bnb-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+</defs>
+<style>
+  #fig-quant-bnb-linear-dataflow text { fill: var(--ink-soft, #0f172a); }
+  #fig-quant-bnb-linear-dataflow .lbl       { font: 600 13px var(--sans,sans-serif); }
+  #fig-quant-bnb-linear-dataflow .lbl-sm    { font: 500 11px var(--sans,sans-serif); }
+  #fig-quant-bnb-linear-dataflow .lbl-xs    { font: 400 10px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-quant-bnb-linear-dataflow .lbl-muted { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-quant-bnb-linear-dataflow .step-lbl  { font: 500 12px var(--sans,sans-serif); }
+  #fig-quant-bnb-linear-dataflow .title-lbl { font: 700 13px var(--sans,sans-serif); }
+  #fig-quant-bnb-linear-dataflow .note-lbl  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-quant-bnb-linear-dataflow .tag-lbl   { font: 600 9px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+
+  @keyframes bnb-token-move {
+    0%   { opacity:0; transform:translateY(-8px); }
+    8%   { opacity:1; transform:translateY(0); }
+    18%  { opacity:1; transform:translateY(0); }
+    26%  { opacity:0.35; transform:translateY(0); }
+    100% { opacity:0.35; transform:translateY(0); }
+  }
+  @keyframes bnb-storage-pulse {
+    0%,20%  { opacity:0.35; }
+    28%,44% { opacity:1; }
+    52%     { opacity:0.35; }
+    100%    { opacity:0.35; }
+  }
+  @keyframes bnb-step1-pulse {
+    0%,30%  { opacity:0.35; }
+    38%,52% { opacity:1; }
+    60%     { opacity:0.35; }
+    100%    { opacity:0.35; }
+  }
+  @keyframes bnb-step2-pulse {
+    0%,48%  { opacity:0.35; }
+    56%,70% { opacity:1; }
+    78%     { opacity:0.35; }
+    100%    { opacity:0.35; }
+  }
+  @keyframes bnb-step3-pulse {
+    0%,64%  { opacity:0.35; }
+    72%,82% { opacity:1; }
+    90%     { opacity:0.35; }
+    100%    { opacity:0.35; }
+  }
+  @keyframes bnb-out-pulse {
+    0%,78%  { opacity:0.35; }
+    86%,96% { opacity:1; }
+    100%    { opacity:1; }
+  }
+  @keyframes bnb-unpack-dash {
+    0%,26%  { stroke-dashoffset:80; opacity:0; }
+    34%,50% { stroke-dashoffset:0;  opacity:1; }
+    58%     { stroke-dashoffset:0;  opacity:0; }
+    100%    { stroke-dashoffset:0;  opacity:0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-quant-bnb-linear-dataflow .anim-in,
+    #fig-quant-bnb-linear-dataflow .anim-storage,
+    #fig-quant-bnb-linear-dataflow .anim-step1,
+    #fig-quant-bnb-linear-dataflow .anim-step2,
+    #fig-quant-bnb-linear-dataflow .anim-step3,
+    #fig-quant-bnb-linear-dataflow .anim-out   { animation:none !important; opacity:1 !important; }
+    #fig-quant-bnb-linear-dataflow .anim-unpack { animation:none !important; opacity:1 !important; stroke-dashoffset:0 !important; }
+  }
+
+  #fig-quant-bnb-linear-dataflow .anim-in      { animation: bnb-token-move   4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-storage  { animation: bnb-storage-pulse 4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-step1    { animation: bnb-step1-pulse  4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-step2    { animation: bnb-step2-pulse  4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-step3    { animation: bnb-step3-pulse  4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-out      { animation: bnb-out-pulse    4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-unpack   {
+    animation: bnb-unpack-dash 4s ease-in-out infinite 0.3s;
+    stroke-dasharray: 6 4;
+    stroke-dashoffset: 80;
+  }
+</style>
+
+
+<g class="anim-in">
+  <rect x="120" y="18" width="310" height="42" rx="21" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" fill="var(--surface-3,#f1f5f9)"/>
+  <text x="275" y="34" text-anchor="middle" class="lbl">FP16/BF16 input activations</text>
+  <text x="275" y="51" text-anchor="middle" class="lbl-xs">x</text>
+</g>
+
+
+<line x1="275" y1="60" x2="275" y2="92" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#bnb-arrow)"/>
+
+
+<rect x="30" y="96" width="480" height="392" rx="12" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+
+
+<text x="270" y="120" text-anchor="middle" class="title-lbl">Linear8bitLt / Linear4bit</text>
+<text x="270" y="136" text-anchor="middle" class="lbl-muted">(weight-only module)</text>
+
+
+<rect x="50" y="148" width="440" height="114" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1" opacity="0.7"/>
+<text x="270" y="165" text-anchor="middle" class="tag-lbl">HBM STORAGE</text>
+
+
+<g class="anim-storage">
+  <rect x="64" y="172" width="194" height="56" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.18" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="161" y="191" text-anchor="middle" class="lbl-sm">Quantized weights W_q</text>
+  <text x="161" y="207" text-anchor="middle" class="lbl-xs">INT8 / NF4</text>
+  <text x="161" y="220" text-anchor="middle" class="lbl-xs">4-bit or 8-bit packed</text>
+</g>
+
+
+<g class="anim-storage">
+  <rect x="274" y="172" width="196" height="56" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.08" stroke="var(--accent,#6366f1)" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="372" y="191" text-anchor="middle" class="lbl-sm">Scales + zero-points</text>
+  <text x="372" y="207" text-anchor="middle" class="lbl-xs">FP16 / FP8</text>
+  <text x="372" y="220" text-anchor="middle" class="lbl-xs">per group (64 elements)</text>
+</g>
+
+
+<text x="270" y="248" text-anchor="middle" class="lbl-muted">stored compactly in HBM -- fewer bytes to move</text>
+
+
+<text x="220" y="274" class="tag-lbl">forward() PIPELINE</text>
+
+
+<path d="M161 228 C161 258 186 272 218 284" fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.5" class="anim-unpack" marker-end="url(#bnb-arrow-accent)"/>
+<text x="70" y="258" class="lbl-xs" style="fill:var(--accent,#6366f1);font:600 10px var(--sans,sans-serif)">unpack+scale</text>
+
+
+<g class="anim-step1">
+  <rect x="50" y="282" width="440" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.10" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="270" y="301" text-anchor="middle" class="step-lbl">1. Dequantize weights  W_q -&gt; FP16/BF16</text>
+  <text x="270" y="317" text-anchor="middle" class="lbl-xs">(on-chip, in L2/registers)</text>
+</g>
+
+
+<line x1="270" y1="326" x2="270" y2="341" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#bnb-arrow)"/>
+
+
+<g class="anim-step2">
+  <rect x="50" y="344" width="440" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.30" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="270" y="363" text-anchor="middle" class="step-lbl" style="font:700 13px var(--sans,sans-serif)">2. GEMM in FP16/BF16   y = x . W-hat^T</text>
+  <text x="270" y="379" text-anchor="middle" class="lbl-xs" style="fill:var(--accent,#6366f1)">compute-heavy -- arithmetic stays FP16/BF16 here</text>
+</g>
+
+
+<line x1="270" y1="388" x2="270" y2="403" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#bnb-arrow)"/>
+
+
+<g class="anim-step3">
+  <rect x="50" y="406" width="440" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.08" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="270" y="425" text-anchor="middle" class="step-lbl">3. Return FP16/BF16 output</text>
+  <text x="270" y="441" text-anchor="middle" class="lbl-xs">activations unchanged in precision</text>
+</g>
+
+
+<line x1="275" y1="488" x2="275" y2="518" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#bnb-arrow)"/>
+
+
+<g class="anim-out">
+  <rect x="120" y="522" width="310" height="42" rx="21" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" fill="var(--surface-3,#f1f5f9)"/>
+  <text x="275" y="538" text-anchor="middle" class="lbl">FP16/BF16 output activations</text>
+  <text x="275" y="555" text-anchor="middle" class="lbl-xs">y</text>
+</g>
+
+
+<rect x="504" y="325" width="122" height="92" rx="6" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="4 3"/>
+
+<line x1="504" y1="370" x2="490" y2="370" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="565" y="340" text-anchor="middle" class="note-lbl">Weight-only:</text>
+<text x="565" y="353" text-anchor="middle" class="note-lbl">arithmetic stays</text>
+<text x="565" y="366" text-anchor="middle" class="note-lbl">FP16/BF16.</text>
+<text x="565" y="381" text-anchor="middle" class="note-lbl">Saving = fewer</text>
+<text x="565" y="394" text-anchor="middle" class="note-lbl">HBM bytes</text>
+<text x="565" y="407" text-anchor="middle" class="note-lbl">for weights.</text>
+
+</svg>
+<figcaption><b>Anatomy of a bitsandbytes weight-only quantized linear layer.</b> Weights are stored compactly as INT8 or NF4 in GPU HBM, cutting memory bandwidth. During <code>forward()</code>, they are dequantized to FP16/BF16 on-chip (Step 1) and the GEMM (Step 2) executes entirely in FP16/BF16 — the arithmetic precision is unchanged; only the storage format is compressed.</figcaption>
+</figure>
+
+<p>Both <code>Linear8bitLt</code> and <code>Linear4bit</code> are weight-only: the dequantized GEMM still runs in FP16 hardware. The bandwidth saving is in loading weights from HBM; once on-chip (in L2 or registers), the weights are converted to FP16 before multiply-accumulate.</p>
+<h3 id="implementing-a-minimal-nf4-layer-from-scratch">Implementing a Minimal NF4 Layer From Scratch<a class="headerlink" href="#implementing-a-minimal-nf4-layer-from-scratch" title="Permanent link">¶</a></h3>
+<p>This reconstruction shows the exact mechanism — not production-ready, but pedagogically complete:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="c1"># The 16 NF4 code points (from QLoRA paper, normalized to [-1, 1])</span>
+<span class="n">NF4_CODES</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span>
+    <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span>       <span class="o">-</span><span class="mf">0.6961928</span><span class="p">,</span>  <span class="o">-</span><span class="mf">0.5250730</span><span class="p">,</span>  <span class="o">-</span><span class="mf">0.3954816</span><span class="p">,</span>
+    <span class="o">-</span><span class="mf">0.2849375</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.1832600</span><span class="p">,</span>  <span class="o">-</span><span class="mf">0.0911578</span><span class="p">,</span>  <span class="mf">0.0</span><span class="p">,</span>
+     <span class="mf">0.0795761</span><span class="p">,</span>  <span class="mf">0.1609030</span><span class="p">,</span>   <span class="mf">0.2461331</span><span class="p">,</span>   <span class="mf">0.3379990</span><span class="p">,</span>
+     <span class="mf">0.4407979</span><span class="p">,</span>  <span class="mf">0.5626170</span><span class="p">,</span>   <span class="mf">0.7229568</span><span class="p">,</span>   <span class="mf">1.0</span><span class="p">,</span>
+<span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">quantize_nf4</span><span class="p">(</span><span class="n">weight</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">group_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">64</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Quantize a 1-D weight tensor to NF4 per-group.</span>
+<span class="sd">    Returns: (packed_indices, scales) where packed_indices is uint8</span>
+<span class="sd">    with two 4-bit indices per byte.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">weight</span> <span class="o">=</span> <span class="n">weight</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">weight</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span>
+    <span class="k">assert</span> <span class="n">n</span> <span class="o">%</span> <span class="n">group_size</span> <span class="o">==</span> <span class="mi">0</span>
+    <span class="n">n_groups</span> <span class="o">=</span> <span class="n">n</span> <span class="o">//</span> <span class="n">group_size</span>
+    <span class="n">w_groups</span> <span class="o">=</span> <span class="n">weight</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">n_groups</span><span class="p">,</span> <span class="n">group_size</span><span class="p">)</span>
+
+    <span class="c1"># Scale each group so its max absolute value maps to 1.0</span>
+    <span class="n">scales</span> <span class="o">=</span> <span class="n">w_groups</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">values</span>  <span class="c1"># (n_groups,)</span>
+    <span class="n">scales</span> <span class="o">=</span> <span class="n">scales</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">)</span>
+    <span class="n">w_norm</span> <span class="o">=</span> <span class="n">w_groups</span> <span class="o">/</span> <span class="n">scales</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>    <span class="c1"># (n_groups, group_size) in [-1, 1]</span>
+
+    <span class="c1"># Find nearest NF4 code point for each weight</span>
+    <span class="c1"># Broadcast: (n_groups, group_size, 1) vs (16,)</span>
+    <span class="n">codes</span> <span class="o">=</span> <span class="n">NF4_CODES</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">weight</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">dists</span> <span class="o">=</span> <span class="p">(</span><span class="n">w_norm</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">-</span> <span class="n">codes</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span>  <span class="c1"># (n_groups, group_size, 16)</span>
+    <span class="n">indices</span> <span class="o">=</span> <span class="n">dists</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">byte</span><span class="p">()</span>           <span class="c1"># (n_groups, group_size), dtype=uint8</span>
+
+    <span class="c1"># Pack two 4-bit indices into one byte</span>
+    <span class="n">indices_flat</span> <span class="o">=</span> <span class="n">indices</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (n,)</span>
+    <span class="n">packed</span> <span class="o">=</span> <span class="p">(</span><span class="n">indices_flat</span><span class="p">[</span><span class="mi">0</span><span class="p">::</span><span class="mi">2</span><span class="p">]</span> <span class="o">&lt;&lt;</span> <span class="mi">4</span><span class="p">)</span> <span class="o">|</span> <span class="n">indices_flat</span><span class="p">[</span><span class="mi">1</span><span class="p">::</span><span class="mi">2</span><span class="p">]</span>  <span class="c1"># (n//2,) uint8</span>
+
+    <span class="k">return</span> <span class="n">packed</span><span class="p">,</span> <span class="n">scales</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dequantize_nf4</span><span class="p">(</span><span class="n">packed</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">scales</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">group_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">64</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Unpack NF4 indices and reconstruct FP32 weights.&quot;&quot;&quot;</span>
+    <span class="c1"># Unpack nibbles</span>
+    <span class="n">hi</span> <span class="o">=</span> <span class="p">(</span><span class="n">packed</span> <span class="o">&gt;&gt;</span> <span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">byte</span><span class="p">()</span>
+    <span class="n">lo</span> <span class="o">=</span> <span class="p">(</span><span class="n">packed</span> <span class="o">&amp;</span> <span class="mh">0xF</span><span class="p">)</span><span class="o">.</span><span class="n">byte</span><span class="p">()</span>
+    <span class="n">indices_flat</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">hi</span><span class="p">,</span> <span class="n">lo</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># interleaved back</span>
+
+    <span class="n">n</span> <span class="o">=</span> <span class="n">indices_flat</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span>
+    <span class="n">n_groups</span> <span class="o">=</span> <span class="n">n</span> <span class="o">//</span> <span class="n">group_size</span>
+    <span class="n">codes</span> <span class="o">=</span> <span class="n">NF4_CODES</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">packed</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">w_norm</span> <span class="o">=</span> <span class="n">codes</span><span class="p">[</span><span class="n">indices_flat</span><span class="o">.</span><span class="n">long</span><span class="p">()]</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">n_groups</span><span class="p">,</span> <span class="n">group_size</span><span class="p">)</span>
+
+    <span class="c1"># Re-apply group scales</span>
+    <span class="n">w_reconstructed</span> <span class="o">=</span> <span class="n">w_norm</span> <span class="o">*</span> <span class="n">scales</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">w_reconstructed</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="c1"># --- Demo ---</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+<span class="n">w</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">256</span><span class="p">)</span>           <span class="c1"># simulate a weight vector (one row of a linear layer)</span>
+<span class="n">packed</span><span class="p">,</span> <span class="n">scales</span> <span class="o">=</span> <span class="n">quantize_nf4</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="n">group_size</span><span class="o">=</span><span class="mi">64</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Original size:    </span><span class="si">{</span><span class="n">w</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="si">}</span><span class="s2"> bytes (FP32)&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Quantized size:   </span><span class="si">{</span><span class="n">packed</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span><span class="si">}</span><span class="s2"> bytes (NF4 packed)&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Scales overhead:  </span><span class="si">{</span><span class="n">scales</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="si">}</span><span class="s2"> bytes (FP32 scales)&quot;</span><span class="p">)</span>
+
+<span class="n">w_hat</span> <span class="o">=</span> <span class="n">dequantize_nf4</span><span class="p">(</span><span class="n">packed</span><span class="p">,</span> <span class="n">scales</span><span class="p">,</span> <span class="n">group_size</span><span class="o">=</span><span class="mi">64</span><span class="p">)</span>
+<span class="n">mse</span> <span class="o">=</span> <span class="p">((</span><span class="n">w</span> <span class="o">-</span> <span class="n">w_hat</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+<span class="n">snr</span> <span class="o">=</span> <span class="p">(</span><span class="n">w</span><span class="o">.</span><span class="n">var</span><span class="p">()</span> <span class="o">/</span> <span class="n">mse</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;MSE:  </span><span class="si">{</span><span class="n">mse</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;SNR:  </span><span class="si">{</span><span class="n">snr</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  (higher is better; &gt;100 is practically lossless)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="quantization-aware-training-qat">Quantization-Aware Training (QAT)<a class="headerlink" href="#quantization-aware-training-qat" title="Permanent link">¶</a></h2>
+<p>Post-training quantization (PTQ) is cheap — no training required — but QAT can close the accuracy gap for aggressive bit widths (INT4 and below) by teaching the model to be robust to quantization noise during training.</p>
+<h3 id="the-straight-through-estimator">The Straight-Through Estimator<a class="headerlink" href="#the-straight-through-estimator" title="Permanent link">¶</a></h3>
+<p>The core challenge is that the rounding operation <span class="arithmatex">\(\operatorname{round}(\cdot)\)</span> has zero gradient almost everywhere. QAT works by using a <strong>straight-through estimator (STE)</strong> in the backward pass: the forward pass rounds normally, but the backward pass pretends the rounding did not happen and passes gradients through unchanged.</p>
+<p>For a quantized weight <span class="arithmatex">\(q = \operatorname{round}(w/s)\)</span>, the forward pass uses <span class="arithmatex">\(q\)</span>, and the backward pass computes:</p>
+<div class="arithmatex">\[
+\frac{\partial \mathcal{L}}{\partial w} \approx \frac{\partial \mathcal{L}}{\partial q}
+\]</div>
+<p>This is a biased estimator, but empirically it works well and allows the model to adjust its weights so that rounding hurts less.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">STEQuantize</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">Function</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Quantize to b bits with straight-through estimator in backward.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">bits</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="c1"># Quantize: clamp to representable range, then round</span>
+        <span class="n">qmin</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="mi">2</span> <span class="o">**</span> <span class="p">(</span><span class="n">bits</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">qmax</span> <span class="o">=</span>  <span class="p">(</span><span class="mi">2</span> <span class="o">**</span> <span class="p">(</span><span class="n">bits</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span> <span class="o">-</span> <span class="mi">1</span>
+        <span class="n">x_scaled</span> <span class="o">=</span> <span class="n">x</span> <span class="o">/</span> <span class="n">scale</span>
+        <span class="n">x_clipped</span> <span class="o">=</span> <span class="n">x_scaled</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="n">qmin</span><span class="p">,</span> <span class="n">qmax</span><span class="p">)</span>
+        <span class="n">x_quant</span> <span class="o">=</span> <span class="n">x_clipped</span><span class="o">.</span><span class="n">round</span><span class="p">()</span>
+        <span class="c1"># Store nothing for backward — STE passes gradient directly</span>
+        <span class="k">return</span> <span class="n">x_quant</span> <span class="o">*</span> <span class="n">scale</span>  <span class="c1"># dequantized immediately (fake-quant)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">):</span>
+        <span class="c1"># STE: pass gradient through unchanged</span>
+        <span class="k">return</span> <span class="n">grad_output</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">FakeQuantLinear</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A drop-in replacement for nn.Linear that applies fake-quantization</span>
+<span class="sd">    to weights during the forward pass (simulates INT4 weight quantization).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="n">bits</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">group_size</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bits</span> <span class="o">=</span> <span class="n">bits</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">group_size</span> <span class="o">=</span> <span class="n">group_size</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_scale</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">w</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Per-group symmetric scale: s = max(|w|) / (2^(b-1) - 1)&quot;&quot;&quot;</span>
+        <span class="n">w_groups</span> <span class="o">=</span> <span class="n">w</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">group_size</span><span class="p">)</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="n">w_groups</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">values</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">**</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bits</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">s</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">expand_as</span><span class="p">(</span><span class="n">w_groups</span><span class="p">)</span><span class="o">.</span><span class="n">reshape_as</span><span class="p">(</span><span class="n">w</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Apply fake-quantization to weights</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_scale</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">)</span>
+        <span class="n">w_fq</span> <span class="o">=</span> <span class="n">STEQuantize</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">bits</span><span class="p">)</span>  <span class="c1"># simplified</span>
+        <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">w_fq</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+
+<span class="c1"># Minimal QAT training loop sketch</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">qat_finetune_step</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replace all Linear layers with FakeQuantLinear, then fine-tune.&quot;&quot;&quot;</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+    <span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">batch</span><span class="p">)</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">loss</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>   <span class="c1"># gradients flow through STE</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="qlora-quantization-low-rank-adaptation">QLoRA: Quantization + Low-Rank Adaptation<a class="headerlink" href="#qlora-quantization-low-rank-adaptation" title="Permanent link">¶</a></h3>
+<p>QLoRA (Dettmers et al., 2023) is arguably the most impactful combination of quantization and fine-tuning. The recipe:</p>
+<ol>
+<li><strong>Freeze</strong> the base model weights in NF4 (4-bit, per-group-64, double quantization).</li>
+<li><strong>Add LoRA adapters</strong> (small rank-<span class="arithmatex">\(r\)</span> matrices <span class="arithmatex">\(A, B\)</span> in BF16) alongside the frozen quantized layers.</li>
+<li><strong>Fine-tune only the LoRA adapters.</strong> Gradients flow through the NF4-dequantized base weights using STE, then into the BF16 LoRA params.</li>
+<li><strong>4-bit NF4 paged optimizer states</strong>: instead of keeping FP32 Adam states for the base model, only LoRA params have optimizer states — since they are tiny (<span class="arithmatex">\(r \ll d\)</span>), this is cheap.</li>
+</ol>
+<p>The key trick: <strong>paged optimizers</strong> (bnb&rsquo;s <code>PagedAdamW32bit</code>) keep optimizer states in CPU RAM and page them to GPU only when needed, preventing OOM on long sequences.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># QLoRA fine-tuning with bitsandbytes + PEFT</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">BitsAndBytesConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">peft</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoraConfig</span><span class="p">,</span> <span class="n">get_peft_model</span><span class="p">,</span> <span class="n">TaskType</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">bitsandbytes</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">bnb</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># 1. Load base model in 4-bit NF4</span>
+<span class="n">bnb_config</span> <span class="o">=</span> <span class="n">BitsAndBytesConfig</span><span class="p">(</span>
+    <span class="n">load_in_4bit</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">bnb_4bit_quant_type</span><span class="o">=</span><span class="s2">&quot;nf4&quot;</span><span class="p">,</span>
+    <span class="n">bnb_4bit_compute_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>
+    <span class="n">bnb_4bit_use_double_quant</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">base_model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="s2">&quot;meta-llama/Meta-Llama-3-8B&quot;</span><span class="p">,</span>
+    <span class="n">quantization_config</span><span class="o">=</span><span class="n">bnb_config</span><span class="p">,</span>
+    <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># 2. Add LoRA adapters (only these parameters will be trained)</span>
+<span class="n">lora_config</span> <span class="o">=</span> <span class="n">LoraConfig</span><span class="p">(</span>
+    <span class="n">r</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>                        <span class="c1"># rank — try 8–64 depending on task</span>
+    <span class="n">lora_alpha</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>               <span class="c1"># scaling: effective_lr_scaling = alpha/r</span>
+    <span class="n">target_modules</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;q_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;k_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;v_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;o_proj&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;gate_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;up_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;down_proj&quot;</span><span class="p">],</span>
+    <span class="n">lora_dropout</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+    <span class="n">bias</span><span class="o">=</span><span class="s2">&quot;none&quot;</span><span class="p">,</span>
+    <span class="n">task_type</span><span class="o">=</span><span class="n">TaskType</span><span class="o">.</span><span class="n">CAUSAL_LM</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">get_peft_model</span><span class="p">(</span><span class="n">base_model</span><span class="p">,</span> <span class="n">lora_config</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">print_trainable_parameters</span><span class="p">()</span>
+<span class="c1"># Trainable params: ~20M / 8B total (0.25%) — massive memory saving</span>
+
+<span class="c1"># 3. Use paged optimizer to handle memory spikes</span>
+<span class="n">optimizer</span> <span class="o">=</span> <span class="n">bnb</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">PagedAdamW32bit</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span>
+    <span class="n">lr</span><span class="o">=</span><span class="mf">2e-4</span><span class="p">,</span>
+    <span class="n">weight_decay</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>LoRA and the PEFT framework are covered in depth in <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a>. The memory-efficient training angle is covered in <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a>.</p>
+<hr />
+<h2 id="kv-cache-quantization">KV-Cache Quantization<a class="headerlink" href="#kv-cache-quantization" title="Permanent link">¶</a></h2>
+<p>In long-context inference, the KV cache can easily rival or exceed model weight memory. For a model with 32 layers, 32 heads, head dimension 128, generating a 32 K-token sequence, each of K and V is:</p>
+<div class="arithmatex">\[
+32 \times 32 \times 128 \times 32000 \times 2 \text{ bytes (BF16)} \approx 8.4 \text{ GB}
+\]</div>
+<p>Quantizing the KV cache to INT8 halves this to 4.2 GB; INT4 reduces it to 2.1 GB. KV quantization is more delicate than weight quantization because keys and values are computed dynamically (they change every sequence) and have heavier-tailed distributions than model weights.</p>
+<h3 id="per-token-dynamic-quantization-of-kv">Per-Token Dynamic Quantization of KV<a class="headerlink" href="#per-token-dynamic-quantization-of-kv" title="Permanent link">¶</a></h3>
+<p>The standard approach (used in TensorRT-LLM, vLLM, and FlexGen) is:</p>
+<ol>
+<li><strong>Per-channel (head-level) symmetric INT8:</strong> For each head at each layer, compute the scale from the running max absolute value of that head&rsquo;s K or V vector at the current position.</li>
+<li><strong>Per-token INT8 with small group size (e.g., group=32 along the token dimension):</strong> More accurate but slightly more complex indexing.</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="c1"># Simplified KV cache quantization kernel (conceptual)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">quantize_kv_int8</span><span class="p">(</span><span class="n">kv</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Quantize a KV tensor of shape (batch, heads, seq_len, head_dim) to INT8.</span>
+<span class="sd">    Per-token (per-position) symmetric quantization.</span>
+<span class="sd">    Returns int8 tensor + FP16 per-token scale tensor.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># kv: (B, H, T, D)</span>
+    <span class="c1"># Compute per-position max-abs across head_dim</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="n">kv</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">values</span> <span class="o">/</span> <span class="mf">127.0</span>  <span class="c1"># (B, H, T, 1)</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="n">scale</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">)</span>
+    <span class="n">kv_int8</span> <span class="o">=</span> <span class="p">(</span><span class="n">kv</span> <span class="o">/</span> <span class="n">scale</span><span class="p">)</span><span class="o">.</span><span class="n">round</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="o">-</span><span class="mi">128</span><span class="p">,</span> <span class="mi">127</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">int8</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">kv_int8</span><span class="p">,</span> <span class="n">scale</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dequantize_kv</span><span class="p">(</span><span class="n">kv_int8</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">scale</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Recover approximate FP16 KV from INT8 + scale.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">kv_int8</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span>
+
+<span class="c1"># Memory comparison for a 32-layer, 32-head, 128-dim model at 8K context</span>
+<span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">32</span> <span class="o">*</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">8192</span><span class="p">,</span> <span class="mi">128</span>  <span class="c1"># flattened heads</span>
+<span class="n">kv</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+<span class="n">kv_int8</span><span class="p">,</span> <span class="n">scale</span> <span class="o">=</span> <span class="n">quantize_kv_int8</span><span class="p">(</span><span class="n">kv</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="p">))</span>
+
+<span class="n">bf16_size</span> <span class="o">=</span> <span class="n">kv</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">*</span> <span class="mi">2</span>  <span class="c1"># bytes</span>
+<span class="n">int8_size</span>  <span class="o">=</span> <span class="n">kv_int8</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">*</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">scale</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">*</span> <span class="mi">2</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;BF16 KV size: </span><span class="si">{</span><span class="n">bf16_size</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mf">1e9</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;INT8 KV size: </span><span class="si">{</span><span class="n">int8_size</span><span class="w">  </span><span class="o">/</span><span class="w"> </span><span class="mf">1e9</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB  (</span><span class="si">{</span><span class="mi">100</span><span class="o">*</span><span class="n">int8_size</span><span class="o">/</span><span class="n">bf16_size</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">% of BF16)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>INT4 KV cache</strong> (used in FlexGen for offloading) quantizes per-group-20 along the token dimension. Accuracy impact on generation quality is measurable on long-context tasks; for short contexts INT4 KV is essentially lossless. PagedAttention (discussed in <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>) already manages KV memory in blocks; each block can independently carry a scale, making per-block quantization natural.</p>
+<hr />
+<h2 id="accuracyperformance-tradeoffs-across-the-zoo">Accuracy–Performance Tradeoffs Across the Zoo<a class="headerlink" href="#accuracyperformance-tradeoffs-across-the-zoo" title="Permanent link">¶</a></h2>
+<p>Choosing a quantization format involves balancing three axes: model quality (perplexity or downstream task score), inference memory, and inference throughput.</p>
+<h3 id="the-perplexity-cost-hierarchy">The Perplexity Cost Hierarchy<a class="headerlink" href="#the-perplexity-cost-hierarchy" title="Permanent link">¶</a></h3>
+<p>Roughly, the accuracy ordering from best to worst for a well-implemented scheme on a 7 B model is:</p>
+<figure class="viz" id="fig-quant-perplexity-quality-spectrum">
+<svg viewBox="0 0 920 240" role="img" aria-label="Horizontal perplexity quality spectrum for a 7B model showing quantization formats from best quality on the left (BF16 approximately equal to FP8) to most lossy on the right (Q2_K), with Q4_K_M and NF4 highlighted as the recommended sweet spot.">
+<defs>
+  <linearGradient id="pqs-bar-grad" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%"   stop-color="var(--good,#2f9e6e)"/>
+    <stop offset="50%"  stop-color="var(--good,#2f9e6e)" stop-opacity="0.6"/>
+    <stop offset="72%"  stop-color="var(--warn,#e0a106)"/>
+    <stop offset="88%"  stop-color="var(--danger,#ef4444)" stop-opacity="0.85"/>
+    <stop offset="100%" stop-color="var(--danger,#ef4444)"/>
+  </linearGradient>
+</defs>
+<style>
+  #fig-quant-perplexity-quality-spectrum text      { fill: var(--ink-soft,#0f172a); }
+  #fig-quant-perplexity-quality-spectrum .chip-lbl { font: 600 10px var(--mono,monospace); }
+  #fig-quant-perplexity-quality-spectrum .sub-lbl  { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-quant-perplexity-quality-spectrum .axis-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-quant-perplexity-quality-spectrum .note-lbl { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-quant-perplexity-quality-spectrum .gt-lbl   { font: 700 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+</style>
+
+
+<rect x="30" y="48" width="860" height="24" rx="12" fill="url(#pqs-bar-grad)" opacity="0.85"/>
+
+
+<text x="30"  y="42" class="axis-lbl">Highest quality / lowest perplexity</text>
+<text x="890" y="42" text-anchor="end" class="axis-lbl">Most lossy / highest perplexity</text>
+
+
+
+<text x="182" y="65" text-anchor="middle" class="gt-lbl">&gt;</text>
+
+<text x="332" y="65" text-anchor="middle" class="gt-lbl">&gt;</text>
+
+<text x="433" y="65" text-anchor="middle" class="gt-lbl">&gt;</text>
+
+<text x="543" y="65" text-anchor="middle" class="gt-lbl">&gt;</text>
+
+<text x="649" y="65" text-anchor="middle" class="gt-lbl">&gt;</text>
+
+<text x="749" y="65" text-anchor="middle" class="gt-lbl">&gt;</text>
+
+<text x="827" y="65" text-anchor="middle" class="gt-lbl">&gt;</text>
+
+
+
+<line x1="90"  y1="72" x2="90"  y2="88" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+<line x1="255" y1="72" x2="255" y2="88" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+<line x1="382" y1="72" x2="382" y2="88" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+<line x1="488" y1="72" x2="488" y2="88" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+<line x1="596" y1="72" x2="596" y2="88" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+
+<line x1="700" y1="72" x2="700" y2="88" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+<line x1="800" y1="72" x2="800" y2="88" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+<line x1="873" y1="72" x2="873" y2="88" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+
+<rect x="36" y="90" width="108" height="34" rx="5" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="90" y="104" text-anchor="middle" class="chip-lbl">BF16</text>
+<text x="90" y="117" text-anchor="middle" class="sub-lbl">~ FP8</text>
+
+
+<rect x="192" y="90" width="130" height="34" rx="5" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="257" y="104" text-anchor="middle" class="chip-lbl">INT8 W+A (SmoothQ)</text>
+<text x="257" y="117" text-anchor="middle" class="sub-lbl">~ Q8_0</text>
+
+
+<rect x="352" y="90" width="60" height="34" rx="5" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="382" y="107" text-anchor="middle" class="chip-lbl">Q6_K</text>
+
+
+<rect x="454" y="90" width="68" height="34" rx="5" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="488" y="107" text-anchor="middle" class="chip-lbl">Q5_K_M</text>
+
+
+<rect x="556" y="90" width="80" height="34" rx="5" fill="var(--surface-3,#f1f5f9)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="596" y="104" text-anchor="middle" class="chip-lbl" style="fill:var(--accent,#6366f1)">Q4_K_M</text>
+<text x="596" y="117" text-anchor="middle" class="sub-lbl" style="fill:var(--accent,#6366f1)">~ NF4</text>
+
+
+<rect x="664" y="90" width="72" height="34" rx="5" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="700" y="104" text-anchor="middle" class="chip-lbl">INT4</text>
+<text x="700" y="117" text-anchor="middle" class="sub-lbl">(GPTQ)</text>
+
+
+<rect x="766" y="90" width="68" height="34" rx="5" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="800" y="107" text-anchor="middle" class="chip-lbl">Q3_K_M</text>
+
+
+<rect x="841" y="90" width="64" height="34" rx="5" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="873" y="107" text-anchor="middle" class="chip-lbl">Q2_K</text>
+
+
+<line x1="596" y1="124" x2="596" y2="144" stroke="var(--accent,#6366f1)" stroke-width="1" stroke-dasharray="3 2"/>
+<rect x="438" y="145" width="316" height="36" rx="5" fill="var(--surface-3,#f1f5f9)" stroke="var(--accent,#6366f1)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="596" y="159" text-anchor="middle" class="note-lbl" style="fill:var(--accent,#6366f1)">only 0.1-0.5 PPL vs BF16 on a 7B model; usually imperceptible</text>
+<text x="596" y="172" text-anchor="middle" class="note-lbl" style="fill:var(--accent,#6366f1)">recommended default for memory-constrained deployment</text>
+
+
+<line x1="855" y1="124" x2="855" y2="186" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="908" y="200" text-anchor="end" class="note-lbl">aggressive;</text>
+<text x="908" y="212" text-anchor="end" class="note-lbl">noticeable loss</text>
+
+</svg>
+<figcaption><b>Perplexity cost hierarchy of quantization formats for a 7B model.</b> The spectrum runs left (highest quality, lowest perplexity) to right (most lossy). <b>Q4_K_M and NF4</b> (highlighted) sit at a practical sweet spot: only 0.1&amp;ndash;0.5 perplexity points above BF16, imperceptible in most downstream tasks, while halving weight memory versus FP16. Q2_K offers the smallest footprint but with noticeable quality degradation.</figcaption>
+</figure>
+
+<p>The gap between Q4_K_M and BF16 is typically 0.1–0.5 perplexity points on Wikitext-2 for a 7 B model — usually imperceptible in downstream quality. The gap grows for smaller models (3 B and below) and for tasks requiring precise factual recall.</p>
+<h3 id="throughput-and-latency">Throughput and Latency<a class="headerlink" href="#throughput-and-latency" title="Permanent link">¶</a></h3>
+<p>For a single-user, memory-bandwidth-bound decode scenario on an A100:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Weights memory</th>
+<th>Approx decode throughput (relative)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BF16</td>
+<td>1× (baseline)</td>
+<td>1×</td>
+</tr>
+<tr>
+<td>INT8 W-only</td>
+<td>0.5×</td>
+<td>~1.5–1.8×</td>
+</tr>
+<tr>
+<td>INT4 W-only</td>
+<td>0.25×</td>
+<td>~2.5–3.5×</td>
+</tr>
+<tr>
+<td>FP8 (W+A)</td>
+<td>0.5×</td>
+<td>~2× (H100 only)</td>
+</tr>
+<tr>
+<td>INT8 W+A</td>
+<td>0.5×</td>
+<td>~1.8–2.2×</td>
+</tr>
+</tbody>
+</table>
+<p>The large spread in INT4 throughput reflects kernel quality — <code>exllamav2</code>&rsquo;s hand-tuned INT4 GEMM kernels significantly outperform naive dequantize-then-FP16-GEMM approaches.</p>
+<h3 id="practical-decision-tree">Practical Decision Tree<a class="headerlink" href="#practical-decision-tree" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-quant-deployment-decision-tree">
+<svg viewBox="0 0 860 470" role="img" aria-label="Decision tree for deploying a 70B model: four hardware branches from most VRAM (2x H100, use BF16/FP8) to least (CPU-only 64GB RAM, use GGUF Q4_K_S or Q3_K_M).">
+<defs>
+  <marker id="ddt-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#cbd5e1)"/>
+  </marker>
+  <linearGradient id="ddt-vram-grad" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stop-color="var(--good,#2f9e6e)"/>
+    <stop offset="100%" stop-color="var(--warn,#e0a106)"/>
+  </linearGradient>
+</defs>
+<style>
+  #fig-quant-deployment-decision-tree text       { fill: var(--ink-soft,#0f172a); }
+  #fig-quant-deployment-decision-tree .lbl       { font: 600 12px var(--sans,sans-serif); }
+  #fig-quant-deployment-decision-tree .lbl-sm    { font: 500 11px var(--sans,sans-serif); }
+  #fig-quant-deployment-decision-tree .lbl-sub   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-quant-deployment-decision-tree .leaf-main { font: 700 12px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+  #fig-quant-deployment-decision-tree .root-lbl  { font: 700 13px var(--sans,sans-serif); }
+  #fig-quant-deployment-decision-tree .vram-lbl  { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+</style>
+
+
+<rect x="8" y="50" width="10" height="370" rx="4" fill="url(#ddt-vram-grad)" opacity="0.55"/>
+
+<text x="13" y="236" text-anchor="middle" transform="rotate(-90,13,236)" class="vram-lbl">more VRAM  /  less VRAM</text>
+
+
+<rect x="26" y="188" width="170" height="64" rx="10" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="111" y="210" text-anchor="middle" class="root-lbl">Goal: deploy</text>
+<text x="111" y="227" text-anchor="middle" class="root-lbl">a 70B model</text>
+<text x="111" y="243" text-anchor="middle" class="lbl-sub">choose by hardware</text>
+
+
+<line x1="196" y1="220" x2="228" y2="220" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+
+<line x1="228" y1="62" x2="228" y2="430" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+
+
+<line x1="228" y1="80" x2="250" y2="80" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+
+<rect x="252" y="58" width="196" height="44" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect x="252" y="58" width="5"   height="44" rx="2" fill="var(--accent,#6366f1)"/>
+<text x="352" y="77" text-anchor="middle" class="lbl-sm">Have 2x H100 80GB?</text>
+<text x="352" y="93" text-anchor="middle" class="lbl-sub">(160 GB total HBM)</text>
+
+<line x1="448" y1="80" x2="468" y2="80" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+
+<rect x="470" y="56" width="378" height="50" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="659" y="75"  text-anchor="middle" class="leaf-main">Use BF16 or FP8</text>
+<text x="659" y="90"  text-anchor="middle" class="lbl-sm">full precision or FP8 W+A</text>
+<text x="659" y="102" text-anchor="middle" class="lbl-sub">best quality</text>
+
+
+<line x1="228" y1="190" x2="250" y2="190" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="252" y="168" width="196" height="44" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect x="252" y="168" width="5"   height="44" rx="2" fill="var(--accent,#6366f1)"/>
+<text x="352" y="187" text-anchor="middle" class="lbl-sm">Have 1x H100/A100 80GB?</text>
+<text x="352" y="203" text-anchor="middle" class="lbl-sub">(80 GB HBM)</text>
+<line x1="448" y1="190" x2="468" y2="190" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="470" y="166" width="378" height="50" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="659" y="185" text-anchor="middle" class="leaf-main">INT8 W-only (bitsandbytes)</text>
+<text x="659" y="200" text-anchor="middle" class="lbl-sm">or  Q4_K_M (vLLM AWQ)</text>
+<text x="659" y="212" text-anchor="middle" class="lbl-sub">good quality, fits single GPU</text>
+
+
+<line x1="228" y1="300" x2="250" y2="300" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="252" y="278" width="196" height="44" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect x="252" y="278" width="5"   height="44" rx="2" fill="var(--accent,#6366f1)"/>
+<text x="352" y="297" text-anchor="middle" class="lbl-sm">Have 24 GB VRAM</text>
+<text x="352" y="313" text-anchor="middle" class="lbl-sub">+ 64 GB system RAM?</text>
+<line x1="448" y1="300" x2="468" y2="300" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="470" y="276" width="378" height="50" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="659" y="295" text-anchor="middle" class="leaf-main">GGUF Q4_K_M</text>
+<text x="659" y="310" text-anchor="middle" class="lbl-sm">with --n-gpu-layers</text>
+<text x="659" y="322" text-anchor="middle" class="lbl-sub">GPU+CPU split inference</text>
+
+
+<line x1="228" y1="410" x2="250" y2="410" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="252" y="388" width="196" height="44" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect x="252" y="388" width="5"   height="44" rx="2" fill="var(--warn,#e0a106)"/>
+<text x="352" y="407" text-anchor="middle" class="lbl-sm">CPU-only (64 GB RAM)?</text>
+<text x="352" y="423" text-anchor="middle" class="lbl-sub">no dedicated GPU</text>
+<line x1="448" y1="410" x2="468" y2="410" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="470" y="386" width="378" height="50" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="659" y="405" text-anchor="middle" class="leaf-main">GGUF Q4_K_S / Q3_K_M</text>
+<text x="659" y="420" text-anchor="middle" class="lbl-sm">llama.cpp CPU inference</text>
+<text x="659" y="432" text-anchor="middle" class="lbl-sub">most aggressive compression</text>
+
+</svg>
+<figcaption><b>Practical decision tree for deploying a 70B model by available hardware.</b> The tree descends from most-capable (2x H100: use full BF16/FP8) to least-capable (CPU-only: use GGUF Q4_K_S or Q3_K_M). The GPU+CPU split path (24 GB VRAM + 64 GB RAM with <code>--n-gpu-layers</code>) is a practical middle ground for consumer hardware running the largest open-weight models.</figcaption>
+</figure>
+
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> An interviewer asks: &ldquo;QLoRA freezes the base model in NF4 and trains LoRA adapters in BF16. During backprop, how do gradients flow through the frozen NF4 weights, and why doesn&rsquo;t the quantization break gradient computation?&rdquo;</p>
+<p><strong>A:</strong> The frozen base model weights are stored in NF4, but during the forward pass they are <em>dequantized to BF16</em> before the matrix multiply. Backpropagation then uses the BF16 dequantized weights in the chain rule — specifically, the gradient with respect to the LoRA adapter parameters <span class="arithmatex">\(A\)</span> and <span class="arithmatex">\(B\)</span> involves multiplication by the dequantized weight matrix, which is in BF16 and fully differentiable. The NF4 quantization itself is treated as a fixed transformation with no gradient (the weights are frozen, so there is no <span class="arithmatex">\(\partial \mathcal{L}/\partial W_\text{base}\)</span> to compute). The rounding in NF4 is only a concern if we wanted to update the base weights, which QLoRA does not — it only updates <span class="arithmatex">\(A\)</span> and <span class="arithmatex">\(B\)</span>. This is why QLoRA does not need a straight-through estimator: the frozen weights are simply a lookup table, and the LoRA paths are fully differentiable in BF16.</p>
+</div>
+<hr />
+<h2 id="summary-format-comparison-reference">Summary: Format Comparison Reference<a class="headerlink" href="#summary-format-comparison-reference" title="Permanent link">¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Bits/w</th>
+<th>Granularity</th>
+<th>Runtime</th>
+<th>Best use case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BF16</td>
+<td>16</td>
+<td>—</td>
+<td>Any GPU</td>
+<td>Training, highest quality</td>
+</tr>
+<tr>
+<td>FP8 E4M3</td>
+<td>8</td>
+<td>Per-tensor</td>
+<td>H100+</td>
+<td>High-throughput inference</td>
+</tr>
+<tr>
+<td>INT8 W-only</td>
+<td>8</td>
+<td>Per-col</td>
+<td>Any GPU</td>
+<td>Drop-in quality-preserving compression</td>
+</tr>
+<tr>
+<td>INT8 W+A</td>
+<td>8</td>
+<td>Per-token</td>
+<td>Ampere+</td>
+<td>Highest server throughput</td>
+</tr>
+<tr>
+<td>NF4</td>
+<td>4</td>
+<td>Per-group-64</td>
+<td>Any GPU</td>
+<td>QLoRA base model</td>
+</tr>
+<tr>
+<td>INT4 GPTQ</td>
+<td>4</td>
+<td>Per-group-128</td>
+<td>Any GPU</td>
+<td>Server INT4 inference</td>
+</tr>
+<tr>
+<td>Q4_K_M</td>
+<td>~4.5</td>
+<td>Block-256</td>
+<td>CPU/GPU</td>
+<td>Edge / llama.cpp</td>
+</tr>
+<tr>
+<td>Q8_0</td>
+<td>8</td>
+<td>Per-32</td>
+<td>CPU</td>
+<td>Fast CPU inference</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Weight-only quantization (W-only) reduces memory bandwidth and footprint without changing arithmetic type; weight+activation quantization (W+A) additionally uses lower-precision integer arithmetic units for higher compute throughput.</li>
+<li>NF4 is information-theoretically optimal for normally distributed weights: its 16 code points are placed at the quantiles of <span class="arithmatex">\(\mathcal{N}(0,1)\)</span>, minimizing expected squared error at 4 bits.</li>
+<li>Double quantization compresses the per-group scale factors themselves (from FP32 to FP8), saving an additional ~0.22 bits/weight across the whole model — meaningful at 70 B scale.</li>
+<li>QLoRA combines NF4 base model storage with BF16 LoRA adapters and paged optimizers, enabling full fine-tuning of a 65 B model on a single 48 GB GPU; gradients never need to pass through the NF4 rounding because the base model weights are frozen.</li>
+<li>llama.cpp&rsquo;s GGUF k-quants (Q4_K_M, Q5_K_M, Q6_K) use block-level mixed precision with super-block and sub-block scales, offering a smooth tradeoff between file size and quality for CPU/edge deployment.</li>
+<li>FP8 (E4M3) inference on H100 GPUs achieves near-BF16 quality at roughly half the memory bandwidth, but requires per-tensor or per-row scaling and benefits from SmoothQuant-style activation smoothing.</li>
+<li>KV-cache quantization (INT8 or INT4 per-token) can halve or quarter KV memory overhead at long contexts; per-token scales are required because KV distributions vary dramatically across positions.</li>
+<li>Quantization-aware training with the straight-through estimator (STE) allows gradient flow through the rounding operation by passing upstream gradients unchanged in the backward pass, at the cost of a biased gradient estimate.</li>
+<li>As a rule of thumb: Q4_K_M / NF4 is the recommended default for 7–70 B models when maximizing quality-per-GB; INT8 W+A (SmoothQuant) is the right choice when maximizing server throughput on Ampere/Hopper GPUs.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Quantization has become the default deployment strategy for LLMs: FP8 W8A8 is the production standard on H100/H200 datacenters, INT4 weight-only (AWQ/GPTQ) dominates single-GPU server use, and GGUF k-quants (Q4_K_M) remain the go-to for CPU and edge inference — with rotation-based methods like QuaRot now enabling full W4A4 including KV cache.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2208.07339">Dettmers et al., <em>LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale</em> (2022)</a> — introduced mixed-precision decomposition to handle activation outliers, making INT8 practical for 6.7 B+ models.</li>
+<li><a href="https://arxiv.org/abs/2305.14314">Dettmers et al., <em>QLoRA: Efficient Finetuning of Quantized LLMs</em> (2023)</a> — introduced NF4, double quantization, and paged optimizers, enabling 65 B fine-tuning on a single 48 GB GPU.</li>
+<li><a href="https://arxiv.org/abs/2210.17323">Frantar et al., <em>GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers</em> (2022)</a> — second-order OBC-based INT4 calibration; the algorithm behind most GGUF conversions and GPTQ server deployments.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2306.00978">Lin et al., <em>AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration</em> (2023)</a> — protects 1 % of salient weights by per-channel activation scaling; MLSys 2024 Best Paper; now a first-class backend in vLLM and TGI.</li>
+<li><a href="https://arxiv.org/abs/2404.00456">Ashkboos et al., <em>QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs</em> (2024)</a> — Hadamard rotation removes activation outliers end-to-end, enabling full W4A4 (weights, activations, and KV cache) with &lt;0.5 PPL loss on Llama-2-70B.</li>
+<li><a href="https://arxiv.org/abs/2411.02355">Kurtic et al., <em>&ldquo;Give Me BF16 or Give Me Death&rdquo;? Accuracy-Performance Trade-Offs in LLM Quantization</em> (2024)</a> — 500 K+ evaluations across the Llama-3.1 family; finds FP8 W8A8 lossless, INT8 W8A8 only 1–3 % degradation, and W4A16 the most cost-efficient for synchronous serving.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/bitsandbytes-foundation/bitsandbytes">bitsandbytes-foundation/bitsandbytes</a> — the canonical PyTorch INT8/NF4 quantization library; powers <code>load_in_8bit</code> and <code>load_in_4bit</code> in Hugging Face Transformers.</li>
+<li><a href="https://github.com/ggml-org/llama.cpp">ggml-org/llama.cpp</a> — reference C/C++ implementation of GGUF k-quants (Q2_K through Q8_0); runs on CPU, Metal, CUDA, and DirectML with no Python dependency.</li>
+<li><a href="https://github.com/NVIDIA/TransformerEngine">NVIDIA/TransformerEngine</a> — NVIDIA&rsquo;s FP8 (and FP4) training and inference library for Hopper/Ada/Blackwell GPUs; includes delayed scaling, amax history, and PyTorch/JAX APIs.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/blog/4bit-transformers-bitsandbytes">Hugging Face blog: <em>Making LLMs even more accessible with bitsandbytes, 4-bit quantization and QLoRA</em> (2023)</a> — step-by-step walkthrough of NF4, double quantization, and QLoRA in the Transformers ecosystem.</li>
+<li><a href="https://docs.vllm.ai/en/latest/features/quantization/">vLLM Quantization docs</a> — production reference covering AWQ, GPTQ, FP8 W8A8, INT8 W8A8, INT4 W4A16, and quantized KV cache in the leading open-source serving engine.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Dettmers et al., &ldquo;LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale&rdquo;</strong>, NeurIPS 2022 — the mixed-precision decomposition that made INT8 practical for very large models.</li>
+<li><strong>Dettmers et al., &ldquo;QLoRA: Efficient Finetuning of Quantized LLMs&rdquo;</strong>, NeurIPS 2023 — introduces NF4, double quantization, paged optimizers, and the QLoRA recipe.</li>
+<li><strong>Xiao et al., &ldquo;SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models&rdquo;</strong>, ICML 2023 — the per-channel migration trick that enables W8A8.</li>
+<li><strong>Frantar et al., &ldquo;GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers&rdquo;</strong>, ICLR 2023 — the second-order OBC-based algorithm that produces the INT4 weights used by many GGUF conversions.</li>
+<li><strong>bitsandbytes library</strong> (Tim Dettmers / Hugging Face) — <code>github.com/TimDettmers/bitsandbytes</code> — the production Python/CUDA implementation of LLM.int8() and NF4.</li>
+<li><strong>llama.cpp</strong> (Georgi Gerganov) — <code>github.com/ggerganov/llama.cpp</code> — the canonical k-quant and GGUF implementation; the source code in <code>ggml-quants.c</code> is the reference for Q4_K_M/Q5_K_M internals.</li>
+<li><strong>Sheng et al., &ldquo;FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU&rdquo;</strong>, ICML 2023 — demonstrates INT4 KV cache quantization and CPU offloading.</li>
+<li><strong>NVIDIA Transformer Engine</strong> (<code>github.com/NVIDIA/TransformerEngine</code>) — reference implementation of FP8 training and inference on Hopper GPUs, including delayed scaling and amax history.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="07-quantization-ptq.html"><span class="pn-label">← Previous</span><span class="pn-title">Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</span></a>
+<a class="next" href="09-compilers-fusion.html"><span class="pn-label">Next →</span><span class="pn-title">Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-quantization-landscape-a-taxonomy">The Quantization Landscape: A Taxonomy</a></li>
+<li class="toc-l2"><a href="#int8-the-safe-harbor">INT8: The Safe Harbor</a></li>
+<li class="toc-l3"><a href="#int8-weight-only-llmint8">INT8 Weight-Only (LLM.int8)</a></li>
+<li class="toc-l3"><a href="#int8-weight-activation-smoothquant-tensorrt-llm">INT8 Weight + Activation (SmoothQuant / TensorRT-LLM)</a></li>
+<li class="toc-l2"><a href="#int4-nf4-pushing-to-4-bits">INT4 &amp;amp; NF4: Pushing to 4 Bits</a></li>
+<li class="toc-l3"><a href="#per-group-int4">Per-Group INT4</a></li>
+<li class="toc-l3"><a href="#nf4-normal-float-4">NF4: Normal Float 4</a></li>
+<li class="toc-l3"><a href="#double-quantization">Double Quantization</a></li>
+<li class="toc-l2"><a href="#fp8-inference">FP8 Inference</a></li>
+<li class="toc-l2"><a href="#gguf-llamacpp-k-quants">GGUF &amp;amp; llama.cpp K-Quants</a></li>
+<li class="toc-l3"><a href="#the-k-quant-family">The K-Quant Family</a></li>
+<li class="toc-l3"><a href="#why-gguf-for-edge-deployment">Why GGUF for Edge Deployment?</a></li>
+<li class="toc-l2"><a href="#bitsandbytes-the-pytorch-native-quantization-library">bitsandbytes: The PyTorch-Native Quantization Library</a></li>
+<li class="toc-l3"><a href="#architecture-of-bnb-linear-layers">Architecture of bnb Linear Layers</a></li>
+<li class="toc-l3"><a href="#implementing-a-minimal-nf4-layer-from-scratch">Implementing a Minimal NF4 Layer From Scratch</a></li>
+<li class="toc-l2"><a href="#quantization-aware-training-qat">Quantization-Aware Training (QAT)</a></li>
+<li class="toc-l3"><a href="#the-straight-through-estimator">The Straight-Through Estimator</a></li>
+<li class="toc-l3"><a href="#qlora-quantization-low-rank-adaptation">QLoRA: Quantization + Low-Rank Adaptation</a></li>
+<li class="toc-l2"><a href="#kv-cache-quantization">KV-Cache Quantization</a></li>
+<li class="toc-l3"><a href="#per-token-dynamic-quantization-of-kv">Per-Token Dynamic Quantization of KV</a></li>
+<li class="toc-l2"><a href="#accuracyperformance-tradeoffs-across-the-zoo">Accuracy–Performance Tradeoffs Across the Zoo</a></li>
+<li class="toc-l3"><a href="#the-perplexity-cost-hierarchy">The Perplexity Cost Hierarchy</a></li>
+<li class="toc-l3"><a href="#throughput-and-latency">Throughput and Latency</a></li>
+<li class="toc-l3"><a href="#practical-decision-tree">Practical Decision Tree</a></li>
+<li class="toc-l2"><a href="#summary-format-comparison-reference">Summary: Format Comparison Reference</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

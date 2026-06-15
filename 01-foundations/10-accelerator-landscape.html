@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi — The LLM Stack</title>
+<meta name="description" content="A vendor-by-vendor survey of the non-NVIDIA accelerators an LLM engineer now ships on: Google TPU (v5e/v6/v7, pods, XLA/JAX), AWS Trainium/Inferentia (Neuron SD">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="active" href="10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part I — Mathematical &amp; Systems Foundations</div>
+<h1 id="110-the-accelerator-landscape-tpus-trainium-amdrocm-gaudi">1.10 The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi<a class="headerlink" href="#110-the-accelerator-landscape-tpus-trainium-amdrocm-gaudi" title="Permanent link">¶</a></h1>
+<p>For most of the last decade, &ldquo;running an LLM&rdquo; silently meant &ldquo;running it on an NVIDIA GPU with CUDA.&rdquo; That assumption is no longer safe, and a working LLM engineer who only knows CUDA is now under-equipped. The largest production language models on earth — Google&rsquo;s Gemini family — never touch an NVIDIA chip; they train and serve on <strong>TPUs</strong>. Anthropic and many AWS customers train and serve on <strong>Trainium</strong> and <strong>Inferentia</strong>. AMD&rsquo;s <strong>Instinct MI300X</strong>, with 192 GB of HBM3 per package, has become a credible serving target precisely because its memory capacity lets a 70B-class model fit on fewer devices. Intel&rsquo;s <strong>Gaudi</strong> is the budget challenger. Procurement reality — supply, price, and the simple fact that you cannot buy as many H100s as you want — means you <em>will</em> eventually be handed a non-NVIDIA fleet and asked to make it sing.</p>
+<p>This chapter is a vendor-by-vendor field guide to that landscape. The goal is not to memorize spec sheets that will be stale in a year, but to internalize the <em>mental models</em> that let you read any new spec sheet and any new SDK and reason about it: the difference between a <strong>systolic array</strong> and a <strong>SIMT</strong> machine; what the compiler does on each platform; what ports cleanly from CUDA and what does not; and how to look at HBM capacity, HBM bandwidth, and FP8/FP4 TFLOPS and decide whether a given chip is right for <em>your</em> training or serving workload.</p>
+<p>We build directly on <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a> (the SIMT baseline we are contrasting against), <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a> (the FP8/FP4/bf16 formats whose throughput we compare), and <a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a> (the interconnects — NVLink vs ICI vs NeuronLink vs Infinity Fabric — that decide how chips scale into pods). When the discussion turns to <em>programming</em> these chips, we lean on <a href="../04-kernels-efficiency/04-triton-kernels.html">Writing GPU Kernels with Triton</a> and <a href="../04-kernels-efficiency/05-cuda-essentials.html">CUDA Programming Essentials for ML Engineers</a>. The roofline reasoning we use to pick hardware is developed fully in <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>.</p>
+<hr />
+<h2 id="two-silicon-philosophies-systolic-arrays-vs-simt">Two Silicon Philosophies: Systolic Arrays vs SIMT<a class="headerlink" href="#two-silicon-philosophies-systolic-arrays-vs-simt" title="Permanent link">¶</a></h2>
+<p>Before any vendor, you need the one architectural distinction that organizes the whole chapter. There are two fundamentally different ways to build a chip that multiplies matrices fast, and almost every accelerator is a point on the spectrum between them.</p>
+<h3 id="the-simt-gpu-nvidia-amd">The SIMT GPU (NVIDIA, AMD)<a class="headerlink" href="#the-simt-gpu-nvidia-amd" title="Permanent link">¶</a></h3>
+<p>You met this in <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>. A GPU is a sea of small programmable cores (NVIDIA: <strong>SMs</strong>; AMD: <strong>CUs</strong>, compute units) running threads in lockstep groups (NVIDIA <strong>warp</strong> = 32 lanes; AMD <strong>wavefront</strong> = 64 lanes). Matrix multiply throughput comes from bolting on dedicated MMA units — NVIDIA <strong>Tensor Cores</strong>, AMD <strong>Matrix Cores</strong> — but the chip remains <em>general-purpose and programmable</em>. You write a kernel, the threads do whatever you tell them, and the same silicon can run a softmax, a sort, a physics simulation, or a ray tracer. Flexibility is the defining feature; the cost is that you, the programmer, must orchestrate the memory hierarchy (registers → shared memory → L2 → HBM) by hand to feed the math units.</p>
+<h3 id="the-systolic-array-tpu-trainium-gaudis-mme">The systolic array (TPU, Trainium, Gaudi&rsquo;s MME)<a class="headerlink" href="#the-systolic-array-tpu-trainium-gaudis-mme" title="Permanent link">¶</a></h3>
+<p>A <strong>systolic array</strong> is the opposite bet. Imagine a 2D grid — say <span class="arithmatex">\(128 \times 128\)</span> — of tiny multiply-accumulate (MAC) cells. Data is <em>pumped</em> through the grid like blood through a heart (Greek <em>systolē</em>, contraction — hence &ldquo;systolic&rdquo;). Weights are pre-loaded into the cells; activations flow in from the left edge, one column per clock; partial sums flow down. Each cell, every cycle, does one fused multiply-add and passes its operands to its neighbors. After the pipeline fills, the array retires a full <span class="arithmatex">\(128 \times 128\)</span> matrix-multiply tile&rsquo;s worth of MACs <em>every single clock cycle</em>, with almost no instruction-fetch overhead and — critically — <strong>almost no register-file or SRAM traffic for the intermediate partial sums</strong>, because they never leave the array; they march cell-to-cell.</p>
+<figure class="viz" id="fig-accel-systolic-array-dataflow">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 900 620" role="img" aria-label="Weight-stationary 4x4 systolic array: activations stream in from the left one column per clock, weights sit fixed in each cell, partial sums march downward, and output columns c0-c3 emerge at the bottom after the pipeline fills.">
+<defs>
+  <marker id="sa-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#f59e0b)"/>
+  </marker>
+  <marker id="sa-arr-ps" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent2,#6366f1)"/>
+  </marker>
+  <marker id="sa-arr-out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#f59e0b)"/>
+  </marker>
+  <marker id="sa-arr-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+</defs>
+<style>
+  #fig-accel-systolic-array-dataflow text { fill: currentColor; }
+  #fig-accel-systolic-array-dataflow .ttl { font: 700 15px var(--sans,sans-serif); }
+  #fig-accel-systolic-array-dataflow .sub { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-accel-systolic-array-dataflow .cell-w { font: 700 16px var(--sans,sans-serif); fill: var(--accent2,#6366f1); }
+  #fig-accel-systolic-array-dataflow .cell-plus { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-accel-systolic-array-dataflow .token { font: 700 9px var(--mono,monospace); fill: var(--accent,#f59e0b); }
+  #fig-accel-systolic-array-dataflow .lane-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#f59e0b); }
+  #fig-accel-systolic-array-dataflow .out-lbl { font: 700 12px var(--sans,sans-serif); fill: var(--accent,#f59e0b); }
+  #fig-accel-systolic-array-dataflow .legend-lbl { font: 500 11px var(--sans,sans-serif); }
+  #fig-accel-systolic-array-dataflow .callout-txt { font: 500 11px var(--sans,sans-serif); }
+  #fig-accel-systolic-array-dataflow .mac-eq { font: 600 9.5px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-accel-systolic-array-dataflow .weight-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+
+  /* Animation keyframes */
+  @keyframes sa-weight-load {
+    0%,100% { opacity:0.2; }
+    40%,60% { opacity:1; }
+  }
+  @keyframes sa-token-step {
+    0% { transform: translateX(0px); opacity:1; }
+    85% { transform: translateX(88px); opacity:1; }
+    100% { transform: translateX(88px); opacity:0.3; }
+  }
+  @keyframes sa-cell-flash {
+    0%,100% { opacity:0; }
+    50% { opacity:0.7; }
+  }
+  @keyframes sa-ps-flow {
+    0% { opacity:0; transform:translateY(0); }
+    20% { opacity:1; transform:translateY(0); }
+    80% { opacity:1; transform:translateY(20px); }
+    100% { opacity:0; transform:translateY(22px); }
+  }
+  @keyframes sa-out-light {
+    0%,70% { opacity:0; }
+    80%,95% { opacity:1; }
+    100% { opacity:0.6; }
+  }
+  @keyframes sa-tok-pulse { 0%,100%{opacity:0.5} 50%{opacity:1} }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-accel-systolic-array-dataflow .anim-weight-load,
+    #fig-accel-systolic-array-dataflow .anim-token,
+    #fig-accel-systolic-array-dataflow .anim-cell-flash,
+    #fig-accel-systolic-array-dataflow .anim-ps-flow,
+    #fig-accel-systolic-array-dataflow .anim-out-light {
+      animation: none !important;
+      opacity: 1 !important;
+    }
+  }
+</style>
+
+
+<text x="450" y="26" text-anchor="middle" class="ttl">Weight-stationary systolic array (4x4 MXU)</text>
+<text x="450" y="46" text-anchor="middle" class="sub">activations stream in from the left, one column per clock; partial sums march downward</text>
+
+
+
+<g class="anim-weight-load" style="animation: sa-weight-load 2s ease-in-out;">
+  <line x1="302" y1="96" x2="650" y2="96" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <line x1="302" y1="96" x2="302" y2="106" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <line x1="650" y1="96" x2="650" y2="106" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="5,3"/>
+
+  <line x1="346" y1="96" x2="346" y2="103" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+  <line x1="434" y1="96" x2="434" y2="103" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+  <line x1="522" y1="96" x2="522" y2="103" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+  <line x1="610" y1="96" x2="610" y2="103" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+  <text x="476" y="90" text-anchor="middle" class="weight-lbl">weights pre-loaded &amp; STATIONARY</text>
+</g>
+
+
+
+
+
+
+<rect x="302" y="110" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="344" y="153" text-anchor="middle" class="cell-w">w</text>
+<text x="344" y="168" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="368" y="172" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="390" y="110" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="432" y="153" text-anchor="middle" class="cell-w">w</text>
+<text x="432" y="168" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="456" y="172" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="478" y="110" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="520" y="153" text-anchor="middle" class="cell-w">w</text>
+<text x="520" y="168" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="544" y="172" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="566" y="110" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="608" y="153" text-anchor="middle" class="cell-w">w</text>
+<text x="608" y="168" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="632" y="172" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+
+<rect x="302" y="198" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="344" y="241" text-anchor="middle" class="cell-w">w</text>
+<text x="344" y="256" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="368" y="260" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="390" y="198" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="432" y="241" text-anchor="middle" class="cell-w">w</text>
+<text x="432" y="256" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="456" y="260" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="478" y="198" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="520" y="241" text-anchor="middle" class="cell-w">w</text>
+<text x="520" y="256" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="544" y="260" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="566" y="198" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="608" y="241" text-anchor="middle" class="cell-w">w</text>
+<text x="608" y="256" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="632" y="260" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+
+<rect x="302" y="286" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="344" y="329" text-anchor="middle" class="cell-w">w</text>
+<text x="344" y="344" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="368" y="348" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="390" y="286" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="432" y="329" text-anchor="middle" class="cell-w">w</text>
+<text x="432" y="344" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="456" y="348" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="478" y="286" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="520" y="329" text-anchor="middle" class="cell-w">w</text>
+<text x="520" y="344" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="544" y="348" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="566" y="286" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="608" y="329" text-anchor="middle" class="cell-w">w</text>
+<text x="608" y="344" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="632" y="348" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+
+<rect x="302" y="374" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="344" y="417" text-anchor="middle" class="cell-w">w</text>
+<text x="344" y="432" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="368" y="436" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="390" y="374" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="432" y="417" text-anchor="middle" class="cell-w">w</text>
+<text x="432" y="432" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="456" y="436" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="478" y="374" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="520" y="417" text-anchor="middle" class="cell-w">w</text>
+<text x="520" y="432" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="544" y="436" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="566" y="374" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="608" y="417" text-anchor="middle" class="cell-w">w</text>
+<text x="608" y="432" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="632" y="436" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+
+
+
+<rect class="anim-cell-flash" x="303" y="111" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 1.2s infinite;"/>
+<rect class="anim-cell-flash" x="391" y="111" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 1.8s infinite;"/>
+<rect class="anim-cell-flash" x="479" y="111" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 2.4s infinite;"/>
+<rect class="anim-cell-flash" x="567" y="111" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.0s infinite;"/>
+
+<rect class="anim-cell-flash" x="303" y="199" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 1.8s infinite;"/>
+<rect class="anim-cell-flash" x="391" y="199" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 2.4s infinite;"/>
+<rect class="anim-cell-flash" x="479" y="199" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.0s infinite;"/>
+<rect class="anim-cell-flash" x="567" y="199" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.6s infinite;"/>
+
+<rect class="anim-cell-flash" x="303" y="287" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 2.4s infinite;"/>
+<rect class="anim-cell-flash" x="391" y="287" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.0s infinite;"/>
+<rect class="anim-cell-flash" x="479" y="287" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.6s infinite;"/>
+<rect class="anim-cell-flash" x="567" y="287" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 4.2s infinite;"/>
+
+<rect class="anim-cell-flash" x="303" y="375" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.0s infinite;"/>
+<rect class="anim-cell-flash" x="391" y="375" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.6s infinite;"/>
+<rect class="anim-cell-flash" x="479" y="375" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 4.2s infinite;"/>
+<rect class="anim-cell-flash" x="567" y="375" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 4.8s infinite;"/>
+
+
+
+<line x1="388" y1="152" x2="389" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="386" y1="152" x2="389" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+<line x1="476" y1="152" x2="477" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="474" y1="152" x2="477" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+<line x1="564" y1="152" x2="565" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="562" y1="152" x2="565" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+
+
+<line x1="386" y1="240" x2="389" y2="240" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="474" y1="240" x2="477" y2="240" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="562" y1="240" x2="565" y2="240" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<line x1="386" y1="328" x2="389" y2="328" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="474" y1="328" x2="477" y2="328" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="562" y1="328" x2="565" y2="328" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<line x1="386" y1="416" x2="389" y2="416" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="474" y1="416" x2="477" y2="416" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="562" y1="416" x2="565" y2="416" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+
+<line x1="344" y1="196" x2="344" y2="197" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="344" y1="194" x2="344" y2="197" stroke="var(--accent2,#6366f1)" stroke-width="2"/>
+<line x1="344" y1="284" x2="344" y2="285" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="344" y1="282" x2="344" y2="285" stroke="var(--accent2,#6366f1)" stroke-width="2"/>
+<line x1="344" y1="372" x2="344" y2="373" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="344" y1="370" x2="344" y2="373" stroke="var(--accent2,#6366f1)" stroke-width="2"/>
+
+
+<line x1="432" y1="194" x2="432" y2="197" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="432" y1="282" x2="432" y2="285" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="432" y1="370" x2="432" y2="373" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+
+
+<line x1="520" y1="194" x2="520" y2="197" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="520" y1="282" x2="520" y2="285" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="520" y1="370" x2="520" y2="373" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+
+
+<line x1="608" y1="194" x2="608" y2="197" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="608" y1="282" x2="608" y2="285" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="608" y1="370" x2="608" y2="373" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+
+
+
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0s infinite;">
+  <rect x="72" y="140" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="87" y="152" text-anchor="middle" class="token">a30</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0.2s infinite;">
+  <rect x="110" y="140" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="125" y="152" text-anchor="middle" class="token">a20</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0.4s infinite;">
+  <rect x="148" y="140" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="163" y="152" text-anchor="middle" class="token">a10</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0.6s infinite;">
+  <rect x="186" y="140" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.2" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="201" y="152" text-anchor="middle" class="token">a00</text>
+</g>
+<line x1="218" y1="148" x2="300" y2="148" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0.6s infinite;">
+  <rect x="72" y="228" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="87" y="240" text-anchor="middle" class="token">a31</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0.8s infinite;">
+  <rect x="110" y="228" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="125" y="240" text-anchor="middle" class="token">a21</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.0s infinite;">
+  <rect x="148" y="228" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="163" y="240" text-anchor="middle" class="token">a11</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.2s infinite;">
+  <rect x="186" y="228" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.2" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="201" y="240" text-anchor="middle" class="token">a01</text>
+</g>
+<line x1="218" y1="236" x2="300" y2="236" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.2s infinite;">
+  <rect x="72" y="316" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="87" y="328" text-anchor="middle" class="token">a32</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.4s infinite;">
+  <rect x="110" y="316" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="125" y="328" text-anchor="middle" class="token">a22</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.6s infinite;">
+  <rect x="148" y="316" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="163" y="328" text-anchor="middle" class="token">a12</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.8s infinite;">
+  <rect x="186" y="316" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.2" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="201" y="328" text-anchor="middle" class="token">a02</text>
+</g>
+<line x1="218" y1="324" x2="300" y2="324" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.8s infinite;">
+  <rect x="72" y="404" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="87" y="416" text-anchor="middle" class="token">a33</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 2.0s infinite;">
+  <rect x="110" y="404" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="125" y="416" text-anchor="middle" class="token">a23</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 2.2s infinite;">
+  <rect x="148" y="404" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="163" y="416" text-anchor="middle" class="token">a13</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 2.4s infinite;">
+  <rect x="186" y="404" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.2" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="201" y="416" text-anchor="middle" class="token">a03</text>
+</g>
+<line x1="218" y1="412" x2="300" y2="412" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<text x="44" y="158" text-anchor="end" class="lane-lbl">a_in</text>
+<line x1="48" y1="154" x2="62" y2="154" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<line x1="344" y1="460" x2="344" y2="498" stroke="var(--accent,#f59e0b)" stroke-width="2.5" marker-end="url(#sa-arr-out)"/>
+<g class="anim-out-light" style="animation: sa-out-light 3.2s 3.2s infinite;">
+  <rect x="320" y="500" width="48" height="20" rx="6" fill="var(--accent,#f59e0b)" opacity="0.25" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="344" y="514" text-anchor="middle" class="out-lbl">c0</text>
+</g>
+
+<line x1="432" y1="460" x2="432" y2="498" stroke="var(--accent,#f59e0b)" stroke-width="2.5" marker-end="url(#sa-arr-out)"/>
+<g class="anim-out-light" style="animation: sa-out-light 3.2s 3.8s infinite;">
+  <rect x="408" y="500" width="48" height="20" rx="6" fill="var(--accent,#f59e0b)" opacity="0.25" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="432" y="514" text-anchor="middle" class="out-lbl">c1</text>
+</g>
+
+<line x1="520" y1="460" x2="520" y2="498" stroke="var(--accent,#f59e0b)" stroke-width="2.5" marker-end="url(#sa-arr-out)"/>
+<g class="anim-out-light" style="animation: sa-out-light 3.2s 4.4s infinite;">
+  <rect x="496" y="500" width="48" height="20" rx="6" fill="var(--accent,#f59e0b)" opacity="0.25" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="520" y="514" text-anchor="middle" class="out-lbl">c2</text>
+</g>
+
+<line x1="608" y1="460" x2="608" y2="498" stroke="var(--accent,#f59e0b)" stroke-width="2.5" marker-end="url(#sa-arr-out)"/>
+<g class="anim-out-light" style="animation: sa-out-light 3.2s 5.0s infinite;">
+  <rect x="584" y="500" width="48" height="20" rx="6" fill="var(--accent,#f59e0b)" opacity="0.25" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="608" y="514" text-anchor="middle" class="out-lbl">c3</text>
+</g>
+
+<text x="476" y="546" text-anchor="middle" class="sub">output columns</text>
+
+
+<rect x="38" y="468" width="218" height="130" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="147" y="487" text-anchor="middle" style="font:700 11px var(--sans,sans-serif)">Legend</text>
+
+<line x1="52" y1="504" x2="80" y2="504" stroke="var(--accent,#f59e0b)" stroke-width="2.5"/>
+<rect x="54" y="498" width="24" height="12" rx="3" fill="var(--accent,#f59e0b)" opacity="0.2" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+<text x="88" y="508" class="legend-lbl">activation a_in (flows right)</text>
+
+<line x1="52" y1="528" x2="80" y2="528" stroke="var(--accent2,#6366f1)" stroke-width="2.5"/>
+<text x="88" y="532" class="legend-lbl">partial sum acc (flows down)</text>
+
+<rect x="52" y="544" width="24" height="14" rx="3" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="56" y="552" style="font:700 10px var(--sans,sans-serif); fill:var(--accent2,#6366f1)">w</text>
+<text x="88" y="555" class="legend-lbl">stationary weight + MAC</text>
+
+<text x="52" y="576" class="mac-eq">each cell/cycle: acc += a_in * w</text>
+
+
+<rect x="668" y="258" width="192" height="76" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<rect x="668" y="258" width="4" height="76" rx="2" fill="var(--accent,#f59e0b)"/>
+<text x="682" y="276" class="callout-txt">partial sums never leave</text>
+<text x="682" y="291" class="callout-txt">the array -&gt; almost no</text>
+<text x="682" y="306" class="callout-txt">SRAM/register traffic</text>
+<text x="682" y="323" style="font:600 9px var(--mono,monospace); fill:var(--muted,#94a3b8)">retire full tile every clock</text>
+
+</svg>
+<figcaption><b>Weight-stationary 4x4 systolic array (TPU/Trainium/Gaudi MXU model).</b> Weights are pre-loaded once and held fixed in each cell; activation tokens stream in from the left, staggered so a diagonal wavefront sweeps the array; partial sums march downward cell-to-cell without ever touching SRAM. After the pipeline fills, the array retires an entire tile of MACs every clock cycle, yielding near-peak utilization with almost no memory-system overhead.</figcaption>
+</figure>
+
+<p>This is spectacularly efficient <em>for dense matrix multiply</em> — far higher FLOPs per watt and per transistor than a general SIMT core, because almost all the silicon is MAC units and almost none is control logic or caches. The price is rigidity. A systolic array does one thing — large dense matmuls — superbly, and <em>everything else</em> (the elementwise ops, the softmax, the layernorm, the gather/scatter, the dynamic shapes) must be handled by a smaller companion vector unit and, crucially, must be arranged ahead of time by a <strong>compiler</strong> that knows the static shape of every tensor. There is no <code>__syncthreads()</code>, no hand-written warp shuffle, no in-kernel branching on data. You do not program a TPU thread-by-thread; you describe a <em>dataflow graph</em> and a compiler maps it onto the array.</p>
+<p>Hold onto this single sentence, because it explains 90% of the porting pain in this chapter: <strong>GPUs give you a programmable machine and make you manage memory; systolic accelerators give you a compiler and make you accept its abstractions.</strong></p>
+<p>The arithmetic-intensity reasoning from <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a> still governs both. A chip&rsquo;s matmul units can only run at peak if the operands arrive fast enough. We formalize this with the ridge point of the roofline:</p>
+<div class="arithmatex">\[
+I^{*} = \frac{\text{peak compute (FLOP/s)}}{\text{peak memory bandwidth (byte/s)}}
+\]</div>
+<p>Any operation whose arithmetic intensity (FLOPs per byte of HBM traffic) is below <span class="arithmatex">\(I^{*}\)</span> is <strong>memory-bound</strong> no matter how many MAC cells the chip has. For an H100 at roughly <span class="arithmatex">\(\sim 990\)</span> bf16 TFLOP/s over <span class="arithmatex">\(\sim 3.35\)</span> TB/s of HBM, <span class="arithmatex">\(I^{*} \approx 295\)</span> FLOP/byte. For a TPU or MI300X the numbers differ, but the logic is identical — and it is why LLM <em>decode</em>, which is fundamentally bandwidth-bound, often runs <em>better</em> on the memory-rich MI300X than its raw FLOPS would suggest.</p>
+<hr />
+<h2 id="google-tpu-the-original-systolic-accelerator">Google TPU: The Original Systolic Accelerator<a class="headerlink" href="#google-tpu-the-original-systolic-accelerator" title="Permanent link">¶</a></h2>
+<p>The Tensor Processing Unit is the most mature non-NVIDIA accelerator and the one that has trained the most frontier-scale models. Its lineage runs from the inference-only TPU v1 (2015) through training-capable v2/v3, the v4/v5 generation (v5e for cost-efficiency, v5p for peak training), the v6 (&ldquo;Trillium&rdquo;), and the v7 (&ldquo;Ironwood&rdquo;) generation aimed squarely at large-scale inference and reasoning workloads.</p>
+<h3 id="the-chip-mxu-vpu-hbm">The chip: MXU + VPU + HBM<a class="headerlink" href="#the-chip-mxu-vpu-hbm" title="Permanent link">¶</a></h3>
+<p>A modern TPU chip contains a small number of large <strong>MXUs</strong> (Matrix Multiply Units) — the systolic arrays, classically <span class="arithmatex">\(128 \times 128\)</span> MAC grids — paired with a <strong>VPU</strong> (Vector Processing Unit) for the elementwise/reduction work the MXU cannot do, plus <strong>scalar units</strong> and a large slab of HBM. A v5p chip, for example, carries on the order of 95 GB of HBM; v6/v7 push capacity and bandwidth substantially higher. The defining feature versus a GPU is the <em>ratio</em>: enormous dense-matmul throughput concentrated in a few big arrays, fed by a comparatively simple, compiler-scheduled memory system, with no programmer-visible warp/SM hierarchy and no shared-memory scratchpad to manage by hand.</p>
+<h3 id="pods-and-ici-the-interconnect-is-the-product">Pods and ICI: the interconnect is the product<a class="headerlink" href="#pods-and-ici-the-interconnect-is-the-product" title="Permanent link">¶</a></h3>
+<p>A single TPU chip is unremarkable; the <strong>pod</strong> is the point. TPUs are wired together with a dedicated <strong>ICI</strong> (Inter-Chip Interconnect) into a <strong>2D or 3D torus</strong> topology. In a torus, each chip talks directly to its neighbors and the mesh wraps around at the edges, so collective operations — the all-reduce and all-gather of <a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a> — flow around rings with no expensive central switch. A full v5p pod connects thousands of chips (v5p: up to 8,960) into one tightly-coupled machine with a flat, predictable bandwidth model. This torus-with-good-collectives design is <em>why</em> TPUs scale to enormous training jobs gracefully: the hardware topology and the parallelism strategy are co-designed.</p>
+<h3 id="the-programming-model-xla-jax-and-the-compiler-is-the-api">The programming model: XLA, JAX, and &ldquo;the compiler is the API&rdquo;<a class="headerlink" href="#the-programming-model-xla-jax-and-the-compiler-is-the-api" title="Permanent link">¶</a></h3>
+<p>You do not write TPU kernels by hand in the CUDA sense. You write high-level array code — almost always <strong>JAX</strong>, sometimes TensorFlow or PyTorch/XLA — and the <strong>XLA</strong> (Accelerated Linear Algebra) compiler lowers your whole-program computation graph onto the MXU/VPU/ICI. XLA does the heavy lifting that a CUDA programmer does manually: operator fusion, memory layout assignment, tiling for the systolic array, and — through <strong>GSPMD/<code>shard_map</code></strong> — inserting the cross-chip collectives implied by your sharding annotations.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># JAX on TPU: data-parallel + tensor-parallel matmul across a pod slice.</span>
+<span class="c1"># The KEY idea: you annotate HOW arrays are sharded across the physical</span>
+<span class="c1"># chip mesh; XLA inserts every all-gather / reduce-scatter for you.</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax.sharding</span><span class="w"> </span><span class="kn">import</span> <span class="n">Mesh</span><span class="p">,</span> <span class="n">PartitionSpec</span> <span class="k">as</span> <span class="n">P</span><span class="p">,</span> <span class="n">NamedSharding</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax.experimental</span><span class="w"> </span><span class="kn">import</span> <span class="n">mesh_utils</span>
+
+<span class="c1"># 1) Discover the physical TPU chips and arrange them into a logical 2D mesh.</span>
+<span class="c1">#    Axis &quot;data&quot; = data parallelism; axis &quot;model&quot; = tensor parallelism.</span>
+<span class="n">devices</span> <span class="o">=</span> <span class="n">mesh_utils</span><span class="o">.</span><span class="n">create_device_mesh</span><span class="p">((</span><span class="mi">4</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>   <span class="c1"># e.g. an 8-chip slice</span>
+<span class="n">mesh</span> <span class="o">=</span> <span class="n">Mesh</span><span class="p">(</span><span class="n">devices</span><span class="p">,</span> <span class="n">axis_names</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;data&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">))</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">shard</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">spec</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">jax</span><span class="o">.</span><span class="n">device_put</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">NamedSharding</span><span class="p">(</span><span class="n">mesh</span><span class="p">,</span> <span class="n">spec</span><span class="p">))</span>
+
+<span class="c1"># 2) Shard a weight matrix&#39;s columns across the &quot;model&quot; axis (tensor parallel),</span>
+<span class="c1">#    and the activation batch across the &quot;data&quot; axis (data parallel).</span>
+<span class="n">W</span> <span class="o">=</span> <span class="n">shard</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="mi">8192</span><span class="p">,</span> <span class="mi">8192</span><span class="p">)),</span>  <span class="n">P</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">))</span>   <span class="c1"># [in, out/TP]</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">shard</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="mi">1024</span><span class="p">,</span> <span class="mi">8192</span><span class="p">)),</span>  <span class="n">P</span><span class="p">(</span><span class="s2">&quot;data&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">))</span>    <span class="c1"># [batch/DP, in]</span>
+
+<span class="nd">@jax</span><span class="o">.</span><span class="n">jit</span>                      <span class="c1"># &lt;-- this single decorator invokes XLA.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">layer</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">W</span><span class="p">):</span>
+    <span class="c1"># You write a plain matmul. XLA sees the shardings on x and W and</span>
+    <span class="c1"># automatically emits the all-gather over &quot;model&quot; needed to form the</span>
+    <span class="c1"># full output, fused with the matmul, tiled for the 128x128 MXU.</span>
+    <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">tanh</span><span class="p">(</span><span class="n">x</span> <span class="o">@</span> <span class="n">W</span><span class="p">)</span>
+
+<span class="n">y</span> <span class="o">=</span> <span class="n">layer</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">W</span><span class="p">)</span>               <span class="c1"># runs across all 8 chips, collectives inserted.</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">y</span><span class="o">.</span><span class="n">sharding</span><span class="p">)</span>    <span class="c1"># (1024, 8192), sharded as XLA decided.</span>
+</code></pre></div>
+<p>The mental shift for a GPU person: there is no kernel to profile in the Nsight sense, no occupancy to tune, no shared-memory bank conflict to chase. Your performance levers are (a) the <strong>sharding annotations</strong> — get the parallelism wrong and XLA inserts catastrophic collectives — (b) keeping shapes <strong>static</strong> so XLA can compile once, and &copy; avoiding ops XLA cannot fuse well. When you <em>do</em> need a custom kernel — a fused FlashAttention variant, a block-sparse MoE op — you reach for <strong>Pallas</strong>, JAX&rsquo;s kernel language (spiritually a Triton for TPU/GPU) that lets you write tiled programs against the MXU/VPU directly. This is the TPU answer to <a href="../04-kernels-efficiency/04-triton-kernels.html">Writing GPU Kernels with Triton</a>.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: why TPUs love bf16 and big batches</p>
+<p>TPUs were co-designed with <strong>bfloat16</strong> (Google invented the format). bf16 keeps FP32&rsquo;s 8 exponent bits — same dynamic range — and throws away mantissa bits, which is exactly the trade a systolic MAC array wants: wide range so you rarely need loss scaling, narrow mantissa so each MAC cell is cheap. Because the MXU retires a full tile every cycle once filled, TPUs are happiest with <em>large, statically-shaped</em> matmuls — big batch, big hidden dim. Tiny, dynamically-shaped, branchy workloads (the kind that plague a SIMT GPU less) are where the systolic model struggles, since the array drains and refills.</p>
+</div>
+<hr />
+<h2 id="aws-trainium-inferentia-systolic-arrays-behind-the-neuron-sdk">AWS Trainium &amp; Inferentia: Systolic Arrays Behind the Neuron SDK<a class="headerlink" href="#aws-trainium-inferentia-systolic-arrays-behind-the-neuron-sdk" title="Permanent link">¶</a></h2>
+<p>Amazon designed two custom chips through its Annapurna Labs group: <strong>Inferentia</strong> (inference) and <strong>Trainium</strong> (training, also strong at inference). Trainium2 powers large training clusters (&ldquo;UltraClusters&rdquo;) and the UltraServer configurations that connect many chips with the <strong>NeuronLink</strong> interconnect; Trainium3 is the next step up. Anthropic&rsquo;s training and serving at scale on Trainium make this a first-class target, not a curiosity.</p>
+<h3 id="architecture-neuroncores">Architecture: NeuronCores<a class="headerlink" href="#architecture-neuroncores" title="Permanent link">¶</a></h3>
+<p>Each Trainium chip contains multiple <strong>NeuronCores</strong>. A NeuronCore is itself heterogeneous: a systolic-array <strong>TensorEngine</strong> for matmuls, a <strong>VectorEngine</strong> and <strong>ScalarEngine</strong> for the elementwise/reduction/activation work, and a <strong>GPSIMD</strong> engine for more general operations, all fed from on-chip SBUF/PSUM scratchpad memory and HBM. The shape is the same family as the TPU — big systolic matmul engine plus vector helpers plus a compiler — but with AWS&rsquo;s own scratchpad and interconnect design.</p>
+<h3 id="the-programming-model-neuron-sdk-compile-ahead-and-xla">The programming model: Neuron SDK, compile-ahead, and <code>xla</code><a class="headerlink" href="#the-programming-model-neuron-sdk-compile-ahead-and-xla" title="Permanent link">¶</a></h3>
+<p>You target Trainium through the <strong>AWS Neuron SDK</strong>. The default path is <strong>PyTorch/XLA</strong>: you write ordinary PyTorch, but execution goes through the <code>torch_xla</code> bridge, which traces your model into an XLA graph and the <strong>Neuron Compiler (<code>neuronx-cc</code>)</strong> lowers it onto the NeuronCores. JAX is also supported via XLA. The dominant practical fact, just like TPU, is that this is a <strong>trace-and-compile</strong> model, not eager execution.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Trainium via PyTorch/XLA. The code looks like normal PyTorch, but the</span>
+<span class="c1"># device is &#39;xla&#39; and execution is LAZY: ops are recorded into a graph and</span>
+<span class="c1"># only compiled+run when you force a materialization (xm.mark_step()).</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch_xla.core.xla_model</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">xm</span>
+
+<span class="n">device</span> <span class="o">=</span> <span class="n">xm</span><span class="o">.</span><span class="n">xla_device</span><span class="p">()</span>                 <span class="c1"># an &#39;xla:0&#39; NeuronCore, not &#39;cuda&#39;.</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">MyTransformer</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>       <span class="c1"># weights live on the NeuronCore.</span>
+<span class="n">opt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">3e-4</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">step</span><span class="p">,</span> <span class="p">(</span><span class="n">xb</span><span class="p">,</span> <span class="n">yb</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">loader</span><span class="p">):</span>
+    <span class="n">xb</span><span class="p">,</span> <span class="n">yb</span> <span class="o">=</span> <span class="n">xb</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span> <span class="n">yb</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">xb</span><span class="p">,</span> <span class="n">yb</span><span class="p">)</span>                 <span class="c1"># NOTHING executes yet -- lazy trace.</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>                      <span class="c1"># still just building the graph.</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+    <span class="c1"># mark_step() cuts the graph, hands it to neuronx-cc, and runs it.</span>
+    <span class="c1"># The FIRST occurrence of a given graph shape triggers a (slow) compile;</span>
+    <span class="c1"># afterwards the compiled binary is cached and reused.</span>
+    <span class="n">xm</span><span class="o">.</span><span class="n">mark_step</span><span class="p">()</span>
+</code></pre></div>
+<p>The big operational gotchas for a GPU engineer moving to Trainium are exactly the gotchas of any lazy/compiled stack: (1) <strong>dynamic shapes trigger recompilation</strong> — if your sequence length or batch size varies every step, you thrash the compiler, so you bucket/pad to a fixed set of shapes; (2) <strong>data-dependent control flow</strong> (Python <code>if</code> on a tensor value) forces graph breaks and is slow; (3) the <strong>first step is dominated by compilation</strong>, so warm-up and a persistent compile cache matter. When you need a true custom kernel, the <strong>Neuron Kernel Interface (NKI)</strong> is the Trainium analog of Triton/Pallas — a Python-embedded language for writing tiled kernels directly against the TensorEngine/VectorEngine.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: bucket your shapes on any XLA backend</p>
+<p>On TPU <em>and</em> Trainium, the single highest-leverage habit is to <strong>enumerate and fix your tensor shapes</strong>. Pad sequences to a small set of length buckets (e.g. 512/1024/2048/4096), fix the batch size, and pad the vocabulary to a friendly multiple. You pay a one-time compile per unique shape and then run compiled binaries forever. The most common &ldquo;TPU/Trainium is mysteriously slow&rdquo; bug is silent recompilation from shapes that wobble step to step.</p>
+</div>
+<hr />
+<h2 id="amd-instinct-rocm-the-closest-thing-to-a-cuda-drop-in">AMD Instinct &amp; ROCm: The Closest Thing to a CUDA Drop-In<a class="headerlink" href="#amd-instinct-rocm-the-closest-thing-to-a-cuda-drop-in" title="Permanent link">¶</a></h2>
+<p>AMD&rsquo;s <strong>Instinct</strong> GPUs are the strategic alternative to NVIDIA because they are <em>also SIMT GPUs</em> — same philosophy, so the porting story is fundamentally easier than for any systolic chip. The <strong>MI300X</strong> pairs a CDNA-architecture GPU with <strong>192 GB of HBM3</strong> (versus 80 GB on an H100), and the <strong>MI325X</strong>/<strong>MI350</strong> generation pushes capacity and bandwidth further, with MI350 adding native FP4/FP6 support aimed at low-precision inference. That memory capacity is the headline feature: a model that needs two or three H100s to hold weights plus KV cache may fit on a single MI300X, collapsing tensor-parallel communication and simplifying serving.</p>
+<h3 id="cdna-cus-wavefronts-and-matrix-cores">CDNA: CUs, wavefronts, and Matrix Cores<a class="headerlink" href="#cdna-cus-wavefronts-and-matrix-cores" title="Permanent link">¶</a></h3>
+<p>The MI300X is built from <strong>XCDs</strong> (accelerator complex dies) carrying <strong>Compute Units (CUs)</strong>, AMD&rsquo;s equivalent of SMs. Threads execute in <strong>wavefronts of 64</strong> (versus NVIDIA&rsquo;s 32-lane warps) — a real difference that affects how you write and tune kernels. Each CU has <strong>Matrix Cores</strong>, AMD&rsquo;s MMA units analogous to Tensor Cores, executing <strong>MFMA</strong> (Matrix Fused Multiply-Add) instructions. The whole package is glued together with AMD&rsquo;s <strong>Infinity Fabric</strong> for chiplet-to-chiplet and GPU-to-GPU links. If you understood <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>, you already understand the MI300X — only the names and the wavefront width change.</p>
+<h3 id="rocm-and-hip-cuda-with-the-serial-numbers-filed-off">ROCm and HIP: CUDA with the serial numbers filed off<a class="headerlink" href="#rocm-and-hip-cuda-with-the-serial-numbers-filed-off" title="Permanent link">¶</a></h3>
+<p>AMD&rsquo;s software stack is <strong>ROCm</strong> (Radeon Open Compute). The programming language is <strong>HIP</strong> (Heterogeneous-Compute Interface for Portability), which is deliberately a near-clone of CUDA: the API calls are renamed <code>cuda*</code> → <code>hip*</code>, the kernel-launch syntax is the same, and the device-code intrinsics map closely. The promise is <em>source portability</em>: one HIP source compiles to AMD (via the ROCm compiler) or to NVIDIA (HIP-over-CUDA).</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// A HIP kernel. Compare this to CUDA -- it is nearly identical.</span>
+<span class="c1">// Compile for AMD with:   hipcc saxpy.cpp -o saxpy</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;hip/hip_runtime.h&gt;</span>
+
+<span class="c1">// y = a*x + y   (the classic SAXPY), one thread per element.</span>
+<span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">saxpy</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">y</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">blockDim</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span><span class="w">   </span><span class="c1">// same index math as CUDA</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="n">y</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">y</span><span class="p">[</span><span class="n">i</span><span class="p">];</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="n">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">20</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">float</span><span class="w"> </span><span class="o">*</span><span class="n">dx</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">dy</span><span class="p">;</span>
+<span class="w">    </span><span class="n">hipMalloc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dx</span><span class="p">,</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">float</span><span class="p">));</span><span class="w">   </span><span class="c1">// cudaMalloc      -&gt; hipMalloc</span>
+<span class="w">    </span><span class="n">hipMalloc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dy</span><span class="p">,</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">float</span><span class="p">));</span>
+<span class="w">    </span><span class="c1">// ... fill dx, dy ...</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">threads</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">256</span><span class="p">,</span><span class="w"> </span><span class="n">blocks</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">n</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threads</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">threads</span><span class="p">;</span>
+<span class="w">    </span><span class="c1">// CUDA&#39;s &lt;&lt;&lt;blocks,threads&gt;&gt;&gt; triple-chevron is supported by hipcc too:</span>
+<span class="w">    </span><span class="n">hipLaunchKernelGGL</span><span class="p">(</span><span class="n">saxpy</span><span class="p">,</span><span class="w"> </span><span class="n">dim3</span><span class="p">(</span><span class="n">blocks</span><span class="p">),</span><span class="w"> </span><span class="n">dim3</span><span class="p">(</span><span class="n">threads</span><span class="p">),</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">                       </span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="mf">2.0f</span><span class="p">,</span><span class="w"> </span><span class="n">dx</span><span class="p">,</span><span class="w"> </span><span class="n">dy</span><span class="p">);</span>
+<span class="w">    </span><span class="n">hipDeviceSynchronize</span><span class="p">();</span><span class="w">              </span><span class="c1">// cudaDeviceSynchronize -&gt; hipDevice...</span>
+<span class="w">    </span><span class="n">hipFree</span><span class="p">(</span><span class="n">dx</span><span class="p">);</span><span class="w"> </span><span class="n">hipFree</span><span class="p">(</span><span class="n">dy</span><span class="p">);</span><span class="w">            </span><span class="c1">// cudaFree              -&gt; hipFree</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>For an existing CUDA codebase, AMD ships <strong><code>hipify</code></strong> tools (<code>hipify-perl</code>, <code>hipify-clang</code>) that mechanically rewrite <code>cuda*</code> calls to <code>hip*</code>. Plumbing — <code>cudaMalloc</code>, <code>cudaMemcpy</code>, stream and event management, most of the C++ — translates almost mechanically. The Python ML stack is even smoother: there is a <strong>ROCm build of PyTorch</strong> in which <code>torch.cuda</code> is <em>retargeted</em> to the AMD device, so a remarkable amount of model code runs unchanged — you still call <code>tensor.cuda()</code> and <code>device="cuda"</code>, and it lands on the Instinct GPU.</p>
+<h3 id="what-ports-cleanly-and-what-does-not">What ports cleanly — and what does not<a class="headerlink" href="#what-ports-cleanly-and-what-does-not" title="Permanent link">¶</a></h3>
+<p>Be precise here, because &ldquo;PyTorch just works on AMD&rdquo; oversells it and &ldquo;nothing works&rdquo; undersells it.</p>
+<ul>
+<li><strong>Ports cleanly:</strong> high-level PyTorch/JAX models on the ROCm builds; straightforward HIP kernels; the overall structure of any CUDA program.</li>
+<li><strong>Ports with friction:</strong> anything <strong>Triton</strong>. Triton has an AMD backend, so many kernels recompile and run — but performance tuning (block sizes, <code>num_warps</code>, pipelining) was done for NVIDIA and must be re-tuned for the 64-wide wavefront and CDNA memory system. FlashAttention and the fused kernels inside vLLM/SGLang have AMD ports, but they tend to lag the NVIDIA versions and need version-matched ROCm.</li>
+<li><strong>Ports painfully or not at all:</strong> hand-written <strong>PTX/SASS</strong> inline assembly (NVIDIA-specific ISA), kernels using NVIDIA-only hardware features (e.g. <code>wgmma</code>/TMA-style Hopper instructions, certain <code>cp.async</code> patterns), and anything depending on <strong>CUDA-only libraries</strong> without a ROCm analog. The ROCm analogs exist — <strong>rocBLAS/hipBLASLt</strong> for cuBLAS, <strong>MIOpen</strong> for cuDNN, <strong>RCCL</strong> for NCCL, <strong>CK</strong> (Composable Kernel) for CUTLASS — but the surface area is not 100% and the bleeding edge of NVIDIA appears first.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: assuming <code>warpSize == 32</code> on AMD</p>
+<p>Mountains of CUDA code bake in the constant 32 — warp-shuffle reductions, masks, <code>__ballot</code> patterns, shared-memory tile sizes chosen for 32 lanes. On a CDNA GPU a wavefront is <strong>64</strong> lanes. <code>hipify</code> will not fix the <em>logic</em>; it only renames API calls. A reduction that loops <code>for (offset = 16; offset &gt; 0; offset &gt;&gt;= 1)</code> assumes 32-wide and will silently drop half the lanes on AMD. Always read <code>warpSize</code> (a runtime value on AMD) rather than hard-coding 32, and re-derive tile sizes from it.</p>
+</div>
+<hr />
+<h2 id="intel-gaudi-the-budget-challenger">Intel Gaudi: The Budget Challenger<a class="headerlink" href="#intel-gaudi-the-budget-challenger" title="Permanent link">¶</a></h2>
+<p>Intel&rsquo;s <strong>Gaudi</strong> line (from the Habana Labs acquisition) — Gaudi2 and <strong>Gaudi3</strong> — is positioned as a cost-per-token challenger. Architecturally it is another heterogeneous design: a cluster of fully-programmable <strong>TPCs</strong> (Tensor Processor Cores, VLIW SIMD vector units) plus configurable <strong>MME</strong> (Matrix Multiplication Engine) systolic blocks for the dense matmuls, with HBM and — its most distinctive hardware choice — <strong>on-die integrated RoCE</strong> (RDMA over Converged Ethernet) ports. Instead of a proprietary fabric, every Gaudi card has many 100+ GbE RoCE links, so chips scale out over <em>standard Ethernet</em>, which is attractive for datacenters that would rather not build a proprietary interconnect island.</p>
+<p>The software stack is <strong>SynapseAI</strong>, exposed to PyTorch through the <strong><code>habana_frameworks</code></strong> bridge. Like Trainium and TPU it is fundamentally a <strong>graph-compile</strong> model (lazy by default, with an eager mode), and like them it rewards static shapes and punishes recompilation.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Gaudi via the Habana PyTorch bridge. Note the &#39;hpu&#39; device.</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">habana_frameworks.torch.core</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">htcore</span>   <span class="c1"># registers the &#39;hpu&#39; backend</span>
+
+<span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;hpu&quot;</span><span class="p">)</span>                     <span class="c1"># not &#39;cuda&#39;, not &#39;xla&#39;</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">MyTransformer</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="n">opt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">3e-4</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">xb</span><span class="p">,</span> <span class="n">yb</span> <span class="ow">in</span> <span class="n">loader</span><span class="p">:</span>
+    <span class="n">xb</span><span class="p">,</span> <span class="n">yb</span> <span class="o">=</span> <span class="n">xb</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span> <span class="n">yb</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">xb</span><span class="p">,</span> <span class="n">yb</span><span class="p">)</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+    <span class="n">htcore</span><span class="o">.</span><span class="n">mark_step</span><span class="p">()</span>   <span class="c1"># like xm.mark_step(): cut &amp; dispatch the graph.</span>
+</code></pre></div>
+<p>The takeaway: Gaudi sits in the same &ldquo;systolic-MME + programmable-vector + graph-compiler&rdquo; family as TPU and Trainium, with the twist that its scale-out is plain Ethernet/RoCE. The porting mental model is the XLA-family one (bucket shapes, avoid graph breaks, warm the compile cache), not the CUDA one.</p>
+<hr />
+<h2 id="the-portability-spectrum-a-unified-map">The Portability Spectrum: A Unified Map<a class="headerlink" href="#the-portability-spectrum-a-unified-map" title="Permanent link">¶</a></h2>
+<p>Step back and the whole landscape collapses onto one axis — <em>how much of the NVIDIA programming model survives</em>:</p>
+<figure class="viz" id="fig-accel-portability-spectrum">
+<svg viewBox="0 0 960 470" role="img" aria-label="The portability spectrum from easiest (AMD Instinct, SIMT GPU) to hardest (Google TPU, systolic MXU) showing how much of the NVIDIA CUDA programming model survives a port to each vendor.">
+<defs>
+  <linearGradient id="ps-axis-grad" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="var(--good,#2f9e6e)"/>
+    <stop offset="100%" stop-color="var(--accent,#f59e0b)"/>
+  </linearGradient>
+  <marker id="ps-arrow-hard" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#f59e0b)"/>
+  </marker>
+</defs>
+<style>
+  #fig-accel-portability-spectrum text { fill: currentColor; }
+  #fig-accel-portability-spectrum .ttl-lbl { font: 700 13px var(--sans,sans-serif); }
+  #fig-accel-portability-spectrum .sub-lbl { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-accel-portability-spectrum .axis-easy { font: 700 13px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+  #fig-accel-portability-spectrum .axis-hard { font: 700 13px var(--sans,sans-serif); fill: var(--accent,#f59e0b); }
+  #fig-accel-portability-spectrum .card-name { font: 700 13px var(--sans,sans-serif); }
+  #fig-accel-portability-spectrum .card-body { font: 400 11px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-accel-portability-spectrum .band-lbl { font: 500 10.5px var(--sans,sans-serif); }
+  #fig-accel-portability-spectrum .caption-txt { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-accel-portability-spectrum .tag-txt { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-accel-portability-spectrum .divider-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+</style>
+
+
+
+<defs>
+  <linearGradient id="ps-axis-fill" x1="0%" y1="0%" x2="100%" y2="0%">
+    <stop offset="0%" stop-color="var(--good,#2f9e6e)" stop-opacity="0.8"/>
+    <stop offset="100%" stop-color="var(--accent,#f59e0b)" stop-opacity="0.8"/>
+  </linearGradient>
+</defs>
+<line x1="60" y1="80" x2="900" y2="80" stroke="url(#ps-axis-fill)" stroke-width="6" stroke-linecap="round"/>
+
+<polygon points="898,74 912,80 898,86" fill="var(--accent,#f59e0b)"/>
+
+
+<text x="60" y="46" class="axis-easy">EASIEST PORT</text>
+<text x="60" y="60" class="sub-lbl">(same philosophy)</text>
+
+<text x="900" y="46" text-anchor="end" class="axis-hard">HARDEST PORT</text>
+<text x="900" y="60" text-anchor="end" class="sub-lbl">(different philosophy)</text>
+
+
+
+
+
+<rect x="67" y="110" width="186" height="130" rx="7" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+
+<rect x="67" y="110" width="186" height="28" rx="7" fill="var(--good,#2f9e6e)" fill-opacity="0.18"/>
+<rect x="67" y="124" width="186" height="14" fill="var(--good,#2f9e6e)" fill-opacity="0.18"/>
+<text x="160" y="129" text-anchor="middle" class="card-name" fill="var(--good,#2f9e6e)">AMD Instinct</text>
+<text x="160" y="151" text-anchor="middle" class="card-body">SIMT GPU</text>
+<text x="160" y="166" text-anchor="middle" class="card-body">ROCm / HIP</text>
+<text x="160" y="184" text-anchor="middle" style="font:500 10px var(--sans,sans-serif); fill:var(--good,#2f9e6e)">same wavefront model</text>
+<text x="160" y="199" text-anchor="middle" style="font:500 10px var(--sans,sans-serif); fill:var(--good,#2f9e6e)">as CUDA</text>
+
+<line x1="160" y1="82" x2="160" y2="110" stroke="var(--good,#2f9e6e)" stroke-width="1.5" stroke-dasharray="3,2"/>
+
+
+<rect x="287" y="110" width="186" height="130" rx="7" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+<rect x="287" y="110" width="186" height="28" rx="7" fill="var(--warn,#e0a106)" fill-opacity="0.15"/>
+<rect x="287" y="124" width="186" height="14" fill="var(--warn,#e0a106)" fill-opacity="0.15"/>
+<text x="380" y="129" text-anchor="middle" class="card-name" fill="var(--warn,#e0a106)">Intel Gaudi</text>
+<text x="380" y="151" text-anchor="middle" class="card-body">MME + TPC</text>
+<text x="380" y="166" text-anchor="middle" class="card-body">SynapseAI</text>
+<text x="380" y="184" text-anchor="middle" style="font:500 10px var(--sans,sans-serif); fill:var(--warn,#e0a106)">graph compile +</text>
+<text x="380" y="199" text-anchor="middle" style="font:500 10px var(--sans,sans-serif); fill:var(--warn,#e0a106)">static shapes</text>
+<line x1="380" y1="82" x2="380" y2="110" stroke="var(--warn,#e0a106)" stroke-width="1.5" stroke-dasharray="3,2"/>
+
+
+<rect x="507" y="110" width="186" height="130" rx="7" class="v-fill" stroke="var(--accent,#f59e0b)" stroke-width="1.5" stroke-opacity="0.7"/>
+<rect x="507" y="110" width="186" height="28" rx="7" fill="var(--accent,#f59e0b)" fill-opacity="0.13"/>
+<rect x="507" y="124" width="186" height="14" fill="var(--accent,#f59e0b)" fill-opacity="0.13"/>
+<text x="600" y="129" text-anchor="middle" class="card-name" fill="var(--accent,#f59e0b)">AWS Trainium</text>
+<text x="600" y="151" text-anchor="middle" class="card-body">systolic + Neuron</text>
+<text x="600" y="166" text-anchor="middle" class="card-body">/ XLA</text>
+<text x="600" y="184" text-anchor="middle" style="font:500 10px var(--sans,sans-serif); fill:var(--accent,#f59e0b)">NKI for custom</text>
+<text x="600" y="199" text-anchor="middle" style="font:500 10px var(--sans,sans-serif); fill:var(--accent,#f59e0b)">kernels</text>
+<line x1="600" y1="82" x2="600" y2="110" stroke="var(--accent,#f59e0b)" stroke-width="1.5" stroke-dasharray="3,2"/>
+
+
+<rect x="727" y="110" width="186" height="130" rx="7" class="v-fill" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+<rect x="727" y="110" width="186" height="28" rx="7" fill="var(--accent,#f59e0b)" fill-opacity="0.22"/>
+<rect x="727" y="124" width="186" height="14" fill="var(--accent,#f59e0b)" fill-opacity="0.22"/>
+<text x="820" y="129" text-anchor="middle" class="card-name" fill="var(--accent,#f59e0b)">Google TPU</text>
+<text x="820" y="151" text-anchor="middle" class="card-body">systolic MXU</text>
+<text x="820" y="166" text-anchor="middle" class="card-body">XLA / JAX</text>
+<text x="820" y="184" text-anchor="middle" style="font:500 10px var(--sans,sans-serif); fill:var(--accent,#f59e0b)">Pallas for custom</text>
+<text x="820" y="199" text-anchor="middle" style="font:500 10px var(--sans,sans-serif); fill:var(--accent,#f59e0b)">kernels</text>
+<line x1="820" y1="82" x2="820" y2="110" stroke="var(--accent,#f59e0b)" stroke-width="2" stroke-dasharray="3,2"/>
+
+
+
+
+<rect x="67" y="262" width="220" height="52" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.1" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+<text x="177" y="280" text-anchor="middle" class="band-lbl" fill="var(--good,#2f9e6e)">HIP ~= CUDA · hipify</text>
+<text x="177" y="295" text-anchor="middle" class="band-lbl" fill="var(--good,#2f9e6e)">ROCm PyTorch · Triton re-tunes</text>
+<text x="177" y="308" text-anchor="middle" style="font:500 9.5px var(--sans,sans-serif); fill:var(--good,#2f9e6e)">translation-only zone</text>
+
+
+<line x1="290" y1="256" x2="290" y2="324" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+
+<rect x="296" y="262" width="618" height="52" rx="5" fill="var(--accent,#f59e0b)" fill-opacity="0.08" stroke="var(--accent,#f59e0b)" stroke-width="1.2"/>
+<text x="605" y="280" text-anchor="middle" class="band-lbl" fill="var(--accent,#f59e0b)">graph compile · static shapes · no hand kernels</text>
+<text x="605" y="295" text-anchor="middle" class="band-lbl" fill="var(--accent,#f59e0b)">reach for NKI / Pallas instead of CUDA</text>
+<text x="605" y="308" text-anchor="middle" style="font:500 9.5px var(--sans,sans-serif); fill:var(--accent,#f59e0b)">paradigm-shift zone</text>
+
+
+<line x1="60" y1="338" x2="900" y2="338" stroke="var(--border-2,#475569)" stroke-width="0.8" stroke-dasharray="6,4"/>
+<text x="480" y="357" text-anchor="middle" class="caption-txt">One axis = how much of the NVIDIA programming model survives.</text>
+<text x="480" y="371" text-anchor="middle" class="caption-txt">SIMT-&gt;SIMT is a translation problem; SIMT-&gt;systolic is a paradigm shift.</text>
+
+
+<rect x="60" y="385" width="232" height="32" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.08" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+<text x="176" y="398" text-anchor="middle" class="tag-txt" fill="var(--good,#2f9e6e)">translation problem</text>
+<text x="176" y="411" text-anchor="middle" class="tag-txt" fill="var(--good,#2f9e6e)">(rename APIs, re-tune 64-wide)</text>
+
+<rect x="668" y="385" width="246" height="32" rx="4" fill="var(--accent,#f59e0b)" fill-opacity="0.08" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+<text x="791" y="398" text-anchor="middle" class="tag-txt" fill="var(--accent,#f59e0b)">paradigm problem</text>
+<text x="791" y="411" text-anchor="middle" class="tag-txt" fill="var(--accent,#f59e0b)">(rewrite to graph-level array code)</text>
+
+
+<line x1="294" y1="401" x2="666" y2="401" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="5,3"/>
+<polygon points="300,397 290,401 300,405" fill="var(--muted,#94a3b8)"/>
+<polygon points="660,397 670,401 660,405" fill="var(--muted,#94a3b8)"/>
+<text x="480" y="398" text-anchor="middle" class="tag-txt">increasing difficulty --&gt;</text>
+
+
+<circle cx="160" cy="80" r="4" fill="var(--good,#2f9e6e)"/>
+<circle cx="380" cy="80" r="4" fill="var(--warn,#e0a106)"/>
+<circle cx="600" cy="80" r="4" fill="var(--accent,#f59e0b)" fill-opacity="0.7"/>
+<circle cx="820" cy="80" r="4" fill="var(--accent,#f59e0b)"/>
+
+</svg>
+<figcaption><b>The portability spectrum: how much of the NVIDIA programming model survives.</b> AMD Instinct sits at the easy end (SIMT-to-SIMT, mostly API renaming via HIP), while Google TPU sits at the hard end (systolic MXU, fully compiler-driven via XLA). The key insight is that the move from CUDA to a systolic accelerator is not a translation problem but a paradigm shift — you stop writing kernels and start describing shapes and sharding for the compiler.</figcaption>
+</figure>
+
+<p>A few organizing principles fall out of this map and are worth stating as rules of thumb:</p>
+<ol>
+<li><strong>SIMT ports to SIMT.</strong> Moving CUDA → AMD is a <em>translation</em> problem (rename APIs, re-tune for 64-wide wavefronts, swap libraries). Moving CUDA → TPU/Trainium/Gaudi is a <em>paradigm</em> problem (rewrite to graph-level array code and let a compiler own the kernels).</li>
+<li><strong>The higher you wrote your code, the more portable it is.</strong> Pure PyTorch/JAX module code is the most portable artifact in ML — it runs on all four families with minimal change. Triton is the next tier (recompiles, re-tunes). Hand-written CUDA C++ with PTX is the least portable.</li>
+<li><strong>On compiler-first chips, your kernel is the compiler&rsquo;s problem, so your job is shapes and sharding.</strong> The performance work moves from &ldquo;tune occupancy and shared memory&rdquo; to &ldquo;keep shapes static and annotate sharding correctly.&rdquo;</li>
+<li><strong>The interconnect is part of the chip.</strong> TPU ICI torus, Trainium NeuronLink, AMD Infinity Fabric, Gaudi RoCE-over-Ethernet — these determine pod-scale efficiency as much as the per-chip FLOPS (see <a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a>).</li>
+</ol>
+<hr />
+<h2 id="reading-a-spec-sheet-to-pick-hardware">Reading a Spec Sheet to Pick Hardware<a class="headerlink" href="#reading-a-spec-sheet-to-pick-hardware" title="Permanent link">¶</a></h2>
+<p>Now the practical skill: given a workload, choose a chip by reading three numbers — <strong>HBM capacity (GB)</strong>, <strong>HBM bandwidth (TB/s)</strong>, and <strong>low-precision matmul throughput (FP8/FP4 TFLOP/s)</strong> — and one fourth, <strong>interconnect bandwidth (GB/s per link)</strong>, for multi-chip jobs. Which number dominates depends entirely on whether you are training or serving, and within serving, whether you are <em>prefill</em>-bound or <em>decode</em>-bound (see <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>).</p>
+<h3 id="step-1-does-the-model-even-fit-capacity">Step 1: Does the model even fit? (capacity)<a class="headerlink" href="#step-1-does-the-model-even-fit-capacity" title="Permanent link">¶</a></h3>
+<p>Weights memory is straightforward:</p>
+<div class="arithmatex">\[
+M_{\text{weights}} = N_{\text{params}} \times b_{\text{bytes/param}}
+\]</div>
+<p>For serving you must add the <strong>KV cache</strong>, whose per-token size for a model with <span class="arithmatex">\(L\)</span> layers, <span class="arithmatex">\(H_{kv}\)</span> key/value heads, head dimension <span class="arithmatex">\(d_h\)</span>, in <span class="arithmatex">\(b\)</span> bytes per element (2 for the K <em>and</em> V tensors), is:</p>
+<div class="arithmatex">\[
+M_{\text{KV/token}} = 2 \times L \times H_{kv} \times d_h \times b
+\]</div>
+<p>Capacity is where the MI300X&rsquo;s 192 GB and the TPU/Gaudi HBM slabs earn their keep: fit the model on fewer devices and you cut the tensor-parallel all-reduce traffic that otherwise caps throughput.</p>
+<h3 id="step-2-is-it-compute-bound-or-bandwidth-bound-roofline">Step 2: Is it compute-bound or bandwidth-bound? (roofline)<a class="headerlink" href="#step-2-is-it-compute-bound-or-bandwidth-bound-roofline" title="Permanent link">¶</a></h3>
+<p>Use the ridge point <span class="arithmatex">\(I^{*}\)</span> from above. <strong>Training</strong> and <strong>prefill</strong> are dense GEMMs with high arithmetic intensity → <strong>compute-bound</strong> → you care about FP8/bf16 TFLOPS. Autoregressive <strong>decode</strong> streams the entire weight matrix from HBM to generate each token with tiny per-token compute → <strong>bandwidth-bound</strong> → you care about HBM TB/s, almost regardless of peak FLOPS. This is the single most important distinction when picking a serving chip.</p>
+<h3 id="step-3-a-back-of-envelope-decision-function">Step 3: A back-of-envelope decision function<a class="headerlink" href="#step-3-a-back-of-envelope-decision-function" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># A toy hardware picker. Numbers are ILLUSTRATIVE order-of-magnitude specs</span>
+<span class="c1"># meant to teach the REASONING; always re-check the current datasheet.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Chip</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">hbm_gb</span><span class="p">:</span> <span class="nb">float</span>          <span class="c1"># capacity</span>
+    <span class="n">hbm_tbs</span><span class="p">:</span> <span class="nb">float</span>         <span class="c1"># bandwidth, TB/s</span>
+    <span class="n">fp8_tflops</span><span class="p">:</span> <span class="nb">float</span>      <span class="c1"># peak FP8 matmul throughput</span>
+    <span class="n">link_gbs</span><span class="p">:</span> <span class="nb">float</span>        <span class="c1"># per-chip interconnect bandwidth, GB/s</span>
+
+<span class="c1"># Illustrative figures -- teach the method, not the exact values.</span>
+<span class="n">CHIPS</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="n">Chip</span><span class="p">(</span><span class="s2">&quot;H100-SXM&quot;</span><span class="p">,</span>   <span class="mi">80</span><span class="p">,</span>  <span class="mf">3.35</span><span class="p">,</span>  <span class="mi">1979</span><span class="p">,</span>  <span class="mi">450</span><span class="p">),</span>   <span class="c1"># NVLink</span>
+    <span class="n">Chip</span><span class="p">(</span><span class="s2">&quot;MI300X&quot;</span><span class="p">,</span>    <span class="mi">192</span><span class="p">,</span>  <span class="mf">5.3</span><span class="p">,</span>   <span class="mi">2615</span><span class="p">,</span>  <span class="mi">448</span><span class="p">),</span>   <span class="c1"># Infinity Fabric</span>
+    <span class="n">Chip</span><span class="p">(</span><span class="s2">&quot;TPU v5p&quot;</span><span class="p">,</span>    <span class="mi">95</span><span class="p">,</span>  <span class="mf">2.76</span><span class="p">,</span>   <span class="mi">918</span><span class="p">,</span>  <span class="mi">600</span><span class="p">),</span>   <span class="c1"># ICI (bf16-class peak)</span>
+    <span class="n">Chip</span><span class="p">(</span><span class="s2">&quot;Gaudi3&quot;</span><span class="p">,</span>    <span class="mi">128</span><span class="p">,</span>  <span class="mf">3.7</span><span class="p">,</span>   <span class="mi">1835</span><span class="p">,</span>  <span class="mi">300</span><span class="p">),</span>   <span class="c1"># RoCE/Ethernet (aggregate)</span>
+<span class="p">]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">kv_bytes_per_token</span><span class="p">(</span><span class="n">L</span><span class="p">,</span> <span class="n">H_kv</span><span class="p">,</span> <span class="n">d_h</span><span class="p">,</span> <span class="n">bytes_per_elt</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+    <span class="k">return</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">L</span> <span class="o">*</span> <span class="n">H_kv</span> <span class="o">*</span> <span class="n">d_h</span> <span class="o">*</span> <span class="n">bytes_per_elt</span>          <span class="c1"># K and V</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">pick</span><span class="p">(</span><span class="n">workload</span><span class="p">,</span> <span class="n">params_b</span><span class="p">,</span> <span class="n">dtype_bytes</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">H_kv</span><span class="p">,</span> <span class="n">d_h</span><span class="p">,</span>
+         <span class="n">ctx_len</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="s2">&quot;decode&quot;</span><span class="p">):</span>
+    <span class="n">need_weights</span> <span class="o">=</span> <span class="n">params_b</span> <span class="o">*</span> <span class="mf">1e9</span> <span class="o">*</span> <span class="n">dtype_bytes</span>
+    <span class="n">kv_per_tok</span>   <span class="o">=</span> <span class="n">kv_bytes_per_token</span><span class="p">(</span><span class="n">L</span><span class="p">,</span> <span class="n">H_kv</span><span class="p">,</span> <span class="n">d_h</span><span class="p">)</span>
+    <span class="n">need_kv</span>      <span class="o">=</span> <span class="n">kv_per_tok</span> <span class="o">*</span> <span class="n">ctx_len</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">need_total</span>   <span class="o">=</span> <span class="p">(</span><span class="n">need_weights</span> <span class="o">+</span> <span class="n">need_kv</span><span class="p">)</span> <span class="o">/</span> <span class="mf">1e9</span>       <span class="c1"># GB</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">workload</span><span class="si">}</span><span class="s2">] need ~</span><span class="si">{</span><span class="n">need_total</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> GB &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;(weights </span><span class="si">{</span><span class="n">need_weights</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> + KV </span><span class="si">{</span><span class="n">need_kv</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">CHIPS</span><span class="p">:</span>
+        <span class="n">n_dev</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="o">-</span><span class="n">need_total</span> <span class="o">//</span> <span class="n">c</span><span class="o">.</span><span class="n">hbm_gb</span><span class="p">)</span>              <span class="c1"># ceil-divide to fit</span>
+        <span class="c1"># decode is bandwidth-bound -&gt; rank by aggregate HBM TB/s;</span>
+        <span class="c1"># prefill/training is compute-bound -&gt; rank by aggregate FP8 TFLOPS.</span>
+        <span class="n">score</span> <span class="o">=</span> <span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">hbm_tbs</span> <span class="k">if</span> <span class="n">target</span> <span class="o">==</span> <span class="s2">&quot;decode&quot;</span> <span class="k">else</span> <span class="n">c</span><span class="o">.</span><span class="n">fp8_tflops</span><span class="p">)</span> <span class="o">*</span> <span class="n">n_dev</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">c</span><span class="o">.</span><span class="n">name</span><span class="si">:</span><span class="s2">10s</span><span class="si">}</span><span class="s2">: fits on </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">n_dev</span><span class="p">)</span><span class="si">}</span><span class="s2"> dev, &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;score=</span><span class="si">{</span><span class="n">score</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="s1">&#39;TB/s&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">target</span><span class="o">==</span><span class="s1">&#39;decode&#39;</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;TFLOPS&#39;</span><span class="si">}</span><span class="s2"> agg)&quot;</span><span class="p">)</span>
+
+<span class="c1"># Llama-70B-ish: 70B params, fp8 weights, 80 layers, 8 KV heads (GQA),</span>
+<span class="c1"># head_dim 128, 8k context, batch 32, decode-bound serving.</span>
+<span class="n">pick</span><span class="p">(</span><span class="s2">&quot;serve-70B-decode&quot;</span><span class="p">,</span> <span class="mi">70</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">80</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">ctx_len</span><span class="o">=</span><span class="mi">8192</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="mi">32</span><span class="p">)</span>
+</code></pre></div>
+<p>The function encodes the doctrine: for <strong>decode</strong> serving, rank by <em>aggregate HBM bandwidth across the fewest devices that fit</em>; for <strong>training/prefill</strong>, rank by <em>aggregate low-precision TFLOPS</em>; and always gate on capacity first because a chip that cannot hold the model is disqualified before any throughput comparison.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: serving a 70B model — capacity changes everything</p>
+<p>Take a 70B-parameter model served in <strong>FP8</strong> (1 byte/param), so weights are <span class="arithmatex">\(70 \times 10^{9} \times 1 = 70\ \text{GB}\)</span>. It uses GQA with <span class="arithmatex">\(L=80\)</span> layers, <span class="arithmatex">\(H_{kv}=8\)</span> KV heads, <span class="arithmatex">\(d_h=128\)</span>, and we serve it in <strong>bf16 KV</strong> (2 bytes). Per-token KV cache:</p>
+<div class="arithmatex">\[
+M_{\text{KV/token}} = 2 \times 80 \times 8 \times 128 \times 2 = 327{,}680\ \text{bytes} \approx 0.31\ \text{MB}
+\]</div>
+<p>At 8,192-token context and batch 32 that is <span class="arithmatex">\(0.31\ \text{MB} \times 8192 \times 32 \approx 82\ \text{GB}\)</span> of KV cache. Total live footprint <span class="arithmatex">\(\approx 70 + 82 = 152\ \text{GB}\)</span>.</p>
+<ul>
+<li>On <strong>80 GB H100s</strong> this needs <span class="arithmatex">\(\lceil 152/80 \rceil = 2\)</span> GPUs minimum just to fit — and in practice more, since you want headroom and the tensor-parallel split fragments memory. Decode now pays an NVLink all-reduce per layer.</li>
+<li>On a <strong>192 GB MI300X</strong>, the whole 152 GB fits on <strong>one</strong> device. No tensor-parallel collective in the decode path at all. Because decode is <strong>bandwidth-bound</strong>, that single MI300X streaming weights at <span class="arithmatex">\(\sim 5.3\ \text{TB/s}\)</span> from one HBM stack — with zero inter-GPU communication — is a genuinely strong serving configuration despite the MI300X&rsquo;s raw FLOPS being a serving afterthought.</li>
+</ul>
+<p>The lesson is the chapter&rsquo;s thesis in miniature: <strong>for decode serving you often pick the chip by HBM capacity and bandwidth, not by peak TFLOPS.</strong> Flip the workload to <em>training</em> the same model and the calculus inverts — now it is dense, compute-bound GEMMs over a huge cluster, you care about aggregate FP8/bf16 TFLOPS and the all-reduce efficiency of the interconnect, and the TPU pod&rsquo;s torus + XLA collectives or a large NVLink/Infinity-Fabric domain become the deciding factors.</p>
+</div>
+<h3 id="a-comparison-table-to-anchor-the-families">A comparison table to anchor the families<a class="headerlink" href="#a-comparison-table-to-anchor-the-families" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Vendor / chip</th>
+<th>Core architecture</th>
+<th>Lanes/group</th>
+<th>Matmul unit</th>
+<th>SDK / language</th>
+<th>Compile model</th>
+<th>Interconnect</th>
+<th>Standout trait</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NVIDIA H100/B200</td>
+<td>SIMT GPU</td>
+<td>warp = 32</td>
+<td>Tensor Core</td>
+<td>CUDA / Triton</td>
+<td>eager + JIT</td>
+<td>NVLink/NVSwitch</td>
+<td>ecosystem, kernels first</td>
+</tr>
+<tr>
+<td>AMD MI300X/MI350</td>
+<td>SIMT GPU (CDNA)</td>
+<td>wavefront = 64</td>
+<td>Matrix Core (MFMA)</td>
+<td>ROCm / HIP</td>
+<td>eager + JIT</td>
+<td>Infinity Fabric</td>
+<td>huge HBM (192 GB)</td>
+</tr>
+<tr>
+<td>Google TPU v5/v6/v7</td>
+<td>systolic</td>
+<td>n/a (compiler)</td>
+<td>MXU (128×128)</td>
+<td>JAX / XLA, Pallas</td>
+<td>ahead-of-time</td>
+<td>ICI torus</td>
+<td>pod scale, mature</td>
+</tr>
+<tr>
+<td>AWS Trainium&#8532;</td>
+<td>systolic</td>
+<td>n/a (compiler)</td>
+<td>TensorEngine</td>
+<td>Neuron / PyTorch-XLA, NKI</td>
+<td>ahead-of-time</td>
+<td>NeuronLink</td>
+<td>AWS price/scale</td>
+</tr>
+<tr>
+<td>Intel Gaudi3</td>
+<td>MME + TPC</td>
+<td>TPC SIMD</td>
+<td>MME</td>
+<td>SynapseAI / PyTorch</td>
+<td>graph compile</td>
+<td>RoCE/Ethernet</td>
+<td>Ethernet scale-out</td>
+</tr>
+</tbody>
+</table>
+<p><em>(Figures and feature sets evolve every product cycle; treat this as the shape of the landscape, not a current datasheet.)</em></p>
+<hr />
+<h2 id="porting-in-practice-a-realistic-checklist">Porting in Practice: A Realistic Checklist<a class="headerlink" href="#porting-in-practice-a-realistic-checklist" title="Permanent link">¶</a></h2>
+<p>When someone hands you a non-NVIDIA fleet, the work is predictable. The order below is roughly highest-leverage first.</p>
+<ol>
+<li><strong>Get the high-level model running first.</strong> Install the vendor&rsquo;s PyTorch/JAX build (ROCm PyTorch, <code>torch_xla</code>+Neuron, <code>habana_frameworks</code>, or JAX-on-TPU). Most module code runs with only a device-string change (<code>cuda</code>→<code>hpu</code>, <code>cuda</code>→<code>xla</code>, or unchanged on ROCm). Confirm a forward/backward pass matches the NVIDIA reference loss within numerical tolerance.</li>
+<li><strong>Freeze your shapes.</strong> On any compiler-first backend (TPU/Trainium/Gaudi) bucket sequence lengths, fix batch size, pad vocab, and warm the compile cache. This step alone often turns a &ldquo;10× slower&rdquo; port into a competitive one. (Irrelevant on AMD, which is eager like NVIDIA.)</li>
+<li><strong>Swap the kernel libraries.</strong> Replace NCCL→RCCL (AMD) or use the vendor collective; ensure FlashAttention has a backend on your target (AMD CK / Triton-AMD; Pallas/NKI flash kernels on systolic chips). For serving, check that <strong>vLLM/SGLang</strong> have an upstream backend for your chip — they increasingly do — rather than porting kernels yourself.</li>
+<li><strong>Re-tune, do not re-translate, the hot kernels.</strong> If you own Triton kernels, recompile for the target and re-sweep block sizes / <code>num_warps</code> for the 64-wide wavefront (AMD) or the MXU tile (Pallas/NKI). Do not assume NVIDIA-tuned constants transfer.</li>
+<li><strong>Audit for NVIDIA-only assumptions.</strong> Grep for hard-coded <code>32</code> (warp size), inline PTX, Hopper-specific intrinsics, and <code>cuda</code>-only library calls with no portable analog. These are the items that genuinely do not port and must be rewritten.</li>
+</ol>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A team wants to serve a 70B model and is choosing between two H100s (80 GB each) and one AMD MI300X (192 GB). The MI300X has <em>lower</em> peak FP8 TFLOPS than two H100s combined. Why might the single MI300X still be the better serving choice, and when would you reverse the decision?</p>
+<p><strong>A:</strong> Because autoregressive <strong>decode is memory-bandwidth-bound, not compute-bound.</strong> Each generated token requires streaming the full set of weights (and the KV cache) from HBM while doing only a tiny amount of arithmetic, so the binding constraint is HBM bandwidth and <em>capacity</em>, not peak matmul FLOPS. Fitting the entire model plus KV cache in the MI300X&rsquo;s 192 GB on a <strong>single device</strong> eliminates the per-layer tensor-parallel all-reduce that two H100s would pay over NVLink, and it streams weights from one HBM stack at very high bandwidth. So for batched decode-dominated serving, the MI300X&rsquo;s surplus capacity and bandwidth can beat the two-H100 setup despite lower aggregate FLOPS. I would <strong>reverse</strong> the decision when the workload becomes <strong>compute-bound</strong>: long-context prefill on large batches, or training/fine-tuning, are dense high-arithmetic-intensity GEMMs where aggregate FP8/bf16 TFLOPS and interconnect all-reduce efficiency dominate — there the two-H100 (or a larger NVLink/TPU-pod) configuration with more compute and a mature kernel stack typically wins.</p>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>The non-NVIDIA accelerator landscape has matured rapidly: Google&rsquo;s TPU v7 Ironwood (2025) targets large-scale inference with 192 GB HBM per chip and 7.37 TB/s bandwidth; AMD&rsquo;s MI350 now ships with 288 GB HBM3e and FP4 support; and AWS Trainium3 anchors large training clusters — making fluency with at least one non-NVIDIA stack a practical job requirement.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1704.04760">Jouppi et al., <em>In-Datacenter Performance Analysis of a Tensor Processing Unit</em> (2017)</a> — the paper that introduced systolic-array TPUs and benchmarked them against contemporary CPUs/GPUs; still the canonical reference for the MXU design.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2510.27583">Ambati &amp; Diep, <em>AMD MI300X GPU Performance Analysis</em> (2024)</a> — systematic microbenchmark study of MI300X compute, memory bandwidth (~81% of 5.3 TB/s peak), and Infinity Fabric interconnect, directly informing serving decisions.</li>
+<li><a href="https://cloud.google.com/blog/products/compute/introducing-trillium-6th-gen-tpus">Google Cloud, <em>Introducing Trillium, sixth-generation TPUs</em> (2024)</a> — 4.7× compute-per-chip improvement over v5e, doubled HBM and ICI bandwidth, 67% better energy efficiency.</li>
+<li><a href="https://blog.google/innovation-and-ai/infrastructure-and-cloud/google-cloud/ironwood-tpu-age-of-inference/">Google, <em>Ironwood: The first Google TPU for the age of inference</em> (2025)</a> — TPU v7 announcement; 192 GB HBM and 7.37 TB/s per chip, 4× throughput gain over Trillium, available in 9,216-chip pods.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/ROCm/ROCm">ROCm/ROCm</a> — AMD&rsquo;s open-source GPU compute stack; the entry point for HIP, rocBLAS, RCCL, and the full AMD software ecosystem.</li>
+<li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm</a> — the de facto multi-backend LLM serving engine with upstream support for NVIDIA, AMD ROCm, Google TPU, and Intel Gaudi, removing the need to port kernels by hand.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://docs.cloud.google.com/tpu/docs/v6e">Google Cloud TPU v6e Architecture Docs</a> — official spec and topology reference for Trillium (v6e); good companion when reading the roofline numbers.</li>
+<li><a href="https://aws.amazon.com/ai/machine-learning/trainium/">AWS Trainium product page</a> — covers Trainium&frac12;/3 generations, UltraServer configurations, and NeuronLink interconnect specs.</li>
+<li><a href="https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/get-started/about/index.html">About Neuron Kernel Interface (NKI) — AWS Neuron Docs</a> — the Triton/Pallas analog for Trainium; explains the TensorEngine/VectorEngine programming model.</li>
+<li><a href="https://rocm.docs.amd.com/en/latest/how-to/rocm-for-ai/inference-optimization/workload.html">AMD ROCm MI300 Series Workload Optimization</a> — official AMD guide covering vLLM tuning, attention backends, and quantization on MI300X/MI350 for LLM inference.</li>
+<li><a href="https://docs.jax.dev/en/latest/pallas/index.html">JAX Pallas: a JAX kernel language</a> — the TPU/GPU custom-kernel layer above XLA; the right tool when you need a fused FlashAttention or MoE gate on TPU.</li>
+<li><a href="https://vllm.ai/blog/2024-10-23-vllm-serving-amd">vLLM Blog: Serving LLMs on AMD MI300X — Best Practices (2024)</a> — concrete benchmark showing 1.5× higher throughput than TGI on Llama 3.1 405B; illustrates the real-world serving advantage of the MI300X&rsquo;s 192 GB HBM.</li>
+</ul>
+</div>
+<h2 id="key-takeaways-further-reading">Key Takeaways &amp; Further Reading<a class="headerlink" href="#key-takeaways-further-reading" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>There are two silicon philosophies. <strong>SIMT GPUs</strong> (NVIDIA, AMD) are programmable seas of cores where <em>you</em> manage the memory hierarchy; <strong>systolic accelerators</strong> (TPU, Trainium, Gaudi&rsquo;s MME) pump data through fixed MAC arrays and make <em>a compiler</em> own the kernels and the sharding.</li>
+<li><strong>Portability tracks philosophy.</strong> CUDA→AMD is a translation problem (HIP ≈ CUDA, <code>hipify</code>, ROCm PyTorch) needing re-tuning for 64-wide wavefronts; CUDA→TPU/Trainium/Gaudi is a paradigm shift to graph-level array code under XLA/Neuron/SynapseAI.</li>
+<li>On <strong>compiler-first chips</strong>, your performance levers are <strong>static shapes</strong> and <strong>sharding annotations</strong>, not occupancy and shared memory. The #1 mystery slowdown is silent recompilation from wobbling shapes — bucket and pad everything.</li>
+<li><strong>The higher-level your code, the more portable it is.</strong> Pure PyTorch/JAX runs on all four families; Triton recompiles but must be re-tuned; hand-written PTX/SASS and Hopper-only intrinsics do not port.</li>
+<li><strong>Read three numbers off the spec sheet:</strong> HBM capacity (does it fit?), HBM bandwidth (decode throughput), and FP8/FP4 TFLOPS (training/prefill throughput) — plus interconnect bandwidth for pods.</li>
+<li><strong>Decode serving is bandwidth-bound; training/prefill is compute-bound.</strong> This single distinction flips which chip wins — which is why a 192 GB MI300X can out-serve two H100s on decode while losing on training.</li>
+<li><strong>The interconnect is part of the chip.</strong> TPU&rsquo;s ICI torus, Trainium&rsquo;s NeuronLink, AMD&rsquo;s Infinity Fabric, and Gaudi&rsquo;s RoCE-over-Ethernet decide pod-scale efficiency as much as per-chip FLOPS.</li>
+<li>vLLM/SGLang/PyTorch/JAX increasingly ship upstream backends for all four families — the portable path is to ride those, not to port kernels by hand.</li>
+</ul>
+</div>
+<p><strong>Further reading.</strong></p>
+<ul>
+<li>Jouppi et al., <em>In-Datacenter Performance Analysis of a Tensor Processing Unit</em> (ISCA 2017) — the foundational TPU systolic-array paper.</li>
+<li>Norrie et al., <em>The Design Process for Google&rsquo;s Training Chips: TPUv2 and TPUv3</em>, and Google&rsquo;s subsequent TPU pod / optical-circuit-switch papers — how training-scale pods are built.</li>
+<li>Bradbury et al., <em>JAX: composable transformations of Python+NumPy programs</em>, and the <strong>XLA</strong> / <strong>GSPMD</strong> documentation and papers — the compiler-first programming model.</li>
+<li>AMD, <em>ROCm</em> and <em>HIP Programming Guide</em>, and the AMD <em>Composable Kernel (CK)</em> and <em>hipBLASLt</em> projects — the CUDA-portability stack.</li>
+<li>AWS, <em>AWS Neuron SDK</em> documentation and the <em>Neuron Kernel Interface (NKI)</em> guide — Trainium/Inferentia programming.</li>
+<li>Intel/Habana, <em>Gaudi / SynapseAI</em> documentation — the MME + TPC + RoCE design.</li>
+<li>Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (vLLM) — the serving engine whose multi-backend support makes cross-vendor inference practical.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="09-parallel-collectives.html"><span class="pn-label">← Previous</span><span class="pn-title">Parallel Computing &amp; Collective Communication</span></a>
+<a class="next" href="../02-transformer/01-tokenization.html"><span class="pn-label">Next →</span><span class="pn-title">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#two-silicon-philosophies-systolic-arrays-vs-simt">Two Silicon Philosophies: Systolic Arrays vs SIMT</a></li>
+<li class="toc-l3"><a href="#the-simt-gpu-nvidia-amd">The SIMT GPU (NVIDIA, AMD)</a></li>
+<li class="toc-l3"><a href="#the-systolic-array-tpu-trainium-gaudis-mme">The systolic array (TPU, Trainium, Gaudi&amp;rsquo;s MME)</a></li>
+<li class="toc-l2"><a href="#google-tpu-the-original-systolic-accelerator">Google TPU: The Original Systolic Accelerator</a></li>
+<li class="toc-l3"><a href="#the-chip-mxu-vpu-hbm">The chip: MXU + VPU + HBM</a></li>
+<li class="toc-l3"><a href="#pods-and-ici-the-interconnect-is-the-product">Pods and ICI: the interconnect is the product</a></li>
+<li class="toc-l3"><a href="#the-programming-model-xla-jax-and-the-compiler-is-the-api">The programming model: XLA, JAX, and &amp;ldquo;the compiler is the API&amp;rdquo;</a></li>
+<li class="toc-l2"><a href="#aws-trainium-inferentia-systolic-arrays-behind-the-neuron-sdk">AWS Trainium &amp;amp; Inferentia: Systolic Arrays Behind the Neuron SDK</a></li>
+<li class="toc-l3"><a href="#architecture-neuroncores">Architecture: NeuronCores</a></li>
+<li class="toc-l3"><a href="#the-programming-model-neuron-sdk-compile-ahead-and-xla">The programming model: Neuron SDK, compile-ahead, and xla</a></li>
+<li class="toc-l2"><a href="#amd-instinct-rocm-the-closest-thing-to-a-cuda-drop-in">AMD Instinct &amp;amp; ROCm: The Closest Thing to a CUDA Drop-In</a></li>
+<li class="toc-l3"><a href="#cdna-cus-wavefronts-and-matrix-cores">CDNA: CUs, wavefronts, and Matrix Cores</a></li>
+<li class="toc-l3"><a href="#rocm-and-hip-cuda-with-the-serial-numbers-filed-off">ROCm and HIP: CUDA with the serial numbers filed off</a></li>
+<li class="toc-l3"><a href="#what-ports-cleanly-and-what-does-not">What ports cleanly — and what does not</a></li>
+<li class="toc-l2"><a href="#intel-gaudi-the-budget-challenger">Intel Gaudi: The Budget Challenger</a></li>
+<li class="toc-l2"><a href="#the-portability-spectrum-a-unified-map">The Portability Spectrum: A Unified Map</a></li>
+<li class="toc-l2"><a href="#reading-a-spec-sheet-to-pick-hardware">Reading a Spec Sheet to Pick Hardware</a></li>
+<li class="toc-l3"><a href="#step-1-does-the-model-even-fit-capacity">Step 1: Does the model even fit? (capacity)</a></li>
+<li class="toc-l3"><a href="#step-2-is-it-compute-bound-or-bandwidth-bound-roofline">Step 2: Is it compute-bound or bandwidth-bound? (roofline)</a></li>
+<li class="toc-l3"><a href="#step-3-a-back-of-envelope-decision-function">Step 3: A back-of-envelope decision function</a></li>
+<li class="toc-l3"><a href="#a-comparison-table-to-anchor-the-families">A comparison table to anchor the families</a></li>
+<li class="toc-l2"><a href="#porting-in-practice-a-realistic-checklist">Porting in Practice: A Realistic Checklist</a></li>
+<li class="toc-l2"><a href="#key-takeaways-further-reading">Key Takeaways &amp;amp; Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

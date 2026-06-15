@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scaling Laws: Kaplan, Chinchilla &amp; Beyond — The LLM Stack</title>
+<meta name="description" content="Power-law scaling of loss with params/data/compute; Kaplan vs Chinchilla compute-optimal; the N≈20*tokens rule; inference-aware/over-training; emergent abilitie">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="active" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="34-scaling-laws-kaplan-chinchilla-beyond">3.4 Scaling Laws: Kaplan, Chinchilla &amp; Beyond<a class="headerlink" href="#34-scaling-laws-kaplan-chinchilla-beyond" title="Permanent link">¶</a></h1>
+<p>Suppose your manager hands you a fixed compute budget — say, a cluster-month that works out to roughly <span class="arithmatex">\(10^{22}\)</span> floating-point operations (FLOPs) — and asks one question: <em>&ldquo;What is the best language model we can train with this?&rdquo;</em> You have two main dials to turn. You can make the model <strong>bigger</strong> (more parameters <span class="arithmatex">\(N\)</span>), or you can train it on <strong>more data</strong> (more tokens <span class="arithmatex">\(D\)</span>). Crank <span class="arithmatex">\(N\)</span> too high and you starve the model of data; it never sees enough text to learn the parameters it has. Crank <span class="arithmatex">\(D\)</span> too high and you waste compute pushing more tokens through a model too small to absorb them. Somewhere in between is the sweet spot.</p>
+<p>Remarkably, this is not guesswork. The relationship between compute, model size, data, and the loss a model achieves turns out to follow clean, predictable <strong>power laws</strong> that hold across more than seven orders of magnitude of compute. These <em>scaling laws</em> are arguably the single most consequential empirical discovery in modern LLM engineering: they let you extrapolate from a handful of cheap small-scale runs to predict the loss of a model you have not yet trained, and they tell you exactly how to allocate a budget so that no FLOP is wasted. The entire frontier-model industry — GPT-4, Gemini, Llama, Claude — is built on top of these curves.</p>
+<p>This chapter develops scaling laws from first principles. We will derive the power-law form, contrast the original <strong>Kaplan et al.</strong> prescription with the corrected <strong>Chinchilla</strong> prescription (and the famous &ldquo;~20 tokens per parameter&rdquo; rule), work through real budget-planning arithmetic, write code that <em>fits</em> a scaling law from synthetic data, and then confront the messier frontier: inference-aware over-training, the emergent-abilities debate, and where these laws break down. Scaling laws are an interview favorite at every level — by the end you should be able to derive the compute-optimal allocation on a whiteboard.</p>
+<p>This chapter builds directly on <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a> (what &ldquo;loss&rdquo; means here) and <a href="../03-pretraining/01-pretraining-data.html">Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a> (where the tokens come from). The compute estimates lean on the FLOP accounting from <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>.</p>
+<hr />
+<h2 id="the-shape-of-the-curve-power-laws-in-loss">The Shape of the Curve: Power Laws in Loss<a class="headerlink" href="#the-shape-of-the-curve-power-laws-in-loss" title="Permanent link">¶</a></h2>
+<h3 id="what-we-are-measuring">What we are measuring<a class="headerlink" href="#what-we-are-measuring" title="Permanent link">¶</a></h3>
+<p>Throughout, &ldquo;loss&rdquo; <span class="arithmatex">\(L\)</span> means the <strong>cross-entropy of next-token prediction</strong>, in nats per token, on held-out data — the same objective covered in <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a>. It is the negative log-likelihood the model assigns to the true next token, averaged over the corpus:</p>
+<div class="arithmatex">\[
+L = -\frac{1}{D}\sum_{t=1}^{D} \log p_\theta(x_t \mid x_{&lt;t})
+\]</div>
+<p>Lower is better. A perfect model would achieve the <strong>entropy of the language itself</strong> — the irreducible uncertainty that no model can remove (the actual next word genuinely is not fully determined by the context). We will call that floor <span class="arithmatex">\(E\)</span>.</p>
+<h3 id="the-empirical-observation">The empirical observation<a class="headerlink" href="#the-empirical-observation" title="Permanent link">¶</a></h3>
+<p>If you train a family of transformers and plot the loss against model size <span class="arithmatex">\(N\)</span> (with data effectively unlimited), against data <span class="arithmatex">\(D\)</span> (with the model effectively unlimited), or against compute <span class="arithmatex">\(C\)</span>, you find something striking: on a <strong>log-log plot, the curve is a straight line</strong>. A straight line on log-log axes is the signature of a <strong>power law</strong>. Concretely, holding everything else non-bottlenecking:</p>
+<p><figure class="viz" id="fig-scaling-law">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 410" role="img" aria-label="A log-log plot of loss versus compute: data points fall on a straight power-law line that bends and flattens as it approaches a dashed irreducible-loss floor E.">
+<br />
+<style>
+    #fig-scaling-law text{ fill:var(--ink-soft); }
+    #fig-scaling-law .ax{ font:600 13px var(--sans,sans-serif); }
+    #fig-scaling-law .tk{ font:500 11px var(--mono,monospace); fill:var(--muted); }
+    #fig-scaling-law .lbl{ font:600 12.5px var(--sans,sans-serif); }
+    #fig-scaling-law .sm{ font:500 11px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-scaling-law .floor{ font:600 13px var(--sans,sans-serif); }
+  </style>
+</p>
+<p><g data-anim="1"></p>
+<div class="highlight"><pre><span></span><code>&lt;g class=&quot;v-grid&quot; stroke-width=&quot;1&quot; opacity=&quot;0.55&quot;&gt;
+  &lt;line x1=&quot;92&quot;  y1=&quot;44&quot; x2=&quot;92&quot;  y2=&quot;330&quot;/&gt;
+  &lt;line x1=&quot;231&quot; y1=&quot;44&quot; x2=&quot;231&quot; y2=&quot;330&quot;/&gt;
+  &lt;line x1=&quot;370&quot; y1=&quot;44&quot; x2=&quot;370&quot; y2=&quot;330&quot;/&gt;
+  &lt;line x1=&quot;509&quot; y1=&quot;44&quot; x2=&quot;509&quot; y2=&quot;330&quot;/&gt;
+  &lt;line x1=&quot;648&quot; y1=&quot;44&quot; x2=&quot;648&quot; y2=&quot;330&quot;/&gt;
+  &lt;line x1=&quot;92&quot; y1=&quot;92&quot;  x2=&quot;648&quot; y2=&quot;92&quot;/&gt;
+  &lt;line x1=&quot;92&quot; y1=&quot;139&quot; x2=&quot;648&quot; y2=&quot;139&quot;/&gt;
+  &lt;line x1=&quot;92&quot; y1=&quot;187&quot; x2=&quot;648&quot; y2=&quot;187&quot;/&gt;
+  &lt;line x1=&quot;92&quot; y1=&quot;234&quot; x2=&quot;648&quot; y2=&quot;234&quot;/&gt;
+&lt;/g&gt;
+
+&lt;line x1=&quot;92&quot; y1=&quot;44&quot; x2=&quot;92&quot; y2=&quot;330&quot; class=&quot;v-stroke&quot; stroke=&quot;var(--ink-soft)&quot; stroke-width=&quot;1.6&quot;/&gt;
+&lt;line x1=&quot;92&quot; y1=&quot;330&quot; x2=&quot;648&quot; y2=&quot;330&quot; class=&quot;v-stroke&quot; stroke=&quot;var(--ink-soft)&quot; stroke-width=&quot;1.6&quot;/&gt;
+
+&lt;text x=&quot;92&quot;  y=&quot;348&quot; text-anchor=&quot;middle&quot; class=&quot;tk&quot;&gt;10¹⁸&lt;/text&gt;
+&lt;text x=&quot;231&quot; y=&quot;348&quot; text-anchor=&quot;middle&quot; class=&quot;tk&quot;&gt;10²⁰&lt;/text&gt;
+&lt;text x=&quot;370&quot; y=&quot;348&quot; text-anchor=&quot;middle&quot; class=&quot;tk&quot;&gt;10²²&lt;/text&gt;
+&lt;text x=&quot;509&quot; y=&quot;348&quot; text-anchor=&quot;middle&quot; class=&quot;tk&quot;&gt;10²⁴&lt;/text&gt;
+&lt;text x=&quot;648&quot; y=&quot;348&quot; text-anchor=&quot;middle&quot; class=&quot;tk&quot;&gt;10²⁶&lt;/text&gt;
+
+&lt;text x=&quot;370&quot; y=&quot;378&quot; text-anchor=&quot;middle&quot; class=&quot;ax&quot;&gt;compute &amp;#8201;C&amp;#8201; (FLOPs, log)&lt;/text&gt;
+&lt;text x=&quot;34&quot; y=&quot;187&quot; text-anchor=&quot;middle&quot; class=&quot;ax&quot; transform=&quot;rotate(-90 34 187)&quot;&gt;loss&amp;#8201; L &amp;#8201;(log)&lt;/text&gt;
+</code></pre></div>
+<p></g></p>
+<p><g data-anim="2">
+    <line x1="92" y1="288" x2="640" y2="288" stroke="var(--good,#2f9e6e)" stroke-width="1.8" stroke-dasharray="7 5" class="viz-pulse"/>
+    <text x="632" y="280" text-anchor="end" class="floor" fill="var(--good,#2f9e6e)">irreducible floor E &#183; entropy of text</text>
+  </g></p>
+<p><g data-anim="3">
+    <path d="M104 70 L210 118 L300 156 L380 190 L452 219 L520 243 L584 261 L648 273"
+          fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+          class="viz-draw" style="--len:680"/>
+  </g></p>
+<p><g data-anim="4" fill="var(--accent)" stroke="var(--surface,#ffffff)" stroke-width="1.4">
+    <circle cx="104" cy="70"  r="5"/>
+    <circle cx="210" cy="118" r="5"/>
+    <circle cx="300" cy="156" r="5"/>
+    <circle cx="380" cy="190" r="5"/>
+    <circle cx="452" cy="219" r="5"/>
+    <circle cx="520" cy="243" r="5"/>
+    <circle cx="584" cy="261" r="5"/>
+    <circle cx="648" cy="273" r="5"/>
+  </g></p>
+<p><g data-anim="4"></p>
+<div class="highlight"><pre><span></span><code>&lt;path d=&quot;M232 132 L300 132 L300 156&quot; fill=&quot;none&quot; stroke=&quot;var(--ink-soft)&quot; stroke-width=&quot;1.3&quot; stroke-dasharray=&quot;3 3&quot; opacity=&quot;0.8&quot;/&gt;
+&lt;text x=&quot;266&quot; y=&quot;126&quot; text-anchor=&quot;middle&quot; class=&quot;sm&quot;&gt;slope = -&amp;#945; (power law)&lt;/text&gt;
+</code></pre></div>
+<p></g></p>
+<p><g data-anim="5">
+    <line x1="566" y1="248" x2="566" y2="285" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.7"/>
+    <rect x="430" y="84" width="214" height="58" rx="9" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="442" y="106" class="lbl" fill="var(--accent)">diminishing returns</text>
+    <text x="442" y="124" class="sm">each decade of compute buys</text>
+    <text x="442" y="138" class="sm">a smaller drop toward E</text>
+  </g></p>
+<p><g data-anim="5">
+    <text x="116" y="88" class="lbl" fill="var(--accent)">(L - E) &#8201;~&#8201; C<tspan dy="-7" font-size="9.5">-&#945;</tspan></text>
+  </g>
+</svg></p>
+<figcaption><b>On log–log axes, loss falls as a straight power-law line — until it meets a floor.</b> Each point is a training run; over many orders of magnitude of compute the loss <em>above the floor</em> drops with a constant slope <b>−α</b>. But an irreducible term <b>E</b> (the entropy of text itself) means the curve bends and flattens toward that dashed asymptote: returns diminish, yet never quite stop.</figcaption>
+</figure>
+<div class="arithmatex">\[
+L(N) \approx \left(\frac{N_c}{N}\right)^{\alpha_N},
+\qquad
+L(D) \approx \left(\frac{D_c}{D}\right)^{\alpha_D}
+\]</div>
+<p>where <span class="arithmatex">\(N_c, D_c\)</span> are constants with units of parameters and tokens, and <span class="arithmatex">\(\alpha_N, \alpha_D\)</span> are small positive exponents (empirically on the order of <span class="arithmatex">\(0.05\)</span>–<span class="arithmatex">\(0.1\)</span>). The exponents being <em>small</em> is the whole story of why training is expensive: to halve the loss-above-floor, you need to multiply <span class="arithmatex">\(N\)</span> by roughly <span class="arithmatex">\(2^{1/\alpha_N}\)</span>, which for <span class="arithmatex">\(\alpha_N \approx 0.07\)</span> is about <span class="arithmatex">\(2^{14} \approx 16000\times\)</span> more parameters. Returns diminish, but they never stop.</p>
+<h3 id="the-joint-form-the-chinchilla-parameterization">The joint form: the Chinchilla parameterization<a class="headerlink" href="#the-joint-form-the-chinchilla-parameterization" title="Permanent link">¶</a></h3>
+<p>The cleanest and most useful parameterization — introduced by Hoffmann et al. (the Chinchilla paper) — treats <span class="arithmatex">\(N\)</span> and <span class="arithmatex">\(D\)</span> jointly and adds the irreducible floor:</p>
+<div class="arithmatex">\[
+\boxed{\;L(N, D) = E + \frac{A}{N^{\alpha}} + \frac{B}{D^{\beta}}\;}
+\]</div>
+<p>Read this term by term:</p>
+<ul>
+<li><span class="arithmatex">\(E\)</span> — the <strong>irreducible loss</strong>, the entropy of natural text. Even an infinitely large model trained on infinite data cannot beat this. Empirically <span class="arithmatex">\(E\)</span> is somewhere around <span class="arithmatex">\(1.6\)</span>–<span class="arithmatex">\(1.7\)</span> nats/token for web text, though the exact value depends entirely on the tokenizer and corpus.</li>
+<li><span class="arithmatex">\(\frac{A}{N^{\alpha}}\)</span> — the <strong>finite-model penalty</strong>. A model with limited parameters cannot represent the ideal predictor; this term shrinks as you add parameters.</li>
+<li><span class="arithmatex">\(\frac{B}{D^{\beta}}\)</span> — the <strong>finite-data penalty</strong>. With limited tokens, the model cannot estimate its parameters well (and overfits); this term shrinks as you add data.</li>
+</ul>
+<p>The two penalty terms add. That additivity is what makes the math tractable: it says the param bottleneck and the data bottleneck are (approximately) independent, so we can reason about them separately and then trade them off against a shared compute budget.</p>
+<figure class="viz" id="fig-scaling-loss-floor-curve">
+<svg viewBox="0 0 720 460" role="img" aria-label="Log-log plot of loss versus model size showing a smooth decreasing curve with empirical data points that bends toward an irreducible floor E — the entropy of natural text.">
+  <defs>
+    <marker id="slfc-arrow-up" viewBox="0 0 10 10" refX="5" refY="1" markerWidth="7" markerHeight="7" orient="0">
+      <path d="M0 10 L5 0 L10 10 z" fill="var(--ink-soft,currentColor)"/>
+    </marker>
+    <marker id="slfc-arrow-right" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="0">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,currentColor)"/>
+    </marker>
+    <marker id="slfc-arrow-down" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="6" markerHeight="6" orient="0">
+      <path d="M0 0 L10 0 L5 10 z" fill="var(--muted,#64748b)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-scaling-loss-floor-curve .ax-lbl  { font: 500 12px var(--sans,sans-serif); fill: var(--ink-soft,currentColor); }
+    #fig-scaling-loss-floor-curve .ann-lbl { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-scaling-loss-floor-curve .floor-lbl { font: 500 11.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-scaling-loss-floor-curve .arr-lbl { font: italic 10.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  </style>
+
+
+
+  <line x1="90" y1="380" x2="90" y2="50"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"
+        marker-end="url(#slfc-arrow-up)"/>
+
+  <line x1="90" y1="380" x2="660" y2="380"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"
+        marker-end="url(#slfc-arrow-right)"/>
+
+
+  <text x="56" y="220" text-anchor="middle" class="ax-lbl"
+        transform="rotate(-90, 56, 220)">log L  (loss, nats/token)</text>
+  <text x="375" y="418" text-anchor="middle" class="ax-lbl">log N  (model parameters, data held fixed)</text>
+
+
+  <line x1="120" y1="308" x2="648" y2="308"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.6"
+        stroke-dasharray="6,4"/>
+
+
+  <text x="120" y="294" class="floor-lbl">E  (irreducible loss = entropy of text)</text>
+
+
+
+  <path d="M120,80 C200,90 290,160 380,230 C460,280 540,300 640,306"
+        fill="none"
+        stroke="var(--accent,#6366f1)"
+        stroke-width="1.5"
+        stroke-opacity="0.35"/>
+
+
+
+
+  <circle cx="120" cy="80"  r="4.5" fill="var(--accent,#6366f1)"/>
+  <circle cx="152" cy="97"  r="4.5" fill="var(--accent,#6366f1)"/>
+  <circle cx="190" cy="120" r="4.5" fill="var(--accent,#6366f1)"/>
+  <circle cx="234" cy="148" r="4.5" fill="var(--accent,#6366f1)"/>
+  <circle cx="285" cy="181" r="4.5" fill="var(--accent,#6366f1)"/>
+  <circle cx="345" cy="213" r="4.5" fill="var(--accent,#6366f1)"/>
+  <circle cx="418" cy="246" r="4.5" fill="var(--accent,#6366f1)"/>
+  <circle cx="497" cy="270" r="4.5" fill="var(--accent,#6366f1)"/>
+  <circle cx="566" cy="286" r="4.5" fill="var(--accent,#6366f1)"/>
+  <circle cx="624" cy="297" r="4.5" fill="var(--accent,#6366f1)"/>
+
+
+
+  <line x1="210" y1="165" x2="268" y2="135"
+        stroke="var(--muted,#64748b)" stroke-width="1.2"/>
+
+  <line x1="246" y1="155" x2="260" y2="162"
+        stroke="var(--muted,#64748b)" stroke-width="0.9" stroke-dasharray="3,2"/>
+  <text x="155" y="158" class="ann-lbl">slope = -alpha_N  (power law on log-log)</text>
+
+
+
+  <line x1="562" y1="291" x2="562" y2="303"
+        stroke="var(--muted,#64748b)" stroke-width="1.1"
+        marker-end="url(#slfc-arrow-down)"/>
+  <text x="456" y="278" class="arr-lbl">-- approaches floor E</text>
+
+</svg>
+<figcaption><b>Loss versus model size bends toward an irreducible floor.</b> Each data point represents an empirical training run. The curve falls steeply at small N (slope -alpha_N on a log-log plot) and flattens as N grows, asymptotically approaching the floor E — the entropy of natural text — which no model, however large, can beat. This is the defining visual signature of the Chinchilla joint form L(N,D) = E + A/N^alpha + B/D^beta.</figcaption>
+</figure>
+
+<div class="admonition note">
+<p class="admonition-title">Why a power law and not something else?</p>
+<p>There is no single agreed first-principles derivation, but the leading intuition comes from data manifolds. If the data lives on a manifold of intrinsic dimension <span class="arithmatex">\(d\)</span>, and a model of size <span class="arithmatex">\(N\)</span> effectively tiles that manifold with <span class="arithmatex">\(\sim N\)</span> pieces, then the approximation error per piece scales like <span class="arithmatex">\(N^{-1/d}\)</span> in the relevant norm — giving a power law whose exponent is set by the <em>intrinsic dimensionality of language</em>, not by the architecture. Sharma &amp; Kaplan formalized a version of this argument. The practical upshot: the exponents are remarkably architecture-insensitive. Swap GELU for SwiGLU, add RoPE, change the aspect ratio within reason — the <em>slope</em> barely moves, even though the <em>offset</em> (the constant <span class="arithmatex">\(A\)</span>) does.</p>
+</div>
+<hr />
+<h2 id="compute-flops-and-the-c-approx-6nd-rule">Compute, FLOPs, and the <span class="arithmatex">\(C \approx 6ND\)</span> Rule<a class="headerlink" href="#compute-flops-and-the-c-approx-6nd-rule" title="Permanent link">¶</a></h2>
+<p>To trade <span class="arithmatex">\(N\)</span> against <span class="arithmatex">\(D\)</span> we need a common currency: <strong>compute</strong>, measured in FLOPs. The foundational accounting rule for dense transformers is:</p>
+<div class="arithmatex">\[
+\boxed{\;C \approx 6 \, N \, D\;}
+\]</div>
+<p>where <span class="arithmatex">\(C\)</span> is total training FLOPs, <span class="arithmatex">\(N\)</span> is the number of (non-embedding) parameters, and <span class="arithmatex">\(D\)</span> is the number of training tokens. This is worth deriving because it shows up in every capacity-planning conversation.</p>
+<h3 id="deriving-the-factor-of-6">Deriving the factor of 6<a class="headerlink" href="#deriving-the-factor-of-6" title="Permanent link">¶</a></h3>
+<p>Consider one parameter in a matrix multiply. Processing one token through it requires:</p>
+<ul>
+<li><strong>Forward pass:</strong> one multiply and one add — that is <span class="arithmatex">\(2\)</span> FLOPs per parameter per token. (Every weight in a <code>Linear</code> layer participates in exactly one multiply-accumulate for each token.)</li>
+<li><strong>Backward pass:</strong> roughly twice the forward cost — <span class="arithmatex">\(4\)</span> FLOPs per parameter per token. The backward pass computes <em>two</em> sets of products: the gradient with respect to the inputs (to propagate further back) and the gradient with respect to the weights (to update them). Each is about as expensive as the forward matmul.</li>
+</ul>
+<p>Add them: <span class="arithmatex">\(2 + 4 = 6\)</span> FLOPs per parameter per token. Multiply by <span class="arithmatex">\(N\)</span> parameters and <span class="arithmatex">\(D\)</span> tokens:</p>
+<div class="arithmatex">\[
+C \approx 6 N D
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">training_flops</span><span class="p">(</span><span class="n">n_params</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Total training FLOPs for a dense transformer (the 6ND rule).</span>
+
+<span class="sd">    6 = 2 (forward MAC) + 4 (backward: grad wrt input + grad wrt weight).</span>
+<span class="sd">    This ignores attention&#39;s quadratic term, which is small relative to the</span>
+<span class="sd">    MLP/projection matmuls until context length is very large. It also ignores</span>
+<span class="sd">    embeddings (use NON-embedding params for N).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="mf">6.0</span> <span class="o">*</span> <span class="n">n_params</span> <span class="o">*</span> <span class="n">n_tokens</span>
+
+
+<span class="c1"># Inference (forward only) is ~2ND -- a useful sanity check:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">inference_flops</span><span class="p">(</span><span class="n">n_params</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+    <span class="k">return</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">n_params</span> <span class="o">*</span> <span class="n">n_tokens</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Caveats to 6ND that interviewers love</p>
+<p>The <span class="arithmatex">\(6ND\)</span> rule counts only the dense matmul FLOPs. Two corrections matter in practice. (1) <strong>Attention</strong> adds a term proportional to <span class="arithmatex">\(L \cdot d \cdot T^2\)</span> per layer (<span class="arithmatex">\(T\)</span> = sequence length); for short contexts it is negligible, but for very long contexts it dominates and <span class="arithmatex">\(6ND\)</span> undercounts — see <a href="../03-pretraining/13-long-context-pretraining.html">Long-Context Pretraining &amp; Context Extension</a>. (2) For <strong>Mixture-of-Experts</strong> models, <span class="arithmatex">\(N\)</span> in the FLOP formula is the <em>active</em> (per-token) parameter count, not the <em>total</em> parameter count, because each token routes to only a few experts — see <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts (MoE) Architectures</a>. MoE breaks the tidy coupling between &ldquo;model capacity&rdquo; and &ldquo;compute,&rdquo; which is precisely why it is attractive.</p>
+</div>
+<h3 id="hardware-flops-vs-model-flops">Hardware FLOPs vs. model FLOPs<a class="headerlink" href="#hardware-flops-vs-model-flops" title="Permanent link">¶</a></h3>
+<p>There is a second, sneaky gap. The <span class="arithmatex">\(6ND\)</span> number is <strong>model FLOPs</strong> — useful arithmetic. The FLOPs your GPUs actually <em>deliver</em> are lower because of memory stalls, communication, and bubbles. The ratio is the <strong>Model FLOPs Utilization (MFU)</strong>:</p>
+<div class="arithmatex">\[
+\text{MFU} = \frac{6 N D}{(\text{peak hardware FLOP/s}) \times (\text{wall-clock seconds})}
+\]</div>
+<p>A well-tuned large pretraining run lands somewhere in the 0.3–0.55 MFU range on modern accelerators. You need MFU to convert a FLOP budget into a <em>time</em> and <em>dollar</em> budget. We return to this in the worked example.</p>
+<hr />
+<h2 id="kaplan-vs-chinchilla-the-great-correction">Kaplan vs. Chinchilla: The Great Correction<a class="headerlink" href="#kaplan-vs-chinchilla-the-great-correction" title="Permanent link">¶</a></h2>
+<h3 id="kaplan-et-al-2020-scaling-laws-are-born">Kaplan et al. (2020): scaling laws are born<a class="headerlink" href="#kaplan-et-al-2020-scaling-laws-are-born" title="Permanent link">¶</a></h3>
+<p>The first systematic scaling study — Kaplan et al., <em>Scaling Laws for Neural Language Models</em> — established the power-law form and, crucially, asked the <strong>compute-optimal allocation</strong> question: given a fixed budget <span class="arithmatex">\(C\)</span>, how should you split it between <span class="arithmatex">\(N\)</span> and <span class="arithmatex">\(D\)</span>?</p>
+<p>Their answer, derived by fitting <span class="arithmatex">\(L(N, D)\)</span> and minimizing under the constraint <span class="arithmatex">\(C = 6ND\)</span>, was that <strong>most of the budget should go into model size</strong>. As compute grows, you should grow <span class="arithmatex">\(N\)</span> fast and <span class="arithmatex">\(D\)</span> slowly. Their fitted relationship was roughly <span class="arithmatex">\(N_{\text{opt}} \propto C^{0.73}\)</span> and <span class="arithmatex">\(D_{\text{opt}} \propto C^{0.27}\)</span> — model size soaking up nearly three-quarters of every additional decade of compute. This is why the models of 2020–2021 (GPT-3 at 175B params trained on ~300B tokens, Gopher at 280B on ~300B tokens, MT-NLG at 530B) were <strong>enormous but relatively data-starved</strong>: roughly 1–2 tokens per parameter.</p>
+<h3 id="the-bug-a-confounded-learning-rate-schedule">The bug: a confounded learning-rate schedule<a class="headerlink" href="#the-bug-a-confounded-learning-rate-schedule" title="Permanent link">¶</a></h3>
+<p>Two years later, Hoffmann et al. (the <strong>Chinchilla</strong> paper, <em>Training Compute-Optimal Large Language Models</em>) re-ran the analysis far more carefully and reached a dramatically different conclusion. The headline diagnosis of where Kaplan went wrong: <strong>the learning-rate schedule was not matched to the token budget</strong>.</p>
+<p>Recall from <a href="../03-pretraining/10-lr-schedules-hparams.html">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a> that a cosine schedule should decay to its minimum <em>exactly at the end of training</em>. Kaplan&rsquo;s experiments largely reused a single long schedule and read off intermediate losses — so the shorter runs (fewer tokens) were evaluated mid-decay, with their learning rate still too high, making them look worse than they truly were. That systematically <strong>understated the value of data</strong>, biasing the optimal allocation toward parameters. Chinchilla retrained every point with a schedule decayed to its own endpoint and used three independent estimation methods that all agreed.</p>
+<h3 id="the-chinchilla-result-scale-n-and-d-in-lockstep">The Chinchilla result: scale <span class="arithmatex">\(N\)</span> and <span class="arithmatex">\(D\)</span> in lockstep<a class="headerlink" href="#the-chinchilla-result-scale-n-and-d-in-lockstep" title="Permanent link">¶</a></h3>
+<p>Chinchilla found that the compute-optimal exponents are <strong>approximately equal</strong>:</p>
+<div class="arithmatex">\[
+N_{\text{opt}} \propto C^{a}, \qquad D_{\text{opt}} \propto C^{b}, \qquad a \approx b \approx 0.5
+\]</div>
+<p>In words: <strong>every time you multiply your compute budget by 10, you should multiply <em>both</em> the model size and the data by roughly <span class="arithmatex">\(\sqrt{10} \approx 3.16\)</span>.</strong> They grow together. This is the opposite of Kaplan&rsquo;s &ldquo;mostly grow the model&rdquo; prescription, and it implied that essentially every large model trained before 2022 was badly <em>undertrained</em> — too big for the amount of data it saw.</p>
+<p>The proof of the pudding: Chinchilla (70B parameters, ~1.4T tokens) <strong>outperformed Gopher (280B parameters, ~300B tokens)</strong> despite being 4× smaller — and using the same compute. A smaller model trained on far more data won. That single result reset the entire field&rsquo;s defaults.</p>
+<figure class="viz" id="fig-scaling-kaplan-vs-chinchilla">
+<svg viewBox="0 0 840 420" role="img" aria-label="Side-by-side comparison of Kaplan 2020 versus Chinchilla 2022 compute-allocation worldviews. Kaplan shows a long params bar and short data bar (lopsided); Chinchilla shows two equal-length bars (balanced), with concrete model examples below each.">
+  <style>
+    #fig-scaling-kaplan-vs-chinchilla .panel-title {
+      font: 700 14px var(--sans,sans-serif);
+      fill: var(--ink-soft,currentColor);
+    }
+    #fig-scaling-kaplan-vs-chinchilla .heading {
+      font: 500 11.5px var(--sans,sans-serif);
+      fill: var(--muted,#64748b);
+    }
+    #fig-scaling-kaplan-vs-chinchilla .bar-lbl {
+      font: 500 11.5px var(--sans,sans-serif);
+      fill: var(--ink-soft,currentColor);
+    }
+    #fig-scaling-kaplan-vs-chinchilla .mult-lbl {
+      font: 700 12px var(--sans,sans-serif);
+    }
+    #fig-scaling-kaplan-vs-chinchilla .pill-text {
+      font: 600 11.5px var(--sans,sans-serif);
+    }
+    #fig-scaling-kaplan-vs-chinchilla .ex-label {
+      font: 500 11px var(--sans,sans-serif);
+      fill: var(--ink-soft,currentColor);
+    }
+    #fig-scaling-kaplan-vs-chinchilla .ex-bold {
+      font: 700 12px var(--sans,sans-serif);
+      fill: var(--ink-soft,currentColor);
+    }
+  </style>
+
+
+  <rect x="28" y="18" width="372" height="384" rx="10"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+
+  <rect x="440" y="18" width="372" height="384" rx="10"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+
+  <line x1="420" y1="30" x2="420" y2="390"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="1"
+        stroke-dasharray="6,4"/>
+
+
+  <text x="214" y="50" text-anchor="middle" class="panel-title">Kaplan worldview (2020)</text>
+  <line x1="60" y1="57" x2="368" y2="57" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+
+  <text x="60" y="82" class="heading">10x compute splits as:</text>
+
+
+  <text x="60" y="108" class="bar-lbl">N (params):</text>
+  <rect x="160" y="95" width="196" height="20" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="362" y="110" dx="4" class="mult-lbl" fill="var(--accent,#6366f1)">~5.2x</text>
+
+
+  <text x="60" y="140" class="bar-lbl">D (data):</text>
+  <rect x="160" y="127" width="72" height="20" rx="4" fill="var(--accent-2,#14b8a6)" fill-opacity="0.8"/>
+  <text x="237" y="142" dx="4" class="mult-lbl" fill="var(--accent-2,#14b8a6)">~1.9x</text>
+
+
+  <text x="60" y="165" class="heading">Mostly grow the model; starve data.</text>
+
+
+  <rect x="60" y="176" width="296" height="28" rx="14"
+        fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <text x="208" y="195" text-anchor="middle" class="pill-text" fill="var(--warn,#e0a106)">=&gt; big, data-starved models</text>
+
+
+  <rect x="60" y="218" width="296" height="64" rx="6"
+        fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <text x="208" y="238" text-anchor="middle" class="ex-label">GPT-3: 175B params / 300B tokens</text>
+  <text x="208" y="256" text-anchor="middle" class="ex-bold">~1.7 tokens/param</text>
+  <text x="208" y="273" text-anchor="middle" class="ex-label">(undertrained for its size)</text>
+
+
+  <text x="60" y="310" class="heading">Exponents:  N ~ C^0.73,  D ~ C^0.27</text>
+
+
+  <rect x="60" y="322" width="296" height="52" rx="6"
+        fill="none" stroke="var(--warn,#e0a106)" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="208" y="342" text-anchor="middle" class="heading">LR schedule not matched to token count</text>
+  <text x="208" y="358" text-anchor="middle" class="heading">-&gt; systematically undervalued data</text>
+  <text x="208" y="374" text-anchor="middle" class="heading">(Chinchilla diagnosis)</text>
+
+
+  <text x="626" y="50" text-anchor="middle" class="panel-title">Chinchilla worldview (2022)</text>
+  <line x1="472" y1="57" x2="780" y2="57" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+
+  <text x="472" y="82" class="heading">10x compute splits as:</text>
+
+
+  <text x="472" y="108" class="bar-lbl">N (params):</text>
+  <rect x="572" y="95" width="148" height="20" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="726" y="110" dx="4" class="mult-lbl" fill="var(--accent,#6366f1)">~3.16x</text>
+
+
+  <text x="472" y="140" class="bar-lbl">D (data):</text>
+  <rect x="572" y="127" width="148" height="20" rx="4" fill="var(--accent-2,#14b8a6)" fill-opacity="0.8"/>
+  <text x="726" y="142" dx="4" class="mult-lbl" fill="var(--accent-2,#14b8a6)">~3.16x</text>
+
+
+  <text x="472" y="165" class="heading">Both grow by sqrt(10) ~= 3.16 in lockstep.</text>
+
+
+  <rect x="472" y="176" width="296" height="28" rx="14"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="620" y="195" text-anchor="middle" class="pill-text" fill="var(--accent,#6366f1)">=&gt; balanced N and D</text>
+
+
+  <rect x="472" y="218" width="296" height="64" rx="6"
+        fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <text x="620" y="238" text-anchor="middle" class="ex-label">Chinchilla: 70B params / 1.4T tokens</text>
+  <text x="620" y="256" text-anchor="middle" class="ex-bold">~20 tokens/param</text>
+  <text x="620" y="273" text-anchor="middle" class="ex-label">(beat 4x larger Gopher)</text>
+
+
+  <text x="472" y="310" class="heading">Exponents:  N ~ C^0.5,   D ~ C^0.5</text>
+
+
+  <rect x="472" y="322" width="296" height="52" rx="6"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="620" y="342" text-anchor="middle" class="heading">Three methods (IsoFLOP, curves, fit)</text>
+  <text x="620" y="358" text-anchor="middle" class="heading">all agreed: alpha ~= beta ~= 0.5</text>
+  <text x="620" y="374" text-anchor="middle" class="heading">=&gt; ~20 tokens/param rule</text>
+
+</svg>
+<figcaption><b>Kaplan (2020) prescribed growing the model fast; Chinchilla (2022) corrected this to grow params and data in lockstep.</b> The left panel's lopsided bars (long N, short D) versus the right panel's equal bars capture the entire correction at a glance. Chinchilla's 70B-parameter model on 1.4T tokens — roughly 20 tokens per parameter — outperformed the 280B-parameter Gopher trained on the same compute, proving that pre-Chinchilla models were severely data-starved.</figcaption>
+</figure>
+
+<h3 id="the-approx-20-tokens-per-parameter-rule">The &ldquo;<span class="arithmatex">\(\approx 20\)</span> tokens per parameter&rdquo; rule<a class="headerlink" href="#the-approx-20-tokens-per-parameter-rule" title="Permanent link">¶</a></h3>
+<p>Because <span class="arithmatex">\(a \approx b\)</span>, the optimal <strong>ratio</strong> <span class="arithmatex">\(D_{\text{opt}} / N_{\text{opt}}\)</span> is approximately <em>constant</em> across compute scales. Chinchilla&rsquo;s fit puts that constant near <strong>20 tokens per parameter</strong>:</p>
+<div class="arithmatex">\[
+\boxed{\;D_{\text{opt}} \approx 20 \, N_{\text{opt}}\;}
+\]</div>
+<p>This is the single number most people remember from the entire scaling literature. It is a back-of-the-envelope heuristic, not a law of nature — the precise multiplier depends on the dataset, tokenizer, and exact fitted exponents, and reasonable re-derivations land anywhere from ~15 to ~25. But &ldquo;20× tokens&rdquo; is the right order of magnitude and a perfectly defensible interview answer.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Kaplan said &ldquo;make the model bigger&rdquo;; Chinchilla said &ldquo;scale data and params together.&rdquo; What changed, and what is the practical takeaway?</p>
+<p><strong>A:</strong> Nothing about the underlying power-law <em>form</em> changed — both fit <span class="arithmatex">\(L(N,D)\)</span> as a sum of power laws. What changed was the <em>measurement</em>. Kaplan&rsquo;s smaller-token runs were evaluated with a learning-rate schedule that hadn&rsquo;t finished decaying, so they looked artificially under-performing, which made data look less valuable than it is. Chinchilla matched the cosine decay to each run&rsquo;s actual token count and used three independent methods (fixed-model loss curves, IsoFLOP profiles, and directly fitting the parametric <span class="arithmatex">\(L(N,D)\)</span>). All three agreed that the compute-optimal exponents for <span class="arithmatex">\(N\)</span> and <span class="arithmatex">\(D\)</span> are roughly equal, <span class="arithmatex">\(\approx 0.5\)</span> each. The practical heuristic is <strong>about 20 training tokens per parameter</strong> at the compute-optimal point. Concretely: a compute-optimal 70B model wants ~1.4T tokens, not the ~300B that GPT-3-era models used. The deeper lesson is methodological — scaling-law conclusions are extremely sensitive to whether your hyperparameters (especially the LR schedule and batch size) are tuned <em>at each scale</em>, so always validate the experimental setup before trusting the slope.</p>
+</div>
+<hr />
+<h2 id="deriving-the-compute-optimal-allocation">Deriving the Compute-Optimal Allocation<a class="headerlink" href="#deriving-the-compute-optimal-allocation" title="Permanent link">¶</a></h2>
+<p>Let us actually do the optimization Chinchilla did, because it is a clean Lagrange-multiplier problem and a very common whiteboard exercise. We want to minimize the loss subject to a fixed compute budget.</p>
+<p><strong>Problem.</strong> Minimize <span class="arithmatex">\(L(N,D) = E + A N^{-\alpha} + B D^{-\beta}\)</span> subject to <span class="arithmatex">\(C = 6 N D\)</span> (fixed).</p>
+<p>Since <span class="arithmatex">\(E\)</span> is constant, drop it. Substitute the constraint <span class="arithmatex">\(D = C / (6N)\)</span> into the loss:</p>
+<div class="arithmatex">\[
+\tilde{L}(N) = A N^{-\alpha} + B \left(\frac{C}{6N}\right)^{-\beta}
+= A N^{-\alpha} + B \left(\frac{6}{C}\right)^{\beta} N^{\beta}
+\]</div>
+<p>Take the derivative with respect to <span class="arithmatex">\(N\)</span> and set it to zero:</p>
+<div class="arithmatex">\[
+\frac{d\tilde{L}}{dN} = -\alpha A N^{-\alpha - 1} + \beta B \left(\frac{6}{C}\right)^{\beta} N^{\beta - 1} = 0
+\]</div>
+<p>Rearranging gives the balance condition: at the optimum, the <strong>marginal loss reduction per FLOP is equal</strong> for parameters and for data. Solving for <span class="arithmatex">\(N\)</span>:</p>
+<div class="arithmatex">\[
+\alpha A N^{-\alpha} = \beta B \left(\frac{6}{C}\right)^{\beta} N^{\beta}
+\;\Longrightarrow\;
+N^{\alpha + \beta} = \frac{\alpha A}{\beta B}\left(\frac{C}{6}\right)^{\beta}
+\]</div>
+<div class="arithmatex">\[
+\boxed{\;N_{\text{opt}} = \left[\frac{\alpha A}{\beta B}\right]^{\frac{1}{\alpha+\beta}} \left(\frac{C}{6}\right)^{\frac{\beta}{\alpha+\beta}}\;}
+\]</div>
+<p>and by the constraint <span class="arithmatex">\(D_{\text{opt}} = \frac{C}{6 N_{\text{opt}}} \propto C^{\frac{\alpha}{\alpha+\beta}}\)</span>. So the exponents are:</p>
+<div class="arithmatex">\[
+a = \frac{\beta}{\alpha + \beta}, \qquad b = \frac{\alpha}{\alpha + \beta}, \qquad a + b = 1.
+\]</div>
+<p>The two exponents must sum to 1 (because <span class="arithmatex">\(C = 6ND\)</span> forces it), and they are <em>equal</em> exactly when <span class="arithmatex">\(\alpha = \beta\)</span>. Chinchilla&rsquo;s fitted <span class="arithmatex">\(\alpha\)</span> and <span class="arithmatex">\(\beta\)</span> came out close to each other, which is <em>why</em> <span class="arithmatex">\(a \approx b \approx 0.5\)</span> and <em>why</em> the token-per-parameter ratio is roughly constant. The whole &ldquo;20× rule&rdquo; falls out of <span class="arithmatex">\(\alpha \approx \beta\)</span>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">chinchilla_optimal</span><span class="p">(</span><span class="n">C</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">beta</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="mf">1.69</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute-optimal (N*, D*) for budget C given fitted scaling-law params.</span>
+
+<span class="sd">    Minimizes L(N,D) = E + A*N^-alpha + B*D^-beta  s.t.  C = 6*N*D.</span>
+<span class="sd">    Returns the optimal params, tokens, predicted loss, and tokens/param.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">exp</span> <span class="o">=</span> <span class="n">beta</span> <span class="o">/</span> <span class="p">(</span><span class="n">alpha</span> <span class="o">+</span> <span class="n">beta</span><span class="p">)</span>                  <span class="c1"># exponent on C for N</span>
+    <span class="n">coef</span> <span class="o">=</span> <span class="p">(</span><span class="n">alpha</span> <span class="o">*</span> <span class="n">A</span> <span class="o">/</span> <span class="p">(</span><span class="n">beta</span> <span class="o">*</span> <span class="n">B</span><span class="p">))</span> <span class="o">**</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">alpha</span> <span class="o">+</span> <span class="n">beta</span><span class="p">))</span>
+    <span class="n">N_opt</span> <span class="o">=</span> <span class="n">coef</span> <span class="o">*</span> <span class="p">(</span><span class="n">C</span> <span class="o">/</span> <span class="mf">6.0</span><span class="p">)</span> <span class="o">**</span> <span class="n">exp</span>
+    <span class="n">D_opt</span> <span class="o">=</span> <span class="n">C</span> <span class="o">/</span> <span class="p">(</span><span class="mf">6.0</span> <span class="o">*</span> <span class="n">N_opt</span><span class="p">)</span>
+    <span class="n">L_opt</span> <span class="o">=</span> <span class="n">E</span> <span class="o">+</span> <span class="n">A</span> <span class="o">*</span> <span class="n">N_opt</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="n">alpha</span><span class="p">)</span> <span class="o">+</span> <span class="n">B</span> <span class="o">*</span> <span class="n">D_opt</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="n">beta</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;N&quot;</span><span class="p">:</span> <span class="n">N_opt</span><span class="p">,</span> <span class="s2">&quot;D&quot;</span><span class="p">:</span> <span class="n">D_opt</span><span class="p">,</span> <span class="s2">&quot;loss&quot;</span><span class="p">:</span> <span class="n">L_opt</span><span class="p">,</span>
+        <span class="s2">&quot;tokens_per_param&quot;</span><span class="p">:</span> <span class="n">D_opt</span> <span class="o">/</span> <span class="n">N_opt</span><span class="p">,</span>
+        <span class="s2">&quot;N_exponent&quot;</span><span class="p">:</span> <span class="n">exp</span><span class="p">,</span> <span class="s2">&quot;D_exponent&quot;</span><span class="p">:</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">exp</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="c1"># Illustrative coefficients in the *spirit* of Chinchilla&#39;s fit (not exact):</span>
+<span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">beta</span><span class="p">,</span> <span class="n">E</span> <span class="o">=</span> <span class="mf">406.4</span><span class="p">,</span> <span class="mf">410.7</span><span class="p">,</span> <span class="mf">0.34</span><span class="p">,</span> <span class="mf">0.28</span><span class="p">,</span> <span class="mf">1.69</span>
+<span class="k">for</span> <span class="n">C</span> <span class="ow">in</span> <span class="p">[</span><span class="mf">1e19</span><span class="p">,</span> <span class="mf">1e21</span><span class="p">,</span> <span class="mf">1e23</span><span class="p">,</span> <span class="mf">1e25</span><span class="p">]:</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">chinchilla_optimal</span><span class="p">(</span><span class="n">C</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">beta</span><span class="p">,</span> <span class="n">E</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;C=</span><span class="si">{</span><span class="n">C</span><span class="si">:</span><span class="s2">.0e</span><span class="si">}</span><span class="s2">  N=</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;N&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">  D=</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;D&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">  &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;tok/param=</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;tokens_per_param&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  L=</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;loss&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The <code>tokens_per_param</code> column comes out roughly constant across the four budgets (it drifts only because <span class="arithmatex">\(\alpha \neq \beta\)</span> exactly) — that constancy <em>is</em> the 20× rule, emerging from the math rather than asserted.</p>
+<hr />
+<h2 id="fitting-a-scaling-law-from-scratch">Fitting a Scaling Law From Scratch<a class="headerlink" href="#fitting-a-scaling-law-from-scratch" title="Permanent link">¶</a></h2>
+<p>Reading about scaling laws is one thing; <strong>fitting</strong> one is the skill that actually transfers to the job. The workflow is: (1) run a grid of small models at varying <span class="arithmatex">\(N\)</span> and <span class="arithmatex">\(D\)</span>, (2) record final losses, (3) fit the parametric form, (4) extrapolate to the target scale, (5) read off the compute-optimal allocation. Here we generate synthetic but realistic data and fit it with a robust loss. The single most important practical trick — which Chinchilla used — is to fit in <strong>log space with the Huber loss</strong>, because raw least-squares on <span class="arithmatex">\(L\)</span> is dominated by the largest-loss (smallest) runs and is sensitive to outliers.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.optimize</span><span class="w"> </span><span class="kn">import</span> <span class="n">minimize</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Step 0: synthesize a grid of (N, D, observed_loss) &quot;experiments&quot;.</span>
+<span class="c1"># In reality these rows come from actual training runs; here we fabricate them</span>
+<span class="c1"># from a known ground-truth law plus noise so we can check we recover it.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">TRUE</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">E</span><span class="o">=</span><span class="mf">1.69</span><span class="p">,</span> <span class="n">A</span><span class="o">=</span><span class="mf">406.0</span><span class="p">,</span> <span class="n">B</span><span class="o">=</span><span class="mf">410.0</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.34</span><span class="p">,</span> <span class="n">beta</span><span class="o">=</span><span class="mf">0.28</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">true_loss</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">p</span><span class="o">=</span><span class="n">TRUE</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">p</span><span class="p">[</span><span class="s2">&quot;E&quot;</span><span class="p">]</span> <span class="o">+</span> <span class="n">p</span><span class="p">[</span><span class="s2">&quot;A&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">N</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="n">p</span><span class="p">[</span><span class="s2">&quot;alpha&quot;</span><span class="p">])</span> <span class="o">+</span> <span class="n">p</span><span class="p">[</span><span class="s2">&quot;B&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">D</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="n">p</span><span class="p">[</span><span class="s2">&quot;beta&quot;</span><span class="p">])</span>
+
+<span class="n">Ns</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">1e7</span><span class="p">,</span> <span class="mf">3e7</span><span class="p">,</span> <span class="mf">1e8</span><span class="p">,</span> <span class="mf">3e8</span><span class="p">,</span> <span class="mf">1e9</span><span class="p">,</span> <span class="mf">3e9</span><span class="p">])</span>          <span class="c1"># 10M .. 3B params</span>
+<span class="n">Ds</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">1e8</span><span class="p">,</span> <span class="mf">3e8</span><span class="p">,</span> <span class="mf">1e9</span><span class="p">,</span> <span class="mf">3e9</span><span class="p">,</span> <span class="mf">1e10</span><span class="p">,</span> <span class="mf">3e10</span><span class="p">,</span> <span class="mf">1e11</span><span class="p">])</span>  <span class="c1"># 0.1B .. 100B tokens</span>
+<span class="n">grid</span> <span class="o">=</span> <span class="p">[(</span><span class="n">N</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span> <span class="k">for</span> <span class="n">N</span> <span class="ow">in</span> <span class="n">Ns</span> <span class="k">for</span> <span class="n">D</span> <span class="ow">in</span> <span class="n">Ds</span><span class="p">]</span>
+<span class="n">N_obs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">g</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">grid</span><span class="p">])</span>
+<span class="n">D_obs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">g</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">grid</span><span class="p">])</span>
+<span class="c1"># multiplicative ~2% noise, as you&#39;d see from seed/data-order variation:</span>
+<span class="n">L_obs</span> <span class="o">=</span> <span class="n">true_loss</span><span class="p">(</span><span class="n">N_obs</span><span class="p">,</span> <span class="n">D_obs</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="mf">0.02</span> <span class="o">*</span> <span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">grid</span><span class="p">)))</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Step 1: the model. We fit E, A, B, alpha, beta. To keep all params positive</span>
+<span class="c1"># and the optimizer well-conditioned, we parameterize via logs:</span>
+<span class="c1">#   E = exp(e), A = exp(a), B = exp(b), alpha and beta directly.</span>
+<span class="c1"># Chinchilla&#39;s key trick: minimize the HUBER loss of the LSE residual in</span>
+<span class="c1"># LOG-loss space, which is robust to the few noisy outlier runs.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">predict_log_loss</span><span class="p">(</span><span class="n">theta</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">D</span><span class="p">):</span>
+    <span class="n">e</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">beta</span> <span class="o">=</span> <span class="n">theta</span>
+    <span class="c1"># log-sum-exp form keeps it numerically stable across many orders of magnitude</span>
+    <span class="n">terms</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">full_like</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">e</span><span class="p">),</span>                 <span class="c1"># log E term -&gt; contributes E</span>
+        <span class="n">a</span> <span class="o">-</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">N</span><span class="p">),</span>              <span class="c1"># log of A*N^-alpha</span>
+        <span class="n">b</span> <span class="o">-</span> <span class="n">beta</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">D</span><span class="p">),</span>               <span class="c1"># log of B*D^-beta</span>
+    <span class="p">])</span>
+    <span class="n">L_pred</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">terms</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">terms</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">terms</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">L_pred</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">huber</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">delta</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">):</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">a</span> <span class="o">&lt;=</span> <span class="n">delta</span><span class="p">,</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">r</span><span class="o">**</span><span class="mi">2</span><span class="p">,</span> <span class="n">delta</span> <span class="o">*</span> <span class="p">(</span><span class="n">a</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">delta</span><span class="p">))</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">objective</span><span class="p">(</span><span class="n">theta</span><span class="p">):</span>
+    <span class="n">resid</span> <span class="o">=</span> <span class="n">predict_log_loss</span><span class="p">(</span><span class="n">theta</span><span class="p">,</span> <span class="n">N_obs</span><span class="p">,</span> <span class="n">D_obs</span><span class="p">)</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">L_obs</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">huber</span><span class="p">(</span><span class="n">resid</span><span class="p">))</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Step 2: fit. Multi-start because the objective is non-convex; keep the best.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="n">best</span><span class="p">,</span> <span class="n">best_val</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">40</span><span class="p">):</span>
+    <span class="n">x0</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span>
+        <span class="n">rng</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>     <span class="c1"># log E   (E ~ 1..2.7)</span>
+        <span class="n">rng</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mf">4.0</span><span class="p">,</span> <span class="mf">8.0</span><span class="p">),</span>     <span class="c1"># log A</span>
+        <span class="n">rng</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mf">4.0</span><span class="p">,</span> <span class="mf">8.0</span><span class="p">),</span>     <span class="c1"># log B</span>
+        <span class="n">rng</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">),</span>     <span class="c1"># alpha</span>
+        <span class="n">rng</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">),</span>     <span class="c1"># beta</span>
+    <span class="p">])</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="n">minimize</span><span class="p">(</span><span class="n">objective</span><span class="p">,</span> <span class="n">x0</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;L-BFGS-B&quot;</span><span class="p">,</span>
+                   <span class="n">bounds</span><span class="o">=</span><span class="p">[(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">12</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">12</span><span class="p">),</span> <span class="p">(</span><span class="mf">0.01</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span> <span class="p">(</span><span class="mf">0.01</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)])</span>
+    <span class="k">if</span> <span class="n">res</span><span class="o">.</span><span class="n">fun</span> <span class="o">&lt;</span> <span class="n">best_val</span><span class="p">:</span>
+        <span class="n">best</span><span class="p">,</span> <span class="n">best_val</span> <span class="o">=</span> <span class="n">res</span><span class="o">.</span><span class="n">x</span><span class="p">,</span> <span class="n">res</span><span class="o">.</span><span class="n">fun</span>
+
+<span class="n">e</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">beta</span> <span class="o">=</span> <span class="n">best</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Recovered:  E=</span><span class="si">{</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  A=</span><span class="si">{</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">a</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  B=</span><span class="si">{</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">b</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;  alpha=</span><span class="si">{</span><span class="n">alpha</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  beta=</span><span class="si">{</span><span class="n">beta</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Ground truth: E=</span><span class="si">{</span><span class="n">TRUE</span><span class="p">[</span><span class="s1">&#39;E&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">  A=</span><span class="si">{</span><span class="n">TRUE</span><span class="p">[</span><span class="s1">&#39;A&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">  B=</span><span class="si">{</span><span class="n">TRUE</span><span class="p">[</span><span class="s1">&#39;B&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;  alpha=</span><span class="si">{</span><span class="n">TRUE</span><span class="p">[</span><span class="s1">&#39;alpha&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">  beta=</span><span class="si">{</span><span class="n">TRUE</span><span class="p">[</span><span class="s1">&#39;beta&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Step 3: use the fit to predict the compute-optimal allocation at a NEW,</span>
+<span class="c1"># much larger budget than any run in the grid -- the whole point of fitting.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">optimal_alloc</span><span class="p">(</span><span class="n">C</span><span class="p">,</span> <span class="n">e</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">beta</span><span class="p">):</span>
+    <span class="n">A_</span><span class="p">,</span> <span class="n">B_</span><span class="p">,</span> <span class="n">E_</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">a</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">b</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+    <span class="n">exp</span> <span class="o">=</span> <span class="n">beta</span> <span class="o">/</span> <span class="p">(</span><span class="n">alpha</span> <span class="o">+</span> <span class="n">beta</span><span class="p">)</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="p">(</span><span class="n">alpha</span> <span class="o">*</span> <span class="n">A_</span> <span class="o">/</span> <span class="p">(</span><span class="n">beta</span> <span class="o">*</span> <span class="n">B_</span><span class="p">))</span> <span class="o">**</span> <span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="p">(</span><span class="n">alpha</span> <span class="o">+</span> <span class="n">beta</span><span class="p">))</span> <span class="o">*</span> <span class="p">(</span><span class="n">C</span> <span class="o">/</span> <span class="mi">6</span><span class="p">)</span> <span class="o">**</span> <span class="n">exp</span>
+    <span class="n">D</span> <span class="o">=</span> <span class="n">C</span> <span class="o">/</span> <span class="p">(</span><span class="mi">6</span> <span class="o">*</span> <span class="n">N</span><span class="p">)</span>
+    <span class="n">L</span> <span class="o">=</span> <span class="n">E_</span> <span class="o">+</span> <span class="n">A_</span> <span class="o">*</span> <span class="n">N</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="n">alpha</span><span class="p">)</span> <span class="o">+</span> <span class="n">B_</span> <span class="o">*</span> <span class="n">D</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="n">beta</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">N</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">L</span>
+
+<span class="k">for</span> <span class="n">C</span> <span class="ow">in</span> <span class="p">[</span><span class="mf">1e23</span><span class="p">,</span> <span class="mf">1e24</span><span class="p">,</span> <span class="mf">1e25</span><span class="p">]:</span>
+    <span class="n">N</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">L</span> <span class="o">=</span> <span class="n">optimal_alloc</span><span class="p">(</span><span class="n">C</span><span class="p">,</span> <span class="n">e</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">beta</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;C=</span><span class="si">{</span><span class="n">C</span><span class="si">:</span><span class="s2">.0e</span><span class="si">}</span><span class="s2"> -&gt; N*=</span><span class="si">{</span><span class="n">N</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">  D*=</span><span class="si">{</span><span class="n">D</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">  tok/param=</span><span class="si">{</span><span class="n">D</span><span class="o">/</span><span class="n">N</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  L*=</span><span class="si">{</span><span class="n">L</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>A few engineering notes that separate a real fit from a toy one:</p>
+<ul>
+<li><strong>Use enough points and enough spread.</strong> Chinchilla&rsquo;s IsoFLOP method runs many models at each of several fixed compute budgets, then fits a parabola in <span class="arithmatex">\(\log N\)</span> to find the valley (the optimal <span class="arithmatex">\(N\)</span>) at each budget, and finally fits a power law through those valleys. Our parametric fit above is the third of Chinchilla&rsquo;s three methods.</li>
+<li><strong>Exclude under-converged runs.</strong> A run whose LR schedule did not finish, or that hit a loss spike (see <a href="../03-pretraining/11-training-stability.html">Training Stability, Loss Spikes &amp; Debugging Large Runs</a>), pollutes the fit. This is exactly the failure mode that biased Kaplan.</li>
+<li><strong>Sanity-check extrapolation, not interpolation.</strong> The whole value is predicting <em>outside</em> your grid. Hold out your largest run, fit on the rest, and verify the prediction lands within a percent or two.</li>
+</ul>
+<hr />
+<h2 id="a-worked-budget-planning-example">A Worked Budget-Planning Example<a class="headerlink" href="#a-worked-budget-planning-example" title="Permanent link">¶</a></h2>
+<p>Let us plan an actual run end to end.</p>
+<div class="admonition example">
+<p class="admonition-title">Planning a compute-optimal run on a fixed budget</p>
+<p><strong>Setup.</strong> You have 256 accelerators, each with a peak of roughly <span class="arithmatex">\(1.0 \times 10^{15}\)</span> bf16 FLOP/s (1 PFLOP/s — in the ballpark of a modern training GPU). You budget <strong>21 days</strong> of wall-clock for the run and expect a Model FLOPs Utilization (MFU) of <strong>0.45</strong>. How big a model should you train, and on how many tokens?</p>
+<p><strong>Step 1 — Total compute budget.</strong></p>
+<p>Raw machine-seconds of FLOPs:
+$$
+256 \times 10^{15}\,\tfrac{\text{FLOP}}{\text{s}} \times (21 \times 86400\,\text{s}) \approx 4.64 \times 10^{23} \text{FLOP (peak)}
+$$
+Apply MFU = 0.45 to get <em>usable</em> model FLOPs:
+$$
+C \approx 0.45 \times 4.64 \times 10^{23} \approx 2.1 \times 10^{23} \text{FLOP}.
+$$</p>
+<p><strong>Step 2 — Compute-optimal split via the 20× rule.</strong></p>
+<p>At the optimum, <span class="arithmatex">\(D \approx 20 N\)</span> and <span class="arithmatex">\(C = 6ND\)</span>, so:
+$$
+C = 6 N (20 N) = 120 \, N^2
+\;\Longrightarrow\;
+N = \sqrt{\frac{C}{120}} = \sqrt{\frac{2.1\times 10^{23}}{120}} \approx 4.2 \times 10^{10}.
+$$
+So <span class="arithmatex">\(N \approx 42\text{B}\)</span> parameters, and:
+$$
+D \approx 20 N \approx 8.4 \times 10^{11} = 840\text{B tokens}.
+$$</p>
+<p><strong>Step 3 — Sanity-check the FLOPs.</strong> <span class="arithmatex">\(6 N D = 6 \times 4.2\times10^{10} \times 8.4\times10^{11} \approx 2.1 \times 10^{23}\)</span> FLOP. It closes.</p>
+<p><strong>Step 4 — Cross-check the throughput.</strong> Tokens per second = <span class="arithmatex">\(\dfrac{C/6}{N \times \text{seconds}}\)</span>. With usable FLOP/s <span class="arithmatex">\(= 0.45 \times 256 \times 10^{15} \approx 1.15\times 10^{17}\)</span>, token throughput <span class="arithmatex">\(= \frac{1.15\times10^{17}}{6 \times 4.2\times10^{10}} \approx 4.6\times10^{5}\)</span> tokens/s <span class="arithmatex">\(\approx\)</span> 460k tok/s, which over 21 days yields <span class="arithmatex">\(\approx 8.3\times10^{11}\)</span> tokens — consistent with <span class="arithmatex">\(D\)</span>. Everything is self-consistent.</p>
+<p><strong>Takeaway.</strong> A 21-day, 256-GPU run at 45% MFU buys you roughly a <strong>42B-parameter Chinchilla-optimal model on ~840B tokens</strong>. If instead you only had ~300B tokens of acceptable-quality data, you would be <em>data-limited</em>: you should train a smaller model (or repeat data, with care — see below) rather than a 42B model starved of tokens.</p>
+</div>
+<p>This is the arithmetic that frontier labs run before every campaign. Notice it has exactly four inputs — GPU count, peak FLOP/s, wall-clock, and MFU — and the 20× rule. You can do it on a napkin.</p>
+<hr />
+<h2 id="beyond-chinchilla-inference-over-training-data-repetition">Beyond Chinchilla: Inference, Over-Training &amp; Data Repetition<a class="headerlink" href="#beyond-chinchilla-inference-over-training-data-repetition" title="Permanent link">¶</a></h2>
+<p>Chinchilla answers &ldquo;what minimizes <em>training</em> loss for a <em>training</em> budget.&rdquo; But that is almost never the real objective. Two large corrections dominate modern practice.</p>
+<h3 id="inference-aware-scaling-why-you-deliberately-over-train">Inference-aware scaling: why you deliberately over-train<a class="headerlink" href="#inference-aware-scaling-why-you-deliberately-over-train" title="Permanent link">¶</a></h3>
+<p>Chinchilla optimizes training compute. But a deployed model is <em>trained once and served billions of times</em>. If you will serve a huge number of inference tokens, it is rational to <strong>shrink the model below Chinchilla-optimal and train it on far more data than 20× tokens</strong> — accepting a slightly higher training loss in exchange for a permanently cheaper, faster model at inference (every forward pass costs <span class="arithmatex">\(\approx 2N\)</span> FLOPs and the KV cache scales with <span class="arithmatex">\(N\)</span>; see <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>).</p>
+<p>This is exactly why <strong>Llama-style</strong> models are trained on token counts vastly exceeding 20× their parameter count. Llama-2-7B saw ~2T tokens (~280 tokens/param); Llama-3-8B saw ~15T tokens (~1900 tokens/param) — roughly <strong>two orders of magnitude past Chinchilla-optimal</strong>. These models are <em>worse than Chinchilla-optimal for their training FLOPs</em> but <em>far better per inference FLOP</em>, which is what their deployers actually pay for.</p>
+<p>You can formalize this. Let <span class="arithmatex">\(D_{\text{inf}}\)</span> be the expected number of tokens you will serve. The objective becomes total lifetime compute:</p>
+<div class="arithmatex">\[
+C_{\text{total}} = \underbrace{6 N D_{\text{train}}}_{\text{train once}} + \underbrace{2 N D_{\text{inf}}}_{\text{serve forever}}
+\]</div>
+<p>minimized subject to hitting a <em>target loss</em> <span class="arithmatex">\(L^\star\)</span>. The larger <span class="arithmatex">\(D_{\text{inf}}\)</span> is, the more the optimum shifts toward small <span class="arithmatex">\(N\)</span> (cheap inference) and large <span class="arithmatex">\(D_{\text{train}}\)</span> (to recover the loss you gave up by shrinking <span class="arithmatex">\(N\)</span>). This &ldquo;inference-aware&rdquo; or &ldquo;over-trained&rdquo; regime was analyzed in follow-up work (e.g., the <em>Beyond Chinchilla-Optimal</em> line of analysis by Sardana, Frankle, and collaborators).</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">lifetime_optimal</span><span class="p">(</span><span class="n">L_target</span><span class="p">,</span> <span class="n">n_inference_tokens</span><span class="p">,</span>
+                     <span class="n">A</span><span class="o">=</span><span class="mf">406.0</span><span class="p">,</span> <span class="n">B</span><span class="o">=</span><span class="mf">410.0</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.34</span><span class="p">,</span> <span class="n">beta</span><span class="o">=</span><span class="mf">0.28</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="mf">1.69</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Pick (N, D_train) to hit a target loss while minimizing TRAIN+INFERENCE</span>
+<span class="sd">    compute. Coarse grid search over N; for each N solve the data term needed</span>
+<span class="sd">    to reach L_target, then score total lifetime FLOPs.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+    <span class="n">best</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">for</span> <span class="n">N</span> <span class="ow">in</span> <span class="n">np</span><span class="o">.</span><span class="n">logspace</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">12</span><span class="p">,</span> <span class="mi">400</span><span class="p">):</span>          <span class="c1"># 0.1B .. 1T params</span>
+        <span class="c1"># residual loss budget left for the data term after the param term:</span>
+        <span class="n">loss_from_data</span> <span class="o">=</span> <span class="n">L_target</span> <span class="o">-</span> <span class="n">E</span> <span class="o">-</span> <span class="n">A</span> <span class="o">*</span> <span class="n">N</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="n">alpha</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">loss_from_data</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">continue</span>                            <span class="c1"># this N alone already over-shoots</span>
+        <span class="n">D_train</span> <span class="o">=</span> <span class="p">(</span><span class="n">B</span> <span class="o">/</span> <span class="n">loss_from_data</span><span class="p">)</span> <span class="o">**</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="n">beta</span><span class="p">)</span>
+        <span class="n">train</span> <span class="o">=</span> <span class="mi">6</span> <span class="o">*</span> <span class="n">N</span> <span class="o">*</span> <span class="n">D_train</span>
+        <span class="n">infer</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">N</span> <span class="o">*</span> <span class="n">n_inference_tokens</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="n">train</span> <span class="o">+</span> <span class="n">infer</span>
+        <span class="k">if</span> <span class="n">best</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">total</span> <span class="o">&lt;</span> <span class="n">best</span><span class="p">[</span><span class="s2">&quot;total&quot;</span><span class="p">]:</span>
+            <span class="n">best</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">N</span><span class="o">=</span><span class="n">N</span><span class="p">,</span> <span class="n">D_train</span><span class="o">=</span><span class="n">D_train</span><span class="p">,</span> <span class="n">train</span><span class="o">=</span><span class="n">train</span><span class="p">,</span>
+                        <span class="n">infer</span><span class="o">=</span><span class="n">infer</span><span class="p">,</span> <span class="n">total</span><span class="o">=</span><span class="n">total</span><span class="p">,</span> <span class="n">tok_per_param</span><span class="o">=</span><span class="n">D_train</span> <span class="o">/</span> <span class="n">N</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">best</span>
+
+<span class="c1"># Light serving vs. heavy serving -&gt; the optimal model SHRINKS as you serve more:</span>
+<span class="k">for</span> <span class="n">D_inf</span> <span class="ow">in</span> <span class="p">[</span><span class="mf">1e11</span><span class="p">,</span> <span class="mf">1e13</span><span class="p">,</span> <span class="mf">1e15</span><span class="p">]:</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">lifetime_optimal</span><span class="p">(</span><span class="n">L_target</span><span class="o">=</span><span class="mf">1.95</span><span class="p">,</span> <span class="n">n_inference_tokens</span><span class="o">=</span><span class="n">D_inf</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;D_inf=</span><span class="si">{</span><span class="n">D_inf</span><span class="si">:</span><span class="s2">.0e</span><span class="si">}</span><span class="s2">: N=</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;N&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">  D_train=</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;D_train&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">  &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;tok/param=</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;tok_per_param&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Run it and you will see the optimal <span class="arithmatex">\(N\)</span> <em>decrease</em> and tokens-per-param <em>increase</em> as inference demand grows — the quantitative justification for over-training.</p>
+<h3 id="data-repetition-and-the-data-wall">Data repetition and the data wall<a class="headerlink" href="#data-repetition-and-the-data-wall" title="Permanent link">¶</a></h3>
+<p>The Chinchilla form assumes every token is fresh. Real high-quality data is finite — the web has only so much good text. When you exhaust unique tokens, you start <strong>repeating epochs</strong>, and repeated tokens are worth <em>less</em> than fresh ones. Muennighoff et al. (<em>Scaling Data-Constrained Language Models</em>) fit a modified law in which the effective data <span class="arithmatex">\(D_{\text{eff}} &lt; D\)</span> once you repeat, with the value of each additional epoch decaying. The empirical rule of thumb from that work: up to <strong>~4 epochs</strong> of repetition costs you very little (repeated tokens are nearly as good as fresh), but beyond ~16 epochs the returns collapse toward zero. This &ldquo;data wall&rdquo; is a central reason the field cares so much about data quality, dedup, and synthetic data — see <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a>.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: decide your regime before you fit anything</p>
+<p>Before applying any scaling law, classify your situation. <strong>Compute-limited</strong> (plenty of data, limited FLOPs): use Chinchilla, target ~20 tokens/param. <strong>Inference-limited</strong> (you will serve a lot): over-train deliberately, push tokens/param up by 10–100×, shrink <span class="arithmatex">\(N\)</span>. <strong>Data-limited</strong> (good tokens are the bottleneck): use the data-constrained law, cap repetition near a few epochs, and invest in data quality and synthetic data instead of more raw scrape. Most production teams are in the second or third regime, <em>not</em> the first — yet the first is what the textbook &ldquo;20× rule&rdquo; assumes.</p>
+</div>
+<hr />
+<h2 id="the-emergent-abilities-debate">The Emergent Abilities Debate<a class="headerlink" href="#the-emergent-abilities-debate" title="Permanent link">¶</a></h2>
+<p>Scaling laws describe the <em>loss</em> — a smooth, continuous quantity. But practitioners care about <strong>capabilities</strong>: can the model do 3-digit arithmetic, pass a coding test, follow multi-step instructions? A celebrated and contested claim is that some capabilities are <strong>emergent</strong> — absent in small models, then appearing <em>abruptly</em> past a scale threshold, producing a sharp &ldquo;phase transition&rdquo; rather than a smooth curve (Wei et al., <em>Emergent Abilities of Large Language Models</em>).</p>
+<p>The counter-argument, by Schaeffer et al. (<em>Are Emergent Abilities of Large Language Models a Mirage?</em>), is sharp and worth internalizing because it is a favorite interview trap. Their claim: <strong>the apparent emergence is largely an artifact of the metric</strong>, not of the model. Many benchmarks use <strong>discontinuous or all-or-nothing scoring</strong> — exact-match accuracy on a multi-step problem, where you get credit only if <em>every</em> token is right. Under such a metric, a smoothly improving per-token loss translates into a sharp jump in the discontinuous score:</p>
+<ul>
+<li>If a task needs <span class="arithmatex">\(k\)</span> tokens all correct, and per-token error probability falls smoothly with scale, then exact-match <span class="arithmatex">\(\approx (1 - p_{\text{err}})^k\)</span> — which stays near zero, then rises steeply once <span class="arithmatex">\(p_{\text{err}}\)</span> crosses a threshold. The <em>underlying</em> improvement was smooth all along; the metric <em>created</em> the cliff.</li>
+</ul>
+<p>Swap the discontinuous metric for a smooth one — token-level edit distance, per-token accuracy, or a calibrated log-likelihood — and many &ldquo;emergent&rdquo; curves straighten out into the same gentle power-law improvement that the loss shows.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">smooth_per_token_accuracy</span><span class="p">(</span><span class="n">N</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Per-token correctness improves SMOOTHLY (power-law) with scale.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="mf">0.9</span> <span class="o">*</span> <span class="p">(</span><span class="n">N</span> <span class="o">/</span> <span class="mf">1e9</span><span class="p">)</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="mf">0.12</span><span class="p">)</span>   <span class="c1"># creeps up from ~0.1 toward 1.0</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">exact_match</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">k_tokens</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;All-or-nothing metric: need ALL k tokens correct simultaneously.&quot;&quot;&quot;</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">smooth_per_token_accuracy</span><span class="p">(</span><span class="n">N</span><span class="p">),</span> <span class="mf">1e-9</span><span class="p">,</span> <span class="mi">1</span> <span class="o">-</span> <span class="mf">1e-9</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">p</span> <span class="o">**</span> <span class="n">k_tokens</span>
+
+<span class="n">Ns</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">logspace</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">12</span><span class="p">,</span> <span class="mi">9</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;N&#39;</span><span class="si">:</span><span class="s2">&gt;10</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;per-token&#39;</span><span class="si">:</span><span class="s2">&gt;10</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;EM(k=1)&#39;</span><span class="si">:</span><span class="s2">&gt;9</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;EM(k=30)&#39;</span><span class="si">:</span><span class="s2">&gt;10</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">N</span> <span class="ow">in</span> <span class="n">Ns</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">N</span><span class="si">:</span><span class="s2">10.1e</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">smooth_per_token_accuracy</span><span class="p">(</span><span class="n">N</span><span class="p">)</span><span class="si">:</span><span class="s2">10.3f</span><span class="si">}</span><span class="s2"> &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">exact_match</span><span class="p">(</span><span class="n">N</span><span class="p">,</span><span class="mi">1</span><span class="p">)</span><span class="si">:</span><span class="s2">9.3f</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">exact_match</span><span class="p">(</span><span class="n">N</span><span class="p">,</span><span class="mi">30</span><span class="p">)</span><span class="si">:</span><span class="s2">10.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># per-token rises gently; EM(k=30) stays ~0 then &quot;emerges&quot; sharply -- same model!</span>
+</code></pre></div>
+<p>The synthesis most researchers now hold: <strong>emergence is real as a phenomenon of how we measure and use models</strong> (a model genuinely <em>can</em> suddenly do a multi-step task once its per-step reliability crosses a threshold), but it is <strong>not a discontinuity in the underlying learning</strong> — the loss was improving smoothly the whole time. For <em>planning</em>, the takeaway is reassuring: you can predict loss reliably from scaling laws, but you <strong>cannot</strong> reliably predict the exact scale at which a specific downstream capability will &ldquo;click,&rdquo; because that depends on the metric&rsquo;s threshold and the task&rsquo;s token-length. Predict loss; treat capability thresholds as uncertain.</p>
+<div class="admonition warning">
+<p class="admonition-title">Don&rsquo;t over-extrapolate a single benchmark</p>
+<p>Because downstream metrics are noisy and threshold-sensitive, never plan a multi-million-dollar run around the promise that &ldquo;ability X emerges at scale Y.&rdquo; Loss extrapolates; capabilities are lumpy. Validate capability claims with smooth proxy metrics (per-token accuracy, Brier score, log-likelihood of correct answers) and several seeds before betting the budget.</p>
+</div>
+<hr />
+<h2 id="limits-caveats-the-frontier">Limits, Caveats &amp; The Frontier<a class="headerlink" href="#limits-caveats-the-frontier" title="Permanent link">¶</a></h2>
+<p>Scaling laws are powerful but not omniscient. Keep these failure modes in mind:</p>
+<ul>
+<li><strong>Constants are not universal.</strong> <span class="arithmatex">\(E\)</span>, <span class="arithmatex">\(A\)</span>, <span class="arithmatex">\(B\)</span> depend on the tokenizer, the data distribution, and the eval set. Refit for <em>your</em> corpus; do not import another lab&rsquo;s coefficients. The <em>exponents</em> transfer better than the <em>offsets</em>.</li>
+<li><strong>Architecture changes shift the offset.</strong> Better architectures (SwiGLU, RoPE, good norm placement — see <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a>) and better data move the curve <em>down</em> without changing the slope much. That vertical shift is &ldquo;free loss,&rdquo; and it compounds: a one-time architectural win is equivalent to a constant multiplier on compute forever.</li>
+<li><strong>MoE rewrites the FLOP accounting.</strong> With sparse experts the relevant <span class="arithmatex">\(N\)</span> for FLOPs is <em>active</em> params; scaling laws have been re-derived for MoE in terms of active params, total params, and the number of experts. The &ldquo;20× rule&rdquo; does not transfer unmodified — see <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts (MoE) Architectures</a>.</li>
+<li><strong>Hyperparameters must scale too.</strong> Optimal learning rate, batch size, and warmup all drift with scale. A scaling law fit on mistuned runs is worthless — this was Kaplan&rsquo;s lesson. Techniques like <span class="arithmatex">\(\mu\)</span>P (maximal-update parameterization) aim to make the optimal LR <em>scale-invariant</em> so you can tune small and transfer; see <a href="../03-pretraining/10-lr-schedules-hparams.html">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a>.</li>
+<li><strong>Test-time compute is a new axis.</strong> Recent work shows you can buy capability by spending more <em>inference</em> compute (longer chains of thought, search, self-consistency) instead of more <em>training</em> compute — a different scaling curve entirely. See <a href="../05-posttraining-alignment/10-reasoning-test-time-compute.html">Reasoning, Chain-of-Thought &amp; Test-Time Compute</a>. The frontier question of 2025–2026 is how to <em>jointly</em> optimize pretraining, post-training, and test-time compute under one budget.</li>
+<li><strong>The data wall is real.</strong> High-quality human text is finite. Past a few epochs, repetition stops helping, which is why synthetic data, multimodal data, and curation are now first-class scaling levers.</li>
+</ul>
+<p>The grand picture: scaling laws turned LLM development from alchemy into engineering. They are the reason a lab can commit hundreds of millions of dollars to a training run <em>before</em> it starts and be confident about the loss it will hit. But they predict <em>loss</em>, and loss is a proxy. The art that remains is choosing the right regime (compute-, inference-, or data-limited), refitting the constants for your own setup, and remembering that the cliff in your benchmark might be a feature of your ruler, not your model.</p>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Language-model loss follows clean <strong>power laws</strong> in parameters and data: <span class="arithmatex">\(L(N,D) = E + A N^{-\alpha} + B D^{-\beta}\)</span>, with a small irreducible floor <span class="arithmatex">\(E\)</span> (the entropy of text) and small exponents, so returns diminish but never vanish.</li>
+<li>Training compute for a dense transformer is <strong><span class="arithmatex">\(C \approx 6ND\)</span></strong> (2 forward + 4 backward FLOPs per parameter per token); inference is <span class="arithmatex">\(\approx 2ND\)</span>. Convert to wall-clock/dollars via <strong>MFU</strong> (typically 0.3–0.55).</li>
+<li><strong>Kaplan (2020)</strong> concluded &ldquo;grow the model fast&rdquo; (<span class="arithmatex">\(N \propto C^{0.73}\)</span>); <strong>Chinchilla (2022)</strong> corrected a learning-rate-schedule confound and found you should <strong>scale <span class="arithmatex">\(N\)</span> and <span class="arithmatex">\(D\)</span> together</strong> (<span class="arithmatex">\(a \approx b \approx 0.5\)</span>).</li>
+<li>The famous heuristic is <strong><span class="arithmatex">\(\approx 20\)</span> tokens per parameter</strong> at the compute-optimal point — it falls out of <span class="arithmatex">\(\alpha \approx \beta\)</span> in the Lagrange-multiplier optimization, and Chinchilla beat the 4×-larger Gopher to prove it.</li>
+<li><strong>Fit scaling laws in log space with a robust (Huber) loss</strong>, exclude under-converged runs, and validate by <em>extrapolating</em> to a held-out large run — not just interpolating.</li>
+<li><strong>Inference-aware over-training</strong> (Llama-style: hundreds to thousands of tokens/param) is rational when you will serve the model heavily: accept higher training loss for a permanently cheaper, smaller model.</li>
+<li>The <strong>data wall</strong> means repeated tokens are worth less; up to ~4 epochs is roughly free, beyond ~16 epochs returns collapse — so data quality and synthetic data become scaling levers.</li>
+<li><strong>Emergent abilities</strong> are largely an artifact of discontinuous metrics: loss improves smoothly, but all-or-nothing scores jump. Predict loss reliably; treat capability thresholds as uncertain.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Scaling laws remain the foundational planning tool for frontier LLM training, with the field actively extending them into the inference and test-time compute regimes. The Chinchilla &ldquo;20 tokens per parameter&rdquo; rule is now understood as one point on a spectrum: real deployments routinely over-train by 100–2000× for inference efficiency, and 2024–2026 research is beginning to unify pre-training and test-time compute into a single joint budget.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2001.08361">Kaplan et al., <em>Scaling Laws for Neural Language Models</em> (2020)</a> — the original paper establishing power-law loss curves across seven orders of magnitude of compute.</li>
+<li><a href="https://arxiv.org/abs/2203.15556">Hoffmann et al., <em>Training Compute-Optimal Large Language Models</em> (Chinchilla, 2022)</a> — corrected the LR-schedule confound; established the equal-exponent result and the ~20 tokens/param rule.</li>
+<li><a href="https://arxiv.org/abs/2004.10802">Sharma &amp; Kaplan, <em>A Neural Scaling Law from the Dimension of the Data Manifold</em> (2020)</a> — first-principles derivation of why loss follows a power law, via data-manifold intrinsic dimension.</li>
+<li><a href="https://arxiv.org/abs/2010.14701">Henighan et al., <em>Scaling Laws for Autoregressive Generative Modeling</em> (2020)</a> — shows the same power-law form holds across image, video, math, and multimodal domains.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2401.00448">Sardana et al., <em>Beyond Chinchilla-Optimal: Accounting for Inference in Language Model Scaling Laws</em> (2024)</a> — formalizes inference-aware over-training; shows that at ~1B inference requests, models should be trained far smaller and longer than Chinchilla prescribes.</li>
+<li><a href="https://arxiv.org/abs/2305.16264">Muennighoff et al., <em>Scaling Data-Constrained Language Models</em> (NeurIPS 2023)</a> — modifies scaling laws for finite data; finds up to ~4 epochs of repetition is nearly free, beyond ~16 epochs returns collapse.</li>
+<li><a href="https://arxiv.org/abs/2408.03314">Snell et al., <em>Scaling LLM Test-Time Compute Optimally</em> (2024)</a> — demonstrates test-time compute scaling can outperform a 14× larger model; introduces a new compute axis orthogonal to training scale.</li>
+<li><a href="https://arxiv.org/abs/2304.15004">Schaeffer et al., <em>Are Emergent Abilities of Large Language Models a Mirage?</em> (NeurIPS 2023)</a> — shows that apparent capability phase-transitions are largely an artifact of discontinuous metrics, not discontinuities in the underlying loss.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://jax-ml.github.io/scaling-book/">Austin et al., <em>How to Scale Your Model</em> (Google DeepMind, 2025)</a> — practical systems guide to scaling transformers on TPUs/GPUs, covering hardware, parallelism, and the engineering side of capacity planning.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Kaplan, McCandlish, Henighan, et al. <em>Scaling Laws for Neural Language Models</em>. arXiv 2020. (The origin of LLM scaling laws.)</li>
+<li>Hoffmann, Borgeaud, Mensch, et al. <em>Training Compute-Optimal Large Language Models</em> (Chinchilla). arXiv 2022. (The correction and the 20× rule.)</li>
+<li>Henighan, Kaplan, Katz, et al. <em>Scaling Laws for Autoregressive Generative Modeling</em>. arXiv 2020. (Scaling across modalities.)</li>
+<li>Sharma, Kaplan. <em>A Neural Scaling Law from the Dimension of the Data Manifold</em>. arXiv 2020. (A first-principles &ldquo;why power laws&rdquo; argument.)</li>
+<li>Sardana, Frankle, et al. <em>Beyond Chinchilla-Optimal: Accounting for Inference in Language Model Scaling Laws</em>. arXiv 2023. (Inference-aware over-training.)</li>
+<li>Muennighoff, Rush, Barak, et al. <em>Scaling Data-Constrained Language Models</em>. NeurIPS 2023. (The data wall and repetition.)</li>
+<li>Wei, Tay, Bommasani, et al. <em>Emergent Abilities of Large Language Models</em>. TMLR 2022.</li>
+<li>Schaeffer, Miranda, Koyejo. <em>Are Emergent Abilities of Large Language Models a Mirage?</em>. NeurIPS 2023.</li>
+<li>Hestness, Narang, Ardalani, et al. <em>Deep Learning Scaling is Predictable, Empirically</em>. arXiv 2017. (An early, prescient empirical scaling study.)</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="03-pretraining-objective.html"><span class="pn-label">← Previous</span><span class="pn-title">The Pretraining Objective &amp; Loss</span></a>
+<a class="next" href="05-distributed-data-parallel.html"><span class="pn-label">Next →</span><span class="pn-title">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-shape-of-the-curve-power-laws-in-loss">The Shape of the Curve: Power Laws in Loss</a></li>
+<li class="toc-l3"><a href="#what-we-are-measuring">What we are measuring</a></li>
+<li class="toc-l3"><a href="#the-empirical-observation">The empirical observation</a></li>
+<li class="toc-l3"><a href="#the-joint-form-the-chinchilla-parameterization">The joint form: the Chinchilla parameterization</a></li>
+<li class="toc-l2"><a href="#compute-flops-and-the-c-approx-6nd-rule">Compute, FLOPs, and the \(C \approx 6ND\) Rule</a></li>
+<li class="toc-l3"><a href="#deriving-the-factor-of-6">Deriving the factor of 6</a></li>
+<li class="toc-l3"><a href="#hardware-flops-vs-model-flops">Hardware FLOPs vs. model FLOPs</a></li>
+<li class="toc-l2"><a href="#kaplan-vs-chinchilla-the-great-correction">Kaplan vs. Chinchilla: The Great Correction</a></li>
+<li class="toc-l3"><a href="#kaplan-et-al-2020-scaling-laws-are-born">Kaplan et al. (2020): scaling laws are born</a></li>
+<li class="toc-l3"><a href="#the-bug-a-confounded-learning-rate-schedule">The bug: a confounded learning-rate schedule</a></li>
+<li class="toc-l3"><a href="#the-chinchilla-result-scale-n-and-d-in-lockstep">The Chinchilla result: scale \(N\) and \(D\) in lockstep</a></li>
+<li class="toc-l3"><a href="#the-approx-20-tokens-per-parameter-rule">The &amp;ldquo;\(\approx 20\) tokens per parameter&amp;rdquo; rule</a></li>
+<li class="toc-l2"><a href="#deriving-the-compute-optimal-allocation">Deriving the Compute-Optimal Allocation</a></li>
+<li class="toc-l2"><a href="#fitting-a-scaling-law-from-scratch">Fitting a Scaling Law From Scratch</a></li>
+<li class="toc-l2"><a href="#a-worked-budget-planning-example">A Worked Budget-Planning Example</a></li>
+<li class="toc-l2"><a href="#beyond-chinchilla-inference-over-training-data-repetition">Beyond Chinchilla: Inference, Over-Training &amp;amp; Data Repetition</a></li>
+<li class="toc-l3"><a href="#inference-aware-scaling-why-you-deliberately-over-train">Inference-aware scaling: why you deliberately over-train</a></li>
+<li class="toc-l3"><a href="#data-repetition-and-the-data-wall">Data repetition and the data wall</a></li>
+<li class="toc-l2"><a href="#the-emergent-abilities-debate">The Emergent Abilities Debate</a></li>
+<li class="toc-l2"><a href="#limits-caveats-the-frontier">Limits, Caveats &amp;amp; The Frontier</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1569 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead — The LLM Stack</title>
+<meta name="description" content="The accept/reject sampling that preserves the target distribution (derive it), draft-then-verify, draft model choice, Medusa heads, EAGLE/EAGLE-2/3 (feature-lev">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="active" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="76-speculative-decoding-draft-models-medusa-eagle-lookahead">7.6 Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead<a class="headerlink" href="#76-speculative-decoding-draft-models-medusa-eagle-lookahead" title="Permanent link">¶</a></h1>
+<p>Autoregressive decoding has a humiliating property: to produce one token, a 70-billion-parameter model must move every one of its weights from HBM (high-bandwidth memory) to the compute units, do a tiny amount of arithmetic, and throw the weights away — only to load them all again for the next token. As we saw in <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>, the decode phase is <strong>memory-bandwidth bound</strong>. The GPU spends almost all of its time shuttling parameters, and almost none of it doing math. A single decode step on an A100 might touch 140 GB of weights (bf16, 70B params) to compute logits for <em>one</em> position. The arithmetic intensity is laughably low.</p>
+<p>Here is the key observation that makes speculative decoding possible: a forward pass over a batch of <span class="arithmatex">\(K\)</span> tokens costs almost exactly the same wall-clock time as a forward pass over <span class="arithmatex">\(1\)</span> token, because in both cases you load all the weights once. The cost of decode is dominated by weight movement, not by the per-token FLOPs. So if we could somehow <em>guess</em> the next <span class="arithmatex">\(K\)</span> tokens cheaply, and then <strong>verify all <span class="arithmatex">\(K\)</span> of them in a single forward pass</strong> of the big model, we would get up to <span class="arithmatex">\(K\)</span> tokens for the price of one — without changing the output distribution at all.</p>
+<p>That is exactly what speculative decoding does. A cheap <strong>drafter</strong> proposes a short continuation; the expensive <strong>target</strong> model verifies it in one parallel pass; a clever accept/reject rule guarantees the accepted tokens are distributed <em>exactly</em> as if the target had sampled them one at a time. This chapter derives that guarantee from scratch, implements it, and then surveys the family of modern drafters — separate draft models, <strong>Medusa</strong> heads, the <strong>EAGLE</strong> line, and <strong>lookahead decoding</strong> — along with the tree-attention machinery that makes verifying many candidates cheap. We will be precise about what determines the speedup: the <strong>acceptance rate</strong> and the <strong>cost ratio</strong> between drafter and target.</p>
+<h2 id="the-core-idea-draft-then-verify">The Core Idea: Draft, Then Verify<a class="headerlink" href="#the-core-idea-draft-then-verify" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-spec-decoding">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 372" role="img" aria-label="Speculative decoding: a small draft model proposes four tokens autoregressively; the large target model verifies all four in one parallel forward pass; the first three are accepted, the fourth is rejected and corrected, and everything after the rejection is discarded.">
+  <defs>
+    <marker id="sd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-spec-decoding text{ fill:var(--ink-soft); }
+    #fig-spec-decoding .head{ font:700 13px var(--sans,sans-serif); }
+    #fig-spec-decoding .sub{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-spec-decoding .tok{ font:700 14px var(--mono,monospace); }
+    #fig-spec-decoding .cost{ font:600 11px var(--mono,monospace); fill:var(--muted); }
+    #fig-spec-decoding .mark{ font:700 14px var(--sans,sans-serif); }
+    #fig-spec-decoding .note{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-spec-decoding .big{ font:700 12px var(--sans,sans-serif); }
+  </style>
+
+
+
+
+
+  <g data-anim="1">
+    <text x="20" y="32" class="head">1 · Draft</text>
+    <text x="120" y="32" class="sub">small model q, γ=4 cheap autoregressive steps</text>
+
+
+    <rect x="20" y="44" width="142" height="40" rx="6" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="91" y="70" text-anchor="middle" class="tok">prefix x≤t</text>
+
+
+    <g class="v-fill v-accent-s" stroke-width="1.5">
+      <rect x="180" y="44" width="96" height="40" rx="6"/>
+      <rect x="296" y="44" width="96" height="40" rx="6"/>
+      <rect x="412" y="44" width="96" height="40" rx="6"/>
+      <rect x="528" y="44" width="96" height="40" rx="6"/>
+    </g>
+    <text x="228" y="70" text-anchor="middle" class="tok v-accent" fill="var(--accent)">d₁</text>
+    <text x="344" y="70" text-anchor="middle" class="tok v-accent" fill="var(--accent)">d₂</text>
+    <text x="460" y="70" text-anchor="middle" class="tok v-accent" fill="var(--accent)">d₃</text>
+    <text x="576" y="70" text-anchor="middle" class="tok v-accent" fill="var(--accent)">d₄</text>
+
+
+    <g class="v-accent" fill="currentColor" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#sd-arrow)" opacity="0.85">
+      <line x1="162" y1="64" x2="178" y2="64"/>
+      <line x1="278" y1="64" x2="294" y2="64"/>
+      <line x1="394" y1="64" x2="410" y2="64"/>
+      <line x1="510" y1="64" x2="526" y2="64"/>
+    </g>
+    <text x="654" y="58" class="cost">cost ≈ γ · c</text>
+    <text x="654" y="73" class="cost">(tiny)</text>
+  </g>
+
+
+  <g data-anim="2">
+    <text x="20" y="138" class="head">2 · Verify</text>
+    <text x="120" y="138" class="sub">target model p scores all γ+1 positions in ONE parallel pass</text>
+
+
+    <rect x="180" y="150" width="560" height="46" rx="8" class="v-fill viz-sweep" stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+    <text x="460" y="178" text-anchor="middle" class="big" fill="var(--accent2,#3b82f6)">target forward pass  →  p(·|x≤t), … , p(·|x≤t,d₁..d₄)</text>
+
+
+    <g class="v-grid" stroke-width="1" opacity="0.8">
+      <line x1="228" y1="196" x2="228" y2="208"/>
+      <line x1="344" y1="196" x2="344" y2="208"/>
+      <line x1="460" y1="196" x2="460" y2="208"/>
+      <line x1="576" y1="196" x2="576" y2="208"/>
+      <line x1="692" y1="196" x2="692" y2="208"/>
+    </g>
+    <text x="692" y="142" text-anchor="middle" class="sub">bonus slot</text>
+    <text x="654" y="232" class="cost">cost = 1 pass</text>
+
+
+    <g class="v-accent-s" stroke="var(--accent)" stroke-width="1" stroke-dasharray="3 3" opacity="0.5">
+      <line x1="228" y1="84" x2="228" y2="150"/>
+      <line x1="344" y1="84" x2="344" y2="150"/>
+      <line x1="460" y1="84" x2="460" y2="150"/>
+      <line x1="576" y1="84" x2="576" y2="150"/>
+    </g>
+  </g>
+
+
+  <g data-anim="3">
+    <text x="20" y="266" class="head">3 · Accept / reject</text>
+    <text x="190" y="266" class="sub">walk left→right; stop at first rejection</text>
+
+
+    <rect x="180" y="278" width="96" height="40" rx="6" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <text x="222" y="304" text-anchor="middle" class="tok" fill="var(--good,#2f9e6e)">d₁</text>
+    <text x="261" y="296" text-anchor="middle" class="mark" fill="var(--good,#2f9e6e)">✓</text>
+
+    <rect x="296" y="278" width="96" height="40" rx="6" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <text x="338" y="304" text-anchor="middle" class="tok" fill="var(--good,#2f9e6e)">d₂</text>
+    <text x="377" y="296" text-anchor="middle" class="mark" fill="var(--good,#2f9e6e)">✓</text>
+
+    <rect x="412" y="278" width="96" height="40" rx="6" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <text x="454" y="304" text-anchor="middle" class="tok" fill="var(--good,#2f9e6e)">d₃</text>
+    <text x="493" y="296" text-anchor="middle" class="mark" fill="var(--good,#2f9e6e)">✓</text>
+  </g>
+
+  <g data-anim="4">
+
+    <rect x="528" y="278" width="96" height="40" rx="6" class="v-fill viz-pulse" stroke="var(--warn,#e0a106)" stroke-width="1.8" stroke-dasharray="5 3"/>
+    <text x="576" y="304" text-anchor="middle" class="tok" fill="var(--warn,#e0a106)">d₄</text>
+    <text x="615" y="296" text-anchor="middle" class="mark" fill="var(--warn,#e0a106)">✗</text>
+
+    <line x1="576" y1="322" x2="576" y2="338" class="v-stroke" stroke="currentColor" stroke-width="1.2" marker-end="url(#sd-arrow)" opacity="0.7"/>
+  </g>
+
+
+  <g data-anim="5">
+    <text x="20" y="356" class="head">Emit</text>
+
+    <rect x="180" y="342" width="328" height="26" rx="6" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="344" y="360" text-anchor="middle" class="big" fill="var(--good,#2f9e6e)">d₁ d₂ d₃  (accepted prefix)</text>
+
+    <rect x="528" y="342" width="96" height="26" rx="6" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+    <text x="576" y="360" text-anchor="middle" class="big" fill="var(--accent2,#3b82f6)">x̂ (corrected)</text>
+
+    <text x="654" y="360" class="note">d₄.. discarded</text>
+    <text x="544" y="332" text-anchor="middle" class="note">resample (p−q)₊</text>
+  </g>
+</svg>
+<figcaption><b>Propose cheaply, verify in one pass, keep the accepted prefix.</b> The small drafter proposes γ=4 tokens autoregressively, then the target verifies all of them — plus a free bonus slot — in a single parallel forward pass. Walking left to right, the accept/reject rule keeps the longest accepted prefix (d₁ d₂ d₃), corrects the first rejection by resampling from the residual (p−q)₊, and discards every draft token after it. Four positions advanced for the price of one target pass — and the emitted tokens are distributed exactly as the target's own sampler.</figcaption>
+</figure>
+
+<p>Let the target model define a next-token distribution <span class="arithmatex">\(p(\cdot \mid x_{&lt;t})\)</span> over the vocabulary, given the prefix <span class="arithmatex">\(x_{&lt;t}\)</span>. Ordinary autoregressive sampling draws <span class="arithmatex">\(x_t \sim p(\cdot \mid x_{&lt;t})\)</span>, appends it, and repeats — one expensive forward pass per token.</p>
+<p>Speculative decoding introduces a second, much cheaper model <span class="arithmatex">\(q\)</span>, the <strong>draft model</strong> (or <em>drafter</em>). One full speculative step looks like this:</p>
+<p><figure class="viz" id="fig-specdec-draft-verify-pipeline">
+<button class="viz-replay" type="button">&#x21bb; replay</button>
+<svg viewBox="0 0 760 570" role="img" aria-label="One speculative decoding step: prefix tokens feed a cheap autoregressive drafter that proposes gamma draft tokens one at a time, then a single parallel target forward pass scores all gamma+1 positions at once, and a left-to-right accept/reject sweep emits between 1 and gamma+1 tokens per target pass.">
+<defs>
+  <marker id="sdv-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#6b7280)"/>
+  </marker>
+  <marker id="sdv-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#2563eb)"/>
+  </marker>
+  <marker id="sdv-arrow-d" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#7c3aed)"/>
+  </marker>
+  <marker id="sdv-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+</defs></p>
+<style>
+  #fig-specdec-draft-verify-pipeline text { fill: var(--ink-soft,#374151); font-family: var(--sans,sans-serif); }
+  #fig-specdec-draft-verify-pipeline .stage-lbl { font: 700 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-specdec-draft-verify-pipeline .chip-txt  { font: 600 10px var(--mono,monospace); }
+  #fig-specdec-draft-verify-pipeline .cap       { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-specdec-draft-verify-pipeline .cap-it    { font: italic 9px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-specdec-draft-verify-pipeline .small-eq  { font: 400 8px var(--mono,monospace); fill: var(--muted,#6b7280); }
+  #fig-specdec-draft-verify-pipeline .bar-fill  { opacity: 0.75; }
+</style>
+
+<p><g data-anim="1">
+  <rect x="8" y="10" width="744" height="64" rx="8" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="18" y="26" class="stage-lbl">PREFIX</text></p>
+<p><rect x="100" y="22" width="36" height="24" rx="4" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#9ca3af)" stroke-width="1.2"/>
+  <text x="118" y="39" text-anchor="middle" class="chip-txt">x&#x2081;</text>
+  <rect x="143" y="22" width="36" height="24" rx="4" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#9ca3af)" stroke-width="1.2"/>
+  <text x="161" y="39" text-anchor="middle" class="chip-txt">x&#x2082;</text>
+  <text x="192" y="39" text-anchor="middle" class="chip-txt">&hellip;</text>
+  <rect x="205" y="22" width="36" height="24" rx="4" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#9ca3af)" stroke-width="1.2"/>
+  <text x="223" y="39" text-anchor="middle" class="chip-txt">x&#x209C;</text>
+  <text x="256" y="39" class="cap">given context (prefix)</text>
+</g></p>
+<p><g data-anim="1">
+  <line x1="110" y1="76" x2="110" y2="98" stroke="var(--ink-soft,#6b7280)" stroke-width="1.4" marker-end="url(#sdv-arrow)"/>
+  <text x="125" y="91" class="cap-it">gamma cheap autoregressive steps with drafter q</text>
+</g></p>
+<p><g data-anim="2">
+  <rect x="8" y="102" width="744" height="122" rx="8" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="18" y="118" class="stage-lbl">DRAFT</text>
+  <text x="18" y="130" class="stage-lbl">(drafter q)</text></p>
+<p><rect x="100" y="118" width="32" height="20" rx="3" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#9ca3af)" stroke-width="1" opacity="0.4"/>
+  <text x="116" y="133" text-anchor="middle" class="chip-txt" opacity="0.4">x&#x2081;</text>
+  <text x="140" y="133" class="chip-txt" opacity="0.35">&hellip;</text>
+  <rect x="151" y="118" width="32" height="20" rx="3" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#9ca3af)" stroke-width="1" opacity="0.4"/>
+  <text x="167" y="133" text-anchor="middle" class="chip-txt" opacity="0.4">x&#x209C;</text></p>
+<p><rect x="190" y="116" width="48" height="26" rx="5" fill="var(--accent-2,#7c3aed)" fill-opacity="0.18" stroke="var(--accent-2,#7c3aed)" stroke-width="1.5"/>
+  <text x="214" y="134" text-anchor="middle" class="chip-txt" fill="var(--accent-2,#7c3aed)">d&#x2081;</text>
+  <text x="214" y="152" text-anchor="middle" class="small-eq">~q(|x_t)</text></p>
+<p><line x1="240" y1="129" x2="256" y2="129" stroke="var(--accent-2,#7c3aed)" stroke-width="1.3" marker-end="url(#sdv-arrow-d)"/></p>
+<p><rect x="258" y="116" width="48" height="26" rx="5" fill="var(--accent-2,#7c3aed)" fill-opacity="0.18" stroke="var(--accent-2,#7c3aed)" stroke-width="1.5"/>
+  <text x="282" y="134" text-anchor="middle" class="chip-txt" fill="var(--accent-2,#7c3aed)">d&#x2082;</text>
+  <text x="282" y="152" text-anchor="middle" class="small-eq">~q(|d1)</text></p>
+<p><line x1="308" y1="129" x2="324" y2="129" stroke="var(--accent-2,#7c3aed)" stroke-width="1.3" marker-end="url(#sdv-arrow-d)"/></p>
+<p><rect x="326" y="116" width="48" height="26" rx="5" fill="var(--accent-2,#7c3aed)" fill-opacity="0.18" stroke="var(--accent-2,#7c3aed)" stroke-width="1.5"/>
+  <text x="350" y="134" text-anchor="middle" class="chip-txt" fill="var(--accent-2,#7c3aed)">d&#x2083;</text>
+  <text x="350" y="152" text-anchor="middle" class="small-eq">~q(|d2)</text></p>
+<p><text x="394" y="133" text-anchor="middle" class="chip-txt" fill="var(--accent-2,#7c3aed)" opacity="0.6">&hellip;</text>
+  <line x1="376" y1="129" x2="408" y2="129" stroke="var(--accent-2,#7c3aed)" stroke-width="1.3" marker-end="url(#sdv-arrow-d)"/></p>
+<p><rect x="410" y="116" width="48" height="26" rx="5" fill="var(--accent-2,#7c3aed)" fill-opacity="0.18" stroke="var(--accent-2,#7c3aed)" stroke-width="1.5"/>
+  <text x="434" y="134" text-anchor="middle" class="chip-txt" fill="var(--accent-2,#7c3aed)">d_g</text>
+  <text x="434" y="152" text-anchor="middle" class="small-eq">~q(|d_{g-1})</text></p>
+<p><text x="324" y="170" text-anchor="middle" class="cap" fill="var(--accent-2,#7c3aed)">one at a time — each conditioned on the previous</text>
+  <line x1="190" y1="176" x2="458" y2="176" stroke="var(--accent-2,#7c3aed)" stroke-width="1" opacity="0.4"/>
+  <text x="312" y="189" text-anchor="middle" class="cap" fill="var(--accent-2,#7c3aed)">gamma draft tokens  (g = 4-8 in practice)</text></p>
+<p><text x="510" y="128" class="cap">cheap: g steps of</text>
+  <text x="510" y="140" class="cap">small model q</text>
+  <text x="510" y="152" class="cap">(30-70x smaller</text>
+  <text x="510" y="164" class="cap">than target p)</text>
+  <text x="510" y="176" class="cap">=&gt; negligible cost</text>
+  <text x="510" y="194" class="cap" fill="var(--muted,#9ca3af)">g = gamma;  d_g = d_gamma</text>
+</g></p>
+<p><g data-anim="2">
+  <line x1="110" y1="226" x2="110" y2="248" stroke="var(--ink-soft,#6b7280)" stroke-width="1.4" marker-end="url(#sdv-arrow)"/>
+  <text x="125" y="241" class="cap-it">ONE parallel forward pass of target p over all g+1 positions</text>
+</g></p>
+<p><g data-anim="3">
+  <rect x="8" y="252" width="744" height="120" rx="8" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="18" y="268" class="stage-lbl">VERIFY</text>
+  <text x="18" y="280" class="stage-lbl">(target p)</text></p>
+<p><rect x="96" y="262" width="370" height="60" rx="4" fill="var(--accent,#2563eb)" fill-opacity="0.07" stroke="var(--accent,#2563eb)" stroke-width="1.8" stroke-dasharray="5 3"/></p>
+<p><line x1="102" y1="338" x2="460" y2="338" stroke="var(--accent,#2563eb)" stroke-width="2.2" marker-end="url(#sdv-arrow-acc)"/></p>
+<p><rect x="102" y="268" width="58" height="48" rx="4" fill="var(--surface-3,#e5e7eb)" stroke="var(--accent,#2563eb)" stroke-width="1.2"/>
+  <text x="131" y="280" text-anchor="middle" class="small-eq">p(|x_t)</text>
+  <rect x="108" y="294" width="5" height="14" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="115" y="299" width="5" height="9" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="122" y="291" width="5" height="17" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="129" y="298" width="5" height="10" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="136" y="295" width="5" height="13" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="143" y="300" width="5" height="8" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <text x="131" y="322" text-anchor="middle" class="small-eq" fill="var(--muted,#6b7280)">pos 0</text></p>
+<p><rect x="168" y="268" width="58" height="48" rx="4" fill="var(--surface-3,#e5e7eb)" stroke="var(--accent,#2563eb)" stroke-width="1.2"/>
+  <text x="197" y="280" text-anchor="middle" class="small-eq">p(|d1)</text>
+  <rect x="174" y="298" width="5" height="10" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="181" y="292" width="5" height="16" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="188" y="296" width="5" height="12" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="195" y="299" width="5" height="9" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="202" y="294" width="5" height="14" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="209" y="301" width="5" height="7" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <text x="197" y="322" text-anchor="middle" class="small-eq" fill="var(--muted,#6b7280)">pos 1</text></p>
+<p><rect x="234" y="268" width="58" height="48" rx="4" fill="var(--surface-3,#e5e7eb)" stroke="var(--accent,#2563eb)" stroke-width="1.2"/>
+  <text x="263" y="280" text-anchor="middle" class="small-eq">p(|d2)</text>
+  <rect x="240" y="296" width="5" height="12" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="247" y="291" width="5" height="17" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="254" y="299" width="5" height="9" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="261" y="295" width="5" height="13" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="268" y="293" width="5" height="15" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="275" y="300" width="5" height="8" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <text x="263" y="322" text-anchor="middle" class="small-eq" fill="var(--muted,#6b7280)">pos 2</text></p>
+<p><rect x="300" y="268" width="58" height="48" rx="4" fill="var(--surface-3,#e5e7eb)" stroke="var(--accent,#2563eb)" stroke-width="1.2"/>
+  <text x="329" y="280" text-anchor="middle" class="small-eq">p(|d3)</text>
+  <rect x="306" y="300" width="5" height="8" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="313" y="293" width="5" height="15" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="320" y="290" width="5" height="18" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="327" y="297" width="5" height="11" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="334" y="295" width="5" height="13" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="341" y="301" width="5" height="7" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <text x="329" y="322" text-anchor="middle" class="small-eq" fill="var(--muted,#6b7280)">pos 3</text></p>
+<p><rect x="366" y="268" width="58" height="48" rx="4" fill="var(--surface-3,#e5e7eb)" stroke="var(--accent,#2563eb)" stroke-width="1.2"/>
+  <text x="395" y="280" text-anchor="middle" class="small-eq">p(|d_g)</text>
+  <rect x="372" y="297" width="5" height="11" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="379" y="292" width="5" height="16" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="386" y="298" width="5" height="10" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="393" y="294" width="5" height="14" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="400" y="296" width="5" height="12" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <rect x="407" y="302" width="5" height="6" class="bar-fill" fill="var(--accent,#2563eb)"/>
+  <text x="395" y="322" text-anchor="middle" class="small-eq" fill="var(--muted,#6b7280)">pos g</text></p>
+<p><text x="280" y="353" text-anchor="middle" class="cap" fill="var(--accent,#2563eb)">all g+1 positions scored in ONE pass</text>
+  <text x="280" y="365" text-anchor="middle" class="cap" fill="var(--accent,#2563eb)">decode is memory-bound: g+1 positions ~ 1 token of weight movement</text></p>
+<p><rect x="482" y="262" width="62" height="48" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.12" stroke="var(--warn,#e0a106)" stroke-width="1.4" stroke-dasharray="4 2"/>
+  <text x="513" y="278" text-anchor="middle" style="font:600 8px var(--mono,monospace); fill:var(--warn,#e0a106)">pos g+1</text>
+  <text x="513" y="289" text-anchor="middle" style="font:600 8px var(--sans,sans-serif); fill:var(--warn,#e0a106)">(bonus)</text>
+  <rect x="490" y="296" width="5" height="8" class="bar-fill" fill="var(--warn,#e0a106)"/>
+  <rect x="497" y="292" width="5" height="12" class="bar-fill" fill="var(--warn,#e0a106)"/>
+  <rect x="504" y="298" width="5" height="6" class="bar-fill" fill="var(--warn,#e0a106)"/>
+  <rect x="511" y="291" width="5" height="13" class="bar-fill" fill="var(--warn,#e0a106)"/>
+  <rect x="518" y="295" width="5" height="9" class="bar-fill" fill="var(--warn,#e0a106)"/>
+  <text x="513" y="320" text-anchor="middle" class="small-eq" fill="var(--warn,#e0a106)">free if all</text>
+  <text x="513" y="330" text-anchor="middle" class="small-eq" fill="var(--warn,#e0a106)">g accepted</text>
+</g></p>
+<p><g data-anim="3">
+  <line x1="110" y1="374" x2="110" y2="396" stroke="var(--ink-soft,#6b7280)" stroke-width="1.4" marker-end="url(#sdv-arrow)"/>
+  <text x="125" y="389" class="cap-it">accept/reject sweep, left to right</text>
+</g></p>
+<p><g data-anim="4">
+  <rect x="8" y="400" width="744" height="162" rx="8" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="18" y="416" class="stage-lbl">OUTPUT</text></p>
+<p><rect x="100" y="412" width="46" height="26" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.15" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="123" y="430" text-anchor="middle" class="chip-txt" fill="var(--good,#2f9e6e)">d&#x2081;</text></p>
+<p><path d="M114 407 L120 413 L130 403" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></p>
+<p><rect x="154" y="412" width="46" height="26" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.15" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="177" y="430" text-anchor="middle" class="chip-txt" fill="var(--good,#2f9e6e)">d&#x2082;</text>
+  <path d="M168 407 L174 413 L184 403" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></p>
+<p><rect x="208" y="412" width="46" height="26" rx="5" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#9ca3af)" stroke-width="1.2"/>
+  <text x="231" y="430" text-anchor="middle" class="chip-txt" fill="var(--muted,#9ca3af)">d&#x2083;</text></p>
+<p><path d="M220 403 L230 413" fill="none" stroke="var(--ink-soft,#dc2626)" stroke-width="1.8" stroke-linecap="round" style="stroke: var(--neg,#dc2626)"/>
+  <path d="M230 403 L220 413" fill="none" stroke="var(--ink-soft,#dc2626)" stroke-width="1.8" stroke-linecap="round" style="stroke: var(--neg,#dc2626)"/></p>
+<p><line x1="210" y1="425" x2="252" y2="425" stroke="var(--muted,#9ca3af)" stroke-width="1.2"/></p>
+<p><rect x="262" y="412" width="46" height="26" rx="5" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#9ca3af)" stroke-width="1" opacity="0.45"/>
+  <text x="285" y="430" text-anchor="middle" class="chip-txt" opacity="0.3">d&#x2084;</text>
+  <line x1="264" y1="425" x2="306" y2="425" stroke="var(--muted,#9ca3af)" stroke-width="1" opacity="0.5"/></p>
+<p><text x="318" y="430" class="chip-txt" opacity="0.3">&hellip;</text></p>
+<p><rect x="328" y="412" width="46" height="26" rx="5" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#9ca3af)" stroke-width="1" opacity="0.45"/>
+  <text x="351" y="430" text-anchor="middle" class="chip-txt" opacity="0.3">d_g</text>
+  <line x1="330" y1="425" x2="372" y2="425" stroke="var(--muted,#9ca3af)" stroke-width="1" opacity="0.5"/></p>
+<p><text x="262" y="451" class="cap" fill="var(--muted,#6b7280)">discarded — tail invalidated</text></p>
+<p><line x1="231" y1="440" x2="231" y2="458" stroke="var(--warn,#e0a106)" stroke-width="1.2" stroke-dasharray="3 2" marker-end="url(#sdv-arrow-warn)"/>
+  <rect x="205" y="460" width="52" height="24" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.2" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+  <text x="231" y="476" text-anchor="middle" class="chip-txt" fill="var(--warn,#e0a106)">x_{t+3}</text>
+  <text x="231" y="494" text-anchor="middle" class="cap" fill="var(--warn,#e0a106)">corrected token</text>
+  <text x="231" y="505" text-anchor="middle" class="cap" fill="var(--warn,#e0a106)">~ p_res proportional to (p-q)_+</text></p>
+<p><rect x="438" y="408" width="296" height="74" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.07" stroke="var(--warn,#e0a106)" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="586" y="423" text-anchor="middle" style="font:600 9.5px var(--sans,sans-serif); fill:var(--warn,#e0a106)">if ALL g accepted:</text>
+  <rect x="557" y="428" width="58" height="24" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.25" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <text x="586" y="445" text-anchor="middle" class="chip-txt" fill="var(--warn,#e0a106)">x_{t+g+1}</text>
+  <text x="586" y="462" text-anchor="middle" class="cap" fill="var(--warn,#e0a106)">free bonus token ~ p</text>
+  <text x="586" y="473" text-anchor="middle" class="cap" fill="var(--warn,#e0a106)">(logit already computed)</text></p>
+<p><rect x="100" y="528" width="620" height="22" rx="4" fill="var(--accent,#2563eb)" fill-opacity="0.1" stroke="var(--accent,#2563eb)" stroke-width="1"/>
+  <text x="410" y="543" text-anchor="middle" style="font:600 9.5px var(--sans,sans-serif); fill:var(--accent,#2563eb)">emit 1 to g+1 tokens per target pass — preserves exact distribution of target p</text>
+</g></p>
+<p></svg></p>
+<figcaption><b>One speculative decoding step: draft autoregressively, verify in parallel, accept/reject left to right.</b> The drafter q proposes gamma (g) tokens one at a time (Band 2, sequential, cheap); the target p scores all g+1 positions in a single forward pass (Band 3, parallel, same cost as 1 token); a left-to-right sweep accepts a prefix of draft tokens, then either samples a corrected token from the residual distribution p_res &#x221d; (p&#x2212;q)&#x208A; at the first rejection, or takes a free bonus token if all g were accepted — emitting 1 to g+1 tokens per expensive target forward pass without changing the output distribution.</figcaption>
+</figure>
+<p>Two facts make this a win:</p>
+<ol>
+<li><strong>The drafter is cheap.</strong> Generating <span class="arithmatex">\(\gamma\)</span> draft tokens with <span class="arithmatex">\(q\)</span> costs <span class="arithmatex">\(\gamma\)</span> forward passes of a small model. If <span class="arithmatex">\(q\)</span> is, say, 30–70× smaller than <span class="arithmatex">\(p\)</span>, those <span class="arithmatex">\(\gamma\)</span> steps are negligible.</li>
+<li><strong>Verification is parallel.</strong> The target <span class="arithmatex">\(p\)</span> scores all <span class="arithmatex">\(\gamma+1\)</span> candidate positions in <strong>one</strong> forward pass. Because decode is memory-bound, scoring <span class="arithmatex">\(\gamma+1\)</span> positions costs about the same as scoring one — we load the weights once.</li>
+</ol>
+<p>If we accept <span class="arithmatex">\(n\)</span> draft tokens plus one bonus token, we advanced the sequence by <span class="arithmatex">\(n+1\)</span> positions while paying for <strong>one</strong> target forward pass and <span class="arithmatex">\(\gamma\)</span> cheap drafter passes. The expected number of tokens per target pass is the engine of the speedup.</p>
+<p>The non-obvious part — and the reason this is <em>exact</em> rather than an approximation — is the accept/reject rule. We need it to guarantee that the emitted tokens have <em>exactly</em> the distribution <span class="arithmatex">\(p\)</span>, even though they were proposed by <span class="arithmatex">\(q\)</span>. We derive that next.</p>
+<h2 id="the-acceptreject-rule-preserving-the-target-distribution">The Accept/Reject Rule: Preserving the Target Distribution<a class="headerlink" href="#the-acceptreject-rule-preserving-the-target-distribution" title="Permanent link">¶</a></h2>
+<p>Consider a single position. The drafter proposes <span class="arithmatex">\(x \sim q(x)\)</span> (we drop the conditioning on the prefix for brevity; everything is conditional on the current context). We want the <em>emitted</em> token to be distributed as <span class="arithmatex">\(p(x)\)</span>, the target distribution. The mechanism is <strong>modified rejection sampling</strong>.</p>
+<h3 id="the-rule">The rule<a class="headerlink" href="#the-rule" title="Permanent link">¶</a></h3>
+<p>Given a drafted token <span class="arithmatex">\(x \sim q\)</span>:</p>
+<ul>
+<li><strong>Accept</strong> <span class="arithmatex">\(x\)</span> with probability <span class="arithmatex">\(\min\!\left(1, \dfrac{p(x)}{q(x)}\right)\)</span>.</li>
+<li>If <strong>rejected</strong>, sample a replacement token from the <strong>residual distribution</strong></li>
+</ul>
+<div class="arithmatex">\[
+p_{\text{res}}(x) \;=\; \frac{\max\!\big(0,\; p(x) - q(x)\big)}{\sum_{x'} \max\!\big(0,\; p(x') - q(x')\big)}.
+\]</div>
+<p>We write <span class="arithmatex">\((\cdot)_+ = \max(0,\cdot)\)</span> for the positive part, so <span class="arithmatex">\(p_{\text{res}}(x) \propto (p(x)-q(x))_+\)</span>. The intuition: where the drafter under-covers the target (<span class="arithmatex">\(p &gt; q\)</span>), we top up the probability mass; where it over-covers (<span class="arithmatex">\(p &lt; q\)</span>), the accept probability <span class="arithmatex">\(p/q &lt; 1\)</span> trims the excess.</p>
+<h3 id="the-proof-that-this-is-exact">The proof that this is exact<a class="headerlink" href="#the-proof-that-this-is-exact" title="Permanent link">¶</a></h3>
+<p>We must show the probability of emitting any specific token <span class="arithmatex">\(x\)</span> equals <span class="arithmatex">\(p(x)\)</span>. The emitted token comes from one of two mutually exclusive events: <em>(a)</em> the drafter proposed <span class="arithmatex">\(x\)</span> and we accepted it, or <em>(b)</em> the drafter proposed something, we rejected it, and the residual sample landed on <span class="arithmatex">\(x\)</span>.</p>
+<p><strong>Event (a): drafted <span class="arithmatex">\(x\)</span> and accepted.</strong></p>
+<div class="arithmatex">\[
+P(\text{draft } x \text{ and accept}) \;=\; q(x)\cdot \min\!\left(1, \frac{p(x)}{q(x)}\right) \;=\; \min\big(q(x),\, p(x)\big).
+\]</div>
+<p><strong>Event (b): some token rejected, then residual produced <span class="arithmatex">\(x\)</span>.</strong> First, the total probability of <em>any</em> rejection. Conditioned on a draft <span class="arithmatex">\(x'\)</span>, rejection probability is <span class="arithmatex">\(1 - \min(1, p(x')/q(x'))\)</span>, so</p>
+<div class="arithmatex">\[
+\beta \;\equiv\; P(\text{reject}) \;=\; \sum_{x'} q(x')\Big(1 - \min\big(1, \tfrac{p(x')}{q(x')}\big)\Big) \;=\; \sum_{x'} \big(q(x') - \min(q(x'), p(x'))\big) \;=\; \sum_{x'} \big(q(x') - p(x')\big)_+ .
+\]</div>
+<p>The last equality holds because <span class="arithmatex">\(q - \min(q,p) = (q-p)_+\)</span>. By symmetry of total mass (<span class="arithmatex">\(\sum p = \sum q = 1\)</span>), <span class="arithmatex">\(\sum_{x'} (q-p)_+ = \sum_{x'}(p-q)_+\)</span>, so <span class="arithmatex">\(\beta\)</span> is also the normalizer of the residual distribution. Therefore the probability of rejecting <em>and then</em> producing <span class="arithmatex">\(x\)</span> from <span class="arithmatex">\(p_{\text{res}}\)</span> is</p>
+<div class="arithmatex">\[
+P(\text{reject and residual}=x) \;=\; \beta \cdot p_{\text{res}}(x) \;=\; \beta \cdot \frac{(p(x)-q(x))_+}{\beta} \;=\; \big(p(x)-q(x)\big)_+ .
+\]</div>
+<p>The <span class="arithmatex">\(\beta\)</span> cancels — a clean and satisfying step. Now add the two events:</p>
+<div class="arithmatex">\[
+P(\text{emit } x) \;=\; \min\big(q(x), p(x)\big) \;+\; \big(p(x)-q(x)\big)_+ .
+\]</div>
+<p>Split on the sign of <span class="arithmatex">\(p(x)-q(x)\)</span>. If <span class="arithmatex">\(p(x) \ge q(x)\)</span>: <span class="arithmatex">\(\min(q,p)=q(x)\)</span> and <span class="arithmatex">\((p-q)_+ = p(x)-q(x)\)</span>, summing to <span class="arithmatex">\(p(x)\)</span>. If <span class="arithmatex">\(p(x) &lt; q(x)\)</span>: <span class="arithmatex">\(\min(q,p)=p(x)\)</span> and <span class="arithmatex">\((p-q)_+ = 0\)</span>, summing to <span class="arithmatex">\(p(x)\)</span>. In <strong>both</strong> cases <span class="arithmatex">\(P(\text{emit }x) = p(x)\)</span>. <span class="arithmatex">\(\blacksquare\)</span></p>
+<p>This is the whole theoretical foundation. The emitted token is <em>exactly</em> a sample from the target <span class="arithmatex">\(p\)</span>, regardless of how good or bad the drafter <span class="arithmatex">\(q\)</span> is. The drafter only affects <strong>speed</strong>, never correctness — a property worth stating loudly because it is what lets production systems turn speculation on by default.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: where the acceptance probability comes from</p>
+<p>The expected acceptance probability at one position is <span class="arithmatex">\(\alpha = \sum_x \min(p(x), q(x))\)</span>, which equals <span class="arithmatex">\(1 - \tfrac{1}{2}\lVert p - q\rVert_1\)</span> — one minus the total variation distance between target and draft. So acceptance is high exactly when the drafter&rsquo;s distribution is close to the target&rsquo;s in TV distance. This is why a well-aligned small model, or feature-level drafters like EAGLE, accept so much more than a random tiny model. The same quantity <span class="arithmatex">\(\alpha\)</span> drives the speedup formula in the last section.</p>
+</div>
+<h3 id="extending-to-a-chain-of-gamma-draft-tokens">Extending to a chain of <span class="arithmatex">\(\gamma\)</span> draft tokens<a class="headerlink" href="#extending-to-a-chain-of-gamma-draft-tokens" title="Permanent link">¶</a></h3>
+<p>The single-position rule chains naturally. We walk the draft left to right. At each drafted position we apply the accept/reject test against the target distribution <em>at that same position</em> (which the single parallel target pass already gave us). The moment a token is <strong>rejected</strong>, we sample its replacement from the residual and <strong>stop</strong> — every draft token after a rejection is discarded, because it was conditioned on a token we just changed.</p>
+<p>There is one more free token. If <em>all</em> <span class="arithmatex">\(\gamma\)</span> draft tokens are accepted, the target&rsquo;s forward pass also produced logits for the position <em>after</em> the last draft token (position <span class="arithmatex">\(\gamma+1\)</span>). We can sample that token directly from <span class="arithmatex">\(p\)</span> as a <strong>bonus token</strong> — a genuinely free extra token, since that logit was computed anyway. So a step emits between <span class="arithmatex">\(1\)</span> (immediate rejection, replaced token) and <span class="arithmatex">\(\gamma+1\)</span> (all accepted plus bonus) tokens.</p>
+<p>The greedy/argmax special case is even simpler: with temperature 0, <span class="arithmatex">\(p\)</span> and <span class="arithmatex">\(q\)</span> are point masses, accept iff the drafter&rsquo;s argmax equals the target&rsquo;s argmax. &ldquo;Accept the longest matching prefix&rdquo; is exactly the rejection rule specialized to deterministic distributions.</p>
+<h2 id="a-from-scratch-implementation">A From-Scratch Implementation<a class="headerlink" href="#a-from-scratch-implementation" title="Permanent link">¶</a></h2>
+<p>Below is a complete, runnable implementation of speculative sampling with a real target and draft model from the same family (so they share a tokenizer — a hard requirement). It is written for clarity, not maximum throughput; production engines fuse these steps into batched CUDA kernels with tree attention (next section). Read the comments carefully: the accept/reject loop is the heart of the algorithm.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+
+<span class="c1"># Target = big, accurate. Draft = small, fast. They MUST share a tokenizer.</span>
+<span class="c1"># (Any GPT-2 size pair works as a demo; swap in a 70B target / 7B draft in prod.)</span>
+<span class="n">TARGET_NAME</span> <span class="o">=</span> <span class="s2">&quot;gpt2-large&quot;</span>   <span class="c1"># ~774M params</span>
+<span class="n">DRAFT_NAME</span>  <span class="o">=</span> <span class="s2">&quot;gpt2&quot;</span>         <span class="c1"># ~124M params</span>
+
+<span class="n">tok</span>    <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">TARGET_NAME</span><span class="p">)</span>
+<span class="n">target</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">TARGET_NAME</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+<span class="n">draft</span>  <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">DRAFT_NAME</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_temperature</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">temperature</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a probability distribution from logits with temperature.</span>
+<span class="sd">    temperature == 0 collapses to a one-hot argmax (greedy).&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">temperature</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">probs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">logits</span><span class="p">)</span>
+        <span class="n">probs</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">logits</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)]</span> <span class="o">=</span> <span class="mf">1.0</span>
+        <span class="k">return</span> <span class="n">probs</span>
+    <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span> <span class="o">/</span> <span class="n">temperature</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">speculative_step</span><span class="p">(</span><span class="n">prefix_ids</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run ONE speculative step.</span>
+<span class="sd">      prefix_ids: LongTensor [1, T] current context (on cuda)</span>
+<span class="sd">      gamma:      number of draft tokens to propose</span>
+<span class="sd">      temperature: sampling temperature for BOTH models</span>
+<span class="sd">    Returns: new_ids [1, T+n+1] and the number of *accepted draft* tokens n.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">prefix_ids</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="n">prefix_ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># ---- 1) DRAFT: γ cheap autoregressive steps with the small model. ----</span>
+    <span class="n">draft_ids</span>   <span class="o">=</span> <span class="n">prefix_ids</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+    <span class="n">draft_probs</span> <span class="o">=</span> <span class="p">[]</span>  <span class="c1"># q-distribution at each drafted position</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">gamma</span><span class="p">):</span>
+        <span class="n">d_logits</span> <span class="o">=</span> <span class="n">draft</span><span class="p">(</span><span class="n">draft_ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span><span class="p">[:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span>      <span class="c1"># [1, V]</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="n">apply_temperature</span><span class="p">(</span><span class="n">d_logits</span><span class="p">,</span> <span class="n">temperature</span><span class="p">)</span>      <span class="c1"># [1, V]</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">multinomial</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">num_samples</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>           <span class="c1"># [1, 1] sampled draft token</span>
+        <span class="n">draft_probs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+        <span class="n">draft_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">draft_ids</span><span class="p">,</span> <span class="n">x</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="c1"># draft_ids is now [1, T+γ]; the last γ tokens are the proposals d_1..d_γ.</span>
+
+    <span class="c1"># ---- 2) VERIFY: ONE parallel target pass over all T+γ positions. ----</span>
+    <span class="c1"># The target scores every position at once. We need its distribution at</span>
+    <span class="c1"># positions T-1 .. T+γ-1 (the predictions for d_1..d_γ AND the bonus slot).</span>
+    <span class="n">t_logits</span> <span class="o">=</span> <span class="n">target</span><span class="p">(</span><span class="n">draft_ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span>                   <span class="c1"># [1, T+γ, V]</span>
+    <span class="n">target_probs</span> <span class="o">=</span> <span class="n">apply_temperature</span><span class="p">(</span>
+        <span class="n">t_logits</span><span class="p">[:,</span> <span class="n">T</span> <span class="o">-</span> <span class="mi">1</span> <span class="p">:</span> <span class="n">T</span> <span class="o">+</span> <span class="n">gamma</span><span class="p">,</span> <span class="p">:]</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>     <span class="c1"># [γ+1, V]</span>
+        <span class="n">temperature</span><span class="p">,</span>
+    <span class="p">)</span>  <span class="c1"># rows 0..γ-1 verify d_1..d_γ; row γ is the bonus-token distribution.</span>
+
+    <span class="c1"># ---- 3) ACCEPT/REJECT loop, left to right. ----</span>
+    <span class="n">accepted</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">gamma</span><span class="p">):</span>
+        <span class="n">d_tok</span> <span class="o">=</span> <span class="n">draft_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="n">T</span> <span class="o">+</span> <span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>                <span class="c1"># the i-th drafted token</span>
+        <span class="n">p_i</span> <span class="o">=</span> <span class="n">target_probs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>                             <span class="c1"># target dist at this position</span>
+        <span class="n">q_i</span> <span class="o">=</span> <span class="n">draft_probs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>                   <span class="c1"># draft  dist at this position</span>
+        <span class="c1"># Accept with prob min(1, p(d)/q(d)).</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="n">accept_prob</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="p">(</span><span class="n">p_i</span><span class="p">[</span><span class="n">d_tok</span><span class="p">]</span> <span class="o">/</span> <span class="n">q_i</span><span class="p">[</span><span class="n">d_tok</span><span class="p">])</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+        <span class="k">if</span> <span class="n">r</span> <span class="o">&lt;</span> <span class="n">accept_prob</span><span class="p">:</span>
+            <span class="n">accepted</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">d_tok</span><span class="p">)</span>
+            <span class="n">n</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># REJECT: sample replacement from residual (p - q)_+ , then STOP.</span>
+            <span class="n">residual</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="n">p_i</span> <span class="o">-</span> <span class="n">q_i</span><span class="p">,</span> <span class="nb">min</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span>
+            <span class="n">residual</span> <span class="o">=</span> <span class="n">residual</span> <span class="o">/</span> <span class="n">residual</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+            <span class="n">repl</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">multinomial</span><span class="p">(</span><span class="n">residual</span><span class="p">,</span> <span class="n">num_samples</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+            <span class="n">accepted</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">repl</span><span class="p">)</span>
+            <span class="k">break</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># No break =&gt; all γ accepted. Sample the FREE bonus token from row γ.</span>
+        <span class="n">bonus</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">multinomial</span><span class="p">(</span><span class="n">target_probs</span><span class="p">[</span><span class="n">gamma</span><span class="p">],</span> <span class="n">num_samples</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="n">accepted</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">bonus</span><span class="p">)</span>
+
+    <span class="n">new_tokens</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">accepted</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">prefix_ids</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">new_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">prefix_ids</span><span class="p">,</span> <span class="n">new_tokens</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">new_ids</span><span class="p">,</span> <span class="n">n</span>
+
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+    <span class="n">ids</span> <span class="o">=</span> <span class="n">tok</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+    <span class="n">start_len</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">total_accepted</span><span class="p">,</span> <span class="n">total_steps</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="n">ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">start_len</span> <span class="o">&lt;</span> <span class="n">max_new_tokens</span><span class="p">:</span>
+        <span class="n">ids</span><span class="p">,</span> <span class="n">n</span> <span class="o">=</span> <span class="n">speculative_step</span><span class="p">(</span><span class="n">ids</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="n">gamma</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">temperature</span><span class="p">)</span>
+        <span class="n">total_accepted</span> <span class="o">+=</span> <span class="n">n</span>
+        <span class="n">total_steps</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="c1"># Average draft tokens accepted per target pass is the key efficiency metric.</span>
+    <span class="n">avg_accept</span> <span class="o">=</span> <span class="n">total_accepted</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">total_steps</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;target passes: </span><span class="si">{</span><span class="n">total_steps</span><span class="si">}</span><span class="s2">, mean accepted draft/step: </span><span class="si">{</span><span class="n">avg_accept</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">tok</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">ids</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="n">start_len</span><span class="p">:],</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+
+<span class="c1"># print(generate(&quot;The future of machine learning is&quot;, temperature=0.8))</span>
+</code></pre></div>
+<p>A few engineering notes the code glosses over but production systems must handle:</p>
+<ul>
+<li><strong>KV-cache reuse.</strong> Re-running <code>draft(draft_ids)</code> and <code>target(draft_ids)</code> from scratch each step is wasteful. Real implementations pass cached KV and only feed the new tokens, so the drafter&rsquo;s <span class="arithmatex">\(\gamma\)</span> steps each see one new position and the target&rsquo;s verify pass sees <span class="arithmatex">\(\gamma\)</span> new positions. After a step, both caches must be <strong>rolled back</strong> to the accepted length — the rejected/unused positions&rsquo; KV entries are evicted. See <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a> for how paged caches make this cheap.</li>
+<li><strong>Numerical stability.</strong> Compute <span class="arithmatex">\(p/q\)</span> carefully; clamp <span class="arithmatex">\(q\)</span> away from zero. With temperature 0, special-case the comparison to argmax to avoid <span class="arithmatex">\(0/0\)</span>.</li>
+<li><strong>Batching.</strong> Different requests in a batch accept different numbers of tokens, so the &ldquo;advance&rdquo; is ragged. This interacts non-trivially with <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>; engines pad to the max accepted length or use variable-length kernels.</li>
+</ul>
+<h2 id="choosing-and-training-a-draft-model">Choosing and Training a Draft Model<a class="headerlink" href="#choosing-and-training-a-draft-model" title="Permanent link">¶</a></h2>
+<p>The accept/reject proof says correctness is free; the drafter only governs throughput. So drafter design is purely an optimization problem with two competing knobs:</p>
+<ol>
+<li><strong>Acceptance rate <span class="arithmatex">\(\alpha\)</span></strong> — how often the target accepts a draft token. Higher is better; it grows with the TV-closeness of <span class="arithmatex">\(q\)</span> to <span class="arithmatex">\(p\)</span>. A drafter from the same model family, trained on the same data, accepts far more than an unrelated small model.</li>
+<li><strong>Draft cost ratio <span class="arithmatex">\(c\)</span></strong> — the drafter&rsquo;s per-token cost as a fraction of the target&rsquo;s. Lower is better. A 70B target with a 7B drafter has <span class="arithmatex">\(c \approx 0.1\)</span>; with a 1B drafter, <span class="arithmatex">\(c \approx 0.014\)</span>.</li>
+</ol>
+<p>These trade off: a bigger drafter raises <span class="arithmatex">\(\alpha\)</span> but also raises <span class="arithmatex">\(c\)</span>. The sweet spot for a separate-model drafter is usually a model 10–50× smaller than the target, from the same family (e.g., Llama-70B target with a Llama-1B/7B draft).</p>
+<h3 id="sources-of-drafters">Sources of drafters<a class="headerlink" href="#sources-of-drafters" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Smaller sibling in the same family.</strong> The classic setup from the original Google/DeepMind speculative-decoding papers (Leviathan et al.; Chen et al., 2023). Easy if the family ships multiple sizes with a shared tokenizer. The shared tokenizer is non-negotiable: token IDs must mean the same thing in both models for the accept test to be coherent.</li>
+<li><strong>Distilled drafter.</strong> Train a small model specifically to mimic the target via <a href="../05-posttraining-alignment/12-distillation-compression.html">Distillation, Model Compression &amp; Knowledge Transfer</a>. Distilling on the target&rsquo;s <em>own</em> outputs (sequence-level or logit-level KD) maximizes TV-closeness and thus <span class="arithmatex">\(\alpha\)</span> — far better than an off-the-shelf small model.</li>
+<li><strong>Self-drafting heads.</strong> Medusa and EAGLE (below) attach lightweight heads to the target itself, eliminating the separate model entirely and getting the drafter&rsquo;s features &ldquo;for free&rdquo; from the target&rsquo;s own hidden states.</li>
+<li><strong>Retrieval / n-gram drafters.</strong> No neural drafter at all: propose continuations from the prompt itself or a corpus via string matching (prompt lookup decoding). Astonishingly effective for tasks with high input-output overlap — summarization, code editing, RAG where the answer quotes the context. Acceptance on copied spans can approach 1.</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: match the drafter to the workload</p>
+<p>Speculative decoding&rsquo;s payoff is workload-dependent. For <em>predictable</em> text — code, structured output, repetitive boilerplate, quoting from context — acceptance is high and speedups are large. For <em>high-entropy</em> creative text at high temperature, the target&rsquo;s distribution is genuinely diffuse, the drafter can&rsquo;t track it, and speedups shrink. Cheap <strong>prompt-lookup</strong> drafting (n-gram from the context) is often the highest-ROI option for copy-heavy workloads and costs essentially nothing to add.</p>
+</div>
+<h2 id="medusa-parallel-prediction-heads">Medusa: Parallel Prediction Heads<a class="headerlink" href="#medusa-parallel-prediction-heads" title="Permanent link">¶</a></h2>
+<p>Maintaining a <em>separate</em> draft model is operationally annoying: extra weights to load, a second model to serve, a second KV cache. <strong>Medusa</strong> (Cai et al., 2024) removes the separate model. It freezes the target and bolts on a small number of extra <strong>decoding heads</strong> — typically 4 or 5 — each a one- or two-layer MLP with a residual connection feeding into the target&rsquo;s existing unembedding (LM head). The base model predicts token <span class="arithmatex">\(t{+}1\)</span> as usual; Medusa head <span class="arithmatex">\(k\)</span> predicts token <span class="arithmatex">\(t{+}k{+}1\)</span> <em>directly from the same final hidden state</em> <span class="arithmatex">\(h_t\)</span>.</p>
+<figure class="viz" id="fig-specdec-medusa-heads">
+<style>
+  #fig-specdec-medusa-heads text { fill: var(--ink-soft); }
+  #fig-specdec-medusa-heads .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-specdec-medusa-heads .sub  { font: 400 10px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-specdec-medusa-heads .cap  { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-specdec-medusa-heads .pill-lbl { font: 600 11px var(--mono,monospace); }
+  #fig-specdec-medusa-heads .head-lbl { font: 700 12px var(--sans,sans-serif); }
+  #fig-specdec-medusa-heads .head-sub { font: 400 9px var(--sans,sans-serif); fill: var(--muted); }
+</style>
+<svg viewBox="0 0 780 370" role="img" aria-label="Medusa fan-out architecture: from one hidden state h_t, the base LM head and four Medusa heads predict five successive token positions in parallel from a single forward pass.">
+  <defs>
+    <marker id="mh-arrow" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#888)"/>
+    </marker>
+  </defs>
+
+
+  <g data-anim="1">
+    <rect x="240" y="18" width="300" height="54" rx="10"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="1.8"/>
+    <text x="390" y="43" text-anchor="middle" class="lbl">final hidden state h_t</text>
+    <text x="390" y="60" text-anchor="middle" class="sub">(from the frozen target)</text>
+  </g>
+
+
+  <line x1="390" y1="72" x2="390" y2="104"
+        stroke="var(--muted,#888)" stroke-width="1.5" marker-end="url(#mh-arrow)"/>
+
+
+  <line x1="74" y1="108" x2="706" y2="108"
+        stroke="var(--muted,#888)" stroke-width="1.5"/>
+
+
+  <text x="390" y="122" text-anchor="middle" class="cap">each = residual MLP -&gt; shared (frozen) unembedding</text>
+
+
+
+  <line x1="74"  y1="108" x2="74"  y2="136" stroke="var(--muted,#888)" stroke-width="1.4" marker-end="url(#mh-arrow)"/>
+  <line x1="218" y1="108" x2="218" y2="136" stroke="var(--muted,#888)" stroke-width="1.4" marker-end="url(#mh-arrow)"/>
+  <line x1="390" y1="108" x2="390" y2="136" stroke="var(--muted,#888)" stroke-width="1.4" marker-end="url(#mh-arrow)"/>
+  <line x1="562" y1="108" x2="562" y2="136" stroke="var(--muted,#888)" stroke-width="1.4" marker-end="url(#mh-arrow)"/>
+  <line x1="706" y1="108" x2="706" y2="136" stroke="var(--muted,#888)" stroke-width="1.4" marker-end="url(#mh-arrow)"/>
+
+
+
+  <g data-anim="2">
+    <rect x="14" y="136" width="120" height="64" rx="8"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.15"
+          stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+    <text x="74" y="162" text-anchor="middle" class="head-lbl" fill="var(--accent,#4f46e5)">base LM head</text>
+    <text x="74" y="177" text-anchor="middle" class="head-sub">(original head)</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="158" y="136" width="120" height="64" rx="8"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.12"
+          stroke="var(--accent-2,#0891b2)" stroke-width="1.8"/>
+    <text x="218" y="162" text-anchor="middle" class="head-lbl" fill="var(--accent-2,#0891b2)">Medusa-1</text>
+    <text x="218" y="177" text-anchor="middle" class="head-sub">1-2 layer MLP</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="330" y="136" width="120" height="64" rx="8"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.12"
+          stroke="var(--accent-2,#0891b2)" stroke-width="1.8"/>
+    <text x="390" y="162" text-anchor="middle" class="head-lbl" fill="var(--accent-2,#0891b2)">Medusa-2</text>
+    <text x="390" y="177" text-anchor="middle" class="head-sub">1-2 layer MLP</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="502" y="136" width="120" height="64" rx="8"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.12"
+          stroke="var(--accent-2,#0891b2)" stroke-width="1.8"/>
+    <text x="562" y="162" text-anchor="middle" class="head-lbl" fill="var(--accent-2,#0891b2)">Medusa-3</text>
+    <text x="562" y="177" text-anchor="middle" class="head-sub">1-2 layer MLP</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="646" y="136" width="120" height="64" rx="8"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.12"
+          stroke="var(--accent-2,#0891b2)" stroke-width="1.8"/>
+    <text x="706" y="162" text-anchor="middle" class="head-lbl" fill="var(--accent-2,#0891b2)">Medusa-4</text>
+    <text x="706" y="177" text-anchor="middle" class="head-sub">1-2 layer MLP</text>
+  </g>
+
+
+  <line x1="74"  y1="200" x2="74"  y2="226" stroke="var(--muted,#888)" stroke-width="1.3" marker-end="url(#mh-arrow)"/>
+  <line x1="218" y1="200" x2="218" y2="226" stroke="var(--muted,#888)" stroke-width="1.3" marker-end="url(#mh-arrow)"/>
+  <line x1="390" y1="200" x2="390" y2="226" stroke="var(--muted,#888)" stroke-width="1.3" marker-end="url(#mh-arrow)"/>
+  <line x1="562" y1="200" x2="562" y2="226" stroke="var(--muted,#888)" stroke-width="1.3" marker-end="url(#mh-arrow)"/>
+  <line x1="706" y1="200" x2="706" y2="226" stroke="var(--muted,#888)" stroke-width="1.3" marker-end="url(#mh-arrow)"/>
+
+
+  <g data-anim="3">
+
+    <rect x="24" y="226" width="100" height="30" rx="14"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+    <text x="74" y="246" text-anchor="middle" class="pill-lbl">token t+1</text>
+
+
+    <rect x="168" y="226" width="100" height="30" rx="14"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+    <text x="218" y="246" text-anchor="middle" class="pill-lbl">token t+2</text>
+
+
+    <rect x="340" y="226" width="100" height="30" rx="14"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+    <text x="390" y="246" text-anchor="middle" class="pill-lbl">token t+3</text>
+
+
+    <rect x="512" y="226" width="100" height="30" rx="14"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+    <text x="562" y="246" text-anchor="middle" class="pill-lbl">token t+4</text>
+
+
+    <rect x="656" y="226" width="100" height="30" rx="14"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+    <text x="706" y="246" text-anchor="middle" class="pill-lbl">token t+5</text>
+  </g>
+
+
+  <g data-anim="1">
+    <rect x="200" y="274" width="14" height="14" rx="3"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.3" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+    <text x="220" y="285" class="cap">base head (original, frozen)</text>
+    <rect x="420" y="274" width="14" height="14" rx="3"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.25" stroke="var(--accent-2,#0891b2)" stroke-width="1.5"/>
+    <text x="440" y="285" class="cap">Medusa heads 1-4 (trained, lightweight)</text>
+  </g>
+
+
+  <g data-anim="3">
+    <text x="390" y="318" text-anchor="middle" class="cap">One forward pass -&gt; candidate distributions for the next 5 tokens at once.</text>
+    <text x="390" y="334" text-anchor="middle" class="cap">Heads 2-5 do NOT see intermediate tokens (harder prediction), so Medusa proposes many candidates</text>
+    <text x="390" y="350" text-anchor="middle" class="cap">and verifies them with tree attention.</text>
+  </g>
+</svg>
+<figcaption><b>Medusa: parallel prediction heads from one hidden state.</b> A single forward pass of the frozen target produces hidden state h_t, which fans out to the base LM head plus four lightweight Medusa heads. Each head independently predicts a different future token position (t+1 through t+5), enabling candidate generation for five positions at once — but because heads do not condition on intermediate tokens, Medusa compensates by proposing top-k candidates per head and verifying via tree attention.</figcaption>
+</figure>
+
+<p>So from one forward pass at position <span class="arithmatex">\(t\)</span>, Medusa produces candidate distributions for the next <em>five</em> tokens at once. The catch: head <span class="arithmatex">\(k\)</span> predicts token <span class="arithmatex">\(t{+}k{+}1\)</span> <strong>without conditioning on the intermediate tokens</strong> <span class="arithmatex">\(t{+}1,\dots,t{+}k\)</span> — it only sees <span class="arithmatex">\(h_t\)</span>. That is a strictly harder prediction problem, so the heads are individually weaker than true autoregressive drafting. Medusa compensates by proposing <em>many</em> candidates per head and verifying them all together with <strong>tree attention</strong> (next section): rather than betting on one continuation, it forms a tree of the top-few choices from each head and lets the target pick the best matching path.</p>
+<p>Because the heads predict farther positions less reliably, Medusa pairs naturally with a relaxed acceptance criterion (&ldquo;typical acceptance&rdquo;) that, at temperature &gt; 0, accepts any token whose target probability exceeds a threshold rather than running exact rejection sampling. This trades a small, bounded deviation from the exact target distribution for higher acceptance and bigger speedups. (You can also run Medusa with the exact rule; it&rsquo;s a configuration choice.)</p>
+<p>Training Medusa is cheap: freeze the backbone, train only the heads (Medusa-1) — sometimes a few GPU-hours — or jointly fine-tune backbone and heads for higher acceptance (Medusa-2). Since only the small heads are trainable, this is feasible even for very large targets and is closely related to the <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT</a> philosophy of adding tiny trainable modules to a frozen base.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MedusaHead</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One Medusa head: a residual MLP block reusing the base model&#39;s LM head.</span>
+<span class="sd">    Predicts a token several positions ahead from the SAME hidden state.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hidden_size</span><span class="p">,</span> <span class="n">lm_head</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">linear</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">hidden_size</span><span class="p">,</span> <span class="n">hidden_size</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">act</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">SiLU</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lm_head</span> <span class="o">=</span> <span class="n">lm_head</span>            <span class="c1"># SHARED with the frozen base model</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">h</span><span class="p">):</span>                 <span class="c1"># h: [B, T, hidden]</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="n">h</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">act</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">h</span><span class="p">))</span>  <span class="c1"># residual connection</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">lm_head</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>            <span class="c1"># [B, T, vocab]</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MedusaModel</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">base_model</span><span class="p">,</span> <span class="n">num_heads</span><span class="o">=</span><span class="mi">4</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base</span> <span class="o">=</span> <span class="n">base_model</span>            <span class="c1"># frozen target</span>
+        <span class="n">hidden</span> <span class="o">=</span> <span class="n">base_model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">hidden_size</span>
+        <span class="n">lm_head</span> <span class="o">=</span> <span class="n">base_model</span><span class="o">.</span><span class="n">get_output_embeddings</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">heads</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">(</span>
+            <span class="n">MedusaHead</span><span class="p">(</span><span class="n">hidden</span><span class="p">,</span> <span class="n">lm_head</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_heads</span><span class="p">)</span>
+        <span class="p">)</span>
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">input_ids</span><span class="p">):</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="p">(</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">output_hidden_states</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">h_last</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">hidden_states</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>            <span class="c1"># [B, T, hidden]</span>
+        <span class="n">base_logits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">get_output_embeddings</span><span class="p">()(</span><span class="n">h_last</span><span class="p">)</span>
+        <span class="c1"># head k predicts token t+k+2; base predicts t+1.</span>
+        <span class="n">head_logits</span> <span class="o">=</span> <span class="p">[</span><span class="n">head</span><span class="p">(</span><span class="n">h_last</span><span class="p">)</span> <span class="k">for</span> <span class="n">head</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">heads</span><span class="p">]</span>
+        <span class="k">return</span> <span class="n">base_logits</span><span class="p">,</span> <span class="n">head_logits</span>          <span class="c1"># use last position to draft</span>
+</code></pre></div>
+<h2 id="the-eagle-line-feature-level-autoregression">The EAGLE Line: Feature-Level Autoregression<a class="headerlink" href="#the-eagle-line-feature-level-autoregression" title="Permanent link">¶</a></h2>
+<p>Medusa&rsquo;s weakness is that each head predicts in isolation from a single hidden state, ignoring the tokens drafted in between. <strong>EAGLE</strong> (Li et al., 2024 — <em>Extrapolation Algorithm for Greater Language-model Efficiency</em>) fixes this with a sharp insight: do the autoregressive drafting in <strong>feature space</strong> instead of token space, and condition on the tokens already drafted.</p>
+<p>EAGLE adds one small <strong>autoregression head</strong> — a single transformer-style decoder layer — that runs its own little autoregressive loop, but over the target&rsquo;s <em>second-to-top-layer hidden features</em> rather than over tokens. Concretely, to draft the next feature it takes as input both the previous feature vector <span class="arithmatex">\(f_{t}\)</span> (from the target&rsquo;s penultimate layer) <strong>and</strong> the embedding of the previously sampled token. It predicts the next feature <span class="arithmatex">\(\hat f_{t+1}\)</span>, runs it through the target&rsquo;s frozen LM head to get a token distribution, samples a token, embeds it, and feeds it back — a true autoregressive draft, but each step is one tiny layer instead of the whole target.</p>
+<figure class="viz" id="fig-specdec-eagle-feature-loop">
+<button class="viz-replay" type="button">&#x21bb; replay</button>
+<style>
+  #fig-specdec-eagle-feature-loop text { fill: var(--ink-soft); }
+  #fig-specdec-eagle-feature-loop .lbl  { font: 600 12px var(--sans,sans-serif); }
+  #fig-specdec-eagle-feature-loop .sub  { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-specdec-eagle-feature-loop .cap  { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-specdec-eagle-feature-loop .edge { font: italic 9.5px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-specdec-eagle-feature-loop .pill { font: 600 11px var(--mono,monospace); }
+  #fig-specdec-eagle-feature-loop .step-lbl { font: 700 11px var(--sans,sans-serif); fill: var(--muted); }
+</style>
+
+<svg viewBox="0 0 840 420" role="img" aria-label="EAGLE autoregressive draft loop: EAGLE layer takes previous feature plus token embedding, predicts next feature, frozen LM head samples a token, token embedding feeds back into the next EAGLE step.">
+  <defs>
+    <marker id="ea-arrow" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#888)"/>
+    </marker>
+    <marker id="ea-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+    </marker>
+  </defs>
+
+
+  <text x="12" y="22" class="step-lbl">STEP 1</text>
+  <line x1="12" y1="28" x2="828" y2="28" stroke="var(--border-2,#ddd)" stroke-width="0.8" stroke-dasharray="4 3"/>
+
+
+
+  <text x="309" y="55" text-anchor="middle" class="edge">(predict feature)</text>
+
+  <text x="494" y="55" text-anchor="middle" class="edge">(token dist)</text>
+
+
+  <g data-anim="1">
+    <rect x="12" y="44" width="88" height="32" rx="7"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.18"
+          stroke="var(--accent-2,#0891b2)" stroke-width="1.7"/>
+    <text x="56" y="65" text-anchor="middle" class="lbl" fill="var(--accent-2,#0891b2)">f_t</text>
+  </g>
+
+
+  <g data-anim="1">
+    <rect x="12" y="88" width="88" height="38" rx="7"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+    <text x="56" y="106" text-anchor="middle" class="sub">emb(prev</text>
+    <text x="56" y="120" text-anchor="middle" class="sub">token)</text>
+  </g>
+
+
+  <line x1="100" y1="60"  x2="136" y2="91" stroke="var(--muted,#888)" stroke-width="1.4" marker-end="url(#ea-arrow)"/>
+  <line x1="100" y1="112" x2="136" y2="95" stroke="var(--muted,#888)" stroke-width="1.4" marker-end="url(#ea-arrow)"/>
+
+
+  <g data-anim="2">
+    <rect x="140" y="70" width="148" height="54" rx="9"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.15"
+          stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+    <text x="214" y="94" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">[EAGLE layer]</text>
+    <text x="214" y="112" text-anchor="middle" class="sub">one cheap decoder layer</text>
+  </g>
+
+
+  <line x1="288" y1="97" x2="328" y2="97" stroke="var(--muted,#888)" stroke-width="1.5" marker-end="url(#ea-arrow)"/>
+
+
+  <g data-anim="2">
+    <rect x="330" y="70" width="140" height="54" rx="8"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.22"
+          stroke="var(--accent-2,#0891b2)" stroke-width="1.8"/>
+    <text x="400" y="94" text-anchor="middle" class="lbl" fill="var(--accent-2,#0891b2)">f-hat_{t+1}</text>
+    <text x="400" y="112" text-anchor="middle" class="sub">(predicted feature)</text>
+  </g>
+
+
+  <line x1="470" y1="97" x2="516" y2="97" stroke="var(--muted,#888)" stroke-width="1.5" marker-end="url(#ea-arrow)"/>
+
+
+  <g data-anim="3">
+    <rect x="518" y="70" width="148" height="54" rx="8"
+          fill="var(--surface,#f5f5f5)" stroke="var(--muted,#888)" stroke-width="1.8" stroke-dasharray="6 3"/>
+    <text x="592" y="94" text-anchor="middle" class="lbl">[frozen LM head]</text>
+    <text x="592" y="112" text-anchor="middle" class="sub">(frozen)</text>
+  </g>
+
+
+  <line x1="666" y1="97" x2="710" y2="97" stroke="var(--muted,#888)" stroke-width="1.5" marker-end="url(#ea-arrow)"/>
+
+
+  <g data-anim="3">
+    <rect x="712" y="79" width="114" height="36" rx="17"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="1.6"/>
+    <text x="769" y="102" text-anchor="middle" class="pill">token d_1</text>
+  </g>
+
+
+
+  <g data-anim="4">
+    <path d="M769 115 C769 158 769 170 769 178 C769 188 600 192 400 192 C240 192 140 192 56 192"
+          fill="none" stroke="var(--accent,#4f46e5)" stroke-width="1.8"
+          stroke-dasharray="6 3" marker-end="url(#ea-arrow-acc)"/>
+    <text x="440" y="187" text-anchor="middle" class="edge" fill="var(--accent,#4f46e5)">embed sampled token, feed back</text>
+  </g>
+
+
+  <g data-anim="4">
+    <path d="M400 124 C400 152 300 166 210 172"
+          fill="none" stroke="var(--muted,#888)" stroke-width="1.2"
+          stroke-dasharray="4 3" marker-end="url(#ea-arrow)"/>
+    <text x="320" y="165" text-anchor="middle" class="edge">feature fwd</text>
+  </g>
+
+
+  <text x="12" y="224" class="step-lbl">STEP 2</text>
+  <line x1="12" y1="230" x2="828" y2="230" stroke="var(--border-2,#ddd)" stroke-width="0.8" stroke-dasharray="4 3"/>
+
+
+  <g data-anim="5">
+    <rect x="12" y="248" width="106" height="32" rx="7"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.18"
+          stroke="var(--accent-2,#0891b2)" stroke-width="1.7"/>
+    <text x="65" y="269" text-anchor="middle" class="lbl" fill="var(--accent-2,#0891b2)">f-hat_{t+1}</text>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="12" y="296" width="106" height="32" rx="7"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+    <text x="65" y="317" text-anchor="middle" class="lbl">emb(d_1)</text>
+  </g>
+
+
+  <line x1="118" y1="264" x2="152" y2="294" stroke="var(--muted,#888)" stroke-width="1.4" marker-end="url(#ea-arrow)"/>
+  <line x1="118" y1="312" x2="152" y2="300" stroke="var(--muted,#888)" stroke-width="1.4" marker-end="url(#ea-arrow)"/>
+
+
+  <g data-anim="5">
+    <rect x="156" y="274" width="148" height="54" rx="9"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.15"
+          stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+    <text x="230" y="298" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">[EAGLE layer]</text>
+    <text x="230" y="316" text-anchor="middle" class="sub">one cheap decoder layer</text>
+  </g>
+
+
+  <line x1="304" y1="301" x2="344" y2="301" stroke="var(--muted,#888)" stroke-width="1.5" marker-end="url(#ea-arrow)"/>
+
+
+  <g data-anim="5">
+    <rect x="346" y="274" width="140" height="54" rx="8"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.22"
+          stroke="var(--accent-2,#0891b2)" stroke-width="1.8"/>
+    <text x="416" y="298" text-anchor="middle" class="lbl" fill="var(--accent-2,#0891b2)">f-hat_{t+2}</text>
+    <text x="416" y="316" text-anchor="middle" class="sub">(predicted feature)</text>
+  </g>
+
+
+  <line x1="486" y1="301" x2="530" y2="301" stroke="var(--muted,#888)" stroke-width="1.5" marker-end="url(#ea-arrow)"/>
+
+
+  <g data-anim="5">
+    <rect x="534" y="274" width="148" height="54" rx="8"
+          fill="var(--surface,#f5f5f5)" stroke="var(--muted,#888)" stroke-width="1.8" stroke-dasharray="6 3"/>
+    <text x="608" y="298" text-anchor="middle" class="lbl">[frozen LM head]</text>
+    <text x="608" y="316" text-anchor="middle" class="sub">(frozen)</text>
+  </g>
+
+
+  <line x1="682" y1="301" x2="726" y2="301" stroke="var(--muted,#888)" stroke-width="1.5" marker-end="url(#ea-arrow)"/>
+
+
+  <g data-anim="5">
+    <rect x="728" y="283" width="102" height="36" rx="17"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="1.6"/>
+    <text x="779" y="306" text-anchor="middle" class="pill">token d_2 ...</text>
+  </g>
+
+
+  <g data-anim="5">
+    <text x="420" y="366" text-anchor="middle" class="cap" style="font-size:9.5px">Autoregression in continuous, low-entropy FEATURE space -&gt; easier to model -&gt; higher acceptance than token-space drafting.</text>
+    <text x="420" y="382" text-anchor="middle" class="cap" style="font-size:9.5px">Still lossless: verification uses the exact accept/reject rule. Dashed blue arc = recurrence (embed sampled token, feed back).</text>
+  </g>
+</svg>
+<figcaption><b>EAGLE: autoregressive drafting in feature space.</b> Rather than drafting in token space, EAGLE runs a tiny one-layer autoregressive loop over the target model's penultimate-layer features. Each step merges the previous feature with the token embedding, predicts the next feature via the cheap EAGLE layer, then samples a token through the frozen LM head. The dashed blue arc shows the recurrence: the sampled token is embedded and fed back as input to the next draft step, making EAGLE a true autoregressive drafter over low-entropy continuous features.</figcaption>
+</figure>
+
+<p>Why is the feature-space target easier to model than the token-space target? Features are <em>continuous and lower-entropy</em> than the sampled token sequence. Much of a token&rsquo;s unpredictability is the irreducible sampling noise of softmax; the underlying feature trajectory is far more deterministic and so is more learnable by a tiny extrapolator. The result: EAGLE&rsquo;s drafts track the target much more closely than Medusa&rsquo;s, yielding substantially higher acceptance lengths at similar drafter cost. It remains a <em>lossless</em> drafter — verification still uses the exact accept/reject rule, so the output distribution is unchanged.</p>
+<p>The line then iterates:</p>
+<ul>
+<li><strong>EAGLE-2</strong> keeps the same drafter but makes the <strong>draft tree dynamic and context-aware.</strong> Instead of a fixed tree shape, it uses the drafter&rsquo;s own confidence (the running product of draft probabilities along each branch) to expand promising branches and prune unlikely ones. The acceptance probability of a draft token is well-approximated by the drafter&rsquo;s confidence, so EAGLE-2 spends its fixed token budget on the branches most likely to be accepted — more accepted tokens per target pass at the same verification cost.</li>
+<li><strong>EAGLE-3</strong> removes a &ldquo;feature-prediction&rdquo; training constraint that limited how much extra training data helped, and <strong>fuses features from multiple target layers</strong> (low/mid/high) rather than just the penultimate one, giving the drafter a richer view. It trains directly to predict tokens (via the test-time-style multi-step objective) rather than to reconstruct a single feature, which scales better with data and pushes acceptance lengths higher still.</li>
+</ul>
+<p>The throughline across the EAGLE family: keep the drafter tiny and <em>reuse the target&rsquo;s own representations</em>, do the cheap autoregression in feature space, and shape the verification tree dynamically.</p>
+<h2 id="tree-attention-verifying-many-candidates-at-once">Tree Attention: Verifying Many Candidates at Once<a class="headerlink" href="#tree-attention-verifying-many-candidates-at-once" title="Permanent link">¶</a></h2>
+<p>Linear drafting commits to a single continuation <span class="arithmatex">\(d_1,\dots,d_\gamma\)</span>; one early rejection wastes the rest. <strong>Tree drafting</strong> instead proposes <em>many</em> candidate continuations arranged as a token tree — for example the top-2 choices at depth 1, and for each of those the top-2 at depth 2, and so on — and verifies the <strong>entire tree in a single target forward pass.</strong> The target then accepts the longest path through the tree that survives the accept/reject test. This dramatically raises expected accepted length per pass and is essential to Medusa and EAGLE.</p>
+<p>The trick that makes it cheap is <strong>tree attention</strong>: we flatten the tree into one sequence and use a custom attention mask so that each node attends only to its <strong>ancestors</strong> (and itself), never to nodes on sibling branches. That way, a single packed forward pass computes the correct hidden state for every node <em>as if</em> each path had been fed in separately.</p>
+<figure class="viz" id="fig-specdec-tree-attention">
+<style>
+  #fig-specdec-tree-attention text { fill: var(--ink-soft); }
+  #fig-specdec-tree-attention .lbl  { font: 600 12px var(--sans,sans-serif); }
+  #fig-specdec-tree-attention .sub  { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-specdec-tree-attention .cap  { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-specdec-tree-attention .ttl  { font: 700 13px var(--sans,sans-serif); }
+  #fig-specdec-tree-attention .mono { font: 600 11px var(--mono,monospace); }
+  #fig-specdec-tree-attention .grid-lbl { font: 600 10.5px var(--mono,monospace); }
+  #fig-specdec-tree-attention .row-lbl  { font: 600 10.5px var(--mono,monospace); }
+  #fig-specdec-tree-attention .depth-lbl { font: 500 9px var(--sans,sans-serif); fill: var(--muted); }
+</style>
+<svg viewBox="0 0 980 500" role="img" aria-label="Tree attention: a token tree branches top-2 at each depth, is flattened into one sequence with depth-based position ids, and a custom attention mask lets each node attend only to its ancestors plus itself for a single packed verification pass.">
+  <defs>
+    <marker id="ta-arrow" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#888)"/>
+    </marker>
+  </defs>
+
+
+
+
+  <text x="14" y="20" class="ttl">A. Token Tree</text>
+
+
+  <g data-anim="1">
+    <rect x="116" y="30" width="72" height="34" rx="8"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="2.2"/>
+    <text x="152" y="52" text-anchor="middle" class="lbl">root</text>
+  </g>
+  <text x="196" y="52" text-anchor="start" class="sub">(last accepted)</text>
+
+
+  <line x1="134" y1="64" x2="82"  y2="106" stroke="var(--muted,#888)" stroke-width="1.5"/>
+  <line x1="170" y1="64" x2="222" y2="106" stroke="var(--muted,#888)" stroke-width="1.5"/>
+  <text x="258" y="126" text-anchor="start" class="sub">depth 1</text>
+
+
+  <g data-anim="2">
+    <rect x="50" y="106" width="64" height="32" rx="7"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.18"
+          stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+    <text x="82" y="127" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">A</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="190" y="106" width="64" height="32" rx="7"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.18"
+          stroke="var(--accent-2,#0891b2)" stroke-width="1.8"/>
+    <text x="222" y="127" text-anchor="middle" class="lbl" fill="var(--accent-2,#0891b2)">B</text>
+  </g>
+
+
+  <line x1="66"  y1="138" x2="40"  y2="178" stroke="var(--accent,#4f46e5)" stroke-width="1.3" opacity="0.8"/>
+  <line x1="98"  y1="138" x2="114" y2="178" stroke="var(--accent,#4f46e5)" stroke-width="1.3" opacity="0.8"/>
+
+  <line x1="206" y1="138" x2="182" y2="178" stroke="var(--accent-2,#0891b2)" stroke-width="1.3" opacity="0.8"/>
+  <line x1="238" y1="138" x2="254" y2="178" stroke="var(--accent-2,#0891b2)" stroke-width="1.3" opacity="0.8"/>
+  <text x="258" y="206" text-anchor="start" class="sub">depth 2</text>
+
+
+  <g data-anim="3">
+    <rect x="12" y="178" width="54" height="28" rx="6"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.12"
+          stroke="var(--accent,#4f46e5)" stroke-width="1.6"/>
+    <text x="39" y="197" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">A1</text>
+
+    <rect x="87" y="178" width="54" height="28" rx="6"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.12"
+          stroke="var(--accent,#4f46e5)" stroke-width="1.6"/>
+    <text x="114" y="197" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">A2</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="155" y="178" width="54" height="28" rx="6"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.12"
+          stroke="var(--accent-2,#0891b2)" stroke-width="1.6"/>
+    <text x="182" y="197" text-anchor="middle" class="lbl" fill="var(--accent-2,#0891b2)">B1</text>
+
+    <rect x="227" y="178" width="54" height="28" rx="6"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.12"
+          stroke="var(--accent-2,#0891b2)" stroke-width="1.6"/>
+    <text x="254" y="197" text-anchor="middle" class="lbl" fill="var(--accent-2,#0891b2)">B2</text>
+  </g>
+
+
+
+
+  <line x1="10" y1="230" x2="290" y2="230" stroke="var(--border-2,#ddd)" stroke-width="0.8"/>
+  <text x="14" y="248" class="ttl">B. Flattened Sequence</text>
+
+
+
+
+  <g data-anim="1">
+    <rect x="14"  y="258" width="34" height="32" rx="4"
+          fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#555)" stroke-width="1.6"/>
+    <text x="31"  y="279" text-anchor="middle" class="mono">rt</text>
+  </g>
+  <g data-anim="2">
+    <rect x="52"  y="258" width="34" height="32" rx="4"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.18" stroke="var(--accent,#4f46e5)" stroke-width="1.6"/>
+    <text x="69"  y="279" text-anchor="middle" class="mono" fill="var(--accent,#4f46e5)">A</text>
+    <rect x="90"  y="258" width="34" height="32" rx="4"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.18" stroke="var(--accent-2,#0891b2)" stroke-width="1.6"/>
+    <text x="107" y="279" text-anchor="middle" class="mono" fill="var(--accent-2,#0891b2)">B</text>
+  </g>
+  <g data-anim="3">
+    <rect x="128" y="258" width="34" height="32" rx="4"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.12" stroke="var(--accent,#4f46e5)" stroke-width="1.4"/>
+    <text x="145" y="279" text-anchor="middle" class="mono" fill="var(--accent,#4f46e5)">A1</text>
+    <rect x="166" y="258" width="34" height="32" rx="4"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.12" stroke="var(--accent,#4f46e5)" stroke-width="1.4"/>
+    <text x="183" y="279" text-anchor="middle" class="mono" fill="var(--accent,#4f46e5)">A2</text>
+    <rect x="204" y="258" width="34" height="32" rx="4"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.12" stroke="var(--accent-2,#0891b2)" stroke-width="1.4"/>
+    <text x="221" y="279" text-anchor="middle" class="mono" fill="var(--accent-2,#0891b2)">B1</text>
+    <rect x="242" y="258" width="34" height="32" rx="4"
+          fill="var(--accent-2,#0891b2)" fill-opacity="0.12" stroke="var(--accent-2,#0891b2)" stroke-width="1.4"/>
+    <text x="259" y="279" text-anchor="middle" class="mono" fill="var(--accent-2,#0891b2)">B2</text>
+  </g>
+
+
+  <text x="4"   y="306" text-anchor="start" class="depth-lbl">idx:</text>
+  <text x="31"  y="306" text-anchor="middle" class="depth-lbl">0</text>
+  <text x="69"  y="306" text-anchor="middle" class="depth-lbl">1</text>
+  <text x="107" y="306" text-anchor="middle" class="depth-lbl">2</text>
+  <text x="145" y="306" text-anchor="middle" class="depth-lbl">3</text>
+  <text x="183" y="306" text-anchor="middle" class="depth-lbl">4</text>
+  <text x="221" y="306" text-anchor="middle" class="depth-lbl">5</text>
+  <text x="259" y="306" text-anchor="middle" class="depth-lbl">6</text>
+
+
+  <text x="4"   y="320" text-anchor="start" class="depth-lbl">depth:</text>
+  <text x="31"  y="320" text-anchor="middle" class="depth-lbl">0</text>
+  <text x="69"  y="320" text-anchor="middle" class="depth-lbl">1</text>
+  <text x="107" y="320" text-anchor="middle" class="depth-lbl">1</text>
+  <text x="145" y="320" text-anchor="middle" class="depth-lbl">2</text>
+  <text x="183" y="320" text-anchor="middle" class="depth-lbl">2</text>
+  <text x="221" y="320" text-anchor="middle" class="depth-lbl">2</text>
+  <text x="259" y="320" text-anchor="middle" class="depth-lbl">2</text>
+
+  <text x="14" y="338" class="cap">position id = DEPTH (not flattened index)</text>
+  <text x="14" y="352" class="cap">-&gt; RoPE treats each path as contiguous</text>
+
+
+
+
+
+
+  <line x1="304" y1="10" x2="304" y2="480" stroke="var(--border-2,#ddd)" stroke-width="0.8"/>
+  <text x="316" y="20" class="ttl">C. Tree Attention Mask</text>
+  <text x="316" y="34" class="sub">(1 = may attend to ancestor or self)</text>
+
+
+
+
+
+
+  <text x="456" y="48" text-anchor="middle" class="grid-lbl">root</text>
+  <text x="528" y="48" text-anchor="middle" class="grid-lbl">A</text>
+  <text x="600" y="48" text-anchor="middle" class="grid-lbl">B</text>
+  <text x="672" y="48" text-anchor="middle" class="grid-lbl">A1</text>
+  <text x="744" y="48" text-anchor="middle" class="grid-lbl">A2</text>
+  <text x="816" y="48" text-anchor="middle" class="grid-lbl">B1</text>
+  <text x="888" y="48" text-anchor="middle" class="grid-lbl">B2</text>
+  <text x="920" y="48" text-anchor="start"  class="sub">&lt;- keys</text>
+
+
+  <text x="414" y="76"  text-anchor="end" class="row-lbl">root</text>
+  <text x="414" y="120" text-anchor="end" class="row-lbl">A</text>
+  <text x="414" y="164" text-anchor="end" class="row-lbl">B</text>
+  <text x="414" y="208" text-anchor="end" class="row-lbl">A1</text>
+  <text x="414" y="252" text-anchor="end" class="row-lbl">A2</text>
+  <text x="414" y="296" text-anchor="end" class="row-lbl">B1</text>
+  <text x="414" y="340" text-anchor="end" class="row-lbl">B2</text>
+
+
+  <text x="318" y="210" class="sub" transform="rotate(-90, 318, 210)" text-anchor="middle">queries -&gt;</text>
+
+
+  <g fill="var(--surface-3,#f8f8f8)" stroke="var(--border-2,#ddd)" stroke-width="0.6">
+
+    <rect x="420" y="54" width="68" height="40" rx="2"/><rect x="492" y="54" width="68" height="40" rx="2"/>
+    <rect x="564" y="54" width="68" height="40" rx="2"/><rect x="636" y="54" width="68" height="40" rx="2"/>
+    <rect x="708" y="54" width="68" height="40" rx="2"/><rect x="780" y="54" width="68" height="40" rx="2"/>
+    <rect x="852" y="54" width="68" height="40" rx="2"/>
+
+    <rect x="420" y="98" width="68" height="40" rx="2"/><rect x="492" y="98" width="68" height="40" rx="2"/>
+    <rect x="564" y="98" width="68" height="40" rx="2"/><rect x="636" y="98" width="68" height="40" rx="2"/>
+    <rect x="708" y="98" width="68" height="40" rx="2"/><rect x="780" y="98" width="68" height="40" rx="2"/>
+    <rect x="852" y="98" width="68" height="40" rx="2"/>
+
+    <rect x="420" y="142" width="68" height="40" rx="2"/><rect x="492" y="142" width="68" height="40" rx="2"/>
+    <rect x="564" y="142" width="68" height="40" rx="2"/><rect x="636" y="142" width="68" height="40" rx="2"/>
+    <rect x="708" y="142" width="68" height="40" rx="2"/><rect x="780" y="142" width="68" height="40" rx="2"/>
+    <rect x="852" y="142" width="68" height="40" rx="2"/>
+
+    <rect x="420" y="186" width="68" height="40" rx="2"/><rect x="492" y="186" width="68" height="40" rx="2"/>
+    <rect x="564" y="186" width="68" height="40" rx="2"/><rect x="636" y="186" width="68" height="40" rx="2"/>
+    <rect x="708" y="186" width="68" height="40" rx="2"/><rect x="780" y="186" width="68" height="40" rx="2"/>
+    <rect x="852" y="186" width="68" height="40" rx="2"/>
+
+    <rect x="420" y="230" width="68" height="40" rx="2"/><rect x="492" y="230" width="68" height="40" rx="2"/>
+    <rect x="564" y="230" width="68" height="40" rx="2"/><rect x="636" y="230" width="68" height="40" rx="2"/>
+    <rect x="708" y="230" width="68" height="40" rx="2"/><rect x="780" y="230" width="68" height="40" rx="2"/>
+    <rect x="852" y="230" width="68" height="40" rx="2"/>
+
+    <rect x="420" y="274" width="68" height="40" rx="2"/><rect x="492" y="274" width="68" height="40" rx="2"/>
+    <rect x="564" y="274" width="68" height="40" rx="2"/><rect x="636" y="274" width="68" height="40" rx="2"/>
+    <rect x="708" y="274" width="68" height="40" rx="2"/><rect x="780" y="274" width="68" height="40" rx="2"/>
+    <rect x="852" y="274" width="68" height="40" rx="2"/>
+
+    <rect x="420" y="318" width="68" height="40" rx="2"/><rect x="492" y="318" width="68" height="40" rx="2"/>
+    <rect x="564" y="318" width="68" height="40" rx="2"/><rect x="636" y="318" width="68" height="40" rx="2"/>
+    <rect x="708" y="318" width="68" height="40" rx="2"/><rect x="780" y="318" width="68" height="40" rx="2"/>
+    <rect x="852" y="318" width="68" height="40" rx="2"/>
+  </g>
+
+
+
+
+  <g data-anim="2" fill="var(--accent,#4f46e5)" fill-opacity="0.62" stroke="none">
+
+    <rect x="420" y="54"  width="68" height="40" rx="2"/>
+
+    <rect x="420" y="98"  width="68" height="40" rx="2"/>
+    <rect x="492" y="98"  width="68" height="40" rx="2"/>
+
+    <rect x="420" y="142" width="68" height="40" rx="2"/>
+    <rect x="564" y="142" width="68" height="40" rx="2"/>
+
+    <rect x="420" y="186" width="68" height="40" rx="2"/>
+    <rect x="492" y="186" width="68" height="40" rx="2"/>
+    <rect x="636" y="186" width="68" height="40" rx="2"/>
+
+    <rect x="420" y="230" width="68" height="40" rx="2"/>
+    <rect x="492" y="230" width="68" height="40" rx="2"/>
+    <rect x="708" y="230" width="68" height="40" rx="2"/>
+
+    <rect x="420" y="274" width="68" height="40" rx="2"/>
+    <rect x="564" y="274" width="68" height="40" rx="2"/>
+    <rect x="780" y="274" width="68" height="40" rx="2"/>
+
+    <rect x="420" y="318" width="68" height="40" rx="2"/>
+    <rect x="564" y="318" width="68" height="40" rx="2"/>
+    <rect x="852" y="318" width="68" height="40" rx="2"/>
+  </g>
+
+
+  <g fill="var(--surface,#fff)" font-size="14" font-family="var(--mono,monospace)" font-weight="700" text-anchor="middle">
+
+    <text x="454" y="79">1</text>
+
+    <text x="454" y="123">1</text><text x="526" y="123">1</text>
+
+    <text x="454" y="167">1</text><text x="598" y="167">1</text>
+
+    <text x="454" y="211">1</text><text x="526" y="211">1</text><text x="670" y="211">1</text>
+
+    <text x="454" y="255">1</text><text x="526" y="255">1</text><text x="742" y="255">1</text>
+
+    <text x="454" y="299">1</text><text x="598" y="299">1</text><text x="814" y="299">1</text>
+
+    <text x="454" y="343">1</text><text x="598" y="343">1</text><text x="886" y="343">1</text>
+  </g>
+
+
+  <g data-anim="3">
+    <text x="660" y="376" text-anchor="middle" class="cap">Each node sees ONLY its ancestors + itself -> one packed forward pass</text>
+    <text x="660" y="390" text-anchor="middle" class="cap">= as if every root->leaf path were fed separately to the target.</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="10" y="414" width="960" height="74" rx="6"
+          fill="var(--surface-3,#f9f9f9)" stroke="var(--border-2,#ddd)" stroke-width="0.8"/>
+    <text x="490" y="434" text-anchor="middle" class="cap">Verify the whole tree in ONE target pass; accept the longest root-&gt;leaf path that survives the accept/reject test,</text>
+    <text x="490" y="450" text-anchor="middle" class="cap">then append the bonus token from the deepest accepted node.</text>
+    <text x="490" y="470" text-anchor="middle" class="cap">The art is choosing the tree shape (depth, branching, node budget) so every marginal node keeps paying for itself;</text>
+    <text x="490" y="484" text-anchor="middle" class="cap">EAGLE-2's dynamic confidence-driven trees are the state of the art.</text>
+  </g>
+</svg>
+<figcaption><b>Tree attention: token tree, flattened sequence, and ancestor-only mask.</b> The drafter proposes a token tree branching top-2 at each depth (Panel A); it is flattened into a single packed sequence where each node's position id equals its depth, not its flattened index (Panel B), so RoPE treats every root-to-leaf path as contiguous. The custom attention mask (Panel C) restricts each node to attending only to its ancestors and itself, allowing one target forward pass to correctly verify all paths simultaneously.</figcaption>
+</figure>
+
+<p>Each node must also carry the correct <strong>position id</strong> equal to its depth (not its index in the flattened sequence), so that positional encodings such as RoPE behave as if the path were contiguous (see <a href="../02-transformer/05-positional-encoding.html">Positional Encodings</a>). Here is a compact construction of the mask and position ids from a parent-pointer tree:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_tree_attn</span><span class="p">(</span><span class="n">parents</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    parents: list where parents[i] is the index of node i&#39;s parent</span>
+<span class="sd">             (parents[0] = -1 for the root). Nodes are in any order such</span>
+<span class="sd">             that a parent appears before its children.</span>
+<span class="sd">    Returns (mask, position_ids):</span>
+<span class="sd">      mask[i, j] = True  iff node j is an ancestor of node i, or j == i.</span>
+<span class="sd">      position_ids[i] = depth of node i (root = 0).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">parents</span><span class="p">)</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">)</span>
+    <span class="n">depth</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="c1"># Walk from node i up to the root, marking every ancestor as visible.</span>
+        <span class="n">j</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">i</span><span class="p">,</span> <span class="mi">0</span>
+        <span class="k">while</span> <span class="n">j</span> <span class="o">!=</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="n">mask</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">if</span> <span class="n">j</span> <span class="o">!=</span> <span class="n">i</span><span class="p">:</span>
+                <span class="n">d</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="n">j</span> <span class="o">=</span> <span class="n">parents</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+        <span class="n">depth</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">d</span>
+    <span class="k">return</span> <span class="n">mask</span><span class="p">,</span> <span class="n">depth</span>
+
+<span class="c1"># Example tree: [root, A, B, A1, A2, B1, B2] from the diagram above.</span>
+<span class="n">parents</span> <span class="o">=</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+<span class="n">mask</span><span class="p">,</span> <span class="n">pos</span> <span class="o">=</span> <span class="n">build_tree_attn</span><span class="p">(</span><span class="n">parents</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">pos</span><span class="o">.</span><span class="n">tolist</span><span class="p">())</span>          <span class="c1"># [0, 1, 1, 2, 2, 2, 2]  (depths)</span>
+<span class="c1"># Feed `mask` as the attention mask and `pos` as position_ids to the target</span>
+<span class="c1"># in ONE forward pass; then verify each root-&gt;leaf path with accept/reject.</span>
+</code></pre></div>
+<p>After the single masked forward pass, you have the target&rsquo;s distribution at every node. You verify paths from the root: walk down, applying the accept/reject test at each edge, and take the longest accepted path; append the bonus token from the deepest accepted node. The verification cost is one target pass over <span class="arithmatex">\(n\)</span> tree nodes — and because decode is memory-bound, <span class="arithmatex">\(n\)</span> on the order of tens of nodes still costs roughly one token&rsquo;s worth of weight movement. The art is choosing the tree shape (depth, branching, total node budget) so the marginal node keeps paying for itself; EAGLE-2&rsquo;s dynamic, confidence-driven trees are the state of the art here.</p>
+<h2 id="lookahead-decoding-drafting-without-a-drafter">Lookahead Decoding: Drafting Without a Drafter<a class="headerlink" href="#lookahead-decoding-drafting-without-a-drafter" title="Permanent link">¶</a></h2>
+<p><strong>Lookahead decoding</strong> (Fu et al., 2024) is a different beast: it needs <strong>no draft model and no extra trained heads at all</strong>. It exploits the fact that the target&rsquo;s <em>own</em> parallel forward pass can be coaxed into generating and verifying n-grams simultaneously, by solving for fixed points of the autoregressive map using a <strong>Jacobi-iteration</strong> view of decoding.</p>
+<p>The idea: think of decoding <span class="arithmatex">\(N\)</span> future tokens as solving a system of nonlinear equations <span class="arithmatex">\(x_i = \arg\max p(\cdot \mid x_{&lt;i})\)</span> for <span class="arithmatex">\(i = 1,\dots,N\)</span>. Ordinary decoding solves these one at a time (Gauss–Seidel order). <strong>Jacobi decoding</strong> instead guesses all <span class="arithmatex">\(N\)</span> at once and refines them in parallel: each forward pass updates every position based on the current guesses, and the sequence provably converges to the same greedy output in at most <span class="arithmatex">\(N\)</span> steps — but often far fewer, because many positions lock in early.</p>
+<p>Lookahead decoding runs two things in every target forward pass, fused:</p>
+<ol>
+<li><strong>The lookahead branch</strong> performs several parallel Jacobi updates over a 2-D window (a <em>window size</em> <span class="arithmatex">\(W\)</span> of parallel positions over a <em>lookback</em> of <span class="arithmatex">\(N\)</span> steps), generating many candidate <strong>n-grams</strong> as a byproduct.</li>
+<li><strong>The verification branch</strong> checks promising n-grams collected so far (stored in an n-gram pool / cache) against the target — exactly like a draft — accepting any that match.</li>
+</ol>
+<p>Both branches share <strong>one</strong> forward pass via a custom attention mask, much like tree attention. The payoff: the number of decoding steps to generate a sequence drops well below the sequence length, trading the GPU&rsquo;s spare parallel FLOPs (remember, decode is memory-bound, so FLOPs are nearly free) for fewer sequential steps. Crucially, with greedy decoding it produces <em>exactly</em> the same output as standard autoregressive decoding — it is lossless by construction, because it only ever accepts tokens that match the target&rsquo;s own argmax.</p>
+<p>Trade-offs versus drafter-based methods:</p>
+<ul>
+<li><strong>Pro:</strong> zero extra models, zero training, drop-in. Great when you can&rsquo;t or won&rsquo;t train a drafter.</li>
+<li><strong>Con:</strong> the extra Jacobi/verification positions consume FLOPs and KV-cache slots, so at large batch sizes — where the GPU is already compute-saturated and <em>not</em> memory-bound — the spare FLOPs vanish and lookahead can <em>hurt</em>. This is the general rule for <strong>all</strong> speculative methods: they convert spare compute into fewer sequential steps, and they only help when there is spare compute, i.e., at small-to-moderate batch sizes where decode is memory-bound.</li>
+</ul>
+<h2 id="acceptance-rate-speedup-when-it-pays-off">Acceptance Rate, Speedup &amp; When It Pays Off<a class="headerlink" href="#acceptance-rate-speedup-when-it-pays-off" title="Permanent link">¶</a></h2>
+<p>Let us make the economics precise. Define, for a single-chain (non-tree) drafter of length <span class="arithmatex">\(\gamma\)</span>:</p>
+<ul>
+<li><span class="arithmatex">\(\alpha\)</span> = the per-token acceptance probability (assume i.i.d. across positions for a clean model).</li>
+<li><span class="arithmatex">\(c\)</span> = the drafter&rsquo;s cost per token, as a fraction of one target forward pass.</li>
+</ul>
+<p>The number of accepted draft tokens before the first rejection is a truncated geometric variable. The <strong>expected number of tokens emitted per speculative step</strong> (accepted drafts plus the one guaranteed corrected/bonus token) is</p>
+<div class="arithmatex">\[
+\mathbb{E}[\text{tokens per step}] \;=\; \frac{1 - \alpha^{\gamma+1}}{1 - \alpha}.
+\]</div>
+<p>This is the expected length of the accepted run plus the trailing token; it ranges from <span class="arithmatex">\(1\)</span> (when <span class="arithmatex">\(\alpha=0\)</span>) up to <span class="arithmatex">\(\gamma+1\)</span> (when <span class="arithmatex">\(\alpha\to 1\)</span>). The <strong>cost per step</strong> is one target pass plus <span class="arithmatex">\(\gamma\)</span> drafter passes: <span class="arithmatex">\(1 + \gamma c\)</span> target-equivalents. Hence the idealized <strong>speedup</strong> over plain decoding (which emits exactly one token per target pass) is</p>
+<div class="arithmatex">\[
+\text{speedup} \;=\; \frac{\mathbb{E}[\text{tokens per step}]}{1 + \gamma c} \;=\; \frac{1 - \alpha^{\gamma+1}}{(1-\alpha)\,(1+\gamma c)} .
+\]</div>
+<p>Two regimes fall right out of this formula. As the drafter cost <span class="arithmatex">\(c \to 0\)</span> (e.g., cheap self-drafting heads), the denominator&rsquo;s drafter term vanishes and speedup <span class="arithmatex">\(\to (1-\alpha^{\gamma+1})/(1-\alpha)\)</span>, which keeps growing with <span class="arithmatex">\(\gamma\)</span> toward <span class="arithmatex">\(1/(1-\alpha)\)</span>. But with a real <span class="arithmatex">\(c&gt;0\)</span>, there is an <strong>optimal <span class="arithmatex">\(\gamma^\*\)</span></strong>: pushing <span class="arithmatex">\(\gamma\)</span> too high wastes drafter passes on tokens that will be rejected anyway. You differentiate or sweep to find it.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: how big is the win?</p>
+<p>Take a 70B target with a 1.5B drafter, so <span class="arithmatex">\(c \approx 1.5/70 \approx 0.021\)</span>. Suppose on a coding workload the drafter achieves acceptance <span class="arithmatex">\(\alpha = 0.8\)</span>, and we draft <span class="arithmatex">\(\gamma = 5\)</span> tokens per step.</p>
+<p>Expected tokens per step:
+$<span class="arithmatex">\(\frac{1 - 0.8^{6}}{1 - 0.8} = \frac{1 - 0.262}{0.2} = \frac{0.738}{0.2} \approx 3.69 \text{ tokens.}\)</span>$</p>
+<p>Cost per step: <span class="arithmatex">\(1 + 5(0.021) = 1.105\)</span> target-equivalent passes.</p>
+<p>Speedup <span class="arithmatex">\(\approx 3.69 / 1.105 \approx 3.3\times\)</span>. So we emit ~3.7 tokens for the wall-clock price of ~1.1 target passes — a 3.3× decode speedup, <em>with identical output distribution</em>.</p>
+<p>Now stress-test the assumption. If the workload is high-entropy chat at temperature 1.0 and acceptance drops to <span class="arithmatex">\(\alpha = 0.4\)</span>, expected tokens per step is <span class="arithmatex">\((1 - 0.4^6)/0.6 = 0.9959/0.6 \approx 1.66\)</span>, and speedup <span class="arithmatex">\(\approx 1.66/1.105 \approx 1.5\times\)</span>. Same machinery, very different payoff — acceptance rate is everything. And note the sweep on <span class="arithmatex">\(\gamma\)</span>: at <span class="arithmatex">\(\alpha=0.4\)</span>, raising <span class="arithmatex">\(\gamma\)</span> to 8 barely changes the numerator (<span class="arithmatex">\(\approx 1.66\)</span>, since the geometric tail is tiny) while the denominator grows to <span class="arithmatex">\(1.17\)</span>, so the speedup <em>falls</em>. The optimal <span class="arithmatex">\(\gamma\)</span> is workload-dependent.</p>
+</div>
+<p>A second, system-level caveat the formula hides: <strong>batch size.</strong> All these speedups assume the decode step is memory-bandwidth bound, so the extra verification FLOPs are free. At large batch sizes the GPU becomes <strong>compute-bound</strong> (you&rsquo;ve already amortized weight loading across many requests), the verification tokens compete for real FLOPs, and the speedup collapses — speculation can even slow you down. Production engines therefore gate speculation on batch size and turn it off under heavy load. This is the same memory-vs-compute boundary analyzed in <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a> and <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: tokenizer and distribution mismatch</p>
+<p>For drafter-based speculation, the draft and target <strong>must share an identical tokenizer</strong>; a token ID has to mean the same string in both, or the accept test is incoherent and outputs garble. Two more subtle traps: (1) the drafter and target must use the <strong>same temperature and sampling transform</strong> at verification time, or the <span class="arithmatex">\(p/q\)</span> ratio is computed against the wrong distribution; and (2) &ldquo;typical acceptance&rdquo; / threshold-based acceptance (used by some Medusa configs) is <em>not</em> the exact rule — it deviates slightly from the target distribution by design. If you need bit-exact equivalence to the target&rsquo;s sampler, use the exact rejection rule, not a relaxed one.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Speculative decoding uses a small, inaccurate draft model, yet its output is provably identical in distribution to the large model&rsquo;s. How is that possible, and what <em>exactly</em> does the draft model&rsquo;s quality affect?</p>
+<p><strong>A:</strong> The guarantee comes from <strong>modified rejection sampling</strong> at each position. A drafted token <span class="arithmatex">\(x \sim q\)</span> is accepted with probability <span class="arithmatex">\(\min(1, p(x)/q(x))\)</span>; on rejection we resample from the residual <span class="arithmatex">\(p_{\text{res}}(x) \propto (p(x)-q(x))_+\)</span> and stop the chain. Summing the two ways a token <span class="arithmatex">\(x\)</span> can be emitted — drafted-and-accepted, giving <span class="arithmatex">\(\min(p(x),q(x))\)</span>, plus rejected-then-residual, giving <span class="arithmatex">\((p(x)-q(x))_+\)</span> — yields exactly <span class="arithmatex">\(p(x)\)</span> for every <span class="arithmatex">\(x\)</span>, independent of <span class="arithmatex">\(q\)</span>. So correctness holds for <em>any</em> drafter. The draft model&rsquo;s quality affects only <strong>speed</strong>: the expected acceptance probability is <span class="arithmatex">\(\alpha = \sum_x \min(p(x), q(x)) = 1 - \mathrm{TV}(p,q)\)</span>, so a drafter closer to the target in total-variation distance accepts more tokens per verification pass and yields a larger speedup, per <span class="arithmatex">\((1-\alpha^{\gamma+1})/[(1-\alpha)(1+\gamma c)]\)</span>. A bad drafter just means <span class="arithmatex">\(\alpha\)</span> is low and you fall back toward 1× — never wrong, only slow.</p>
+<p><strong>Follow-up Q:</strong> When would you <em>not</em> use it?</p>
+<p><strong>A:</strong> When the decode step is already compute-bound — large batch sizes, or very small models — the extra verification FLOPs aren&rsquo;t free and speculation can slow you down. Also for very high-entropy sampling where acceptance is low, the win shrinks. Gate it on batch size and workload.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Decode is memory-bandwidth bound, so verifying <span class="arithmatex">\(K\)</span> tokens in one target pass costs about the same as one token — this is the entire reason speculative decoding works.</li>
+<li>The <strong>accept/reject rule</strong> — accept <span class="arithmatex">\(x\sim q\)</span> with prob <span class="arithmatex">\(\min(1,p(x)/q(x))\)</span>, else resample from <span class="arithmatex">\((p-q)_+\)</span> — makes emitted tokens <em>exactly</em> distributed as the target <span class="arithmatex">\(p\)</span>, for <strong>any</strong> drafter. Correctness is free; the drafter only buys speed.</li>
+<li>Expected acceptance is <span class="arithmatex">\(\alpha = \sum_x \min(p,q) = 1 - \mathrm{TV}(p,q)\)</span>: a drafter close to the target in total-variation distance accepts more.</li>
+<li><strong>Separate draft models</strong> (10–50× smaller, same tokenizer/family, ideally distilled from the target) are the classic recipe; <strong>prompt-lookup/n-gram</strong> drafting is near-free and excellent for copy-heavy workloads.</li>
+<li><strong>Medusa</strong> adds parallel prediction heads to the frozen target (cheap to train, but each head predicts in isolation); <strong>EAGLE/EAGLE-&#8532;</strong> do autoregression in <strong>feature space</strong> conditioned on drafted tokens, achieving much higher acceptance, with dynamic confidence-driven draft trees.</li>
+<li><strong>Tree attention</strong> verifies many candidate continuations in one pass via an ancestor-only mask and depth-based position ids, raising accepted tokens per step.</li>
+<li><strong>Lookahead decoding</strong> needs no drafter or training — it uses Jacobi iteration to generate and verify n-grams in the target&rsquo;s own parallel passes; lossless for greedy decoding.</li>
+<li>Speedup <span class="arithmatex">\(= (1-\alpha^{\gamma+1})/[(1-\alpha)(1+\gamma c)]\)</span>: there is an optimal draft length <span class="arithmatex">\(\gamma^\*\)</span>, and all methods only help while decode is <strong>memory-bound</strong> (small/moderate batch). Gate speculation on batch size.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Speculative decoding is now a production staple in every major serving engine (vLLM, TensorRT-LLM, SGLang). The EAGLE family — especially EAGLE-3 (NeurIPS 2025) — represents the current speed frontier for self-speculative methods, with 3–6× latency reductions on popular models.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2211.17192">Leviathan, Kalman &amp; Matias, <em>Fast Inference from Transformers via Speculative Decoding</em> (2022)</a> — the original draft-then-verify algorithm with the accept/reject proof; 2–3× speedup on T5-XXL.</li>
+<li><a href="https://arxiv.org/abs/2302.01318">Chen et al., <em>Accelerating Large Language Model Decoding with Speculative Sampling</em> (2023)</a> — concurrent DeepMind formulation using modified rejection sampling; benchmarked on Chinchilla-70B.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2401.10774">Cai et al., <em>Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads</em> (2024)</a> — parallel prediction heads bolted onto a frozen target; introduces tree attention and the typical-acceptance criterion.</li>
+<li><a href="https://arxiv.org/abs/2401.15077">Li et al., <em>EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty</em> (2024)</a> — autoregression in feature (penultimate-layer) space; 2.7–3.5× speedup by matching the target&rsquo;s own representations.</li>
+<li><a href="https://arxiv.org/abs/2406.16858">Li et al., <em>EAGLE-2: Faster Inference of Language Models with Dynamic Draft Trees</em> (2024)</a> — confidence-driven dynamic draft trees that allocate the token budget to the most-likely branches; 20–40% faster than EAGLE-1.</li>
+<li><a href="https://arxiv.org/abs/2503.01840">Li et al., <em>EAGLE-3: Scaling up Inference Acceleration via Training-Time Test</em> (2025)</a> — multi-layer feature fusion and a training-time test objective; 3.3–6.5× speedup and now integrated into vLLM/SGLang/TRT-LLM.</li>
+<li><a href="https://arxiv.org/abs/2402.02057">Fu et al., <em>Break the Sequential Dependency of LLM Inference Using Lookahead Decoding</em> (2024)</a> — Jacobi-iteration drafting with no extra model or training; lossless for greedy decoding.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/SafeAILab/EAGLE">SafeAILab/EAGLE</a> — official reference implementation of EAGLE-1, EAGLE-2, and EAGLE-3 (ICML&lsquo;24, EMNLP&lsquo;24, NeurIPS&lsquo;25).</li>
+<li><a href="https://github.com/FasterDecoding/Medusa">FasterDecoding/Medusa</a> — Medusa training and inference code; includes recipes for both Medusa-1 (heads only) and Medusa-2 (joint fine-tune).</li>
+<li><a href="https://docs.vllm.ai/en/latest/features/speculative_decoding/">vLLM speculative decoding docs</a> — production guide covering draft models, EAGLE, n-gram, and the <code>--speculative-config</code> API.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2401.07851">Xia et al., <em>Unlocking Efficiency in LLM Inference: A Comprehensive Survey of Speculative Decoding</em> (2024)</a> — systematic taxonomy of drafter types, verification strategies, and Spec-Bench comparisons across methods.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Leviathan, Kalman &amp; Matias, <em>Fast Inference from Transformers via Speculative Decoding</em> (Google, 2023) — the accept/reject derivation and draft-then-verify framing.</li>
+<li>Chen et al., <em>Accelerating Large Language Model Decoding with Speculative Sampling</em> (DeepMind, 2023) — concurrent formulation with the modified rejection-sampling proof.</li>
+<li>Cai et al., <em>Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads</em> (2024) — parallel heads, tree attention, typical acceptance.</li>
+<li>Li et al., <em>EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty</em> (2024), plus the <strong>EAGLE-2</strong> (dynamic draft trees) and <strong>EAGLE-3</strong> (multi-layer feature fusion, training-time test) follow-ups.</li>
+<li>Fu et al., <em>Break the Sequential Dependency of LLM Inference Using Lookahead Decoding</em> (2024) — Jacobi-iteration drafting without a draft model.</li>
+<li>Stern, Shazeer &amp; Uszkoreit, <em>Blockwise Parallel Decoding for Deep Autoregressive Models</em> (2018) — an early precursor to multi-token prediction and verification.</li>
+<li>The <strong>vLLM</strong> and <strong>TensorRT-LLM</strong> repositories — production implementations of draft-model, Medusa, and EAGLE speculation; see <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a> and <a href="../07-inference-serving/05-trtllm-tgi-stacks.html">TensorRT-LLM, TGI &amp; Other Serving Stacks</a>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="05-trtllm-tgi-stacks.html"><span class="pn-label">← Previous</span><span class="pn-title">TensorRT-LLM, TGI &amp; Other Serving Stacks</span></a>
+<a class="next" href="07-prefix-caching.html"><span class="pn-label">Next →</span><span class="pn-title">Prefix Caching &amp; KV-Cache Reuse</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-core-idea-draft-then-verify">The Core Idea: Draft, Then Verify</a></li>
+<li class="toc-l2"><a href="#the-acceptreject-rule-preserving-the-target-distribution">The Accept/Reject Rule: Preserving the Target Distribution</a></li>
+<li class="toc-l3"><a href="#the-rule">The rule</a></li>
+<li class="toc-l3"><a href="#the-proof-that-this-is-exact">The proof that this is exact</a></li>
+<li class="toc-l3"><a href="#extending-to-a-chain-of-gamma-draft-tokens">Extending to a chain of \(\gamma\) draft tokens</a></li>
+<li class="toc-l2"><a href="#a-from-scratch-implementation">A From-Scratch Implementation</a></li>
+<li class="toc-l2"><a href="#choosing-and-training-a-draft-model">Choosing and Training a Draft Model</a></li>
+<li class="toc-l3"><a href="#sources-of-drafters">Sources of drafters</a></li>
+<li class="toc-l2"><a href="#medusa-parallel-prediction-heads">Medusa: Parallel Prediction Heads</a></li>
+<li class="toc-l2"><a href="#the-eagle-line-feature-level-autoregression">The EAGLE Line: Feature-Level Autoregression</a></li>
+<li class="toc-l2"><a href="#tree-attention-verifying-many-candidates-at-once">Tree Attention: Verifying Many Candidates at Once</a></li>
+<li class="toc-l2"><a href="#lookahead-decoding-drafting-without-a-drafter">Lookahead Decoding: Drafting Without a Drafter</a></li>
+<li class="toc-l2"><a href="#acceptance-rate-speedup-when-it-pays-off">Acceptance Rate, Speedup &amp;amp; When It Pays Off</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

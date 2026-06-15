@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM-Specific Deep-Dive Questions — ML/LLM Interview Companion</title>
+<meta name="description" content="The questions a strong LLM candidate must nail: explain attention/RoPE/KV-cache/flash-attention, why GQA, DPO vs PPO, GRPO, quantization, scaling laws, MoE, spe">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../interview/index.html"><span class="logo">Λ</span><span class="brand-text">ML/LLM Interview Companion<small>Prep for Top-Tier ML &amp; LLM Engineering Interviews</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="interview-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<a class="sidebar-parent" href="../index.html">← The LLM Stack</a>
+<div class="nav-part" data-part="13-interview-prep">
+<div class="nav-part-title"><span>The ML/LLM Interview — Companion Prep</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-google-ml-interview-format.html"><span class="nav-num">1.1</span>The ML Engineer Interview: Formats &amp; What&#x27;s Tested</a></li>
+<li><a class="" href="02-ml-breadth-rapidfire.html"><span class="nav-num">1.2</span>ML Breadth: Rapid-Fire Concepts &amp; Model Answers</a></li>
+<li><a class="" href="03-ml-system-design-framework.html"><span class="nav-num">1.3</span>ML System Design: A Framework</a></li>
+<li><a class="" href="04-ml-system-design-cases.html"><span class="nav-num">1.4</span>ML System Design: Worked Cases</a></li>
+<li><a class="" href="05-coding-for-ml-interviews.html"><span class="nav-num">1.5</span>Coding for ML Interviews</a></li>
+<li><a class="active" href="06-llm-deepdive-questions.html"><span class="nav-num">1.6</span>LLM-Specific Deep-Dive Questions</a></li>
+<li><a class="" href="07-behavioral-googleyness.html"><span class="nav-num">1.7</span>Behavioral, Leadership &amp; Project Deep-Dive</a></li>
+<li><a class="" href="08-ten-day-study-plan.html"><span class="nav-num">1.8</span>The 10-Day Study Plan &amp; Final Checklist</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">The ML/LLM Interview — Companion Prep</div>
+<h1 id="136-llm-specific-deep-dive-questions">13.6 LLM-Specific Deep-Dive Questions<a class="headerlink" href="#136-llm-specific-deep-dive-questions" title="Permanent link">¶</a></h1>
+<p>The breadth round (<a href="02-ml-breadth-rapidfire.html">ML Breadth: Rapid-Fire Concepts &amp; Model Answers</a>) tests whether you know machine learning. The LLM deep-dive tests whether you actually understand the <em>modern</em> stack — the part that didn&rsquo;t exist when most ML textbooks were written. At Google, this often arrives mid-conversation: the interviewer name-drops &ldquo;KV cache&rdquo; or &ldquo;GQA&rdquo; or &ldquo;DPO&rdquo; and watches you either light up or stall. A strong candidate doesn&rsquo;t recite a definition; they explain the <em>mechanism</em>, the <em>failure mode it fixes</em>, the <em>cost</em>, and the <em>tradeoff</em>.</p>
+<p>This chapter is a question bank with model answers, organized by topic. Each answer is written the way you should <em>say</em> it out loud: lead with the one-sentence essence, then the mechanism, then a number or a tradeoff. We cross-link to the full chapters so you can go deeper, but everything you need to <em>survive the question</em> is here. Treat the code blocks as the reconstructions you should be able to whiteboard from memory under pressure — if you can write the eight-line attention and the online-softmax recurrence, you have already beaten most candidates.</p>
+<p>A meta-note on style: when you don&rsquo;t know something, say what you <em>do</em> know and reason toward the rest. &ldquo;I haven&rsquo;t read the EAGLE paper closely, but speculative decoding generally works by&hellip;&rdquo; is a strong answer. Bluffing a fabricated number is the single fastest way to lose an LLM interviewer&rsquo;s trust.</p>
+<h2 id="attention-rope-kv-cache-flashattention">Attention, RoPE, KV-Cache &amp; FlashAttention<a class="headerlink" href="#attention-rope-kv-cache-flashattention" title="Permanent link">¶</a></h2>
+<p>These four are the load-bearing wall. If you can&rsquo;t explain them crisply, the interviewer learns everything they need in five minutes.</p>
+<h3 id="explain-self-attention-from-scratch">Explain self-attention from scratch<a class="headerlink" href="#explain-self-attention-from-scratch" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> Attention lets every token mix in information from every other token, weighted by learned relevance. Each token emits a <em>query</em>, every token exposes a <em>key</em> and a <em>value</em>; the query dots against all keys to produce weights, and the output is the weighted sum of values.</p>
+<div class="arithmatex">\[
+\operatorname{Attention}(Q,K,V)=\operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V
+\]</div>
+<p>The <span class="arithmatex">\(\sqrt{d_k}\)</span> divisor is not cosmetic: if <span class="arithmatex">\(q,k\)</span> have unit-variance components, <span class="arithmatex">\(q\cdot k\)</span> has variance <span class="arithmatex">\(d_k\)</span>, so without scaling the logits grow with head dimension, the softmax saturates, and gradients vanish. You should be able to reconstruct this in a few lines:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="o">,</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">attention</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+    <span class="c1"># q,k,v: (batch, heads, seq, d_head)</span>
+    <span class="n">d_head</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="p">(</span><span class="n">q</span> <span class="o">@</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="n">d_head</span> <span class="o">**</span> <span class="mf">0.5</span>   <span class="c1"># (b,h,T,T)</span>
+    <span class="k">if</span> <span class="n">causal</span><span class="p">:</span>
+        <span class="n">T</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">triu</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">q</span><span class="o">.</span><span class="n">device</span><span class="p">),</span> <span class="n">diagonal</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">bool</span><span class="p">()</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">))</span>  <span class="c1"># no peeking ahead</span>
+    <span class="n">weights</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>                   <span class="c1"># rows sum to 1</span>
+    <span class="k">return</span> <span class="n">weights</span> <span class="o">@</span> <span class="n">v</span>                                    <span class="c1"># (b,h,T,d_head)</span>
+</code></pre></div>
+<p>The causal mask is what makes a decoder-only LM autoregressive: position <span class="arithmatex">\(t\)</span> may attend to <span class="arithmatex">\(\le t\)</span> only. The full development — why dot-product, why multi-head, the geometry — is in <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a>.</p>
+<p><strong>Cost.</strong> The <span class="arithmatex">\(QK^\top\)</span> matrix is <span class="arithmatex">\(T\times T\)</span>, so attention is <span class="arithmatex">\(O(T^2 d)\)</span> compute and, naively, <span class="arithmatex">\(O(T^2)\)</span> memory. That quadratic is the root cause of half the engineering in this book.</p>
+<h3 id="explain-rope-and-why-it-beats-learned-positional-embeddings">Explain RoPE and why it beats learned positional embeddings<a class="headerlink" href="#explain-rope-and-why-it-beats-learned-positional-embeddings" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> Rotary Position Embedding encodes position by <em>rotating</em> the query and key vectors by an angle proportional to their absolute position, in 2D subspaces. Because a dot product of two rotated vectors depends only on the <em>difference</em> of their rotation angles, the attention score between positions <span class="arithmatex">\(m\)</span> and <span class="arithmatex">\(n\)</span> becomes a function of <span class="arithmatex">\(m-n\)</span> — RoPE injects relative position while applying an absolute rotation.</p>
+<p>For a 2D pair <span class="arithmatex">\((x_1,x_2)\)</span> at position <span class="arithmatex">\(m\)</span> with frequency <span class="arithmatex">\(\theta\)</span>:</p>
+<div class="arithmatex">\[
+R_{m,\theta}\begin{bmatrix}x_1\\x_2\end{bmatrix}=\begin{bmatrix}\cos m\theta &amp; -\sin m\theta\\ \sin m\theta &amp; \cos m\theta\end{bmatrix}\begin{bmatrix}x_1\\x_2\end{bmatrix}
+\]</div>
+<p>The head dimension is split into <span class="arithmatex">\(d/2\)</span> such pairs, each with its own frequency <span class="arithmatex">\(\theta_i=\text{base}^{-2i/d}\)</span> (base typically 10000). Low-index pairs rotate fast (capture local order); high-index pairs rotate slowly (capture long-range position).</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">build_rope_cache</span><span class="p">(</span><span class="n">seq_len</span><span class="p">,</span> <span class="n">d_head</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mf">10000.0</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cpu&quot;</span><span class="p">):</span>
+    <span class="c1"># inverse frequencies: one per dimension-pair</span>
+    <span class="n">inv_freq</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">base</span> <span class="o">**</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">d_head</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="n">d_head</span><span class="p">))</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">seq_len</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">freqs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">outer</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">inv_freq</span><span class="p">)</span>            <span class="c1"># (seq, d_head/2)</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">freqs</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">freqs</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_rope</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">cos</span><span class="p">,</span> <span class="n">sin</span><span class="p">):</span>
+    <span class="c1"># x: (b, h, seq, d_head); rotate consecutive pairs (x_even, x_odd)</span>
+    <span class="n">x1</span><span class="p">,</span> <span class="n">x2</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">::</span><span class="mi">2</span><span class="p">],</span> <span class="n">x</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">::</span><span class="mi">2</span><span class="p">]</span>
+    <span class="n">cos</span><span class="p">,</span> <span class="n">sin</span> <span class="o">=</span> <span class="n">cos</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">],</span> <span class="n">sin</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="n">rx1</span> <span class="o">=</span> <span class="n">x1</span> <span class="o">*</span> <span class="n">cos</span> <span class="o">-</span> <span class="n">x2</span> <span class="o">*</span> <span class="n">sin</span>
+    <span class="n">rx2</span> <span class="o">=</span> <span class="n">x1</span> <span class="o">*</span> <span class="n">sin</span> <span class="o">+</span> <span class="n">x2</span> <span class="o">*</span> <span class="n">cos</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="n">out</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">::</span><span class="mi">2</span><span class="p">],</span> <span class="n">out</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">::</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">rx1</span><span class="p">,</span> <span class="n">rx2</span>
+    <span class="k">return</span> <span class="n">out</span>
+</code></pre></div>
+<p><strong>Why it wins.</strong> (1) It&rsquo;s <em>relative</em>, which generalizes better than absolute position. (2) It&rsquo;s applied to Q and K only — no extra parameters, no added embedding to the residual stream. (3) It extends to longer contexts via frequency tricks (NTK scaling, YaRN) without retraining from scratch — you just stretch or interpolate the angles. This is the foundation of context extension; see <a href="../02-transformer/05-positional-encoding.html">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a> and <a href="../03-pretraining/13-long-context-pretraining.html">Long-Context Pretraining &amp; Context Extension</a>.</p>
+<h3 id="what-is-the-kv-cache-and-why-does-it-dominate-inference-memory">What is the KV cache and why does it dominate inference memory?<a class="headerlink" href="#what-is-the-kv-cache-and-why-does-it-dominate-inference-memory" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> During autoregressive decoding, generating token <span class="arithmatex">\(t+1\)</span> requires attending over all previous keys and values. Those K and V tensors depend only on past tokens, not the current one, so we <em>cache</em> them and reuse them — turning per-step attention from <span class="arithmatex">\(O(t^2)\)</span> recomputation into <span class="arithmatex">\(O(t)\)</span>.</p>
+<p>The cache size is the number every LLM systems interviewer wants you to derive on the spot:</p>
+<div class="arithmatex">\[
+\text{KV bytes}=2\times L\times n_{\text{kv}}\times d_{\text{head}}\times T\times B\times \text{bytes}
+\]</div>
+<p>where 2 is for K and V, <span class="arithmatex">\(L\)</span> is layers, <span class="arithmatex">\(n_{\text{kv}}\)</span> is KV heads, <span class="arithmatex">\(T\)</span> is sequence length, <span class="arithmatex">\(B\)</span> is batch. The KV cache, not the weights, is what limits how many concurrent requests you can serve — see the worked example below and <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>. Its fragmentation problem is solved by PagedAttention (<a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>).</p>
+<h3 id="explain-flashattention-without-hand-waving">Explain FlashAttention without hand-waving<a class="headerlink" href="#explain-flashattention-without-hand-waving" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> FlashAttention computes exact attention without ever materializing the <span class="arithmatex">\(T\times T\)</span> score matrix in slow GPU memory (HBM). It tiles Q, K, V into blocks, keeps a running softmax in fast on-chip SRAM, and is therefore <em>IO-bound-aware</em>: it trades a little extra compute for a massive reduction in HBM traffic, which is the actual bottleneck.</p>
+<p>The trick is the <strong>online softmax</strong>: you can compute a numerically-stable softmax-weighted sum in one pass if you carry a running max <span class="arithmatex">\(m\)</span> and running denominator <span class="arithmatex">\(\ell\)</span>, rescaling the accumulator when a new block reveals a larger max.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">online_softmax_attention</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">K_blocks</span><span class="p">,</span> <span class="n">V_blocks</span><span class="p">):</span>
+    <span class="c1"># q: (d,)  one query; K_blocks/V_blocks: list of (block, d) tiles</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">)</span>      <span class="c1"># running max of logits</span>
+    <span class="n">l</span> <span class="o">=</span> <span class="mf">0.0</span>                <span class="c1"># running sum of exp(logit - m)</span>
+    <span class="n">acc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>   <span class="c1"># running output (un-normalized)</span>
+    <span class="k">for</span> <span class="n">Kb</span><span class="p">,</span> <span class="n">Vb</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">K_blocks</span><span class="p">,</span> <span class="n">V_blocks</span><span class="p">):</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="p">(</span><span class="n">Kb</span> <span class="o">@</span> <span class="n">q</span><span class="p">)</span> <span class="o">/</span> <span class="n">q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">**</span> <span class="mf">0.5</span>      <span class="c1"># logits for this tile</span>
+        <span class="n">m_new</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">s</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+        <span class="c1"># rescale old accumulator + denom to the new max</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">m</span> <span class="o">-</span> <span class="n">m_new</span><span class="p">)</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">s</span> <span class="o">-</span> <span class="n">m_new</span><span class="p">)</span>               <span class="c1"># tile probabilities</span>
+        <span class="n">l</span> <span class="o">=</span> <span class="n">l</span> <span class="o">*</span> <span class="n">scale</span> <span class="o">+</span> <span class="n">p</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="n">acc</span> <span class="o">=</span> <span class="n">acc</span> <span class="o">*</span> <span class="n">scale</span> <span class="o">+</span> <span class="p">(</span><span class="n">p</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">Vb</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">m_new</span>
+    <span class="k">return</span> <span class="n">acc</span> <span class="o">/</span> <span class="n">l</span>
+</code></pre></div>
+<p>That recurrence is the whole idea — FlashAttention 1 (Dao et al.) is this, tiled and fused into a CUDA kernel; FA2 improves work partitioning across warps; FA3 adds FP8 and Hopper async copies. The reason it&rsquo;s faster despite recomputation in the backward pass: attention is <em>memory-bandwidth bound</em>, not compute bound, so cutting HBM reads/writes from <span class="arithmatex">\(O(T^2)\)</span> to <span class="arithmatex">\(O(T)\)</span> wins. Full treatment: <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a> and <a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2 &amp; 3</a>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: KV-cache size for a 70B-class model</p>
+<p>Take a Llama-70B-style config: <span class="arithmatex">\(L=80\)</span> layers, hidden <span class="arithmatex">\(d_{\text{model}}=8192\)</span>, <span class="arithmatex">\(n_{\text{head}}=64\)</span> query heads, <span class="arithmatex">\(d_{\text{head}}=128\)</span>, but <strong>GQA with <span class="arithmatex">\(n_{\text{kv}}=8\)</span></strong> KV heads. Serve at sequence length <span class="arithmatex">\(T=8192\)</span>, batch <span class="arithmatex">\(B=1\)</span>, weights in bf16 (2 bytes), so the KV cache is also bf16.</p>
+<p>Per token, per layer the cache stores K and V: <span class="arithmatex">\(2\times n_{\text{kv}}\times d_{\text{head}}=2\times 8\times 128=2048\)</span> values <span class="arithmatex">\(=4096\)</span> bytes.</p>
+<p>Across all layers and the full sequence:
+$$
+4096 \text{B} \times L \times T = 4096 \times 80 \times 8192 \approx 2.68\times10^{9} \text{B} \approx 2.5 \text{GiB per request.}
+$$</p>
+<p>Now compare to <strong>multi-head attention with <span class="arithmatex">\(n_{\text{kv}}=64\)</span></strong>: the cache would be <span class="arithmatex">\(8\times\)</span> larger, about <strong>20 GiB per request</strong>. On an 80 GB H100 holding ~140 GB of&hellip; wait — the 70B weights alone are ~140 GB in bf16 and won&rsquo;t fit; assume tensor parallelism across 2 GPUs so weights are ~70 GB/GPU, leaving ~10 GB for KV. With MHA you could barely fit <em>one</em> request; with GQA you fit <em>four</em>. That 8× is exactly why every modern model uses GQA. (FP8 KV cache would halve these again.)</p>
+</div>
+<h2 id="why-gqa-mqa-mla">Why GQA, MQA &amp; MLA<a class="headerlink" href="#why-gqa-mqa-mla" title="Permanent link">¶</a></h2>
+<h3 id="walk-through-mha-mqa-gqa">Walk through MHA → MQA → GQA<a class="headerlink" href="#walk-through-mha-mqa-gqa" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> These are points on a spectrum trading attention quality for KV-cache size. Multi-Head Attention (MHA) gives every query head its own K and V. Multi-Query Attention (MQA) shares <em>one</em> K/V across all query heads — minimal cache, but a quality hit and training instability. Grouped-Query Attention (GQA) is the compromise: split query heads into <span class="arithmatex">\(g\)</span> groups, each group shares one K/V head.</p>
+<div class="highlight"><pre><span></span><code>MHA:  Q heads: [q0 q1 q2 q3 q4 q5 q6 q7]
+      K/V:     [k0 k1 k2 k3 k4 k5 k6 k7]    (8 KV heads — big cache)
+
+GQA:  Q heads: [q0 q1 q2 q3 | q4 q5 q6 q7]
+      K/V:     [   k0       |    k1     ]    (2 KV heads — 4x smaller)
+
+MQA:  Q heads: [q0 q1 q2 q3   q4 q5 q6 q7]
+      K/V:     [          k0            ]    (1 KV head — smallest)
+</code></pre></div>
+<p>The KV cache shrinks by the factor <span class="arithmatex">\(n_{\text{head}}/n_{\text{kv}}\)</span>. Since the cache, not FLOPs, bounds concurrency during decode, GQA directly multiplies your serving throughput — that&rsquo;s the answer to &ldquo;why GQA&rdquo;: <strong>it cuts KV-cache memory by the group factor with negligible quality loss, raising the batch size you can serve and thus tokens/sec/GPU.</strong></p>
+<h3 id="what-is-mla-and-how-does-it-differ">What is MLA and how does it differ?<a class="headerlink" href="#what-is-mla-and-how-does-it-differ" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> Mult-head Latent Attention (DeepSeek) goes further: instead of caching K and V directly, it caches a <em>low-rank latent</em> that is up-projected to K and V on the fly. The cache stores a small compressed vector per token, decoupling cache size from head count almost entirely, while preserving more expressive per-head attention than GQA. It also folds RoPE in via a separate decoupled key path. Tradeoff: more compute and more architectural complexity at train time. Full comparison: <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A teammate proposes switching a trained MHA model to MQA to save serving memory, by averaging the K/V projection weights across heads. Will it work?</p>
+<p><strong>A:</strong> Not out of the box. You can mean-pool the K and V projections to <em>initialize</em> a GQA/MQA variant — that&rsquo;s exactly the &ldquo;uptraining&rdquo; recipe from the GQA paper — but you must then fine-tune for a small fraction of the original compute to recover quality; a zero-shot swap degrades sharply because the query heads were trained against head-specific keys. I&rsquo;d convert to GQA (say 8 KV heads, not 1) for a better quality/memory point, mean-pool to initialize, and uptrain on a few billion tokens. I&rsquo;d verify with perplexity and a downstream eval that the recovered model matches baseline before shipping.</p>
+</div>
+<h2 id="preference-optimization-dpo-vs-ppo-vs-grpo">Preference Optimization: DPO vs PPO vs GRPO<a class="headerlink" href="#preference-optimization-dpo-vs-ppo-vs-grpo" title="Permanent link">¶</a></h2>
+<p>This cluster separates people who&rsquo;ve read the RLHF papers from people who&rsquo;ve trained the models. The full pipeline is in <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>.</p>
+<h3 id="explain-the-classic-rlhfppo-pipeline">Explain the classic RLHF/PPO pipeline<a class="headerlink" href="#explain-the-classic-rlhfppo-pipeline" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> Three stages: (1) <strong>SFT</strong> — supervised fine-tune on demonstrations. (2) <strong>Reward model</strong> — collect pairwise human preferences and train a model <span class="arithmatex">\(r_\phi(x,y)\)</span> to score responses, using the Bradley–Terry loss. (3) <strong>PPO</strong> — optimize the policy <span class="arithmatex">\(\pi_\theta\)</span> to maximize reward while a KL penalty keeps it near the SFT reference <span class="arithmatex">\(\pi_{\text{ref}}\)</span>:</p>
+<div class="arithmatex">\[
+\max_\theta\ \mathbb{E}_{x\sim D,\,y\sim\pi_\theta}\big[r_\phi(x,y)\big]-\beta\,\mathbb{D}_{\text{KL}}\big(\pi_\theta(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x)\big)
+\]</div>
+<p>PPO needs four models in memory simultaneously: policy, reference, reward, and a <strong>value/critic</strong> network for advantage estimation. It&rsquo;s powerful but heavy, sensitive to hyperparameters, and notoriously fiddly. See <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>.</p>
+<h3 id="why-dpo-and-what-is-it-really-doing">Why DPO, and what is it really doing?<a class="headerlink" href="#why-dpo-and-what-is-it-really-doing" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> Direct Preference Optimization removes the reward model and the RL loop entirely. The key insight: the RLHF objective has a <em>closed-form optimal policy</em>, and you can algebraically invert it so the reward is expressed in terms of the policy itself. Substituting into the Bradley–Terry preference likelihood yields a simple supervised classification loss on preference pairs <span class="arithmatex">\((y_w \succ y_l)\)</span>:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{DPO}}=-\mathbb{E}_{(x,y_w,y_l)}\left[\log\sigma\!\left(\beta\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\text{ref}}(y_w\mid x)}-\beta\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\text{ref}}(y_l\mid x)}\right)\right]
+\]</div>
+<p>The model implicitly <em>becomes</em> its own reward model. Here is the loss in full — note it&rsquo;s just two forward passes and a log-sigmoid:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dpo_loss</span><span class="p">(</span><span class="n">policy_logp_w</span><span class="p">,</span> <span class="n">policy_logp_l</span><span class="p">,</span>    <span class="c1"># sum log-prob of chosen/rejected under policy</span>
+             <span class="n">ref_logp_w</span><span class="p">,</span> <span class="n">ref_logp_l</span><span class="p">,</span>          <span class="c1"># ...under frozen reference</span>
+             <span class="n">beta</span><span class="o">=</span><span class="mf">0.1</span><span class="p">):</span>
+    <span class="c1"># &quot;implicit reward&quot; = beta * log-ratio of policy to reference</span>
+    <span class="n">pi_logratio</span>  <span class="o">=</span> <span class="n">policy_logp_w</span> <span class="o">-</span> <span class="n">policy_logp_l</span>     <span class="c1"># policy prefers chosen by this much</span>
+    <span class="n">ref_logratio</span> <span class="o">=</span> <span class="n">ref_logp_w</span>   <span class="o">-</span> <span class="n">ref_logp_l</span>         <span class="c1"># reference&#39;s baseline preference</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">beta</span> <span class="o">*</span> <span class="p">(</span><span class="n">pi_logratio</span> <span class="o">-</span> <span class="n">ref_logratio</span><span class="p">)</span>     <span class="c1"># how much we *increase* the margin</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="o">-</span><span class="n">F</span><span class="o">.</span><span class="n">logsigmoid</span><span class="p">(</span><span class="n">logits</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>              <span class="c1"># push chosen above rejected</span>
+    <span class="c1"># implicit rewards (for logging margins / accuracy):</span>
+    <span class="n">chosen_reward</span>   <span class="o">=</span> <span class="n">beta</span> <span class="o">*</span> <span class="p">(</span><span class="n">policy_logp_w</span> <span class="o">-</span> <span class="n">ref_logp_w</span><span class="p">)</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+    <span class="n">rejected_reward</span> <span class="o">=</span> <span class="n">beta</span> <span class="o">*</span> <span class="p">(</span><span class="n">policy_logp_l</span> <span class="o">-</span> <span class="n">ref_logp_l</span><span class="p">)</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">loss</span><span class="p">,</span> <span class="n">chosen_reward</span><span class="p">,</span> <span class="n">rejected_reward</span>
+</code></pre></div>
+<p><strong>Tradeoff.</strong> DPO is far simpler, more stable, and cheaper (two models, no rollouts). Its weaknesses: it learns only from the <em>offline</em> preference pairs you collected — no exploration — so it can over-fit to the dataset&rsquo;s quirks and is prone to <em>length bias</em> and pushing down the probability of <em>both</em> responses if not regularized. On-policy methods (PPO, GRPO) can keep improving by generating fresh samples. See <a href="../05-posttraining-alignment/07-dpo-and-variants.html">Direct Preference Optimization &amp; Its Variants</a>.</p>
+<h3 id="what-is-grpo-and-why-did-it-take-over-for-reasoning">What is GRPO and why did it take over for reasoning?<a class="headerlink" href="#what-is-grpo-and-why-did-it-take-over-for-reasoning" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> Group Relative Policy Optimization (DeepSeek) is PPO <em>without the critic</em>. Instead of a learned value network to estimate the baseline, it samples a <em>group</em> of <span class="arithmatex">\(G\)</span> responses per prompt, scores each, and uses the group&rsquo;s mean reward as the baseline. The advantage of a response is just its reward standardized within the group:</p>
+<div class="arithmatex">\[
+\hat{A}_i=\frac{r_i-\operatorname{mean}(r_1,\dots,r_G)}{\operatorname{std}(r_1,\dots,r_G)}
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">grpo_advantages</span><span class="p">(</span><span class="n">rewards</span><span class="p">):</span>
+    <span class="c1"># rewards: (group_size,) scalar reward per sampled completion for ONE prompt</span>
+    <span class="n">mean</span> <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="n">std</span>  <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">std</span><span class="p">()</span> <span class="o">+</span> <span class="mf">1e-6</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">rewards</span> <span class="o">-</span> <span class="n">mean</span><span class="p">)</span> <span class="o">/</span> <span class="n">std</span>        <span class="c1"># within-group standardized advantage</span>
+</code></pre></div>
+<p><strong>Why it took over.</strong> (1) It drops the value network — halving memory and removing the hardest-to-tune component. (2) The group baseline is well-suited to <strong>verifiable rewards</strong> (math/code where reward is 0/1 correctness), the engine behind reasoning models. A correct answer in a group of mostly-wrong answers gets a big positive advantage; that&rsquo;s a clean learning signal. See <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a> and <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards</a>. The KL term and advantage normalization details matter a lot in practice — <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Reward model?</th>
+<th>Critic?</th>
+<th>On-policy rollouts?</th>
+<th>Main weakness</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PPO</td>
+<td>Yes</td>
+<td>Yes (value net)</td>
+<td>Yes</td>
+<td>4 models, fiddly tuning</td>
+</tr>
+<tr>
+<td>DPO</td>
+<td>No (implicit)</td>
+<td>No</td>
+<td>No (offline)</td>
+<td>No exploration, length bias</td>
+</tr>
+<tr>
+<td>GRPO</td>
+<td>Often verifier</td>
+<td>No (group baseline)</td>
+<td>Yes</td>
+<td>Needs many samples/prompt</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Your DPO-trained model gets higher reward-model scores but humans say its answers got <em>worse and longer</em>. What happened and what do you do?</p>
+<p><strong>A:</strong> Two classic DPO pathologies. First, <strong>length bias</strong>: if chosen responses in your pairs were on average longer, DPO learns &ldquo;longer = better&rdquo; as a spurious feature. Second, <strong>reward over-optimization / off-distribution drift</strong>: DPO can push up the implicit margin by mostly <em>lowering</em> the rejected logprob, drifting from the reference into regions the preference data never covered. Fixes: add a length penalty or use length-normalized log-probs; switch to a length-debiased variant; increase <span class="arithmatex">\(\beta\)</span> to stay closer to the reference; add an SFT term on the chosen responses to anchor likelihoods. I&rsquo;d validate with human eval or a held-out judge that <em>controls for length</em>, not just the reward model the policy is gaming — this is reward hacking, covered in <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>.</p>
+</div>
+<h2 id="quantization">Quantization<a class="headerlink" href="#quantization" title="Permanent link">¶</a></h2>
+<p>The interviewer wants to know you understand <em>what</em> you&rsquo;re quantizing (weights? activations? KV cache?) and <em>why</em> it works without destroying the model.</p>
+<h3 id="how-does-quantization-work-and-why-doesnt-it-break-the-model">How does quantization work and why doesn&rsquo;t it break the model?<a class="headerlink" href="#how-does-quantization-work-and-why-doesnt-it-break-the-model" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> Quantization maps high-precision weights (fp16/bf16) to low-bit integers (int8, int4) using a scale (and optional zero-point), reconstructing approximate values at compute time. It works because (1) neural nets are over-parameterized and robust to weight noise, and (2) most of the cost of LLM inference is <em>memory bandwidth</em> — moving weights from HBM — so storing weights in 4 bits means 4× fewer bytes to move, a near-4× decode speedup, even if you up-cast to do the matmul.</p>
+<p>Symmetric per-group quantization in a few lines:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">quantize_int4_symmetric</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="n">group_size</span><span class="o">=</span><span class="mi">128</span><span class="p">):</span>
+    <span class="c1"># w: (out, in) weight matrix; quantize along input dim in groups</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">inn</span> <span class="o">=</span> <span class="n">w</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">w</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">inn</span> <span class="o">//</span> <span class="n">group_size</span><span class="p">,</span> <span class="n">group_size</span><span class="p">)</span>
+    <span class="n">absmax</span> <span class="o">=</span> <span class="n">w</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">amax</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>          <span class="c1"># per-group scale</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="n">absmax</span> <span class="o">/</span> <span class="mf">7.0</span>                                  <span class="c1"># int4 range [-8,7] -&gt; use 7</span>
+    <span class="n">q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">w</span> <span class="o">/</span> <span class="n">scale</span><span class="p">),</span> <span class="o">-</span><span class="mi">8</span><span class="p">,</span> <span class="mi">7</span><span class="p">)</span>        <span class="c1"># quantized integers</span>
+    <span class="k">return</span> <span class="n">q</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">int8</span><span class="p">),</span> <span class="n">scale</span>                        <span class="c1"># store 4-bit packed + scale</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dequantize</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">scale</span><span class="p">,</span> <span class="n">group_size</span><span class="o">=</span><span class="mi">128</span><span class="p">):</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">q</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">*</span> <span class="n">scale</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>           <span class="c1"># approximate original</span>
+</code></pre></div>
+<h3 id="ptq-vs-qat-and-whats-the-hard-part">PTQ vs QAT, and what&rsquo;s the hard part?<a class="headerlink" href="#ptq-vs-qat-and-whats-the-hard-part" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> <strong>Post-Training Quantization (PTQ)</strong> quantizes a finished model with a small calibration set — fast, no retraining (GPTQ, AWQ, SmoothQuant). <strong>Quantization-Aware Training (QAT)</strong> simulates quantization during training so the model learns to be robust — more accurate at very low bits, but expensive. The hard part is <strong>outlier activations</strong>: a few channels have huge magnitudes that blow up the quantization range and destroy precision for everyone else. SmoothQuant migrates the difficulty from activations into weights via a per-channel scale; AWQ protects the <em>salient</em> weight channels identified by activation magnitude; GPTQ uses second-order (Hessian) information to quantize weights while compensating for the error. KV-cache quantization is a separate axis that directly extends context length. Full treatment: <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I: PTQ</a> and <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II: Formats &amp; QAT</a>; the float side connects to <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall</p>
+<p>&ldquo;Int4 makes everything 4× faster&rdquo; is only true in the <em>memory-bound</em> decode regime. During <em>prefill</em> (and any compute-bound large-batch matmul) you may be limited by GPU FLOPs, not bandwidth, and the dequantize overhead can make int4 <em>slower</em> than a well-tuned fp16/fp8 kernel. Always ask: am I bandwidth-bound or compute-bound? That&rsquo;s the roofline question — see <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>.</p>
+</div>
+<h2 id="scaling-laws-moe-architecture">Scaling Laws, MoE &amp; Architecture<a class="headerlink" href="#scaling-laws-moe-architecture" title="Permanent link">¶</a></h2>
+<h3 id="state-the-chinchilla-result-and-its-practical-consequence">State the Chinchilla result and its practical consequence<a class="headerlink" href="#state-the-chinchilla-result-and-its-practical-consequence" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> Kaplan et al. (2020) found loss falls as a power law in parameters <span class="arithmatex">\(N\)</span>, data <span class="arithmatex">\(D\)</span>, and compute <span class="arithmatex">\(C\)</span>. Chinchilla (Hoffmann et al., 2022) refined the <em>compute-optimal</em> allocation: for a fixed compute budget, you should scale parameters and tokens <strong>roughly equally</strong> — about <strong>20 tokens per parameter</strong> — whereas earlier models like GPT-3 were badly <em>under-trained</em> (too big, too little data). The loss model:</p>
+<div class="arithmatex">\[
+L(N,D)=E+\frac{A}{N^{\alpha}}+\frac{B}{D^{\beta}}
+\]</div>
+<p>with <span class="arithmatex">\(\alpha,\beta\approx 0.34\)</span>. Given compute <span class="arithmatex">\(C\approx 6ND\)</span> FLOPs, you minimize <span class="arithmatex">\(L\)</span> subject to that constraint.</p>
+<p><strong>The practical twist interviewers love.</strong> Chinchilla optimizes <em>training</em> compute. But in production, <strong>inference compute dominates</strong> over a model&rsquo;s lifetime, so it&rsquo;s rational to &ldquo;over-train&rdquo; a <em>smaller</em> model on far more than 20 tokens/param (Llama-3 used trillions of tokens for 8B). You trade extra training cost for a permanently cheaper, faster model to serve. Knowing this distinction — <em>compute-optimal training</em> vs <em>inference-optimal deployment</em> — is the mark of someone who&rsquo;s actually shipped. See <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: sizing a run with a compute budget</p>
+<p>Suppose you have a budget of <span class="arithmatex">\(C=10^{22}\)</span> FLOPs. Using <span class="arithmatex">\(C\approx 6ND\)</span> and the Chinchilla rule <span class="arithmatex">\(D\approx 20N\)</span>:</p>
+<div class="arithmatex">\[
+C = 6N(20N)=120N^2 \;\Rightarrow\; N=\sqrt{C/120}=\sqrt{10^{22}/120}\approx 9.1\times10^{9}.
+\]</div>
+<p>So a compute-optimal model is roughly <strong>9B parameters</strong> trained on <span class="arithmatex">\(D\approx 20N\approx 1.8\times10^{11}=180\)</span>B tokens. If instead inference cost dominates and you want a 3B model, you&rsquo;d push <span class="arithmatex">\(D\)</span> to ~600B+ tokens (well past compute-optimal) to recover quality — spending more training FLOPs to win on every future inference call.</p>
+</div>
+<h3 id="explain-mixture-of-experts-and-the-routing-problem">Explain Mixture-of-Experts and the routing problem<a class="headerlink" href="#explain-mixture-of-experts-and-the-routing-problem" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> An MoE replaces the dense feed-forward layer with many expert FFNs and a <em>router</em> that sends each token to a small subset (top-<span class="arithmatex">\(k\)</span>, often <span class="arithmatex">\(k=2\)</span>). The result: you scale <em>total</em> parameters (knowledge capacity) while keeping <em>active</em> parameters per token — and thus FLOPs — roughly constant. A model can have 600B total but activate only ~37B per token.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">moe_layer</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">experts</span><span class="p">,</span> <span class="n">router</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+    <span class="c1"># x: (tokens, d_model); experts: list of FFN modules; router: Linear(d_model -&gt; n_experts)</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">router</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                          <span class="c1"># (tokens, n_experts)</span>
+    <span class="n">weights</span><span class="p">,</span> <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">logits</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">k</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># pick top-k experts</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">slot</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">experts</span><span class="p">)):</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="n">idx</span><span class="p">[:,</span> <span class="n">slot</span><span class="p">]</span> <span class="o">==</span> <span class="n">e</span>            <span class="c1"># tokens routed to expert e in this slot</span>
+            <span class="k">if</span> <span class="n">mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+                <span class="n">out</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span> <span class="o">+=</span> <span class="n">weights</span><span class="p">[</span><span class="n">mask</span><span class="p">,</span> <span class="n">slot</span><span class="p">:</span><span class="n">slot</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">experts</span><span class="p">[</span><span class="n">e</span><span class="p">](</span><span class="n">x</span><span class="p">[</span><span class="n">mask</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">out</span>
+</code></pre></div>
+<p><strong>The hard parts.</strong> (1) <strong>Load balancing</strong> — without an auxiliary loss, the router collapses to a few favorite experts; you add a balancing loss (or use loss-free bias tricks) to spread tokens. (2) <strong>All-to-all communication</strong> — experts are sharded across GPUs (expert parallelism), so routing means shuffling tokens across the network, which can bottleneck. (3) <strong>Training instability</strong> and the discrete, non-differentiable top-<span class="arithmatex">\(k\)</span>. The tradeoff: huge memory footprint (all experts must be resident) for lower FLOPs/token. Deep dive: <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts (MoE) Architectures</a>; the parallelism in <a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II</a>.</p>
+<h3 id="name-three-modern-architecture-choices-and-why">Name three modern architecture choices and why<a class="headerlink" href="#name-three-modern-architecture-choices-and-why" title="Permanent link">¶</a></h3>
+<p>Quick-fire, the way you&rsquo;d rattle them off: <strong>Pre-norm</strong> (LayerNorm/RMSNorm <em>before</em> the sublayer) for stable gradients in deep stacks; <strong>RMSNorm</strong> over LayerNorm (drops the mean-centering, cheaper, works as well); <strong>SwiGLU</strong> activation (gated GLU variant, better than ReLU/GELU at equal params); <strong>RoPE</strong> for relative position; <strong>GQA</strong> for cheap KV cache; <strong>no bias terms</strong> in linears (free stability). See <a href="../02-transformer/10-modern-arch-improvements.html">Modern Architecture Improvements &amp; Design Choices</a>.</p>
+<h2 id="inference-acceleration-hallucination">Inference Acceleration &amp; Hallucination<a class="headerlink" href="#inference-acceleration-hallucination" title="Permanent link">¶</a></h2>
+<h3 id="explain-speculative-decoding">Explain speculative decoding<a class="headerlink" href="#explain-speculative-decoding" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> Decode is memory-bandwidth bound: each step loads the entire model to produce <em>one</em> token, wasting compute. Speculative decoding uses a small, fast <strong>draft</strong> model to propose <span class="arithmatex">\(k\)</span> tokens cheaply, then the big <strong>target</strong> model verifies all <span class="arithmatex">\(k\)</span> in a <em>single parallel forward pass</em>. A rejection-sampling acceptance rule guarantees the output distribution is <strong>identical</strong> to the target model&rsquo;s — it&rsquo;s exact, not approximate. You get a speedup equal to the average number of tokens accepted per target pass.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">speculative_step</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">draft</span><span class="p">,</span> <span class="n">prefix</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">4</span><span class="p">):</span>
+    <span class="c1"># 1) draft proposes k tokens autoregressively (cheap)</span>
+    <span class="n">draft_tokens</span><span class="p">,</span> <span class="n">draft_probs</span> <span class="o">=</span> <span class="n">draft</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">prefix</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">k</span><span class="p">)</span>
+    <span class="c1"># 2) target scores all k+1 positions in ONE forward pass (parallel)</span>
+    <span class="n">target_probs</span> <span class="o">=</span> <span class="n">target</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">prefix</span> <span class="o">+</span> <span class="n">draft_tokens</span><span class="p">)</span>   <span class="c1"># (k+1, vocab)</span>
+    <span class="c1"># 3) accept/reject each drafted token to preserve target&#39;s distribution</span>
+    <span class="n">accepted</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">tok</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">draft_tokens</span><span class="p">):</span>
+        <span class="n">p</span><span class="p">,</span> <span class="n">q</span> <span class="o">=</span> <span class="n">target_probs</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">tok</span><span class="p">],</span> <span class="n">draft_probs</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">tok</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">&lt;</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">p</span> <span class="o">/</span> <span class="n">q</span><span class="p">):</span>     <span class="c1"># accept with prob min(1, p/q)</span>
+            <span class="n">accepted</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tok</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># reject: resample from the adjusted residual distribution (p - q)_+</span>
+            <span class="n">accepted</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sample_residual</span><span class="p">(</span><span class="n">target_probs</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">draft_probs</span><span class="p">[</span><span class="n">i</span><span class="p">]))</span>
+            <span class="k">return</span> <span class="n">accepted</span>                      <span class="c1"># stop at first rejection</span>
+    <span class="n">accepted</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sample</span><span class="p">(</span><span class="n">target_probs</span><span class="p">[</span><span class="n">k</span><span class="p">]))</span>     <span class="c1"># bonus token: all k accepted</span>
+    <span class="k">return</span> <span class="n">accepted</span>
+</code></pre></div>
+<p><strong>Why it&rsquo;s free quality-wise:</strong> the math guarantees the marginal output distribution equals the target&rsquo;s. Variants: <strong>Medusa</strong> adds extra decoding heads to the target itself (no separate draft); <strong>EAGLE</strong> drafts in feature space; <strong>lookahead</strong> uses n-gram jacobi iteration. The speedup depends entirely on draft acceptance rate — a well-aligned draft on predictable text can accept 3–4 tokens/pass. Full coverage: <a href="../07-inference-serving/06-speculative-decoding.html">Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a>. Why decode is memory-bound in the first place: <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference</a>.</p>
+<h3 id="what-causes-hallucination-mechanistically">What causes hallucination, mechanistically?<a class="headerlink" href="#what-causes-hallucination-mechanistically" title="Permanent link">¶</a></h3>
+<p><strong>Essence.</strong> Hallucination — confident, fluent, <em>false</em> output — isn&rsquo;t a bug in one place; it&rsquo;s the product of how LLMs are trained and decoded. Give a layered answer:</p>
+<ol>
+<li><strong>The objective rewards plausibility, not truth.</strong> Next-token prediction (and the MLE/cross-entropy loss) optimizes for <em>likely</em> continuations given the training distribution. The model has no built-in notion of factual grounding; it interpolates over patterns. See <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a>.</li>
+<li><strong>No epistemic uncertainty signal.</strong> The model outputs a probability distribution over tokens, but a high-probability token is not a calibrated &ldquo;I&rsquo;m sure this is true.&rdquo; After RLHF, models often become <em>worse</em>-calibrated — confidently wrong — because preference data rewards confident, helpful-sounding answers.</li>
+<li><strong>Training-time incentives to guess.</strong> If the SFT/RL data punishes &ldquo;I don&rsquo;t know&rdquo; and rewards attempts, the model learns that guessing beats abstaining — a direct cause of fabrication on the long tail.</li>
+<li><strong>Knowledge gaps &amp; staleness.</strong> Facts absent from (or rare in) pretraining, or events after the cutoff, force the model to extrapolate. Closed-book recall of rare entities is where hallucination spikes.</li>
+<li><strong>Decoding pressure.</strong> Sampling (temperature, top-p) injects randomness that can tip a borderline-correct answer into a wrong one; the model must emit <em>some</em> token even when no continuation is well-supported.</li>
+</ol>
+<p><strong>Mitigations</strong> map onto each cause: <strong>RAG</strong> grounds answers in retrieved evidence (<a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a>); <strong>calibration / abstention training</strong> rewards &ldquo;I don&rsquo;t know&rdquo;; <strong>verifiers and tool use</strong> check claims (<a href="../08-agents-harness/01-tool-use-function-calling.html">Tool Use &amp; Function Calling</a>); <strong>LLM-as-judge / self-consistency</strong> catches inconsistency (<a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge</a>); lower temperature reduces stochastic errors. The honest framing for an interview: hallucination is <em>intrinsic</em> to a likelihood model with no grounding; we <em>manage</em> it with retrieval, verification, and calibration rather than &ldquo;fixing&rdquo; it.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Is hallucination something we can fully eliminate by scaling up the model?</p>
+<p><strong>A:</strong> No — scaling reduces it on the head of the distribution (common facts) but can&rsquo;t eliminate it. The model is fundamentally a probabilistic next-token predictor with no access to ground truth at inference time; for any query whose answer isn&rsquo;t recoverable from its weights — post-cutoff events, private data, rare entities — it must either abstain or extrapolate, and extrapolation is hallucination. Worse, there&rsquo;s a known tension: aggressive RLHF for helpfulness can degrade calibration, making a bigger model <em>more</em> confidently wrong. The durable fixes are architectural and systemic — grounding via retrieval, external verifiers/tools for checkable claims, and explicitly training the model to express uncertainty and abstain — not raw scale. I&rsquo;d frame it to a PM as <em>risk management</em>, with measurable abstention and grounding-rate metrics, not a solved problem.</p>
+</div>
+<h2 id="putting-it-together-how-to-answer-in-the-room">Putting It Together: How to Answer in the Room<a class="headerlink" href="#putting-it-together-how-to-answer-in-the-room" title="Permanent link">¶</a></h2>
+<p>A meta-pattern for <em>every</em> question above:</p>
+<ol>
+<li><strong>One-sentence essence first.</strong> &ldquo;GQA shares K/V across groups of query heads to shrink the KV cache.&rdquo; Don&rsquo;t make them wait.</li>
+<li><strong>Mechanism.</strong> The formula or the data flow — show you understand <em>how</em>, not just <em>that</em>.</li>
+<li><strong>A number or a tradeoff.</strong> &ldquo;8× smaller cache → 8× more concurrent requests.&rdquo; Magnitudes prove you&rsquo;ve touched the system.</li>
+<li><strong>The failure mode it addresses.</strong> Every technique exists because something broke. Naming the break shows depth.</li>
+<li><strong>Honest edges.</strong> &ldquo;DPO is simpler but can&rsquo;t explore; that&rsquo;s why reasoning models use GRPO.&rdquo; Knowing the <em>limits</em> is more impressive than evangelizing.</li>
+</ol>
+<p>Practice saying these out loud. The difference between a hire and a no-hire on the LLM deep-dive is rarely knowledge — it&rsquo;s <em>fluency</em>: the ability to go from &ldquo;explain flash attention&rdquo; to a clear, structured, three-layer answer in twenty seconds without a script. The chapters cross-linked throughout give you the depth; this chapter gives you the compression.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Attention is <span class="arithmatex">\(\operatorname{softmax}(QK^\top/\sqrt{d_k})V\)</span>; the <span class="arithmatex">\(\sqrt{d_k}\)</span> prevents softmax saturation, and the causal mask makes it autoregressive — be able to write both from memory.</li>
+<li>RoPE encodes <em>relative</em> position by rotating Q and K, costs zero parameters, and enables context extension; the KV cache (size <span class="arithmatex">\(\propto 2\,L\,n_{\text{kv}}\,d_{\text{head}}\,T\,B\)</span>) — not the weights — bounds serving concurrency.</li>
+<li>GQA cuts the KV cache by the query/KV-head ratio with negligible quality loss; MLA compresses further via a cached low-rank latent. Always derive the cache size in GiB when asked.</li>
+<li>PPO needs four models including a critic; DPO drops the reward model via a closed-form inversion (offline, simple, but no exploration and length-biased); GRPO drops the critic via a group-relative baseline and shines with verifiable rewards.</li>
+<li>Quantization wins mainly because decode is <em>memory-bandwidth bound</em>; the hard problem is outlier activations (SmoothQuant/AWQ/GPTQ). Int4 is not automatically faster in compute-bound regimes.</li>
+<li>Chinchilla says ~20 tokens/param is <em>training</em>-compute-optimal; inference-cost reality justifies &ldquo;over-training&rdquo; smaller models. MoE scales total params while holding FLOPs/token via top-<span class="arithmatex">\(k\)</span> routing, paying in memory and all-to-all comms.</li>
+<li>Speculative decoding is an <em>exact</em> speedup (draft proposes, target verifies in parallel, rejection sampling preserves the distribution). Hallucination is intrinsic to ungrounded likelihood models — manage it with retrieval, verifiers, and calibration, not scale alone.</li>
+<li>In the room: essence → mechanism → number/tradeoff → failure mode → honest limits. Fluency beats recall.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Vaswani et al., <em>Attention Is All You Need</em> (2017) — the transformer and scaled dot-product attention.</li>
+<li>Su et al., <em>RoFormer: Enhanced Transformer with Rotary Position Embedding</em> — RoPE.</li>
+<li>Dao et al., <em>FlashAttention</em> and <em>FlashAttention-2</em> — IO-aware exact attention.</li>
+<li>Ainslie et al., <em>GQA: Training Generalized Multi-Query Transformer Models</em> — grouped-query attention and uptraining.</li>
+<li>Ouyang et al., <em>Training Language Models to Follow Instructions with Human Feedback (InstructGPT)</em> — the RLHF/PPO pipeline.</li>
+<li>Rafailov et al., <em>Direct Preference Optimization</em> — DPO and the implicit reward derivation.</li>
+<li>Shao et al. / DeepSeek, <em>DeepSeekMath</em> (GRPO) and <em>DeepSeek-V3 / R1</em> — GRPO, MLA, and the reasoning recipe.</li>
+<li>Hoffmann et al., <em>Training Compute-Optimal Large Language Models (Chinchilla)</em>; Kaplan et al., <em>Scaling Laws for Neural Language Models</em>.</li>
+<li>Shazeer et al., <em>Outrageously Large Neural Networks (Sparsely-Gated MoE)</em>; Fedus et al., <em>Switch Transformers</em>.</li>
+<li>Leviathan et al., <em>Fast Inference from Transformers via Speculative Decoding</em>; Chen et al., <em>Accelerating LLM Decoding with Speculative Sampling</em>.</li>
+<li>Frantar et al., <em>GPTQ</em>; Lin et al., <em>AWQ</em>; Xiao et al., <em>SmoothQuant</em> — post-training quantization.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="05-coding-for-ml-interviews.html"><span class="pn-label">← Previous</span><span class="pn-title">Coding for ML Interviews</span></a>
+<a class="next" href="07-behavioral-googleyness.html"><span class="pn-label">Next →</span><span class="pn-title">Behavioral, Leadership &amp; Project Deep-Dive</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>ML/LLM Interview Companion · Prep for Top-Tier ML &amp; LLM Engineering Interviews</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#attention-rope-kv-cache-flashattention">Attention, RoPE, KV-Cache &amp;amp; FlashAttention</a></li>
+<li class="toc-l3"><a href="#explain-self-attention-from-scratch">Explain self-attention from scratch</a></li>
+<li class="toc-l3"><a href="#explain-rope-and-why-it-beats-learned-positional-embeddings">Explain RoPE and why it beats learned positional embeddings</a></li>
+<li class="toc-l3"><a href="#what-is-the-kv-cache-and-why-does-it-dominate-inference-memory">What is the KV cache and why does it dominate inference memory?</a></li>
+<li class="toc-l3"><a href="#explain-flashattention-without-hand-waving">Explain FlashAttention without hand-waving</a></li>
+<li class="toc-l2"><a href="#why-gqa-mqa-mla">Why GQA, MQA &amp;amp; MLA</a></li>
+<li class="toc-l3"><a href="#walk-through-mha-mqa-gqa">Walk through MHA → MQA → GQA</a></li>
+<li class="toc-l3"><a href="#what-is-mla-and-how-does-it-differ">What is MLA and how does it differ?</a></li>
+<li class="toc-l2"><a href="#preference-optimization-dpo-vs-ppo-vs-grpo">Preference Optimization: DPO vs PPO vs GRPO</a></li>
+<li class="toc-l3"><a href="#explain-the-classic-rlhfppo-pipeline">Explain the classic RLHF/PPO pipeline</a></li>
+<li class="toc-l3"><a href="#why-dpo-and-what-is-it-really-doing">Why DPO, and what is it really doing?</a></li>
+<li class="toc-l3"><a href="#what-is-grpo-and-why-did-it-take-over-for-reasoning">What is GRPO and why did it take over for reasoning?</a></li>
+<li class="toc-l2"><a href="#quantization">Quantization</a></li>
+<li class="toc-l3"><a href="#how-does-quantization-work-and-why-doesnt-it-break-the-model">How does quantization work and why doesn&amp;rsquo;t it break the model?</a></li>
+<li class="toc-l3"><a href="#ptq-vs-qat-and-whats-the-hard-part">PTQ vs QAT, and what&amp;rsquo;s the hard part?</a></li>
+<li class="toc-l2"><a href="#scaling-laws-moe-architecture">Scaling Laws, MoE &amp;amp; Architecture</a></li>
+<li class="toc-l3"><a href="#state-the-chinchilla-result-and-its-practical-consequence">State the Chinchilla result and its practical consequence</a></li>
+<li class="toc-l3"><a href="#explain-mixture-of-experts-and-the-routing-problem">Explain Mixture-of-Experts and the routing problem</a></li>
+<li class="toc-l3"><a href="#name-three-modern-architecture-choices-and-why">Name three modern architecture choices and why</a></li>
+<li class="toc-l2"><a href="#inference-acceleration-hallucination">Inference Acceleration &amp;amp; Hallucination</a></li>
+<li class="toc-l3"><a href="#explain-speculative-decoding">Explain speculative decoding</a></li>
+<li class="toc-l3"><a href="#what-causes-hallucination-mechanistically">What causes hallucination, mechanistically?</a></li>
+<li class="toc-l2"><a href="#putting-it-together-how-to-answer-in-the-room">Putting It Together: How to Answer in the Room</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

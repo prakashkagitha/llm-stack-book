@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pretraining Data: Sources, Crawling &amp; The Data Pipeline — The LLM Stack</title>
+<meta name="description" content="Web crawl (Common Crawl), CommonCrawl-&gt;WET/WARC, curated corpora (books, code, arXiv, Wikipedia), licensing, the data &#x27;recipe&#x27; and mixture weights; FineWeb/Dolm">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="active" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="31-pretraining-data-sources-crawling-the-data-pipeline">3.1 Pretraining Data: Sources, Crawling &amp; The Data Pipeline<a class="headerlink" href="#31-pretraining-data-sources-crawling-the-data-pipeline" title="Permanent link">¶</a></h1>
+<p>Every capability an LLM has — from grammar to reasoning to coding — is first learned from data. Before a single gradient step is taken, a research or engineering team must answer a deceptively difficult question: <em>what text should the model read, and in what proportions?</em> Get this wrong and no optimizer, no architecture change, and no amount of compute will fix it.</p>
+<p>This chapter is the engineering foundation for Part III. We examine every layer of the data stack: where the text comes from, how it travels from a raw crawl to a packed training shard, and how teams at the frontier have made (and published) their data choices. The adjacent chapter, <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a>, covers the transformation step in detail; here we focus on <em>sourcing, acquisition, and pipeline architecture</em>.</p>
+<hr />
+<h2 id="the-data-problem-at-pretraining-scale">The Data Problem at Pretraining Scale<a class="headerlink" href="#the-data-problem-at-pretraining-scale" title="Permanent link">¶</a></h2>
+<p>Training a frontier model on, say, 10 trillion tokens sounds straightforward until you realize what that means in physical terms. A token is roughly 4 bytes in a UTF-8 BPE vocabulary. Ten trillion tokens is approximately 40 terabytes of raw Unicode text. Assembling that much high-quality, diverse, legally defensible text is a multi-month infrastructure project.</p>
+<p>The challenge is not just volume. It is <em>quality heterogeneity</em>: the web contains academic prose, Python source code, forum arguments, machine-generated spam, adult content, and plagiarized boilerplate — all interleaved. A model trained on an indiscriminate dump will learn the distribution of <em>all</em> of those things. Careful curation of the data mixture is how practitioners steer a model&rsquo;s knowledge, language coverage, and safety properties before a single training step.</p>
+<p>Three design axes frame every data decision:</p>
+<ol>
+<li><strong>Breadth vs. depth.</strong> Web crawls offer unmatched breadth but noisy quality. Curated corpora (books, arXiv, Wikipedia) offer depth but limited scale.</li>
+<li><strong>Compute efficiency.</strong> The Chinchilla scaling law (covered in <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>) shows that for a fixed compute budget, it is usually better to train on <em>more</em> tokens from a <em>smaller</em> model than to over-train a giant model. Data becomes the binding constraint.</li>
+<li><strong>Legal exposure.</strong> Copyright, license compliance, and the emerging regulatory landscape around training data consent are real engineering constraints, not afterthoughts.</li>
+</ol>
+<hr />
+<h2 id="common-crawl-the-backbone-of-llm-data">Common Crawl: The Backbone of LLM Data<a class="headerlink" href="#common-crawl-the-backbone-of-llm-data" title="Permanent link">¶</a></h2>
+<p><a href="https://commoncrawl.org">Common Crawl</a> is a nonprofit that continuously crawls the web and publishes monthly snapshots under an open-access license. It is the primary raw material for almost every large open dataset. As of 2025, the Common Crawl corpus spans over 250 billion web pages accumulated across more than a decade of monthly releases.</p>
+<h3 id="file-formats-warc-wet-and-wat">File Formats: WARC, WET, and WAT<a class="headerlink" href="#file-formats-warc-wet-and-wat" title="Permanent link">¶</a></h3>
+<p>Each monthly crawl is published in three complementary formats:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Content</th>
+<th>Typical use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>WARC</strong> (Web ARChive)</td>
+<td>Full HTTP responses including headers, HTML, images</td>
+<td>Re-rendering, link analysis</td>
+</tr>
+<tr>
+<td><strong>WET</strong> (WARC Encapsulated Text)</td>
+<td>Extracted plain text only</td>
+<td>Language model training</td>
+</tr>
+<tr>
+<td><strong>WAT</strong> (Web Archive Transformation)</td>
+<td>Metadata JSON only (links, language tags, etc.)</td>
+<td>Filtering, graph analysis</td>
+</tr>
+</tbody>
+</table>
+<p>For LLM pretraining, WET files are the natural starting point: Common Crawl&rsquo;s crawlers already ran <code>trafilatura</code> or a similar extraction tool to strip HTML and produce Unicode text. Each monthly dump produces roughly 20–30 TB of WET files compressed with gzip.</p>
+<p>A WET record looks like this:</p>
+<div class="highlight"><pre><span></span><code>WARC/1.0
+WARC-Type: conversion
+WARC-Target-URI: https://example.com/article
+WARC-Date: 2024-04-15T12:34:56Z
+WARC-Refers-To: &lt;urn:uuid:...&gt;
+Content-Type: text/plain
+Content-Length: 2048
+
+The quick brown fox jumps over the lazy dog. Lorem ipsum ...
+</code></pre></div>
+<h3 id="crawl-anatomy">Crawl Anatomy<a class="headerlink" href="#crawl-anatomy" title="Permanent link">¶</a></h3>
+<p>Common Crawl uses Apache Nutch and Heritrix to discover pages. The crawler follows links breadth-first from a seed list of highly-linked root domains. Because it respects <code>robots.txt</code> and applies politeness delays, the crawl takes weeks per snapshot. The resulting corpus is <em>not</em> a uniform sample of the web — high-PageRank domains are over-represented, low-resource languages are under-represented, and large static-content sites (PDFs, images) are excluded.</p>
+<p>This non-uniformity is both a feature and a bug. English Wikipedia is crawled in its entirety every month. Some low-resource languages appear only in a handful of documents. Any downstream model will inherit these imbalances unless they are explicitly corrected through domain up/down-weighting.</p>
+<hr />
+<h2 id="curated-corpora-beyond-the-raw-crawl">Curated Corpora: Beyond the Raw Crawl<a class="headerlink" href="#curated-corpora-beyond-the-raw-crawl" title="Permanent link">¶</a></h2>
+<p>Web text alone produces capable but uneven models. Practitioners supplement it with curated corpora that provide depth in specific high-value domains.</p>
+<h3 id="books">Books<a class="headerlink" href="#books" title="Permanent link">¶</a></h3>
+<p><strong>Books3</strong> (part of The Pile, EleutherAI, 2020) contains roughly 197,000 full-length books scraped from a shadow library. It offers multi-chapter long-form coherent text that web pages rarely provide — an important signal for long-range narrative reasoning. However, Books3 has faced significant copyright challenges, leading many subsequent projects to omit it or replace it with licensed alternatives.</p>
+<p><strong>Project Gutenberg</strong> provides around 60,000 public-domain books. Smaller in scale but legally unambiguous.</p>
+<p><strong>OpenLibrary / Internet Archive Book Scans</strong> offer scanned OCR text from millions of physical books, though quality is variable and OCR noise requires careful cleaning.</p>
+<h3 id="scientific-and-technical-text">Scientific and Technical Text<a class="headerlink" href="#scientific-and-technical-text" title="Permanent link">¶</a></h3>
+<p><strong>arXiv</strong> preprints: The arXiv bulk access API provides LaTeX source for millions of papers across physics, mathematics, computer science, and adjacent fields. LaTeX source is richer than rendered PDFs because it contains explicit semantic structure (theorems, proofs, equations). The S2ORC project (Semantic Scholar Open Research Corpus) provides cleaned, parsed versions of the open-access scientific literature.</p>
+<p><strong>PubMed Central</strong> (PMC) provides open-access biomedical literature. This domain is valuable for medical reasoning but requires understanding the distinction between the structured abstract and the full paper.</p>
+<p><strong>GitHub code</strong>: Code is now a standard pretraining ingredient. The Stack (BigCode, 2022) assembled 358 GB of permissively licensed code across 86 programming languages by filtering GitHub by license type. Code is valuable not only for coding tasks but also for teaching formal reasoning patterns — many researchers believe that code-heavy pretraining substantially improves mathematical performance.</p>
+<h3 id="wikipedia-and-reference-content">Wikipedia and Reference Content<a class="headerlink" href="#wikipedia-and-reference-content" title="Permanent link">¶</a></h3>
+<p>Wikipedia is the single highest-quality per-token training signal in most data mixes. Its prose is grammatical, encyclopedic, cross-referenced, and maintained by human editors. However, the entire English Wikipedia dumps to only about 20 GB of plain text — a tiny fraction of a modern training corpus by volume. Its contribution is disproportionate to its weight, which is why data mixtures almost universally up-weight it.</p>
+<p><strong>Wikidata, Freebase, DBpedia</strong> provide structured knowledge in triple or JSON form. Some pipelines convert these to natural language sentences (e.g., &ldquo;Paris is the capital of France&rdquo;) to inject factual grounding.</p>
+<h3 id="multilingual-sources">Multilingual Sources<a class="headerlink" href="#multilingual-sources" title="Permanent link">¶</a></h3>
+<p><strong>CC-100</strong> (Conneau et al., 2020) extracted 100 language-specific corpora from Common Crawl using language identification. <strong>mC4</strong> (Raffel et al., T5 paper follow-up) is the multilingual variant of C4. <strong>CulturaX</strong> (Nguyen et al., 2023) provides a deduplicated, filtered multilingual corpus spanning 167 languages built from mC4 and the Oscar corpus.</p>
+<hr />
+<h2 id="the-data-recipe-mixture-weights">The Data Recipe: Mixture Weights<a class="headerlink" href="#the-data-recipe-mixture-weights" title="Permanent link">¶</a></h2>
+<p>Assembling sources is only the first step. The second — and often more consequential — step is deciding <em>how much</em> of each source to include per training step. This is called the <strong>data recipe</strong> or <strong>mixture</strong>.</p>
+<p>Let <span class="arithmatex">\(D = \{D_1, D_2, \ldots, D_k\}\)</span> be a collection of <span class="arithmatex">\(k\)</span> domain corpora. At each training step, a batch is sampled from the mixture using domain weights <span class="arithmatex">\(w = (w_1, \ldots, w_k)\)</span> with <span class="arithmatex">\(\sum_i w_i = 1\)</span>. These weights determine the effective number of tokens seen from each domain over the full training run.</p>
+<p>If the model is trained for <span class="arithmatex">\(N\)</span> total tokens and domain <span class="arithmatex">\(i\)</span> has weight <span class="arithmatex">\(w_i\)</span>, then it sees approximately <span class="arithmatex">\(N \cdot w_i\)</span> tokens from domain <span class="arithmatex">\(i\)</span>. If domain <span class="arithmatex">\(i\)</span> contains <span class="arithmatex">\(|D_i|\)</span> tokens, the <strong>epoch count</strong> for that domain is:</p>
+<div class="arithmatex">\[
+\text{epochs}_i = \frac{N \cdot w_i}{|D_i|}
+\]</div>
+<p>Repeating data is not free — multiple passes over the same text lead to memorization and reduced generalization, particularly noticeable after about 4 epochs (Muennighoff et al., <em>Scaling Data-Constrained Language Models</em>, 2023). This creates a practical ceiling: for domains like Wikipedia (small corpus), high weights cause many-epoch repetition; for web (huge corpus), even a modest weight can represent less than 1 epoch.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: data mixture sizing</p>
+<p>Suppose we are training a 7B parameter model on 2 trillion tokens (<span class="arithmatex">\(N = 2 \times 10^{12}\)</span>) with the following simplified mixture:</p>
+<p>| Domain | Weight <span class="arithmatex">\(w_i\)</span> | Corpus size <span class="arithmatex">\(|D_i|\)</span> | Epochs <span class="arithmatex">\(= N \cdot w_i / |D_i|\)</span> |
+|--------|-------------|---------------------|-------------------------------|
+| Web (CC) | 0.65 | 3.0T tokens | <span class="arithmatex">\(\approx 0.43\)</span> |
+| Code (GitHub) | 0.15 | 350B tokens | <span class="arithmatex">\(\approx 0.86\)</span> |
+| Books | 0.08 | 90B tokens | <span class="arithmatex">\(\approx 1.78\)</span> |
+| arXiv | 0.04 | 40B tokens | <span class="arithmatex">\(\approx 2.00\)</span> |
+| Wikipedia | 0.04 | 4B tokens | <span class="arithmatex">\(\approx 20.0\)</span> |
+| Other curated | 0.04 | 60B tokens | <span class="arithmatex">\(\approx 1.33\)</span> |</p>
+<p>Wikipedia is seen roughly 20 times despite comprising only 0.2% of the raw token count. This is by design — its per-token quality justifies heavy up-weighting. Code and arXiv approach 1–2 epochs, which is acceptable. Web crawl is comfortably under 1 epoch, so no repetition memorization.</p>
+<p>The practical implication: if you reduce <span class="arithmatex">\(N\)</span> (train shorter, e.g., 1T tokens), you cut every epoch count proportionally, meaning Wikipedia moves to ~10 epochs and you may see slightly more memorization of Wikipedia text.</p>
+</div>
+<hr />
+<h2 id="open-dataset-case-studies">Open Dataset Case Studies<a class="headerlink" href="#open-dataset-case-studies" title="Permanent link">¶</a></h2>
+<p>Several research groups have released their full data pipelines. These are the landmark datasets every practitioner should know.</p>
+<h3 id="the-pile-eleutherai-gao-et-al-2020">The Pile (EleutherAI, Gao et al., 2020)<a class="headerlink" href="#the-pile-eleutherai-gao-et-al-2020" title="Permanent link">¶</a></h3>
+<p>The Pile was one of the first carefully documented, publicly released pretraining datasets. It assembled 825 GB of text from 22 diverse sources, including Pile-CC (a cleaned Common Crawl subset), Books3, OpenWebText2, GitHub, arXiv, FreeLaw, Wikipedia, DM Mathematics, and more. The Pile&rsquo;s documentation of per-domain composition established a template that all subsequent efforts followed. GPT-Neo, GPT-J, and GPT-NeoX were trained on The Pile.</p>
+<h3 id="c4-raffel-et-al-t5-2019">C4 (Raffel et al., T5, 2019)<a class="headerlink" href="#c4-raffel-et-al-t5-2019" title="Permanent link">¶</a></h3>
+<p>Colossal Clean Crawled Corpus (C4) is a 750 GB English-only filtered version of a single Common Crawl snapshot. The cleaning pipeline applied heuristic filters: remove lines without terminal punctuation, remove documents under 5 sentences, remove documents containing JavaScript warnings, deduplicate at the 3-gram level. C4 became the standard pretraining corpus for the T5 family and remains a useful ablation baseline.</p>
+<h3 id="redpajama-together-ai-2023">RedPajama (Together AI, 2023)<a class="headerlink" href="#redpajama-together-ai-2023" title="Permanent link">¶</a></h3>
+<p>RedPajama replicated and open-sourced the LLaMA training data recipe. It documented the exact composition used by Meta&rsquo;s LLaMA: CommonCrawl (67%), C4 (15%), GitHub (4.5%), Wikipedia (4.5%), Books (4.5%), arXiv (2.5%), StackExchange (2%). RedPajama v2 extended this to over 30 trillion tokens with quality signals attached to each document (e.g., perplexity score against a reference model, URL quality signals) so downstream users could apply their own filtering thresholds.</p>
+<h3 id="dolma-ai2-soldaini-et-al-2024">Dolma (AI2, Soldaini et al., 2024)<a class="headerlink" href="#dolma-ai2-soldaini-et-al-2024" title="Permanent link">¶</a></h3>
+<p>Dolma is a 3 trillion token open corpus assembled by the Allen Institute for AI for training OLMo. It is notable for:
+- <strong>Extreme documentation</strong>: every filtering step, model card, and design decision is described in the accompanying paper.
+- <strong>Legal care</strong>: documents are tagged with license information; Books3 is excluded.
+- <strong>Taggers</strong>: Dolma attaches Gopher-quality signals, language identification scores, and toxicity scores to every document without removing them — allowing users to filter at different thresholds.</p>
+<p>The Dolma toolkit (a separate open-source tool) supports streaming processing of WARC/WET files, deduplication, and mixing — making it the most production-ready open data pipeline as of 2025.</p>
+<h3 id="fineweb-huggingface-penedo-et-al-2024">FineWeb (HuggingFace, Penedo et al., 2024)<a class="headerlink" href="#fineweb-huggingface-penedo-et-al-2024" title="Permanent link">¶</a></h3>
+<p>FineWeb is a 15 trillion token dataset derived entirely from Common Crawl (96 monthly snapshots through 2024). Its key innovation is showing that <em>aggressive quality filtering alone</em> — without exotic curated corpora — can match or exceed the downstream performance of carefully hand-curated mixes. The FineWeb-Edu subset (1.3T tokens) applies an educational quality classifier (a fine-tuned LLM scoring each page on a 0–5 scale for educational value) and dramatically outperforms base FineWeb on knowledge-intensive benchmarks at small model scales (1B–7B parameters).</p>
+<p>FineWeb is released under the Common Crawl terms of service, making it the most legally accessible large-scale web corpus.</p>
+<hr />
+<h2 id="data-engineering-at-scale">Data Engineering at Scale<a class="headerlink" href="#data-engineering-at-scale" title="Permanent link">¶</a></h2>
+<p>Assembling trillions of tokens requires industrial-grade data engineering. A naive approach — load everything into memory, filter, write out — fails immediately. We need streaming pipelines that process hundreds of terabytes without materializing more than a few GB at a time.</p>
+<h3 id="distributed-processing-architecture">Distributed Processing Architecture<a class="headerlink" href="#distributed-processing-architecture" title="Permanent link">¶</a></h3>
+<p>The standard architecture uses a distributed compute layer (Apache Spark, or custom Python with Ray/Dask) on top of object storage (S3, GCS). A typical pipeline stage looks like:</p>
+<div class="highlight"><pre><span></span><code>  S3 / GCS (raw WET files)
+       |
+       v
+  [Worker pool]  — stream and decompress WET
+       |
+       v
+  [Language ID]  — fastText / CLD3 per document
+       |
+       v
+  [Quality filter]  — heuristic + model-based
+       |
+       v
+  [Deduplication]  — MinHash LSH (see next chapter)
+       |
+       v
+  [Tokenize + pack]  — HuggingFace tokenizers
+       |
+       v
+  [Write shards]  — .bin / .arrow / .jsonl.zst
+       |
+       v
+  S3 / GCS (training shards, ready to stream)
+</code></pre></div>
+<p>The key design principle is <strong>embarrassing parallelism</strong>: each WET file (typically 400–700 MB compressed) is an independent processing unit. Workers download, decompress, and process one file at a time, emitting filtered documents to an output bucket. No inter-worker coordination is needed until the deduplication stage.</p>
+<h3 id="streaming-data-pipeline-in-python">Streaming Data Pipeline in Python<a class="headerlink" href="#streaming-data-pipeline-in-python" title="Permanent link">¶</a></h3>
+<p>Below is a self-contained, production-inspired streaming pipeline that processes a directory of compressed WET files, applies basic quality filters, tokenizes, and writes packed binary shards. This sketches the core logic you would extend with deduplication and more sophisticated filtering.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Streaming pretraining data pipeline.</span>
+
+<span class="sd">Processes gzipped WET files from a directory,</span>
+<span class="sd">applies quality heuristics, tokenizes with a BPE tokenizer,</span>
+<span class="sd">packs tokens into fixed-length context windows, and</span>
+<span class="sd">writes binary numpy shards.</span>
+
+<span class="sd">Usage:</span>
+<span class="sd">    python pipeline.py --input /data/wet --output /data/shards \</span>
+<span class="sd">                       --context_len 4096 --shard_size 500_000_000</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">gzip</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">struct</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tokenizers</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tokenizer</span>  <span class="c1"># HuggingFace fast tokenizers</span>
+
+
+<span class="c1"># ── WET record parser ──────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_wet_records</span><span class="p">(</span><span class="n">filepath</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Yield (url, text) pairs from a gzipped WET file.</span>
+<span class="sd">    WET files use the WARC/1.0 record format.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="n">gzip</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">filepath</span><span class="p">,</span> <span class="s2">&quot;rt&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="n">errors</span><span class="o">=</span><span class="s2">&quot;replace&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fh</span><span class="p">:</span>
+        <span class="n">current_url</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">in_body</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="n">body_lines</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">raw_line</span> <span class="ow">in</span> <span class="n">fh</span><span class="p">:</span>
+            <span class="n">line</span> <span class="o">=</span> <span class="n">raw_line</span><span class="o">.</span><span class="n">rstrip</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;WARC-Target-URI:&quot;</span><span class="p">):</span>
+                <span class="c1"># Starting a new record — flush the previous one</span>
+                <span class="k">if</span> <span class="n">current_url</span> <span class="ow">and</span> <span class="n">body_lines</span><span class="p">:</span>
+                    <span class="k">yield</span> <span class="n">current_url</span><span class="p">,</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">body_lines</span><span class="p">)</span>
+                <span class="n">current_url</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;:&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+                <span class="n">in_body</span> <span class="o">=</span> <span class="kc">False</span>
+                <span class="n">body_lines</span> <span class="o">=</span> <span class="p">[]</span>
+
+            <span class="k">elif</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;Content-Type: text/plain&quot;</span><span class="p">):</span>
+                <span class="c1"># The next blank line marks the start of the body</span>
+                <span class="n">in_body</span> <span class="o">=</span> <span class="kc">True</span>
+
+            <span class="k">elif</span> <span class="n">in_body</span> <span class="ow">and</span> <span class="n">line</span> <span class="o">==</span> <span class="s2">&quot;&quot;</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">body_lines</span><span class="p">:</span>
+                <span class="c1"># Skip the blank separator between headers and body</span>
+                <span class="k">pass</span>
+
+            <span class="k">elif</span> <span class="n">in_body</span><span class="p">:</span>
+                <span class="n">body_lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+
+        <span class="c1"># Don&#39;t forget the last record</span>
+        <span class="k">if</span> <span class="n">current_url</span> <span class="ow">and</span> <span class="n">body_lines</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="n">current_url</span><span class="p">,</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">body_lines</span><span class="p">)</span>
+
+
+<span class="c1"># ── Quality heuristics ─────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">passes_quality_filter</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">min_chars</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">200</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A simplified version of the heuristics used by C4 and Gopher.</span>
+<span class="sd">    Returns True if the document passes all checks.</span>
+
+<span class="sd">    Real pipelines also run language identification (fastText) and</span>
+<span class="sd">    a reference model perplexity filter — omitted here for brevity.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># (1) Minimum length</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">min_chars</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="c1"># (2) Must contain at least 3 lines with terminal punctuation</span>
+    <span class="n">sentences_with_punct</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">l</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">l</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">10</span> <span class="ow">and</span> <span class="n">l</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="ow">in</span> <span class="s2">&quot;.!?</span><span class="se">\&quot;</span><span class="s2">&quot;</span>
+    <span class="p">]</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">sentences_with_punct</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="c1"># (3) Word-level repetition ratio (Gopher signal)</span>
+    <span class="c1"># If the most common word accounts for &gt; 20% of words, likely spam</span>
+    <span class="n">words</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">words</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="n">most_common_freq</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+        <span class="n">words</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="n">w</span><span class="p">)</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="nb">set</span><span class="p">(</span><span class="n">words</span><span class="p">)</span>
+    <span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">most_common_freq</span> <span class="o">&gt;</span> <span class="mf">0.20</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="c1"># (4) Bullet/symbol density (JS code / menu spam heuristic)</span>
+    <span class="n">non_alpha</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">text</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">c</span><span class="o">.</span><span class="n">isalnum</span><span class="p">()</span> <span class="ow">and</span> <span class="n">c</span> <span class="ow">not</span> <span class="ow">in</span> <span class="s2">&quot; </span><span class="se">\n</span><span class="s2">.,;:!?&#39;</span><span class="se">\&quot;</span><span class="s2">-()&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">non_alpha</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">),</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">0.25</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="k">return</span> <span class="kc">True</span>
+
+
+<span class="c1"># ── Token packer ──────────────────────────────────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TokenShard</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Accumulates tokenized documents and flushes complete context windows</span>
+<span class="sd">    to a binary shard file.  Format: raw int32 token IDs, no padding.</span>
+<span class="sd">    The last incomplete context is dropped (never crosses document boundaries</span>
+<span class="sd">    in this simplified version — real pipelines often concatenate and then pack).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">output_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">shard_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">output_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">output_dir</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">output_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">shard_size</span> <span class="o">=</span> <span class="n">shard_size</span>  <span class="c1"># tokens per shard file</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ctx_len</span> <span class="o">=</span> <span class="n">ctx_len</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_buffer</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_shard_idx</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_total_tokens</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_tokens</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">token_ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">eos_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Append document tokens followed by an EOS separator.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_buffer</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">token_ids</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">eos_id</span><span class="p">)</span>
+
+        <span class="c1"># Flush complete shard whenever buffer is large enough</span>
+        <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_buffer</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">shard_size</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_flush_shard</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_flush_shard</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Write one shard of exactly self.shard_size tokens.&quot;&quot;&quot;</span>
+        <span class="n">tokens</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_buffer</span><span class="p">[:</span><span class="bp">self</span><span class="o">.</span><span class="n">shard_size</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_buffer</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_buffer</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">shard_size</span><span class="p">:]</span>
+
+        <span class="c1"># Align to ctx_len boundaries so every row in the shard</span>
+        <span class="c1"># is a complete, non-padding context window</span>
+        <span class="n">n_complete</span> <span class="o">=</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span> <span class="o">//</span> <span class="bp">self</span><span class="o">.</span><span class="n">ctx_len</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">ctx_len</span>
+        <span class="n">tokens</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[:</span><span class="n">n_complete</span><span class="p">]</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">tokens</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="n">arr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">tokens</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="n">shard_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">output_dir</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;shard_</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_shard_idx</span><span class="si">:</span><span class="s2">05d</span><span class="si">}</span><span class="s2">.bin&quot;</span>
+        <span class="n">arr</span><span class="o">.</span><span class="n">tofile</span><span class="p">(</span><span class="n">shard_path</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_total_tokens</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_shard_idx</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Wrote </span><span class="si">{</span><span class="n">shard_path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> tokens &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span><span class="o">//</span><span class="bp">self</span><span class="o">.</span><span class="n">ctx_len</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> contexts)&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">finalize</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Flush any remaining full contexts from the buffer.&quot;&quot;&quot;</span>
+        <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_buffer</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">shard_size</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_flush_shard</span><span class="p">()</span>
+        <span class="c1"># Write a partial shard if enough for at least one context</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_buffer</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ctx_len</span><span class="p">:</span>
+            <span class="n">n_complete</span> <span class="o">=</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_buffer</span><span class="p">)</span> <span class="o">//</span> <span class="bp">self</span><span class="o">.</span><span class="n">ctx_len</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">ctx_len</span>
+            <span class="n">tokens</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_buffer</span><span class="p">[:</span><span class="n">n_complete</span><span class="p">]</span>
+            <span class="n">arr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">tokens</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+            <span class="n">shard_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">output_dir</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;shard_</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_shard_idx</span><span class="si">:</span><span class="s2">05d</span><span class="si">}</span><span class="s2">.bin&quot;</span>
+            <span class="n">arr</span><span class="o">.</span><span class="n">tofile</span><span class="p">(</span><span class="n">shard_path</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_total_tokens</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Wrote final </span><span class="si">{</span><span class="n">shard_path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> tokens&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Total tokens written: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_total_tokens</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># ── Main pipeline ─────────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_pipeline</span><span class="p">(</span>
+    <span class="n">input_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">output_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">tokenizer_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">context_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4096</span><span class="p">,</span>
+    <span class="n">shard_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500_000_000</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Main entry point.  In production, this loop is distributed across</span>
+<span class="sd">    hundreds of workers, each handling a distinct subset of WET files.</span>
+<span class="sd">    Here we run single-threaded for clarity.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">Tokenizer</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">tokenizer_path</span><span class="p">)</span>
+    <span class="n">eos_id</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">token_to_id</span><span class="p">(</span><span class="s2">&quot;&lt;|endoftext|&gt;&quot;</span><span class="p">)</span>
+    <span class="n">packer</span> <span class="o">=</span> <span class="n">TokenShard</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">shard_size</span><span class="p">,</span> <span class="n">context_len</span><span class="p">)</span>
+
+    <span class="n">wet_files</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">input_dir</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">&quot;*.wet.gz&quot;</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Found </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">wet_files</span><span class="p">)</span><span class="si">}</span><span class="s2"> WET files to process.&quot;</span><span class="p">)</span>
+
+    <span class="n">total_docs</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">kept_docs</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">for</span> <span class="n">wet_path</span> <span class="ow">in</span> <span class="n">wet_files</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Processing </span><span class="si">{</span><span class="n">wet_path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> ...&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">url</span><span class="p">,</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">parse_wet_records</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">wet_path</span><span class="p">)):</span>
+            <span class="n">total_docs</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">passes_quality_filter</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
+                <span class="k">continue</span>
+            <span class="c1"># Tokenize (encode returns a huggingface Encoding object)</span>
+            <span class="n">encoding</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+            <span class="n">packer</span><span class="o">.</span><span class="n">add_tokens</span><span class="p">(</span><span class="n">encoding</span><span class="o">.</span><span class="n">ids</span><span class="p">,</span> <span class="n">eos_id</span><span class="p">)</span>
+            <span class="n">kept_docs</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="n">packer</span><span class="o">.</span><span class="n">finalize</span><span class="p">()</span>
+    <span class="n">retention</span> <span class="o">=</span> <span class="mi">100</span> <span class="o">*</span> <span class="n">kept_docs</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">total_docs</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Retention rate: </span><span class="si">{</span><span class="n">kept_docs</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">total_docs</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> = </span><span class="si">{</span><span class="n">retention</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">()</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--input&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--output&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--tokenizer&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">&quot;tokenizer.json&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--context_len&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">4096</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--shard_size&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">500_000_000</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+
+    <span class="n">run_pipeline</span><span class="p">(</span>
+        <span class="n">args</span><span class="o">.</span><span class="n">input</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">output</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">,</span>
+        <span class="n">args</span><span class="o">.</span><span class="n">context_len</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">shard_size</span><span class="p">,</span>
+    <span class="p">)</span>
+</code></pre></div>
+<p>In production, the outer loop over WET files is parallelized — each worker picks a file from an SQS queue or equivalent, processes it, and writes results to a shared output bucket. Workers are stateless, so they are trivially recoverable on node failure.</p>
+<h3 id="shard-layout-for-streaming-training">Shard Layout for Streaming Training<a class="headerlink" href="#shard-layout-for-streaming-training" title="Permanent link">¶</a></h3>
+<p>Training reads shards in random order to approximate i.i.d. sampling. Each shard is a flat binary file of <code>int32</code> token IDs arranged in rows of <code>context_len</code> tokens. The training dataloader memory-maps these files:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.data</span><span class="w"> </span><span class="kn">import</span> <span class="n">IterableDataset</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ShardedTokenDataset</span><span class="p">(</span><span class="n">IterableDataset</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Memory-mapped streaming dataset over pre-tokenized binary shards.</span>
+
+<span class="sd">    Shards are laid out as flat int32 arrays; each context window</span>
+<span class="sd">    is a contiguous slice of length (context_len + 1) — the +1 gives</span>
+<span class="sd">    us the label shift: input = tokens[:-1], target = tokens[1:].</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">shard_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">context_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4096</span><span class="p">,</span>
+        <span class="n">shuffle_shards</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">shard_paths</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">shard_dir</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">&quot;*.bin&quot;</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">context_len</span> <span class="o">=</span> <span class="n">context_len</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">shuffle_shards</span> <span class="o">=</span> <span class="n">shuffle_shards</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__iter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">shard_order</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">shard_paths</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">shuffle_shards</span><span class="p">:</span>
+            <span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+            <span class="n">random</span><span class="o">.</span><span class="n">shuffle</span><span class="p">(</span><span class="n">shard_order</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">shard_path</span> <span class="ow">in</span> <span class="n">shard_order</span><span class="p">:</span>
+            <span class="c1"># Memory-map: no data is loaded until a row is accessed</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">memmap</span><span class="p">(</span><span class="n">shard_path</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;r&quot;</span><span class="p">)</span>
+            <span class="n">n_contexts</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span> <span class="o">//</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">context_len</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+
+            <span class="c1"># Shuffle context order within the shard</span>
+            <span class="n">indices</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">permutation</span><span class="p">(</span><span class="n">n_contexts</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">idx</span> <span class="ow">in</span> <span class="n">indices</span><span class="p">:</span>
+                <span class="n">start</span> <span class="o">=</span> <span class="n">idx</span> <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">context_len</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+                <span class="n">chunk</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">start</span> <span class="p">:</span> <span class="n">start</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">context_len</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">chunk</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">))</span>
+                <span class="n">y</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">chunk</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">))</span>
+                <span class="k">yield</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>Write shards with <code>context_len + 1</code> tokens per row so that every fetch yields a complete <code>(input, label)</code> pair with no off-by-one indexing at read time. This eliminates a common source of subtle bugs when labels wrap across rows.</p>
+</div>
+<hr />
+<h2 id="domain-mixing-strategies-and-curriculum">Domain Mixing Strategies and Curriculum<a class="headerlink" href="#domain-mixing-strategies-and-curriculum" title="Permanent link">¶</a></h2>
+<p>Beyond static mixture weights, researchers have explored <em>dynamic</em> data curricula — changing the mixture as training progresses.</p>
+<p><strong>Skill-it! (Chen et al., 2023)</strong> showed that ordering data by increasing difficulty (measured by loss on a held-out probe set) can improve downstream performance, analogous to curriculum learning in classical ML.</p>
+<p><strong>DoReMi (Xie et al., 2023)</strong> framed mixture weight selection as a distributionally robust optimization (DRO) problem: train a small proxy model and a domain weight learner simultaneously, with the weight learner trying to equalize worst-case domain loss. The resulting weights outperform human-tuned weights on average across downstream tasks.</p>
+<p><strong>Online data mixing</strong> is used by some teams to re-weight domains mid-training based on validation loss trends — domains where validation loss plateaus early get down-weighted. This requires periodic synchronization with a validation loop but can squeeze meaningful quality improvements from a fixed corpus.</p>
+<p>The key insight from all of these approaches is that the optimal mixture is <em>not</em> the natural distribution of the web. The web has too much low-quality text and too little high-quality structured knowledge. Every serious training run explicitly tilts the distribution toward quality.</p>
+<hr />
+<h2 id="licensing-legal-considerations-data-ethics">Licensing, Legal Considerations &amp; Data Ethics<a class="headerlink" href="#licensing-legal-considerations-data-ethics" title="Permanent link">¶</a></h2>
+<p>Licensing is increasingly a first-class engineering concern, not a legal afterthought. The 2023–2024 wave of copyright litigation against AI companies (NYT v. OpenAI, Getty v. Stability AI, and others) has made data provenance a real risk factor.</p>
+<h3 id="license-taxonomy">License Taxonomy<a class="headerlink" href="#license-taxonomy" title="Permanent link">¶</a></h3>
+<p>Training data sources fall into a rough hierarchy of legal clarity:</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Examples</th>
+<th>Risk level</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Public domain</td>
+<td>Project Gutenberg, US government works, pre-1928 texts</td>
+<td>Lowest</td>
+</tr>
+<tr>
+<td>Permissive open licenses</td>
+<td>Apache 2.0, MIT, CC-BY code/text</td>
+<td>Low</td>
+</tr>
+<tr>
+<td>Share-alike licenses</td>
+<td>CC BY-SA, GPL</td>
+<td>Medium (copyleft may propagate)</td>
+</tr>
+<tr>
+<td>Unclear / no license</td>
+<td>Most of the web, Common Crawl</td>
+<td>High — jurisdiction-dependent</td>
+</tr>
+<tr>
+<td>Opted-out or robots.txt blocked</td>
+<td>Varies by site</td>
+<td>Should exclude</td>
+</tr>
+</tbody>
+</table>
+<p>Most frontier training corpora rely heavily on Tier 3–4 material, betting on fair-use arguments in the US and equivalent doctrines elsewhere. The EU AI Act (effective 2025–2026) adds new transparency requirements: providers of general-purpose AI models must publish a &ldquo;sufficiently detailed summary&rdquo; of training data, including copyright opt-outs.</p>
+<h3 id="c2pa-and-data-consent-infrastructure">C2PA and Data Consent Infrastructure<a class="headerlink" href="#c2pa-and-data-consent-infrastructure" title="Permanent link">¶</a></h3>
+<p>The Content Credentials (C2PA) standard and emerging &ldquo;robots.txt for AI&rdquo; (the <code>ai-disallow</code> token in robots.txt, as proposed by several working groups) are nascent infrastructure for consent signaling. The AI2 Dolma team introduced the concept of <strong>domain-level opt-out lists</strong> — documents from sites that have explicitly opted out of AI training are tagged and excluded. This is currently voluntary, but is likely to become a legal requirement in multiple jurisdictions.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall</p>
+<p>Using web data with no license audit is fine for research prototypes but creates material legal risk for deployed products. Build document-level provenance tracking (source URL, crawl date, inferred license tier) into your pipeline from day one — retrofitting it after training is far more expensive.</p>
+</div>
+<hr />
+<h2 id="interview-corner">Interview Corner<a class="headerlink" href="#interview-corner" title="Permanent link">¶</a></h2>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A team is building a 7B model and asks you to design the pretraining data pipeline from scratch. Walk through the major decisions, from raw Common Crawl data to packed training shards.</p>
+<p><strong>A:</strong> I would structure the work in four phases:</p>
+<ol>
+<li>
+<p><strong>Source selection and acquisition</strong>: Start with a recent Common Crawl WET snapshot (~25 TB compressed). Add curated high-quality corpora: Wikipedia (up-weight heavily), deduplicated GitHub code filtered for permissive licenses, arXiv LaTeX source, and a cleaned books corpus. Each source is tracked with a provenance record (URL, license tier, crawl date).</p>
+</li>
+<li>
+<p><strong>Per-document filtering</strong>: Stream each WET file through (a) language ID (fastText; keep only desired languages), (b) Gopher heuristics (word count, symbol ratio, line-ending punctuation, repetition rate), and &copy; an optional perplexity filter against a small reference LM. Expect to retain roughly 30–50% of raw Common Crawl by document count but higher by quality-adjusted token value.</p>
+</li>
+<li>
+<p><strong>Deduplication</strong>: Apply MinHash LSH at 13-gram shingle level to remove near-duplicate documents across the full corpus. This is the most computationally intensive step — covered in the <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a> chapter. Expect 15–30% additional token reduction.</p>
+</li>
+<li>
+<p><strong>Mixing and packing</strong>: Assign domain weights (roughly: 65% web, 15% code, 8% books, 4% arXiv, 4% Wikipedia, 4% other) and sample proportionally when writing training shards. Tokenize with the model&rsquo;s BPE tokenizer, concatenate documents with an EOS separator, pack into fixed <code>context_len + 1</code> rows, and write as memory-mappable <code>int32</code> binary shards (~500M tokens each).</p>
+</li>
+</ol>
+<p>The resulting pipeline should be embarrassingly parallel at the file level. Track total token counts and per-domain epoch counts throughout — the epoch counts will tell you whether you need to source more data or accept repetition.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Common Crawl WET files are the raw material for most open LLM training corpora; the monthly snapshots total hundreds of terabytes and require industrial-strength streaming pipelines to process.</li>
+<li>No one trains on raw crawl data. Every serious corpus applies at minimum: language filtering, Gopher-style quality heuristics, and MinHash deduplication.</li>
+<li>The data recipe — the mixture weights across domains — matters as much as total token count. Up-weighting Wikipedia, code, and curated scientific text is standard practice even though they are a tiny fraction of raw volume.</li>
+<li>Epoch counts are a first-class design parameter: Wikipedia at high weight may be seen 10–20 times in a trillion-token run; repeating data beyond ~4 epochs degrades generalization.</li>
+<li>FineWeb demonstrated that aggressive quality filtering of Common Crawl alone can match carefully hand-curated mixes; FineWeb-Edu showed that educational quality classifiers further improve knowledge benchmarks.</li>
+<li>Dolma and RedPajama are the most thoroughly documented open pretraining datasets; their papers are essential reading for understanding real-world pipeline decisions.</li>
+<li>Licensing and data provenance are production engineering constraints, not research afterthoughts. Build document-level provenance tracking from day one; EU AI Act requirements make it legally necessary.</li>
+<li>A streaming pipeline with memory-mapped binary shards, embarrassing per-file parallelism, and domain-balanced sampling is the standard architecture; it scales from research to trillion-token production runs.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Pretraining data curation has matured into a rigorous engineering discipline: the field now understands that aggressive quality filtering of Common Crawl alone can match hand-curated mixes (FineWeb), that data mixture weights should be optimized rather than guessed (DoReMi, DCLM), and that transparent, reproducible pipelines (Dolma, RedPajama-v2) are the new baseline for open research.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2101.00027">Gao et al., <em>The Pile: An 800 GB Dataset of Diverse Text for Language Modeling</em> (2020)</a> — established the template of documenting multi-source open pretraining corpora.</li>
+<li><a href="https://arxiv.org/abs/1910.10683">Raffel et al., <em>Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer</em> (T5, 2019)</a> — introduced C4 and the web-cleaning heuristics still used today.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2406.17557">Penedo et al., <em>The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale</em> (2024)</a> — 15T-token web corpus; shows aggressive quality filtering alone matches curated mixes; FineWeb-Edu classifier boosts knowledge benchmarks.</li>
+<li><a href="https://arxiv.org/abs/2406.11794">Li et al., <em>DataComp-LM: In Search of the Next Generation of Training Sets for Language Models</em> (2024)</a> — controlled benchmark for data-curation strategies; DCLM-Baseline enables 64% MMLU at 7B with 2.6T tokens.</li>
+<li><a href="https://arxiv.org/abs/2402.00159">Soldaini et al., <em>Dolma: An Open Corpus of Three Trillion Tokens for Language Model Pretraining Research</em> (2024)</a> — most thoroughly documented open pipeline; per-document provenance, license tags, and multi-threshold quality signals.</li>
+<li><a href="https://arxiv.org/abs/2305.10429">Xie et al., <em>DoReMi: Optimizing Data Mixtures Speeds Up Language Model Pretraining</em> (2023)</a> — group DRO on a proxy model finds domain weights that outperform human-tuned mixes by 6.5 pp on downstream tasks.</li>
+<li><a href="https://arxiv.org/abs/2305.16264">Muennighoff et al., <em>Scaling Data-Constrained Language Models</em> (2023)</a> — quantifies how data repetition beyond ~4 epochs degrades generalization; introduces scaling laws for repeated-token regimes.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/huggingface/datatrove">huggingface/datatrove</a> — platform-agnostic, memory-efficient pipeline library (readers, filters, dedup, writers) used to build FineWeb; runs locally or on SLURM unchanged.</li>
+<li><a href="https://github.com/allenai/dolma">allenai/dolma</a> — production-ready data curation toolkit with Rust Bloom-filter dedup, parallel taggers, and S3 support; backs the OLMo training corpus.</li>
+<li><a href="https://github.com/mlfoundations/dclm">mlfoundations/dclm</a> — DCLM benchmark framework; 300T-token Common Crawl pool, 53-task evaluation suite, and OpenLM pretraining recipes across 411M–7B scales.</li>
+<li><a href="https://github.com/togethercomputer/RedPajama-Data">togethercomputer/RedPajama-Data</a> — open replication of the LLaMA data recipe; v2 adds 40+ pre-computed quality signals to 30T tokens across five languages.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingfacefw-blogpost-fineweb-v1.static.hf.space/index.html">FineWeb: decanting the web for the finest text data at scale (HuggingFace blog, 2024)</a> — detailed walkthrough of every filtering and deduplication decision, with ablation charts; excellent companion to the paper.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Gao et al.</strong> — <em>The Pile: An 800GB Dataset of Diverse Text for Language Modeling</em>, EleutherAI, 2020. The template for documented open pretraining data.</li>
+<li><strong>Raffel et al.</strong> — <em>Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer (T5)</em>, JMLR, 2020. Introduced C4 and documented web-cleaning heuristics.</li>
+<li><strong>Soldaini et al.</strong> — <em>Dolma: An Open Corpus of Three Trillion Tokens for Language Model Pretraining Research</em>, AI2, 2024. Most thoroughly documented open pipeline.</li>
+<li><strong>Penedo et al.</strong> — <em>FineWeb: Decanting the Web for the Finest Text Data at Scale</em>, HuggingFace, 2024. Shows aggressive quality filtering can match curated mixes.</li>
+<li><strong>Xie et al.</strong> — <em>DoReMi: Optimizing Data Mixtures Speeds Up Language Model Pretraining</em>, NeurIPS, 2023. Principled approach to mixture weight selection.</li>
+<li><strong>Muennighoff et al.</strong> — <em>Scaling Data-Constrained Language Models</em>, NeurIPS, 2023. Quantifies the cost of data repetition.</li>
+<li><strong>Together AI</strong> — <em>RedPajama</em>, 2023. Open replication of the LLaMA data recipe, including v2 with attached quality signals.</li>
+<li><strong>BigCode Project</strong> — <em>The Stack</em>, 2022. Permissively licensed code corpus across 86 programming languages.</li>
+<li><strong>Common Crawl</strong> — <code>commoncrawl.org</code>. Primary source of web data for nearly all open LLM corpora.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="pn-label">← Previous</span><span class="pn-title">Diffusion &amp; Non-Autoregressive Language Models</span></a>
+<a class="next" href="02-data-cleaning-dedup.html"><span class="pn-label">Next →</span><span class="pn-title">Data Cleaning, Deduplication &amp; Quality Filtering</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-data-problem-at-pretraining-scale">The Data Problem at Pretraining Scale</a></li>
+<li class="toc-l2"><a href="#common-crawl-the-backbone-of-llm-data">Common Crawl: The Backbone of LLM Data</a></li>
+<li class="toc-l3"><a href="#file-formats-warc-wet-and-wat">File Formats: WARC, WET, and WAT</a></li>
+<li class="toc-l3"><a href="#crawl-anatomy">Crawl Anatomy</a></li>
+<li class="toc-l2"><a href="#curated-corpora-beyond-the-raw-crawl">Curated Corpora: Beyond the Raw Crawl</a></li>
+<li class="toc-l3"><a href="#books">Books</a></li>
+<li class="toc-l3"><a href="#scientific-and-technical-text">Scientific and Technical Text</a></li>
+<li class="toc-l3"><a href="#wikipedia-and-reference-content">Wikipedia and Reference Content</a></li>
+<li class="toc-l3"><a href="#multilingual-sources">Multilingual Sources</a></li>
+<li class="toc-l2"><a href="#the-data-recipe-mixture-weights">The Data Recipe: Mixture Weights</a></li>
+<li class="toc-l2"><a href="#open-dataset-case-studies">Open Dataset Case Studies</a></li>
+<li class="toc-l3"><a href="#the-pile-eleutherai-gao-et-al-2020">The Pile (EleutherAI, Gao et al., 2020)</a></li>
+<li class="toc-l3"><a href="#c4-raffel-et-al-t5-2019">C4 (Raffel et al., T5, 2019)</a></li>
+<li class="toc-l3"><a href="#redpajama-together-ai-2023">RedPajama (Together AI, 2023)</a></li>
+<li class="toc-l3"><a href="#dolma-ai2-soldaini-et-al-2024">Dolma (AI2, Soldaini et al., 2024)</a></li>
+<li class="toc-l3"><a href="#fineweb-huggingface-penedo-et-al-2024">FineWeb (HuggingFace, Penedo et al., 2024)</a></li>
+<li class="toc-l2"><a href="#data-engineering-at-scale">Data Engineering at Scale</a></li>
+<li class="toc-l3"><a href="#distributed-processing-architecture">Distributed Processing Architecture</a></li>
+<li class="toc-l3"><a href="#streaming-data-pipeline-in-python">Streaming Data Pipeline in Python</a></li>
+<li class="toc-l3"><a href="#shard-layout-for-streaming-training">Shard Layout for Streaming Training</a></li>
+<li class="toc-l2"><a href="#domain-mixing-strategies-and-curriculum">Domain Mixing Strategies and Curriculum</a></li>
+<li class="toc-l2"><a href="#licensing-legal-considerations-data-ethics">Licensing, Legal Considerations &amp;amp; Data Ethics</a></li>
+<li class="toc-l3"><a href="#license-taxonomy">License Taxonomy</a></li>
+<li class="toc-l3"><a href="#c2pa-and-data-consent-infrastructure">C2PA and Data Consent Infrastructure</a></li>
+<li class="toc-l2"><a href="#interview-corner">Interview Corner</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

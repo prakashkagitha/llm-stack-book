@@ -1,0 +1,1481 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Constitutional AI, RLAIF &amp; Self-Improvement — The LLM Stack</title>
+<meta name="description" content="AI feedback instead of human (RLAIF), Constitutional AI (critique+revise, a constitution), self-rewarding LMs, self-play, rejection sampling / STaR / ReST, weak">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="active" href="11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part V — Post-Training &amp; Alignment</div>
+<h1 id="511-constitutional-ai-rlaif-self-improvement">5.11 Constitutional AI, RLAIF &amp; Self-Improvement<a class="headerlink" href="#511-constitutional-ai-rlaif-self-improvement" title="Permanent link">¶</a></h1>
+<p>Human preference labels are expensive, inconsistent, and difficult to scale to the throughput that modern post-training pipelines demand. A single RLHF training run for a frontier model can consume millions of human-written comparisons, each requiring minutes of careful reading by a skilled annotator. Constitutional AI (CAI), Reinforcement Learning from AI Feedback (RLAIF), and the family of self-improvement techniques — STaR, ReST, self-rewarding language models, and weak-to-strong generalization — all attack this bottleneck from different angles. This chapter explains each mechanism in depth, shows working code for the critical components, and discusses where alignment data actually comes from at scale.</p>
+<p>Before diving in, orient yourself: the underlying RLHF pipeline that CAI feeds into is covered in <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>, and the PPO/GRPO trainers that consume AI-generated reward signals live in <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a> and <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>. Reward hacking risks that arise when an AI grades itself are treated carefully in <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>.</p>
+<hr />
+<h2 id="the-problem-human-labeling-at-scale">The Problem: Human Labeling at Scale<a class="headerlink" href="#the-problem-human-labeling-at-scale" title="Permanent link">¶</a></h2>
+<p>Human annotation has three compounding problems when you try to scale it.</p>
+<p><strong>Volume.</strong> A typical preference dataset for a chat model contains on the order of hundreds of thousands to a few million examples. The generation side of an RL run continuously produces new rollouts that need scoring — at the rate of millions per day for a large run. Human throughput simply does not match generation throughput.</p>
+<p><strong>Consistency.</strong> Human raters disagree, especially on nuanced safety and helpfulness trade-offs. Inter-annotator agreement on a 1–5 helpfulness scale can be surprisingly low. A reward model trained on noisy labels learns noisy preferences — it may generalize to behaviors the annotators never intended.</p>
+<p><strong>Latency.</strong> A human annotation job takes hours to days to return labels. RL algorithms like PPO want reward signals in seconds. The asynchronous mismatch forces practitioners to freeze the reward model during an RL run, which limits the feedback loop.</p>
+<p>AI feedback sidesteps all three by replacing the human rater with a language model. The AI can score millions of samples per hour with deterministic temperatures, and the feedback loop closes in milliseconds. The trade-off is that the AI rater may embed its own biases and errors — which is exactly the problem that a <em>constitution</em> is designed to constrain.</p>
+<hr />
+<h2 id="constitutional-ai-cai">Constitutional AI (CAI)<a class="headerlink" href="#constitutional-ai-cai" title="Permanent link">¶</a></h2>
+<h3 id="core-idea-a-principle-set-as-a-steering-document">Core Idea: A Principle Set as a Steering Document<a class="headerlink" href="#core-idea-a-principle-set-as-a-steering-document" title="Permanent link">¶</a></h3>
+<p>Constitutional AI, introduced by Bai et al. (Anthropic, 2022), gives the model an explicit list of principles — the &ldquo;constitution&rdquo; — and teaches it to evaluate its own outputs against those principles before producing a final response. The pipeline has two major stages.</p>
+<p><strong>Stage 1 — Supervised Learning from Self-Critique (SL-CAI).</strong> Given a prompt that would normally elicit a harmful response, the model first generates a harmful draft, then critiques the draft with reference to a specific constitutional principle, then revises the draft to be more aligned. This critique-revision loop can be iterated several times. The final revised response becomes the supervised fine-tuning (SFT) target.</p>
+<p><strong>Stage 2 — RL from AI Feedback (RLAIF).</strong> The model (or a larger &ldquo;preference model&rdquo;) scores pairs of responses by asking which response better satisfies a given constitutional principle. These AI-generated preference labels train a preference model. The preference model then provides reward signals for an RL fine-tuning loop (e.g., PPO), yielding the final Constitutional AI model (CAI).</p>
+<figure class="viz" id="fig-cai-two-stage-pipeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+
+<svg viewBox="0 0 900 560" role="img"
+  aria-label="Constitutional AI Pipeline: Stage 1 critique-revision loop produces SFT targets. Stage 2 RLAIF generates preference labels to train a reward model, then PPO produces the final CAI model.">
+<defs>
+  <marker id="cp-a"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9z" fill="var(--ink-soft,#555)"/></marker>
+  <marker id="cp-aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9z" fill="var(--accent,#3a6ea5)"/></marker>
+  <marker id="cp-am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9z" fill="var(--muted,#aaa)"/></marker>
+</defs>
+<style>
+  #fig-cai-two-stage-pipeline text      { font:400 12px var(--sans,sans-serif); fill:var(--ink-soft,#333); }
+  #fig-cai-two-stage-pipeline .T        { font:700 17px var(--sans,sans-serif); }
+  #fig-cai-two-stage-pipeline .L        { font:600 11px var(--sans,sans-serif); fill:var(--accent,#3a6ea5); }
+  #fig-cai-two-stage-pipeline .N        { font:600 11px var(--sans,sans-serif); fill:var(--ink-soft,#222); }
+  #fig-cai-two-stage-pipeline .NS       { font:400 9.5px var(--sans,sans-serif); fill:var(--muted,#666); }
+  #fig-cai-two-stage-pipeline .AL       { font:italic 9px var(--sans,sans-serif); fill:var(--muted,#888); }
+  #fig-cai-two-stage-pipeline .LP       { font:400 9px var(--sans,sans-serif); fill:var(--accent,#3a6ea5); }
+  #fig-cai-two-stage-pipeline .XL       { font:400 9px var(--sans,sans-serif); fill:var(--muted,#aaa); }
+
+  #fig-cai-two-stage-pipeline [data-anim]            { opacity:0; }
+  #fig-cai-two-stage-pipeline:not(.playing) [data-anim]{ opacity:1; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="1"] { animation:ci .35s .05s ease forwards; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="2"] { animation:ci .35s .5s  ease forwards; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="3"] { animation:ci .35s .95s ease forwards; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="4"] { animation:ci .35s 1.4s ease forwards; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="5"] { animation:ci .35s 1.85s ease forwards; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="6"] { animation:ci .35s 2.35s ease forwards; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="7"] { animation:ci .35s 2.85s ease forwards; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="8"] { animation:ci .35s 3.35s ease forwards; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="9"] { animation:ci .35s 3.85s ease forwards; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="10"]{ animation:ci .35s 4.35s ease forwards; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="11"]{ animation:ci .35s 4.85s ease forwards; }
+  #fig-cai-two-stage-pipeline.playing [data-anim="12"]{ animation:ci .35s 5.35s ease forwards; }
+  @keyframes ci { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+</style>
+
+
+<rect x="10" y="10" width="880" height="540" rx="12"
+  fill="var(--surface,#fff)" stroke="var(--border-2,#888)" stroke-width="1.5"/>
+<text x="450" y="38" text-anchor="middle" class="T">Constitutional AI Pipeline</text>
+<line x1="25" y1="307" x2="885" y2="307"
+  stroke="var(--border-2,#ccc)" stroke-width="0.8" stroke-dasharray="6 4"/>
+
+
+<g data-anim="1">
+  <text x="24" y="68" class="L">Stage 1 — SL-CAI (Supervised Learning from Self-Critique)</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="20" y="162" width="112" height="60" rx="7"
+    fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+  <text x="76" y="186" text-anchor="middle" class="N">Harmful</text>
+  <text x="76" y="201" text-anchor="middle" class="N">prompt</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="132" y1="192" x2="193" y2="192"
+    stroke="var(--ink-soft,#777)" stroke-width="1.4" marker-end="url(#cp-a)"/>
+
+  <text x="162" y="185" text-anchor="middle" class="AL">generate</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="195" y="162" width="112" height="60" rx="7"
+    fill="var(--warn,#fde8e8)" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+  <text x="251" y="184" text-anchor="middle" class="N">Initial</text>
+  <text x="251" y="198" text-anchor="middle" class="NS">response</text>
+  <text x="251" y="212" text-anchor="middle" class="NS">(may be harmful)</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="307" y1="192" x2="354" y2="192"
+    stroke="var(--ink-soft,#777)" stroke-width="1.4" marker-end="url(#cp-a)"/>
+</g>
+
+
+<g data-anim="3">
+  <rect x="355" y="155" width="160" height="74" rx="7"
+    fill="var(--surface-3,#e7f0fb)" stroke="var(--accent,#3a6ea5)" stroke-width="1.8"/>
+
+  <g stroke="var(--accent,#3a6ea5)" stroke-width="1.3" fill="none" stroke-linejoin="round">
+    <path d="M364,166 h14 l4,4 v18 h-18 z"/>
+    <line x1="367" y1="174" x2="376" y2="174"/>
+    <line x1="367" y1="180" x2="378" y2="180"/>
+    <line x1="367" y1="186" x2="378" y2="186"/>
+  </g>
+  <text x="430" y="178" text-anchor="middle" class="N">Apply constitution</text>
+  <text x="430" y="193" text-anchor="middle" class="N">principle P_i</text>
+  <text x="430" y="210" text-anchor="middle" class="NS">sampled per iteration</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="515" y1="192" x2="577" y2="192"
+    stroke="var(--ink-soft,#777)" stroke-width="1.4" marker-end="url(#cp-a)"/>
+
+  <text x="546" y="185" text-anchor="middle" class="AL">critique</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="578" y="162" width="112" height="60" rx="7"
+    fill="var(--surface,#f4f4f4)" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+  <text x="634" y="186" text-anchor="middle" class="N">Critique</text>
+  <text x="634" y="201" text-anchor="middle" class="NS">of draft</text>
+</g>
+
+
+<g data-anim="5">
+  <line x1="690" y1="192" x2="753" y2="192"
+    stroke="var(--ink-soft,#777)" stroke-width="1.4" marker-end="url(#cp-a)"/>
+  <text x="721" y="185" text-anchor="middle" class="AL">revise</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="754" y="162" width="112" height="60" rx="7"
+    fill="var(--surface,#f4f4f4)" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+  <text x="810" y="186" text-anchor="middle" class="N">Revision</text>
+  <text x="810" y="201" text-anchor="middle" class="NS">improved draft</text>
+</g>
+
+
+<g data-anim="6">
+  <path d="M810,162 Q810,104 622,98 Q510,93 435,155"
+    fill="none" stroke="var(--accent,#3a6ea5)" stroke-width="1.7"
+    stroke-dasharray="5 3" marker-end="url(#cp-aa)"/>
+  <text x="630" y="90" text-anchor="middle" class="LP">loop k times (k = 1..4)</text>
+</g>
+
+
+<g data-anim="7">
+  <line x1="810" y1="222" x2="810" y2="256"
+    stroke="var(--accent,#3a6ea5)" stroke-width="1.7" marker-end="url(#cp-aa)"/>
+</g>
+
+
+<g data-anim="7">
+  <rect x="736" y="257" width="148" height="46" rx="7"
+    fill="var(--surface-3,#e7f0fb)" stroke="var(--accent,#3a6ea5)" stroke-width="2"/>
+  <text x="810" y="275" text-anchor="middle" class="N" fill="var(--accent,#3a6ea5)">Final revision</text>
+  <text x="810" y="290" text-anchor="middle" class="NS">SFT training target</text>
+</g>
+
+
+<g data-anim="7">
+  <text x="24" y="325" class="L">Stage 2 — RLAIF (RL from AI Feedback)</text>
+</g>
+
+
+<g data-anim="8">
+  <rect x="20" y="436" width="96" height="60" rx="7"
+    fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+  <text x="68" y="455" text-anchor="middle" class="N">Prompt</text>
+  <text x="68" y="469" text-anchor="middle" class="NS">+(A, B)</text>
+  <text x="68" y="483" text-anchor="middle" class="NS">per P_j</text>
+</g>
+
+
+<g data-anim="8">
+  <line x1="116" y1="466" x2="173" y2="466"
+    stroke="var(--ink-soft,#777)" stroke-width="1.4" marker-end="url(#cp-a)"/>
+</g>
+
+
+<g data-anim="9">
+  <rect x="174" y="436" width="116" height="60" rx="7"
+    fill="var(--surface-3,#e7f0fb)" stroke="var(--accent,#3a6ea5)" stroke-width="1.8"/>
+  <text x="232" y="456" text-anchor="middle" class="N">AI preference</text>
+  <text x="232" y="470" text-anchor="middle" class="N">label</text>
+  <text x="232" y="484" text-anchor="middle" class="NS">A or B preferred</text>
+</g>
+
+
+<g data-anim="9">
+  <line x1="290" y1="466" x2="349" y2="466"
+    stroke="var(--ink-soft,#777)" stroke-width="1.4" marker-end="url(#cp-a)"/>
+</g>
+
+
+<g data-anim="10">
+  <rect x="350" y="436" width="140" height="60" rx="7"
+    fill="var(--surface,#f4f4f4)" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+  <text x="420" y="456" text-anchor="middle" class="N">Preference</text>
+  <text x="420" y="470" text-anchor="middle" class="N">model (RM)</text>
+  <text x="420" y="484" text-anchor="middle" class="NS">trained on AI labels</text>
+</g>
+
+
+<g data-anim="10">
+  <line x1="490" y1="466" x2="549" y2="466"
+    stroke="var(--ink-soft,#777)" stroke-width="1.4" marker-end="url(#cp-a)"/>
+</g>
+
+
+<g data-anim="11">
+  <rect x="550" y="436" width="120" height="60" rx="7"
+    fill="var(--surface,#f4f4f4)" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+  <text x="610" y="456" text-anchor="middle" class="N">RL fine-tuning</text>
+  <text x="610" y="470" text-anchor="middle" class="N">(PPO)</text>
+  <text x="610" y="484" text-anchor="middle" class="NS">on the policy</text>
+</g>
+
+
+<g data-anim="11">
+  <line x1="670" y1="466" x2="729" y2="466"
+    stroke="var(--ink-soft,#777)" stroke-width="1.4" marker-end="url(#cp-a)"/>
+</g>
+
+
+<g data-anim="12">
+  <rect x="730" y="436" width="148" height="60" rx="7"
+    fill="var(--accent,#3a6ea5)" stroke="var(--accent,#3a6ea5)" stroke-width="2"/>
+  <text x="804" y="457" text-anchor="middle" class="N" fill="#fff" font-weight="700">Constitutional</text>
+  <text x="804" y="472" text-anchor="middle" class="N" fill="#fff" font-weight="700">AI model (CAI)</text>
+  <text x="804" y="486" text-anchor="middle" class="NS" fill="rgba(255,255,255,0.82)">final aligned policy</text>
+</g>
+
+
+<g data-anim="7">
+  <path d="M810,303 Q810,360 440,372 Q240,380 68,436"
+    fill="none" stroke="var(--muted,#bbb)" stroke-width="1.1"
+    stroke-dasharray="5 4" marker-end="url(#cp-am)" opacity="0.85"/>
+  <text x="440" y="385" text-anchor="middle" class="XL">SFT-warmed policy feeds Stage 2</text>
+</g>
+
+</svg>
+<figcaption><b>The Constitutional AI pipeline in two stages.</b> Stage 1 (SL-CAI) runs a critique-revision loop — guided by a sampled constitution principle — to turn harmful drafts into clean SFT training targets. Stage 2 (RLAIF) uses an AI judge to label response pairs, trains a preference model on those labels, then runs PPO to produce the final CAI model — replacing large-scale human annotation.</figcaption>
+</figure>
+
+<h3 id="the-constitution">The Constitution<a class="headerlink" href="#the-constitution" title="Permanent link">¶</a></h3>
+<p>A constitution is a list of natural-language principles. Anthropic&rsquo;s public constitution references ideas such as:</p>
+<ul>
+<li>&ldquo;Choose the response that is least likely to contain information that could be used for harm.&rdquo;</li>
+<li>&ldquo;Choose the response that is more honest and does not mislead the user.&rdquo;</li>
+<li>&ldquo;Choose the response that is most consistent with being a helpful, honest, and harmless AI assistant.&rdquo;</li>
+</ul>
+<p>Each principle is a short English sentence. During SL-CAI, one principle is sampled per example to construct the critique prompt. During RLAIF, one principle is sampled to construct the comparison prompt. Cycling through the full principle set creates diverse training signal that covers many alignment dimensions without requiring a human to write a rubric for each.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="c1"># A minimal, illustrative constitution (not the full Anthropic version)</span>
+<span class="n">CONSTITUTION</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;Choose the response that is least likely to cause physical or psychological harm.&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Choose the response that is most honest and does not deceive the user.&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Choose the response that avoids discrimination based on race, gender, or religion.&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Choose the response that does not assist with illegal activities.&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Choose the response that best respects the user&#39;s autonomy and right to make decisions.&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Choose the response that is most helpful while remaining safe.&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Choose the response that avoids generating explicit or adult content.&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Choose the response that protects user privacy and does not solicit personal data.&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ConstitutionExample</span><span class="p">:</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">initial_response</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">principle</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">critique_prompt</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">revision_prompt</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_critique_prompt</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">response</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">principle</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Construct the critique prompt used in SL-CAI Stage 1.</span>
+<span class="sd">    The model is asked to identify problems in `response` according to `principle`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Human: </span><span class="si">{</span><span class="n">prompt</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Assistant: </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Please critique the above response with respect to the following principle:</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;  &#39;</span><span class="si">{</span><span class="n">principle</span><span class="si">}</span><span class="s2">&#39;</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Identify specific problems and explain briefly why they violate the principle.</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Critique:&quot;</span>
+    <span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_revision_prompt</span><span class="p">(</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">response</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">principle</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">critique</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Construct the revision prompt: given the critique, rewrite the response</span>
+<span class="sd">    to satisfy the principle.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Human: </span><span class="si">{</span><span class="n">prompt</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Assistant: </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Critique (for principle &#39;</span><span class="si">{</span><span class="n">principle</span><span class="si">}</span><span class="s2">&#39;):</span><span class="se">\n</span><span class="si">{</span><span class="n">critique</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Now rewrite the response to address the critique and satisfy the principle.</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Revised response:&quot;</span>
+    <span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_preference_prompt</span><span class="p">(</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">response_a</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">response_b</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">principle</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    RLAIF Stage 2: ask an AI judge which response better satisfies the principle.</span>
+<span class="sd">    Returns a prompt whose completion should be &#39;A&#39; or &#39;B&#39;.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Consider the following principle:</span><span class="se">\n</span><span class="s2">  &#39;</span><span class="si">{</span><span class="n">principle</span><span class="si">}</span><span class="s2">&#39;</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Human turn: </span><span class="si">{</span><span class="n">prompt</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Response A:</span><span class="se">\n</span><span class="si">{</span><span class="n">response_a</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Response B:</span><span class="se">\n</span><span class="si">{</span><span class="n">response_b</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Which response better satisfies the principle above? Answer with a single letter, &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;either &#39;A&#39; or &#39;B&#39;, and nothing else.</span><span class="se">\n</span><span class="s2">Answer:&quot;</span>
+    <span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sample_principle</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">CONSTITUTION</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="iterative-critique-revision-in-practice">Iterative Critique-Revision in Practice<a class="headerlink" href="#iterative-critique-revision-in-practice" title="Permanent link">¶</a></h3>
+<p>The most powerful insight in CAI is that a model can meaningfully improve its own outputs through critique, even when the initial response was misaligned. In practice, one to four critique-revision rounds provide most of the benefit; further iterations show diminishing returns and risk over-sanitizing helpful content.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">critique_revise_loop</span><span class="p">(</span>
+    <span class="n">model_generate</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="nb">str</span><span class="p">],</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">num_rounds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+    <span class="n">verbose</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run the SL-CAI critique-revision loop.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        model_generate: a function that calls the LLM and returns a completion string.</span>
+<span class="sd">        prompt:         the user&#39;s original request.</span>
+<span class="sd">        num_rounds:     how many critique+revision cycles to run.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The final revised response after `num_rounds` iterations.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Step 1: generate an initial (potentially misaligned) response</span>
+    <span class="n">current_response</span> <span class="o">=</span> <span class="n">model_generate</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Human: </span><span class="si">{</span><span class="n">prompt</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Assistant:&quot;</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">round_idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_rounds</span><span class="p">):</span>
+        <span class="c1"># Sample a different principle each round for diversity</span>
+        <span class="n">principle</span> <span class="o">=</span> <span class="n">sample_principle</span><span class="p">()</span>
+
+        <span class="c1"># Step 2: critique the current response</span>
+        <span class="n">critique_prompt</span> <span class="o">=</span> <span class="n">build_critique_prompt</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">current_response</span><span class="p">,</span> <span class="n">principle</span><span class="p">)</span>
+        <span class="n">critique</span> <span class="o">=</span> <span class="n">model_generate</span><span class="p">(</span><span class="n">critique_prompt</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">verbose</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;--- Round </span><span class="si">{</span><span class="n">round_idx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2">: principle=&#39;</span><span class="si">{</span><span class="n">principle</span><span class="p">[:</span><span class="mi">60</span><span class="p">]</span><span class="si">}</span><span class="s2">...&#39; ---&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Critique: </span><span class="si">{</span><span class="n">critique</span><span class="p">[:</span><span class="mi">200</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Step 3: revise based on the critique</span>
+        <span class="n">revision_prompt</span> <span class="o">=</span> <span class="n">build_revision_prompt</span><span class="p">(</span>
+            <span class="n">prompt</span><span class="p">,</span> <span class="n">current_response</span><span class="p">,</span> <span class="n">principle</span><span class="p">,</span> <span class="n">critique</span>
+        <span class="p">)</span>
+        <span class="n">current_response</span> <span class="o">=</span> <span class="n">model_generate</span><span class="p">(</span><span class="n">revision_prompt</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">verbose</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Revision preview: </span><span class="si">{</span><span class="n">current_response</span><span class="p">[:</span><span class="mi">200</span><span class="p">]</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">current_response</span>
+
+
+<span class="c1"># ------------------------------------------------------------------</span>
+<span class="c1"># Toy invocation (replace `model_generate` with a real API call):</span>
+<span class="c1"># ------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">mock_model</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Stub — in production replace with an API call to your LLM.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="s2">&quot;Critique:&quot;</span> <span class="ow">in</span> <span class="n">prompt</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;The response could encourage harm by providing step-by-step instructions.&quot;</span>
+    <span class="k">if</span> <span class="s2">&quot;Revised response:&quot;</span> <span class="ow">in</span> <span class="n">prompt</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;I&#39;m unable to help with that request. Here&#39;s what I can offer instead...&quot;</span>
+    <span class="k">return</span> <span class="s2">&quot;Sure, here&#39;s exactly how to do that dangerous thing...&quot;</span>  <span class="c1"># initial harmful stub</span>
+
+<span class="n">final</span> <span class="o">=</span> <span class="n">critique_revise_loop</span><span class="p">(</span><span class="n">mock_model</span><span class="p">,</span> <span class="s2">&quot;How do I hack into my neighbor&#39;s WiFi?&quot;</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Final response:&quot;</span><span class="p">,</span> <span class="n">final</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="building-the-ai-preference-dataset">Building the AI Preference Dataset<a class="headerlink" href="#building-the-ai-preference-dataset" title="Permanent link">¶</a></h3>
+<p>For Stage 2, we generate multiple candidate responses for each prompt (often two, but sometimes more) and use the AI judge to assign a preference label. A useful addition is asking the judge for a <em>chain-of-thought</em> explanation before the final label, which improves calibration.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">NamedTuple</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PreferencePair</span><span class="p">(</span><span class="n">NamedTuple</span><span class="p">):</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">chosen</span><span class="p">:</span> <span class="nb">str</span>      <span class="c1"># the preferred response</span>
+    <span class="n">rejected</span><span class="p">:</span> <span class="nb">str</span>    <span class="c1"># the less-preferred response</span>
+    <span class="n">principle</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">judge_rationale</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">ai_label_pair</span><span class="p">(</span>
+    <span class="n">model_generate</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="nb">str</span><span class="p">],</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">response_a</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">response_b</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">use_cot</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PreferencePair</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Use an AI judge to label which of response_a / response_b is preferred.</span>
+<span class="sd">    With `use_cot=True`, the judge reasons before giving its final verdict,</span>
+<span class="sd">    which empirically increases accuracy.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">principle</span> <span class="o">=</span> <span class="n">sample_principle</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">use_cot</span><span class="p">:</span>
+        <span class="n">judge_prompt</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Consider the following principle:</span><span class="se">\n</span><span class="s2">  &#39;</span><span class="si">{</span><span class="n">principle</span><span class="si">}</span><span class="s2">&#39;</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;Human turn: </span><span class="si">{</span><span class="n">prompt</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;Response A:</span><span class="se">\n</span><span class="si">{</span><span class="n">response_a</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;Response B:</span><span class="se">\n</span><span class="si">{</span><span class="n">response_b</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;First, briefly explain which response better satisfies the principle and why.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;Then, on a new line, write exactly: VERDICT: A  or  VERDICT: B</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;Reasoning:&quot;</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">judge_prompt</span> <span class="o">=</span> <span class="n">build_preference_prompt</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">response_a</span><span class="p">,</span> <span class="n">response_b</span><span class="p">,</span> <span class="n">principle</span><span class="p">)</span>
+
+    <span class="n">judge_output</span> <span class="o">=</span> <span class="n">model_generate</span><span class="p">(</span><span class="n">judge_prompt</span><span class="p">)</span>
+
+    <span class="c1"># Parse the verdict</span>
+    <span class="n">verdict_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;VERDICT:\s*([AB])&quot;</span><span class="p">,</span> <span class="n">judge_output</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">IGNORECASE</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">verdict_match</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># Fall back to looking for a standalone letter</span>
+        <span class="n">verdict_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\b([AB])\b\s*$&quot;</span><span class="p">,</span> <span class="n">judge_output</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+
+    <span class="n">verdict</span> <span class="o">=</span> <span class="n">verdict_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span> <span class="k">if</span> <span class="n">verdict_match</span> <span class="k">else</span> <span class="s2">&quot;A&quot;</span>  <span class="c1"># default tie-break</span>
+
+    <span class="n">chosen</span><span class="p">,</span> <span class="n">rejected</span> <span class="o">=</span> <span class="p">(</span><span class="n">response_a</span><span class="p">,</span> <span class="n">response_b</span><span class="p">)</span> <span class="k">if</span> <span class="n">verdict</span> <span class="o">==</span> <span class="s2">&quot;A&quot;</span> <span class="k">else</span> <span class="p">(</span><span class="n">response_b</span><span class="p">,</span> <span class="n">response_a</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">PreferencePair</span><span class="p">(</span>
+        <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
+        <span class="n">chosen</span><span class="o">=</span><span class="n">chosen</span><span class="p">,</span>
+        <span class="n">rejected</span><span class="o">=</span><span class="n">rejected</span><span class="p">,</span>
+        <span class="n">principle</span><span class="o">=</span><span class="n">principle</span><span class="p">,</span>
+        <span class="n">judge_rationale</span><span class="o">=</span><span class="n">judge_output</span><span class="p">,</span>
+    <span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="rlaif-replacing-human-raters-with-ai">RLAIF: Replacing Human Raters with AI<a class="headerlink" href="#rlaif-replacing-human-raters-with-ai" title="Permanent link">¶</a></h2>
+<p>RLAIF (Lee et al., Google, 2023) is a direct, controlled comparison between human feedback and AI feedback for training a reward model. The key finding is that, for many helpfulness tasks, a preference model trained on AI labels achieves win rates against human-preference-trained baselines that are roughly comparable, at a fraction of the cost.</p>
+<h3 id="the-labeling-protocol">The Labeling Protocol<a class="headerlink" href="#the-labeling-protocol" title="Permanent link">¶</a></h3>
+<p>The AI judge is typically a model that is at least as capable as the policy being trained — often the same scale or larger. The judge is prompted with the comparison task and asked to reason before deciding. Two important practical choices:</p>
+<ol>
+<li>
+<p><strong>Position bias mitigation.</strong> LLMs systematically prefer the first response they read. Swap the order of A and B for a fraction of examples, and take the average (or the majority vote).</p>
+</li>
+<li>
+<p><strong>Self-consistency filtering.</strong> Run the judge multiple times with temperature &gt; 0 and only keep examples where the judge gives a consistent verdict. This removes ambiguous cases that would add label noise to the reward model.</p>
+</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">robust_ai_label</span><span class="p">(</span>
+    <span class="n">model_generate</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="nb">str</span><span class="p">],</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">response_a</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">response_b</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">n_votes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
+    <span class="n">consistency_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.7</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">PreferencePair</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Multi-vote AI labeling with position-debiasing and consistency filtering.</span>
+
+<span class="sd">    - n_votes: number of independent judge calls.</span>
+<span class="sd">    - consistency_threshold: discard examples where the majority is below this fraction.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">votes</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">rationales</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_votes</span><span class="p">):</span>
+        <span class="c1"># Alternate order to cancel position bias</span>
+        <span class="k">if</span> <span class="n">i</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">pair</span> <span class="o">=</span> <span class="n">ai_label_pair</span><span class="p">(</span><span class="n">model_generate</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">response_a</span><span class="p">,</span> <span class="n">response_b</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Swap positions, then flip the verdict back</span>
+            <span class="n">pair_swapped</span> <span class="o">=</span> <span class="n">ai_label_pair</span><span class="p">(</span><span class="n">model_generate</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">response_b</span><span class="p">,</span> <span class="n">response_a</span><span class="p">)</span>
+            <span class="c1"># After swap, &#39;chosen&#39; refers to the winner in swapped order;</span>
+            <span class="c1"># re-map: if swapped chosen == response_b, verdict was &quot;A&quot; in swapped = B in original</span>
+            <span class="k">if</span> <span class="n">pair_swapped</span><span class="o">.</span><span class="n">chosen</span> <span class="o">==</span> <span class="n">response_b</span><span class="p">:</span>
+                <span class="c1"># original A won after swap-correction</span>
+                <span class="n">pair</span> <span class="o">=</span> <span class="n">PreferencePair</span><span class="p">(</span>
+                    <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">chosen</span><span class="o">=</span><span class="n">response_a</span><span class="p">,</span> <span class="n">rejected</span><span class="o">=</span><span class="n">response_b</span><span class="p">,</span>
+                    <span class="n">principle</span><span class="o">=</span><span class="n">pair_swapped</span><span class="o">.</span><span class="n">principle</span><span class="p">,</span> <span class="n">judge_rationale</span><span class="o">=</span><span class="n">pair_swapped</span><span class="o">.</span><span class="n">judge_rationale</span>
+                <span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">pair</span> <span class="o">=</span> <span class="n">PreferencePair</span><span class="p">(</span>
+                    <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">chosen</span><span class="o">=</span><span class="n">response_b</span><span class="p">,</span> <span class="n">rejected</span><span class="o">=</span><span class="n">response_a</span><span class="p">,</span>
+                    <span class="n">principle</span><span class="o">=</span><span class="n">pair_swapped</span><span class="o">.</span><span class="n">principle</span><span class="p">,</span> <span class="n">judge_rationale</span><span class="o">=</span><span class="n">pair_swapped</span><span class="o">.</span><span class="n">judge_rationale</span>
+                <span class="p">)</span>
+
+        <span class="n">votes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pair</span><span class="o">.</span><span class="n">chosen</span><span class="p">)</span>
+        <span class="n">rationales</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pair</span><span class="o">.</span><span class="n">judge_rationale</span><span class="p">)</span>
+
+    <span class="n">vote_counter</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="n">votes</span><span class="p">)</span>
+    <span class="n">majority_response</span><span class="p">,</span> <span class="n">majority_count</span> <span class="o">=</span> <span class="n">vote_counter</span><span class="o">.</span><span class="n">most_common</span><span class="p">(</span><span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">consistency</span> <span class="o">=</span> <span class="n">majority_count</span> <span class="o">/</span> <span class="n">n_votes</span>
+
+    <span class="k">if</span> <span class="n">consistency</span> <span class="o">&lt;</span> <span class="n">consistency_threshold</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>  <span class="c1"># discard ambiguous example</span>
+
+    <span class="n">rejected_response</span> <span class="o">=</span> <span class="n">response_b</span> <span class="k">if</span> <span class="n">majority_response</span> <span class="o">==</span> <span class="n">response_a</span> <span class="k">else</span> <span class="n">response_a</span>
+    <span class="k">return</span> <span class="n">PreferencePair</span><span class="p">(</span>
+        <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
+        <span class="n">chosen</span><span class="o">=</span><span class="n">majority_response</span><span class="p">,</span>
+        <span class="n">rejected</span><span class="o">=</span><span class="n">rejected_response</span><span class="p">,</span>
+        <span class="n">principle</span><span class="o">=</span><span class="n">sample_principle</span><span class="p">(),</span>
+        <span class="n">judge_rationale</span><span class="o">=</span><span class="n">rationales</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>  <span class="c1"># representative rationale</span>
+    <span class="p">)</span>
+</code></pre></div>
+<h3 id="rlaif-vs-human-preference-trade-offs">RLAIF vs Human Preference: Trade-offs<a class="headerlink" href="#rlaif-vs-human-preference-trade-offs" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Human feedback</th>
+<th>AI feedback (RLAIF)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cost per label</td>
+<td>USD 0.05–0.50</td>
+<td>USD 0.0001–0.01 (API cost)</td>
+</tr>
+<tr>
+<td>Throughput</td>
+<td>~1 M/month (large team)</td>
+<td>~100 M/day</td>
+</tr>
+<tr>
+<td>Consistency</td>
+<td>Inter-annotator ~60–80 %</td>
+<td>High (same prompt → same output)</td>
+</tr>
+<tr>
+<td>Cultural bias</td>
+<td>Rater pool bias</td>
+<td>Model&rsquo;s training data bias</td>
+</tr>
+<tr>
+<td>Safety sensitivity</td>
+<td>Good with training</td>
+<td>Requires explicit constitution</td>
+</tr>
+<tr>
+<td>Scalability</td>
+<td>Linear in headcount</td>
+<td>Linear in compute</td>
+</tr>
+</tbody>
+</table>
+<p>The biggest practical risk of RLAIF is <em>bias amplification</em>: the judge model&rsquo;s preferences are learned, not ground truth, and those preferences can encode harmful biases invisibly. A constitution provides a partial check by making the evaluation criterion explicit and human-auditable.</p>
+<hr />
+<h2 id="self-rewarding-language-models">Self-Rewarding Language Models<a class="headerlink" href="#self-rewarding-language-models" title="Permanent link">¶</a></h2>
+<p>Self-rewarding LMs (Yuan et al., Meta, 2024) push the RLAIF idea further: instead of a separate judge model, the <em>same model</em> acts as both policy and reward model. The training loop alternates between (1) generating candidate responses and (2) scoring them using the model itself in &ldquo;judge mode.&rdquo;</p>
+<p>The model is fine-tuned on a joint objective: it must be good at answering user queries <em>and</em> good at evaluating responses according to rubrics. Concretely, during the scoring step the model is prompted with a rubric:</p>
+<div class="highlight"><pre><span></span><code>Review the following response to a user&#39;s query.
+Score it on a scale from 1 to 5 on each of:
+  - Instruction following
+  - Accuracy
+  - Helpful completeness
+  - Safety
+
+Response: {response}
+
+Scores (format: IFollow=X, Accuracy=X, Completeness=X, Safety=X):
+</code></pre></div>
+<p>The training loop is:</p>
+<ol>
+<li><strong>SFT initialization.</strong> Fine-tune on a seed dataset of high-quality (prompt, response) pairs to give the model a strong starting point in both answer quality and judging ability.</li>
+<li><strong>LLM-as-a-judge (LaaJ) data generation.</strong> For each training prompt, sample <span class="arithmatex">\(k\)</span> responses from the current policy at some temperature. Score each response using the model in judge mode. This yields a ranked set of responses.</li>
+<li><strong>Preference dataset construction.</strong> Treat the highest-scored response as chosen and the lowest as rejected. (Or use all <span class="arithmatex">\(\binom{k}{2}\)</span> pairs.)</li>
+<li><strong>DPO/IPO update.</strong> Fine-tune on the new preference pairs using <a href="../05-posttraining-alignment/07-dpo-and-variants.html">Direct Preference Optimization &amp; Its Variants</a>.</li>
+<li><strong>Repeat.</strong> The updated model is used as the judge in the next round.</li>
+</ol>
+<p>The virtuous cycle is that as the policy improves, the judge also improves (since they share weights), leading to progressively better preference data — <em>self-improvement through self-evaluation</em>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Self-reward collapse</p>
+<p>If the model&rsquo;s judge mode becomes too lenient (grading its own outputs too highly), the preference pairs collapse to near-zero margin and DPO training stagnates. Regularize by mixing in external human preference pairs or by adding entropy bonuses to the judge scoring distribution.</p>
+</div>
+<hr />
+<h2 id="rejection-sampling-star-rest">Rejection Sampling, STaR &amp; ReST<a class="headerlink" href="#rejection-sampling-star-rest" title="Permanent link">¶</a></h2>
+<h3 id="rejection-sampling-fine-tuning-rft">Rejection Sampling Fine-Tuning (RFT)<a class="headerlink" href="#rejection-sampling-fine-tuning-rft" title="Permanent link">¶</a></h3>
+<p>The simplest self-improvement technique is rejection sampling fine-tuning. Given a seed policy <span class="arithmatex">\(\pi_0\)</span> and a verifiable reward <span class="arithmatex">\(r\)</span> (a unit-test pass, a math answer checker, etc.), the loop is:</p>
+<ol>
+<li>For each training problem <span class="arithmatex">\(x\)</span>, sample <span class="arithmatex">\(k\)</span> completions <span class="arithmatex">\(y_1, \ldots, y_k \sim \pi_\theta(\cdot | x)\)</span>.</li>
+<li>Keep only those <span class="arithmatex">\(y_i\)</span> for which <span class="arithmatex">\(r(x, y_i) = 1\)</span> (correct answer).</li>
+<li>Fine-tune <span class="arithmatex">\(\pi_\theta\)</span> on the kept (x, y) pairs.</li>
+<li>Repeat.</li>
+</ol>
+<p>Each iteration increases the probability of correct solutions because the training set now contains only correct demonstrations. This is related to <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a>, which covers the verifiable-reward approach in depth.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.data</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dataset</span><span class="p">,</span> <span class="n">DataLoader</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RejectionSamplingDataset</span><span class="p">(</span><span class="n">Dataset</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Dynamically built rejection-sampling dataset.</span>
+<span class="sd">    Stores only (prompt, completion) pairs that passed the reward filter.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">accepted_pairs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]],</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">max_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pairs</span> <span class="o">=</span> <span class="n">accepted_pairs</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span> <span class="o">=</span> <span class="n">tokenizer</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_len</span> <span class="o">=</span> <span class="n">max_len</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pairs</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">idx</span><span class="p">):</span>
+        <span class="n">prompt</span><span class="p">,</span> <span class="n">completion</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">pairs</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="n">prompt</span> <span class="o">+</span> <span class="n">completion</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">eos_token</span>
+        <span class="n">tokens</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span>
+            <span class="n">text</span><span class="p">,</span> <span class="n">truncation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">max_len</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span>
+        <span class="p">)</span>
+        <span class="n">input_ids</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="c1"># Mask the prompt tokens in the loss (train only on the completion)</span>
+        <span class="n">prompt_ids</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">labels</span> <span class="o">=</span> <span class="n">input_ids</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+        <span class="n">labels</span><span class="p">[:</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt_ids</span><span class="p">)]</span> <span class="o">=</span> <span class="o">-</span><span class="mi">100</span>  <span class="c1"># ignore_index</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;input_ids&quot;</span><span class="p">:</span> <span class="n">input_ids</span><span class="p">,</span> <span class="s2">&quot;labels&quot;</span><span class="p">:</span> <span class="n">labels</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rejection_sampling_iteration</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span>
+    <span class="n">tokenizer</span><span class="p">:</span> <span class="n">AutoTokenizer</span><span class="p">,</span>
+    <span class="n">prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">reward_fn</span><span class="p">,</span>          <span class="c1"># reward_fn(prompt, completion) -&gt; bool</span>
+    <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>        <span class="c1"># number of samples per prompt</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.8</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    One round of rejection sampling.</span>
+<span class="sd">    Returns a list of (prompt, completion) pairs that earned reward == 1.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">accepted</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">prompt</span> <span class="ow">in</span> <span class="n">prompts</span><span class="p">:</span>
+            <span class="n">input_ids</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+            <span class="c1"># Sample k completions</span>
+            <span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
+                <span class="n">input_ids</span><span class="p">,</span>
+                <span class="n">do_sample</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">temperature</span><span class="o">=</span><span class="n">temperature</span><span class="p">,</span>
+                <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>
+                <span class="n">num_return_sequences</span><span class="o">=</span><span class="n">k</span><span class="p">,</span>
+                <span class="n">pad_token_id</span><span class="o">=</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">eos_token_id</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">seq</span> <span class="ow">in</span> <span class="n">outputs</span><span class="p">:</span>
+                <span class="c1"># Decode only the newly generated tokens</span>
+                <span class="n">new_tokens</span> <span class="o">=</span> <span class="n">seq</span><span class="p">[</span><span class="n">input_ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]:]</span>
+                <span class="n">completion</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">new_tokens</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">reward_fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">completion</span><span class="p">):</span>
+                    <span class="n">accepted</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">prompt</span><span class="p">,</span> <span class="n">completion</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">accepted</span>
+</code></pre></div>
+<h3 id="star-self-taught-reasoner">STaR: Self-Taught Reasoner<a class="headerlink" href="#star-self-taught-reasoner" title="Permanent link">¶</a></h3>
+<p>Zeiler et al. (2022) introduced STaR (Self-Taught Reasoner), which addresses a key problem: when <span class="arithmatex">\(k\)</span> is small and the problem is hard, the model may produce zero correct completions for many prompts, yielding no training signal. STaR adds a <em>rationalization hint</em>: when the model fails, show it the ground-truth answer and ask it to construct a chain-of-thought that leads to that answer, then use that chain-of-thought as an additional training example.</p>
+<div class="arithmatex">\[
+\mathcal{D}_\text{STaR} = \underbrace{\{(x, r_{\text{sampled}}, y^*) : r \text{ correct}\}}_{\text{self-generated rationales}} \cup \underbrace{\{(x \| y^*, r_{\text{hint}}, y^*) : r \text{ incorrect}\}}_{\text{hint-conditioned rationales}}
+\]</div>
+<p>where <span class="arithmatex">\(x\)</span> is the question, <span class="arithmatex">\(r\)</span> is the rationale, and <span class="arithmatex">\(y^*\)</span> is the correct answer. The hint set provides training signal even when the model cannot solve problems cold.</p>
+<h3 id="rest-reinforced-self-training">ReST: Reinforced Self-Training<a class="headerlink" href="#rest-reinforced-self-training" title="Permanent link">¶</a></h3>
+<p>ReST (Gulcehre et al., Google, 2023) separates the data generation step (&ldquo;Grow&rdquo;) from the fine-tuning step (&ldquo;Improve&rdquo;) and repeats them:</p>
+<ul>
+<li><strong>Grow:</strong> sample a large offline dataset <span class="arithmatex">\(\mathcal{D}^t\)</span> from the current policy <span class="arithmatex">\(\pi_t\)</span>. Filter by reward threshold <span class="arithmatex">\(\tau_t\)</span>.</li>
+<li><strong>Improve:</strong> fine-tune <span class="arithmatex">\(\pi_{t+1}\)</span> on <span class="arithmatex">\(\mathcal{D}^t\)</span> starting from <span class="arithmatex">\(\pi_t\)</span>.</li>
+</ul>
+<p>Critically, the threshold <span class="arithmatex">\(\tau_t\)</span> is raised each iteration — the bar gets higher. Early rounds accept solutions with partial credit; later rounds only accept near-perfect solutions. This curriculum prevents the model from plateauing on easy examples.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: rejection-sampling pass rates</p>
+<p>Consider a math benchmark where the seed policy <span class="arithmatex">\(\pi_0\)</span> solves 30 % of problems correctly when sampling <span class="arithmatex">\(k=1\)</span> (greedy). With <span class="arithmatex">\(k=32\)</span> samples and temperature 0.8, pass@32 might be around 70 %: 70 % of problems yield at least one correct completion that becomes a training example.</p>
+<p>After one RFT iteration on this data, the new policy <span class="arithmatex">\(\pi_1\)</span> achieves, say, 42 % at <span class="arithmatex">\(k=1\)</span>. A second iteration with <span class="arithmatex">\(k=32\)</span> now hits pass@32 ≈ 85 %, and <span class="arithmatex">\(k=1\)</span> accuracy climbs to ~55 %. Each round narrows the gap between greedy accuracy and best-of-<span class="arithmatex">\(k\)</span> accuracy, which is the core mechanism: RFT converts sampling-time compute into model capability.</p>
+<p>Concrete magnitudes: a 7B model on MATH training problems might consume about 200 MB of training text per iteration (a few tens of thousands of accepted completions at ~1,000 tokens each). Each GPU-hour of generation produces on the order of 50,000 completions at temperature 0.8 on an H100.</p>
+</div>
+<hr />
+<h2 id="self-play-iterative-self-improvement">Self-Play &amp; Iterative Self-Improvement<a class="headerlink" href="#self-play-iterative-self-improvement" title="Permanent link">¶</a></h2>
+<p>Self-play is familiar from game-playing AI (AlphaGo, AlphaStar): two copies of the model compete, and the stronger copy&rsquo;s move choices become training data. In the language domain, the analogies are:</p>
+<ul>
+<li><strong>Red-teaming self-play.</strong> One copy of the model generates adversarial prompts designed to elicit unsafe outputs from the other copy. Successful jailbreaks become SFT safety-training examples.</li>
+<li><strong>Debate.</strong> Two model instances argue opposing positions on a factual question; a third model (or human) judges. The winning side&rsquo;s arguments reinforce correct reasoning.</li>
+<li><strong>Constitutional self-play (in SPIN, Chen et al., 2024).</strong> The policy at iteration <span class="arithmatex">\(t\)</span> generates responses that are used as <em>rejected</em> examples, while real high-quality human data provides <em>chosen</em> examples. This forces the model to distinguish its own (current) output distribution from the gold distribution, directly optimizing the gap.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Simplified SPIN (Self-Play Fine-Tuning) data construction</span>
+<span class="c1"># Reference: Chen et al., &quot;Self-Play Fine-Tuning Converts Weak Language Models to Strong&quot;, 2024</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_spin_pairs</span><span class="p">(</span>
+    <span class="n">model_generate</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="nb">str</span><span class="p">],</span>
+    <span class="n">human_data</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]],</span>  <span class="c1"># (prompt, gold_response)</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">PreferencePair</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    For each (prompt, gold) pair in the human dataset:</span>
+<span class="sd">      - Generate a response from the current policy (the &#39;player&#39; copy).</span>
+<span class="sd">      - Use gold_response as &#39;chosen&#39;, policy response as &#39;rejected&#39;.</span>
+<span class="sd">    This creates a preference signal that pushes the policy distribution</span>
+<span class="sd">    toward the human data distribution.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pairs</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">gold_response</span> <span class="ow">in</span> <span class="n">human_data</span><span class="p">:</span>
+        <span class="c1"># The &#39;main player&#39; generates the rejected sample</span>
+        <span class="n">policy_response</span> <span class="o">=</span> <span class="n">model_generate</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Human: </span><span class="si">{</span><span class="n">prompt</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Assistant:&quot;</span><span class="p">)</span>
+        <span class="n">pairs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">PreferencePair</span><span class="p">(</span>
+            <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
+            <span class="n">chosen</span><span class="o">=</span><span class="n">gold_response</span><span class="p">,</span>
+            <span class="n">rejected</span><span class="o">=</span><span class="n">policy_response</span><span class="p">,</span>
+            <span class="n">principle</span><span class="o">=</span><span class="s2">&quot;Match the quality and style of high-quality human responses.&quot;</span><span class="p">,</span>
+            <span class="n">judge_rationale</span><span class="o">=</span><span class="s2">&quot;Human data is used as gold reference.&quot;</span><span class="p">,</span>
+        <span class="p">))</span>
+    <span class="k">return</span> <span class="n">pairs</span>
+</code></pre></div>
+<hr />
+<h2 id="weak-to-strong-generalization">Weak-to-Strong Generalization<a class="headerlink" href="#weak-to-strong-generalization" title="Permanent link">¶</a></h2>
+<p>Weak-to-strong generalization (Burns et al., OpenAI, 2023) addresses a different but related problem: what happens when the student model is <em>stronger</em> than the supervisor? This is directly relevant to the scalable oversight problem: future models will likely surpass human raters in many domains, making human feedback unreliable.</p>
+<p>The experimental setup is:</p>
+<ol>
+<li>Choose a &ldquo;weak supervisor&rdquo; — a small model or a model with degraded capability — and elicit its labels.</li>
+<li>Fine-tune a &ldquo;strong student&rdquo; (a much larger model) on those weak labels.</li>
+<li>Ask: does the strong student exceed the weak supervisor&rsquo;s performance? Does it recover the &ldquo;ceiling&rdquo; set by a strong-supervised baseline?</li>
+</ol>
+<p>Empirically, the strong student trained on weak labels does significantly <em>better</em> than the weak supervisor — it generalizes beyond the noisy signal. The gap between weak-supervised and strong-supervised performance (the &ldquo;elicitation gap&rdquo;) shrinks with certain interventions:</p>
+<ul>
+<li><strong>Bootstrapping.</strong> Train an intermediate &ldquo;medium&rdquo; model on weak labels, then use the medium model to relabel data for the strong model.</li>
+<li><strong>Consistency regularization.</strong> Penalize the strong model for confidently disagreeing with the weak supervisor.</li>
+<li><strong>Auxiliary confidence loss.</strong> Train the strong model to predict <em>where</em> the weak supervisor&rsquo;s labels are likely correct, then weight training examples accordingly.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">WeakToStrongTrainer</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Illustrative trainer that implements the &#39;bootstrapping&#39; weak-to-strong strategy.</span>
+<span class="sd">    In practice you would use your distributed training stack, but this</span>
+<span class="sd">    sketch shows the key loss computation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">strong_model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span>
+        <span class="n">weak_labels</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># shape [N], float in [0,1]</span>
+        <span class="n">confidence_weight</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">strong_model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weak_labels</span> <span class="o">=</span> <span class="n">weak_labels</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">conf_w</span> <span class="o">=</span> <span class="n">confidence_weight</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">compute_loss</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>     <span class="c1"># shape [B, 2] for binary classification</span>
+        <span class="n">indices</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>    <span class="c1"># which examples in the batch</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Main loss = cross-entropy with weak labels.</span>
+<span class="sd">        Auxiliary loss = learn the *confidence* of weak labels</span>
+<span class="sd">                         (treat examples with extreme weak probabilities as high-confidence).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">weak</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">weak_labels</span><span class="p">[</span><span class="n">indices</span><span class="p">]</span>  <span class="c1"># [B] floats</span>
+        <span class="n">probs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">logits</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">])</span>  <span class="c1"># binary case: P(positive)</span>
+
+        <span class="c1"># Primary BCE against weak labels</span>
+        <span class="n">ce_loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">binary_cross_entropy</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="n">weak</span><span class="p">)</span>
+
+        <span class="c1"># Confidence signal: |weak - 0.5| is high when weak supervisor is confident</span>
+        <span class="n">weak_confidence</span> <span class="o">=</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="p">(</span><span class="n">weak</span> <span class="o">-</span> <span class="mf">0.5</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">())</span>  <span class="c1"># maps [0,1] to [0,1]</span>
+        <span class="c1"># Encourage the strong model to be right where the weak label is confident</span>
+        <span class="n">conf_loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">binary_cross_entropy</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="n">weak</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="n">weak_confidence</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">ce_loss</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">conf_w</span> <span class="o">*</span> <span class="n">conf_loss</span>
+</code></pre></div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> What is Constitutional AI, and how does it reduce the cost of alignment data compared to vanilla RLHF?</p>
+<p><strong>A:</strong> Constitutional AI (Bai et al., Anthropic 2022) replaces human preference labels with AI-generated labels guided by an explicit principle set — the &ldquo;constitution.&rdquo; Instead of asking human raters which of two responses is better, CAI prompts a language model to judge pairs of responses against a stated principle (&ldquo;choose the response that avoids harm&rdquo;). This yields two wins over standard RLHF: (1) AI can label millions of pairs per day at a small fraction of the cost of a human annotation round, and (2) the evaluation criterion is explicit and auditable — the constitution is a human-readable document that specifies exactly what the judge is measuring. The pipeline also includes a supervised stage where the model critiques and revises its own potentially harmful drafts before ever involving RL, which gives clean SFT training signal without human annotators. The main trade-off is that the AI judge inherits its own model&rsquo;s biases, so the constitution must be carefully designed and periodically audited.</p>
+</div>
+<hr />
+<h2 id="sourcing-alignment-data-at-scale-a-practical-view">Sourcing Alignment Data at Scale: A Practical View<a class="headerlink" href="#sourcing-alignment-data-at-scale-a-practical-view" title="Permanent link">¶</a></h2>
+<p>Where does alignment data actually come from in a production post-training pipeline? The honest answer is: from many sources in parallel, with AI-labeling taking an increasingly large share.</p>
+<h3 id="the-alignment-data-flywheel">The Alignment Data Flywheel<a class="headerlink" href="#the-alignment-data-flywheel" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-cai-alignment-data-flywheel">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 860 620" role="img" aria-label="The Alignment Data Flywheel: a small seed of human data trains an SFT model, RLAIF labeling trains successive reward models, RL policies improve each round, a human spot-check QA gate approves the production model, and the production model feeds back as the next seed, creating a self-reinforcing improvement cycle.">
+<defs>
+  <marker id="fly-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="fly-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#3a6ea5)"/>
+  </marker>
+</defs>
+<style>
+  #fig-cai-alignment-data-flywheel text { font: 400 12px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+  #fig-cai-alignment-data-flywheel .title { font: 700 17px var(--sans,sans-serif); fill: var(--ink-soft,#111); }
+  #fig-cai-alignment-data-flywheel .node-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--ink-soft,#222); }
+  #fig-cai-alignment-data-flywheel .node-sub { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#666); }
+  #fig-cai-alignment-data-flywheel .arrow-lbl { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#666); }
+  #fig-cai-alignment-data-flywheel .arc-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#3a6ea5); }
+  #fig-cai-alignment-data-flywheel .callout { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#666); }
+
+  /* stage reveals */
+  #fig-cai-alignment-data-flywheel [data-anim] { opacity: 0; }
+  #fig-cai-alignment-data-flywheel.playing [data-anim="1"]  { animation: fly-in 0.4s 0.1s ease forwards; }
+  #fig-cai-alignment-data-flywheel.playing [data-anim="2"]  { animation: fly-in 0.4s 0.6s ease forwards; }
+  #fig-cai-alignment-data-flywheel.playing [data-anim="3"]  { animation: fly-in 0.4s 1.1s ease forwards; }
+  #fig-cai-alignment-data-flywheel.playing [data-anim="4"]  { animation: fly-in 0.4s 1.6s ease forwards; }
+  #fig-cai-alignment-data-flywheel.playing [data-anim="5"]  { animation: fly-in 0.4s 2.2s ease forwards; }
+  #fig-cai-alignment-data-flywheel.playing [data-anim="6"]  { animation: fly-in 0.4s 2.8s ease forwards; }
+  #fig-cai-alignment-data-flywheel.playing [data-anim="7"]  { animation: fly-in 0.4s 3.5s ease forwards; }
+  #fig-cai-alignment-data-flywheel.playing [data-anim="8"]  { animation: fly-in 0.4s 4.2s ease forwards; }
+  #fig-cai-alignment-data-flywheel.playing [data-anim="9"]  { animation: fly-in 0.4s 5.0s ease forwards; }
+  #fig-cai-alignment-data-flywheel.playing [data-anim="10"] { animation: fly-in 0.4s 5.8s ease forwards; }
+  #fig-cai-alignment-data-flywheel.playing [data-anim="11"] { animation: fly-in 0.4s 6.6s ease forwards; }
+  @keyframes fly-in { from{opacity:0;transform:translateX(-6px)} to{opacity:1;transform:translateX(0)} }
+
+  #fig-cai-alignment-data-flywheel:not(.playing) [data-anim] { opacity: 1; }
+
+  /* flowing dash on feedback arc */
+  #fig-cai-alignment-data-flywheel.playing .arc-flow {
+    stroke-dasharray: 12 8;
+    stroke-dashoffset: 0;
+    animation: arc-dash 2s 6.8s linear infinite;
+  }
+  @keyframes arc-dash { to { stroke-dashoffset: -80; } }
+</style>
+
+
+<rect x="10" y="10" width="840" height="600" rx="12" fill="var(--surface,#fff)" stroke="var(--border-2,#888)" stroke-width="1.5"/>
+
+
+<text x="430" y="38" text-anchor="middle" class="title">Alignment Data Flywheel</text>
+
+
+
+<g data-anim="1">
+  <rect x="116" y="62" width="196" height="56" rx="8" fill="var(--surface-3,#eef2f7)" stroke="var(--accent,#3a6ea5)" stroke-width="2"/>
+  <text x="214" y="82" text-anchor="middle" class="node-lbl" fill="var(--accent,#3a6ea5)">Human data (seed)</text>
+  <text x="214" y="96" text-anchor="middle" class="node-sub">small, expensive, high-quality</text>
+  <text x="214" y="110" text-anchor="middle" class="node-sub">O(10K-100K) examples</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="214" y1="118" x2="214" y2="154" stroke="var(--ink-soft,#888)" stroke-width="1.4" marker-end="url(#fly-arr)"/>
+</g>
+
+
+<g data-anim="2">
+  <rect x="130" y="155" width="168" height="52" rx="8" fill="var(--surface,#f4f4f4)" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+  <text x="214" y="176" text-anchor="middle" class="node-lbl">SFT model v0</text>
+  <text x="214" y="192" text-anchor="middle" class="node-sub">supervised warmup</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="214" y1="207" x2="214" y2="245" stroke="var(--ink-soft,#888)" stroke-width="1.4" marker-end="url(#fly-arr)"/>
+  <text x="220" y="230" class="arrow-lbl">reward signal</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="130" y="246" width="168" height="52" rx="8" fill="var(--surface,#f4f4f4)" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+  <text x="214" y="267" text-anchor="middle" class="node-lbl">RL policy v1</text>
+  <text x="214" y="283" text-anchor="middle" class="node-sub">RL fine-tuned (PPO)</text>
+</g>
+
+
+<g data-anim="6">
+  <line x1="214" y1="298" x2="214" y2="337" stroke="var(--ink-soft,#888)" stroke-width="1.4" marker-end="url(#fly-arr)"/>
+  <text x="220" y="322" class="arrow-lbl">reward signal</text>
+</g>
+
+
+<g data-anim="6">
+  <rect x="130" y="338" width="168" height="52" rx="8" fill="var(--surface,#f4f4f4)" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+  <text x="214" y="359" text-anchor="middle" class="node-lbl">RL policy v2</text>
+  <text x="214" y="375" text-anchor="middle" class="node-sub">improved policy</text>
+</g>
+
+
+<g data-anim="9">
+  <line x1="214" y1="390" x2="214" y2="429" stroke="var(--accent,#3a6ea5)" stroke-width="1.6" marker-end="url(#fly-arr-acc)"/>
+  <text x="220" y="415" class="arrow-lbl" fill="var(--accent,#3a6ea5)">Approved</text>
+</g>
+
+
+<g data-anim="9">
+  <rect x="130" y="430" width="168" height="56" rx="8" fill="var(--accent,#3a6ea5)" stroke="var(--accent,#3a6ea5)" stroke-width="2"/>
+  <text x="214" y="453" text-anchor="middle" class="node-lbl" fill="#fff" font-weight="700">Production model</text>
+  <text x="214" y="469" text-anchor="middle" class="node-sub" fill="rgba(255,255,255,0.85)">deployed, aligned</text>
+</g>
+
+
+
+
+<g data-anim="3">
+
+  <line x1="298" y1="181" x2="418" y2="181" stroke="var(--ink-soft,#888)" stroke-width="1.3" marker-end="url(#fly-arr)"/>
+  <text x="358" y="172" text-anchor="middle" class="arrow-lbl">generate pairs</text>
+
+  <rect x="419" y="155" width="178" height="52" rx="8" fill="var(--surface-3,#e7f0fb)" stroke="var(--accent,#3a6ea5)" stroke-width="1.8"/>
+  <text x="508" y="175" text-anchor="middle" class="node-lbl">RLAIF labeling</text>
+  <text x="508" y="189" text-anchor="middle" class="node-sub">AI judge per principle</text>
+  <text x="508" y="203" text-anchor="middle" class="node-sub">-> Reward model v0</text>
+
+
+  <path d="M508,207 Q508,230 380,240 Q310,244 298,246" fill="none" stroke="var(--ink-soft,#888)" stroke-width="1.3" marker-end="url(#fly-arr)"/>
+</g>
+
+
+<g data-anim="5">
+
+  <line x1="298" y1="272" x2="418" y2="272" stroke="var(--ink-soft,#888)" stroke-width="1.3" marker-end="url(#fly-arr)"/>
+  <text x="358" y="263" text-anchor="middle" class="arrow-lbl">generate pairs</text>
+
+  <rect x="419" y="246" width="178" height="52" rx="8" fill="var(--surface-3,#e7f0fb)" stroke="var(--accent,#3a6ea5)" stroke-width="1.8"/>
+  <text x="508" y="266" text-anchor="middle" class="node-lbl">More RLAIF</text>
+  <text x="508" y="280" text-anchor="middle" class="node-sub">higher-quality data now</text>
+  <text x="508" y="294" text-anchor="middle" class="node-sub">-> Reward model v1</text>
+
+
+  <path d="M508,298 Q508,322 380,332 Q310,336 298,338" fill="none" stroke="var(--ink-soft,#888)" stroke-width="1.3" marker-end="url(#fly-arr)"/>
+</g>
+
+
+<g data-anim="7">
+
+  <line x1="298" y1="364" x2="418" y2="364" stroke="var(--ink-soft,#888)" stroke-width="1.3" marker-end="url(#fly-arr)"/>
+  <text x="358" y="355" text-anchor="middle" class="arrow-lbl">sample outputs</text>
+
+  <rect x="419" y="338" width="178" height="60" rx="8" fill="var(--warn,#fde8e8)" stroke="var(--border-2,#888)" stroke-width="1.6"/>
+
+  <path d="M430,360 l4,5 l8,-11" fill="none" stroke="var(--accent,#3a6ea5)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="524" y="358" text-anchor="middle" class="node-lbl">Human spot-check</text>
+  <text x="524" y="372" text-anchor="middle" class="node-sub">QA gate — regression on</text>
+  <text x="524" y="386" text-anchor="middle" class="node-sub">hard cases + reward hacking</text>
+
+
+  <path d="M508,398 Q508,420 380,432 Q310,438 298,440" fill="none" stroke="var(--accent,#3a6ea5)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#fly-arr-acc)"/>
+</g>
+
+
+<g data-anim="10">
+
+
+  <path id="fly-arc-path"
+    d="M130,458 Q55,458 45,370 Q35,280 45,200 Q55,120 130,90"
+    fill="none"
+    stroke="var(--accent,#3a6ea5)"
+    stroke-width="2.5"
+    class="arc-flow"
+    marker-end="url(#fly-arr-acc)"/>
+
+
+  <text x="22" y="340" text-anchor="middle" class="arc-lbl" transform="rotate(-90,22,340)">iterative upgrade: policy becomes next seed</text>
+</g>
+
+
+<g data-anim="11">
+  <text x="660" y="440" text-anchor="start" class="arc-lbl">better model -&gt;</text>
+  <text x="660" y="455" text-anchor="start" class="arc-lbl">better RLAIF labels -&gt;</text>
+  <text x="660" y="470" text-anchor="start" class="arc-lbl">repeat</text>
+
+
+  <rect x="610" y="520" width="232" height="48" rx="6" fill="var(--surface-3,#f4f4f4)" stroke="var(--border-2,#bbb)" stroke-width="1"/>
+  <text x="726" y="538" text-anchor="middle" class="callout">Human nodes (seed + QA gate)</text>
+  <text x="726" y="551" text-anchor="middle" class="callout">kept small; AI-labeled nodes</text>
+  <text x="726" y="564" text-anchor="middle" class="callout">scale up each round</text>
+</g>
+
+
+<g data-anim="1">
+  <text x="214" y="590" text-anchor="middle" class="callout" font-weight="600">Model versions (spine)</text>
+</g>
+<g data-anim="3">
+  <text x="508" y="590" text-anchor="middle" class="callout" font-weight="600">RLAIF / QA stages</text>
+</g>
+
+</svg>
+<figcaption><b>The alignment data flywheel: a small human seed compounds through iterated RLAIF.</b> A tiny set of expert-labeled examples trains an SFT model; RLAIF then labels millions of AI-generated pairs to train successive reward models; a human spot-check QA gate catches failures before production; and the production model becomes the seed for the next round — each iteration producing higher-quality AI labels that make the next round even better.</figcaption>
+</figure>
+
+<p>Key stages:</p>
+<ol>
+<li>
+<p><strong>Seed human data (O(10K–100K) examples).</strong> Expert annotators write high-quality demonstrations and preference comparisons for the most safety-critical and capability-critical cases. This is expensive but small.</p>
+</li>
+<li>
+<p><strong>SFT warmup.</strong> The seed data trains a first supervised model. This model generates plausible candidate responses for the RLAIF stage.</p>
+</li>
+<li>
+<p><strong>RLAIF at scale (O(1M–100M) labels).</strong> A judge model (often a larger model or the SFT model itself) labels AI-generated comparison pairs. Constitutional principles guide the labeling. The resulting preference dataset trains a reward model.</p>
+</li>
+<li>
+<p><strong>RL fine-tuning.</strong> PPO or DPO on the AI-labeled preference data updates the policy. See <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>.</p>
+</li>
+<li>
+<p><strong>Human spot-check QA.</strong> A sample of the RL model&rsquo;s outputs is audited by humans — not to re-label everything, but to catch systematic failures or reward hacking. This is the human bottleneck that remains, kept small but targeted.</p>
+</li>
+<li>
+<p><strong>Iterative upgrade.</strong> The RL policy becomes the next seed for another generation of RLAIF data, creating a flywheel.</p>
+</li>
+</ol>
+<h3 id="what-to-prioritize-with-limited-human-budget">What to Prioritize with Limited Human Budget<a class="headerlink" href="#what-to-prioritize-with-limited-human-budget" title="Permanent link">¶</a></h3>
+<p>Given a fixed annotation budget, practitioners should spend it on:</p>
+<ul>
+<li><strong>Hard cases.</strong> Easy prompts can be labeled by AI with high confidence. Hard, nuanced, or safety-critical prompts are where human judgment adds the most value over AI.</li>
+<li><strong>Adversarial red-teaming.</strong> Human red-teamers find jailbreaks that AI self-play may miss.</li>
+<li><strong>Calibration examples.</strong> A small set of &ldquo;anchor&rdquo; examples with known correct preferences helps calibrate the AI judge and catches drift between iterations.</li>
+<li><strong>Low-agreement filtering.</strong> Run the AI judge multiple times; spend human budget on the examples where the judge is inconsistent.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Practical data-budget allocation sketch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">allocate_annotation_budget</span><span class="p">(</span>
+    <span class="n">total_examples</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">ai_labeling_confidence</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span>  <span class="c1"># per-example confidence in [0,1]</span>
+    <span class="n">human_budget_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">,</span>  <span class="c1"># spend 5% of budget on humans</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Given a list of per-example AI confidence scores, route the</span>
+<span class="sd">    least-confident examples to human annotators.</span>
+<span class="sd">    Returns (human_indices, ai_indices).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">n_human</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">total_examples</span> <span class="o">*</span> <span class="n">human_budget_fraction</span><span class="p">)</span>
+    <span class="c1"># Sort by ascending confidence: least confident go to humans</span>
+    <span class="n">ranked</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">ai_labeling_confidence</span><span class="p">)),</span>
+                    <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">i</span><span class="p">:</span> <span class="n">ai_labeling_confidence</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+    <span class="n">human_indices</span> <span class="o">=</span> <span class="n">ranked</span><span class="p">[:</span><span class="n">n_human</span><span class="p">]</span>
+    <span class="n">ai_indices</span> <span class="o">=</span> <span class="n">ranked</span><span class="p">[</span><span class="n">n_human</span><span class="p">:]</span>
+    <span class="k">return</span> <span class="n">human_indices</span><span class="p">,</span> <span class="n">ai_indices</span>
+</code></pre></div>
+<hr />
+<h2 id="putting-it-all-together-a-cai-rlaif-rft-recipe">Putting It All Together: A CAI + RLAIF + RFT Recipe<a class="headerlink" href="#putting-it-all-together-a-cai-rlaif-rft-recipe" title="Permanent link">¶</a></h2>
+<p>A modern self-improving alignment pipeline combines all the techniques above. Here is a concrete recipe and the key hyperparameters to tune.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">End-to-end sketch of a CAI + RLAIF + Rejection-Sampling pipeline.</span>
+<span class="sd">This is pseudocode-level but shows the data flow clearly.</span>
+<span class="sd">In production each step would run on a distributed cluster.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">AlignmentPipelineConfig</span><span class="p">:</span>
+    <span class="c1"># SL-CAI (critique-revision)</span>
+    <span class="n">cai_num_critique_rounds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>       <span class="c1"># k rounds of critique+revision</span>
+    <span class="n">cai_harmful_prompt_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.3</span>  <span class="c1"># fraction of prompts to use CAI on</span>
+
+    <span class="c1"># RLAIF preference labeling</span>
+    <span class="n">rlaif_judge_model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;anthropic/claude-3-opus&quot;</span>  <span class="c1"># or your own larger model</span>
+    <span class="n">rlaif_n_votes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span>                 <span class="c1"># majority-vote ensemble</span>
+    <span class="n">rlaif_consistency_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.7</span>
+
+    <span class="c1"># Rejection sampling (RFT)</span>
+    <span class="n">rft_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span>                        <span class="c1"># completions per prompt</span>
+    <span class="n">rft_temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.8</span>
+    <span class="n">rft_num_iterations</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>
+
+    <span class="c1"># DPO fine-tuning</span>
+    <span class="n">dpo_beta</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span>                  <span class="c1"># KL penalty</span>
+    <span class="n">dpo_learning_rate</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5e-7</span>
+    <span class="n">dpo_epochs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+
+    <span class="c1"># Human spot-check</span>
+    <span class="n">human_qa_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.02</span>       <span class="c1"># 2% of final outputs reviewed by humans</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_alignment_pipeline</span><span class="p">(</span>
+    <span class="n">seed_policy</span><span class="p">,</span>
+    <span class="n">tokenizer</span><span class="p">,</span>
+    <span class="n">harmful_prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">general_prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">verifiable_prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">reward_fn</span><span class="p">,</span>
+    <span class="n">config</span><span class="p">:</span> <span class="n">AlignmentPipelineConfig</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Full pipeline (abbreviated, showing the structure):</span>
+
+<span class="sd">    1. SL-CAI: generate clean responses for harmful prompts via critique-revision.</span>
+<span class="sd">    2. SFT warmup on SL-CAI outputs + existing SFT data.</span>
+<span class="sd">    3. RLAIF: label general-prompt pairs with AI judge.</span>
+<span class="sd">    4. Train reward model on RLAIF pairs.</span>
+<span class="sd">    5. RFT on verifiable-reward tasks.</span>
+<span class="sd">    6. DPO on RLAIF preference pairs.</span>
+<span class="sd">    7. Human QA gate.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># === STAGE 1: SL-CAI ===</span>
+    <span class="n">cai_training_pairs</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">prompt</span> <span class="ow">in</span> <span class="n">harmful_prompts</span><span class="p">:</span>
+        <span class="n">safe_response</span> <span class="o">=</span> <span class="n">critique_revise_loop</span><span class="p">(</span>
+            <span class="n">seed_policy</span><span class="o">.</span><span class="n">generate_text</span><span class="p">,</span>
+            <span class="n">prompt</span><span class="p">,</span>
+            <span class="n">num_rounds</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">cai_num_critique_rounds</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">cai_training_pairs</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">prompt</span><span class="p">,</span> <span class="n">safe_response</span><span class="p">))</span>
+
+    <span class="c1"># === STAGE 2: SFT warmup ===</span>
+    <span class="c1"># (sft_train(seed_policy, cai_training_pairs) — omitted for brevity)</span>
+
+    <span class="c1"># === STAGE 3: RLAIF ===</span>
+    <span class="n">preference_dataset</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">prompt</span> <span class="ow">in</span> <span class="n">general_prompts</span><span class="p">:</span>
+        <span class="c1"># Sample two responses at moderate temperature</span>
+        <span class="n">resp_a</span> <span class="o">=</span> <span class="n">seed_policy</span><span class="o">.</span><span class="n">generate_text</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.8</span><span class="p">)</span>
+        <span class="n">resp_b</span> <span class="o">=</span> <span class="n">seed_policy</span><span class="o">.</span><span class="n">generate_text</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.8</span><span class="p">)</span>
+        <span class="n">pair</span> <span class="o">=</span> <span class="n">robust_ai_label</span><span class="p">(</span>
+            <span class="n">seed_policy</span><span class="o">.</span><span class="n">generate_text</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">resp_a</span><span class="p">,</span> <span class="n">resp_b</span><span class="p">,</span>
+            <span class="n">n_votes</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">rlaif_n_votes</span><span class="p">,</span>
+            <span class="n">consistency_threshold</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">rlaif_consistency_threshold</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">pair</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">preference_dataset</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pair</span><span class="p">)</span>
+
+    <span class="c1"># === STAGE 4: Reward model training ===</span>
+    <span class="c1"># (reward_model_train(preference_dataset) — omitted)</span>
+
+    <span class="c1"># === STAGE 5: Rejection sampling (verifiable tasks) ===</span>
+    <span class="n">rft_training_data</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">iteration</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">rft_num_iterations</span><span class="p">):</span>
+        <span class="n">accepted</span> <span class="o">=</span> <span class="n">rejection_sampling_iteration</span><span class="p">(</span>
+            <span class="n">seed_policy</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">verifiable_prompts</span><span class="p">,</span>
+            <span class="n">reward_fn</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">rft_k</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">rft_temperature</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">rft_training_data</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">accepted</span><span class="p">)</span>
+        <span class="c1"># (sft_finetune(seed_policy, accepted) — omitted; updates seed_policy in place)</span>
+
+    <span class="c1"># === STAGE 6: DPO on RLAIF pairs ===</span>
+    <span class="c1"># (dpo_train(seed_policy, preference_dataset, beta=config.dpo_beta) — omitted)</span>
+
+    <span class="c1"># === STAGE 7: Human QA spot-check ===</span>
+    <span class="c1"># (sample config.human_qa_fraction of outputs, route to human review)</span>
+
+    <span class="k">return</span> <span class="n">seed_policy</span>  <span class="c1"># the aligned model</span>
+</code></pre></div>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Constitutional AI replaces the human rater with an AI judge steered by an explicit principle set. The pipeline has two stages: supervised critique-revision (SL-CAI) and RL from AI feedback (RLAIF), each eliminating a different bottleneck.</li>
+<li>RLAIF can produce preference labels orders of magnitude faster and cheaper than human annotation. Position bias and label noise are mitigated by response-order randomization and multi-vote consistency filtering.</li>
+<li>Self-rewarding language models use the same model as both policy and judge. The virtuous cycle improves both simultaneously, but risks self-grade inflation — mitigation includes mixing in external data and entropy bonuses.</li>
+<li>Rejection sampling fine-tuning (RFT) is the simplest form of self-improvement: sample <span class="arithmatex">\(k\)</span> responses, keep the correct ones, fine-tune. STaR adds hint-conditioned rationalization to provide signal even when the model fails; ReST adds a curriculum threshold that rises each iteration.</li>
+<li>SPIN (self-play fine-tuning) uses the model&rsquo;s own outputs as rejected examples, directly optimizing the gap between the current policy distribution and the target human data distribution.</li>
+<li>Weak-to-strong generalization shows that a capable student trained on noisy weak labels can exceed the supervisor. Bootstrapping (intermediate model, then strong model) and confidence-weighted loss close the elicitation gap further.</li>
+<li>In production, a small but carefully targeted human annotation budget — spent on hard cases, adversarial examples, and calibration anchors — provides the quality floor that AI labeling alone cannot guarantee.</li>
+<li>The alignment data flywheel: seed human data → SFT → RLAIF → RL → better model → better RLAIF labels → repeat. Each round should raise the reward threshold (curriculum) to avoid stagnation.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Constitutional AI and RLAIF have become the default scaling strategy for alignment data in frontier labs: AI-generated preference labels now outnumber human labels by orders of magnitude, with constitutions providing auditable constraints on what the AI judge measures. Self-improvement loops (STaR, ReST, SPIN, self-rewarding LMs) are now standard post-training components, and the scalable-oversight question — how to supervise models that exceed human competence — is an active research frontier.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2212.08073">Bai et al., <em>Constitutional AI: Harmlessness from AI Feedback</em> (2022)</a> — original CAI paper defining the two-stage critique-revision + RLAIF pipeline that replaced human labelers at Anthropic.</li>
+<li><a href="https://arxiv.org/abs/2203.14465">Zelikman et al., <em>STaR: Bootstrapping Reasoning With Reasoning</em> (2022)</a> — self-taught reasoner that generates rationales, filters by correctness, and fine-tunes iteratively; foundational for verifiable-reward self-improvement.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2309.00267">Lee et al., <em>RLAIF vs. RLHF</em> (2023)</a> — controlled Google study showing AI-labeled preferences match human labels on summarization and dialogue; introduces position-debiasing protocol.</li>
+<li><a href="https://arxiv.org/abs/2308.08998">Gulcehre et al., <em>Reinforced Self-Training (ReST) for Language Modeling</em> (2023)</a> — Grow/Improve curriculum with rising reward thresholds; shows offline rejection sampling is more compute-efficient than online RL.</li>
+<li><a href="https://arxiv.org/abs/2312.09390">Burns et al., <em>Weak-to-Strong Generalization</em> (2023)</a> — OpenAI study demonstrating that a strong student trained on weak labels exceeds its supervisor; central paper on scalable oversight.</li>
+<li><a href="https://arxiv.org/abs/2401.10020">Yuan et al., <em>Self-Rewarding Language Models</em> (2024)</a> — same model acts as policy and judge; iterative DPO updates improve both roles simultaneously.</li>
+<li><a href="https://arxiv.org/abs/2401.01335">Chen et al., <em>Self-Play Fine-Tuning (SPIN)</em> (2024)</a> — uses the model&rsquo;s own previous-iteration outputs as the rejected baseline in DPO, directly closing the gap to human data.</li>
+<li><a href="https://arxiv.org/abs/2407.19594">Wu et al., <em>Meta-Rewarding Language Models</em> (2024)</a> — adds a meta-judge role to fix reward saturation in self-rewarding loops; improves AlpacaEval 2 win rate from 22.9 % to 39.4 % on Llama-3-8B.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://huggingface.co/docs/trl/index">huggingface/trl</a> — full post-training library with SFT, DPO, PPO, GRPO, and reward-modeling trainers; the standard implementation base for RLAIF pipelines.</li>
+<li><a href="https://github.com/openai/weak-to-strong">openai/weak-to-strong</a> — reference codebase for weak-to-strong generalization experiments across NLP and vision tasks.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.anthropic.com/constitution">Anthropic, <em>Claude&rsquo;s Constitution</em></a> — the publicly released principle set used in Claude&rsquo;s CAI training; CC0 licensed and directly actionable as a starting point for your own constitution.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Bai et al., &ldquo;Constitutional AI: Harmlessness from AI Feedback,&rdquo; Anthropic, 2022. The original CAI paper defining the critique-revision and RLAIF pipeline.</li>
+<li>Lee et al., &ldquo;RLAIF: Scaling Reinforcement Learning from Human Feedback with AI Feedback,&rdquo; Google, 2023. Controlled comparison of human vs. AI preference labels; introduces position-debiasing protocol.</li>
+<li>Zeiler et al., &ldquo;STaR: Bootstrapping Reasoning With Reasoning,&rdquo; NeurIPS 2022. Self-taught reasoner with hint-conditioned rationalization.</li>
+<li>Gulcehre et al., &ldquo;Reinforced Self-Training (ReST) for Language Modeling,&rdquo; Google DeepMind, 2023. Grow-Improve curriculum for offline rejection sampling.</li>
+<li>Yuan et al., &ldquo;Self-Rewarding Language Models,&rdquo; Meta AI, 2024. The joint policy+judge training loop with DPO updates.</li>
+<li>Chen et al., &ldquo;Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models,&rdquo; 2024. SPIN: using the model&rsquo;s own outputs as the rejected baseline.</li>
+<li>Burns et al., &ldquo;Weak-to-Strong Generalization: Eliciting Strong Capabilities With Weak Supervision,&rdquo; OpenAI, 2023. Empirical study of the scalable oversight setting with bootstrapping and confidence-weighting interventions.</li>
+<li>Anthropic Model Card and Constitution — publicly released at anthropic.com, describing the principles used in Claude&rsquo;s CAI training.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="10-reasoning-test-time-compute.html"><span class="pn-label">← Previous</span><span class="pn-title">Reasoning, Chain-of-Thought &amp; Test-Time Compute</span></a>
+<a class="next" href="12-distillation-compression.html"><span class="pn-label">Next →</span><span class="pn-title">Distillation, Model Compression &amp; Knowledge Transfer</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-problem-human-labeling-at-scale">The Problem: Human Labeling at Scale</a></li>
+<li class="toc-l2"><a href="#constitutional-ai-cai">Constitutional AI (CAI)</a></li>
+<li class="toc-l3"><a href="#core-idea-a-principle-set-as-a-steering-document">Core Idea: A Principle Set as a Steering Document</a></li>
+<li class="toc-l3"><a href="#the-constitution">The Constitution</a></li>
+<li class="toc-l3"><a href="#iterative-critique-revision-in-practice">Iterative Critique-Revision in Practice</a></li>
+<li class="toc-l3"><a href="#building-the-ai-preference-dataset">Building the AI Preference Dataset</a></li>
+<li class="toc-l2"><a href="#rlaif-replacing-human-raters-with-ai">RLAIF: Replacing Human Raters with AI</a></li>
+<li class="toc-l3"><a href="#the-labeling-protocol">The Labeling Protocol</a></li>
+<li class="toc-l3"><a href="#rlaif-vs-human-preference-trade-offs">RLAIF vs Human Preference: Trade-offs</a></li>
+<li class="toc-l2"><a href="#self-rewarding-language-models">Self-Rewarding Language Models</a></li>
+<li class="toc-l2"><a href="#rejection-sampling-star-rest">Rejection Sampling, STaR &amp;amp; ReST</a></li>
+<li class="toc-l3"><a href="#rejection-sampling-fine-tuning-rft">Rejection Sampling Fine-Tuning (RFT)</a></li>
+<li class="toc-l3"><a href="#star-self-taught-reasoner">STaR: Self-Taught Reasoner</a></li>
+<li class="toc-l3"><a href="#rest-reinforced-self-training">ReST: Reinforced Self-Training</a></li>
+<li class="toc-l2"><a href="#self-play-iterative-self-improvement">Self-Play &amp;amp; Iterative Self-Improvement</a></li>
+<li class="toc-l2"><a href="#weak-to-strong-generalization">Weak-to-Strong Generalization</a></li>
+<li class="toc-l2"><a href="#sourcing-alignment-data-at-scale-a-practical-view">Sourcing Alignment Data at Scale: A Practical View</a></li>
+<li class="toc-l3"><a href="#the-alignment-data-flywheel">The Alignment Data Flywheel</a></li>
+<li class="toc-l3"><a href="#what-to-prioritize-with-limited-human-budget">What to Prioritize with Limited Human Budget</a></li>
+<li class="toc-l2"><a href="#putting-it-all-together-a-cai-rlaif-rft-recipe">Putting It All Together: A CAI + RLAIF + RFT Recipe</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

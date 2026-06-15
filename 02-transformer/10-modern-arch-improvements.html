@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modern Architecture Improvements &amp; Design Choices — The LLM Stack</title>
+<meta name="description" content="What changed from GPT-2 to Llama/Qwen/DeepSeek/Gemma: RMSNorm, SwiGLU, RoPE, GQA, QK-norm, no biases, untied/tied embeddings, depth vs width, attention sinks, l">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="active" href="10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part II — The Transformer Architecture</div>
+<h1 id="210-modern-architecture-improvements-design-choices">2.10 Modern Architecture Improvements &amp; Design Choices<a class="headerlink" href="#210-modern-architecture-improvements-design-choices" title="Permanent link">¶</a></h1>
+<p>The Transformer described by Vaswani et al. in 2017 was a landmark, but the architecture used in today&rsquo;s production LLMs — Llama 3, Qwen 2.5, DeepSeek-V3, Gemma 2 — bears only a family resemblance to that original design. A practitioner opening a modern model config file for the first time will encounter terms like <code>rms_norm</code>, <code>silu</code>, <code>rope_theta</code>, <code>num_key_value_heads</code>, <code>qk_norm</code>, and <code>no_bias</code>. Each of these represents a deliberate, empirically validated architectural decision made in pursuit of better training stability, improved compute efficiency, or stronger final model quality.</p>
+<p>This chapter is your annotated map of those decisions. We will examine each improvement from first principles — why it was introduced, what it fixes, how it works mathematically, and how it appears in code. We conclude with a &ldquo;modern transformer recipe&rdquo; summarizing which choices are nearly universal versus still debated. For the transformer block basics, see <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a>; for positional encodings in depth, see <a href="../02-transformer/05-positional-encoding.html">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a>; and for GQA/MQA mechanics, see <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>.</p>
+<hr />
+<h2 id="rmsnorm-cheaper-equally-stable-normalization">RMSNorm: Cheaper, Equally Stable Normalization<a class="headerlink" href="#rmsnorm-cheaper-equally-stable-normalization" title="Permanent link">¶</a></h2>
+<h3 id="the-problem-with-layernorm">The problem with LayerNorm<a class="headerlink" href="#the-problem-with-layernorm" title="Permanent link">¶</a></h3>
+<p>The original Transformer used LayerNorm (Ba et al., &ldquo;Layer Normalization&rdquo;, 2016):</p>
+<div class="arithmatex">\[
+\text{LayerNorm}(x) = \frac{x - \mu}{\sigma + \epsilon} \cdot \gamma + \beta
+\]</div>
+<p>where <span class="arithmatex">\(\mu = \frac{1}{d}\sum_i x_i\)</span> and <span class="arithmatex">\(\sigma^2 = \frac{1}{d}\sum_i (x_i - \mu)^2\)</span>. This requires two passes over the feature vector: one to compute the mean, one to compute the variance. More importantly, it requires two learned parameter vectors: <span class="arithmatex">\(\gamma\)</span> (scale) and <span class="arithmatex">\(\beta\)</span> (shift). The <span class="arithmatex">\(\beta\)</span> term encodes an explicit re-centering.</p>
+<h3 id="rmsnorm-derivation">RMSNorm derivation<a class="headerlink" href="#rmsnorm-derivation" title="Permanent link">¶</a></h3>
+<p>Zhang and Sennrich (&ldquo;Root Mean Square Layer Normalization&rdquo;, NeurIPS 2019) asked: is the re-centering operation actually necessary? They ablated LayerNorm into its components and found that the re-scaling (via <span class="arithmatex">\(\gamma\)</span>) drives almost all of LayerNorm&rsquo;s benefit, while mean subtraction contributes little to final performance but accounts for roughly a third of LayerNorm&rsquo;s compute.</p>
+<p>Root Mean Square Normalization (RMSNorm) drops mean subtraction entirely:</p>
+<div class="arithmatex">\[
+\text{RMSNorm}(x) = \frac{x}{\text{RMS}(x)} \cdot \gamma, \quad \text{where } \text{RMS}(x) = \sqrt{\frac{1}{d}\sum_{i=1}^{d} x_i^2 + \epsilon}
+\]</div>
+<p>There is no <span class="arithmatex">\(\beta\)</span> parameter. One division by the RMS, then a learned element-wise scale. This is approximately 10–30% faster than LayerNorm on modern hardware because there is no mean subtraction kernel and no second reduction pass.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RMSNorm</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Root Mean Square Layer Normalization.</span>
+<span class="sd">    Used in Llama, Mistral, Qwen, DeepSeek, Gemma, and most modern LLMs.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    dim : int</span>
+<span class="sd">        The feature dimension (hidden size d_model).</span>
+<span class="sd">    eps : float</span>
+<span class="sd">        Small constant for numerical stability. 1e-5 is common; some</span>
+<span class="sd">        models (Gemma) use 1e-6.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-5</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">eps</span> <span class="o">=</span> <span class="n">eps</span>
+        <span class="c1"># gamma: learnable scale, initialized to ones so RMSNorm is</span>
+        <span class="c1"># initially the identity (modulo the normalization step).</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">dim</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_norm</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># x: (..., dim). Compute RMS over last dimension.</span>
+        <span class="c1"># rsqrt = 1/sqrt for numerical efficiency.</span>
+        <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">rsqrt</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">eps</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Cast to float32 for the norm computation for precision,</span>
+        <span class="c1"># then cast back. This pattern is used in Llama reference code.</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_norm</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">float</span><span class="p">())</span><span class="o">.</span><span class="n">type_as</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">output</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span>
+
+
+<span class="c1"># --- Quick sanity check ---</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span>   <span class="c1"># batch=2, seq=8, d_model=512</span>
+<span class="n">norm</span> <span class="o">=</span> <span class="n">RMSNorm</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">512</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">norm</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="c1"># Verify unit-RMS along the feature dimension (before scaling by weight)</span>
+<span class="n">raw_normed</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">rsqrt</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-5</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;RMS of raw_normed row 0: </span><span class="si">{</span><span class="n">raw_normed</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># ~1.000</span>
+</code></pre></div>
+<h3 id="pre-norm-vs-post-norm">Pre-norm vs post-norm<a class="headerlink" href="#pre-norm-vs-post-norm" title="Permanent link">¶</a></h3>
+<p>GPT-2 used post-norm (LayerNorm after the residual). Nearly all modern models use <strong>pre-norm</strong> (LayerNorm before the sublayer):</p>
+<div class="highlight"><pre><span></span><code>Post-norm (GPT-2):  x → Sublayer(x) + x → Norm → output
+Pre-norm  (modern): x → Norm(x) → Sublayer → + x → output
+</code></pre></div>
+<p>Pre-norm yields more stable gradients at large scale — the residual path is always clean, so gradients flow through the skip connection without being divided by a normalization operation. The trade-off is that pre-norm models can exhibit &ldquo;representation collapse&rdquo; at depth if not carefully initialized, which motivates other tricks like scaled initialization.</p>
+<hr />
+<h2 id="swiglu-a-better-mlp-activation">SwiGLU: A Better MLP Activation<a class="headerlink" href="#swiglu-a-better-mlp-activation" title="Permanent link">¶</a></h2>
+<h3 id="from-relu-to-gelu-to-swiglu">From ReLU to GELU to SwiGLU<a class="headerlink" href="#from-relu-to-gelu-to-swiglu" title="Permanent link">¶</a></h3>
+<p>The original Transformer used a plain two-layer MLP with ReLU:</p>
+<div class="arithmatex">\[
+\text{FFN}(x) = \max(0, xW_1 + b_1)W_2 + b_2
+\]</div>
+<p>BERT switched to GELU (Gaussian Error Linear Unit), which is smoother and empirically outperforms ReLU. Modern LLMs take this further with <strong>Gated Linear Units (GLU)</strong> and specifically their SiLU-gated variant — SwiGLU — introduced by Noam Shazeer (&ldquo;GLU Variants Improve Transformer&rdquo;, 2020).</p>
+<h3 id="swiglu-mechanics">SwiGLU mechanics<a class="headerlink" href="#swiglu-mechanics" title="Permanent link">¶</a></h3>
+<p>A Gated Linear Unit multiplies two linear projections together, one of which passes through a nonlinearity acting as a soft gate:</p>
+<div class="arithmatex">\[
+\text{SwiGLU}(x, W, V, W_2) = (\text{SiLU}(xW) \otimes xV) \cdot W_2
+\]</div>
+<p>where <span class="arithmatex">\(\text{SiLU}(z) = z \cdot \sigma(z)\)</span> (also called Swish), and <span class="arithmatex">\(\otimes\)</span> denotes element-wise multiplication. The SiLU function is smooth, non-monotone, and has a non-zero gradient for negative inputs, all of which help gradient flow.</p>
+<p>The gating mechanism is important: <span class="arithmatex">\(xV\)</span> produces a &ldquo;content&rdquo; projection and <span class="arithmatex">\(\text{SiLU}(xW)\)</span> produces a soft gate. The gate dynamically suppresses or amplifies each dimension of the content, giving the MLP a multiplicative interaction it lacked before.</p>
+<p>Because SwiGLU has <strong>three</strong> weight matrices (<span class="arithmatex">\(W\)</span>, <span class="arithmatex">\(V\)</span>, <span class="arithmatex">\(W_2\)</span>) instead of two, to keep parameter count equal to a standard 4x MLP, the hidden dimension is reduced to <span class="arithmatex">\(\frac{2}{3} \cdot 4d = \frac{8d}{3}\)</span>. In practice most models round to a multiple of 256 for hardware alignment; Llama 2 70B uses an intermediate size of 28,672 for a model dimension of 8,192.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SwiGLUMLP</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    SwiGLU feed-forward network used in Llama, Qwen, DeepSeek, etc.</span>
+
+<span class="sd">    For a model with hidden_dim = d, the intermediate_dim is typically</span>
+<span class="sd">    floor(8*d/3) rounded up to a multiple of 256.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hidden_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">intermediate_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="c1"># Three linear projections; no bias (see section on no-bias later)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">gate_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">hidden_dim</span><span class="p">,</span> <span class="n">intermediate_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">up_proj</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">hidden_dim</span><span class="p">,</span> <span class="n">intermediate_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">down_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">intermediate_dim</span><span class="p">,</span> <span class="n">hidden_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># gate: apply SiLU to create a soft gate</span>
+        <span class="n">gate</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">silu</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">gate_proj</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+        <span class="c1"># up: linear content projection</span>
+        <span class="n">up</span>   <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">up_proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="c1"># Element-wise product (gated content), then project back down</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">down_proj</span><span class="p">(</span><span class="n">gate</span> <span class="o">*</span> <span class="n">up</span><span class="p">)</span>
+
+
+<span class="c1"># Demonstration: compare SwiGLU vs vanilla FFN parameter counts</span>
+<span class="n">d</span> <span class="o">=</span> <span class="mi">4096</span>  <span class="c1"># typical hidden size</span>
+
+<span class="c1"># Vanilla FFN with 4x expansion: 2 * d * 4d = 8d^2</span>
+<span class="n">vanilla_params</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">d</span> <span class="o">*</span> <span class="p">(</span><span class="mi">4</span> <span class="o">*</span> <span class="n">d</span><span class="p">)</span>
+
+<span class="c1"># SwiGLU FFN with 8/3 expansion: 3 * d * (8d/3) = 8d^2 — same!</span>
+<span class="n">intermediate</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="mi">8</span> <span class="o">*</span> <span class="n">d</span> <span class="o">/</span> <span class="mi">3</span><span class="p">)</span>
+<span class="n">swiglu_params</span> <span class="o">=</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">d</span> <span class="o">*</span> <span class="n">intermediate</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Vanilla 4x FFN params: </span><span class="si">{</span><span class="n">vanilla_params</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;SwiGLU  8/3 FFN params: </span><span class="si">{</span><span class="n">swiglu_params</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># Both are approximately 8*d^2 — SwiGLU is iso-parameter with better quality.</span>
+</code></pre></div>
+<hr />
+<h2 id="rope-rotary-position-embeddings">RoPE: Rotary Position Embeddings<a class="headerlink" href="#rope-rotary-position-embeddings" title="Permanent link">¶</a></h2>
+<p>Rotary Position Embedding (RoPE), introduced by Su et al. (&ldquo;RoFormer: Enhanced Transformer with Rotary Position Embedding&rdquo;, 2021), is now the dominant positional encoding for autoregressive LLMs. See <a href="../02-transformer/05-positional-encoding.html">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a> for the full derivation; here we focus on why it was adopted in the modern recipe and its practical configuration.</p>
+<h3 id="why-rope-won">Why RoPE won<a class="headerlink" href="#why-rope-won" title="Permanent link">¶</a></h3>
+<p>RoPE encodes position by rotating query and key vectors in 2D subspaces. The critical insight is that the dot product <span class="arithmatex">\(q_m^\top k_n\)</span> naturally becomes a function of the <em>relative offset</em> <span class="arithmatex">\((m - n)\)</span>, not of absolute positions — this is the <strong>relative position</strong> property that matters for generalization. Unlike sinusoidal encodings, RoPE requires no separate embedding table and requires no modification to the value vectors. Unlike learned absolute position embeddings, it generalizes beyond training context length (with appropriate scaling, see below).</p>
+<p>The rotation for position <span class="arithmatex">\(m\)</span> applied to a 2D subspace of the query vector:</p>
+<div class="arithmatex">\[
+R_m = \begin{bmatrix} \cos(m\theta) &amp; -\sin(m\theta) \\ \sin(m\theta) &amp; \cos(m\theta) \end{bmatrix}
+\]</div>
+<p>For a <span class="arithmatex">\(d_k\)</span>-dimensional head, this is repeated for <span class="arithmatex">\(d_k/2\)</span> rotation pairs, each with a different base frequency:</p>
+<div class="arithmatex">\[
+\theta_i = \text{base}^{-2i/d_k}, \quad i = 0, 1, \ldots, d_k/2 - 1
+\]</div>
+<p>The <code>rope_theta</code> hyperparameter (the base) controls the frequency range. GPT-2 had no RoPE. Llama 1 used <code>rope_theta=10000</code>. Llama 3 extended this to <code>rope_theta=500000</code> to improve long-context behavior by spreading frequencies more broadly, making it easier to extrapolate to new positions at inference time.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">precompute_freqs_cis</span><span class="p">(</span><span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">max_seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">theta</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10000.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Precompute complex exponentials for RoPE.</span>
+<span class="sd">    Returns a tensor of shape (max_seq_len, dim//2) with dtype=complex64.</span>
+<span class="sd">    The &#39;cis&#39; notation: cis(x) = e^{ix} = cos(x) + i*sin(x).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Frequencies: theta^{-2i/dim} for i in [0, dim/2)</span>
+    <span class="n">freqs</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">theta</span> <span class="o">**</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">dim</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="n">dim</span><span class="p">))</span>
+    <span class="c1"># Positions: [0, 1, 2, ..., max_seq_len-1]</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">max_seq_len</span><span class="p">)</span>
+    <span class="c1"># Outer product: shape (max_seq_len, dim//2)</span>
+    <span class="n">freqs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">outer</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">freqs</span><span class="p">)</span>
+    <span class="c1"># Convert to complex: e^{i * freqs}</span>
+    <span class="n">freqs_cis</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">polar</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">freqs</span><span class="p">),</span> <span class="n">freqs</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">freqs_cis</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_rotary_emb</span><span class="p">(</span><span class="n">xq</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">xk</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+                     <span class="n">freqs_cis</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Apply RoPE to query and key tensors.</span>
+<span class="sd">    xq, xk: (batch, seq_len, n_heads, head_dim)</span>
+<span class="sd">    freqs_cis: (seq_len, head_dim//2) complex tensor</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Reshape to complex view: treat pairs of reals as complex numbers</span>
+    <span class="n">xq_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">view_as_complex</span><span class="p">(</span><span class="n">xq</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">*</span><span class="n">xq</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+    <span class="n">xk_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">view_as_complex</span><span class="p">(</span><span class="n">xk</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">*</span><span class="n">xk</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+
+    <span class="c1"># Broadcast freqs_cis over batch and head dimensions</span>
+    <span class="c1"># freqs_cis shape: (seq_len, head_dim//2) -&gt; (1, seq_len, 1, head_dim//2)</span>
+    <span class="n">freqs_cis</span> <span class="o">=</span> <span class="n">freqs_cis</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+
+    <span class="c1"># Multiply in complex space = rotation in 2D pairs</span>
+    <span class="n">xq_out</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">view_as_real</span><span class="p">(</span><span class="n">xq_</span> <span class="o">*</span> <span class="n">freqs_cis</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+    <span class="n">xk_out</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">view_as_real</span><span class="p">(</span><span class="n">xk_</span> <span class="o">*</span> <span class="n">freqs_cis</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">xq_out</span><span class="o">.</span><span class="n">type_as</span><span class="p">(</span><span class="n">xq</span><span class="p">),</span> <span class="n">xk_out</span><span class="o">.</span><span class="n">type_as</span><span class="p">(</span><span class="n">xk</span><span class="p">)</span>
+
+
+<span class="c1"># Demonstration</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">batch</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">head_dim</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">64</span>
+<span class="n">xq</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">)</span>
+<span class="n">xk</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">)</span>
+
+<span class="n">freqs</span> <span class="o">=</span> <span class="n">precompute_freqs_cis</span><span class="p">(</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">theta</span><span class="o">=</span><span class="mf">500000.0</span><span class="p">)</span>  <span class="c1"># Llama 3 theta</span>
+<span class="n">xq_rot</span><span class="p">,</span> <span class="n">xk_rot</span> <span class="o">=</span> <span class="n">apply_rotary_emb</span><span class="p">(</span><span class="n">xq</span><span class="p">,</span> <span class="n">xk</span><span class="p">,</span> <span class="n">freqs</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;RoPE applied. Output shape: </span><span class="si">{</span><span class="n">xq_rot</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># Verify relative position property: dot product depends only on relative offset</span>
+<span class="n">q0</span> <span class="o">=</span> <span class="n">xq_rot</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>  <span class="c1"># position 3, head 0</span>
+<span class="n">k5</span> <span class="o">=</span> <span class="n">xk_rot</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>  <span class="c1"># position 8, head 0</span>
+<span class="c1"># The dot product q0.k5 encodes offset=5, not absolute positions 3 and 8.</span>
+</code></pre></div>
+<hr />
+<h2 id="grouped-query-attention-gqa">Grouped Query Attention (GQA)<a class="headerlink" href="#grouped-query-attention-gqa" title="Permanent link">¶</a></h2>
+<p>Standard Multi-Head Attention (MHA) maintains separate <span class="arithmatex">\(K\)</span> and <span class="arithmatex">\(V\)</span> projection matrices for each of <span class="arithmatex">\(H\)</span> heads. During autoregressive decoding, the key-value (KV) cache grows as <span class="arithmatex">\(O(L \cdot H \cdot d_k)\)</span> per layer — for a 70B model with 64 heads and a 128K context, this is on the order of tens of gigabytes. See <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a> for the full treatment; here we focus on the design decision and its practical configuration.</p>
+<p>Grouped Query Attention (GQA), introduced in Ainslie et al. (&ldquo;GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints&rdquo;, 2023), is a generalization that interpolates between Multi-Head Attention and Multi-Query Attention (MQA, which has a single KV head for all query heads):</p>
+<div class="highlight"><pre><span></span><code>MHA:  H_q = H_kv                  (all heads have own KV)
+GQA:  H_q = G * H_kv  for G &gt; 1   (G query heads share one KV head)
+MQA:  H_kv = 1                     (all query heads share one KV)
+</code></pre></div>
+<p>A common configuration is 8 KV heads for 32 query heads (G=4), as in Llama 2 70B and Qwen 2.5. This reduces the KV cache memory by a factor of G while introducing only a small quality degradation versus MHA.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: KV cache memory budget</p>
+<p>Consider a model with the following configuration (similar to Llama 3 8B):
+- Layers: 32
+- Hidden dim: 4096
+- Query heads: 32 (head_dim = 128)
+- KV heads (GQA): 8</p>
+<p><strong>KV cache per token per layer:</strong></p>
+<div class="arithmatex">\[
+\text{bytes} = 2 \text{ (K and V)} \times H_{kv} \times d_k \times \text{bytes\_per\_element}
+\]</div>
+<p>With bf16 (2 bytes), this is:</p>
+<div class="arithmatex">\[
+2 \times 8 \times 128 \times 2 = 4096 \text{ bytes} = 4 \text{ KB per token per layer}
+\]</div>
+<p><strong>Total KV cache for 32 layers, 8K context:</strong></p>
+<div class="arithmatex">\[
+4 \text{ KB} \times 32 \times 8192 = 1073741824 \text{ bytes} \approx 1 \text{ GB}
+\]</div>
+<p>With full MHA (32 KV heads), this would be 4 GB — four times larger. For a 128K context, GQA brings it from ~64 GB to ~16 GB, making long-context inference feasible on reasonable hardware.</p>
+</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">GroupedQueryAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Grouped Query Attention (GQA) as used in Llama 2/3, Qwen, Mistral.</span>
+
+<span class="sd">    n_heads: number of query heads (H_q)</span>
+<span class="sd">    n_kv_heads: number of key/value heads (H_kv), must divide n_heads evenly</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_kv_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">n_heads</span> <span class="o">%</span> <span class="n">n_kv_heads</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;n_heads must be divisible by n_kv_heads&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span>    <span class="o">=</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_kv_heads</span> <span class="o">=</span> <span class="n">n_kv_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_rep</span>      <span class="o">=</span> <span class="n">n_heads</span> <span class="o">//</span> <span class="n">n_kv_heads</span>   <span class="c1"># how many Q heads per KV head</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span>   <span class="o">=</span> <span class="n">d_model</span> <span class="o">//</span> <span class="n">n_heads</span>
+
+        <span class="c1"># Query projects to n_heads * head_dim</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">q_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span>    <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="c1"># Key/Value project to n_kv_heads * head_dim (smaller!)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">k_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_kv_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">v_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_kv_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">o_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_repeat_kv</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Expand KV from n_kv_heads to n_heads by repeating.&quot;&quot;&quot;</span>
+        <span class="c1"># x: (batch, seq, n_kv_heads, head_dim)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_rep</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">x</span>
+        <span class="c1"># Repeat along the head dimension n_rep times</span>
+        <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span>
+            <span class="o">*</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_kv_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_rep</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">*</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">C</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">head_dim</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span>
+
+        <span class="c1"># Project to Q, K, V</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">q_proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span>    <span class="n">head_dim</span><span class="p">)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_kv_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">v_proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_kv_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">)</span>
+
+        <span class="c1"># Expand K and V to match n_heads</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_repeat_kv</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>  <span class="c1"># (B, T, n_heads, head_dim)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_repeat_kv</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+
+        <span class="c1"># Transpose to (B, n_heads, T, head_dim) for attention</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+
+        <span class="c1"># Scaled dot-product attention</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">head_dim</span><span class="p">)</span>
+        <span class="n">attn</span> <span class="o">=</span> <span class="p">(</span><span class="n">q</span> <span class="o">@</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="n">scale</span>         <span class="c1"># (B, n_heads, T, T)</span>
+        <span class="n">attn</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">attn</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">out</span>  <span class="o">=</span> <span class="n">attn</span> <span class="o">@</span> <span class="n">v</span>                                   <span class="c1"># (B, n_heads, T, head_dim)</span>
+
+        <span class="c1"># Merge heads and project</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">C</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">o_proj</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="qk-norm-stabilizing-attention-logits-at-scale">QK-Norm: Stabilizing Attention Logits at Scale<a class="headerlink" href="#qk-norm-stabilizing-attention-logits-at-scale" title="Permanent link">¶</a></h2>
+<h3 id="the-problem-logit-explosion">The problem: logit explosion<a class="headerlink" href="#the-problem-logit-explosion" title="Permanent link">¶</a></h3>
+<p>In deep, wide models trained for many tokens, the dot products <span class="arithmatex">\(q_i \cdot k_j\)</span> can grow to very large values. Once the logits are large in magnitude, the softmax saturates: one token gets weight ~1 and all others get weight ~0. This &ldquo;attention collapse&rdquo; degrades the model&rsquo;s ability to attend to multiple positions, and the large pre-softmax logits create numerical instability, especially in bf16 where the dynamic range is narrow. See also <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a> for why bf16 overflow is a real concern.</p>
+<h3 id="qk-norm-normalize-q-and-k-before-attention">QK-norm: normalize Q and K before attention<a class="headerlink" href="#qk-norm-normalize-q-and-k-before-attention" title="Permanent link">¶</a></h3>
+<p>The fix, used in models like Gemma 2 and DeepSeek-V3, is to apply RMSNorm to the query and key vectors <em>before</em> computing the attention scores:</p>
+<div class="arithmatex">\[
+\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{\text{RMSNorm}(Q)\,\text{RMSNorm}(K)^\top}{\sqrt{d_k}}\right)V
+\]</div>
+<p>This bounds the dot products to <span class="arithmatex">\(O(d_k)\)</span> regardless of training duration or model size. An independent learned scale <span class="arithmatex">\(\gamma\)</span> per head can be added to recover expressivity.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">QKNormAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Attention with per-head QK normalization, as in Gemma 2.</span>
+<span class="sd">    Prevents logit explosion during long training runs.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span>  <span class="o">=</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span> <span class="o">=</span> <span class="n">d_model</span> <span class="o">//</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">q_proj</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">k_proj</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">v_proj</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">o_proj</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="c1"># One RMSNorm per head for Q and K; per-head head_dim</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">q_norm</span> <span class="o">=</span> <span class="n">RMSNorm</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">k_norm</span> <span class="o">=</span> <span class="n">RMSNorm</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">C</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">q_proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">v_proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+
+        <span class="c1"># Apply QK-norm per head (RMSNorm operates on head_dim)</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">q_norm</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>   <span class="c1"># normalizes the last dimension</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_norm</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+
+        <span class="c1"># Standard scaled dot-product attention from here</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">attn</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">((</span><span class="n">q</span> <span class="o">@</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">),</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">out</span>  <span class="o">=</span> <span class="p">(</span><span class="n">attn</span> <span class="o">@</span> <span class="n">v</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">C</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">o_proj</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="no-biases-tieduntied-embeddings-and-initialization">No Biases, Tied/Untied Embeddings, and Initialization<a class="headerlink" href="#no-biases-tieduntied-embeddings-and-initialization" title="Permanent link">¶</a></h2>
+<h3 id="dropping-biases">Dropping biases<a class="headerlink" href="#dropping-biases" title="Permanent link">¶</a></h3>
+<p>GPT-2 had bias terms in every linear projection and LayerNorm. Modern models like Llama, Qwen, and Mistral remove biases from all linear layers. The motivation is empirical: at large scale biases do not meaningfully improve loss (they represent a negligible fraction of parameters), but they complicate optimizer state memory (Adam maintains a first and second moment for every parameter, so biases add to optimizer memory with little benefit). For a 7B model, removing biases saves a few hundred MB of optimizer state — not huge, but free.</p>
+<p>There is also a theoretical argument: when using pre-RMSNorm (which has no bias itself), the preceding biases in linear projections are redundant, as RMSNorm can represent any affine output of a linear layer with a bias by adjusting its scale.</p>
+<h3 id="tied-vs-untied-embeddings">Tied vs untied embeddings<a class="headerlink" href="#tied-vs-untied-embeddings" title="Permanent link">¶</a></h3>
+<p>The embedding table maps token IDs to vectors of dimension <span class="arithmatex">\(d\)</span> and has shape <span class="arithmatex">\((V, d)\)</span> where <span class="arithmatex">\(V\)</span> is the vocabulary size. The output &ldquo;unembedding&rdquo; (also called the LM head or logit projection) maps from <span class="arithmatex">\(d\)</span> back to <span class="arithmatex">\(V\)</span>, also shape <span class="arithmatex">\((V, d)\)</span>.</p>
+<p><strong>Tied embeddings</strong> share the same weight matrix for both. This was common in smaller models (original GPT-2, T5) because it saves <span class="arithmatex">\(V \times d\)</span> parameters — for a vocabulary of 32,000 and <span class="arithmatex">\(d=4096\)</span>, that is ~131M parameters. <strong>Untied embeddings</strong> use separate matrices. The choice:</p>
+<ul>
+<li>Tied: fewer parameters, simpler to implement, forces the embedding space to be simultaneously useful for input representation and output scoring.</li>
+<li>Untied: more expressive; the input and output embedding spaces can specialize. Llama 1 used tied embeddings; Llama 2 and 3 use <strong>untied</strong> embeddings, the direction most modern large models have moved for quality reasons.</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Initialization matters more than you think</p>
+<p>Modern models use carefully scaled initialization. The standard method (from GPT-2 and widely adopted) scales down the residual projections (the output projection of attention and the down-projection of MLP) by <span class="arithmatex">\(1/\sqrt{2L}\)</span> where <span class="arithmatex">\(L\)</span> is the number of layers. This controls the variance of the residual stream at initialization, preventing the residual sum from growing as <span class="arithmatex">\(O(\sqrt{L})\)</span>. Without this, deep models (&gt;60 layers) exhibit loss spikes at the start of training.</p>
+</div>
+<hr />
+<h2 id="logit-soft-capping">Logit Soft-Capping<a class="headerlink" href="#logit-soft-capping" title="Permanent link">¶</a></h2>
+<h3 id="the-problem-logit-skew-in-final-layer">The problem: logit skew in final layer<a class="headerlink" href="#the-problem-logit-skew-in-final-layer" title="Permanent link">¶</a></h3>
+<p>During pretraining, the final linear projection from hidden state to vocabulary logits can develop large-magnitude outputs for a small set of tokens. When the model becomes very confident, the cross-entropy gradient for non-predicted tokens effectively vanishes, slowing learning. At inference time, extreme logits after temperature scaling create numerical issues.</p>
+<h3 id="soft-capping">Soft-capping<a class="headerlink" href="#soft-capping" title="Permanent link">¶</a></h3>
+<p>Gemma 2 introduces <strong>logit soft-capping</strong>: a differentiable function that squashes logits toward a cap value <span class="arithmatex">\(c\)</span> while preserving sign and relative ordering for logits well within the cap:</p>
+<div class="arithmatex">\[
+\hat{z}_i = c \cdot \tanh\!\left(\frac{z_i}{c}\right)
+\]</div>
+<p>For small <span class="arithmatex">\(|z_i| \ll c\)</span>, <span class="arithmatex">\(\tanh(z_i/c) \approx z_i/c\)</span>, so <span class="arithmatex">\(\hat{z}_i \approx z_i\)</span> — linear behavior near zero. For large <span class="arithmatex">\(|z_i|\)</span>, <span class="arithmatex">\(\hat{z}_i \to \pm c\)</span> asymptotically. With <span class="arithmatex">\(c=30\)</span> (Gemma 2&rsquo;s setting), logits are prevented from exceeding 30 in magnitude.</p>
+<p>Gemma 2 also applies soft-capping to per-layer <em>attention logits</em> (pre-softmax), with <span class="arithmatex">\(c=50\)</span>:</p>
+<div class="arithmatex">\[
+\hat{a}_{ij} = 50 \cdot \tanh\!\left(\frac{q_i \cdot k_j / \sqrt{d_k}}{50}\right)
+\]</div>
+<p>This combines with QK-norm to doubly guard against attention saturation.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">soft_cap</span><span class="p">(</span><span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">cap</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Differentiable logit soft-capping (Gemma 2).</span>
+
+<span class="sd">    Maps logits smoothly toward [-cap, +cap]. For |z| &lt;&lt; cap, behavior</span>
+<span class="sd">    is approximately linear; for |z| &gt;&gt; cap, asymptotes to ±cap.</span>
+
+<span class="sd">    Args</span>
+<span class="sd">    ----</span>
+<span class="sd">    logits : (..., vocab_size) raw pre-softmax logits</span>
+<span class="sd">    cap    : scalar, e.g. 30.0 for final logits or 50.0 for attention logits</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    Capped logits of same shape as input.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">cap</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">tanh</span><span class="p">(</span><span class="n">logits</span> <span class="o">/</span> <span class="n">cap</span><span class="p">)</span>
+
+
+<span class="c1"># Demonstration</span>
+<span class="n">z</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="o">-</span><span class="mf">100.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">30.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">10.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">,</span> <span class="mf">100.0</span><span class="p">])</span>
+<span class="n">capped</span> <span class="o">=</span> <span class="n">soft_cap</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="n">cap</span><span class="o">=</span><span class="mf">30.0</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Raw    :&quot;</span><span class="p">,</span> <span class="n">z</span><span class="o">.</span><span class="n">tolist</span><span class="p">())</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Capped :&quot;</span><span class="p">,</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">v</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">capped</span><span class="o">.</span><span class="n">tolist</span><span class="p">()])</span>
+<span class="c1"># Output:  Capped: [-30.00, -28.59, -24.88, 0.00, 24.88, 28.59, 30.00]</span>
+<span class="c1"># Note: 100 -&gt; 30, 30 -&gt; 28.59 (compressed, not clipped)</span>
+</code></pre></div>
+<hr />
+<h2 id="attention-sinks-and-sink-tokens">Attention Sinks and Sink Tokens<a class="headerlink" href="#attention-sinks-and-sink-tokens" title="Permanent link">¶</a></h2>
+<h3 id="the-attention-sink-phenomenon">The &ldquo;attention sink&rdquo; phenomenon<a class="headerlink" href="#the-attention-sink-phenomenon" title="Permanent link">¶</a></h3>
+<p>Xiao et al. (&ldquo;Efficient Streaming LLMs with Attention Sinks&rdquo;, 2023) made an empirical observation: attention maps in trained autoregressive models show that some tokens — almost always the first few tokens in the context (especially BOS, Beginning-Of-Sequence) — receive anomalously high attention weights regardless of their content relevance. These are called <strong>attention sinks</strong>.</p>
+<p>Why does this happen? Attention weights must sum to 1 via softmax. When no other token is relevant, the model needs somewhere to &ldquo;dump&rdquo; the probability mass so it can attend to nothing useful without the softmax distribution becoming uniform (which would average together all values and potentially corrupt the output). The initial tokens, having been seen in every context, become the designated garbage-collector for probability mass.</p>
+<h3 id="implications-for-model-design-and-inference">Implications for model design and inference<a class="headerlink" href="#implications-for-model-design-and-inference" title="Permanent link">¶</a></h3>
+<p>The attention sink phenomenon has two practical consequences:</p>
+<ol>
+<li>
+<p><strong>Long-context window extension via StreamingLLM</strong>: if you want to process infinite-length streams, you can evict old KV cache entries safely — <em>as long as you keep the first few tokens&rsquo; KV cache</em> (the sinks). Dropping the sink tokens causes catastrophic loss spikes.</p>
+</li>
+<li>
+<p><strong>Deliberate sink token design</strong>: some models prepend a learnable or fixed &ldquo;register&rdquo; token that is never attended to in the output but acts as a sink for attention. This frees the model from overloading the BOS token.</p>
+</li>
+</ol>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are designing a 70B parameter language model for production deployment. Walk through the key architectural choices you would make compared to the original Transformer, and explain <em>why</em> for each one.</p>
+<p><strong>A:</strong> A strong answer covers the following decisions with their motivations:</p>
+<ol>
+<li><strong>RMSNorm over LayerNorm</strong>: cheaper (no mean subtraction), equally stable; use pre-norm placement for gradient flow.</li>
+<li><strong>SwiGLU FFN</strong>: empirically stronger than ReLU/GELU at the same parameter count; multiplicative gating gives more expressive activations.</li>
+<li><strong>RoPE positional encoding</strong>: relative position property generalizes beyond training length; no embedding table overhead; set <code>rope_theta</code> high (500k) for long-context capability.</li>
+<li><strong>GQA with ~8 KV heads</strong>: dramatically reduces KV cache memory (often 4–8x smaller) with minimal quality loss; critical for deployment economics.</li>
+<li><strong>No biases in linear layers</strong>: negligible quality impact, reduces optimizer memory, simplifies distributed checkpointing.</li>
+<li><strong>Untied input/output embeddings</strong>: improved model quality at scale; the cost is <span class="arithmatex">\(V \times d\)</span> extra parameters (~130M for a 32K vocab at d=4096), which is acceptable.</li>
+<li><strong>QK-norm</strong> (for very large scale or long training): prevents attention logit explosion during extended training runs.</li>
+<li><strong>Logit soft-capping</strong> (optional, Gemma 2 style): additional guard against output logit saturation, especially with large vocabularies.</li>
+<li><strong>Scaled residual initialization</strong>: scale down output projections by <span class="arithmatex">\(1/\sqrt{2L}\)</span> to keep residual variance stable at initialization in deep models.</li>
+</ol>
+</div>
+<hr />
+<h2 id="depth-vs-width-trade-offs">Depth vs Width Trade-offs<a class="headerlink" href="#depth-vs-width-trade-offs" title="Permanent link">¶</a></h2>
+<h3 id="why-we-go-deep">Why we go deep<a class="headerlink" href="#why-we-go-deep" title="Permanent link">¶</a></h3>
+<p>Scaling laws (Kaplan et al., &ldquo;Scaling Laws for Neural Language Models&rdquo;, 2020; Hoffmann et al., &ldquo;Training Compute-Optimal Large Language Models&rdquo; / Chinchilla, 2022) largely treat architecture shape as secondary to total parameter count and compute budget. See <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a> for the full story. But within a fixed parameter budget, <em>how</em> to allocate parameters between depth (number of layers) and width (hidden dimension, number of heads, MLP expansion) matters.</p>
+<p>The dominant empirical finding is that <strong>depth is worth more than width</strong> up to a point. Deeper models can represent functions of exponentially higher complexity (via function composition) than wide-but-shallow ones. However, deeper models are harder to parallelize in pipeline parallel training (more micro-batches needed to fill the pipeline bubble) and have slower sequential KV-cache generation at inference.</p>
+<h3 id="practical-aspect-ratios">Practical aspect ratios<a class="headerlink" href="#practical-aspect-ratios" title="Permanent link">¶</a></h3>
+<p>The ratio <span class="arithmatex">\(L / d_{\text{model}}\)</span> tends to be consistent across generations:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Layers (<span class="arithmatex">\(L\)</span>)</th>
+<th>Hidden dim (<span class="arithmatex">\(d\)</span>)</th>
+<th><span class="arithmatex">\(L/d\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPT-2 1.5B</td>
+<td>48</td>
+<td>1600</td>
+<td>0.030</td>
+</tr>
+<tr>
+<td>Llama 2 7B</td>
+<td>32</td>
+<td>4096</td>
+<td>0.0078</td>
+</tr>
+<tr>
+<td>Llama 3 70B</td>
+<td>80</td>
+<td>8192</td>
+<td>0.0098</td>
+</tr>
+<tr>
+<td>Qwen 2.5 72B</td>
+<td>80</td>
+<td>8192</td>
+<td>0.0098</td>
+</tr>
+<tr>
+<td>DeepSeek-V3 (dense equiv.)</td>
+<td>61</td>
+<td>7168</td>
+<td>0.0085</td>
+</tr>
+</tbody>
+</table>
+<p>Modern 7B-class models favor roughly 32 layers with <span class="arithmatex">\(d=4096\)</span>, yielding an attention head dimension of 128 (with 32 heads). Larger models scale <span class="arithmatex">\(d\)</span> and <span class="arithmatex">\(L\)</span> roughly in proportion. Going much beyond <span class="arithmatex">\(d=8192\)</span> per attention head becomes hardware-unfriendly: matmuls want square-ish tensors, and very large hidden dimensions with few heads under-utilize hardware parallelism.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: parameter count breakdown for a 7B model</p>
+<p>Configuration: <span class="arithmatex">\(L=32\)</span>, <span class="arithmatex">\(d=4096\)</span>, <span class="arithmatex">\(H_q=32\)</span>, <span class="arithmatex">\(H_{kv}=8\)</span>, <span class="arithmatex">\(d_k=128\)</span>, intermediate=11008 (SwiGLU).</p>
+<p><strong>Per-layer parameter count:</strong></p>
+<p>Attention (<span class="arithmatex">\(Q, K, V, O\)</span> projections):
+$<span class="arithmatex">\(P_{\text{attn}} = d \cdot H_q \cdot d_k + d \cdot H_{kv} \cdot d_k \times 2 + H_q \cdot d_k \cdot d\)</span>$
+$<span class="arithmatex">\(= 4096 \times 4096 + 2 \times 4096 \times 1024 + 4096 \times 4096 = 4 \times 4096^2 / 2 + \ldots\)</span>$</p>
+<p>Let&rsquo;s be precise. With GQA:
+- <span class="arithmatex">\(Q\)</span>: <span class="arithmatex">\(d \times (H_q \times d_k) = 4096 \times 4096 = 16.8M\)</span>
+- <span class="arithmatex">\(K\)</span>: <span class="arithmatex">\(d \times (H_{kv} \times d_k) = 4096 \times 1024 = 4.2M\)</span>
+- <span class="arithmatex">\(V\)</span>: <span class="arithmatex">\(4096 \times 1024 = 4.2M\)</span>
+- <span class="arithmatex">\(O\)</span>: <span class="arithmatex">\(4096 \times 4096 = 16.8M\)</span>
+- Attention total: <span class="arithmatex">\(\approx 42M\)</span></p>
+<p>MLP (SwiGLU with intermediate=11008):
+- gate_proj + up_proj: <span class="arithmatex">\(2 \times 4096 \times 11008 = 90.2M\)</span>
+- down_proj: <span class="arithmatex">\(11008 \times 4096 = 45.1M\)</span>
+- MLP total: <span class="arithmatex">\(\approx 135M\)</span></p>
+<p>RMSNorm (2 per layer, negligible): <span class="arithmatex">\(2 \times 4096 \approx 8K\)</span></p>
+<p><strong>Per-layer total</strong>: <span class="arithmatex">\(\approx 177M\)</span> parameters.</p>
+<p><strong>32 layers</strong>: <span class="arithmatex">\(32 \times 177M \approx 5.66B\)</span></p>
+<p><strong>Embeddings (untied)</strong>: input: <span class="arithmatex">\(32000 \times 4096 \approx 131M\)</span>; output (LM head): same <span class="arithmatex">\(\approx 131M\)</span>. Total embedding: <span class="arithmatex">\(\approx 262M\)</span>.</p>
+<p><strong>Grand total</strong>: <span class="arithmatex">\(5.66B + 0.26B \approx 5.9B\)</span> — close to the marketed &ldquo;7B&rdquo; (which often includes rounded counts and other components). The discrepancy also comes from Llama 2 7B actually having a vocab size of 32,000 and slightly different intermediate size.</p>
+</div>
+<hr />
+<h2 id="the-modern-transformer-recipe">The Modern Transformer Recipe<a class="headerlink" href="#the-modern-transformer-recipe" title="Permanent link">¶</a></h2>
+<p>We now have enough pieces to assemble a complete reference. The table below summarizes the consensus choices circa 2024–2026, distinguishing &ldquo;near-universal&rdquo; (adopted by nearly all recent models) from &ldquo;model-specific&rdquo; (used by some, absent in others).</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>GPT-2 (2019)</th>
+<th>Modern Consensus</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Normalization</td>
+<td>LayerNorm (post)</td>
+<td>RMSNorm (pre)</td>
+<td>Zhang &amp; Sennrich 2019</td>
+</tr>
+<tr>
+<td>MLP activation</td>
+<td>GeLU</td>
+<td>SwiGLU / GeGLU</td>
+<td>Shazeer 2020</td>
+</tr>
+<tr>
+<td>Position encoding</td>
+<td>Learned absolute</td>
+<td>RoPE</td>
+<td>Su et al. 2021</td>
+</tr>
+<tr>
+<td>Multi-head variant</td>
+<td>MHA</td>
+<td>GQA</td>
+<td>Ainslie et al. 2023</td>
+</tr>
+<tr>
+<td>Bias in Linear</td>
+<td>Yes</td>
+<td>No</td>
+<td>Empirical preference</td>
+</tr>
+<tr>
+<td>Tied embeddings</td>
+<td>Yes</td>
+<td>Untied (usually)</td>
+<td>Llama 2+ trend</td>
+</tr>
+<tr>
+<td>QK-norm</td>
+<td>No</td>
+<td>Yes (large scale)</td>
+<td>Gemma 2, Qwen 2.5</td>
+</tr>
+<tr>
+<td>Logit soft-cap</td>
+<td>No</td>
+<td>Optional</td>
+<td>Gemma 2</td>
+</tr>
+<tr>
+<td>Attention sink</td>
+<td>Ignored</td>
+<td>Keep BOS in KV cache</td>
+<td>StreamingLLM, 2023</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Putting it all together: a from-scratch ModernTransformerBlock.</span>
+<span class="sd">This implements the full recipe: pre-RMSNorm, SwiGLU, GQA with RoPE,</span>
+<span class="sd">no biases, QK-norm optional. Runnable as a standalone unit test.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RMSNorm</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-5</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">eps</span> <span class="o">=</span> <span class="n">eps</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">dim</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">rsqrt</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">eps</span>
+                               <span class="p">)</span><span class="o">.</span><span class="n">type_as</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SwiGLUFFN</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">intermediate</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">gate</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">intermediate</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">up</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">intermediate</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">down</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">intermediate</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span>  <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">down</span><span class="p">(</span><span class="n">F</span><span class="o">.</span><span class="n">silu</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="n">x</span><span class="p">))</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">up</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ModernTransformerBlock</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A single Transformer block implementing the modern (2024-era) recipe:</span>
+<span class="sd">      - Pre-RMSNorm on both attention and MLP sublayers</span>
+<span class="sd">      - GQA-style attention (n_kv_heads &lt;= n_heads)</span>
+<span class="sd">      - SwiGLU FFN</span>
+<span class="sd">      - No biases anywhere</span>
+<span class="sd">      - Optional QK-norm</span>
+
+<span class="sd">    Does NOT include RoPE application here for brevity; in a full model</span>
+<span class="sd">    RoPE would be applied to Q and K after projection.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">n_kv_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">intermediate</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">qk_norm</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-5</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">d_model</span> <span class="o">%</span> <span class="n">n_heads</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="k">assert</span> <span class="n">n_heads</span> <span class="o">%</span> <span class="n">n_kv_heads</span> <span class="o">==</span> <span class="mi">0</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span>    <span class="o">=</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_kv_heads</span> <span class="o">=</span> <span class="n">n_kv_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_rep</span>      <span class="o">=</span> <span class="n">n_heads</span> <span class="o">//</span> <span class="n">n_kv_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span>   <span class="o">=</span> <span class="n">d_model</span> <span class="o">//</span> <span class="n">n_heads</span>
+
+        <span class="c1"># Pre-norm before attention</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attn_norm</span> <span class="o">=</span> <span class="n">RMSNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">eps</span><span class="p">)</span>
+        <span class="c1"># Attention projections — no bias</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">q_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span>    <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">k_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_kv_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">v_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_kv_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">o_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span>                    <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="c1"># Optional QK-norm</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">qk_norm</span> <span class="o">=</span> <span class="n">qk_norm</span>
+        <span class="k">if</span> <span class="n">qk_norm</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">q_norm</span> <span class="o">=</span> <span class="n">RMSNorm</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">eps</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">k_norm</span> <span class="o">=</span> <span class="n">RMSNorm</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">eps</span><span class="p">)</span>
+
+        <span class="c1"># Pre-norm before MLP</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ffn_norm</span> <span class="o">=</span> <span class="n">RMSNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">eps</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span>      <span class="o">=</span> <span class="n">SwiGLUFFN</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">intermediate</span><span class="p">)</span>
+
+        <span class="c1"># Scaled residual initialization for stability in deep models</span>
+        <span class="c1"># Scale output projections by 1/sqrt(2*n_layers); caller should</span>
+        <span class="c1"># set this post-construction, e.g.:</span>
+        <span class="c1">#   for block in blocks:</span>
+        <span class="c1">#       block.o_proj.weight.data.mul_(1.0 / math.sqrt(2 * n_layers))</span>
+        <span class="c1">#       block.ffn.down.weight.data.mul_(1.0 / math.sqrt(2 * n_layers))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_repeat_kv</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_rep</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">x</span>
+        <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span>
+            <span class="o">*</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_kv_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_rep</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">*</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">C</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="c1"># --- Attention sublayer (pre-norm) ---</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn_norm</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">q_proj</span><span class="p">(</span><span class="n">h</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span>    <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_proj</span><span class="p">(</span><span class="n">h</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_kv_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">v_proj</span><span class="p">(</span><span class="n">h</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_kv_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">qk_norm</span><span class="p">:</span>
+            <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">q_norm</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+            <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_norm</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_repeat_kv</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_repeat_kv</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+
+        <span class="c1"># (B, H, T, d_k)</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+
+        <span class="c1"># Causal mask for autoregressive decoding</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tril</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">))</span><span class="o">.</span><span class="n">bool</span><span class="p">()</span>
+        <span class="n">attn_logits</span> <span class="o">=</span> <span class="p">(</span><span class="n">q</span> <span class="o">@</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+        <span class="n">attn_logits</span> <span class="o">=</span> <span class="n">attn_logits</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="o">~</span><span class="n">mask</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>
+        <span class="n">attn_w</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">attn_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">out</span> <span class="o">=</span> <span class="p">(</span><span class="n">attn_w</span> <span class="o">@</span> <span class="n">v</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">C</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">o_proj</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>          <span class="c1"># residual connection</span>
+
+        <span class="c1"># --- MLP sublayer (pre-norm) ---</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ffn_norm</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>  <span class="c1"># residual connection</span>
+
+        <span class="k">return</span> <span class="n">x</span>
+
+
+<span class="c1"># --- Integration test ---</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">block</span> <span class="o">=</span> <span class="n">ModernTransformerBlock</span><span class="p">(</span>
+    <span class="n">d_model</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">n_heads</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">n_kv_heads</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">intermediate</span><span class="o">=</span><span class="mi">1365</span><span class="p">,</span>  <span class="c1"># 8/3 * 512 ≈ 1365</span>
+    <span class="n">qk_norm</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span>  <span class="c1"># batch=2, seq=16, d_model=512</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">block</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Block output shape: </span><span class="si">{</span><span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>          <span class="c1"># (2, 16, 512)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output norm (should be finite): </span><span class="si">{</span><span class="n">y</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">param_count</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">block</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Block parameter count: </span><span class="si">{</span><span class="n">param_count</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># ~4.2M for this config</span>
+</code></pre></div>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>RMSNorm</strong> (pre-norm placement) replaces LayerNorm in virtually all modern LLMs. It is ~10–30% faster, equally stable, and requires no bias parameters.</li>
+<li><strong>SwiGLU</strong> provides multiplicative gating that consistently outperforms ReLU/GELU FFNs at equal parameter cost; the three-weight design requires scaling the intermediate dimension to <span class="arithmatex">\(\frac{8}{3}d\)</span> to stay iso-parameter.</li>
+<li><strong>RoPE</strong> enables relative positional encoding without a separate embedding table, generalizes beyond training context length, and is the universal choice for decoder-only models. The <code>rope_theta</code> base should be set high (100k–500k) for long-context models.</li>
+<li><strong>GQA</strong> (Grouped Query Attention) reduces KV cache memory by a factor equal to the grouping ratio (commonly 4–8x) with minimal quality degradation; this is the key architectural enabler for long-context inference.</li>
+<li><strong>QK-norm</strong> (normalizing Q and K per head before computing attention scores) prevents attention logit explosion in large or long-training models; used in Gemma 2 and DeepSeek-V3.</li>
+<li><strong>No biases</strong> in linear layers is almost universal at the frontier; biases add optimizer memory overhead and negligible quality benefit, especially with pre-RMSNorm.</li>
+<li><strong>Logit soft-capping</strong> (<span class="arithmatex">\(z \to c \cdot \tanh(z/c)\)</span>) is a differentiable alternative to hard clipping that prevents output distribution collapse and improves numerical stability.</li>
+<li><strong>Attention sinks</strong> (typically the BOS token) must be preserved in the KV cache for streaming/long-context inference; evicting them causes catastrophic attention pattern collapse.</li>
+<li><strong>Scaled residual initialization</strong> (<span class="arithmatex">\(\times 1/\sqrt{2L}\)</span> on output projections) is essential for stable training of very deep models; without it, the residual stream variance grows with depth.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>The modern transformer recipe — RMSNorm, SwiGLU, RoPE, GQA, and QK-norm — has become near-universal across frontier open-source models (Llama 3, Qwen 2.5, DeepSeek-V3, Mistral) since 2023, with logit soft-capping and attention-sink awareness rounding out the toolkit for stable long-context training.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1910.07467">Zhang &amp; Sennrich, <em>Root Mean Square Layer Normalization</em> (2019)</a> — establishes that re-scaling (not re-centering) drives LayerNorm&rsquo;s benefit, motivating the lighter RMSNorm used in virtually all modern LLMs.</li>
+<li><a href="https://arxiv.org/abs/2002.05202">Shazeer, <em>GLU Variants Improve Transformer</em> (2020)</a> — introduces SwiGLU and GeGLU gated feed-forward networks that consistently outperform ReLU/GELU at equal parameter cost.</li>
+<li><a href="https://arxiv.org/abs/2104.09864">Su et al., <em>RoFormer: Enhanced Transformer with Rotary Position Embedding</em> (2021)</a> — proposes RoPE, encoding relative position via rotation matrices in the attention QK dot-product; now the dominant positional scheme for decoder-only models.</li>
+<li><a href="https://arxiv.org/abs/2305.13245">Ainslie et al., <em>GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</em> (2023)</a> — shows grouped-query attention achieves MHA quality at MQA memory cost and provides an uptraining recipe for existing checkpoints.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2309.00071">Peng et al., <em>YaRN: Efficient Context Window Extension of Large Language Models</em> (2023)</a> — extends RoPE to 128K+ contexts via frequency-aware interpolation, requiring 10x fewer tokens than naive fine-tuning; adopted by Mistral, Qwen, and others.</li>
+<li><a href="https://arxiv.org/abs/2408.00118">The Gemma Team, <em>Gemma 2: Improving Open Language Models at a Practical Size</em> (2024)</a> — introduces QK-norm and logit soft-capping (<span class="arithmatex">\(c \cdot \tanh(z/c)\)</span>) as complementary stability mechanisms, alongside interleaved sliding-window attention.</li>
+<li><a href="https://arxiv.org/abs/2412.19437">DeepSeek-AI, <em>DeepSeek-V3 Technical Report</em> (2024)</a> — comprehensive recipe for a 671B MoE model using MLA, SwiGLU, RMSNorm, and auxiliary-loss-free load balancing; shows the modern stack scales to frontier quality.</li>
+<li><a href="https://arxiv.org/abs/2407.21783">Meta AI, <em>The Llama 3 Herd of Models</em> (2024)</a> — documents the full open-source recipe at 8B–405B scale: GQA, RoPE with <code>theta=500000</code>, untied embeddings, and a 128K context window.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/huggingface/transformers">huggingface/transformers</a> — canonical implementations of every major modern architecture (Llama, Mistral, Qwen, Gemma) with config files exposing every design knob discussed in this chapter.</li>
+<li><a href="https://github.com/EleutherAI/gpt-neox">EleutherAI/gpt-neox</a> — research training framework with clean reference implementations of RoPE, ALiBi, SwiGLU, and GQA for GPU-scale pretraining.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://lilianweng.github.io/posts/2023-01-27-the-transformer-family-v2/">Lilian Weng, <em>The Transformer Family Version 2.0</em> (2023)</a> — authoritative survey of architectural improvements (efficient attention, positional encoding variants, long-context techniques) with clear diagrams and equations.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Zhang and Sennrich, &ldquo;Root Mean Square Layer Normalization,&rdquo; NeurIPS 2019 — the RMSNorm paper.</li>
+<li>Noam Shazeer, &ldquo;GLU Variants Improve Transformer,&rdquo; arXiv 2020 — SwiGLU and GeGLU.</li>
+<li>Su et al., &ldquo;RoFormer: Enhanced Transformer with Rotary Position Embedding,&rdquo; arXiv 2021 — original RoPE paper.</li>
+<li>Ainslie et al., &ldquo;GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints,&rdquo; EMNLP 2023 — GQA, including a method for uptraining existing MHA checkpoints.</li>
+<li>Touvron et al., &ldquo;Llama 2: Open Foundation and Fine-Tuned Chat Models,&rdquo; arXiv 2023 — a comprehensive blueprint of the modern recipe in an openly released model.</li>
+<li>Team Gemma, &ldquo;Gemma 2: Improving Open Language Models at a Practical Size,&rdquo; Google DeepMind 2024 — QK-norm, logit soft-capping, and interleaved sliding-window attention.</li>
+<li>Xiao et al., &ldquo;Efficient Streaming LLMs with Attention Sinks,&rdquo; ICLR 2024 — attention sink phenomenon and StreamingLLM.</li>
+<li>Kaplan et al., &ldquo;Scaling Laws for Neural Language Models,&rdquo; arXiv 2020 — depth vs width trade-offs in the context of scaling.</li>
+<li>Meta AI, Llama 3 model card and technical report, 2024 — updated RoPE theta and architectural decisions at 70B/405B scale.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="09-mixture-of-experts.html"><span class="pn-label">← Previous</span><span class="pn-title">Mixture-of-Experts (MoE) Architectures</span></a>
+<a class="next" href="11-ssm-and-alternatives.html"><span class="pn-label">Next →</span><span class="pn-title">Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#rmsnorm-cheaper-equally-stable-normalization">RMSNorm: Cheaper, Equally Stable Normalization</a></li>
+<li class="toc-l3"><a href="#the-problem-with-layernorm">The problem with LayerNorm</a></li>
+<li class="toc-l3"><a href="#rmsnorm-derivation">RMSNorm derivation</a></li>
+<li class="toc-l3"><a href="#pre-norm-vs-post-norm">Pre-norm vs post-norm</a></li>
+<li class="toc-l2"><a href="#swiglu-a-better-mlp-activation">SwiGLU: A Better MLP Activation</a></li>
+<li class="toc-l3"><a href="#from-relu-to-gelu-to-swiglu">From ReLU to GELU to SwiGLU</a></li>
+<li class="toc-l3"><a href="#swiglu-mechanics">SwiGLU mechanics</a></li>
+<li class="toc-l2"><a href="#rope-rotary-position-embeddings">RoPE: Rotary Position Embeddings</a></li>
+<li class="toc-l3"><a href="#why-rope-won">Why RoPE won</a></li>
+<li class="toc-l2"><a href="#grouped-query-attention-gqa">Grouped Query Attention (GQA)</a></li>
+<li class="toc-l2"><a href="#qk-norm-stabilizing-attention-logits-at-scale">QK-Norm: Stabilizing Attention Logits at Scale</a></li>
+<li class="toc-l3"><a href="#the-problem-logit-explosion">The problem: logit explosion</a></li>
+<li class="toc-l3"><a href="#qk-norm-normalize-q-and-k-before-attention">QK-norm: normalize Q and K before attention</a></li>
+<li class="toc-l2"><a href="#no-biases-tieduntied-embeddings-and-initialization">No Biases, Tied/Untied Embeddings, and Initialization</a></li>
+<li class="toc-l3"><a href="#dropping-biases">Dropping biases</a></li>
+<li class="toc-l3"><a href="#tied-vs-untied-embeddings">Tied vs untied embeddings</a></li>
+<li class="toc-l2"><a href="#logit-soft-capping">Logit Soft-Capping</a></li>
+<li class="toc-l3"><a href="#the-problem-logit-skew-in-final-layer">The problem: logit skew in final layer</a></li>
+<li class="toc-l3"><a href="#soft-capping">Soft-capping</a></li>
+<li class="toc-l2"><a href="#attention-sinks-and-sink-tokens">Attention Sinks and Sink Tokens</a></li>
+<li class="toc-l3"><a href="#the-attention-sink-phenomenon">The &amp;ldquo;attention sink&amp;rdquo; phenomenon</a></li>
+<li class="toc-l3"><a href="#implications-for-model-design-and-inference">Implications for model design and inference</a></li>
+<li class="toc-l2"><a href="#depth-vs-width-trade-offs">Depth vs Width Trade-offs</a></li>
+<li class="toc-l3"><a href="#why-we-go-deep">Why we go deep</a></li>
+<li class="toc-l3"><a href="#practical-aspect-ratios">Practical aspect ratios</a></li>
+<li class="toc-l2"><a href="#the-modern-transformer-recipe">The Modern Transformer Recipe</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

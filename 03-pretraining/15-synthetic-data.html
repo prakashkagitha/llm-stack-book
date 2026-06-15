@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synthetic Data for Pre- and Post-Training — The LLM Stack</title>
+<meta name="description" content="Generating training tokens with models rather than scraping them: rephrasing/restyling the web (WRAP), textbook-style generation (Phi, Cosmopedia/FineWeb-Edu), ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="active" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="315-synthetic-data-for-pre-and-post-training">3.15 Synthetic Data for Pre- and Post-Training<a class="headerlink" href="#315-synthetic-data-for-pre-and-post-training" title="Permanent link">¶</a></h1>
+<p>For most of deep learning&rsquo;s history, &ldquo;data&rdquo; meant something you <em>found</em>: ImageNet was scraped and hand-labeled, Common Crawl was harvested from the open web, and the implicit contract was that the internet would always be bigger than your model&rsquo;s appetite. That contract is breaking. Frontier models are now trained on tens of trillions of tokens, and the supply of <em>high-quality</em> human-written text — clean prose, correct code, well-structured explanations — is finite and largely exhausted. The Chinchilla math from <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a> says we want roughly 20 tokens per parameter; a 1-trillion-parameter model wants ~20T tokens, and the clean, deduplicated, English subset of the web is smaller than that. We are running into a <strong>data wall</strong>.</p>
+<p>Synthetic data is the response. Instead of (or in addition to) scraping tokens, we <em>generate</em> them with a model — rephrasing messy web text into clean prose, writing textbook-style explanations of concepts, manufacturing instruction–answer pairs, or distilling the step-by-step reasoning of a strong teacher into a smaller student. Done well, this is one of the highest-leverage techniques in the modern stack: it converts <em>compute</em> (cheap, scalable) into <em>high-quality tokens</em> (scarce), and it lets you target exactly the distribution you want. Done badly, it is a slow-motion catastrophe — <strong>model collapse</strong>, where models trained on their own outputs progressively forget the tails of the distribution and converge to bland, narrowed mush.</p>
+<p>This chapter is about doing it well. We will cover the four dominant recipes — web rephrasing (WRAP), textbook-style generation (Phi, Cosmopedia, FineWeb-Edu), instruction-augmented pretraining, and reasoning-trace distillation for post-training. We will derive when mixing synthetic with natural data helps versus hurts, build the math of model collapse from first principles, write runnable generation-and-verification pipelines, and catalog the failure modes — contamination, distributional narrowing, fact drift — that separate a useful synthetic corpus from a poisoned one.</p>
+<p>This chapter builds on <a href="../03-pretraining/01-pretraining-data.html">Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a> (where natural tokens come from), <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a> (the filters synthetic data must also pass), and <a href="../03-pretraining/14-data-mixing-curriculum.html">Data Mixing, Domain Weighting &amp; Curriculum</a> (how to weight a natural/synthetic blend). The post-training half connects to <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a>, <a href="../05-posttraining-alignment/12-distillation-compression.html">Distillation, Model Compression &amp; Knowledge Transfer</a>, and <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a>.</p>
+<hr />
+<h2 id="why-generate-tokens-at-all">Why Generate Tokens At All?<a class="headerlink" href="#why-generate-tokens-at-all" title="Permanent link">¶</a></h2>
+<h3 id="the-data-wall-quantified">The data wall, quantified<a class="headerlink" href="#the-data-wall-quantified" title="Permanent link">¶</a></h3>
+<p>Let us make the scarcity concrete. Estimates of the high-quality public text stock vary, but a useful order-of-magnitude figure is that the <em>clean, deduplicated, English</em> web is on the order of <span class="arithmatex">\(10^{13}\)</span> tokens — call it tens of trillions, with a long tail of lower-quality text beyond that. Meanwhile training token counts have grown roughly an order of magnitude every couple of years. When the model&rsquo;s appetite catches up to the supply, you have three moves:</p>
+<ol>
+<li><strong>Train more epochs over the same data.</strong> Repetition gives diminishing returns and eventually <em>hurts</em> — re-seeing the same tokens four-plus times yields little new signal and risks memorization (see <a href="../13-interp-safety-gov/03-privacy-memorization-dp.html">Privacy, Memorization &amp; Differential Privacy for LLMs</a>). The Muennighoff et al. &ldquo;data-constrained scaling&rdquo; work quantifies this: up to ~4 epochs is roughly as good as fresh data, after which value decays fast.</li>
+<li><strong>Lower the quality bar</strong> and ingest more of the noisy tail. This dilutes the average token&rsquo;s value and can degrade the model.</li>
+<li><strong>Manufacture new high-quality tokens</strong> with a generator model. This is synthetic data.</li>
+</ol>
+<p>The third option is attractive because of an asymmetry: <strong>verifying or restyling text is easier than writing it from scratch</strong>, and a model that is mediocre at open-ended generation can still be excellent at <em>transforming</em> existing good text. That asymmetry — generation-easier-than-from-scratch, verification-easier-than-generation — is the engine behind every recipe in this chapter.</p>
+<h3 id="a-taxonomy-of-synthetic-data">A taxonomy of synthetic data<a class="headerlink" href="#a-taxonomy-of-synthetic-data" title="Permanent link">¶</a></h3>
+<p>It helps to classify by <em>how far</em> the synthetic text departs from a human-written source. The further you go, the more value you can add — and the more risk you take on.</p>
+<figure class="viz" id="fig-syndata-grounding-spectrum">
+<svg viewBox="0 0 860 310" role="img" aria-label="The synthetic-data grounding spectrum: four stages from source-grounded rephrasing on the left (low risk) to free-generation on the right (high risk).">
+  <defs>
+    <linearGradient id="sgs-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="var(--good,#2b8a6f)"/>
+      <stop offset="100%" stop-color="var(--warn,#c2410c)"/>
+    </linearGradient>
+  </defs>
+  <style>
+    #fig-syndata-grounding-spectrum text  { fill: var(--ink-soft,#374151); }
+    #fig-syndata-grounding-spectrum .ttl  { font: 700 10.5px var(--sans,sans-serif); }
+    #fig-syndata-grounding-spectrum .sub  { font: 400 8.5px var(--mono,monospace);  fill: var(--muted,#6b7280); }
+    #fig-syndata-grounding-spectrum .body { font: 400 8.5px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-syndata-grounding-spectrum .axl  { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-syndata-grounding-spectrum .foot { font: 400 8px var(--sans,sans-serif);   fill: var(--muted,#6b7280); }
+  </style>
+
+
+  <rect x="12" y="34" width="800" height="10" rx="5" fill="url(#sgs-grad)" opacity="0.85"/>
+  <polygon points="810,27 830,39 810,51" fill="var(--warn,#c2410c)" opacity="0.85"/>
+  <text x="14"  y="24" class="axl" text-anchor="start">Source-grounded (low risk)</text>
+  <text x="808" y="24" class="axl" text-anchor="end">Free-generation (high risk)</text>
+
+
+
+  <rect x="12"  y="58" width="190" height="148" rx="7" class="v-fill" stroke="var(--good,#2b8a6f)"  stroke-width="1.8"/>
+  <text x="107" y="77"  text-anchor="middle" class="ttl" fill="var(--good,#2b8a6f)">Rephrase / restyle</text>
+  <text x="107" y="89"  text-anchor="middle" class="sub">(WRAP)</text>
+  <line x1="22"  y1="95"  x2="192" y2="95"  stroke="var(--good,#2b8a6f)" stroke-width="0.5" opacity="0.25"/>
+  <text x="107" y="109" text-anchor="middle" class="body">Rewrite a real doc;</text>
+  <text x="107" y="121" text-anchor="middle" class="body">clean style. All facts</text>
+  <text x="107" y="133" text-anchor="middle" class="body">traceable to source.</text>
+
+
+  <rect x="212" y="58" width="190" height="148" rx="7" class="v-fill" stroke="var(--accent,#059669)" stroke-width="1.8"/>
+  <text x="307" y="75"  text-anchor="middle" class="ttl" fill="var(--accent,#059669)">Knowledge-</text>
+  <text x="307" y="87"  text-anchor="middle" class="ttl" fill="var(--accent,#059669)">augmented</text>
+  <text x="307" y="99"  text-anchor="middle" class="sub">(add facts, Q&amp;A,</text>
+  <text x="307" y="109" text-anchor="middle" class="sub">worked examples)</text>
+  <line x1="222" y1="115" x2="392" y2="115" stroke="var(--accent,#059669)" stroke-width="0.5" opacity="0.25"/>
+  <text x="307" y="129" text-anchor="middle" class="body">Seed: real passage +</text>
+  <text x="307" y="141" text-anchor="middle" class="body">model-added structure.</text>
+  <text x="307" y="153" text-anchor="middle" class="body">Extras not grounded.</text>
+
+
+  <rect x="412" y="58" width="190" height="148" rx="7" class="v-fill" stroke="var(--warn,#e0a106)"  stroke-width="1.8"/>
+  <text x="507" y="75"  text-anchor="middle" class="ttl" fill="var(--warn,#b45309)">Instruction / QA</text>
+  <text x="507" y="87"  text-anchor="middle" class="ttl" fill="var(--warn,#b45309)">from a passage</text>
+  <text x="507" y="99"  text-anchor="middle" class="sub">(grounded reading-</text>
+  <text x="507" y="109" text-anchor="middle" class="sub">comprehension)</text>
+  <line x1="422" y1="115" x2="592" y2="115" stroke="var(--warn,#e0a106)" stroke-width="0.5" opacity="0.25"/>
+  <text x="507" y="129" text-anchor="middle" class="body">Questions answered by</text>
+  <text x="507" y="141" text-anchor="middle" class="body">extracting from passage.</text>
+  <text x="507" y="153" text-anchor="middle" class="body">Doc-seeded; reformatted.</text>
+
+
+  <rect x="612" y="58" width="238" height="148" rx="7" class="v-fill" stroke="var(--warn,#c2410c)"  stroke-width="2"/>
+  <text x="731" y="75"  text-anchor="middle" class="ttl" fill="var(--warn,#c2410c)">Pure textbook /</text>
+  <text x="731" y="87"  text-anchor="middle" class="ttl" fill="var(--warn,#c2410c)">curated-prompt gen</text>
+  <text x="731" y="99"  text-anchor="middle" class="sub">(Phi, Cosmopedia)</text>
+  <line x1="622" y1="105" x2="840" y2="105" stroke="var(--warn,#c2410c)" stroke-width="0.5" opacity="0.25"/>
+  <text x="731" y="119" text-anchor="middle" class="body">Topic-prompt only;</text>
+  <text x="731" y="131" text-anchor="middle" class="body">writes from parametric</text>
+  <text x="731" y="143" text-anchor="middle" class="body">memory. Highest pedagogy,</text>
+  <text x="731" y="155" text-anchor="middle" class="body">highest hallucination risk.</text>
+
+
+
+  <line x1="207" y1="206" x2="207" y2="230" stroke="currentColor" stroke-width="0.8" stroke-dasharray="3,3" opacity="0.35"/>
+  <polygon points="203,206 211,206 207,212" fill="currentColor" opacity="0.28"/>
+  <text x="207" y="242" text-anchor="middle" class="foot">grounded — every fact</text>
+  <text x="207" y="253" text-anchor="middle" class="foot">traceable to a real doc</text>
+
+
+  <line x1="507" y1="206" x2="507" y2="230" stroke="currentColor" stroke-width="0.8" stroke-dasharray="3,3" opacity="0.35"/>
+  <polygon points="503,206 511,206 507,212" fill="currentColor" opacity="0.28"/>
+  <text x="507" y="242" text-anchor="middle" class="foot">seeded by a doc</text>
+  <text x="507" y="253" text-anchor="middle" class="foot">but reformatted</text>
+
+
+  <line x1="731" y1="206" x2="731" y2="230" stroke="currentColor" stroke-width="0.8" stroke-dasharray="3,3" opacity="0.35"/>
+  <polygon points="727,206 735,206 731,212" fill="currentColor" opacity="0.28"/>
+  <text x="731" y="242" text-anchor="middle" class="foot">seeded only</text>
+  <text x="731" y="253" text-anchor="middle" class="foot">by a topic prompt</text>
+
+
+  <text x="430" y="290" text-anchor="middle" class="foot">Increasing departure from human-written source means more value AND more risk</text>
+</svg>
+<figcaption><b>The synthetic-data grounding spectrum.</b> Four recipe families span a single risk axis: at the safe left end, rephrase/restyle (WRAP) inherits all facts from the source; at the risky right end, pure textbook generation (Phi, Cosmopedia) writes entirely from parametric memory. The further a recipe departs from a human-written source, the more pedagogical density it can achieve — and the more hallucination risk it accumulates.</figcaption>
+</figure>
+
+<ul>
+<li><strong>Source-grounded transformation</strong> (WRAP-style rephrasing). Take a real document; rewrite it in a target style (clean, formal, Q&amp;A). Facts are inherited from the source, so hallucination risk is bounded by the source&rsquo;s accuracy plus paraphrase drift.</li>
+<li><strong>Knowledge-augmented generation.</strong> Seed with a real passage but <em>add</em> structure the model knows — worked examples, contrasting cases, follow-up questions. Risk rises because added content is not grounded.</li>
+<li><strong>Prompt-seeded generation</strong> (Cosmopedia, Phi textbooks). Seed only with a topic, audience, and format (&ldquo;write a textbook section on photosynthesis for a high-schooler&rdquo;). The model writes from its parametric knowledge. Highest density of clean pedagogical text, highest hallucination risk.</li>
+<li><strong>Reasoning-trace distillation</strong> (post-training). Have a strong teacher solve problems with chain-of-thought, then train a student on those traces — ideally keeping only traces whose final answer is <em>verified</em> correct.</li>
+</ul>
+<hr />
+<h2 id="recipe-1-rephrasing-the-web-wrap">Recipe 1 — Rephrasing the Web (WRAP)<a class="headerlink" href="#recipe-1-rephrasing-the-web-wrap" title="Permanent link">¶</a></h2>
+<p>The lowest-risk, highest-ROI recipe is <strong>Web Rephrasing Augmented Pretraining (WRAP)</strong>, introduced by Maini et al. The insight: raw web text is information-rich but <em>stylistically poor</em> — boilerplate, broken HTML remnants, SEO spam, inconsistent formatting. Loss on such text is dominated by predicting noise. If you take each web document and ask an instruction-tuned model to rewrite it in one of a few clean styles, you get tokens that carry the same information at much higher &ldquo;signal per token.&rdquo;</p>
+<p>WRAP uses a small set of rewrite styles, for example:</p>
+<ul>
+<li><strong>Easy / Wikipedia-style</strong>: clear expository prose, like an encyclopedia entry.</li>
+<li><strong>Q&amp;A</strong>: turn the passage into question–answer pairs.</li>
+<li><strong>Concise / formal</strong>: tighten and formalize.</li>
+</ul>
+<p>The reported result is striking: pretraining on a <em>mix</em> of original web text plus its rephrasings reaches a target perplexity with roughly <strong>3× fewer tokens</strong> than web text alone, and improves downstream zero-shot accuracy — without needing any human-written corpus beyond the original web. Crucially, you <strong>keep the original document too</strong>; the rephrasing augments rather than replaces, which preserves the factual grounding and the natural diversity of the source.</p>
+<h3 id="a-runnable-wrap-pipeline">A runnable WRAP pipeline<a class="headerlink" href="#a-runnable-wrap-pipeline" title="Permanent link">¶</a></h3>
+<p>Here is the core loop, using a vLLM-style batched generator (see <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a>). The economics matter — you are running inference over <em>trillions</em> of tokens, so batching and a small generator are essential.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">WRAP-style web rephrasing. For each web doc, sample one of a few rewrite</span>
+<span class="sd">styles and generate a clean version. Keep BOTH original and rephrasing.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+
+<span class="c1"># A small, fixed menu of rewrite styles. Diversity of styles is what keeps</span>
+<span class="c1"># the synthetic distribution from collapsing onto one bland mode.</span>
+<span class="n">STYLE_PROMPTS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;wiki&quot;</span><span class="p">:</span>    <span class="s2">&quot;Rewrite the following text as a clear, encyclopedic passage. &quot;</span>
+               <span class="s2">&quot;Preserve all factual content; remove boilerplate and noise.</span><span class="se">\n\n</span><span class="si">{doc}</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;qa&quot;</span><span class="p">:</span>      <span class="s2">&quot;Convert the following text into 2-4 self-contained &quot;</span>
+               <span class="s2">&quot;question-and-answer pairs covering its key facts.</span><span class="se">\n\n</span><span class="si">{doc}</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;concise&quot;</span><span class="p">:</span> <span class="s2">&quot;Rewrite the following text concisely and formally, keeping &quot;</span>
+               <span class="s2">&quot;every fact but removing redundancy.</span><span class="se">\n\n</span><span class="si">{doc}</span><span class="s2">&quot;</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">WrapConfig</span><span class="p">:</span>
+    <span class="n">max_input_chars</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">6000</span>      <span class="c1"># truncate very long docs before rewriting</span>
+    <span class="n">max_new_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1024</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.7</span>         <span class="c1"># some entropy -&gt; stylistic diversity</span>
+    <span class="n">styles_per_doc</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>          <span class="c1"># how many rephrasings per source doc</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_prompts</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">cfg</span><span class="p">:</span> <span class="n">WrapConfig</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Yield (doc_id, style, prompt) for batched generation.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">doc_id</span><span class="p">,</span> <span class="n">doc</span> <span class="ow">in</span> <span class="n">docs</span><span class="p">:</span>
+        <span class="n">doc</span> <span class="o">=</span> <span class="n">doc</span><span class="p">[:</span> <span class="n">cfg</span><span class="o">.</span><span class="n">max_input_chars</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">styles_per_doc</span><span class="p">):</span>
+            <span class="n">style</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">STYLE_PROMPTS</span><span class="p">))</span>
+            <span class="k">yield</span> <span class="n">doc_id</span><span class="p">,</span> <span class="n">style</span><span class="p">,</span> <span class="n">STYLE_PROMPTS</span><span class="p">[</span><span class="n">style</span><span class="p">]</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">doc</span><span class="o">=</span><span class="n">doc</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rephrase_corpus</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">llm</span><span class="p">,</span> <span class="n">cfg</span><span class="p">:</span> <span class="n">WrapConfig</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    `llm.generate(prompts, ...)` is the vLLM batched API. We process the whole</span>
+<span class="sd">    shard at once so the GPU stays saturated -- throughput, not latency, is</span>
+<span class="sd">    what dominates cost when rewriting trillions of tokens.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">items</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">build_prompts</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span> <span class="n">cfg</span><span class="p">))</span>
+    <span class="n">prompts</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="p">(</span><span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">items</span><span class="p">]</span>
+    <span class="n">outputs</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
+        <span class="n">prompts</span><span class="p">,</span>
+        <span class="n">sampling_params</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">temperature</span><span class="p">,</span>
+                             <span class="n">max_tokens</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">max_new_tokens</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="k">for</span> <span class="p">(</span><span class="n">doc_id</span><span class="p">,</span> <span class="n">style</span><span class="p">,</span> <span class="n">_</span><span class="p">),</span> <span class="n">out</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">items</span><span class="p">,</span> <span class="n">outputs</span><span class="p">):</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="c1"># Emit BOTH the original (once) and the rephrasing. Keeping the</span>
+        <span class="c1"># original preserves grounding and natural diversity.</span>
+        <span class="k">yield</span> <span class="p">{</span><span class="s2">&quot;doc_id&quot;</span><span class="p">:</span> <span class="n">doc_id</span><span class="p">,</span> <span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;synthetic&quot;</span><span class="p">,</span>
+               <span class="s2">&quot;style&quot;</span><span class="p">:</span> <span class="n">style</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">text</span><span class="p">}</span>
+</code></pre></div>
+<h3 id="why-keep-the-original-and-how-much-to-mix">Why keep the original — and how much to mix<a class="headerlink" href="#why-keep-the-original-and-how-much-to-mix" title="Permanent link">¶</a></h3>
+<p>If you trained <em>only</em> on rephrasings, you would inherit every quirk of the rewriter: its preferred sentence rhythms, its vocabulary, its tendency to &ldquo;tidy away&rdquo; rare facts. Keeping the original web text anchors the model to the true data distribution. The empirical sweet spot in WRAP-style work is roughly a <strong>1:1 mix</strong> of natural and synthetic — enough synthetic to lift quality, enough natural to preserve the tails. We will formalize this trade-off in the model-collapse section below.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>Use the <em>smallest</em> rewriter that produces clean output. The rewrite task is easy relative to open-ended generation, so a 1–8B instruction model is often plenty, and at trillion-token scale the difference between a 7B and a 70B rewriter is the difference between a feasible and an infeasible budget. Quantize the rewriter (see <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a>) and serve it with continuous batching.</p>
+</div>
+<hr />
+<h2 id="recipe-2-textbook-style-generation-phi-cosmopedia-fineweb-edu">Recipe 2 — Textbook-Style Generation (Phi, Cosmopedia, FineWeb-Edu)<a class="headerlink" href="#recipe-2-textbook-style-generation-phi-cosmopedia-fineweb-edu" title="Permanent link">¶</a></h2>
+<p>The second recipe goes further: generate <em>new</em> expository content rather than rewriting a specific source. The thesis, from Microsoft&rsquo;s <strong>Phi</strong> series (&ldquo;Textbooks Are All You Need,&rdquo; Gunasekar et al.), is that data <em>quality</em> can substitute for <em>quantity</em> and <em>model size</em>. A small model trained on a curated diet of &ldquo;textbook-quality&rdquo; text — clear, pedagogically structured, low-noise — can match much larger models trained on raw web scrapings. Phi-1 (1.3B) reached strong code performance on a tiny, curated corpus; later Phi models extended the recipe to general reasoning.</p>
+<p>There are two ways to get textbook-quality tokens:</p>
+<ol>
+<li><strong>Filter the web for them</strong> (FineWeb-Edu). Train a lightweight classifier to score how &ldquo;educational&rdquo; a web page is, then keep only the high-scoring pages. This is <em>selection</em>, not generation — but it is the natural-data analogue of textbook generation and pairs with it. See <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a>.</li>
+<li><strong>Generate them</strong> (Cosmopedia, the open reproduction of Phi&rsquo;s synthetic data). Prompt a strong model with a <em>seed</em> (a topic, an audience, a format) and have it write the passage. The art is in the <em>prompt diversity</em> — without it, you generate the same fifty essays a million times.</li>
+</ol>
+<h3 id="the-fineweb-edu-educational-classifier">The FineWeb-Edu educational classifier<a class="headerlink" href="#the-fineweb-edu-educational-classifier" title="Permanent link">¶</a></h3>
+<p>The filter half is cheap and worth always doing. You score the web with a small regression head on top of frozen embeddings, trained on a few hundred thousand LLM-labeled examples.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">FineWeb-Edu-style educational quality filter. A strong LLM labels a seed set</span>
+<span class="sd">with an &#39;educational value&#39; score 0-5; we distill that into a fast linear head</span>
+<span class="sd">on frozen sentence embeddings, then score the whole web with the cheap head.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.linear_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">Ridge</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">make_labeling_prompt</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="c1"># The rubric is the product. Be explicit about what &#39;educational&#39; means</span>
+    <span class="c1"># so the labels are consistent across millions of pages.</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="s2">&quot;Rate the educational value of the text for teaching a student, &quot;</span>
+        <span class="s2">&quot;on an additive 0-5 scale:</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;+1 if it contains some educational content,</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;+1 if it addresses a topic relevant to school/college curricula,</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;+1 if it is coherent and well-written,</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;+1 if it is comprehensive and self-contained,</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;+1 if it is outstanding, like a high-quality textbook.</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;Reply with ONLY the integer.</span><span class="se">\n\n</span><span class="s2">TEXT:</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="n">text</span><span class="p">[:</span><span class="mi">4000</span><span class="p">]</span>
+    <span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">train_edu_head</span><span class="p">(</span><span class="n">embeds</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">scores</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Ridge</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;embeds: (N, d) frozen embeddings; scores: (N,) LLM labels in [0,5].&quot;&quot;&quot;</span>
+    <span class="n">head</span> <span class="o">=</span> <span class="n">Ridge</span><span class="p">(</span><span class="n">alpha</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">head</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">embeds</span><span class="p">,</span> <span class="n">scores</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">head</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">keep_mask</span><span class="p">(</span><span class="n">head</span><span class="p">:</span> <span class="n">Ridge</span><span class="p">,</span> <span class="n">embeds</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">3.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Keep only pages the head scores &gt;= threshold (e.g. 3/5).&quot;&quot;&quot;</span>
+    <span class="n">preds</span> <span class="o">=</span> <span class="n">head</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">embeds</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">preds</span> <span class="o">&gt;=</span> <span class="n">threshold</span>
+</code></pre></div>
+<p>A threshold around &#8535; typically keeps a small single-digit percentage of the web but yields a corpus on which models learn dramatically faster per token. The lesson generalizes: <strong>a cheap classifier distilled from expensive LLM labels is one of the best dollar-for-dollar quality levers in pretraining.</strong></p>
+<h3 id="cosmopedia-style-generation-with-prompt-diversity">Cosmopedia-style generation with prompt diversity<a class="headerlink" href="#cosmopedia-style-generation-with-prompt-diversity" title="Permanent link">¶</a></h3>
+<p>For generation, the central engineering problem is <strong>avoiding repetition at scale</strong>. If you prompt &ldquo;write a textbook section about biology&rdquo; a million times, deduplication will throw away 99% of it. The fix is a combinatorial prompt template seeded by <em>web snippets</em> (so topics track real-world distribution) crossed with audiences, styles, and formats.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Cosmopedia-style synthetic textbook generation. The key is PROMPT DIVERSITY:</span>
+<span class="sd">seed each prompt with a real web snippet (for topical grounding) and sample an</span>
+<span class="sd">audience + format. This combinatorial explosion keeps near-duplicates rare.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span><span class="o">,</span><span class="w"> </span><span class="nn">hashlib</span>
+
+<span class="n">AUDIENCES</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;a curious middle-school student&quot;</span><span class="p">,</span> <span class="s2">&quot;an undergraduate&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;a professional in an unrelated field&quot;</span><span class="p">,</span> <span class="s2">&quot;a young child&quot;</span><span class="p">]</span>
+<span class="n">FORMATS</span>   <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;a textbook section with a worked example&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;a Socratic dialogue&quot;</span><span class="p">,</span> <span class="s2">&quot;a how-to tutorial with steps&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;a blog post that builds intuition first&quot;</span><span class="p">]</span>
+<span class="n">STYLES</span>    <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;rigorous and precise&quot;</span><span class="p">,</span> <span class="s2">&quot;warm and intuitive&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;concise and example-driven&quot;</span><span class="p">]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">make_generation_prompt</span><span class="p">(</span><span class="n">seed_snippet</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">aud</span><span class="p">,</span> <span class="n">fmt</span><span class="p">,</span> <span class="n">sty</span> <span class="o">=</span> <span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">AUDIENCES</span><span class="p">),</span>
+                     <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">FORMATS</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">STYLES</span><span class="p">))</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Using the topic implied by the snippet below, write </span><span class="si">{</span><span class="n">fmt</span><span class="si">}</span><span class="s2"> aimed at &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">aud</span><span class="si">}</span><span class="s2">. Be </span><span class="si">{</span><span class="n">sty</span><span class="si">}</span><span class="s2">. Do not mention the snippet; teach the underlying &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;concept thoroughly and accurately. If you state a fact, make sure it &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;is correct.</span><span class="se">\n\n</span><span class="s2">SNIPPET:</span><span class="se">\n</span><span class="si">{</span><span class="n">seed_snippet</span><span class="p">[:</span><span class="mi">1500</span><span class="p">]</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">PASSAGE:</span><span class="se">\n</span><span class="s2">&quot;</span>
+    <span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dedup_key</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;MinHash-lite: hash the first n normalized words as a near-dup bucket.</span>
+<span class="sd">    In production use real MinHash/LSH (see the dedup chapter).&quot;&quot;&quot;</span>
+    <span class="n">words</span> <span class="o">=</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">()[:</span><span class="n">n</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">md5</span><span class="p">(</span><span class="n">words</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">generate_textbook</span><span class="p">(</span><span class="n">seeds</span><span class="p">,</span> <span class="n">llm</span><span class="p">,</span> <span class="n">seen</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="n">seen</span> <span class="o">=</span> <span class="n">seen</span> <span class="k">if</span> <span class="n">seen</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="n">prompts</span> <span class="o">=</span> <span class="p">[</span><span class="n">make_generation_prompt</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">seeds</span><span class="p">]</span>
+    <span class="n">outs</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">sampling_params</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">top_p</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">1500</span><span class="p">))</span>  <span class="c1"># high entropy = diversity</span>
+    <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">outs</span><span class="p">:</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">dedup_key</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">seen</span><span class="p">:</span>          <span class="c1"># cheap near-dup guard; real dedup is downstream</span>
+            <span class="k">continue</span>
+        <span class="n">seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+        <span class="k">yield</span> <span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;synthetic_textbook&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">text</span><span class="p">}</span>
+</code></pre></div>
+<p>Note the deliberately high temperature and <code>top_p</code>: for <em>expository</em> generation we <em>want</em> entropy, because diversity is the whole game. This is the opposite of reasoning distillation (Recipe 4), where we will often want low temperature and verified correctness.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: hallucinated facts in textbook generation</p>
+<p>Prompt-seeded generation writes from the model&rsquo;s parametric memory, so it <em>will</em> state plausible-sounding falsehoods — wrong dates, invented citations, subtly broken proofs. Unlike WRAP, there is no source document to anchor against. Mitigations: (1) seed with real snippets so claims track reality; (2) restrict to domains where the generator is strong and verifiable (math, code, well-trodden science); (3) run a verification pass (next section). Never generate &ldquo;textbook&rdquo; content in a domain your generator is weak in — you are just laundering its errors into the next model.</p>
+</div>
+<hr />
+<h2 id="recipe-3-instruction-and-qa-augmented-pretraining">Recipe 3 — Instruction- and QA-Augmented Pretraining<a class="headerlink" href="#recipe-3-instruction-and-qa-augmented-pretraining" title="Permanent link">¶</a></h2>
+<p>A third recipe blurs the line between pretraining and post-training: inject <strong>instruction-formatted</strong> data (questions, tasks, and their answers) directly into the <em>pretraining</em> mix. The UL2 / FLAN line of work and, more pointedly, the &ldquo;instruction pretraining&rdquo; results show that interleaving QA pairs derived from raw text during pretraining improves both the base model&rsquo;s quality and its downstream instruction-following — the model arrives at the SFT stage already fluent in the question-answer shape.</p>
+<p>The mechanism is <strong>reading-comprehension synthesis</strong>: for each raw passage, generate questions whose answers are <em>grounded in that passage</em>, then train on <code>passage → questions+answers</code>. Because the answers come from the passage, grounding is strong and hallucination is low — this is closer to WRAP than to free generation.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Instruction-augmented pretraining: turn raw passages into grounded</span>
+<span class="sd">reading-comprehension QA, so the base model sees instruction-shaped data</span>
+<span class="sd">DURING pretraining. Answers are extracted from the passage -&gt; low hallucination.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="n">QA_SYNTH_PROMPT</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">From the passage, write </span><span class="si">{k}</span><span class="s2"> diverse question/answer pairs. Each ANSWER must be</span>
+<span class="s2">fully supported by the passage -- do not use outside knowledge. Mix factual,</span>
+<span class="s2">inferential, and &quot;why/how&quot; questions. Format strictly as:</span>
+<span class="s2">Q: ...</span>
+<span class="s2">A: ...</span>
+
+<span class="s2">PASSAGE:</span>
+<span class="si">{passage}</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">synth_qa</span><span class="p">(</span><span class="n">passages</span><span class="p">,</span> <span class="n">llm</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">3</span><span class="p">):</span>
+    <span class="n">prompts</span> <span class="o">=</span> <span class="p">[</span><span class="n">QA_SYNTH_PROMPT</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">k</span><span class="o">=</span><span class="n">k</span><span class="p">,</span> <span class="n">passage</span><span class="o">=</span><span class="n">p</span><span class="p">[:</span><span class="mi">4000</span><span class="p">])</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">passages</span><span class="p">]</span>
+    <span class="n">outs</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">sampling_params</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">))</span>
+    <span class="k">for</span> <span class="n">p</span><span class="p">,</span> <span class="n">out</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">passages</span><span class="p">,</span> <span class="n">outs</span><span class="p">):</span>
+        <span class="n">qa_text</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="c1"># Interleave the ORIGINAL passage with its QA so the model learns the</span>
+        <span class="c1"># link between source text and answerable questions.</span>
+        <span class="k">yield</span> <span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;instruct_pretrain&quot;</span><span class="p">,</span>
+               <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">p</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="n">qa_text</span><span class="p">}</span>
+</code></pre></div>
+<p>This recipe is the cheapest way to give a base model &ldquo;a head start&rdquo; on instruction following, and it composes with everything in <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a>. The key constraint is the <strong>grounding instruction</strong> (&ldquo;ANSWER must be supported by the passage&rdquo;) — drop it and you slide from augmentation into free generation, with all the hallucination risk that entails.</p>
+<hr />
+<h2 id="recipe-4-reasoning-trace-distillation-for-post-training">Recipe 4 — Reasoning-Trace Distillation for Post-Training<a class="headerlink" href="#recipe-4-reasoning-trace-distillation-for-post-training" title="Permanent link">¶</a></h2>
+<p>The post-training half of synthetic data is where the most dramatic recent gains live. The recipe: take a strong <strong>teacher</strong> that can reason (produce chain-of-thought, write and check code), have it solve a large bank of problems, <strong>filter to keep only verified-correct traces</strong>, and fine-tune a <strong>student</strong> on those traces. This is <strong>rejection-sampling fine-tuning</strong> (sometimes called STaR-style after Zelikman et al.&rsquo;s &ldquo;Self-Taught Reasoner,&rdquo; or RFT), and it is how reasoning capability gets compressed from a frontier model into a small one. It connects deeply to <a href="../05-posttraining-alignment/12-distillation-compression.html">Distillation, Model Compression &amp; Knowledge Transfer</a>, <a href="../05-posttraining-alignment/10-reasoning-test-time-compute.html">Reasoning, Chain-of-Thought &amp; Test-Time Compute</a>, and <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a>.</p>
+<p>The crucial difference from the pretraining recipes: here we can often <strong>verify the output objectively</strong>. A math answer either matches the gold answer or it does not; code either passes the unit tests or it does not. Verification turns noisy generation into a high-precision data source — we <em>over-generate</em> and <em>filter hard</em>.</p>
+<h3 id="rejection-sampling-fine-tuning-end-to-end">Rejection-sampling fine-tuning, end to end<a class="headerlink" href="#rejection-sampling-fine-tuning-end-to-end" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Reasoning-trace distillation via rejection sampling (STaR/RFT-style).</span>
+<span class="sd">For each problem with a known answer, sample K chain-of-thought traces from a</span>
+<span class="sd">teacher, KEEP only traces whose final answer is verified correct, dedup, and</span>
+<span class="sd">build an SFT dataset of (problem -&gt; correct trace).</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_final_answer</span><span class="p">(</span><span class="n">trace</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Pull the boxed/&#39;final answer&#39; from a CoT trace. Robust parsing matters;</span>
+<span class="sd">    a bad extractor silently throws away good traces or keeps bad ones.&quot;&quot;&quot;</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">boxed\{([^}]*)\}&quot;</span><span class="p">,</span> <span class="n">trace</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;(?:final answer|answer)\s*[:=]\s*(.+)&quot;</span><span class="p">,</span> <span class="n">trace</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">m</span> <span class="k">else</span> <span class="kc">None</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">verify</span><span class="p">(</span><span class="n">pred</span><span class="p">,</span> <span class="n">gold</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Domain-specific. For math, normalize then compare; for code, run tests</span>
+<span class="sd">    in a sandbox (see the reward-verifiers chapter). Here: normalized string eq.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">pred</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="n">norm</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">s</span><span class="p">:</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\s+&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">s</span><span class="p">))</span><span class="o">.</span><span class="n">rstrip</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">norm</span><span class="p">(</span><span class="n">pred</span><span class="p">)</span> <span class="o">==</span> <span class="n">norm</span><span class="p">(</span><span class="n">gold</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">distill_reasoning</span><span class="p">(</span><span class="n">problems</span><span class="p">,</span> <span class="n">llm</span><span class="p">,</span> <span class="n">K</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">max_keep_per_problem</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    problems: list of dicts {&quot;question&quot;: str, &quot;gold&quot;: str}</span>
+<span class="sd">    Over-generate K traces/problem, verify, keep up to `max_keep` correct +</span>
+<span class="sd">    DIVERSE traces per problem.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Sample K completions per problem in one big batched call.</span>
+    <span class="n">prompts</span><span class="p">,</span> <span class="n">owners</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">problems</span><span class="p">):</span>
+        <span class="n">cot</span> <span class="o">=</span> <span class="p">(</span><span class="n">p</span><span class="p">[</span><span class="s2">&quot;question&quot;</span><span class="p">]</span> <span class="o">+</span>
+               <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">Think step by step, then give the final answer &quot;</span>
+               <span class="s2">&quot;in </span><span class="se">\\</span><span class="s2">boxed</span><span class="si">{}</span><span class="s2">.&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">K</span><span class="p">):</span>
+            <span class="n">prompts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cot</span><span class="p">);</span> <span class="n">owners</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+
+    <span class="n">outs</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">sampling_params</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">top_p</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">2048</span><span class="p">))</span>  <span class="c1"># entropy -&gt; diverse traces</span>
+
+    <span class="n">kept</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">list</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">owner</span><span class="p">,</span> <span class="n">out</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">owners</span><span class="p">,</span> <span class="n">outs</span><span class="p">):</span>
+        <span class="n">trace</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span>
+        <span class="n">pred</span>  <span class="o">=</span> <span class="n">extract_final_answer</span><span class="p">(</span><span class="n">trace</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">verify</span><span class="p">(</span><span class="n">pred</span><span class="p">,</span> <span class="n">problems</span><span class="p">[</span><span class="n">owner</span><span class="p">][</span><span class="s2">&quot;gold&quot;</span><span class="p">]):</span>
+            <span class="n">kept</span><span class="p">[</span><span class="n">owner</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">trace</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+
+    <span class="n">dataset</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">traces</span> <span class="ow">in</span> <span class="n">kept</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="c1"># Light diversity: dedup identical first lines, cap per problem so easy</span>
+        <span class="c1"># problems don&#39;t swamp the dataset (a curriculum/balance concern).</span>
+        <span class="n">seen</span><span class="p">,</span> <span class="n">chosen</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(),</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">traces</span><span class="p">:</span>
+            <span class="n">key</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">seen</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">key</span><span class="p">);</span> <span class="n">chosen</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">chosen</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">max_keep_per_problem</span><span class="p">:</span>
+                <span class="k">break</span>
+        <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">chosen</span><span class="p">:</span>
+            <span class="n">dataset</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="n">problems</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s2">&quot;question&quot;</span><span class="p">],</span>
+                            <span class="s2">&quot;trace&quot;</span><span class="p">:</span> <span class="n">t</span><span class="p">,</span> <span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;reasoning_sft&quot;</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">dataset</span>
+</code></pre></div>
+<p>Three design points are doing the heavy lifting:</p>
+<ul>
+<li><strong>Over-generate, filter hard.</strong> Sampling <span class="arithmatex">\(K=8\)</span> traces and keeping only correct ones is the verification asymmetry in action. Even if the teacher is only ~40% correct per attempt, with <span class="arithmatex">\(K=8\)</span> you cover a large fraction of solvable problems at least once: the probability of at least one success is <span class="arithmatex">\(1-(1-0.4)^8 \approx 0.98\)</span>.</li>
+<li><strong>Cap per problem.</strong> Easy problems get solved every time and would dominate the dataset; capping enforces balance, a curriculum concern shared with <a href="../06-rl-infra/12-rl-data-curriculum-replay.html">RL Data, Curriculum &amp; Replay Management</a>.</li>
+<li><strong>Keep diverse correct traces, not just one.</strong> Multiple valid solution paths teach the student that reasoning is a search, not a single memorized script.</li>
+</ul>
+<h3 id="distillation-vs-rl-where-synthetic-sft-stops">Distillation vs. RL: where synthetic SFT stops<a class="headerlink" href="#distillation-vs-rl-where-synthetic-sft-stops" title="Permanent link">¶</a></h3>
+<p>Rejection-sampling distillation is <strong>off-policy SFT on filtered samples</strong>. It is cheap, stable, and gets you most of the way. But it has a ceiling: the student can only imitate traces the teacher already produces, and SFT on someone else&rsquo;s tokens can teach <em>style</em> without <em>competence</em> (the student parrots &ldquo;Let me think step by step&rdquo; without the underlying search). When you want the student to <em>exceed</em> its imitation ceiling, you move to RL with verifiable rewards, where the student generates its <em>own</em> traces and is rewarded for correctness — see <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a> and <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a>. A common modern pipeline is: rejection-sampling SFT to bootstrap, <em>then</em> RLVR to push past the teacher.</p>
+<hr />
+<h2 id="mixing-scaling-and-the-math-of-model-collapse">Mixing, Scaling, and the Math of Model Collapse<a class="headerlink" href="#mixing-scaling-and-the-math-of-model-collapse" title="Permanent link">¶</a></h2>
+<p>We now turn to the central question: <strong>how much synthetic data, mixed how, before things go wrong?</strong></p>
+<h3 id="the-accumulate-vs-replace-distinction">The accumulate-vs-replace distinction<a class="headerlink" href="#the-accumulate-vs-replace-distinction" title="Permanent link">¶</a></h3>
+<p>The most important result in the model-collapse literature (Shumailov et al., &ldquo;The Curse of Recursion&rdquo;; Gerstgrasser et al., &ldquo;Is Model Collapse Inevitable?&rdquo;) is a sharp dichotomy:</p>
+<ul>
+<li><strong>Replace.</strong> If each generation trains <em>only</em> on the previous generation&rsquo;s synthetic output, discarding the original data, errors compound and the distribution narrows generation after generation. Variance shrinks, the tails vanish, and eventually the model produces near-constant gibberish. This is true <strong>model collapse</strong>.</li>
+<li><strong>Accumulate.</strong> If you <em>keep the original real data</em> and <em>add</em> synthetic data on top — train each generation on real + all-synthetic-so-far — collapse is largely <em>avoided</em>. The real data acts as an anchor that pins the distribution in place.</li>
+</ul>
+<p>This is exactly why every good recipe above keeps the original: WRAP keeps the source document, instruction-augmentation interleaves the real passage, FineWeb-Edu <em>is</em> real data. <strong>The failure mode is recursive replacement, not synthetic data per se.</strong></p>
+<h3 id="a-toy-model-of-collapse-the-shrinking-gaussian">A toy model of collapse: the shrinking Gaussian<a class="headerlink" href="#a-toy-model-of-collapse-the-shrinking-gaussian" title="Permanent link">¶</a></h3>
+<p>The cleanest way to <em>feel</em> collapse is the Gaussian re-estimation chain. Suppose generation 0 is the true distribution <span class="arithmatex">\(\mathcal{N}(\mu, \sigma^2)\)</span>. Each generation draws <span class="arithmatex">\(n\)</span> samples, fits a Gaussian by maximum likelihood, and the <em>next</em> generation samples from that fitted Gaussian — the &ldquo;replace&rdquo; regime. The fitted variance <span class="arithmatex">\(\hat\sigma^2_{t}\)</span> is an unbiased estimate of <span class="arithmatex">\(\sigma^2_{t-1}\)</span>, but it has <em>sampling noise</em>, and that noise systematically erodes variance over time. The expected variance decays:</p>
+<div class="arithmatex">\[
+\mathbb{E}[\hat\sigma^2_t] \approx \sigma^2 \left(1 - \frac{1}{n}\right)^{t}
+\]</div>
+<p>so after <span class="arithmatex">\(t\)</span> generations the variance has shrunk by a factor <span class="arithmatex">\((1-1/n)^t\)</span>. With finite samples the tails progressively disappear; the distribution collapses toward its mean. Now contrast the <strong>accumulate</strong> regime, where each fit uses the <em>original</em> real samples plus all synthetic so far — the real samples keep re-injecting the true variance, and the decay halts. Let us watch it happen.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Toy model of model collapse: recursive Gaussian re-estimation.</span>
+<span class="sd">REPLACE: each generation fits only on the previous generation&#39;s samples.</span>
+<span class="sd">ACCUMULATE: each generation fits on the ORIGINAL data plus all synthetic so far.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">collapse_chain</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&quot;replace&quot;</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">generations</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    <span class="n">true_mu</span><span class="p">,</span> <span class="n">true_sigma</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span>
+    <span class="n">real</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">true_mu</span><span class="p">,</span> <span class="n">true_sigma</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">n</span><span class="p">)</span>   <span class="c1"># generation-0 REAL data</span>
+
+    <span class="n">mu</span><span class="p">,</span> <span class="n">sigma</span> <span class="o">=</span> <span class="n">real</span><span class="o">.</span><span class="n">mean</span><span class="p">(),</span> <span class="n">real</span><span class="o">.</span><span class="n">std</span><span class="p">()</span>
+    <span class="n">history</span> <span class="o">=</span> <span class="p">[(</span><span class="n">mu</span><span class="p">,</span> <span class="n">sigma</span><span class="p">)]</span>
+    <span class="n">pool</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">real</span><span class="p">)</span>  <span class="c1"># for ACCUMULATE we grow this with synthetic samples</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">generations</span><span class="p">):</span>
+        <span class="n">synth</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">mu</span><span class="p">,</span> <span class="n">sigma</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">n</span><span class="p">)</span>        <span class="c1"># sample from current model</span>
+        <span class="k">if</span> <span class="n">mode</span> <span class="o">==</span> <span class="s2">&quot;replace&quot;</span><span class="p">:</span>
+            <span class="n">fit</span> <span class="o">=</span> <span class="n">synth</span>                              <span class="c1"># forget the real data</span>
+        <span class="k">else</span><span class="p">:</span>  <span class="c1"># accumulate</span>
+            <span class="n">pool</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">synth</span><span class="p">)</span>                       <span class="c1"># keep real + all synthetic</span>
+            <span class="n">fit</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">mu</span><span class="p">,</span> <span class="n">sigma</span> <span class="o">=</span> <span class="n">fit</span><span class="o">.</span><span class="n">mean</span><span class="p">(),</span> <span class="n">fit</span><span class="o">.</span><span class="n">std</span><span class="p">()</span>
+        <span class="n">history</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">mu</span><span class="p">,</span> <span class="n">sigma</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">history</span>
+
+<span class="k">for</span> <span class="n">mode</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;replace&quot;</span><span class="p">,</span> <span class="s2">&quot;accumulate&quot;</span><span class="p">):</span>
+    <span class="n">h</span> <span class="o">=</span> <span class="n">collapse_chain</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="n">mode</span><span class="p">)</span>
+    <span class="n">s0</span><span class="p">,</span> <span class="n">s_end</span> <span class="o">=</span> <span class="n">h</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">],</span> <span class="n">h</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">mode</span><span class="si">:</span><span class="s2">&gt;10</span><span class="si">}</span><span class="s2">: sigma </span><span class="si">{</span><span class="n">s0</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="n">s_end</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="mi">100</span><span class="o">*</span><span class="p">(</span><span class="n">s0</span><span class="o">-</span><span class="n">s_end</span><span class="p">)</span><span class="o">/</span><span class="n">s0</span><span class="si">:</span><span class="s2">+.0f</span><span class="si">}</span><span class="s2">% change after 30 generations)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Running this, the <code>replace</code> chain shows the standard deviation steadily shrinking toward zero (variance collapse), while the <code>accumulate</code> chain holds its standard deviation near 1.0 — the real anchor prevents collapse. The same dynamic plays out in language models, with &ldquo;variance&rdquo; standing in for <em>diversity of vocabulary, syntax, and ideas</em>: replacement-trained models drift toward generic, repetitive, low-perplexity text, losing the rare words and unusual constructions that live in the tails.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: variance decay and the collapse half-life</p>
+<p>Take the replace regime with <span class="arithmatex">\(n = 50\)</span> samples per generation. The per-generation variance retention is <span class="arithmatex">\((1 - 1/n) = 0.98\)</span>. After <span class="arithmatex">\(t\)</span> generations the expected variance is <span class="arithmatex">\(\sigma^2 \cdot 0.98^{\,t}\)</span>.</p>
+<p>How many generations until variance halves? Solve <span class="arithmatex">\(0.98^{\,t} = 0.5\)</span>:</p>
+<div class="arithmatex">\[
+t = \frac{\ln 0.5}{\ln 0.98} = \frac{-0.693}{-0.0202} \approx 34 \text{ generations.}
+\]</div>
+<p>So with 50 samples per round, you lose half your diversity in ~34 recursive generations — slow but inexorable. Now <em>double the sample size</em> to <span class="arithmatex">\(n = 100\)</span>: retention becomes <span class="arithmatex">\(0.99\)</span>, and the half-life stretches to <span class="arithmatex">\(t = \ln 0.5 / \ln 0.99 \approx 69\)</span> generations. <strong>More samples per generation slows collapse but never stops it</strong> — only re-injecting real data (the accumulate regime) actually halts the decay. This is the quantitative case for the 1:1-ish natural/synthetic mixes used in practice, and for never letting a fully-synthetic recursive loop run unchecked.</p>
+</div>
+<h3 id="scaling-behavior-of-mixed-corpora">Scaling behavior of mixed corpora<a class="headerlink" href="#scaling-behavior-of-mixed-corpora" title="Permanent link">¶</a></h3>
+<p>Two empirical regularities guide the mixing ratio (and connect to <a href="../03-pretraining/14-data-mixing-curriculum.html">Data Mixing, Domain Weighting &amp; Curriculum</a>):</p>
+<ol>
+<li><strong>Synthetic data improves the <em>effective</em> token efficiency</strong> — you reach a target loss with fewer total tokens — but the gains <em>saturate</em> as the synthetic fraction grows. Past some fraction (often cited in the 30–50% range for rephrase-style data, higher for verified reasoning data), adding more synthetic stops helping and starts narrowing the distribution.</li>
+<li><strong>The optimal synthetic fraction depends on the quality gap.</strong> If your generator is much stronger than your target student (reasoning distillation from a frontier teacher), a high synthetic fraction is great. If your generator is the <em>same</em> class as your target (self-rephrasing), keep the fraction moderate and always anchor with real data, because you cannot distill capability the generator does not have — you can only restyle.</li>
+</ol>
+<p>A simple, defensible default for <em>pretraining</em> mixes: <strong>1–2 parts natural to 1 part synthetic</strong>, with synthetic capped around one-third to one-half of the blend. For <em>post-training</em> reasoning SFT, the dataset can be almost entirely synthetic <em>because every example is verified</em> — verification breaks the collapse dynamic by removing the error-accumulation channel.</p>
+<hr />
+<h2 id="verification-filtering-and-contamination-control">Verification, Filtering, and Contamination Control<a class="headerlink" href="#verification-filtering-and-contamination-control" title="Permanent link">¶</a></h2>
+<p>Synthetic data is only as good as its filters. The generation step is cheap; the <strong>verification and decontamination</strong> steps are where quality is won or lost. Treat the whole thing as a high-throughput data pipeline with quality gates (the philosophy of <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a> and <a href="../12-production-mlops/05-data-flywheel.html">Data Flywheels &amp; Continuous Improvement</a>).</p>
+<h3 id="the-verification-ladder">The verification ladder<a class="headerlink" href="#the-verification-ladder" title="Permanent link">¶</a></h3>
+<p>Order your filters cheapest-first so you discard junk before paying for expensive checks:</p>
+<figure class="viz" id="fig-syndata-verification-ladder">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 870 380" role="img" aria-label="The synthetic-data verification ladder: five sequential quality gates ordered cheapest to most expensive, each dropping records so later stages process fewer items.">
+  <defs>
+    <marker id="svl-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#2563eb)"/>
+    </marker>
+    <marker id="svl-darr" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M1 0 L9 0 L5 9 z" fill="var(--muted,#9ca3af)"/>
+    </marker>
+    <marker id="svl-farr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+    <clipPath id="svl-dotclip"><rect x="0" y="95" width="790" height="130"/></clipPath>
+  </defs>
+  <style>
+    #fig-syndata-verification-ladder text   { fill: var(--ink-soft,#374151); }
+    #fig-syndata-verification-ladder .ttl   { font: 700 9.5px var(--sans,sans-serif); }
+    #fig-syndata-verification-ladder .badge { font: 700 11px var(--sans,sans-serif); }
+    #fig-syndata-verification-ladder .sub   { font: 400 8px var(--mono,monospace); fill: var(--muted,#6b7280); }
+    #fig-syndata-verification-ladder .drop  { font: 400 8px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+    #fig-syndata-verification-ladder .axl   { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-syndata-verification-ladder .foot  { font: 400 8px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-syndata-verification-ladder .final { font: 700 9.5px var(--sans,sans-serif); }
+    #fig-syndata-verification-ladder .dot {
+      animation: svl-flow 5s linear infinite;
+      fill: var(--accent,#2563eb); opacity: 0.85;
+    }
+    #fig-syndata-verification-ladder .dot2 { animation-delay: 1.67s; }
+    #fig-syndata-verification-ladder .dot3 { animation-delay: 3.33s; }
+    @keyframes svl-flow {
+      0%   { transform: translateX(0px);   opacity:0.9; }
+      88%  { transform: translateX(730px); opacity:0.9; }
+      89%  { opacity:0; }
+      100% { transform: translateX(730px); opacity:0; }
+    }
+  </style>
+
+
+  <line x1="12" y1="35" x2="812" y2="35" stroke="var(--accent,#2563eb)" stroke-width="1.1" marker-end="url(#svl-arr)" opacity="0.45"/>
+  <text x="14"  y="26" class="axl" text-anchor="start">cheapest</text>
+  <text x="810" y="26" class="axl" text-anchor="end">most expensive</text>
+
+
+
+  <rect x="12"  y="50" width="148" height="180" rx="7" class="v-fill" stroke="var(--accent,#2563eb)" stroke-width="1.6"/>
+  <circle cx="86" cy="69" r="10" fill="var(--accent,#2563eb)" opacity="0.12"/>
+  <text x="86"  y="73"  text-anchor="middle" class="badge" fill="var(--accent,#2563eb)">1</text>
+  <text x="86"  y="90"  text-anchor="middle" class="ttl"   fill="var(--accent,#2563eb)">Format / length</text>
+  <text x="86"  y="102" text-anchor="middle" class="ttl"   fill="var(--accent,#2563eb)">&amp; language ID</text>
+  <line x1="22"  y1="108" x2="150" y2="108" stroke="var(--accent,#2563eb)" stroke-width="0.5" opacity="0.2"/>
+  <text x="86"  y="122" text-anchor="middle" class="sub">drop malformed</text>
+  <text x="86"  y="133" text-anchor="middle" class="sub">drop wrong-lang</text>
+
+
+  <rect x="173" y="50" width="148" height="180" rx="7" class="v-fill" stroke="var(--accent,#2563eb)" stroke-width="1.6"/>
+  <circle cx="247" cy="69" r="10" fill="var(--accent,#2563eb)" opacity="0.12"/>
+  <text x="247" y="73"  text-anchor="middle" class="badge" fill="var(--accent,#2563eb)">2</text>
+  <text x="247" y="90"  text-anchor="middle" class="ttl"   fill="var(--accent,#2563eb)">n-gram dedup</text>
+  <text x="247" y="102" text-anchor="middle" class="sub">(MinHash / LSH)</text>
+  <line x1="183" y1="108" x2="311" y2="108" stroke="var(--accent,#2563eb)" stroke-width="0.5" opacity="0.2"/>
+  <text x="247" y="122" text-anchor="middle" class="sub">drop near-dups</text>
+
+
+  <rect x="334" y="50" width="148" height="180" rx="7" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+  <circle cx="408" cy="69" r="10" fill="var(--accent2,#3b82f6)" opacity="0.12"/>
+  <text x="408" y="73"  text-anchor="middle" class="badge" fill="var(--accent2,#3b82f6)">3</text>
+  <text x="408" y="90"  text-anchor="middle" class="ttl"   fill="var(--accent2,#3b82f6)">Quality</text>
+  <text x="408" y="102" text-anchor="middle" class="ttl"   fill="var(--accent2,#3b82f6)">classifier</text>
+  <line x1="344" y1="108" x2="472" y2="108" stroke="var(--accent2,#3b82f6)" stroke-width="0.5" opacity="0.2"/>
+  <text x="408" y="122" text-anchor="middle" class="sub">FineWeb-Edu head</text>
+  <text x="408" y="133" text-anchor="middle" class="sub">drop low-edu pages</text>
+  <text x="408" y="144" text-anchor="middle" class="sub">score &lt; ~3/5</text>
+
+
+  <rect x="495" y="50" width="148" height="180" rx="7" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+  <circle cx="569" cy="69" r="10" fill="var(--warn,#e0a106)" opacity="0.12"/>
+  <text x="569" y="73"  text-anchor="middle" class="badge" fill="var(--warn,#b45309)">4</text>
+  <text x="569" y="90"  text-anchor="middle" class="ttl"   fill="var(--warn,#b45309)">Correctness</text>
+  <text x="569" y="102" text-anchor="middle" class="ttl"   fill="var(--warn,#b45309)">(exec / verify)</text>
+  <line x1="505" y1="108" x2="633" y2="108" stroke="var(--warn,#e0a106)" stroke-width="0.5" opacity="0.2"/>
+  <text x="569" y="122" text-anchor="middle" class="sub">sandbox execution</text>
+  <text x="569" y="133" text-anchor="middle" class="sub">answer match</text>
+  <text x="569" y="144" text-anchor="middle" class="sub">keep verified traces</text>
+
+
+  <rect x="656" y="50" width="148" height="180" rx="7" class="v-fill" stroke="var(--warn,#c2410c)" stroke-width="1.8"/>
+
+  <circle cx="730" cy="69" r="10" fill="var(--warn,#c2410c)" opacity="0.12"/>
+  <text x="730" y="73"  text-anchor="middle" class="badge" fill="var(--warn,#c2410c)">5</text>
+  <text x="730" y="90"  text-anchor="middle" class="ttl"   fill="var(--warn,#c2410c)">LLM-judge</text>
+  <text x="730" y="102" text-anchor="middle" class="ttl"   fill="var(--warn,#c2410c)">(semantic)</text>
+  <line x1="666" y1="108" x2="794" y2="108" stroke="var(--warn,#c2410c)" stroke-width="0.5" opacity="0.2"/>
+  <text x="730" y="122" text-anchor="middle" class="sub">factuality /</text>
+  <text x="730" y="133" text-anchor="middle" class="sub">coherence verdict</text>
+  <text x="730" y="144" text-anchor="middle" class="sub">drop subtle errors</text>
+
+
+  <line x1="160" y1="140" x2="173" y2="140" stroke="var(--accent,#2563eb)" stroke-width="5.5" marker-end="url(#svl-arr)" opacity="0.5"/>
+  <line x1="321" y1="140" x2="334" y2="140" stroke="var(--accent,#2563eb)" stroke-width="4"   marker-end="url(#svl-arr)" opacity="0.5"/>
+  <line x1="482" y1="140" x2="495" y2="140" stroke="var(--accent2,#3b82f6)" stroke-width="2.8" marker-end="url(#svl-arr)" opacity="0.5"/>
+  <line x1="643" y1="140" x2="656" y2="140" stroke="var(--warn,#e0a106)"   stroke-width="1.8" marker-end="url(#svl-arr)" opacity="0.55"/>
+
+
+  <rect x="809" y="112" width="54" height="56" rx="6" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+  <text x="836" y="131" text-anchor="middle" class="final" fill="var(--good,#2f9e6e)">Clean</text>
+  <text x="836" y="143" text-anchor="middle" class="final" fill="var(--good,#2f9e6e)">shard</text>
+  <text x="836" y="156" text-anchor="middle" class="sub"   fill="var(--good,#2f9e6e)">kept</text>
+  <line x1="804" y1="140" x2="809" y2="140" stroke="var(--good,#2f9e6e)" stroke-width="1.2" marker-end="url(#svl-farr)"/>
+
+
+  <line x1="86"  y1="230" x2="86"  y2="262" stroke="var(--muted,#9ca3af)" stroke-width="0.9" stroke-dasharray="3,2" opacity="0.55" marker-end="url(#svl-darr)"/>
+  <rect x="28"  y="264" width="116" height="34" rx="4" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#9ca3af)" stroke-width="0.8" opacity="0.75"/>
+  <text x="86"  y="278" text-anchor="middle" class="drop">malformed /</text>
+  <text x="86"  y="290" text-anchor="middle" class="drop">wrong-lang</text>
+
+  <line x1="247" y1="230" x2="247" y2="262" stroke="var(--muted,#9ca3af)" stroke-width="0.9" stroke-dasharray="3,2" opacity="0.55" marker-end="url(#svl-darr)"/>
+  <rect x="189" y="264" width="116" height="34" rx="4" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#9ca3af)" stroke-width="0.8" opacity="0.75"/>
+  <text x="247" y="278" text-anchor="middle" class="drop">near-</text>
+  <text x="247" y="290" text-anchor="middle" class="drop">duplicates</text>
+
+  <line x1="408" y1="230" x2="408" y2="262" stroke="var(--muted,#9ca3af)" stroke-width="0.9" stroke-dasharray="3,2" opacity="0.55" marker-end="url(#svl-darr)"/>
+  <rect x="350" y="264" width="116" height="34" rx="4" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#9ca3af)" stroke-width="0.8" opacity="0.75"/>
+  <text x="408" y="278" text-anchor="middle" class="drop">low-quality</text>
+  <text x="408" y="290" text-anchor="middle" class="drop">pages</text>
+
+  <line x1="569" y1="230" x2="569" y2="262" stroke="var(--muted,#9ca3af)" stroke-width="0.9" stroke-dasharray="3,2" opacity="0.55" marker-end="url(#svl-darr)"/>
+  <rect x="511" y="264" width="116" height="34" rx="4" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#9ca3af)" stroke-width="0.8" opacity="0.75"/>
+  <text x="569" y="278" text-anchor="middle" class="drop">incorrect</text>
+  <text x="569" y="290" text-anchor="middle" class="drop">traces</text>
+
+  <line x1="730" y1="230" x2="730" y2="262" stroke="var(--muted,#9ca3af)" stroke-width="0.9" stroke-dasharray="3,2" opacity="0.55" marker-end="url(#svl-darr)"/>
+  <rect x="672" y="264" width="116" height="34" rx="4" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#9ca3af)" stroke-width="0.8" opacity="0.75"/>
+  <text x="730" y="278" text-anchor="middle" class="drop">subtly-wrong</text>
+  <text x="730" y="290" text-anchor="middle" class="drop">outputs</text>
+
+
+  <g clip-path="url(#svl-dotclip)">
+    <circle class="dot"  cx="20" cy="140" r="4.5"/>
+    <circle class="dot dot2" cx="20" cy="140" r="4.5"/>
+    <circle class="dot dot3" cx="20" cy="140" r="4.5"/>
+  </g>
+
+
+  <text x="430" y="368" text-anchor="middle" class="foot">Order filters cheapest-first: discard junk before paying for expensive checks.</text>
+</svg>
+<figcaption><b>The synthetic-data verification ladder.</b> Five quality gates run cheapest-first: format/length checks, n-gram deduplication (MinHash/LSH), an educational quality classifier (FineWeb-Edu), sandbox execution for correctness on math and code, and a final LLM judge for semantic quality. Each stage drops records so the costly later stages process only what survives earlier filters.</figcaption>
+</figure>
+
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">A cheapest-first verification ladder for a synthetic shard. Each stage drops</span>
+<span class="sd">records so later, costlier stages process fewer items. Returns survivors + stats.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">verify_shard</span><span class="p">(</span><span class="n">records</span><span class="p">,</span> <span class="n">edu_head</span><span class="p">,</span> <span class="n">embed_fn</span><span class="p">,</span> <span class="n">judge_llm</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="n">stats</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;in&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">records</span><span class="p">)}</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">seen_ngrams</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">records</span><span class="p">:</span>
+        <span class="n">t</span> <span class="o">=</span> <span class="n">r</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">]</span>
+        <span class="c1"># Stage 1: format / length / language (cheap string ops)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="mi">50</span> <span class="o">&lt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">split</span><span class="p">())</span> <span class="o">&lt;=</span> <span class="mi">4000</span><span class="p">):</span>
+            <span class="k">continue</span>
+        <span class="c1"># Stage 2: cheap near-dup via 13-gram fingerprint set</span>
+        <span class="n">toks</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+        <span class="n">fp</span> <span class="o">=</span> <span class="nb">hash</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">toks</span><span class="p">[:</span><span class="mi">13</span><span class="p">]))</span>
+        <span class="k">if</span> <span class="n">fp</span> <span class="ow">in</span> <span class="n">seen_ngrams</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">seen_ngrams</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">fp</span><span class="p">)</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+    <span class="n">stats</span><span class="p">[</span><span class="s2">&quot;after_dedup&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+
+    <span class="c1"># Stage 3: quality classifier (one batched embedding + linear head)</span>
+    <span class="n">embeds</span> <span class="o">=</span> <span class="n">embed_fn</span><span class="p">([</span><span class="n">r</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">out</span><span class="p">])</span>
+    <span class="n">keep</span> <span class="o">=</span> <span class="n">edu_head</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">embeds</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mf">3.0</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="p">[</span><span class="n">r</span> <span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">keep</span><span class="p">)</span> <span class="k">if</span> <span class="n">k</span><span class="p">]</span>
+    <span class="n">stats</span><span class="p">[</span><span class="s2">&quot;after_quality&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+
+    <span class="c1"># Stage 4: correctness is already enforced upstream for reasoning traces</span>
+    <span class="c1"># (rejection sampling); for free-gen we may run an LLM judge here.</span>
+    <span class="k">if</span> <span class="n">judge_llm</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="p">[</span><span class="n">r</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">out</span> <span class="k">if</span> <span class="n">llm_judge_ok</span><span class="p">(</span><span class="n">judge_llm</span><span class="p">,</span> <span class="n">r</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">])]</span>
+    <span class="n">stats</span><span class="p">[</span><span class="s2">&quot;out&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span><span class="p">,</span> <span class="n">stats</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">llm_judge_ok</span><span class="p">(</span><span class="n">judge_llm</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Ask a judge model for a factuality/coherence verdict. Expensive -&gt; last.&quot;&quot;&quot;</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;Is the following passage coherent and free of obvious factual &quot;</span>
+              <span class="s2">&quot;errors? Answer YES or NO.</span><span class="se">\n\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="n">text</span><span class="p">[:</span><span class="mi">3000</span><span class="p">])</span>
+    <span class="n">verdict</span> <span class="o">=</span> <span class="n">judge_llm</span><span class="o">.</span><span class="n">generate</span><span class="p">([</span><span class="n">prompt</span><span class="p">],</span> <span class="n">sampling_params</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">4</span><span class="p">))[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">verdict</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;YES&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>For <em>verifiable</em> domains (math, code), stage 4 is a real executor in a sandbox — see <a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a>. For everything else, stage 5 is an LLM-as-judge pass; understand its biases before you trust it (<a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a>).</p>
+<h3 id="contamination-the-silent-killer-of-synthetic-data">Contamination: the silent killer of synthetic data<a class="headerlink" href="#contamination-the-silent-killer-of-synthetic-data" title="Permanent link">¶</a></h3>
+<p>The single most dangerous failure mode is <strong>benchmark contamination</strong>. When your generator was itself trained on, or has memorized, the test sets you evaluate on (MMLU, GSM8K, HumanEval, …), its synthetic output can leak those test items verbatim or near-verbatim into your training data. You then score brilliantly on the benchmark and learn nothing — a contaminated number is worse than no number, because it actively misleads. Synthetic data <em>amplifies</em> this risk because the generator can regurgitate memorized eval items even when you never asked for them.</p>
+<p>Decontamination is mandatory and must run against your eval suites:</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Decontamination: drop any synthetic record that overlaps an eval item by a</span>
+<span class="sd">high-n-gram match. Use a generous n (e.g. 13-grams) and check against ALL</span>
+<span class="sd">benchmarks you report on. This is non-negotiable for credible numbers.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">ngrams</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">13</span><span class="p">):</span>
+    <span class="n">toks</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">toks</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="n">n</span><span class="p">])</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">toks</span><span class="p">)</span> <span class="o">-</span> <span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_eval_ngram_index</span><span class="p">(</span><span class="n">eval_items</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">13</span><span class="p">):</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">eval_items</span><span class="p">:</span>           <span class="c1"># questions AND answers from every benchmark</span>
+        <span class="n">idx</span> <span class="o">|=</span> <span class="n">ngrams</span><span class="p">(</span><span class="n">item</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">idx</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">decontaminate</span><span class="p">(</span><span class="n">records</span><span class="p">,</span> <span class="n">eval_index</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">13</span><span class="p">,</span> <span class="n">max_overlap</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Drop a record if it shares more than `max_overlap` 13-grams with any</span>
+<span class="sd">    eval item -- i.e. it has likely memorized/leaked a test question.&quot;&quot;&quot;</span>
+    <span class="n">clean</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">records</span><span class="p">:</span>
+        <span class="n">overlap</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">ngrams</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">],</span> <span class="n">n</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">eval_index</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">overlap</span> <span class="o">&lt;=</span> <span class="n">max_overlap</span><span class="p">:</span>
+            <span class="n">clean</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">clean</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: trusting synthetic benchmark scores</p>
+<p>If you generate training data with model X and then report results on benchmark B, you <em>must</em> assume X may have seen B. Always (1) decontaminate the synthetic corpus against B&rsquo;s n-grams, (2) report on at least one <em>held-out, freshly authored</em> eval the generator could not have seen, and (3) be suspicious of any benchmark where the synthetic-trained model jumps far more than its general capability did. Contamination produces exactly that signature: a spike on the measured benchmark with no transfer.</p>
+</div>
+<h3 id="distributional-narrowing-and-fact-drift">Distributional narrowing and fact drift<a class="headerlink" href="#distributional-narrowing-and-fact-drift" title="Permanent link">¶</a></h3>
+<p>Two subtler failure modes round out the catalog:</p>
+<ul>
+<li><strong>Distributional narrowing.</strong> Even without full collapse, synthetic data tends to over-represent the <em>center</em> of the distribution — common topics, standard phrasings, the generator&rsquo;s stylistic tics — and under-represent rare entities, dialects, code-switching, and long-tail facts. Mitigate by <em>seeding generation from real data</em> (so topic frequency tracks reality) and by measuring diversity directly: track type-token ratio, self-BLEU (lower is more diverse), and embedding-space coverage of your synthetic corpus against the natural one.</li>
+<li><strong>Fact drift / error laundering.</strong> A wrong fact generated once, kept, and trained on becomes &ldquo;knowledge&rdquo; the next generation confidently repeats and elaborates. This is how a single hallucination metastasizes across a model lineage. The defense is grounding (WRAP, instruction-augmentation), verification (reasoning traces), and source seeding — and never running a recursive self-generation loop without real-data anchoring and decontamination at every step.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Diversity monitoring: a cheap self-BLEU proxy (lexical overlap among samples)</span>
+<span class="sd">plus type-token ratio. Run these on every synthetic shard; a falling TTR or a</span>
+<span class="sd">rising self-overlap is an early warning of narrowing/collapse.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">type_token_ratio</span><span class="p">(</span><span class="n">texts</span><span class="p">):</span>
+    <span class="n">toks</span> <span class="o">=</span> <span class="p">[</span><span class="n">w</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">texts</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">t</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">()]</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">toks</span><span class="p">))</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">toks</span><span class="p">))</span>   <span class="c1"># higher = more diverse</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">self_overlap</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">200</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Average fraction of shared unigrams between random pairs. Higher = more</span>
+<span class="sd">    repetitive (a collapse warning). Sampled for speed.&quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+    <span class="n">sets</span> <span class="o">=</span> <span class="p">[</span><span class="nb">set</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">())</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">texts</span><span class="p">[:</span><span class="n">k</span><span class="p">]]</span>
+    <span class="n">pairs</span><span class="p">,</span> <span class="n">tot</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">0.0</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">sets</span><span class="p">)):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">sets</span><span class="p">)):</span>
+            <span class="n">inter</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">sets</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">&amp;</span> <span class="n">sets</span><span class="p">[</span><span class="n">j</span><span class="p">])</span>
+            <span class="n">union</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">sets</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">|</span> <span class="n">sets</span><span class="p">[</span><span class="n">j</span><span class="p">])</span> <span class="ow">or</span> <span class="mi">1</span>
+            <span class="n">tot</span> <span class="o">+=</span> <span class="n">inter</span> <span class="o">/</span> <span class="n">union</span><span class="p">;</span> <span class="n">pairs</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="n">tot</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">pairs</span><span class="p">)</span>                  <span class="c1"># ~ Jaccard self-similarity</span>
+</code></pre></div>
+<p>Wire these into your pipeline as <strong>monitored metrics</strong>: if type-token ratio falls or self-overlap rises shard-over-shard, your generator is narrowing and you should raise temperature, broaden seeds, or cut the synthetic fraction.</p>
+<hr />
+<h2 id="interview-corner">Interview Corner<a class="headerlink" href="#interview-corner" title="Permanent link">¶</a></h2>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are out of high-quality pretraining tokens and decide to add synthetic data by rephrasing your existing corpus with your own model. A colleague warns this will cause &ldquo;model collapse.&rdquo; Are they right, and how would you design the mix to be safe?</p>
+<p><strong>A:</strong> Partially right — collapse is a real risk but it is <em>avoidable</em>, and the key variable is whether you <strong>replace</strong> real data or <strong>accumulate</strong> on top of it. The Shumailov-style collapse results are about <em>recursive replacement</em>: training generation <span class="arithmatex">\(t+1\)</span> only on generation <span class="arithmatex">\(t\)</span>&rsquo;s outputs, discarding the original. That compounds sampling noise and narrows the distribution — the toy Gaussian shows variance decaying like <span class="arithmatex">\((1-1/n)^t\)</span>. But the Gerstgrasser &ldquo;accumulate&rdquo; results show that if you <em>keep all the real data</em> and <em>add</em> synthetic to it, collapse is largely prevented because the real data re-anchors the distribution each round.</p>
+<p>So the design: (1) <strong>never replace</strong> — always keep the full natural corpus and treat synthetic as augmentation, targeting roughly a 1:1 to 2:1 natural:synthetic ratio. (2) <strong>Use rephrasing, not free generation</strong>, so every synthetic token is grounded in a real source and facts are inherited, not invented (WRAP-style). (3) <strong>Diversify the rewrite styles</strong> and use a moderate temperature so you do not collapse onto one bland mode. (4) <strong>Decontaminate</strong> the synthetic output against every benchmark you will report — a self-rephraser can leak memorized eval items. (5) <strong>Monitor diversity</strong> (type-token ratio, self-overlap) shard-over-shard as an early-warning signal. The colleague&rsquo;s fear applies to a naive recursive loop; a grounded, accumulating, decontaminated, diversity-monitored mix is safe and is exactly what shops doing this in practice run.</p>
+</div>
+<hr />
+<h2 id="putting-it-together-a-synthetic-data-playbook">Putting It Together: A Synthetic-Data Playbook<a class="headerlink" href="#putting-it-together-a-synthetic-data-playbook" title="Permanent link">¶</a></h2>
+<p>Stitching the recipes into one decision procedure:</p>
+<table>
+<thead>
+<tr>
+<th>Goal</th>
+<th>Recipe</th>
+<th>Grounding</th>
+<th>Filter</th>
+<th>Mix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Stretch a scarce corpus</td>
+<td>WRAP rephrasing</td>
+<td>Source doc</td>
+<td>Quality + dedup</td>
+<td>~1:1 natural:synth</td>
+</tr>
+<tr>
+<td>Inject clean pedagogy</td>
+<td>Cosmopedia gen + FineWeb-Edu filter</td>
+<td>Seed snippet (gen); real (filter)</td>
+<td>Quality, dedup, judge</td>
+<td>Cap synth ≤ ~&#8531;</td>
+</tr>
+<tr>
+<td>Head-start instruction following</td>
+<td>QA-augmented pretrain</td>
+<td>Passage</td>
+<td>Grounding check</td>
+<td>Small fraction</td>
+</tr>
+<tr>
+<td>Distill reasoning into a student</td>
+<td>Rejection-sampling SFT</td>
+<td>Verified answer</td>
+<td>Exec/verify (hard)</td>
+<td>Mostly synth (verified)</td>
+</tr>
+<tr>
+<td>Exceed the teacher</td>
+<td>RLVR (not SFT)</td>
+<td>Verifiable reward</td>
+<td>Reward = verifier</td>
+<td>On-policy</td>
+</tr>
+</tbody>
+</table>
+<p>The throughline across all five: <strong>synthetic data converts compute into targeted, high-quality tokens, and its safety is governed by grounding, verification, and the refusal to ever recursively replace real data.</strong> Generation is the easy 10%; the verification ladder, decontamination, and diversity monitoring are the 90% that decides whether your synthetic corpus is a moat or a landmine.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The <strong>data wall</strong> is real: high-quality human text is finite, and synthetic data trades cheap compute for scarce high-quality tokens — but only if generated and filtered carefully.</li>
+<li>Four recipes, by increasing risk: <strong>WRAP rephrasing</strong> (source-grounded, ~3× token efficiency), <strong>textbook generation</strong> (Phi/Cosmopedia, highest quality density, highest hallucination risk), <strong>instruction/QA augmentation</strong> (grounded, gives base models a head start), and <strong>reasoning-trace distillation</strong> (verified, the post-training workhorse).</li>
+<li><strong>Model collapse is caused by recursive <em>replacement</em>, not by synthetic data itself.</strong> Keeping the real data and <em>accumulating</em> synthetic on top largely prevents it; the toy Gaussian shows variance decaying like <span class="arithmatex">\((1-1/n)^t\)</span> only in the replace regime.</li>
+<li><strong>Verification breaks the collapse dynamic.</strong> For math/code you can keep only objectively-correct traces, which is why post-training datasets can be almost fully synthetic while pretraining mixes cannot.</li>
+<li><strong>Over-generate, filter hard.</strong> Sample <span class="arithmatex">\(K\)</span> candidates, keep the verified-correct ones; with the verification asymmetry, an unreliable generator still yields a high-precision dataset.</li>
+<li><strong>Decontamination against every reported benchmark is mandatory</strong> — synthetic generators can leak memorized eval items, producing spurious score spikes with no real transfer.</li>
+<li><strong>Monitor diversity</strong> (type-token ratio, self-overlap, embedding coverage). Falling diversity is the early-warning sign of narrowing before full collapse.</li>
+<li>Default pretraining mix: <strong>1–2 parts natural to 1 part synthetic</strong>, synthetic capped around one-third to one-half; always anchor with real data, always seed generation from real data so topic frequencies track reality.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Synthetic data has become a first-class ingredient in frontier LLM training: WRAP-style rephrasing, textbook-quality generation (Phi/Cosmopedia), and verified reasoning-trace distillation (RFT/STaR) are now standard practice, while the model-collapse literature has largely settled on &ldquo;accumulate, don&rsquo;t replace&rdquo; as the governing principle for safe mixing.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2306.11644">Gunasekar et al., <em>Textbooks Are All You Need</em> (2023)</a> — introduced Phi-1 and the thesis that data quality can substitute for scale; spawned the textbook-generation paradigm.</li>
+<li><a href="https://arxiv.org/abs/2309.05463">Li et al., <em>Textbooks Are All You Need II: phi-1.5</em> (2023)</a> — extended the recipe to general reasoning, showing 1.3B models matching 5× larger ones on NLP tasks.</li>
+<li><a href="https://arxiv.org/abs/2203.14465">Zelikman et al., <em>STaR: Bootstrapping Reasoning With Reasoning</em> (2022)</a> — the canonical rejection-sampling fine-tuning loop: over-generate, verify, keep correct traces.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2401.16380">Maini et al., <em>Rephrasing the Web (WRAP)</em> (2024)</a> — source-grounded web rephrasing achieves ~3× pretraining token efficiency; the lowest-risk synthetic recipe.</li>
+<li><a href="https://arxiv.org/abs/2305.17493">Shumailov et al., <em>The Curse of Recursion</em> (2023)</a> — quantifies model collapse under recursive replacement; tails of the distribution vanish irreversibly.</li>
+<li><a href="https://arxiv.org/abs/2404.01413">Gerstgrasser et al., <em>Is Model Collapse Inevitable?</em> (2024)</a> — shows accumulating real + synthetic data breaks the collapse dynamic; test risk bounded by π²/6 of the baseline.</li>
+<li><a href="https://arxiv.org/abs/2305.16264">Muennighoff et al., <em>Scaling Data-Constrained Language Models</em> (2023)</a> — NeurIPS 2023 outstanding paper; quantifies diminishing returns of repeated epochs vs. fresh tokens.</li>
+<li><a href="https://arxiv.org/abs/2406.14491">Cheng et al., <em>Instruction Pre-Training</em> (2024)</a> — injecting 200M synthesized instruction-response pairs during pretraining; enables Llama3-8B to match 70B on downstream tasks.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/huggingface/cosmopedia">huggingface/cosmopedia</a> — fully open pipeline (prompt generation, llm-swarm inference, deduplication, decontamination) that produced 25B tokens of synthetic textbooks.</li>
+<li><a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu">HuggingFaceFW/fineweb-edu</a> — 1.3T-token educational web corpus (arxiv: 2406.17557); the classifier distillation approach is a reusable quality-filtering recipe.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Maini, Seto, et al., <em>Rephrasing the Web (WRAP): A Recipe for Compute and Data-Efficient Language Modeling</em>.</li>
+<li>Gunasekar et al., <em>Textbooks Are All You Need</em> (Phi-1); Li et al., <em>Textbooks Are All You Need II</em> (phi-1.5); the broader Microsoft <strong>Phi</strong> technical reports.</li>
+<li>Ben Allal, Lozhkov, et al., <strong>Cosmopedia</strong> (HuggingFace) — open reproduction of Phi-style synthetic textbook data; and the <strong>FineWeb-Edu</strong> dataset and educational-classifier report.</li>
+<li>Shumailov et al., <em>The Curse of Recursion: Training on Generated Data Makes Models Forget</em> (model collapse).</li>
+<li>Gerstgrasser et al., <em>Is Model Collapse Inevitable? Breaking the Curse of Recursion by Accumulating Real and Synthetic Data</em>.</li>
+<li>Zelikman et al., <em>STaR: Bootstrapping Reasoning with Reasoning</em>; and rejection-sampling fine-tuning as used in the <strong>Llama</strong> and <strong>DeepSeek-R1</strong> post-training reports.</li>
+<li>Muennighoff et al., <em>Scaling Data-Constrained Language Models</em> (how many epochs of real data are worth fresh tokens).</li>
+<li>Cheng et al., <em>Instruction Pre-Training: Language Models Are Supervised Multitask Learners</em>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="14-data-mixing-curriculum.html"><span class="pn-label">← Previous</span><span class="pn-title">Data Mixing, Domain Weighting &amp; Curriculum</span></a>
+<a class="next" href="16-continual-pretraining.html"><span class="pn-label">Next →</span><span class="pn-title">Continual &amp; Domain-Adaptive Pretraining</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-generate-tokens-at-all">Why Generate Tokens At All?</a></li>
+<li class="toc-l3"><a href="#the-data-wall-quantified">The data wall, quantified</a></li>
+<li class="toc-l3"><a href="#a-taxonomy-of-synthetic-data">A taxonomy of synthetic data</a></li>
+<li class="toc-l2"><a href="#recipe-1-rephrasing-the-web-wrap">Recipe 1 — Rephrasing the Web (WRAP)</a></li>
+<li class="toc-l3"><a href="#a-runnable-wrap-pipeline">A runnable WRAP pipeline</a></li>
+<li class="toc-l3"><a href="#why-keep-the-original-and-how-much-to-mix">Why keep the original — and how much to mix</a></li>
+<li class="toc-l2"><a href="#recipe-2-textbook-style-generation-phi-cosmopedia-fineweb-edu">Recipe 2 — Textbook-Style Generation (Phi, Cosmopedia, FineWeb-Edu)</a></li>
+<li class="toc-l3"><a href="#the-fineweb-edu-educational-classifier">The FineWeb-Edu educational classifier</a></li>
+<li class="toc-l3"><a href="#cosmopedia-style-generation-with-prompt-diversity">Cosmopedia-style generation with prompt diversity</a></li>
+<li class="toc-l2"><a href="#recipe-3-instruction-and-qa-augmented-pretraining">Recipe 3 — Instruction- and QA-Augmented Pretraining</a></li>
+<li class="toc-l2"><a href="#recipe-4-reasoning-trace-distillation-for-post-training">Recipe 4 — Reasoning-Trace Distillation for Post-Training</a></li>
+<li class="toc-l3"><a href="#rejection-sampling-fine-tuning-end-to-end">Rejection-sampling fine-tuning, end to end</a></li>
+<li class="toc-l3"><a href="#distillation-vs-rl-where-synthetic-sft-stops">Distillation vs. RL: where synthetic SFT stops</a></li>
+<li class="toc-l2"><a href="#mixing-scaling-and-the-math-of-model-collapse">Mixing, Scaling, and the Math of Model Collapse</a></li>
+<li class="toc-l3"><a href="#the-accumulate-vs-replace-distinction">The accumulate-vs-replace distinction</a></li>
+<li class="toc-l3"><a href="#a-toy-model-of-collapse-the-shrinking-gaussian">A toy model of collapse: the shrinking Gaussian</a></li>
+<li class="toc-l3"><a href="#scaling-behavior-of-mixed-corpora">Scaling behavior of mixed corpora</a></li>
+<li class="toc-l2"><a href="#verification-filtering-and-contamination-control">Verification, Filtering, and Contamination Control</a></li>
+<li class="toc-l3"><a href="#the-verification-ladder">The verification ladder</a></li>
+<li class="toc-l3"><a href="#contamination-the-silent-killer-of-synthetic-data">Contamination: the silent killer of synthetic data</a></li>
+<li class="toc-l3"><a href="#distributional-narrowing-and-fact-drift">Distributional narrowing and fact drift</a></li>
+<li class="toc-l2"><a href="#interview-corner">Interview Corner</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-synthetic-data-playbook">Putting It Together: A Synthetic-Data Playbook</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

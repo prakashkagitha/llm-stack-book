@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vision Transformers &amp; Image Encoders — The LLM Stack</title>
+<meta name="description" content="ViT (patches as tokens), CLIP (contrastive image-text), SigLIP, image preprocessing, patch embeddings, register tokens, DINOv2; how images enter the transformer">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="active" href="01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part X — Multimodal &amp; Generative Frontiers</div>
+<h1 id="101-vision-transformers-image-encoders">10.1 Vision Transformers &amp; Image Encoders<a class="headerlink" href="#101-vision-transformers-image-encoders" title="Permanent link">¶</a></h1>
+<p>Images are not tokens — and yet modern vision models treat them exactly like tokens. The insight that a 224×224 pixel image can be split into a sequence of 196 small patches, each embedded into a vector exactly like a word, and then fed into an unmodified Transformer, turned out to be one of the most generative ideas in the last decade of deep learning. This chapter builds that idea from the ground up: how you patchify an image, why it works, what goes wrong if you do it naively, and how CLIP, SigLIP, DINOv2, and modern multimodal pipelines extend the basic ViT into the powerful image encoders that power GPT-4o, Gemini, and Claude.</p>
+<p>Before reading this chapter, make sure you are comfortable with <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a> and <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a>. This chapter feeds directly into <a href="../10-multimodal-and-arch/02-vision-language-models.html">Vision-Language Models</a>, where we cover how a trained image encoder is wired into a language model.</p>
+<hr />
+<h2 id="why-convolutions-are-not-enough">Why Convolutions Are Not Enough<a class="headerlink" href="#why-convolutions-are-not-enough" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-vit-patchify">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 372" role="img" aria-label="A Vision Transformer input pipeline: an image is split into a grid of fixed-size patches, each patch is flattened and linearly projected into a patch embedding, a learnable CLS token is prepended, learned position embeddings are added, and the resulting token sequence is fed to a Transformer encoder.">
+  <defs>
+    <marker id="vp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-vit-patchify text{ fill:var(--ink-soft); }
+    #fig-vit-patchify .ttl{ font:600 12.5px var(--sans,sans-serif); }
+    #fig-vit-patchify .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-vit-patchify .mono{ font:600 11px var(--mono,monospace); }
+    #fig-vit-patchify .dim{ font:500 10px var(--mono,monospace); fill:var(--muted); }
+    #fig-vit-patchify .op{ font:600 11px var(--sans,sans-serif); fill:var(--muted); }
+  </style>
+
+
+  <g data-anim="1">
+    <text x="100" y="28" text-anchor="middle" class="ttl">Image → patches</text>
+
+    <rect x="32" y="42" width="136" height="136" rx="4" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <g class="v-grid" stroke-width="1">
+      <line x1="66" y1="42" x2="66" y2="178"/>
+      <line x1="100" y1="42" x2="100" y2="178"/>
+      <line x1="134" y1="42" x2="134" y2="178"/>
+      <line x1="32" y1="76" x2="168" y2="76"/>
+      <line x1="32" y1="110" x2="168" y2="110"/>
+      <line x1="32" y1="144" x2="168" y2="144"/>
+    </g>
+
+    <rect x="100" y="76" width="34" height="34" class="v-accent" fill="var(--accent)" fill-opacity="0.32"/>
+    <rect x="100" y="76" width="34" height="34" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="1.8"/>
+    <text x="100" y="200" text-anchor="middle" class="dim">224×224×3</text>
+    <text x="100" y="214" text-anchor="middle" class="sm">16×16 patches → N=196</text>
+  </g>
+
+
+  <line x1="172" y1="93" x2="214" y2="93" class="v-muted" stroke="currentColor" stroke-width="1.4" marker-end="url(#vp-arrow)"/>
+  <text x="193" y="84" text-anchor="middle" class="op">flatten</text>
+
+
+  <g data-anim="2">
+    <text x="300" y="28" text-anchor="middle" class="ttl">Flatten + project</text>
+
+    <rect x="226" y="60" width="148" height="20" rx="3" class="v-fill v-accent-s" stroke-width="1.4"/>
+    <g class="v-grid" stroke-width="0.8" opacity="0.8">
+      <line x1="248" y1="60" x2="248" y2="80"/><line x1="270" y1="60" x2="270" y2="80"/>
+      <line x1="292" y1="60" x2="292" y2="80"/><line x1="314" y1="60" x2="314" y2="80"/>
+      <line x1="336" y1="60" x2="336" y2="80"/><line x1="358" y1="60" x2="358" y2="80"/>
+    </g>
+    <text x="300" y="96" text-anchor="middle" class="dim">pᵢ : 16·16·3 = 768</text>
+
+
+    <line x1="300" y1="104" x2="300" y2="122" class="v-muted" stroke="currentColor" stroke-width="1.4" marker-end="url(#vp-arrow)"/>
+    <rect x="252" y="126" width="96" height="34" rx="5" class="v-fill" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="300" y="148" text-anchor="middle" class="mono" fill="var(--accent)">E · pᵢ   (D×768)</text>
+    <text x="300" y="174" text-anchor="middle" class="sm">linear patch embedding</text>
+
+
+    <line x1="300" y1="180" x2="300" y2="198" class="v-muted" stroke="currentColor" stroke-width="1.4" marker-end="url(#vp-arrow)"/>
+    <rect x="270" y="202" width="60" height="20" rx="3" class="v-accent" fill="var(--accent)" fill-opacity="0.32" stroke="var(--accent)" stroke-width="1.6"/>
+    <text x="300" y="238" text-anchor="middle" class="dim">patch token : D=768</text>
+  </g>
+
+
+  <line x1="376" y1="212" x2="418" y2="212" class="v-muted" stroke="currentColor" stroke-width="1.4" marker-end="url(#vp-arrow)"/>
+
+
+  <g data-anim="3">
+    <text x="588" y="28" text-anchor="middle" class="ttl">Token sequence  z₀</text>
+
+
+    <rect x="426" y="186" width="42" height="52" rx="5" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="447" y="216" text-anchor="middle" class="mono" fill="var(--good,#2f9e6e)">CLS</text>
+
+
+    <g>
+      <rect x="474" y="186" width="22" height="52" rx="4" class="v-fill v-accent-s" stroke-width="1.4"/>
+      <rect x="500" y="186" width="22" height="52" rx="4" class="v-fill v-accent-s" stroke-width="1.4"/>
+      <rect x="526" y="186" width="22" height="52" rx="4" class="v-fill v-accent-s" stroke-width="1.4"/>
+      <rect x="552" y="186" width="22" height="52" rx="4" class="v-fill v-accent-s" stroke-width="1.4"/>
+
+      <rect x="578" y="186" width="22" height="52" rx="4" class="v-accent" fill="var(--accent)" fill-opacity="0.32" stroke="var(--accent)" stroke-width="1.8"/>
+      <rect x="612" y="186" width="22" height="52" rx="4" class="v-fill v-accent-s" stroke-width="1.4"/>
+      <rect x="638" y="186" width="22" height="52" rx="4" class="v-fill v-accent-s" stroke-width="1.4"/>
+      <text x="603" y="206" text-anchor="middle" class="dim" fill="var(--accent)">pᵢ</text>
+      <text x="625" y="213" text-anchor="middle" class="sm">…</text>
+      <rect x="666" y="186" width="22" height="52" rx="4" class="v-fill v-accent-s" stroke-width="1.4"/>
+    </g>
+    <text x="447" y="256" text-anchor="middle" class="sm">[CLS]</text>
+    <text x="582" y="256" text-anchor="middle" class="sm">N patch tokens</text>
+    <text x="588" y="270" text-anchor="middle" class="dim">N+1 = 197 tokens</text>
+  </g>
+
+
+  <g data-anim="4">
+    <text x="447" y="300" text-anchor="middle" class="op">＋</text>
+
+    <rect x="426" y="306" width="262" height="20" rx="4" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <g class="v-grid" stroke-width="0.8" opacity="0.75">
+      <line x1="468" y1="306" x2="468" y2="326"/><line x1="496" y1="306" x2="496" y2="326"/>
+      <line x1="524" y1="306" x2="524" y2="326"/><line x1="552" y1="306" x2="552" y2="326"/>
+      <line x1="580" y1="306" x2="580" y2="326"/><line x1="612" y1="306" x2="612" y2="326"/>
+      <line x1="640" y1="306" x2="640" y2="326"/><line x1="666" y1="306" x2="666" y2="326"/>
+    </g>
+    <text x="557" y="320" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">+ E_pos  (learned)</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="557" y1="330" x2="557" y2="346" class="v-muted" stroke="currentColor" stroke-width="1.4" marker-end="url(#vp-arrow)"/>
+    <rect x="426" y="348" width="262" height="20" rx="6" class="v-accent" fill="var(--accent)" fill-opacity="0.16" stroke="var(--accent)" stroke-width="1.5"/>
+    <text x="557" y="362" text-anchor="middle" class="ttl" fill="var(--accent)">Transformer encoder  (L blocks)</text>
+  </g>
+</svg>
+<figcaption><b>An image becomes a token sequence.</b> The image is cut into a grid of fixed 16×16 patches; each patch is <b>flattened</b> (16·16·3 = 768 values) and <b>linearly projected</b> by a shared matrix <b>E</b> into a D-dim patch embedding. A learnable <b>[CLS]</b> token is prepended and learned <b>position embeddings</b> are added, giving 197 tokens that an ordinary Transformer encoder consumes — patches treated exactly like words.</figcaption>
+</figure>
+
+<p>Convolutional Neural Networks (CNNs) dominated image recognition from AlexNet (2012) through EfficientNet (2019). They work by sliding local filters across the image in a hierarchy, gradually building up larger receptive fields. This inductive bias — locality and translation equivariance — is well-matched to natural images, and it made CNNs sample-efficient and fast.</p>
+<p>So why replace them? Three reasons.</p>
+<p><strong>Limited global context.</strong> A pixel in the top-left of the image cannot directly attend to a pixel in the bottom-right until very deep layers, where the effective receptive field has grown large. Modeling long-range spatial dependencies (a person&rsquo;s face relative to their hands) requires many layers or dilated convolutions.</p>
+<p><strong>Awkward text-image unification.</strong> When building a model that jointly processes text and images, two separate architecture families (Transformer for text, CNN for images) create a fundamental impedance mismatch. Every cross-modal attention mechanism becomes a bespoke engineering project.</p>
+<p><strong>Scaling behavior.</strong> Transformers scale more predictably with data and compute than CNNs. When pre-trained on very large datasets, a Transformer-based image encoder tends to outperform CNN baselines, even though CNNs are often better with limited data.</p>
+<p>The ViT (Vision Transformer), introduced by Dosovitskiy et al. in &ldquo;An Image Is Worth 16x16 Words&rdquo; (2020), solves all three problems with an elegant single insight: <strong>treat image patches as tokens</strong>.</p>
+<hr />
+<h2 id="the-patchify-operation">The Patchify Operation<a class="headerlink" href="#the-patchify-operation" title="Permanent link">¶</a></h2>
+<h3 id="from-pixels-to-tokens">From Pixels to Tokens<a class="headerlink" href="#from-pixels-to-tokens" title="Permanent link">¶</a></h3>
+<p>An input image <span class="arithmatex">\(\mathbf{x} \in \mathbb{R}^{H \times W \times C}\)</span> is split into <span class="arithmatex">\(N\)</span> non-overlapping patches of size <span class="arithmatex">\(P \times P\)</span>:</p>
+<div class="arithmatex">\[
+N = \frac{H \times W}{P^2}
+\]</div>
+<p>For the canonical ViT-B/16 configuration: <span class="arithmatex">\(H=W=224\)</span>, <span class="arithmatex">\(P=16\)</span>, <span class="arithmatex">\(C=3\)</span>, giving <span class="arithmatex">\(N = \frac{224 \times 224}{16^2} = 196\)</span> patches. Each patch is a <span class="arithmatex">\(16 \times 16 \times 3 = 768\)</span>-dimensional flattened vector. A linear projection maps each flattened patch to the model&rsquo;s hidden dimension <span class="arithmatex">\(D\)</span>:</p>
+<div class="arithmatex">\[
+\mathbf{z}_0 = [\mathbf{x}_\text{cls};\; \mathbf{E}\mathbf{p}_1;\; \mathbf{E}\mathbf{p}_2;\; \ldots;\; \mathbf{E}\mathbf{p}_N] + \mathbf{E}_\text{pos}
+\]</div>
+<p>where <span class="arithmatex">\(\mathbf{E} \in \mathbb{R}^{D \times (P^2 C)}\)</span> is the patch embedding matrix, <span class="arithmatex">\(\mathbf{p}_i\)</span> is the <span class="arithmatex">\(i\)</span>-th flattened patch, and <span class="arithmatex">\(\mathbf{E}_\text{pos} \in \mathbb{R}^{(N+1) \times D}\)</span> is a learned positional embedding table. The prepended <span class="arithmatex">\(\mathbf{x}_\text{cls}\)</span> is a learnable classification token, analogous to BERT&rsquo;s <code>[CLS]</code>.</p>
+<h3 id="image-preprocessing">Image Preprocessing<a class="headerlink" href="#image-preprocessing" title="Permanent link">¶</a></h3>
+<p>Before patchification, images must be normalized into a consistent distribution. The standard pipeline is:</p>
+<ol>
+<li><strong>Resize and crop</strong> — resize the shorter edge to 256, center-crop to 224×224 (or random-crop during training).</li>
+<li><strong>Convert to float</strong> — divide pixel values by 255 to get <span class="arithmatex">\([0, 1]\)</span>.</li>
+<li><strong>Normalize channels</strong> — subtract per-channel mean and divide by per-channel standard deviation, typically using ImageNet statistics: mean = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225).</li>
+</ol>
+<p>This maps pixel intensities to a zero-mean, unit-variance distribution, making the linear patch projection well-conditioned.</p>
+<h3 id="code-patchify-patch-embedding">Code: Patchify + Patch Embedding<a class="headerlink" href="#code-patchify-patch-embedding" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">einops</span>  <span class="c1"># pip install einops</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># patchify: split an image tensor into a sequence of patch vectors</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">patchify</span><span class="p">(</span><span class="n">images</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">patch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Args:</span>
+<span class="sd">        images: (B, C, H, W) float tensor, pre-normalized</span>
+<span class="sd">        patch_size: side length of each square patch (P)</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        patches: (B, N, P*P*C) where N = (H/P) * (W/P)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">C</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">images</span><span class="o">.</span><span class="n">shape</span>
+    <span class="k">assert</span> <span class="n">H</span> <span class="o">%</span> <span class="n">patch_size</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">W</span> <span class="o">%</span> <span class="n">patch_size</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> \
+        <span class="sa">f</span><span class="s2">&quot;Image size (</span><span class="si">{</span><span class="n">H</span><span class="si">}</span><span class="s2">,</span><span class="si">{</span><span class="n">W</span><span class="si">}</span><span class="s2">) must be divisible by patch_size=</span><span class="si">{</span><span class="n">patch_size</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="c1"># Rearrange from (B, C, H, W) → (B, N, P*P*C)</span>
+    <span class="c1"># &#39;h1 h2 w1 w2&#39; means height is split into h1 groups of h2=P rows, same for width</span>
+    <span class="n">patches</span> <span class="o">=</span> <span class="n">einops</span><span class="o">.</span><span class="n">rearrange</span><span class="p">(</span>
+        <span class="n">images</span><span class="p">,</span>
+        <span class="s1">&#39;b c (h1 h2) (w1 w2) -&gt; b (h1 w1) (h2 w2 c)&#39;</span><span class="p">,</span>
+        <span class="n">h2</span><span class="o">=</span><span class="n">patch_size</span><span class="p">,</span> <span class="n">w2</span><span class="o">=</span><span class="n">patch_size</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">patches</span>  <span class="c1"># (B, N, P*P*C)</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># PatchEmbed: learnable linear projection of patches into D-dim vectors</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">PatchEmbed</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Equivalent to a Conv2d with kernel_size=stride=patch_size, but implemented</span>
+<span class="sd">    as a matrix multiply for clarity. In practice, nn.Conv2d is often used</span>
+<span class="sd">    because it can be more cache-efficient on hardware.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">img_size</span><span class="o">=</span><span class="mi">224</span><span class="p">,</span> <span class="n">patch_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">in_chans</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">embed_dim</span><span class="o">=</span><span class="mi">768</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">img_size</span> <span class="o">=</span> <span class="n">img_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">patch_size</span> <span class="o">=</span> <span class="n">patch_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">num_patches</span> <span class="o">=</span> <span class="p">(</span><span class="n">img_size</span> <span class="o">//</span> <span class="n">patch_size</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>   <span class="c1"># 196 for 224/16</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">patch_dim</span> <span class="o">=</span> <span class="n">patch_size</span> <span class="o">*</span> <span class="n">patch_size</span> <span class="o">*</span> <span class="n">in_chans</span>  <span class="c1"># 768 = 16*16*3</span>
+
+        <span class="c1"># A single weight matrix E ∈ R^{D × (P²C)}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">patch_dim</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        x: (B, C, H, W) pre-normalized image</span>
+<span class="sd">        returns: (B, N, D) patch embeddings</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">patches</span> <span class="o">=</span> <span class="n">patchify</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">patch_size</span><span class="p">)</span>  <span class="c1"># (B, N, P²C)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">proj</span><span class="p">(</span><span class="n">patches</span><span class="p">)</span>               <span class="c1"># (B, N, D)</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Quick sanity check</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">C</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">224</span><span class="p">,</span> <span class="mi">224</span>
+    <span class="n">images</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">C</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">)</span>
+
+    <span class="n">embed</span> <span class="o">=</span> <span class="n">PatchEmbed</span><span class="p">(</span><span class="n">img_size</span><span class="o">=</span><span class="mi">224</span><span class="p">,</span> <span class="n">patch_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">in_chans</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">embed_dim</span><span class="o">=</span><span class="mi">768</span><span class="p">)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">embed</span><span class="p">(</span><span class="n">images</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Input shape:  </span><span class="si">{</span><span class="n">images</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># (4, 3, 224, 224)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output shape: </span><span class="si">{</span><span class="n">out</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>       <span class="c1"># (4, 196, 768)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Params in PatchEmbed: </span><span class="si">{</span><span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">embed</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># Expected: 768 * 768 + 768 = 590,592  (weight + bias)</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: parameter count and memory for ViT-B/16</p>
+<p>ViT-B/16 has <span class="arithmatex">\(D=768\)</span>, 12 Transformer layers, 12 heads.</p>
+<p><strong>Patch embedding matrix</strong>: <span class="arithmatex">\(D \times (P^2 C) = 768 \times 768 = 589{,}824\)</span> parameters.</p>
+<p><strong>Positional embedding table</strong>: <span class="arithmatex">\((N+1) \times D = 197 \times 768 = 151{,}296\)</span> parameters.</p>
+<p><strong>CLS token</strong>: <span class="arithmatex">\(D = 768\)</span> parameters.</p>
+<p><strong>Each Transformer block</strong> (QKV projections + output proj + two LayerNorms + MLP):
+$<span class="arithmatex">\(4 \times D^2 + 2 \times 4D^2 + 4D = 4 \times 768^2 + 8 \times 768^2 = 12 \times 768^2 \approx 7.08\text{M}\)</span>$</p>
+<p>12 layers × 7.08M = 84.9M, plus ~0.85M for embeddings and the final norm/head.
+Total: roughly <strong>86M parameters</strong>, or about <strong>344 MB in fp32</strong>, <strong>172 MB in bf16</strong>.</p>
+<p><strong>Sequence length</strong>: 196 image patches + 1 CLS = <strong>197 tokens</strong>.
+Attention is <span class="arithmatex">\(O(N^2 D)\)</span> per layer, not unbearably long for this patch size — but dynamic high-resolution inputs (e.g., 1024×1024 with 16-pixel patches) give <span class="arithmatex">\(N=4096\)</span>, which is where <a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2 &amp; 3</a> becomes critical.</p>
+</div>
+<hr />
+<h2 id="the-full-vit-architecture">The Full ViT Architecture<a class="headerlink" href="#the-full-vit-architecture" title="Permanent link">¶</a></h2>
+<p>With patch embeddings in hand, the rest of ViT is a vanilla Transformer encoder. The architecture is deliberately unchanged from BERT:</p>
+<figure class="viz" id="fig-vit-arch-full-pipeline">
+<svg viewBox="0 0 660 1000" role="img" aria-label="The full ViT-B/16 forward pass: an input image of shape (B, 3, 224, 224) is split into 196 patches by PatchEmbed, a CLS token is prepended and positional embeddings are added to give (B, 197, 768), then 12 Transformer blocks each apply Pre-LN, Multi-Head Self-Attention, a residual add, Pre-LN, MLP, and a residual add, after which the CLS token is extracted as (B, 768), passed through LayerNorm and a Linear head, and finally outputs class logits of shape (B, num_classes).">
+<defs>
+  <marker id="vit-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="vit-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#6366f1)"/>
+  </marker>
+</defs>
+<style>
+  #fig-vit-arch-full-pipeline text { fill: currentColor; }
+  #fig-vit-arch-full-pipeline .ttl { font: 700 14px var(--sans,sans-serif); }
+  #fig-vit-arch-full-pipeline .node-lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-vit-arch-full-pipeline .node-sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-vit-arch-full-pipeline .shape-lbl { font: 400 11px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-vit-arch-full-pipeline .pill-lbl { font: 500 11px var(--sans,sans-serif); }
+  #fig-vit-arch-full-pipeline .pill-shape { font: 400 10px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-vit-arch-full-pipeline .inner-lbl { font: 500 11.5px var(--sans,sans-serif); }
+  #fig-vit-arch-full-pipeline .resid-lbl { font: 700 13px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+  #fig-vit-arch-full-pipeline .block-ttl { font: 700 13px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+  #fig-vit-arch-full-pipeline .block-sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+</style>
+
+
+<text x="330" y="22" text-anchor="middle" class="ttl">ViT-B/16 Forward Pass</text>
+
+
+<rect x="165" y="35" width="330" height="52" rx="10"
+      fill="var(--accent,#6366f1)" fill-opacity="0.15"
+      stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="330" y="58" text-anchor="middle" class="node-lbl">Input image</text>
+<text x="330" y="76" text-anchor="middle" class="shape-lbl">(B, 3, 224, 224)</text>
+
+
+<line x1="330" y1="89" x2="330" y2="109" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#vit-arr)"/>
+
+
+<rect x="165" y="112" width="330" height="52" rx="8"
+      fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="330" y="135" text-anchor="middle" class="node-lbl">PatchEmbed</text>
+<text x="330" y="151" text-anchor="middle" class="node-sub">16x16 patch linear projection</text>
+
+<text x="502" y="142" text-anchor="start" class="shape-lbl">(B, 196, 768)</text>
+
+
+<line x1="330" y1="166" x2="330" y2="184" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#vit-arr)"/>
+
+
+<rect x="140" y="187" width="380" height="32" rx="16"
+      fill="var(--accent,#6366f1)" fill-opacity="0.10"
+      stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<text x="260" y="207" text-anchor="middle" class="pill-lbl">prepend CLS token</text>
+<text x="430" y="207" text-anchor="middle" class="pill-shape">(B, 197, 768)</text>
+
+
+<line x1="330" y1="221" x2="330" y2="239" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#vit-arr)"/>
+
+
+<rect x="140" y="242" width="380" height="32" rx="16"
+      fill="var(--accent,#6366f1)" fill-opacity="0.10"
+      stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<text x="260" y="262" text-anchor="middle" class="pill-lbl">add positional embeddings</text>
+<text x="430" y="262" text-anchor="middle" class="pill-shape">(B, 197, 768)</text>
+
+
+<line x1="330" y1="276" x2="330" y2="296" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#vit-arr)"/>
+
+
+
+<rect x="100" y="302" width="420" height="300" rx="12"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="1" opacity="0.25"
+      transform="translate(6,6)"/>
+<rect x="100" y="302" width="420" height="300" rx="12"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="1" opacity="0.4"
+      transform="translate(3,3)"/>
+
+<rect x="100" y="302" width="420" height="300" rx="12"
+      fill="var(--surface,#fff)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+
+<text x="310" y="325" text-anchor="middle" class="block-ttl">TransformerBlock x L</text>
+<text x="310" y="341" text-anchor="middle" class="block-sub">L = 12 for ViT-B/16   |   each block processes (B, 197, 768)</text>
+
+
+<rect x="128" y="352" width="310" height="234" rx="8"
+      fill="var(--accent,#6366f1)" fill-opacity="0.05"
+      stroke="var(--border-2,#475569)" stroke-width="1.2"/>
+
+
+
+<rect x="140" y="362" width="220" height="26" rx="5"
+      fill="var(--accent,#6366f1)" fill-opacity="0.04"
+      stroke="var(--border-2,#475569)" stroke-width="0.8"/>
+<text x="250" y="379" text-anchor="middle" class="inner-lbl">LayerNorm (Pre-LN)</text>
+
+
+<rect x="140" y="394" width="220" height="26" rx="5"
+      fill="var(--accent,#6366f1)" fill-opacity="0.04"
+      stroke="var(--border-2,#475569)" stroke-width="0.8"/>
+<text x="250" y="411" text-anchor="middle" class="inner-lbl">Multi-Head Self-Attention</text>
+
+
+<rect x="140" y="426" width="220" height="26" rx="5"
+      fill="var(--accent,#6366f1)" fill-opacity="0.08"
+      stroke="var(--accent,#6366f1)" stroke-width="0.8"/>
+<text x="250" y="443" text-anchor="middle" class="inner-lbl">Residual connection</text>
+
+
+<rect x="140" y="466" width="220" height="26" rx="5"
+      fill="var(--accent,#6366f1)" fill-opacity="0.04"
+      stroke="var(--border-2,#475569)" stroke-width="0.8"/>
+<text x="250" y="483" text-anchor="middle" class="inner-lbl">LayerNorm (Pre-LN)</text>
+
+
+<rect x="140" y="498" width="220" height="26" rx="5"
+      fill="var(--accent,#6366f1)" fill-opacity="0.04"
+      stroke="var(--border-2,#475569)" stroke-width="0.8"/>
+<text x="250" y="515" text-anchor="middle" class="inner-lbl">MLP (FFN, 4x hidden dim)</text>
+
+
+<rect x="140" y="530" width="220" height="26" rx="5"
+      fill="var(--accent,#6366f1)" fill-opacity="0.08"
+      stroke="var(--accent,#6366f1)" stroke-width="0.8"/>
+<text x="250" y="547" text-anchor="middle" class="inner-lbl">Residual connection</text>
+
+
+
+<path d="M 385,365 L 400,365 L 400,452 L 387,452"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.8" stroke-dasharray="4,2"/>
+<text x="405" y="414" text-anchor="start" class="resid-lbl">+</text>
+
+
+<path d="M 385,469 L 400,469 L 400,556 L 387,556"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.8" stroke-dasharray="4,2"/>
+<text x="405" y="516" text-anchor="start" class="resid-lbl">+</text>
+
+
+<line x1="330" y1="604" x2="330" y2="622" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#vit-arr)"/>
+
+
+<rect x="155" y="625" width="350" height="32" rx="16"
+      fill="var(--accent,#6366f1)" fill-opacity="0.10"
+      stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<text x="280" y="645" text-anchor="middle" class="pill-lbl">CLS token output (row 0)</text>
+<text x="420" y="645" text-anchor="middle" class="pill-shape">(B, 768)</text>
+
+
+<line x1="330" y1="659" x2="330" y2="677" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#vit-arr)"/>
+
+
+<rect x="165" y="680" width="330" height="52" rx="8"
+      fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="330" y="703" text-anchor="middle" class="node-lbl">LayerNorm + Linear head</text>
+<text x="330" y="721" text-anchor="middle" class="node-sub">final norm then linear projection to num_classes</text>
+
+
+<line x1="330" y1="734" x2="330" y2="752" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#vit-arr)"/>
+
+
+<rect x="165" y="755" width="330" height="52" rx="10"
+      fill="var(--accent,#6366f1)" fill-opacity="0.15"
+      stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="330" y="778" text-anchor="middle" class="node-lbl">Class logits</text>
+<text x="330" y="796" text-anchor="middle" class="shape-lbl">(B, num_classes)   e.g. 1000 for ImageNet</text>
+
+
+</svg>
+<figcaption><b>The complete ViT-B/16 forward pass, from raw image to class logits.</b> A 224x224 image is divided into 196 non-overlapping 16x16 patches and linearly projected to 768-dimensional embeddings; a learnable CLS token is prepended and 1D positional embeddings are added. The resulting sequence of 197 tokens passes through L=12 identical Transformer blocks, each using Pre-LayerNorm ordering with two residual connections (one around the attention sub-layer, one around the MLP). Only the CLS token's final representation is fed to the classification head, yielding logits over all classes.</figcaption>
+</figure>
+
+<h3 id="code-minimal-vit-block">Code: Minimal ViT Block<a class="headerlink" href="#code-minimal-vit-block" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MultiHeadSelfAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Standard multi-head self-attention — see chapter 2.4 for the full treatment.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">embed_dim</span> <span class="o">%</span> <span class="n">num_heads</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">num_heads</span> <span class="o">=</span> <span class="n">num_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span> <span class="o">=</span> <span class="n">embed_dim</span> <span class="o">//</span> <span class="n">num_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>  <span class="c1"># 1/√d_k scaling factor</span>
+
+        <span class="c1"># Fused QKV projection: one matrix, split afterward</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">qkv</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">embed_dim</span><span class="p">,</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">embed_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">out_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">embed_dim</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        x: (B, N, D)  where N = num_patches+1 (includes CLS)</span>
+<span class="sd">        returns: (B, N, D)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">H</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_heads</span>
+
+        <span class="c1"># Project and split into queries, keys, values</span>
+        <span class="n">qkv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">qkv</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                         <span class="c1"># (B, N, 3D)</span>
+        <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="n">qkv</span><span class="o">.</span><span class="n">chunk</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>            <span class="c1"># each (B, N, D)</span>
+
+        <span class="c1"># Reshape to (B, H, N, head_dim) for multi-head computation</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">reshape</span><span class="p">(</span><span class="n">t</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">t</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="n">reshape</span><span class="p">(</span><span class="n">q</span><span class="p">),</span> <span class="n">reshape</span><span class="p">(</span><span class="n">k</span><span class="p">),</span> <span class="n">reshape</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>  <span class="c1"># each (B, H, N, head_dim)</span>
+
+        <span class="c1"># Scaled dot-product attention</span>
+        <span class="n">attn</span> <span class="o">=</span> <span class="p">(</span><span class="n">q</span> <span class="o">@</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span>   <span class="c1"># (B, H, N, N)</span>
+        <span class="n">attn</span> <span class="o">=</span> <span class="n">attn</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">attn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="n">attn</span><span class="p">)</span>
+
+        <span class="c1"># Aggregate values and reshape back</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="p">(</span><span class="n">attn</span> <span class="o">@</span> <span class="n">v</span><span class="p">)</span>                          <span class="c1"># (B, H, N, head_dim)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">out_proj</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>                 <span class="c1"># (B, N, D)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ViTBlock</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    One Transformer block in ViT, using Pre-LayerNorm (LN before attention).</span>
+<span class="sd">    Pre-LN improves training stability vs the original Post-LN used by BERT.</span>
+<span class="sd">    See: chapter 2.6 for a detailed discussion of norm placement.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">mlp_ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">4.0</span><span class="p">,</span>
+                 <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">embed_dim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attn</span> <span class="o">=</span> <span class="n">MultiHeadSelfAttention</span><span class="p">(</span><span class="n">embed_dim</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">,</span> <span class="n">dropout</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">embed_dim</span><span class="p">)</span>
+        <span class="n">mlp_hidden</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">embed_dim</span> <span class="o">*</span> <span class="n">mlp_ratio</span><span class="p">)</span>  <span class="c1"># typically 4× hidden dim = 3072</span>
+
+        <span class="c1"># Two-layer MLP with GELU activation — standard ViT uses GELU</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mlp</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">embed_dim</span><span class="p">,</span> <span class="n">mlp_hidden</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">GELU</span><span class="p">(),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">mlp_hidden</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">),</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Pre-LN residual: x = x + Attn(LN(x))</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">norm1</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+        <span class="c1"># Pre-LN residual: x = x + MLP(LN(x))</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">norm2</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">x</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">VisionTransformer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Minimal ViT implementation matching the ViT-B/16 configuration.</span>
+<span class="sd">    For the full model (ViT-L, ViT-H, ViT-G), only embed_dim, num_heads,</span>
+<span class="sd">    and depth change — everything else stays the same.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">img_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">224</span><span class="p">,</span>
+        <span class="n">patch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>
+        <span class="n">in_chans</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+        <span class="n">num_classes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span><span class="p">,</span>
+        <span class="n">embed_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">768</span><span class="p">,</span>
+        <span class="n">depth</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">12</span><span class="p">,</span>
+        <span class="n">num_heads</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">12</span><span class="p">,</span>
+        <span class="n">mlp_ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">4.0</span><span class="p">,</span>
+        <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">patch_embed</span> <span class="o">=</span> <span class="n">PatchEmbed</span><span class="p">(</span><span class="n">img_size</span><span class="p">,</span> <span class="n">patch_size</span><span class="p">,</span> <span class="n">in_chans</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">)</span>
+        <span class="n">num_patches</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">patch_embed</span><span class="o">.</span><span class="n">num_patches</span>  <span class="c1"># 196</span>
+
+        <span class="c1"># Learnable CLS token (prepended to the patch sequence)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cls_token</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">))</span>
+
+        <span class="c1"># Learnable positional embeddings for N+1 positions (patches + CLS)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pos_embed</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_patches</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">))</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">pos_drop</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">)</span>
+
+        <span class="c1"># Stack of Transformer blocks</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">([</span>
+            <span class="n">ViTBlock</span><span class="p">(</span><span class="n">embed_dim</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">,</span> <span class="n">mlp_ratio</span><span class="p">,</span> <span class="n">dropout</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">depth</span><span class="p">)</span>
+        <span class="p">])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">embed_dim</span><span class="p">)</span>
+
+        <span class="c1"># Classification head: linear layer on top of the CLS token</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">embed_dim</span><span class="p">,</span> <span class="n">num_classes</span><span class="p">)</span>
+
+        <span class="c1"># Initialize weights following the ViT paper</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">trunc_normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pos_embed</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">trunc_normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cls_token</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_init_weights</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_init_weights</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">m</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">):</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">trunc_normal_</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">m</span><span class="o">.</span><span class="n">bias</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">zeros_</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">):</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">zeros_</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">ones_</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">weight</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        x: (B, 3, H, W) pre-normalized images</span>
+<span class="sd">        returns: (B, num_classes) logits</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">B</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">patch_embed</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>   <span class="c1"># (B, N, D)</span>
+
+        <span class="c1"># Expand and prepend CLS token</span>
+        <span class="bp">cls</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cls_token</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B, 1, D)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="bp">cls</span><span class="p">,</span> <span class="n">x</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>           <span class="c1"># (B, N+1, D)</span>
+
+        <span class="c1"># Add positional embeddings and apply dropout</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">pos_embed</span>                   <span class="c1"># (B, N+1, D)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">pos_drop</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+        <span class="c1"># Apply Transformer blocks</span>
+        <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">block</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                         <span class="c1"># (B, N+1, D)</span>
+
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                         <span class="c1"># (B, N+1, D)</span>
+
+        <span class="c1"># Extract CLS token output and classify</span>
+        <span class="n">cls_out</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>                        <span class="c1"># (B, D)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="n">cls_out</span><span class="p">)</span>                <span class="c1"># (B, num_classes)</span>
+
+
+<span class="c1"># Verify shapes</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">VisionTransformer</span><span class="p">()</span>  <span class="c1"># ViT-B/16 defaults</span>
+    <span class="n">imgs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">224</span><span class="p">,</span> <span class="mi">224</span><span class="p">)</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">imgs</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Logits shape: </span><span class="si">{</span><span class="n">logits</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># (2, 1000)</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total parameters: </span><span class="si">{</span><span class="n">total</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>    <span class="c1"># ~86M</span>
+</code></pre></div>
+<hr />
+<h2 id="positional-embeddings-in-vit">Positional Embeddings in ViT<a class="headerlink" href="#positional-embeddings-in-vit" title="Permanent link">¶</a></h2>
+<p>ViT uses <strong>learned</strong> 1D positional embeddings by default — one embedding vector per patch position (0 to <span class="arithmatex">\(N\)</span>, including CLS). This contrasts with the sinusoidal scheme in the original Transformer (see <a href="../02-transformer/05-positional-encoding.html">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a>).</p>
+<p><strong>Why not 2D?</strong> In practice, 1D learned embeddings work nearly as well as 2D variants, partly because the model learns 2D structure implicitly. The patches have a natural 2D grid structure, and the positional embedding that gets added to patch <span class="arithmatex">\((i, j)\)</span> effectively encodes the spatial position.</p>
+<p><strong>Resolution generalization</strong> is a real problem: if you train ViT-B/16 on 224×224 and want to fine-tune on 384×384 (giving <span class="arithmatex">\(N = 576\)</span> patches), the learned position embeddings are the wrong size. The standard fix is <strong>bicubic interpolation</strong> of the position embedding grid — treating the 14×14 embedding table as a 2D feature map and resizing it to 24×24.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">interpolate_pos_embed</span><span class="p">(</span><span class="n">pos_embed</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+                          <span class="n">new_h</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">new_w</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                          <span class="n">patch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolate positional embeddings from training resolution to a new resolution.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        pos_embed: (1, N+1, D) learned position embeddings (includes CLS at index 0)</span>
+<span class="sd">        new_h, new_w: new image height and width in pixels</span>
+<span class="sd">        patch_size: patch size in pixels</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        (1, new_N+1, D) interpolated positional embeddings</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Separate CLS token from patch position embeddings</span>
+    <span class="n">cls_pos</span> <span class="o">=</span> <span class="n">pos_embed</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span>           <span class="c1"># (1, 1, D)</span>
+    <span class="n">patch_pos</span> <span class="o">=</span> <span class="n">pos_embed</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:,</span> <span class="p">:]</span>         <span class="c1"># (1, N, D)</span>
+
+    <span class="c1"># Infer original grid size from N = h_orig * w_orig</span>
+    <span class="n">N_orig</span> <span class="o">=</span> <span class="n">patch_pos</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">h_orig</span> <span class="o">=</span> <span class="n">w_orig</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">N_orig</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>    <span class="c1"># e.g., 14 for 196 patches</span>
+    <span class="n">D</span> <span class="o">=</span> <span class="n">patch_pos</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># Reshape to 2D grid, interpolate</span>
+    <span class="n">patch_pos</span> <span class="o">=</span> <span class="n">patch_pos</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">h_orig</span><span class="p">,</span> <span class="n">w_orig</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+    <span class="n">patch_pos</span> <span class="o">=</span> <span class="n">patch_pos</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>  <span class="c1"># (1, D, h_orig, w_orig)</span>
+
+    <span class="n">new_h_patches</span> <span class="o">=</span> <span class="n">new_h</span> <span class="o">//</span> <span class="n">patch_size</span>
+    <span class="n">new_w_patches</span> <span class="o">=</span> <span class="n">new_w</span> <span class="o">//</span> <span class="n">patch_size</span>
+
+    <span class="n">patch_pos</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">interpolate</span><span class="p">(</span>
+        <span class="n">patch_pos</span><span class="p">,</span>
+        <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">new_h_patches</span><span class="p">,</span> <span class="n">new_w_patches</span><span class="p">),</span>
+        <span class="n">mode</span><span class="o">=</span><span class="s1">&#39;bicubic&#39;</span><span class="p">,</span>
+        <span class="n">align_corners</span><span class="o">=</span><span class="kc">False</span>
+    <span class="p">)</span>  <span class="c1"># (1, D, new_h_patches, new_w_patches)</span>
+
+    <span class="n">patch_pos</span> <span class="o">=</span> <span class="n">patch_pos</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>  <span class="c1"># (1, new_h_patches, new_w_patches, D)</span>
+    <span class="n">patch_pos</span> <span class="o">=</span> <span class="n">patch_pos</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>     <span class="c1"># (1, new_N, D)</span>
+
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">cls_pos</span><span class="p">,</span> <span class="n">patch_pos</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (1, new_N+1, D)</span>
+</code></pre></div>
+<hr />
+<h2 id="clip-contrastive-language-image-pre-training">CLIP: Contrastive Language-Image Pre-training<a class="headerlink" href="#clip-contrastive-language-image-pre-training" title="Permanent link">¶</a></h2>
+<p>ViT trained on ImageNet learns to classify 1000 categories. CLIP (Radford et al., OpenAI, 2021) generalized this dramatically: train an image encoder and a text encoder jointly on 400 million (image, alt-text) pairs from the internet, using a <strong>contrastive objective</strong> that pulls matching pairs together and pushes mismatched pairs apart.</p>
+<h3 id="the-clip-loss">The CLIP Loss<a class="headerlink" href="#the-clip-loss" title="Permanent link">¶</a></h3>
+<p>Given a batch of <span class="arithmatex">\(N\)</span> (image, text) pairs, CLIP computes embeddings:</p>
+<div class="arithmatex">\[
+\mathbf{i}_k = f_\text{image}(\mathbf{x}_k) / \|f_\text{image}(\mathbf{x}_k)\|_2, \quad
+\mathbf{t}_k = f_\text{text}(\mathbf{w}_k) / \|f_\text{text}(\mathbf{w}_k)\|_2
+\]</div>
+<p>and then computes a similarity matrix <span class="arithmatex">\(\mathbf{S} \in \mathbb{R}^{N \times N}\)</span>:</p>
+<div class="arithmatex">\[
+S_{ij} = \tau \cdot \mathbf{i}_i \cdot \mathbf{t}_j^\top
+\]</div>
+<p>where <span class="arithmatex">\(\tau\)</span> is a learnable temperature parameter (initialized around <span class="arithmatex">\(1/0.07 \approx 14.3\)</span>). The loss is symmetric cross-entropy applied both row-wise (each image&rsquo;s text should rank first) and column-wise (each text&rsquo;s image should rank first):</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{CLIP} = -\frac{1}{2N} \left( \sum_{k=1}^N \log \frac{e^{S_{kk}}}{\sum_j e^{S_{kj}}} + \sum_{k=1}^N \log \frac{e^{S_{kk}}}{\sum_i e^{S_{ik}}} \right)
+\]</div>
+<p>This is InfoNCE loss applied in two directions. The loss essentially treats every off-diagonal pair in the batch as a negative example, which is why CLIP needs very large batch sizes (on the order of 32,768) to have enough negatives.</p>
+<h3 id="architectural-choices">Architectural Choices<a class="headerlink" href="#architectural-choices" title="Permanent link">¶</a></h3>
+<p>CLIP uses a <strong>ViT</strong> or a <strong>ResNet</strong> as the image encoder, and a Transformer (similar to GPT-2) as the text encoder. For the image encoder, ViT-L/14 (patch size 14, large model) is the standard CLIP backbone. Both encoders project their final representation into a shared 512- or 768-dimensional space via a linear projection head.</p>
+<p>At inference, CLIP enables <strong>zero-shot classification</strong>: compute the cosine similarity between the image embedding and the embeddings of text prompts like &ldquo;a photo of a cat&rdquo;, &ldquo;a photo of a dog&rdquo;, etc. The predicted class is the one with the highest similarity.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">clip_contrastive_loss</span><span class="p">(</span><span class="n">image_embeds</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+                          <span class="n">text_embeds</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+                          <span class="n">logit_scale</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute the symmetric CLIP contrastive loss (InfoNCE in both directions).</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        image_embeds: (N, D) L2-normalized image embeddings</span>
+<span class="sd">        text_embeds:  (N, D) L2-normalized text embeddings</span>
+<span class="sd">        logit_scale:  scalar parameter, stored as log(τ) and exp()&#39;d for stability</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        scalar loss</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Exponentiate the log-temperature; clamp to prevent collapse or explosion</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="n">logit_scale</span><span class="o">.</span><span class="n">exp</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">max</span><span class="o">=</span><span class="mf">100.0</span><span class="p">)</span>
+
+    <span class="c1"># Compute (N, N) similarity matrix: S[i,j] = τ * &lt;image_i, text_j&gt;</span>
+    <span class="n">logits_per_image</span> <span class="o">=</span> <span class="n">scale</span> <span class="o">*</span> <span class="n">image_embeds</span> <span class="o">@</span> <span class="n">text_embeds</span><span class="o">.</span><span class="n">t</span><span class="p">()</span>  <span class="c1"># (N, N)</span>
+    <span class="n">logits_per_text</span>  <span class="o">=</span> <span class="n">logits_per_image</span><span class="o">.</span><span class="n">t</span><span class="p">()</span>                   <span class="c1"># (N, N)</span>
+
+    <span class="c1"># Ground-truth: diagonal is the positive pair</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="n">image_embeds</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">image_embeds</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="c1"># Cross-entropy in both directions, then average</span>
+    <span class="n">loss_i</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span><span class="n">logits_per_image</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
+    <span class="n">loss_t</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span><span class="n">logits_per_text</span><span class="p">,</span>  <span class="n">labels</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">loss_i</span> <span class="o">+</span> <span class="n">loss_t</span><span class="p">)</span> <span class="o">/</span> <span class="mf">2.0</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">zero_shot_classify</span><span class="p">(</span><span class="n">image_embed</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+                       <span class="n">class_text_embeds</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Args:</span>
+<span class="sd">        image_embed:       (D,)   L2-normalized embedding of a single image</span>
+<span class="sd">        class_text_embeds: (C, D) L2-normalized embeddings for C class prompts</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        (C,) softmax probabilities</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Cosine similarities (temperature=1 here; CLIP uses learned τ)</span>
+    <span class="n">sims</span> <span class="o">=</span> <span class="n">image_embed</span> <span class="o">@</span> <span class="n">class_text_embeds</span><span class="o">.</span><span class="n">t</span><span class="p">()</span>   <span class="c1"># (C,)</span>
+    <span class="k">return</span> <span class="n">sims</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="siglip-replacing-infonce-with-sigmoid-loss">SigLIP: Replacing InfoNCE with Sigmoid Loss<a class="headerlink" href="#siglip-replacing-infonce-with-sigmoid-loss" title="Permanent link">¶</a></h2>
+<p>CLIP&rsquo;s softmax-based InfoNCE loss has a subtle problem: computing <span class="arithmatex">\(\log \sum_j e^{S_{kj}}\)</span> requires gathering the full batch&rsquo;s logits to one device, which creates a communication bottleneck when training on thousands of GPUs. Zhai et al. (Google, &ldquo;Sigmoid Loss for Language Image Pre-Training&rdquo;, 2023) proposed <strong>SigLIP</strong> to address this.</p>
+<p>Instead of a softmax over <span class="arithmatex">\(N\)</span> negatives, SigLIP applies a <strong>sigmoid</strong> binary cross-entropy to each pair independently:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{SigLIP} = -\frac{1}{N^2} \sum_{i=1}^N \sum_{j=1}^N
+\left[ y_{ij} \log \sigma(\tau \cdot \mathbf{i}_i \cdot \mathbf{t}_j + b)
++ (1 - y_{ij}) \log \sigma(-\tau \cdot \mathbf{i}_i \cdot \mathbf{t}_j - b) \right]
+\]</div>
+<p>where <span class="arithmatex">\(y_{ij} = 1\)</span> if <span class="arithmatex">\(i = j\)</span> (positive pair) and <span class="arithmatex">\(0\)</span> otherwise, and <span class="arithmatex">\(b\)</span> is a learnable bias initialized to a negative value (around <span class="arithmatex">\(-10\)</span>) to counteract the class-imbalance of having many more negatives than positives in the full <span class="arithmatex">\(N^2\)</span> grid.</p>
+<p><strong>Key advantages of SigLIP over CLIP:</strong>
+- No global normalization (softmax denominator), so loss computation shards trivially across devices.
+- Better accuracy with smaller batch sizes, because sigmoid loss does not need large <span class="arithmatex">\(N\)</span> to have a meaningful denominator.
+- A learnable bias <span class="arithmatex">\(b\)</span> lets the model calibrate the raw similarity threshold.</p>
+<p>SigLIP forms the image encoder backbone in several recent vision-language models (for example, the Gemini/PaliGemma family uses SigLIP-So400M-14).</p>
+<hr />
+<h2 id="dinov2-self-supervised-vision-features">DINOv2: Self-Supervised Vision Features<a class="headerlink" href="#dinov2-self-supervised-vision-features" title="Permanent link">¶</a></h2>
+<p>While CLIP and SigLIP rely on paired image-text data, DINOv2 (Oquab et al., Meta AI, 2023) learns powerful image representations using <strong>only images</strong>, via self-supervised distillation. It builds on DINO (self-DIstillation with NO labels) and DINO v2 introduces:</p>
+<ol>
+<li><strong>A curated dataset</strong> (LVD-142M) filtered for high-quality, diverse images using embedding-space deduplication.</li>
+<li><strong>A student-teacher distillation setup</strong>: a student ViT processes augmented crops; a teacher ViT (EMA of the student weights) processes a larger crop. The student is trained to match the teacher&rsquo;s patch-level features.</li>
+<li><strong>DINO + iBOT objectives</strong>: DINO aligns the CLS tokens (global features); iBOT (image BERT) masks random patches and predicts the teacher&rsquo;s patch representations, learning local spatial features.</li>
+<li><strong>Register tokens</strong>: Newly introduced learnable tokens appended to the sequence (discussed below).</li>
+</ol>
+<p>DINOv2 models (ViT-S, ViT-B, ViT-L, ViT-G/14) produce exceptionally clean spatial features: patch attention maps reveal semantic regions without any dense annotation.</p>
+<h3 id="register-tokens">Register Tokens<a class="headerlink" href="#register-tokens" title="Permanent link">¶</a></h3>
+<p>Darcet et al. (Meta AI, &ldquo;Vision Transformers Need Registers&rdquo;, 2023) discovered that ViT attention maps often contain <strong>artifact tokens</strong> — patches with anomalously high attention scores that don&rsquo;t correspond to semantic content. These arise when the model has too few positions to store global information, forcing it to &ldquo;park&rdquo; redundant global context in arbitrary high-norm patch tokens.</p>
+<p>The fix is <strong>register tokens</strong>: <span class="arithmatex">\(R\)</span> extra learnable tokens (typically <span class="arithmatex">\(R = 4\)</span> or <span class="arithmatex">\(8\)</span>) appended to the sequence before the Transformer blocks. They serve as scratch space for global reasoning:</p>
+<div class="arithmatex">\[
+\mathbf{z}_0 = [\mathbf{x}_\text{cls};\; \mathbf{E}\mathbf{p}_1;\; \ldots;\; \mathbf{E}\mathbf{p}_N;\; \mathbf{r}_1;\; \ldots;\; \mathbf{r}_R]
+\]</div>
+<p>The register tokens are discarded at the output; only the patch tokens and CLS token are used downstream. With registers, DINOv2&rsquo;s spatial attention maps become significantly cleaner and spatial tasks (depth estimation, segmentation) improve.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">VisionTransformerWithRegisters</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    ViT with register tokens, following Darcet et al. (2023).</span>
+<span class="sd">    Register tokens are appended after patch tokens and discarded at output.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">img_size</span><span class="o">=</span><span class="mi">224</span><span class="p">,</span> <span class="n">patch_size</span><span class="o">=</span><span class="mi">14</span><span class="p">,</span> <span class="n">in_chans</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">embed_dim</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>
+        <span class="n">depth</span><span class="o">=</span><span class="mi">24</span><span class="p">,</span> <span class="n">num_heads</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">mlp_ratio</span><span class="o">=</span><span class="mf">4.0</span><span class="p">,</span>
+        <span class="n">num_registers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>    <span class="c1"># key new parameter</span>
+        <span class="n">num_classes</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>      <span class="c1"># 0 = return features, not logits</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">patch_embed</span> <span class="o">=</span> <span class="n">PatchEmbed</span><span class="p">(</span><span class="n">img_size</span><span class="p">,</span> <span class="n">patch_size</span><span class="p">,</span> <span class="n">in_chans</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">)</span>
+        <span class="n">num_patches</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">patch_embed</span><span class="o">.</span><span class="n">num_patches</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">cls_token</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pos_embed</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_patches</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">))</span>
+
+        <span class="c1"># Register tokens — no positional embedding added to them</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">num_registers</span> <span class="o">=</span> <span class="n">num_registers</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">register_tokens</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_registers</span><span class="p">,</span> <span class="n">embed_dim</span><span class="p">)</span>
+        <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">([</span>
+            <span class="n">ViTBlock</span><span class="p">(</span><span class="n">embed_dim</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">,</span> <span class="n">mlp_ratio</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">depth</span><span class="p">)</span>
+        <span class="p">])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">embed_dim</span><span class="p">)</span>
+
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">trunc_normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pos_embed</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">trunc_normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cls_token</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">trunc_normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">register_tokens</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+        <span class="n">B</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">patches</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">patch_embed</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                     <span class="c1"># (B, N, D)</span>
+
+        <span class="c1"># Build sequence: [CLS | patches] with positional embeddings</span>
+        <span class="bp">cls</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cls_token</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="bp">cls</span><span class="p">,</span> <span class="n">patches</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>              <span class="c1"># (B, N+1, D)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">pos_embed</span>                            <span class="c1"># add pos embeddings</span>
+
+        <span class="c1"># Append register tokens (no positional embedding for registers)</span>
+        <span class="n">regs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">register_tokens</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">x</span><span class="p">,</span> <span class="n">regs</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>                   <span class="c1"># (B, N+1+R, D)</span>
+
+        <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">block</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+        <span class="c1"># Discard register tokens; return CLS and patch tokens</span>
+        <span class="c1"># Register tokens occupy the last R positions</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">num_registers</span><span class="p">]</span>                    <span class="c1"># (B, N+1, D)</span>
+        <span class="n">cls_out</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>                                 <span class="c1"># (B, D)</span>
+        <span class="n">patch_out</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>                              <span class="c1"># (B, N, D)</span>
+
+        <span class="k">return</span> <span class="n">cls_out</span><span class="p">,</span> <span class="n">patch_out</span>   <span class="c1"># global feature, spatial features</span>
+</code></pre></div>
+<hr />
+<h2 id="from-raw-pixels-to-transformer-input-the-full-pipeline">From Raw Pixels to Transformer Input: The Full Pipeline<a class="headerlink" href="#from-raw-pixels-to-transformer-input-the-full-pipeline" title="Permanent link">¶</a></h2>
+<p>Let&rsquo;s put the preprocessing and patchification pipeline together as it appears in production code:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.v2</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">T</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># Standard ViT/CLIP preprocessing (ImageNet statistics)</span>
+<span class="n">IMAGENET_MEAN</span> <span class="o">=</span> <span class="p">(</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">)</span>
+<span class="n">IMAGENET_STD</span>  <span class="o">=</span> <span class="p">(</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">)</span>
+
+<span class="c1"># CLIP uses slightly different mean/std</span>
+<span class="n">CLIP_MEAN</span> <span class="o">=</span> <span class="p">(</span><span class="mf">0.48145466</span><span class="p">,</span> <span class="mf">0.4578275</span><span class="p">,</span> <span class="mf">0.40821073</span><span class="p">)</span>
+<span class="n">CLIP_STD</span>  <span class="o">=</span> <span class="p">(</span><span class="mf">0.26862954</span><span class="p">,</span> <span class="mf">0.26130258</span><span class="p">,</span> <span class="mf">0.27577711</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_vit_transform</span><span class="p">(</span><span class="n">img_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">224</span><span class="p">,</span>
+                        <span class="n">mean</span><span class="o">=</span><span class="n">IMAGENET_MEAN</span><span class="p">,</span>
+                        <span class="n">std</span><span class="o">=</span><span class="n">IMAGENET_STD</span><span class="p">,</span>
+                        <span class="n">is_train</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T</span><span class="o">.</span><span class="n">Compose</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Build the standard preprocessing pipeline for a ViT model.</span>
+
+<span class="sd">    During training, we add random resized crop and horizontal flip for</span>
+<span class="sd">    data augmentation. During inference, we use deterministic center crop.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">is_train</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">T</span><span class="o">.</span><span class="n">Compose</span><span class="p">([</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">RandomResizedCrop</span><span class="p">(</span><span class="n">img_size</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="p">(</span><span class="mf">0.2</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)),</span>  <span class="c1"># random crop</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">RandomHorizontalFlip</span><span class="p">(),</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">ToImage</span><span class="p">(),</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">ToDtype</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>   <span class="c1"># → [0, 1]</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">Normalize</span><span class="p">(</span><span class="n">mean</span><span class="o">=</span><span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="n">std</span><span class="p">),</span>         <span class="c1"># → ~N(0,1)</span>
+        <span class="p">])</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">T</span><span class="o">.</span><span class="n">Compose</span><span class="p">([</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">Resize</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">img_size</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">/</span> <span class="mi">224</span><span class="p">)),</span>    <span class="c1"># resize short edge</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">CenterCrop</span><span class="p">(</span><span class="n">img_size</span><span class="p">),</span>                 <span class="c1"># deterministic center crop</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">ToImage</span><span class="p">(),</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">ToDtype</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">Normalize</span><span class="p">(</span><span class="n">mean</span><span class="o">=</span><span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="n">std</span><span class="p">),</span>
+        <span class="p">])</span>
+
+
+<span class="c1"># Example usage</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">transform</span> <span class="o">=</span> <span class="n">build_vit_transform</span><span class="p">(</span><span class="mi">224</span><span class="p">,</span> <span class="n">is_train</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="c1"># Load a PIL image</span>
+    <span class="n">img</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="s2">&quot;RGB&quot;</span><span class="p">,</span> <span class="p">(</span><span class="mi">640</span><span class="p">,</span> <span class="mi">480</span><span class="p">),</span> <span class="n">color</span><span class="o">=</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">32</span><span class="p">))</span>
+    <span class="n">tensor</span> <span class="o">=</span> <span class="n">transform</span><span class="p">(</span><span class="n">img</span><span class="p">)</span>               <span class="c1"># (3, 224, 224)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Preprocessed tensor shape: </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>    <span class="c1"># torch.Size([3, 224, 224])</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Value range: [</span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">]&quot;</span><span class="p">)</span>  <span class="c1"># ~[-2, 2]</span>
+
+    <span class="c1"># Batch and feed to model</span>
+    <span class="n">batch</span> <span class="o">=</span> <span class="n">tensor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>           <span class="c1"># (1, 3, 224, 224)</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">VisionTransformer</span><span class="p">()</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Logits shape: </span><span class="si">{</span><span class="n">logits</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># (1, 1000)</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: wrong normalization statistics</p>
+<p>Using ImageNet statistics for a CLIP model (or vice versa) is a frequent source of bugs that can silently degrade downstream performance by several percent. Always check which normalization constants a checkpoint was trained with. Some models (e.g., SigLIP) use image-specific mean/std; others use a simple <span class="arithmatex">\([-1, 1]\)</span> rescaling with mean=0.5, std=0.5. Store preprocessing alongside the model checkpoint.</p>
+</div>
+<hr />
+<h2 id="comparing-the-major-vision-encoder-families">Comparing the Major Vision Encoder Families<a class="headerlink" href="#comparing-the-major-vision-encoder-families" title="Permanent link">¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Training Signal</th>
+<th>Architecture</th>
+<th>Key Innovation</th>
+<th>Typical Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ViT-B/16</td>
+<td>Supervised (ImageNet)</td>
+<td>ViT</td>
+<td>Patches as tokens</td>
+<td>Classification baseline</td>
+</tr>
+<tr>
+<td>ViT-L/14</td>
+<td>Supervised (JFT-300M)</td>
+<td>ViT</td>
+<td>Scale</td>
+<td>High-accuracy backbone</td>
+</tr>
+<tr>
+<td>CLIP ViT-L/14</td>
+<td>Image-text contrastive</td>
+<td>ViT + text Transformer</td>
+<td>Zero-shot, joint embedding</td>
+<td>VLMs, zero-shot retrieval</td>
+</tr>
+<tr>
+<td>SigLIP-So400M/14</td>
+<td>Image-text sigmoid loss</td>
+<td>ViT-So400M</td>
+<td>No global softmax, small batches</td>
+<td>Gemini/PaliGemma backbone</td>
+</tr>
+<tr>
+<td>DINOv2 ViT-G/14</td>
+<td>Self-supervised distillation</td>
+<td>ViT + registers</td>
+<td>Dense spatial features, no labels</td>
+<td>Segmentation, depth, VLMs</td>
+</tr>
+<tr>
+<td>EVA-CLIP</td>
+<td>Image-text + masked prediction</td>
+<td>ViT-E</td>
+<td>Scalable vision encoder</td>
+<td>Open-source VLMs</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">ViT-G vs ViT-H vs ViT-E: a quick size guide</p>
+<p>ViT-B (86M) &lt; ViT-L (307M) &lt; ViT-H (632M) &lt; ViT-G (1.1B) &lt; ViT-22B (22B).
+The naming is not perfectly consistent across papers; always check <code>embed_dim</code> and <code>depth</code> rather than the letter designation alone.</p>
+</div>
+<hr />
+<h2 id="interview-corner-key-takeaways">Interview Corner &amp; Key Takeaways<a class="headerlink" href="#interview-corner-key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You want to adapt a CLIP ViT-L/14 (trained on 224×224 images) to process 448×448 images. What breaks and how do you fix it?</p>
+<p><strong>A:</strong> The patch embedding weights are fine (they embed <span class="arithmatex">\(14 \times 14\)</span> patches regardless of image size). What breaks is the <strong>positional embedding table</strong>: trained on <span class="arithmatex">\(16 \times 16 = 256\)</span> patch positions, but a 448×448 image with 14-pixel patches has <span class="arithmatex">\(32 \times 32 = 1024\)</span> positions. You fix this with <strong>bicubic interpolation</strong> of the 2D position embedding grid: reshape the 256 embeddings into a 16×16 grid, resize to 32×32 via bicubic interpolation, and flatten. This is the standard <code>interpolate_pos_embed</code> trick used during fine-tuning. After interpolation, a few gradient steps to fine-tune the position embeddings at the new resolution generally restores most of the accuracy. Alternatively, RoPE (Rotary Position Embeddings) can be used instead of learned embeddings precisely to avoid this resolution-lock problem — several recent ViT variants adopt 2D RoPE for this reason.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> What is the difference between CLIP and SigLIP, and when would you prefer one over the other?</p>
+<p><strong>A:</strong> Both are contrastive image-text models. CLIP uses a softmax (InfoNCE) loss that requires computing a normalization term over all <span class="arithmatex">\(N\)</span> items in the batch — demanding very large batches (tens of thousands) and global gather operations across GPUs. SigLIP replaces this with a per-pair sigmoid binary cross-entropy that avoids global normalization. SigLIP scales more gracefully to large fleets of GPUs and works better at smaller batch sizes. If you have abundant GPU memory and want the absolute best zero-shot accuracy at a given model size, CLIP with large batches is competitive; SigLIP is generally the better engineering choice for modern multimodal training pipelines. SigLIP is the backbone used in PaliGemma and the Gemini visual encoder family.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>ViT divides an image into non-overlapping <span class="arithmatex">\(P \times P\)</span> patches, flattens each to a vector, and linearly projects them — treating patches exactly like word tokens. For ViT-B/16 on 224×224 images this gives 196 tokens of dimension 768.</li>
+<li>A learned CLS token is prepended; its final output serves as the global image representation for classification. Alternatively, the patch tokens can be averaged (patch-avg pooling) or used as spatial features for dense tasks.</li>
+<li>Positional embeddings in ViT are learned, not sinusoidal. When changing resolution, the 2D grid must be bicubically interpolated to generate embeddings for the new number of patches.</li>
+<li>CLIP trains an image encoder and a text encoder jointly with symmetric InfoNCE contrastive loss on 400M+ image-text pairs, enabling zero-shot classification by comparing image embeddings to text prompt embeddings.</li>
+<li>SigLIP replaces CLIP&rsquo;s softmax loss with sigmoid binary cross-entropy applied per pair, eliminating the need for large batch sizes and global gather operations — preferred in modern large-scale training pipelines.</li>
+<li>DINOv2 learns rich spatial features with no text supervision by distilling a teacher ViT into a student, jointly optimizing CLS-level (DINO) and patch-level (iBOT) objectives.</li>
+<li>Register tokens (Darcet et al., 2023) add <span class="arithmatex">\(R\)</span> extra learnable positions to absorb global &ldquo;scratch&rdquo; information, eliminating the artifact tokens that appear in plain ViT attention maps. Registers are discarded at the output.</li>
+<li>Image preprocessing (resize, crop, normalize) must match the training pipeline exactly. CLIP and ImageNet models use different normalization constants; mixing them silently degrades performance.</li>
+<li>These image encoders are the building block for the <a href="../10-multimodal-and-arch/02-vision-language-models.html">Vision-Language Models</a> discussed in the next chapter, where patch token sequences are fused into a language model&rsquo;s context.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Vision Transformers are the dominant image encoder architecture across classification, dense prediction, and multimodal systems; the field has shifted from supervised ImageNet training toward large-scale contrastive (CLIP/SigLIP) and self-supervised (DINOv2) pre-training, with encoder scale now reaching 22B parameters.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2010.11929">Dosovitskiy et al., <em>An Image Is Worth 16×16 Words</em> (2020)</a> — the paper that established patch-based ViT and proved a pure Transformer matches CNNs at scale.</li>
+<li><a href="https://arxiv.org/abs/2103.00020">Radford et al. (OpenAI), <em>Learning Transferable Visual Models From Natural Language Supervision</em> (2021)</a> — CLIP: contrastive image-text pre-training enabling zero-shot classification.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2303.15343">Zhai et al. (Google), <em>Sigmoid Loss for Language Image Pre-Training</em> (2023)</a> — SigLIP replaces CLIP&rsquo;s softmax with per-pair sigmoid loss, removing the global-gather bottleneck; backbone of PaliGemma and Gemini.</li>
+<li><a href="https://arxiv.org/abs/2304.07193">Oquab et al. (Meta AI), <em>DINOv2: Learning Robust Visual Features without Supervision</em> (2023)</a> — self-supervised distillation on 142M curated images yields all-purpose spatial features that outperform weakly-supervised encoders.</li>
+<li><a href="https://arxiv.org/abs/2309.16588">Darcet et al. (Meta AI), <em>Vision Transformers Need Registers</em> (2023)</a> — identifies high-norm artifact tokens in ViT attention maps and fixes them with learnable register tokens, improving dense-prediction quality.</li>
+<li><a href="https://arxiv.org/abs/2302.05442">Dehghani et al. (Google), <em>Scaling Vision Transformers to 22 Billion Parameters</em> (2023)</a> — ViT-22B shows LLM-like scaling laws in vision with parallel layers and QK-norm for training stability.</li>
+<li><a href="https://arxiv.org/abs/2211.07636">Fang et al. (BAAI), <em>EVA: Exploring the Limits of Masked Visual Representation Learning at Scale</em> (2022)</a> — masked image reconstruction of CLIP features scales ViT to 1B parameters, forming the EVA-CLIP open-source encoder family.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/huggingface/pytorch-image-models">huggingface/pytorch-image-models (timm)</a> — the largest collection of PyTorch vision backbones (ViT, DeiT, SigLIP, EVA-CLIP, DINOv2) with pretrained weights and training scripts.</li>
+<li><a href="https://github.com/facebookresearch/dinov2">facebookresearch/dinov2</a> — official Meta AI code and pretrained ViT-S/B/L/G DINOv2 models, including register-token variants.</li>
+<li><a href="https://github.com/mlfoundations/open_clip">mlfoundations/open_clip</a> — open-source CLIP training codebase supporting LAION-2B, DataComp, and custom datasets; includes SigLIP variants.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://ai.meta.com/blog/dino-v2-computer-vision-self-supervised-learning/">Meta AI Blog: <em>DINOv2: State-of-the-art computer vision models with self-supervised learning</em> (2023)</a> — accessible overview of DINOv2&rsquo;s design, capabilities, and real-world applications.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Dosovitskiy et al., &ldquo;An Image Is Worth 16×16 Words: Transformers for Image Recognition at Scale&rdquo; (2020) — the original ViT paper.</li>
+<li>Radford et al. (OpenAI), &ldquo;Learning Transferable Visual Models From Natural Language Supervision&rdquo; (2021) — CLIP.</li>
+<li>Zhai et al. (Google), &ldquo;Sigmoid Loss for Language Image Pre-Training&rdquo; (SigLIP, 2023).</li>
+<li>Oquab et al. (Meta AI), &ldquo;DINOv2: Learning Robust Visual Features without Supervision&rdquo; (2023).</li>
+<li>Darcet et al. (Meta AI), &ldquo;Vision Transformers Need Registers&rdquo; (2023) — register tokens.</li>
+<li>Fang et al., &ldquo;EVA: Exploring the Limits of Masked Visual Representation Learning at Scale&rdquo; (2022) — EVA-CLIP.</li>
+<li>Touvron et al., &ldquo;Training data-efficient image transformers &amp; distillation through attention&rdquo; (DeiT, 2021) — training ViT with limited data via distillation.</li>
+<li>timm library (Ross Wightman) — the de facto PyTorch hub for pretrained vision models; includes ViT, DeiT, DINOv2, EVA-CLIP, and many variants: <code>github.com/huggingface/pytorch-image-models</code>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="pn-label">← Previous</span><span class="pn-title">Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</span></a>
+<a class="next" href="02-vision-language-models.html"><span class="pn-label">Next →</span><span class="pn-title">Vision-Language Models</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-convolutions-are-not-enough">Why Convolutions Are Not Enough</a></li>
+<li class="toc-l2"><a href="#the-patchify-operation">The Patchify Operation</a></li>
+<li class="toc-l3"><a href="#from-pixels-to-tokens">From Pixels to Tokens</a></li>
+<li class="toc-l3"><a href="#image-preprocessing">Image Preprocessing</a></li>
+<li class="toc-l3"><a href="#code-patchify-patch-embedding">Code: Patchify + Patch Embedding</a></li>
+<li class="toc-l2"><a href="#the-full-vit-architecture">The Full ViT Architecture</a></li>
+<li class="toc-l3"><a href="#code-minimal-vit-block">Code: Minimal ViT Block</a></li>
+<li class="toc-l2"><a href="#positional-embeddings-in-vit">Positional Embeddings in ViT</a></li>
+<li class="toc-l2"><a href="#clip-contrastive-language-image-pre-training">CLIP: Contrastive Language-Image Pre-training</a></li>
+<li class="toc-l3"><a href="#the-clip-loss">The CLIP Loss</a></li>
+<li class="toc-l3"><a href="#architectural-choices">Architectural Choices</a></li>
+<li class="toc-l2"><a href="#siglip-replacing-infonce-with-sigmoid-loss">SigLIP: Replacing InfoNCE with Sigmoid Loss</a></li>
+<li class="toc-l2"><a href="#dinov2-self-supervised-vision-features">DINOv2: Self-Supervised Vision Features</a></li>
+<li class="toc-l3"><a href="#register-tokens">Register Tokens</a></li>
+<li class="toc-l2"><a href="#from-raw-pixels-to-transformer-input-the-full-pipeline">From Raw Pixels to Transformer Input: The Full Pipeline</a></li>
+<li class="toc-l2"><a href="#comparing-the-major-vision-encoder-families">Comparing the Major Vision Encoder Families</a></li>
+<li class="toc-l2"><a href="#interview-corner-key-takeaways">Interview Corner &amp;amp; Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

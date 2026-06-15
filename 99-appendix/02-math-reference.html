@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Math Reference Sheet — The LLM Stack</title>
+<meta name="description" content="All the key equations in one place: softmax, cross-entropy, attention, RoPE, LayerNorm/RMSNorm, AdamW, PPO/GRPO/DPO losses, KL estimators, scaling laws, LoRA — ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-glossary.html">Glossary of Terms</a></li>
+<li><a class="active" href="02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Appendix</div>
+<h1 id="the-math-reference-sheet">The Math Reference Sheet<a class="headerlink" href="#the-math-reference-sheet" title="Permanent link">¶</a></h1>
+<p>This appendix collects every core equation used across the LLM stack in one printable location. For each formula you get: the expression in display math, a one-line meaning reminder, and the key shape conventions. When you want a full derivation or motivation, the cross-links point you to the chapter where it lives. Think of this as the cheat sheet you tape to your monitor during a training run.</p>
+<hr />
+<h2 id="1-core-neural-network-building-blocks">1. Core Neural Network Building Blocks<a class="headerlink" href="#1-core-neural-network-building-blocks" title="Permanent link">¶</a></h2>
+<h3 id="softmax">Softmax<a class="headerlink" href="#softmax" title="Permanent link">¶</a></h3>
+<div class="arithmatex">\[
+\operatorname{softmax}(z)_i = \frac{e^{z_i}}{\sum_{j=1}^{V} e^{z_j}}
+\]</div>
+<p><strong>Meaning.</strong> Converts a vector of raw logits <span class="arithmatex">\(z \in \mathbb{R}^V\)</span> into a probability distribution. Outputs are positive and sum to one.</p>
+<p><strong>Numerically stable form.</strong> In practice we subtract the maximum before exponentiating to avoid overflow:</p>
+<div class="arithmatex">\[
+\operatorname{softmax}(z)_i = \frac{e^{z_i - \max_j z_j}}{\sum_{j} e^{z_j - \max_j z_j}}
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">safe_softmax</span><span class="p">(</span><span class="n">z</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Numerically stable softmax.</span>
+<span class="sd">    Subtracting the max is equivalent — the shift cancels in numerator</span>
+<span class="sd">    and denominator — but prevents exp() overflow when z is large.</span>
+
+<span class="sd">    z: any shape, we reduce along `dim`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">z_shifted</span> <span class="o">=</span> <span class="n">z</span> <span class="o">-</span> <span class="n">z</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="n">dim</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">values</span>  <span class="c1"># broadcast-safe</span>
+    <span class="n">exp_z</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">z_shifted</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">exp_z</span> <span class="o">/</span> <span class="n">exp_z</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="n">dim</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Quick sanity check</span>
+<span class="n">logits</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">])</span>
+<span class="n">probs</span>  <span class="o">=</span> <span class="n">safe_softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">probs</span><span class="o">.</span><span class="n">sum</span><span class="p">(),</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">1.0</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">probs</span><span class="p">)</span>  <span class="c1"># tensor([0.6590, 0.2424, 0.0986])</span>
+</code></pre></div>
+<p>See <a href="../01-foundations/02-probability-information.html">Probability, Statistics &amp; Information Theory</a> for the full information-theoretic derivation.</p>
+<hr />
+<h3 id="cross-entropy-loss">Cross-Entropy Loss<a class="headerlink" href="#cross-entropy-loss" title="Permanent link">¶</a></h3>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{CE}} = -\sum_{i=1}^{V} y_i \log \hat{p}_i
+\]</div>
+<p>For the <strong>language modelling</strong> setting where <span class="arithmatex">\(y\)</span> is a one-hot target token <span class="arithmatex">\(t\)</span>:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{CE}} = -\log \hat{p}_t = -\log \operatorname{softmax}(z)_t = \log\!\sum_j e^{z_j} - z_t
+\]</div>
+<p>The second form (log-sum-exp minus the correct logit) is the numerically preferred implementation and equals what <code>torch.nn.CrossEntropyLoss</code> computes directly from logits.</p>
+<p><strong>Perplexity</strong> is the exponential of the mean cross-entropy per token:</p>
+<div class="arithmatex">\[
+\text{PPL} = \exp\!\left(\frac{1}{N}\sum_{n=1}^{N} \mathcal{L}_n\right)
+\]</div>
+<p>A model with PPL 20 needs on average 20 equally-likely guesses to land on the correct next token.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="c1"># Internally: F.log_softmax + F.nll_loss, numerically fused</span>
+<span class="n">criterion</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">CrossEntropyLoss</span><span class="p">(</span><span class="n">reduction</span><span class="o">=</span><span class="s1">&#39;mean&#39;</span><span class="p">)</span>
+
+<span class="c1"># logits: [batch, vocab];  targets: [batch] of integer token ids</span>
+<span class="n">logits</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">32_000</span><span class="p">)</span>   <span class="c1"># e.g. Llama-3 vocab</span>
+<span class="n">targets</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">32_000</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,))</span>
+
+<span class="n">loss</span> <span class="o">=</span> <span class="n">criterion</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">targets</span><span class="p">)</span>
+<span class="n">perplexity</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">loss</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;loss=</span><span class="si">{</span><span class="n">loss</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">  PPL=</span><span class="si">{</span><span class="n">perplexity</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>See <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a> for the sequence-level formulation with causal masking.</p>
+<hr />
+<h3 id="layer-normalization">Layer Normalization<a class="headerlink" href="#layer-normalization" title="Permanent link">¶</a></h3>
+<div class="arithmatex">\[
+\operatorname{LayerNorm}(x) = \gamma \odot \frac{x - \mu}{\sqrt{\sigma^2 + \varepsilon}} + \beta
+\]</div>
+<p>where <span class="arithmatex">\(\mu = \frac{1}{d}\sum_i x_i\)</span>, <span class="arithmatex">\(\sigma^2 = \frac{1}{d}\sum_i (x_i - \mu)^2\)</span>, and <span class="arithmatex">\(\gamma, \beta \in \mathbb{R}^d\)</span> are learned scale and bias.</p>
+<h3 id="rmsnorm">RMSNorm<a class="headerlink" href="#rmsnorm" title="Permanent link">¶</a></h3>
+<div class="arithmatex">\[
+\operatorname{RMSNorm}(x) = \gamma \odot \frac{x}{\sqrt{\frac{1}{d}\sum_i x_i^2 + \varepsilon}}
+\]</div>
+<p><strong>Meaning.</strong> RMSNorm drops the mean-centering step. It is used in Llama &#8532; and most modern decoders because it is faster (fewer ops, no mean subtraction) and empirically just as effective. There is no bias <span class="arithmatex">\(\beta\)</span>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="o">,</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rms_norm</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">weight</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    x     : (..., d_model)</span>
+<span class="sd">    weight: (d_model,) — the learnable scale γ</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Mean of squares along the last dimension</span>
+    <span class="n">rms</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">eps</span><span class="p">)</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">x</span> <span class="o">/</span> <span class="n">rms</span><span class="p">)</span> <span class="o">*</span> <span class="n">weight</span>
+
+<span class="c1"># Test against PyTorch&#39;s built-in</span>
+<span class="n">d</span> <span class="o">=</span> <span class="mi">512</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+<span class="n">w</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+
+<span class="n">out_custom</span> <span class="o">=</span> <span class="n">rms_norm</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">w</span><span class="p">)</span>
+<span class="n">out_builtin</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">rms_norm</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="p">(</span><span class="n">d</span><span class="p">,),</span> <span class="n">w</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">out_custom</span><span class="p">,</span> <span class="n">out_builtin</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">)</span>
+</code></pre></div>
+<p>See <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a>.</p>
+<hr />
+<h2 id="2-attention">2. Attention<a class="headerlink" href="#2-attention" title="Permanent link">¶</a></h2>
+<h3 id="scaled-dot-product-attention">Scaled Dot-Product Attention<a class="headerlink" href="#scaled-dot-product-attention" title="Permanent link">¶</a></h3>
+<div class="arithmatex">\[
+\operatorname{Attention}(Q, K, V) = \operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right) V
+\]</div>
+<p><strong>Shapes.</strong> <span class="arithmatex">\(Q \in \mathbb{R}^{T_q \times d_k}\)</span>, <span class="arithmatex">\(K \in \mathbb{R}^{T_k \times d_k}\)</span>, <span class="arithmatex">\(V \in \mathbb{R}^{T_k \times d_v}\)</span>. Output has shape <span class="arithmatex">\(T_q \times d_v\)</span>.</p>
+<p><strong>Why <span class="arithmatex">\(\sqrt{d_k}\)</span>?</strong> The dot product <span class="arithmatex">\(q^\top k\)</span> has variance proportional to <span class="arithmatex">\(d_k\)</span> when entries are standard normal. Dividing by <span class="arithmatex">\(\sqrt{d_k}\)</span> restores unit variance and keeps softmax in a sensible gradient regime.</p>
+<p><strong>Causal mask.</strong> For autoregressive decoding, add <span class="arithmatex">\(-\infty\)</span> to positions where <span class="arithmatex">\(j &gt; i\)</span> before the softmax so token <span class="arithmatex">\(i\)</span> cannot attend to future tokens.</p>
+<h3 id="multi-head-attention-mha">Multi-Head Attention (MHA)<a class="headerlink" href="#multi-head-attention-mha" title="Permanent link">¶</a></h3>
+<div class="arithmatex">\[
+\text{MHA}(Q,K,V) = \operatorname{concat}(\text{head}_1,\ldots,\text{head}_h) W^O
+\]</div>
+<div class="arithmatex">\[
+\text{head}_i = \operatorname{Attention}(Q W_i^Q,\; K W_i^K,\; V W_i^V)
+\]</div>
+<p>where <span class="arithmatex">\(W_i^Q, W_i^K \in \mathbb{R}^{d_{\text{model}} \times d_k}\)</span>, <span class="arithmatex">\(W_i^V \in \mathbb{R}^{d_{\text{model}} \times d_v}\)</span>, and <span class="arithmatex">\(W^O \in \mathbb{R}^{h d_v \times d_{\text{model}}}\)</span>.</p>
+<p><strong>Grouped Query Attention (GQA).</strong> Use <span class="arithmatex">\(g\)</span> KV heads shared across <span class="arithmatex">\(h\)</span> query heads where <span class="arithmatex">\(g \ll h\)</span>. KV cache shrinks by factor <span class="arithmatex">\(h/g\)</span>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">scaled_dot_product_attention</span><span class="p">(</span>
+    <span class="n">q</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, H, T, d_k)</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, H, T, d_k)</span>
+    <span class="n">v</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, H, T, d_v)</span>
+    <span class="n">causal</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Pure-PyTorch reference implementation.</span>
+<span class="sd">    In production use F.scaled_dot_product_attention (dispatches to FlashAttention).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">d_k</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="c1"># (B, H, T_q, T_k)</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">matmul</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">d_k</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">causal</span><span class="p">:</span>
+        <span class="n">T</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">triu</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">q</span><span class="o">.</span><span class="n">device</span><span class="p">),</span> <span class="n">diagonal</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">bool</span><span class="p">()</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>
+
+    <span class="n">attn</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>      <span class="c1"># (B, H, T_q, T_k)</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">matmul</span><span class="p">(</span><span class="n">attn</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>          <span class="c1"># (B, H, T_q, d_v)</span>
+</code></pre></div>
+<p>See <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a> and <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>.</p>
+<hr />
+<h3 id="rotary-position-embedding-rope">Rotary Position Embedding (RoPE)<a class="headerlink" href="#rotary-position-embedding-rope" title="Permanent link">¶</a></h3>
+<p>RoPE rotates the query and key vectors before the dot product. For a 2-D pair <span class="arithmatex">\((x_{2i}, x_{2i+1})\)</span> at position <span class="arithmatex">\(m\)</span>:</p>
+<div class="arithmatex">\[
+\begin{bmatrix} x_{2i}' \\ x_{2i+1}' \end{bmatrix}
+=
+\begin{bmatrix} \cos(m\theta_i) &amp; -\sin(m\theta_i) \\ \sin(m\theta_i) &amp; \cos(m\theta_i) \end{bmatrix}
+\begin{bmatrix} x_{2i} \\ x_{2i+1} \end{bmatrix}
+\]</div>
+<p>where <span class="arithmatex">\(\theta_i = b^{-2i/d}\)</span> with base <span class="arithmatex">\(b = 10{,}000\)</span> (original) or larger values (e.g. <span class="arithmatex">\(b = 500{,}000\)</span> for long-context Llama-3).</p>
+<p>The inner product between rotated query at position <span class="arithmatex">\(m\)</span> and rotated key at position <span class="arithmatex">\(n\)</span> depends only on <span class="arithmatex">\(m - n\)</span>, giving <strong>relative</strong> position encoding without any extra parameters.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_rope</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">freqs_cis</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    x         : (B, T, H, d_head)</span>
+<span class="sd">    freqs_cis : (T, d_head/2) complex tensor = cos + i*sin</span>
+
+<span class="sd">    Applies RoPE by treating consecutive pairs of dimensions as complex numbers.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Reshape to complex: (B, T, H, d_head/2) complex64</span>
+    <span class="n">x_complex</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">view_as_complex</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">*</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+    <span class="c1"># freqs_cis: (1, T, 1, d_head/2) after unsqueeze for broadcast</span>
+    <span class="n">freqs_cis</span> <span class="o">=</span> <span class="n">freqs_cis</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="c1"># Element-wise complex multiply = rotation</span>
+    <span class="n">x_rotated</span> <span class="o">=</span> <span class="n">x_complex</span> <span class="o">*</span> <span class="n">freqs_cis</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">view_as_real</span><span class="p">(</span><span class="n">x_rotated</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">type_as</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_rope_freqs</span><span class="p">(</span><span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_head</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">base</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10_000.0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Returns (seq_len, d_head/2) complex tensor of e^{i*m*theta_i}.&quot;&quot;&quot;</span>
+    <span class="n">i</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">d_head</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">theta</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">base</span> <span class="o">**</span> <span class="p">(</span><span class="n">i</span> <span class="o">/</span> <span class="n">d_head</span><span class="p">))</span>                <span class="c1"># (d_head/2,)</span>
+    <span class="n">m</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">seq_len</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>                  <span class="c1"># (T,)</span>
+    <span class="n">freqs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">outer</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">theta</span><span class="p">)</span>                        <span class="c1"># (T, d_head/2)</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">polar</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">freqs</span><span class="p">),</span> <span class="n">freqs</span><span class="p">)</span>    <span class="c1"># complex</span>
+</code></pre></div>
+<p>See <a href="../02-transformer/05-positional-encoding.html">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a>.</p>
+<hr />
+<h2 id="3-optimizers">3. Optimizers<a class="headerlink" href="#3-optimizers" title="Permanent link">¶</a></h2>
+<h3 id="adamw">AdamW<a class="headerlink" href="#adamw" title="Permanent link">¶</a></h3>
+<div class="arithmatex">\[
+m_t = \beta_1 m_{t-1} + (1-\beta_1) g_t
+\]</div>
+<div class="arithmatex">\[
+v_t = \beta_2 v_{t-1} + (1-\beta_2) g_t^2
+\]</div>
+<div class="arithmatex">\[
+\hat{m}_t = \frac{m_t}{1 - \beta_1^t}, \quad \hat{v}_t = \frac{v_t}{1 - \beta_2^t}
+\]</div>
+<div class="arithmatex">\[
+\theta_t = \theta_{t-1} - \alpha \left(\frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \varepsilon} + \lambda\, \theta_{t-1}\right)
+\]</div>
+<p><strong>Meaning.</strong> Adam with <strong>decoupled weight decay</strong> <span class="arithmatex">\(\lambda\)</span>. The weight-decay term <span class="arithmatex">\(\lambda \theta\)</span> is applied directly to the parameters <em>before</em> the gradient step, not folded into the gradient — this is the &ldquo;W&rdquo; in AdamW and it is the correct way to do <span class="arithmatex">\(L_2\)</span> regularization with adaptive optimizers.</p>
+<p><strong>Typical hyperparameters for LLM pretraining:</strong> <span class="arithmatex">\(\beta_1 = 0.9\)</span>, <span class="arithmatex">\(\beta_2 = 0.95\)</span> (not 0.999), <span class="arithmatex">\(\varepsilon = 10^{-8}\)</span>, <span class="arithmatex">\(\lambda = 0.1\)</span>, cosine learning-rate schedule.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">adamw_step</span><span class="p">(</span>
+    <span class="n">param</span><span class="p">:</span>  <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># parameter θ</span>
+    <span class="n">grad</span><span class="p">:</span>   <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># gradient g_t</span>
+    <span class="n">m</span><span class="p">:</span>      <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># first moment (in-place)</span>
+    <span class="n">v</span><span class="p">:</span>      <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># second moment (in-place)</span>
+    <span class="n">t</span><span class="p">:</span>      <span class="nb">int</span><span class="p">,</span>            <span class="c1"># step count (1-indexed)</span>
+    <span class="n">lr</span><span class="p">:</span>     <span class="nb">float</span> <span class="o">=</span> <span class="mf">3e-4</span><span class="p">,</span>
+    <span class="n">beta1</span><span class="p">:</span>  <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.9</span><span class="p">,</span>
+    <span class="n">beta2</span><span class="p">:</span>  <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.95</span><span class="p">,</span>
+    <span class="n">eps</span><span class="p">:</span>    <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-8</span><span class="p">,</span>
+    <span class="n">wd</span><span class="p">:</span>     <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single AdamW update step. Modifies param, m, v in-place.&quot;&quot;&quot;</span>
+    <span class="c1"># Bias-correct moments</span>
+    <span class="n">m</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">beta1</span><span class="p">)</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">grad</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mi">1</span> <span class="o">-</span> <span class="n">beta1</span><span class="p">)</span>
+    <span class="n">v</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">beta2</span><span class="p">)</span><span class="o">.</span><span class="n">addcmul_</span><span class="p">(</span><span class="n">grad</span><span class="p">,</span> <span class="n">grad</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mi">1</span> <span class="o">-</span> <span class="n">beta2</span><span class="p">)</span>
+
+    <span class="n">m_hat</span> <span class="o">=</span> <span class="n">m</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">beta1</span> <span class="o">**</span> <span class="n">t</span><span class="p">)</span>
+    <span class="n">v_hat</span> <span class="o">=</span> <span class="n">v</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">beta2</span> <span class="o">**</span> <span class="n">t</span><span class="p">)</span>
+
+    <span class="c1"># Weight decay applied directly to param, then Adam step</span>
+    <span class="n">param</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">wd</span><span class="p">)</span>
+    <span class="n">param</span><span class="o">.</span><span class="n">addcdiv_</span><span class="p">(</span><span class="n">m_hat</span><span class="p">,</span> <span class="n">v_hat</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">eps</span><span class="p">),</span> <span class="n">value</span><span class="o">=-</span><span class="n">lr</span><span class="p">)</span>
+</code></pre></div>
+<p>See <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a>.</p>
+<hr />
+<h2 id="4-scaling-laws">4. Scaling Laws<a class="headerlink" href="#4-scaling-laws" title="Permanent link">¶</a></h2>
+<h3 id="kaplan-et-al-scaling-law-2020">Kaplan et al. Scaling Law (2020)<a class="headerlink" href="#kaplan-et-al-scaling-law-2020" title="Permanent link">¶</a></h3>
+<div class="arithmatex">\[
+L(N, D) \approx \left(\frac{N_c}{N}\right)^{\alpha_N} + \left(\frac{D_c}{D}\right)^{\alpha_D}
+\]</div>
+<p>where <span class="arithmatex">\(N\)</span> = parameters, <span class="arithmatex">\(D\)</span> = training tokens, <span class="arithmatex">\(\alpha_N \approx 0.076\)</span>, <span class="arithmatex">\(\alpha_D \approx 0.095\)</span> (OpenAI estimates), and <span class="arithmatex">\(N_c, D_c\)</span> are dataset- and task-specific constants.</p>
+<p><strong>Key finding:</strong> scale <span class="arithmatex">\(N\)</span> faster than <span class="arithmatex">\(D\)</span>; for a given compute budget <span class="arithmatex">\(C\)</span> the loss-optimal model is larger and undertrained.</p>
+<h3 id="hoffmann-et-al-chinchilla-2022">Hoffmann et al. (Chinchilla, 2022)<a class="headerlink" href="#hoffmann-et-al-chinchilla-2022" title="Permanent link">¶</a></h3>
+<div class="arithmatex">\[
+L(N, D) = E + \frac{A}{N^\alpha} + \frac{B}{D^\beta}
+\]</div>
+<p>with <span class="arithmatex">\(\alpha \approx 0.34\)</span>, <span class="arithmatex">\(\beta \approx 0.28\)</span> (fitted on language tasks). Minimising loss for fixed compute <span class="arithmatex">\(C = 6ND\)</span> gives:</p>
+<div class="arithmatex">\[
+N_{\text{opt}} \propto C^{0.5}, \quad D_{\text{opt}} \propto C^{0.5}
+\]</div>
+<p>meaning <strong>parameters and tokens should scale in a roughly 1:20 ratio</strong> (20 tokens per parameter). A 70 B-parameter model is compute-optimal at about 1.4 T tokens.</p>
+<h3 id="compute-budget">Compute Budget<a class="headerlink" href="#compute-budget" title="Permanent link">¶</a></h3>
+<div class="arithmatex">\[
+C \approx 6 N D \quad \text{(FLOPs)}
+\]</div>
+<p>The factor 6 accounts for 2 multiply-add ops per parameter per token in the forward pass, doubled for the backward pass.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: Chinchilla-optimal 7 B model</p>
+<p>Suppose you have a budget of <span class="arithmatex">\(C = 7 \times 10^{22}\)</span> FLOPs (roughly what it takes to train a 7 B parameter model with 2 T tokens on a cluster of A100s for a few weeks).</p>
+<p>Using <span class="arithmatex">\(C = 6ND\)</span>:
+$<span class="arithmatex">\(D_{\text{opt}} = \frac{C}{6 N} = \frac{7\times10^{22}}{6 \times 7\times10^9} \approx 1.67 \times 10^{12} \approx 1.67\text{ T tokens}\)</span>$</p>
+<p>Chinchilla says optimal <span class="arithmatex">\(D/N \approx 20\)</span>, so for <span class="arithmatex">\(N = 7\text{ B}\)</span>, optimal <span class="arithmatex">\(D = 140\text{ B tokens}\)</span> — but modern practice (Llama 2, Llama 3) deliberately over-trains far past the compute-optimal point because inference cost matters more at deployment.</p>
+</div>
+<p>See <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>.</p>
+<hr />
+<h2 id="5-lora-and-peft">5. LoRA and PEFT<a class="headerlink" href="#5-lora-and-peft" title="Permanent link">¶</a></h2>
+<h3 id="lora-low-rank-adaptation">LoRA (Low-Rank Adaptation)<a class="headerlink" href="#lora-low-rank-adaptation" title="Permanent link">¶</a></h3>
+<p>For a weight matrix <span class="arithmatex">\(W_0 \in \mathbb{R}^{d \times k}\)</span>, freeze <span class="arithmatex">\(W_0\)</span> and inject a low-rank perturbation:</p>
+<div class="arithmatex">\[
+W = W_0 + \Delta W = W_0 + \frac{\alpha}{r} B A
+\]</div>
+<p>where <span class="arithmatex">\(B \in \mathbb{R}^{d \times r}\)</span>, <span class="arithmatex">\(A \in \mathbb{R}^{r \times k}\)</span>, rank <span class="arithmatex">\(r \ll \min(d,k)\)</span>, and <span class="arithmatex">\(\alpha\)</span> is a scaling hyperparameter.</p>
+<p><strong>Initialisation.</strong> <span class="arithmatex">\(A\)</span> is random Gaussian; <span class="arithmatex">\(B\)</span> is zero — so <span class="arithmatex">\(\Delta W = 0\)</span> at the start of fine-tuning, preserving the pretrained forward pass.</p>
+<p><strong>Parameter savings.</strong> Instead of training <span class="arithmatex">\(dk\)</span> parameters we train <span class="arithmatex">\(r(d+k)\)</span>. For <span class="arithmatex">\(d = k = 4096\)</span> and <span class="arithmatex">\(r = 16\)</span>: full fine-tuning costs <span class="arithmatex">\(16.8\text{ M}\)</span> params per matrix; LoRA costs <span class="arithmatex">\(2 \times 4096 \times 16 = 131{,}072\)</span> — a <span class="arithmatex">\(128\times\)</span> reduction.</p>
+<p><strong>Merged form at inference.</strong> Because the output is <span class="arithmatex">\((W_0 + BA)x\)</span>, we can merge <span class="arithmatex">\(W \leftarrow W_0 + BA\)</span> before deployment — zero extra latency.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LoRALinear</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Drop-in replacement for nn.Linear with LoRA.</span>
+<span class="sd">    The base weight W0 is frozen; only A and B are trained.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">in_features</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">out_features</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">r</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>
+        <span class="n">lora_alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">16.0</span><span class="p">,</span>
+        <span class="n">bias</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">r</span> <span class="o">=</span> <span class="n">r</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scaling</span> <span class="o">=</span> <span class="n">lora_alpha</span> <span class="o">/</span> <span class="n">r</span>
+
+        <span class="c1"># Frozen pretrained weight</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">out_features</span><span class="p">,</span> <span class="n">in_features</span><span class="p">),</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span>
+        <span class="p">)</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">kaiming_uniform_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">a</span><span class="o">=</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mi">5</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">bias</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">bias</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">out_features</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">register_parameter</span><span class="p">(</span><span class="s2">&quot;bias&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+        <span class="c1"># Trainable LoRA matrices</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">in_features</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">out_features</span><span class="p">,</span> <span class="n">r</span><span class="p">))</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">kaiming_uniform_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">,</span> <span class="n">a</span><span class="o">=</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mi">5</span><span class="p">))</span>
+        <span class="c1"># B stays zero → ΔW = 0 at init</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Base forward + LoRA delta, scaled</span>
+        <span class="n">base_out</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+        <span class="n">lora_out</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">)</span>        <span class="c1"># (..., r)</span>
+        <span class="n">lora_out</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">lora_out</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span><span class="p">)</span> <span class="c1"># (..., out)</span>
+        <span class="k">return</span> <span class="n">base_out</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">scaling</span> <span class="o">*</span> <span class="n">lora_out</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">merge</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Collapse LoRA into base weight for zero-overhead inference.&quot;&quot;&quot;</span>
+        <span class="n">merged_w</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">scaling</span> <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">)</span>
+        <span class="n">lin</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>
+            <span class="n">bias</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">bias</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="p">)</span>
+        <span class="n">lin</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">merged_w</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">bias</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">lin</span><span class="o">.</span><span class="n">bias</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bias</span><span class="o">.</span><span class="n">clone</span><span class="p">())</span>
+        <span class="k">return</span> <span class="n">lin</span>
+</code></pre></div>
+<p>See <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a> and <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a>.</p>
+<hr />
+<h2 id="6-reinforcement-learning-losses">6. Reinforcement Learning Losses<a class="headerlink" href="#6-reinforcement-learning-losses" title="Permanent link">¶</a></h2>
+<h3 id="ppo-clipped-surrogate-objective">PPO Clipped Surrogate Objective<a class="headerlink" href="#ppo-clipped-surrogate-objective" title="Permanent link">¶</a></h3>
+<p>The Proximal Policy Optimization (PPO) objective for a language-model policy <span class="arithmatex">\(\pi_\theta\)</span>:</p>
+<div class="arithmatex">\[
+\mathcal{L}^{\text{CLIP}}(\theta) = \mathbb{E}_t\!\left[\min\!\left(r_t(\theta)\, A_t,\; \operatorname{clip}(r_t(\theta), 1-\varepsilon, 1+\varepsilon)\, A_t\right)\right]
+\]</div>
+<p>where:</p>
+<div class="arithmatex">\[
+r_t(\theta) = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_\text{old}}(a_t \mid s_t)}
+\]</div>
+<p>is the <strong>importance-sampling ratio</strong> and <span class="arithmatex">\(A_t\)</span> is the advantage estimate. <span class="arithmatex">\(\varepsilon = 0.2\)</span> is standard.</p>
+<p><strong>Meaning.</strong> Maximise expected advantage but refuse to let the policy move too far from the reference. The clip prevents large destructive updates.</p>
+<p><strong>KL Penalty variant</strong> (used in early RLHF):</p>
+<div class="arithmatex">\[
+\mathcal{L}^{\text{KL}}(\theta) = \mathbb{E}\!\left[r_t A_t\right] - \beta\, D_{\text{KL}}\!\left(\pi_\theta \;\|\; \pi_{\text{ref}}\right)
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">ppo_loss</span><span class="p">(</span>
+    <span class="n">log_probs_new</span><span class="p">:</span>  <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B,) log π_θ(a|s)</span>
+    <span class="n">log_probs_old</span><span class="p">:</span>  <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B,) log π_old(a|s)</span>
+    <span class="n">advantages</span><span class="p">:</span>     <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B,) advantage estimates A_t</span>
+    <span class="n">clip_eps</span><span class="p">:</span>       <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.2</span><span class="p">,</span>
+    <span class="n">reduce</span><span class="p">:</span>         <span class="nb">bool</span>  <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    PPO clipped surrogate loss.</span>
+<span class="sd">    We *maximise* this, so negate before calling .backward().</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ratio</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">log_probs_new</span> <span class="o">-</span> <span class="n">log_probs_old</span><span class="p">)</span>  <span class="c1"># importance ratio</span>
+    <span class="c1"># Clipped objective</span>
+    <span class="n">surr1</span>  <span class="o">=</span> <span class="n">ratio</span> <span class="o">*</span> <span class="n">advantages</span>
+    <span class="n">surr2</span>  <span class="o">=</span> <span class="n">ratio</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">clip_eps</span><span class="p">,</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">clip_eps</span><span class="p">)</span> <span class="o">*</span> <span class="n">advantages</span>
+    <span class="n">loss</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">surr1</span><span class="p">,</span> <span class="n">surr2</span><span class="p">)</span>  <span class="c1"># take the pessimistic bound</span>
+    <span class="k">return</span> <span class="n">loss</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span> <span class="k">if</span> <span class="n">reduce</span> <span class="k">else</span> <span class="n">loss</span>
+</code></pre></div>
+<p>See <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>.</p>
+<hr />
+<h3 id="grpo-group-relative-policy-optimisation">GRPO (Group Relative Policy Optimisation)<a class="headerlink" href="#grpo-group-relative-policy-optimisation" title="Permanent link">¶</a></h3>
+<p>GRPO replaces the value critic with a group-normalised reward baseline. For a group of <span class="arithmatex">\(G\)</span> responses <span class="arithmatex">\(\{o_1, \ldots, o_G\}\)</span> sampled from the old policy for the same prompt:</p>
+<div class="arithmatex">\[
+A_i = \frac{r_i - \operatorname{mean}(\{r_j\}_{j=1}^G)}{\operatorname{std}(\{r_j\}_{j=1}^G)}
+\]</div>
+<p>The policy gradient objective over token positions <span class="arithmatex">\(t\)</span> in response <span class="arithmatex">\(i\)</span>:</p>
+<div class="arithmatex">\[
+\mathcal{L}^{\text{GRPO}}(\theta) = \frac{1}{G}\sum_{i=1}^G \frac{1}{|o_i|}\sum_{t=1}^{|o_i|} \left[\min(r_{i,t} A_i,\; \text{clip}(r_{i,t}, 1-\varepsilon, 1+\varepsilon) A_i) - \beta\, D_{\text{KL}}(\pi_\theta \| \pi_{\text{ref}})\right]
+\]</div>
+<p><strong>Meaning.</strong> The reward within the group acts as its own baseline — no separate critic network needed. Used in DeepSeek-R1 and many reasoning-focused RLVR pipelines.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">grpo_advantages</span><span class="p">(</span><span class="n">rewards</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    rewards : (G,) — one scalar reward per response in the group</span>
+<span class="sd">    Returns : (G,) normalised advantages</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">mean</span> <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="n">std</span>  <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">unbiased</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">rewards</span> <span class="o">-</span> <span class="n">mean</span><span class="p">)</span> <span class="o">/</span> <span class="n">std</span>
+
+<span class="c1"># Example: 8 responses with rewards from a verifier</span>
+<span class="n">rewards</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">])</span>
+<span class="n">adv</span> <span class="o">=</span> <span class="n">grpo_advantages</span><span class="p">(</span><span class="n">rewards</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">adv</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">decimals</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+<span class="c1"># tensor([ 1.03, -1.21,  1.03,  0.10, -1.21,  1.03,  0.10, -1.21])</span>
+</code></pre></div>
+<p>See <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a> and <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>.</p>
+<hr />
+<h3 id="dpo-direct-preference-optimisation">DPO (Direct Preference Optimisation)<a class="headerlink" href="#dpo-direct-preference-optimisation" title="Permanent link">¶</a></h3>
+<p>DPO closes the loop between the reward model and policy update. Given a preference pair <span class="arithmatex">\((y_w, y_l)\)</span> where <span class="arithmatex">\(y_w\)</span> is preferred over <span class="arithmatex">\(y_l\)</span>:</p>
+<div class="arithmatex">\[
+\mathcal{L}^{\text{DPO}}(\theta) = -\mathbb{E}_{(x, y_w, y_l)}\!\left[\log \sigma\!\left(\beta \log\frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log\frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)}\right)\right]
+\]</div>
+<p><strong>Meaning.</strong> The model is rewarded for increasing the likelihood of preferred completions <em>relative to the reference</em> while decreasing that of dispreferred completions. <span class="arithmatex">\(\beta\)</span> (typically 0.1–0.5) controls how tightly the policy stays near the reference.</p>
+<p><strong>Log-ratio shorthand:</strong></p>
+<div class="arithmatex">\[
+h_\theta(y, x) \triangleq \log\frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)}
+\]</div>
+<div class="arithmatex">\[
+\mathcal{L}^{\text{DPO}} = -\mathbb{E}\!\left[\log \sigma\!\left(\beta \left(h_\theta(y_w, x) - h_\theta(y_l, x)\right)\right)\right]
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dpo_loss</span><span class="p">(</span>
+    <span class="n">log_probs_theta_w</span><span class="p">:</span>  <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B,) log π_θ(y_w | x)</span>
+    <span class="n">log_probs_theta_l</span><span class="p">:</span>  <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B,) log π_θ(y_l | x)</span>
+    <span class="n">log_probs_ref_w</span><span class="p">:</span>    <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B,) log π_ref(y_w | x)</span>
+    <span class="n">log_probs_ref_l</span><span class="p">:</span>    <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B,) log π_ref(y_l | x)</span>
+    <span class="n">beta</span><span class="p">:</span>               <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Standard DPO loss (Rafailov et al. 2023).</span>
+<span class="sd">    Each log_prob is the per-sequence sum of token log-probs.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">log_ratio_w</span> <span class="o">=</span> <span class="n">log_probs_theta_w</span> <span class="o">-</span> <span class="n">log_probs_ref_w</span>  <span class="c1"># h_θ(y_w, x)</span>
+    <span class="n">log_ratio_l</span> <span class="o">=</span> <span class="n">log_probs_theta_l</span> <span class="o">-</span> <span class="n">log_probs_ref_l</span>  <span class="c1"># h_θ(y_l, x)</span>
+    <span class="c1"># Positive when preferred response has higher relative log-prob</span>
+    <span class="n">gap</span>  <span class="o">=</span> <span class="n">beta</span> <span class="o">*</span> <span class="p">(</span><span class="n">log_ratio_w</span> <span class="o">-</span> <span class="n">log_ratio_l</span><span class="p">)</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="o">-</span><span class="n">F</span><span class="o">.</span><span class="n">logsigmoid</span><span class="p">(</span><span class="n">gap</span><span class="p">)</span>  <span class="c1"># = log(1 + exp(-gap)), numerically stable</span>
+    <span class="k">return</span> <span class="n">loss</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</code></pre></div>
+<p>See <a href="../05-posttraining-alignment/07-dpo-and-variants.html">Direct Preference Optimization &amp; Its Variants</a>.</p>
+<hr />
+<h2 id="7-kl-divergence-estimators">7. KL Divergence Estimators<a class="headerlink" href="#7-kl-divergence-estimators" title="Permanent link">¶</a></h2>
+<p>The full KL divergence between a learned policy <span class="arithmatex">\(\pi\)</span> and reference <span class="arithmatex">\(\pi_{\text{ref}}\)</span> is:</p>
+<div class="arithmatex">\[
+D_{\text{KL}}(\pi \| \pi_{\text{ref}}) = \mathbb{E}_{a \sim \pi}\!\left[\log\frac{\pi(a)}{\pi_{\text{ref}}(a)}\right]
+\]</div>
+<p>In practice we estimate it from a single action sample. Three common Monte Carlo estimators, all unbiased or approximately unbiased:</p>
+<table>
+<thead>
+<tr>
+<th>Estimator</th>
+<th>Formula</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>k1</strong> (naive)</td>
+<td><span class="arithmatex">\(\log r\)</span> where <span class="arithmatex">\(r = \pi / \pi_{\text{ref}}\)</span></td>
+<td>Biased toward negative values; noisy</td>
+</tr>
+<tr>
+<td><strong>k2</strong></td>
+<td><span class="arithmatex">\(r - 1 - \log r\)</span></td>
+<td>Always <span class="arithmatex">\(\geq 0\)</span>; more stable</td>
+</tr>
+<tr>
+<td><strong>k3</strong></td>
+<td><span class="arithmatex">\(\frac{(r-1)^2}{2}\)</span></td>
+<td>Second-order Taylor approx; cheapest</td>
+</tr>
+</tbody>
+</table>
+<p><strong>k2 is the standard choice</strong> in RLHF systems (used in TRL, OpenRLHF). It lower-bounds the true KL by Jensen&rsquo;s inequality.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">kl_estimators</span><span class="p">(</span>
+    <span class="n">log_pi</span><span class="p">:</span>     <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, T) log-probs under current policy</span>
+    <span class="n">log_pi_ref</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, T) log-probs under reference policy</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns three scalar KL estimates averaged over batch and token positions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">log_r</span> <span class="o">=</span> <span class="n">log_pi</span> <span class="o">-</span> <span class="n">log_pi_ref</span>  <span class="c1"># log importance ratio  (B, T)</span>
+    <span class="n">r</span>     <span class="o">=</span> <span class="n">log_r</span><span class="o">.</span><span class="n">exp</span><span class="p">()</span>
+
+    <span class="n">k1</span> <span class="o">=</span> <span class="n">log_r</span>                   <span class="c1"># naive, can be negative</span>
+    <span class="n">k2</span> <span class="o">=</span> <span class="n">r</span> <span class="o">-</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">log_r</span>        <span class="c1"># always &gt;= 0 by log inequality</span>
+    <span class="n">k3</span> <span class="o">=</span> <span class="p">(</span><span class="n">r</span> <span class="o">-</span> <span class="mf">1.0</span><span class="p">)</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span>   <span class="c1"># Taylor approximation</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;k1&quot;</span><span class="p">:</span> <span class="n">k1</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+        <span class="s2">&quot;k2&quot;</span><span class="p">:</span> <span class="n">k2</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+        <span class="s2">&quot;k3&quot;</span><span class="p">:</span> <span class="n">k3</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+    <span class="p">}</span>
+
+<span class="c1"># Sanity: for identical policies KL should be ~0</span>
+<span class="n">lp</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="mi">4</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="o">-</span><span class="mf">3.0</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">kl_estimators</span><span class="p">(</span><span class="n">lp</span><span class="p">,</span> <span class="n">lp</span><span class="p">))</span>
+<span class="c1"># {&#39;k1&#39;: 0.0, &#39;k2&#39;: 0.0, &#39;k3&#39;: 0.0}</span>
+</code></pre></div>
+<p>See <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>.</p>
+<hr />
+<h2 id="8-quick-reference-table">8. Quick-Reference Table<a class="headerlink" href="#8-quick-reference-table" title="Permanent link">¶</a></h2>
+<p>The table below lists every major equation in one place for rapid lookup.</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Equation (compact)</th>
+<th>Key shapes/params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Softmax</td>
+<td><span class="arithmatex">\(p_i = e^{z_i}/\sum_j e^{z_j}\)</span></td>
+<td><span class="arithmatex">\(z \in \mathbb{R}^V\)</span></td>
+</tr>
+<tr>
+<td>Cross-Entropy</td>
+<td><span class="arithmatex">\(\mathcal{L} = -\log p_t\)</span></td>
+<td>scalar per token</td>
+</tr>
+<tr>
+<td>Perplexity</td>
+<td><span class="arithmatex">\(\exp(\bar{\mathcal{L}})\)</span></td>
+<td>scalar per sequence</td>
+</tr>
+<tr>
+<td>LayerNorm</td>
+<td><span class="arithmatex">\(\gamma(x-\mu)/\sigma + \beta\)</span></td>
+<td>learnable <span class="arithmatex">\(\gamma, \beta \in \mathbb{R}^d\)</span></td>
+</tr>
+<tr>
+<td>RMSNorm</td>
+<td><span class="arithmatex">\(\gamma x / \text{RMS}(x)\)</span></td>
+<td>no <span class="arithmatex">\(\beta\)</span>, no mean</td>
+</tr>
+<tr>
+<td>Attention</td>
+<td><span class="arithmatex">\(\operatorname{softmax}(QK^\top/\sqrt{d_k})V\)</span></td>
+<td><span class="arithmatex">\(Q,K: T\times d_k\)</span>; <span class="arithmatex">\(V: T\times d_v\)</span></td>
+</tr>
+<tr>
+<td>RoPE</td>
+<td>complex rotation <span class="arithmatex">\(x_m e^{im\theta}\)</span></td>
+<td>base <span class="arithmatex">\(b\)</span>, position <span class="arithmatex">\(m\)</span></td>
+</tr>
+<tr>
+<td>AdamW</td>
+<td><span class="arithmatex">\(\theta \leftarrow \theta(1-\alpha\lambda) - \alpha \hat{m}/(\sqrt{\hat{v}}+\varepsilon)\)</span></td>
+<td><span class="arithmatex">\(\beta_1{=}0.9, \beta_2{=}0.95\)</span></td>
+</tr>
+<tr>
+<td>Scaling (Chinchilla)</td>
+<td><span class="arithmatex">\(L = E + A/N^\alpha + B/D^\beta\)</span></td>
+<td><span class="arithmatex">\(\alpha{\approx}0.34, \beta{\approx}0.28\)</span></td>
+</tr>
+<tr>
+<td>Compute budget</td>
+<td><span class="arithmatex">\(C \approx 6ND\)</span></td>
+<td>FLOPs</td>
+</tr>
+<tr>
+<td>LoRA</td>
+<td><span class="arithmatex">\(W = W_0 + \frac{\alpha}{r}BA\)</span></td>
+<td><span class="arithmatex">\(r \ll \min(d,k)\)</span>, <span class="arithmatex">\(B=0\)</span> at init</td>
+</tr>
+<tr>
+<td>PPO</td>
+<td><span class="arithmatex">\(\min(rA, \operatorname{clip}(r,1{\pm}\varepsilon)A)\)</span></td>
+<td><span class="arithmatex">\(\varepsilon{=}0.2\)</span></td>
+</tr>
+<tr>
+<td>GRPO advantage</td>
+<td><span class="arithmatex">\((r_i - \bar{r})/\sigma_r\)</span></td>
+<td>group of <span class="arithmatex">\(G\)</span> responses</td>
+</tr>
+<tr>
+<td>DPO</td>
+<td><span class="arithmatex">\(-\log\sigma(\beta(h_w - h_l))\)</span></td>
+<td><span class="arithmatex">\(\beta{\approx}0.1\)</span></td>
+</tr>
+<tr>
+<td>KL (k2)</td>
+<td><span class="arithmatex">\(r - 1 - \log r\)</span></td>
+<td><span class="arithmatex">\(r = \pi/\pi_{\text{ref}}\)</span></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> During RLHF with PPO, your KL penalty term keeps exploding after a few hundred steps even though you&rsquo;re clipping the PPO ratio. What are the likely causes and how would you fix them?</p>
+<p><strong>A:</strong> Several things can cause runaway KL despite PPO clipping. First, check whether you are computing the KL <strong>per token averaged over the sequence</strong> or summing it — summing scales with sequence length and can dominate long completions. Second, verify the reference policy is truly frozen; if you accidentally pass gradients through it the reference drifts and the KL penalty is meaningless. Third, PPO clipping only constrains the probability ratio at <em>sampled</em> tokens; if the policy confidently shifts probability mass onto <em>unsampled</em> tokens the effective KL can still blow up — the k2 estimator <span class="arithmatex">\(r - 1 - \log r\)</span> catches this. Fourth, check for numerical instability in log-probs: with FP16, very low probability tokens can underflow to <span class="arithmatex">\(-\infty\)</span>; use bfloat16 or clamp log-probs to a safe floor. Finally, the KL coefficient <span class="arithmatex">\(\beta\)</span> may simply be too small — an adaptive controller that scales <span class="arithmatex">\(\beta\)</span> to keep <span class="arithmatex">\(D_{\text{KL}} \leq \delta_{\text{target}}\)</span> (e.g. the &ldquo;KL annealing&rdquo; trick in TRL) is more robust than a fixed constant.</p>
+</div>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Numerically stable forms matter.</strong> Always use log-sum-exp softmax; use <code>F.cross_entropy</code> from logits (never <code>log(softmax(logits))</code>); use the k2 KL estimator.</li>
+<li><strong>Softmax temperature</strong> (dividing logits by <span class="arithmatex">\(T\)</span> before softmax) sharpens (<span class="arithmatex">\(T &lt; 1\)</span>) or flattens (<span class="arithmatex">\(T &gt; 1\)</span>) the distribution without changing argmax.</li>
+<li><strong>Attention scaling by <span class="arithmatex">\(\sqrt{d_k}\)</span></strong> prevents the softmax from saturating into near-one-hot distributions at large head dimensions.</li>
+<li><strong>RMSNorm vs LayerNorm:</strong> modern decoders prefer RMSNorm — same stabilization, fewer ops, no centering bias.</li>
+<li><strong>AdamW decouples weight decay</strong> from the gradient adaptive step; folding <span class="arithmatex">\(L_2\)</span> into the gradient (classic Adam) leads to incorrect regularization with per-parameter step sizes.</li>
+<li><strong>Chinchilla says scale tokens as fast as parameters.</strong> In practice over-training beyond compute-optimal is often better because inference is expensive.</li>
+<li><strong>LoRA rank <span class="arithmatex">\(r\)</span></strong> is a budget knob: higher <span class="arithmatex">\(r\)</span> gives more expressivity at the cost of more trainable parameters; <span class="arithmatex">\(r=16\)</span> or <span class="arithmatex">\(r=64\)</span> covers most SFT/RLHF use cases.</li>
+<li><strong>PPO clips the probability ratio, not the KL</strong> — so monitor the k2 KL estimator separately to catch distribution drift.</li>
+<li><strong>DPO <span class="arithmatex">\(\beta\)</span></strong> controls the strength of the KL constraint implicitly baked into the closed-form optimum; too small <span class="arithmatex">\(\beta\)</span> leads to over-fitting on preferences; too large underfits.</li>
+</ul>
+</div>
+<hr />
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Vaswani et al., <em>Attention Is All You Need</em> (2017) — original scaled dot-product attention and multi-head formulation.</li>
+<li>Ba et al., <em>Layer Normalization</em> (2016) — the LayerNorm paper.</li>
+<li>Zhang and Sennrich, <em>Root Mean Square Layer Normalization</em> (2019) — RMSNorm derivation.</li>
+<li>Su et al., <em>RoFormer: Enhanced Transformer with Rotary Position Embedding</em> (2021) — RoPE derivation.</li>
+<li>Loshchilov and Hutter, <em>Decoupled Weight Decay Regularization</em> (2019) — AdamW.</li>
+<li>Kaplan et al., <em>Scaling Laws for Neural Language Models</em> (2020) — OpenAI scaling law.</li>
+<li>Hoffmann et al., <em>Training Compute-Optimal Large Language Models</em> (Chinchilla, 2022) — Deepmind scaling law.</li>
+<li>Hu et al., <em>LoRA: Low-Rank Adaptation of Large Language Models</em> (2022) — LoRA.</li>
+<li>Schulman et al., <em>Proximal Policy Optimization Algorithms</em> (2017) — PPO.</li>
+<li>Rafailov et al., <em>Direct Preference Optimization: Your Language Model is Secretly a Reward Model</em> (2023) — DPO.</li>
+<li>Shao et al., <em>DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models</em> (2024) — GRPO.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="01-glossary.html"><span class="pn-label">← Previous</span><span class="pn-title">Glossary of Terms</span></a>
+<a class="next" href="03-papers-reading-list.html"><span class="pn-label">Next →</span><span class="pn-title">Key Papers: An Annotated Reading List</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#1-core-neural-network-building-blocks">1. Core Neural Network Building Blocks</a></li>
+<li class="toc-l3"><a href="#softmax">Softmax</a></li>
+<li class="toc-l3"><a href="#cross-entropy-loss">Cross-Entropy Loss</a></li>
+<li class="toc-l3"><a href="#layer-normalization">Layer Normalization</a></li>
+<li class="toc-l3"><a href="#rmsnorm">RMSNorm</a></li>
+<li class="toc-l2"><a href="#2-attention">2. Attention</a></li>
+<li class="toc-l3"><a href="#scaled-dot-product-attention">Scaled Dot-Product Attention</a></li>
+<li class="toc-l3"><a href="#multi-head-attention-mha">Multi-Head Attention (MHA)</a></li>
+<li class="toc-l3"><a href="#rotary-position-embedding-rope">Rotary Position Embedding (RoPE)</a></li>
+<li class="toc-l2"><a href="#3-optimizers">3. Optimizers</a></li>
+<li class="toc-l3"><a href="#adamw">AdamW</a></li>
+<li class="toc-l2"><a href="#4-scaling-laws">4. Scaling Laws</a></li>
+<li class="toc-l3"><a href="#kaplan-et-al-scaling-law-2020">Kaplan et al. Scaling Law (2020)</a></li>
+<li class="toc-l3"><a href="#hoffmann-et-al-chinchilla-2022">Hoffmann et al. (Chinchilla, 2022)</a></li>
+<li class="toc-l3"><a href="#compute-budget">Compute Budget</a></li>
+<li class="toc-l2"><a href="#5-lora-and-peft">5. LoRA and PEFT</a></li>
+<li class="toc-l3"><a href="#lora-low-rank-adaptation">LoRA (Low-Rank Adaptation)</a></li>
+<li class="toc-l2"><a href="#6-reinforcement-learning-losses">6. Reinforcement Learning Losses</a></li>
+<li class="toc-l3"><a href="#ppo-clipped-surrogate-objective">PPO Clipped Surrogate Objective</a></li>
+<li class="toc-l3"><a href="#grpo-group-relative-policy-optimisation">GRPO (Group Relative Policy Optimisation)</a></li>
+<li class="toc-l3"><a href="#dpo-direct-preference-optimisation">DPO (Direct Preference Optimisation)</a></li>
+<li class="toc-l2"><a href="#7-kl-divergence-estimators">7. KL Divergence Estimators</a></li>
+<li class="toc-l2"><a href="#8-quick-reference-table">8. Quick-Reference Table</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

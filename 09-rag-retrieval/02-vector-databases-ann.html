@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vector Databases &amp; Approximate Nearest Neighbor Search — The LLM Stack</title>
+<meta name="description" content="Exact vs approximate search, the curse of dimensionality, HNSW (graph), IVF, PQ/product quantization, ScaNN, the recall-latency-memory tradeoff, vector DBs (FAI">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="active" href="02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IX — Retrieval &amp; RAG</div>
+<h1 id="92-vector-databases-approximate-nearest-neighbor-search">9.2 Vector Databases &amp; Approximate Nearest Neighbor Search<a class="headerlink" href="#92-vector-databases-approximate-nearest-neighbor-search" title="Permanent link">¶</a></h1>
+<p>In the previous chapter, <a href="../09-rag-retrieval/01-embeddings-representation.html">Embeddings &amp; Representation Learning</a>, we learned how to turn a chunk of text into a dense vector <span class="arithmatex">\(\mathbf{x} \in \mathbb{R}^d\)</span> such that semantically similar passages land close together in vector space. That is half of a retrieval system. The other half is the problem this chapter solves: given a query vector <span class="arithmatex">\(\mathbf{q}\)</span> and a corpus of <span class="arithmatex">\(N\)</span> vectors — where <span class="arithmatex">\(N\)</span> might be ten million, or ten billion — find the <span class="arithmatex">\(k\)</span> vectors closest to <span class="arithmatex">\(\mathbf{q}\)</span> <em>fast enough to put in the critical path of an LLM request</em>. A user will not wait two seconds for retrieval before the model even starts generating. You have a few milliseconds.</p>
+<p>This is the <strong>nearest neighbor search</strong> problem, and it is deceptively hard. The naive solution — compare the query to every vector — is correct but linear in <span class="arithmatex">\(N\)</span>. At a billion vectors, that is a billion dot products <em>per query</em>. The entire field of <strong>Approximate Nearest Neighbor (ANN)</strong> search exists to trade a sliver of correctness for orders of magnitude in speed. The systems that productionize these algorithms — FAISS, Milvus, Qdrant, Weaviate, pgvector, ScaNN — are <strong>vector databases</strong>. By the end of this chapter you will understand the three algorithm families that power essentially all of them (graphs, inverted files, and quantization), you will have built a brute-force searcher, a product quantizer, and a working HNSW index from scratch, and you will be able to reason quantitatively about the recall-latency-memory triangle that governs every deployment decision.</p>
+<p>This is foundational plumbing for <a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a>, <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a>, and <a href="../08-agents-harness/05-agent-memory.html">Memory Systems for Agents</a>. It is also one of the most reliably asked ML-system-design topics in interviews, which we address directly.</p>
+<h2 id="the-problem-exact-nearest-neighbor-search">The Problem: Exact Nearest Neighbor Search<a class="headerlink" href="#the-problem-exact-nearest-neighbor-search" title="Permanent link">¶</a></h2>
+<h3 id="formalizing-the-query">Formalizing the query<a class="headerlink" href="#formalizing-the-query" title="Permanent link">¶</a></h3>
+<p>We have a database of vectors <span class="arithmatex">\(\mathcal{D} = \{\mathbf{x}_1, \dots, \mathbf{x}_N\}\)</span>, each <span class="arithmatex">\(\mathbf{x}_i \in \mathbb{R}^d\)</span>. Given a query <span class="arithmatex">\(\mathbf{q} \in \mathbb{R}^d\)</span> and a distance function <span class="arithmatex">\(\operatorname{dist}(\cdot, \cdot)\)</span>, the <strong><span class="arithmatex">\(k\)</span>-nearest-neighbor</strong> (<span class="arithmatex">\(k\)</span>-NN) problem is to return the set</p>
+<div class="arithmatex">\[
+\operatorname{kNN}(\mathbf{q}) = \underset{S \subseteq \mathcal{D},\, |S|=k}{\arg\min} \sum_{\mathbf{x} \in S} \operatorname{dist}(\mathbf{q}, \mathbf{x}),
+\]</div>
+<p>i.e. the <span class="arithmatex">\(k\)</span> database vectors with the smallest distance to <span class="arithmatex">\(\mathbf{q}\)</span>. The two distance functions that matter in practice are <strong>squared Euclidean (L2)</strong> distance and, far more commonly for normalized text embeddings, <strong>cosine similarity</strong> (equivalently, inner product on unit vectors):</p>
+<div class="arithmatex">\[
+\operatorname{dist}_{L2}(\mathbf{q}, \mathbf{x}) = \|\mathbf{q} - \mathbf{x}\|_2^2 = \sum_{j=1}^{d}(q_j - x_j)^2, \qquad
+\operatorname{sim}_{\cos}(\mathbf{q}, \mathbf{x}) = \frac{\mathbf{q}^\top \mathbf{x}}{\|\mathbf{q}\|\,\|\mathbf{x}\|}.
+\]</div>
+<p>A crucial identity ties these together. For unit-normalized vectors (<span class="arithmatex">\(\|\mathbf{q}\| = \|\mathbf{x}\| = 1\)</span>):</p>
+<div class="arithmatex">\[
+\|\mathbf{q} - \mathbf{x}\|_2^2 = \|\mathbf{q}\|^2 + \|\mathbf{x}\|^2 - 2\,\mathbf{q}^\top\mathbf{x} = 2 - 2\,\mathbf{q}^\top\mathbf{x}.
+\]</div>
+<p>So <strong>minimizing L2 distance is equivalent to maximizing inner product</strong> when everything is normalized. This is why most retrieval pipelines L2-normalize embeddings at index time: it lets you use a single index that is simultaneously a cosine index and a Euclidean index. The flip side — <strong>maximum inner product search (MIPS)</strong> on <em>un</em>-normalized vectors — is genuinely harder, because inner product is not a metric (it violates the triangle inequality), which breaks many tree- and graph-based pruning arguments.</p>
+<h3 id="brute-force-the-baseline-you-must-always-have">Brute force: the baseline you must always have<a class="headerlink" href="#brute-force-the-baseline-you-must-always-have" title="Permanent link">¶</a></h3>
+<p>The exact answer is computed by scanning every vector. Done in a vectorized way, it is just a matrix-vector (or matrix-matrix, for a batch of queries) product:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">brute_force_knn</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">q</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Exact k-NN under squared-L2 distance.</span>
+<span class="sd">    data: (N, d) float32 corpus.   q: (d,) float32 query.</span>
+<span class="sd">    Returns (indices, distances) of the k closest vectors, sorted ascending.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># ||x - q||^2 = ||x||^2 - 2 x.q + ||q||^2.  The ||q||^2 term is constant</span>
+    <span class="c1"># across all x, so it does not affect the ranking and we can drop it.</span>
+    <span class="c1"># We keep the full form here for an honest distance value.</span>
+    <span class="n">diffs</span> <span class="o">=</span> <span class="n">data</span> <span class="o">-</span> <span class="n">q</span>                  <span class="c1"># (N, d) broadcast subtraction</span>
+    <span class="n">dists</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;nd,nd-&gt;n&quot;</span><span class="p">,</span> <span class="n">diffs</span><span class="p">,</span> <span class="n">diffs</span><span class="p">)</span>  <span class="c1"># (N,) squared L2, fused</span>
+
+    <span class="c1"># argpartition is O(N): it finds the k smallest without fully sorting.</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argpartition</span><span class="p">(</span><span class="n">dists</span><span class="p">,</span> <span class="n">k</span><span class="p">)[:</span><span class="n">k</span><span class="p">]</span>
+    <span class="c1"># Then sort just those k for a clean ranked list.</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="n">idx</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">dists</span><span class="p">[</span><span class="n">idx</span><span class="p">])]</span>
+    <span class="k">return</span> <span class="n">idx</span><span class="p">,</span> <span class="n">dists</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+
+<span class="c1"># For a *batch* of queries, prefer the GEMM trick:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">brute_force_batch</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">queries</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;data: (N,d), queries: (Q,d) -&gt; top-k indices per query, (Q,k).&quot;&quot;&quot;</span>
+    <span class="c1"># ||x-q||^2 = ||x||^2 - 2 q.x + ||q||^2. Compute the cross term with one GEMM.</span>
+    <span class="n">x_norm</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;nd,nd-&gt;n&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>        <span class="c1"># (N,)</span>
+    <span class="n">cross</span>  <span class="o">=</span> <span class="n">queries</span> <span class="o">@</span> <span class="n">data</span><span class="o">.</span><span class="n">T</span>                          <span class="c1"># (Q, N)  the expensive part</span>
+    <span class="n">dists</span>  <span class="o">=</span> <span class="n">x_norm</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:]</span> <span class="o">-</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">cross</span>             <span class="c1"># (Q, N), q_norm dropped</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">argpartition</span><span class="p">(</span><span class="n">dists</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)[:,</span> <span class="p">:</span><span class="n">k</span><span class="p">]</span>
+</code></pre></div>
+<p>Two lessons hide in this code. First, the dominant cost is the <code>queries @ data.T</code> GEMM (general matrix multiply), which is <span class="arithmatex">\(O(Q \cdot N \cdot d)\)</span> FLOPs but maps perfectly onto BLAS / a GPU — see <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>. On a modern GPU, brute force over a few million vectors is genuinely fast and is often the <em>right</em> answer; FAISS ships a <code>IndexFlatIP</code>/<code>IndexFlatL2</code> precisely for this. Second, brute force gives recall = 1.0 by definition, so it is your <strong>ground-truth oracle</strong> for measuring how approximate the approximate methods are. Never ship an ANN index without measuring its recall against brute force on a held-out query set.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: when does brute force stop being free?</p>
+<p>Suppose <span class="arithmatex">\(N = 1{,}000{,}000\)</span> documents, <span class="arithmatex">\(d = 768\)</span> (a typical sentence-embedding dimension), stored in <code>float32</code>. The corpus is <span class="arithmatex">\(N \cdot d \cdot 4 = 10^6 \cdot 768 \cdot 4 \approx 3.07\)</span> GB — it fits in RAM and even in a single GPU&rsquo;s memory.</p>
+<p>One query is a <span class="arithmatex">\((1 \times d) \times (d \times N)\)</span> product: about <span class="arithmatex">\(2 N d = 2 \cdot 10^6 \cdot 768 \approx 1.5 \times 10^9\)</span> FLOPs. A GPU at, say, 20 TFLOP/s effective on this memory-bound op finishes one query in well under a millisecond — but the op is <strong>memory-bound</strong>: it must read all 3 GB of vectors, so latency is roughly <span class="arithmatex">\(3.07\,\text{GB} / \text{(memory bandwidth)}\)</span>. At ~1.5 TB/s that is ~2 ms per query just to stream the data, regardless of FLOPs.</p>
+<p>Now scale to <span class="arithmatex">\(N = 10^9\)</span>. The corpus is 3 TB — it no longer fits on one machine, the per-query scan reads 3 TB, and at 1.5 TB/s that is <strong>2 seconds per query</strong>. This is the wall. ANN exists to turn that 2 seconds into ~2 milliseconds by <em>not looking at most of the vectors</em>.</p>
+</div>
+<h2 id="the-curse-of-dimensionality">The Curse of Dimensionality<a class="headerlink" href="#the-curse-of-dimensionality" title="Permanent link">¶</a></h2>
+<p>Why can&rsquo;t we just use a <span class="arithmatex">\(k\)</span>-d tree, the classic exact NN data structure from any algorithms course? Because in high dimensions, <em>space itself stops behaving the way our 2-D and 3-D intuitions expect</em>. This phenomenon is the <strong>curse of dimensionality</strong>, and understanding it is the key to understanding why ANN methods look the way they do.</p>
+<h3 id="distances-concentrate">Distances concentrate<a class="headerlink" href="#distances-concentrate" title="Permanent link">¶</a></h3>
+<p>Consider <span class="arithmatex">\(N\)</span> points drawn uniformly at random in the unit hypercube <span class="arithmatex">\([0,1]^d\)</span>. As <span class="arithmatex">\(d\)</span> grows, the distance from a query to its <em>nearest</em> neighbor and to its <em>farthest</em> neighbor become nearly identical. Concretely, a classic result (Beyer et al., <em>When Is &ldquo;Nearest Neighbor&rdquo; Meaningful?</em>) shows that under broad conditions,</p>
+<div class="arithmatex">\[
+\lim_{d \to \infty} \frac{\mathbb{E}[\operatorname{dist}_{\max}] - \mathbb{E}[\operatorname{dist}_{\min}]}{\mathbb{E}[\operatorname{dist}_{\min}]} \to 0.
+\]</div>
+<p>The <em>contrast</em> between near and far vanishes. We can feel this with a one-line experiment:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">1000</span><span class="p">]:</span>
+    <span class="n">X</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">random</span><span class="p">((</span><span class="mi">10_000</span><span class="p">,</span> <span class="n">d</span><span class="p">))</span>          <span class="c1"># 10k uniform points in [0,1]^d</span>
+    <span class="n">q</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">random</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+    <span class="n">dists</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">X</span> <span class="o">-</span> <span class="n">q</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">dmin</span><span class="p">,</span> <span class="n">dmax</span> <span class="o">=</span> <span class="n">dists</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span> <span class="n">dists</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>
+    <span class="c1"># &quot;contrast&quot;: how much farther the farthest point is vs the nearest</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;d=</span><span class="si">{</span><span class="n">d</span><span class="si">:</span><span class="s2">5d</span><span class="si">}</span><span class="s2">  dmin=</span><span class="si">{</span><span class="n">dmin</span><span class="si">:</span><span class="s2">7.3f</span><span class="si">}</span><span class="s2">  dmax=</span><span class="si">{</span><span class="n">dmax</span><span class="si">:</span><span class="s2">7.3f</span><span class="si">}</span><span class="s2">  &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;ratio dmax/dmin=</span><span class="si">{</span><span class="n">dmax</span><span class="o">/</span><span class="n">dmin</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># d=    2  ... ratio ~ 50x      (nearest is dramatically nearer)</span>
+<span class="c1"># d= 1000  ... ratio ~ 1.1x     (everything is roughly equidistant)</span>
+</code></pre></div>
+<p>At <span class="arithmatex">\(d=2\)</span> the farthest point is dozens of times farther than the nearest, so &ldquo;nearest neighbor&rdquo; is meaningful and a tree can prune aggressively. At <span class="arithmatex">\(d=1000\)</span> the ratio collapses toward 1: the nearest and farthest neighbors are almost the same distance away.</p>
+<h3 id="why-this-kills-exact-structures">Why this kills exact structures<a class="headerlink" href="#why-this-kills-exact-structures" title="Permanent link">¶</a></h3>
+<p>A <span class="arithmatex">\(k\)</span>-d tree prunes a branch when the splitting hyperplane is farther from the query than the best candidate found so far. In high dimensions, because distances concentrate and because a query&rsquo;s &ldquo;ball&rdquo; of radius (best-so-far) intersects almost every cell, <strong>almost no branches can be pruned</strong>. The tree degrades to a linear scan — with worse constants than brute force, because of the pointer chasing. Empirically, <span class="arithmatex">\(k\)</span>-d trees lose to brute force somewhere around <span class="arithmatex">\(d \approx 20\)</span>–<span class="arithmatex">\(30\)</span>.</p>
+<p>There is a second, geometric way to see the curse. The volume of a <span class="arithmatex">\(d\)</span>-dimensional unit ball relative to the enclosing cube goes to zero super-exponentially:</p>
+<div class="arithmatex">\[
+V_{\text{ball}}(d) = \frac{\pi^{d/2}}{\Gamma\!\left(\frac{d}{2}+1\right)}, \qquad \frac{V_{\text{ball}}}{V_{\text{cube}}} \xrightarrow{d \to \infty} 0.
+\]</div>
+<p>Almost all the volume of a high-dimensional cube is in its corners, far from the center. Random data is spread thin across an enormous space, and &ldquo;locality&rdquo; — the property tree structures exploit — barely exists.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: but real embeddings aren&rsquo;t uniform</p>
+<p>The curse is stated for <em>uniformly random</em> data. Real text and image embeddings live on a low-dimensional <strong>manifold</strong> inside <span class="arithmatex">\(\mathbb{R}^d\)</span> — they have an <em>intrinsic dimensionality</em> far below the <em>ambient</em> <span class="arithmatex">\(d\)</span>. This is exactly why ANN works at all in practice: the methods below exploit that hidden low-dimensional structure (clusters, neighborhoods, smooth directions). The curse tells you that <em>generic</em> exact methods fail; the <em>blessing</em> of structure is what the good ANN methods cash in on.</p>
+</div>
+<h2 id="inverted-files-ivf-search-by-coarse-partition">Inverted Files (IVF): Search by Coarse Partition<a class="headerlink" href="#inverted-files-ivf-search-by-coarse-partition" title="Permanent link">¶</a></h2>
+<p>The first practical idea is brutally simple: <strong>don&rsquo;t search the whole database, search a neighborhood of it.</strong> Partition the vector space into cells, figure out which cell the query falls in, and scan only that cell (plus a few neighbors). This is the <strong>Inverted File</strong> index, IVF, named by analogy to the inverted index of classical text search.</p>
+<h3 id="building-an-ivf-index">Building an IVF index<a class="headerlink" href="#building-an-ivf-index" title="Permanent link">¶</a></h3>
+<ol>
+<li><strong>Train</strong> by running <span class="arithmatex">\(k\)</span>-means on a sample of the corpus to find <span class="arithmatex">\(n_{\text{list}}\)</span> <strong>centroids</strong> <span class="arithmatex">\(\{\mathbf{c}_1, \dots, \mathbf{c}_{n_{\text{list}}}\}\)</span>. These centroids are the <em>coarse quantizer</em>. A common heuristic is <span class="arithmatex">\(n_{\text{list}} \approx \sqrt{N}\)</span>.</li>
+<li><strong>Assign</strong> every database vector to its nearest centroid. The index is then a set of <span class="arithmatex">\(n_{\text{list}}\)</span> lists (the &ldquo;inverted lists&rdquo; or <em>posting lists</em>), where list <span class="arithmatex">\(j\)</span> holds the ids of all vectors assigned to centroid <span class="arithmatex">\(\mathbf{c}_j\)</span>.</li>
+<li><strong>Search</strong> by finding the <span class="arithmatex">\(n_{\text{probe}}\)</span> centroids nearest to <span class="arithmatex">\(\mathbf{q}\)</span>, then doing brute force <em>only</em> over the vectors in those <span class="arithmatex">\(n_{\text{probe}}\)</span> lists.</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">IVFFlat</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Inverted-file index with exact (flat) distances inside each cell.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n_list</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span> <span class="n">n_iter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">25</span><span class="p">,</span> <span class="n">seed</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_list</span> <span class="o">=</span> <span class="n">n_list</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_iter</span> <span class="o">=</span> <span class="n">n_iter</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_kmeans</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">X</span><span class="p">):</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="c1"># init centroids from random data points (k-means++ is better in prod)</span>
+        <span class="n">C</span> <span class="o">=</span> <span class="n">X</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">rng</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_list</span><span class="p">,</span> <span class="n">replace</span><span class="o">=</span><span class="kc">False</span><span class="p">)]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_iter</span><span class="p">):</span>
+            <span class="c1"># assign: nearest centroid for each point via the (a-b)^2 GEMM trick</span>
+            <span class="n">d2</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;nd,nd-&gt;n&quot;</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">X</span><span class="p">)[:,</span> <span class="kc">None</span><span class="p">]</span>
+                  <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">X</span> <span class="o">@</span> <span class="n">C</span><span class="o">.</span><span class="n">T</span>
+                  <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;kd,kd-&gt;k&quot;</span><span class="p">,</span> <span class="n">C</span><span class="p">,</span> <span class="n">C</span><span class="p">)[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:])</span>   <span class="c1"># (n, n_list)</span>
+            <span class="n">assign</span> <span class="o">=</span> <span class="n">d2</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_list</span><span class="p">):</span>                    <span class="c1"># update step</span>
+                <span class="n">pts</span> <span class="o">=</span> <span class="n">X</span><span class="p">[</span><span class="n">assign</span> <span class="o">==</span> <span class="n">j</span><span class="p">]</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">pts</span><span class="p">):</span>
+                    <span class="n">C</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">pts</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">C</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">train</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">X</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">centroids</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_kmeans</span><span class="p">(</span><span class="n">X</span><span class="p">)</span>
+        <span class="c1"># assign every vector to its nearest centroid -&gt; build posting lists</span>
+        <span class="n">d2</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;nd,nd-&gt;n&quot;</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">X</span><span class="p">)[:,</span> <span class="kc">None</span><span class="p">]</span>
+              <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">X</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">centroids</span><span class="o">.</span><span class="n">T</span>
+              <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;kd,kd-&gt;k&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">centroids</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">centroids</span><span class="p">)[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:])</span>
+        <span class="n">assign</span> <span class="o">=</span> <span class="n">d2</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lists</span> <span class="o">=</span> <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">assign</span> <span class="o">==</span> <span class="n">j</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_list</span><span class="p">)]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">X</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">search</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">n_probe</span><span class="o">=</span><span class="mi">8</span><span class="p">):</span>
+        <span class="c1"># 1) find the n_probe nearest centroids to the query</span>
+        <span class="n">cd</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;kd,kd-&gt;k&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">centroids</span> <span class="o">-</span> <span class="n">q</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">centroids</span> <span class="o">-</span> <span class="n">q</span><span class="p">)</span>
+        <span class="n">probes</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argpartition</span><span class="p">(</span><span class="n">cd</span><span class="p">,</span> <span class="n">n_probe</span><span class="p">)[:</span><span class="n">n_probe</span><span class="p">]</span>
+        <span class="c1"># 2) gather candidate ids from those lists and do exact distances</span>
+        <span class="n">cand</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">lists</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">probes</span><span class="p">])</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">cand</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">int</span><span class="p">)</span>
+        <span class="n">dists</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;nd,nd-&gt;n&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">cand</span><span class="p">]</span> <span class="o">-</span> <span class="n">q</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">cand</span><span class="p">]</span> <span class="o">-</span> <span class="n">q</span><span class="p">)</span>
+        <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argpartition</span><span class="p">(</span><span class="n">dists</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">cand</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))[:</span><span class="n">k</span><span class="p">]</span>
+        <span class="n">order</span> <span class="o">=</span> <span class="n">order</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">dists</span><span class="p">[</span><span class="n">order</span><span class="p">])]</span>
+        <span class="k">return</span> <span class="n">cand</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="the-ivf-tradeoff-knob-n_probe">The IVF tradeoff knob: <code>n_probe</code><a class="headerlink" href="#the-ivf-tradeoff-knob-n_probe" title="Permanent link">¶</a></h3>
+<p><code>n_probe</code> is the single most important search-time parameter. With <code>n_probe = 1</code> you scan only the query&rsquo;s own cell — blazing fast, but you miss any true neighbor that happens to sit just across a cell boundary (the <strong>boundary problem</strong>). With <code>n_probe = n_list</code> you scan everything and recover exact brute force. In between, recall rises monotonically with <code>n_probe</code> while latency rises roughly linearly. The expected number of vectors scanned is approximately</p>
+<div class="arithmatex">\[
+\mathbb{E}[\text{scanned}] \approx N \cdot \frac{n_{\text{probe}}}{n_{\text{list}}},
+\]</div>
+<p>so with <span class="arithmatex">\(n_{\text{list}} = \sqrt{N}\)</span> and <span class="arithmatex">\(n_{\text{probe}} = 8\)</span>, you scan on the order of <span class="arithmatex">\(8\sqrt{N}\)</span> vectors instead of <span class="arithmatex">\(N\)</span>. For <span class="arithmatex">\(N = 10^9\)</span> that is <span class="arithmatex">\(8 \cdot 31{,}623 \approx 2.5 \times 10^5\)</span> vectors per query — a <strong>4000×</strong> reduction.</p>
+<p>IVF alone solves the <em>speed</em> problem but not the <em>memory</em> problem: every vector is still stored in full <code>float32</code>. For a billion 768-d vectors that is 3 TB of RAM. To break the memory wall we need quantization.</p>
+<h2 id="product-quantization-pq-compressing-the-vectors">Product Quantization (PQ): Compressing the Vectors<a class="headerlink" href="#product-quantization-pq-compressing-the-vectors" title="Permanent link">¶</a></h2>
+<p>Product Quantization, introduced by Jégou, Douze &amp; Schmid (<em>Product Quantization for Nearest Neighbor Search</em>, 2011), is the idea that lets a vector database hold <em>billions</em> of vectors in <em>gigabytes</em> of RAM. It is one of the most elegant ideas in the field.</p>
+<h3 id="the-core-trick-split-then-quantize-each-piece">The core trick: split, then quantize each piece<a class="headerlink" href="#the-core-trick-split-then-quantize-each-piece" title="Permanent link">¶</a></h3>
+<p>A scalar quantizer maps a single number to one of <span class="arithmatex">\(K\)</span> codebook values. To quantize a whole <span class="arithmatex">\(d\)</span>-dimensional vector to <span class="arithmatex">\(K\)</span> codewords, you would need <span class="arithmatex">\(K\)</span> exponentially large to cover the space — infeasible. PQ sidesteps this: <strong>split the vector into <span class="arithmatex">\(m\)</span> contiguous subvectors and quantize each subvector independently</strong> with its own small codebook of <span class="arithmatex">\(k^*\)</span> entries (typically <span class="arithmatex">\(k^* = 256\)</span>, so each code fits in one byte).</p>
+<p>Split <span class="arithmatex">\(\mathbf{x} \in \mathbb{R}^d\)</span> into <span class="arithmatex">\(m\)</span> subvectors <span class="arithmatex">\(\mathbf{x} = (\mathbf{u}^1, \dots, \mathbf{u}^m)\)</span>, each of dimension <span class="arithmatex">\(d^* = d/m\)</span>. Learn a separate codebook <span class="arithmatex">\(\mathcal{C}^j = \{\mathbf{c}^j_1, \dots, \mathbf{c}^j_{k^*}\}\)</span> per subspace via <span class="arithmatex">\(k\)</span>-means. The PQ code of <span class="arithmatex">\(\mathbf{x}\)</span> is the tuple of nearest-centroid indices:</p>
+<div class="arithmatex">\[
+q(\mathbf{x}) = \big(\, q_1(\mathbf{u}^1), \dots, q_m(\mathbf{u}^m)\,\big), \quad q_j(\mathbf{u}^j) = \underset{i \in \{1,\dots,k^*\}}{\arg\min}\ \|\mathbf{u}^j - \mathbf{c}^j_i\|^2.
+\]</div>
+<p>The genius is in the arithmetic. The reconstruction codebook implicitly represents <span class="arithmatex">\((k^*)^m\)</span> distinct vectors — for <span class="arithmatex">\(k^* = 256\)</span>, <span class="arithmatex">\(m = 8\)</span> that is <span class="arithmatex">\(256^8 = 2^{64}\)</span> possible reconstructions — but you only store <span class="arithmatex">\(m \cdot k^* \cdot d^*\)</span> floats of codebooks and <strong><span class="arithmatex">\(m\)</span> bytes per database vector</strong>. A 768-d float32 vector (3072 bytes) compresses to <span class="arithmatex">\(m = 8\)</span> bytes: a <strong>384× memory reduction</strong>.</p>
+<h3 id="asymmetric-distance-computation-adc">Asymmetric Distance Computation (ADC)<a class="headerlink" href="#asymmetric-distance-computation-adc" title="Permanent link">¶</a></h3>
+<p>How do you compute the distance from a <em>full-precision</em> query to a <em>compressed</em> database vector without decompressing? You exploit the separability of squared L2 distance across the subspaces. Approximate</p>
+<div class="arithmatex">\[
+\|\mathbf{q} - \mathbf{x}\|^2 \approx \|\mathbf{q} - q(\mathbf{x})\|^2 = \sum_{j=1}^{m} \big\|\mathbf{q}^j - \mathbf{c}^j_{\,q_j(\mathbf{x})}\big\|^2,
+\]</div>
+<p>where <span class="arithmatex">\(\mathbf{q}^j\)</span> is the <span class="arithmatex">\(j\)</span>-th sub-block of the query. The trick: at query time, precompute a small <strong>lookup table (LUT)</strong> of size <span class="arithmatex">\(m \times k^*\)</span> holding the squared distance from each query sub-block to every centroid in that subspace. Then the distance to <em>any</em> database vector is just <span class="arithmatex">\(m\)</span> table lookups and <span class="arithmatex">\(m{-}1\)</span> additions — no multiplications, no decompression. This is <strong>ADC</strong> (the query stays &ldquo;asymmetric&rdquo;: full precision; only the database is quantized, which keeps accuracy higher than quantizing both sides).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ProductQuantizer</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">m</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">k_star</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span> <span class="n">n_iter</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">m</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_star</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_iter</span> <span class="o">=</span> <span class="n">m</span><span class="p">,</span> <span class="n">k_star</span><span class="p">,</span> <span class="n">n_iter</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">train</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">X</span><span class="p">):</span>
+        <span class="n">n</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">shape</span>
+        <span class="k">assert</span> <span class="n">d</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">m</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;d must be divisible by m&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dsub</span> <span class="o">=</span> <span class="n">d</span> <span class="o">//</span> <span class="bp">self</span><span class="o">.</span><span class="n">m</span>
+        <span class="c1"># one codebook per subspace: (m, k_star, dsub)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">codebooks</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">m</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_star</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">dsub</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">m</span><span class="p">):</span>
+            <span class="n">sub</span> <span class="o">=</span> <span class="n">X</span><span class="p">[:,</span> <span class="n">j</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">dsub</span><span class="p">:(</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">dsub</span><span class="p">]</span>          <span class="c1"># (n, dsub)</span>
+            <span class="n">C</span> <span class="o">=</span> <span class="n">sub</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">rng</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_star</span><span class="p">,</span> <span class="n">replace</span><span class="o">=</span><span class="kc">False</span><span class="p">)]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_iter</span><span class="p">):</span>                     <span class="c1"># k-means per subspace</span>
+                <span class="n">d2</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;nd,nd-&gt;n&quot;</span><span class="p">,</span> <span class="n">sub</span><span class="p">,</span> <span class="n">sub</span><span class="p">)[:,</span> <span class="kc">None</span><span class="p">]</span>
+                      <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">sub</span> <span class="o">@</span> <span class="n">C</span><span class="o">.</span><span class="n">T</span>
+                      <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;kd,kd-&gt;k&quot;</span><span class="p">,</span> <span class="n">C</span><span class="p">,</span> <span class="n">C</span><span class="p">)[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:])</span>
+                <span class="n">a</span> <span class="o">=</span> <span class="n">d2</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">k_star</span><span class="p">):</span>
+                    <span class="n">pts</span> <span class="o">=</span> <span class="n">sub</span><span class="p">[</span><span class="n">a</span> <span class="o">==</span> <span class="n">c</span><span class="p">]</span>
+                    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">pts</span><span class="p">):</span> <span class="n">C</span><span class="p">[</span><span class="n">c</span><span class="p">]</span> <span class="o">=</span> <span class="n">pts</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">codebooks</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">C</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">X</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Map each vector to m uint8 codes.&quot;&quot;&quot;</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">codes</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">m</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">m</span><span class="p">):</span>
+            <span class="n">sub</span> <span class="o">=</span> <span class="n">X</span><span class="p">[:,</span> <span class="n">j</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">dsub</span><span class="p">:(</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">dsub</span><span class="p">]</span>
+            <span class="n">C</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">codebooks</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+            <span class="n">d2</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;nd,nd-&gt;n&quot;</span><span class="p">,</span> <span class="n">sub</span><span class="p">,</span> <span class="n">sub</span><span class="p">)[:,</span> <span class="kc">None</span><span class="p">]</span>
+                  <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">sub</span> <span class="o">@</span> <span class="n">C</span><span class="o">.</span><span class="n">T</span>
+                  <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;kd,kd-&gt;k&quot;</span><span class="p">,</span> <span class="n">C</span><span class="p">,</span> <span class="n">C</span><span class="p">)[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:])</span>
+            <span class="n">codes</span><span class="p">[:,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">d2</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>                       <span class="c1"># nearest centroid id</span>
+        <span class="k">return</span> <span class="n">codes</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">search</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">codes</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;ADC: build the per-subspace LUT, then sum lookups for every code.&quot;&quot;&quot;</span>
+        <span class="c1"># 1) precompute LUT: distance from each query sub-block to all centroids</span>
+        <span class="n">lut</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">m</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_star</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">m</span><span class="p">):</span>
+            <span class="n">qsub</span> <span class="o">=</span> <span class="n">q</span><span class="p">[</span><span class="n">j</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">dsub</span><span class="p">:(</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">dsub</span><span class="p">]</span>            <span class="c1"># (dsub,)</span>
+            <span class="n">diff</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">codebooks</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">-</span> <span class="n">qsub</span>                  <span class="c1"># (k_star, dsub)</span>
+            <span class="n">lut</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;kd,kd-&gt;k&quot;</span><span class="p">,</span> <span class="n">diff</span><span class="p">,</span> <span class="n">diff</span><span class="p">)</span>       <span class="c1"># (k_star,)</span>
+        <span class="c1"># 2) approximate distance to every db vector = sum of m table lookups</span>
+        <span class="n">approx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">codes</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">m</span><span class="p">):</span>
+            <span class="n">approx</span> <span class="o">+=</span> <span class="n">lut</span><span class="p">[</span><span class="n">j</span><span class="p">,</span> <span class="n">codes</span><span class="p">[:,</span> <span class="n">j</span><span class="p">]]</span>                    <span class="c1"># vectorized gather</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argpartition</span><span class="p">(</span><span class="n">approx</span><span class="p">,</span> <span class="n">k</span><span class="p">)[:</span><span class="n">k</span><span class="p">]</span>
+        <span class="k">return</span> <span class="n">idx</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">approx</span><span class="p">[</span><span class="n">idx</span><span class="p">])]</span>
+</code></pre></div>
+<h3 id="ivf-pq-the-workhorse-of-billion-scale-search">IVF + PQ: the workhorse of billion-scale search<a class="headerlink" href="#ivf-pq-the-workhorse-of-billion-scale-search" title="Permanent link">¶</a></h3>
+<p>The legendary FAISS index <code>IVF{n_list},PQ{m}</code> combines all of the above. IVF restricts the search to a handful of cells (solving <em>speed</em>); PQ compresses each vector to <span class="arithmatex">\(m\)</span> bytes (solving <em>memory</em>). A common refinement, <strong>IVFADC with residuals</strong>, quantizes not the raw vector but its <em>residual</em> after subtracting its coarse centroid, which dramatically improves accuracy because residuals are small and well-clustered. A final, optional <strong>re-ranking</strong> step (<code>IndexRefineFlat</code>) fetches the top candidates&rsquo; full vectors from disk and re-scores them exactly to recover the recall that quantization lost.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: sizing a billion-vector IVF-PQ index</p>
+<p>Target: <span class="arithmatex">\(N = 10^9\)</span> vectors, <span class="arithmatex">\(d = 768\)</span>, in RAM on commodity hardware.</p>
+<p><strong>Flat float32:</strong> <span class="arithmatex">\(10^9 \cdot 768 \cdot 4 \approx 3.07\)</span> TB. Infeasible on one box.</p>
+<p><strong>IVF-PQ with <span class="arithmatex">\(m=64\)</span> bytes/vector</strong> (a typical accuracy-preserving choice for 768-d): each vector becomes 64 bytes of PQ code plus a few bytes of id, call it ~72 bytes. Total: <span class="arithmatex">\(10^9 \cdot 72 \approx 72\)</span> GB — fits on a single large-memory server. The codebooks (<span class="arithmatex">\(n_{\text{list}}\)</span> coarse centroids + <span class="arithmatex">\(m \cdot 256 \cdot d^*\)</span> PQ floats) are negligible by comparison.</p>
+<p><strong>Speed:</strong> with <span class="arithmatex">\(n_{\text{list}} = 2^{16} \approx 65{,}536\)</span> and <span class="arithmatex">\(n_{\text{probe}} = 64\)</span>, you scan <span class="arithmatex">\(\approx 10^9 \cdot 64 / 65{,}536 \approx 9.8 \times 10^5\)</span> codes per query. Each scored vector costs only <span class="arithmatex">\(m=64\)</span> byte-lookups-and-adds via the ADC LUT — no float multiplies. That is the difference between a billion full dot products and ~1M cache-friendly table lookups.</p>
+<p><strong>Cost:</strong> the recall drop. With <span class="arithmatex">\(m=64\)</span> bytes and re-ranking the top ~1000 candidates against full vectors on disk, you can typically recover recall@10 into the high 0.9s — but you <em>measure</em> this against brute force, never assume it.</p>
+</div>
+<h2 id="hnsw-navigable-small-world-graphs">HNSW: Navigable Small-World Graphs<a class="headerlink" href="#hnsw-navigable-small-world-graphs" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-hnsw">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 470" role="img" aria-label="HNSW search: a query descends from a sparse top layer through denser layers, greedily hopping along graph edges toward the nearest neighbor at layer 0.">
+  <defs>
+    <marker id="hn-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+    </marker>
+    <marker id="hn-drop" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-hnsw .lname{ font:700 12.5px var(--sans,sans-serif); fill: var(--ink-soft); }
+    #fig-hnsw .lsub{ font:500 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-hnsw .nid{ font:600 9.5px var(--mono,monospace); fill: var(--ink-soft); }
+    #fig-hnsw .tag{ font:600 11px var(--sans,sans-serif); fill: var(--ink-soft); }
+    #fig-hnsw .note{ font:500 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-hnsw .qmark{ font:700 11px var(--sans,sans-serif); }
+  </style>
+
+
+  <g data-anim="1">
+    <rect x="14" y="20" width="692" height="118" rx="9" class="v-fill v-grid" fill-opacity="0.45" stroke-width="1"/>
+    <text x="30" y="40" class="lname">Layer 2</text>
+    <text x="30" y="55" class="lsub">sparse · long hops</text>
+
+
+    <g class="v-stroke" stroke="currentColor" stroke-width="1.4" opacity="0.55" fill="none">
+      <line x1="118" y1="92" x2="372" y2="64"/>
+      <line x1="372" y1="64" x2="612" y2="100"/>
+    </g>
+
+    <g>
+      <circle cx="118" cy="92" r="11" class="v-fill v-accent-s" stroke-width="2"/>
+      <circle cx="372" cy="64" r="11" class="v-fill v-stroke" stroke-width="1.6"/>
+      <circle cx="612" cy="100" r="11" class="v-fill v-stroke" stroke-width="1.6"/>
+    </g>
+
+    <text x="118" y="95" text-anchor="middle" class="nid">E</text>
+    <text x="372" y="67" text-anchor="middle" class="nid">a</text>
+    <text x="612" y="103" text-anchor="middle" class="nid">b</text>
+    <text x="118" y="123" text-anchor="middle" class="tag" fill="var(--accent)">entry point</text>
+
+
+    <line x1="129" y1="90" x2="361" y2="66" class="viz-draw" style="--len:234" stroke="var(--accent)" stroke-width="2.6" marker-end="url(#hn-arrow)"/>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="372" y1="76" x2="372" y2="172" stroke="var(--warn,#e0a106)" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#hn-drop)"/>
+    <text x="384" y="128" class="note" fill="var(--warn,#e0a106)">descend</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="14" y="160" width="692" height="124" rx="9" class="v-fill v-grid" fill-opacity="0.45" stroke-width="1"/>
+    <text x="30" y="180" class="lname">Layer 1</text>
+    <text x="30" y="195" class="lsub">medium density</text>
+
+
+    <g class="v-stroke" stroke="currentColor" stroke-width="1.3" opacity="0.5" fill="none">
+      <line x1="118" y1="232" x2="252" y2="210"/>
+      <line x1="252" y1="210" x2="372" y2="210"/>
+      <line x1="372" y1="210" x2="500" y2="244"/>
+      <line x1="500" y1="244" x2="612" y2="222"/>
+      <line x1="252" y1="210" x2="372" y2="210"/>
+      <line x1="372" y1="210" x2="252" y2="210"/>
+    </g>
+
+    <g>
+      <circle cx="118" cy="232" r="10" class="v-fill v-stroke" stroke-width="1.6"/>
+      <circle cx="252" cy="210" r="10" class="v-fill v-stroke" stroke-width="1.6"/>
+      <circle cx="372" cy="210" r="10" class="v-fill v-stroke" stroke-width="1.6"/>
+      <circle cx="500" cy="244" r="10" class="v-fill v-stroke" stroke-width="1.6"/>
+      <circle cx="612" cy="222" r="10" class="v-fill v-stroke" stroke-width="1.6"/>
+    </g>
+    <text x="118" y="235" text-anchor="middle" class="nid">E</text>
+    <text x="252" y="213" text-anchor="middle" class="nid">c</text>
+    <text x="372" y="213" text-anchor="middle" class="nid">a</text>
+    <text x="500" y="247" text-anchor="middle" class="nid">d</text>
+    <text x="612" y="225" text-anchor="middle" class="nid">b</text>
+
+
+    <line x1="382" y1="213" x2="490" y2="241" class="viz-draw" style="--len:112" stroke="var(--accent)" stroke-width="2.6" marker-end="url(#hn-arrow)"/>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="500" y1="254" x2="500" y2="320" stroke="var(--warn,#e0a106)" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#hn-drop)"/>
+    <text x="512" y="292" class="note" fill="var(--warn,#e0a106)">descend</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="14" y="308" width="692" height="142" rx="9" class="v-fill v-grid" fill-opacity="0.55" stroke-width="1"/>
+    <text x="30" y="328" class="lname">Layer 0</text>
+    <text x="30" y="343" class="lsub">dense · every node lives here</text>
+
+
+    <g class="v-stroke" stroke="currentColor" stroke-width="1.1" opacity="0.42" fill="none">
+      <line x1="110" y1="408" x2="178" y2="378"/>
+      <line x1="178" y1="378" x2="252" y2="408"/>
+      <line x1="252" y1="408" x2="318" y2="372"/>
+      <line x1="318" y1="372" x2="392" y2="404"/>
+      <line x1="392" y1="404" x2="446" y2="372"/>
+      <line x1="446" y1="372" x2="500" y2="396"/>
+      <line x1="500" y1="396" x2="560" y2="420"/>
+      <line x1="500" y1="396" x2="446" y2="372"/>
+      <line x1="392" y1="404" x2="500" y2="396"/>
+      <line x1="318" y1="372" x2="252" y2="408"/>
+      <line x1="178" y1="378" x2="110" y2="408"/>
+      <line x1="560" y1="420" x2="624" y2="388"/>
+      <line x1="446" y1="372" x2="560" y2="420"/>
+    </g>
+
+
+    <g>
+      <circle cx="110" cy="408" r="8.5" class="v-fill v-stroke" stroke-width="1.5"/>
+      <circle cx="178" cy="378" r="8.5" class="v-fill v-stroke" stroke-width="1.5"/>
+      <circle cx="252" cy="408" r="8.5" class="v-fill v-stroke" stroke-width="1.5"/>
+      <circle cx="318" cy="372" r="8.5" class="v-fill v-stroke" stroke-width="1.5"/>
+      <circle cx="392" cy="404" r="8.5" class="v-fill v-stroke" stroke-width="1.5"/>
+      <circle cx="446" cy="372" r="8.5" class="v-fill v-stroke" stroke-width="1.5"/>
+      <circle cx="624" cy="388" r="8.5" class="v-fill v-stroke" stroke-width="1.5"/>
+
+      <circle cx="500" cy="396" r="9" class="v-fill v-stroke" stroke-width="1.6"/>
+
+      <circle cx="560" cy="420" r="10.5" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="2.4"/>
+      <circle cx="560" cy="420" r="16" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.4" opacity="0.5" class="viz-pulse"/>
+    </g>
+    <text x="500" y="399" text-anchor="middle" class="nid">d</text>
+    <text x="560" y="423" text-anchor="middle" class="nid" fill="var(--good,#2f9e6e)">nn</text>
+
+
+    <line x1="509" y1="399" x2="550" y2="416" class="viz-draw" style="--len:45" stroke="var(--accent)" stroke-width="2.6" marker-end="url(#hn-arrow)"/>
+
+    <text x="560" y="446" text-anchor="middle" class="tag" fill="var(--good,#2f9e6e)">nearest neighbor</text>
+  </g>
+
+
+  <g data-anim="4">
+    <line x1="592" y1="392" x2="566" y2="412" stroke="var(--accent-2,#3b82f6)" stroke-width="1.3" stroke-dasharray="3 3" opacity="0.7"/>
+    <g transform="translate(600,378)">
+      <path d="M0 -9 L9 0 L0 9 L-9 0 Z" fill="var(--accent-2,#3b82f6)" fill-opacity="0.85"/>
+      <text x="0" y="3.5" text-anchor="middle" class="qmark" fill="var(--surface,#fff)">q</text>
+    </g>
+    <text x="600" y="362" text-anchor="middle" class="tag" fill="var(--accent-2,#3b82f6)">query</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="232" y1="333" x2="262" y2="333" stroke="var(--accent)" stroke-width="2.6" marker-end="url(#hn-arrow)"/>
+    <text x="270" y="337" class="note">greedy hop: move to the neighbor closest to q</text>
+  </g>
+</svg>
+<figcaption><b>HNSW search zooms in coarse-to-fine through a layered small-world graph.</b> The query enters at the single top-layer <b>entry point</b> and at each layer greedily hops to whichever neighbor is closer to <b>q</b>, then drops down a layer; the sparse top makes big jumps while the dense layer 0 refines to the true <b>nearest neighbor</b>. Hop count grows only logarithmically with the number of vectors.</figcaption>
+</figure>
+
+<p>Quantization compresses; IVF partitions. The third family — <strong>graph-based ANN</strong> — takes a different route and is, for most in-memory workloads under ~100M vectors, the recall-latency champion. The dominant algorithm is <strong>Hierarchical Navigable Small World (HNSW)</strong> graphs, from Malkov &amp; Yashunin (<em>Efficient and robust approximate nearest neighbor search using HNSW graphs</em>, 2016/2018).</p>
+<h3 id="greedy-search-on-a-proximity-graph">Greedy search on a proximity graph<a class="headerlink" href="#greedy-search-on-a-proximity-graph" title="Permanent link">¶</a></h3>
+<p>Build a graph where each vector is a node connected to some of its near neighbors. To search, start at any node and <strong>greedily walk downhill</strong>: repeatedly move to whichever neighbor of the current node is closer to the query, until no neighbor improves. On a well-constructed <em>navigable</em> graph, this greedy walk converges to (approximately) the true nearest neighbor in a number of hops that grows only <em>logarithmically</em> with <span class="arithmatex">\(N\)</span>.</p>
+<p>The naive version gets stuck in local minima and has long-range connectivity problems. HNSW fixes both with two ideas:</p>
+<ol>
+<li><strong>Small-world structure.</strong> Inspired by Kleinberg&rsquo;s navigable small-world networks (the &ldquo;six degrees of separation&rdquo; insight), the graph mixes short links (to immediate neighbors, for accuracy) with long links (for fast traversal across the space). This gives the logarithmic hop count.</li>
+<li><strong>A hierarchy of layers.</strong> Like a skip list, HNSW stacks multiple graph layers. The top layer is sparse with long-range links; each lower layer is denser. A node&rsquo;s maximum layer is drawn from an exponentially decaying distribution, <span class="arithmatex">\(\ell = \lfloor -\ln(\text{Uniform}(0,1)) \cdot m_L \rfloor\)</span> with <span class="arithmatex">\(m_L = 1/\ln(M)\)</span>. Search starts at the single top-layer entry point, greedily descends to the nearest node in each layer, then drops down — zooming in like a coarse-to-fine map.</li>
+</ol>
+<div class="highlight"><pre><span></span><code>  Layer 2:   E ------------------- A                (sparse, long hops)
+                 \               /
+  Layer 1:   E --- B ----- C --- A --- D            (medium)
+              \    |       |     |    /
+  Layer 0:   E-B-F-G-B-C-H-I-C-A-J-D-K...           (dense; every node lives here)
+                          ^
+              query enters at top entry E, greedily descends,
+              refines in layer 0 to collect the final top-k.
+</code></pre></div>
+<h3 id="from-scratch-hnsw">From-scratch HNSW<a class="headerlink" href="#from-scratch-hnsw" title="Permanent link">¶</a></h3>
+<p>Here is a complete, runnable HNSW. It is faithful to the paper&rsquo;s two routines — <code>SEARCH-LAYER</code> (a best-first beam search with a candidate min-heap and a result max-heap) and the layered <code>INSERT</code> — and it achieves real recall. The two build parameters are <span class="arithmatex">\(M\)</span> (neighbors per node) and <code>ef_construction</code> (beam width during insertion); the one search parameter is <code>ef</code> (beam width during query, which trades recall for latency).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span><span class="o">,</span><span class="w"> </span><span class="nn">heapq</span><span class="o">,</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">l2</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">a</span> <span class="o">-</span> <span class="n">b</span>
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">d</span> <span class="o">@</span> <span class="n">d</span><span class="p">)</span>               <span class="c1"># squared L2</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">HNSW</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">M</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">ef_construction</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">data</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">M</span> <span class="o">=</span> <span class="n">M</span>                        <span class="c1"># max neighbors per node (layer &gt; 0)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">M0</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">M</span>                   <span class="c1"># layer 0 gets more links (paper heuristic)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">efc</span> <span class="o">=</span> <span class="n">ef_construction</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mL</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">M</span><span class="p">)</span>       <span class="c1"># level-generation normalizer</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">graph</span> <span class="o">=</span> <span class="p">[]</span>                   <span class="c1"># graph[node][layer] -&gt; list of neighbor ids</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">levels</span> <span class="o">=</span> <span class="p">[]</span>                  <span class="c1"># top layer index of each node</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">entry</span> <span class="o">=</span> <span class="kc">None</span>                 <span class="c1"># current global entry point</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">top</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>                     <span class="c1"># current top layer</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_rand_level</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># exponentially-decaying layer assignment (skip-list style)</span>
+        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="o">-</span><span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">rng</span><span class="o">.</span><span class="n">random</span><span class="p">())</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">mL</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_search_layer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">entry_points</span><span class="p">,</span> <span class="n">ef</span><span class="p">,</span> <span class="n">layer</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Best-first search within one layer; returns ef nearest as (dist,id).&quot;&quot;&quot;</span>
+        <span class="n">visited</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">entry_points</span><span class="p">)</span>
+        <span class="n">cand</span> <span class="o">=</span> <span class="p">[]</span>   <span class="c1"># min-heap of (dist, id): the frontier to expand</span>
+        <span class="n">res</span>  <span class="o">=</span> <span class="p">[]</span>   <span class="c1"># max-heap of (-dist, id): the ef best found so far</span>
+        <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">entry_points</span><span class="p">:</span>
+            <span class="n">de</span> <span class="o">=</span> <span class="n">l2</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">e</span><span class="p">])</span>
+            <span class="n">heapq</span><span class="o">.</span><span class="n">heappush</span><span class="p">(</span><span class="n">cand</span><span class="p">,</span> <span class="p">(</span><span class="n">de</span><span class="p">,</span> <span class="n">e</span><span class="p">))</span>
+            <span class="n">heapq</span><span class="o">.</span><span class="n">heappush</span><span class="p">(</span><span class="n">res</span><span class="p">,</span> <span class="p">(</span><span class="o">-</span><span class="n">de</span><span class="p">,</span> <span class="n">e</span><span class="p">))</span>
+        <span class="k">while</span> <span class="n">cand</span><span class="p">:</span>
+            <span class="n">dc</span><span class="p">,</span> <span class="n">c</span> <span class="o">=</span> <span class="n">heapq</span><span class="o">.</span><span class="n">heappop</span><span class="p">(</span><span class="n">cand</span><span class="p">)</span>
+            <span class="c1"># if the closest frontier node is worse than our current worst</span>
+            <span class="c1"># kept result, we can stop expanding (the beam has converged).</span>
+            <span class="k">if</span> <span class="o">-</span><span class="n">res</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">dc</span><span class="p">:</span>
+                <span class="k">break</span>
+            <span class="k">for</span> <span class="n">nb</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="p">[</span><span class="n">c</span><span class="p">][</span><span class="n">layer</span><span class="p">]:</span>
+                <span class="k">if</span> <span class="n">nb</span> <span class="ow">in</span> <span class="n">visited</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">visited</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">nb</span><span class="p">)</span>
+                <span class="n">dn</span> <span class="o">=</span> <span class="n">l2</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">nb</span><span class="p">])</span>
+                <span class="k">if</span> <span class="n">dn</span> <span class="o">&lt;</span> <span class="o">-</span><span class="n">res</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">res</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">ef</span><span class="p">:</span>
+                    <span class="n">heapq</span><span class="o">.</span><span class="n">heappush</span><span class="p">(</span><span class="n">cand</span><span class="p">,</span> <span class="p">(</span><span class="n">dn</span><span class="p">,</span> <span class="n">nb</span><span class="p">))</span>
+                    <span class="n">heapq</span><span class="o">.</span><span class="n">heappush</span><span class="p">(</span><span class="n">res</span><span class="p">,</span> <span class="p">(</span><span class="o">-</span><span class="n">dn</span><span class="p">,</span> <span class="n">nb</span><span class="p">))</span>
+                    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">res</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">ef</span><span class="p">:</span>
+                        <span class="n">heapq</span><span class="o">.</span><span class="n">heappop</span><span class="p">(</span><span class="n">res</span><span class="p">)</span>     <span class="c1"># keep only the ef best</span>
+        <span class="k">return</span> <span class="p">[(</span><span class="o">-</span><span class="n">nd</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span> <span class="k">for</span> <span class="n">nd</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">res</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_select_neighbors</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">,</span> <span class="n">candidates</span><span class="p">,</span> <span class="n">M</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Simple heuristic: keep the M closest candidates to `node`.&quot;&quot;&quot;</span>
+        <span class="n">scored</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">((</span><span class="n">l2</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">node</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">c</span><span class="p">]),</span> <span class="n">c</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">candidates</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">c</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">scored</span><span class="p">[:</span><span class="n">M</span><span class="p">]]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">insert</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">):</span>
+        <span class="n">level</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_rand_level</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">append</span><span class="p">([[]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">level</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">levels</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">level</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">entry</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>                  <span class="c1"># first node ever</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">entry</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">top</span> <span class="o">=</span> <span class="n">i</span><span class="p">,</span> <span class="n">level</span>
+            <span class="k">return</span>
+
+        <span class="n">ep</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">entry</span><span class="p">]</span>
+        <span class="c1"># Phase 1: greedily descend the layers ABOVE the new node&#39;s top layer,</span>
+        <span class="c1"># using a beam of width 1 (just find the single best entry per layer).</span>
+        <span class="k">for</span> <span class="n">lc</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">top</span><span class="p">,</span> <span class="n">level</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">):</span>
+            <span class="n">ep</span> <span class="o">=</span> <span class="p">[</span><span class="nb">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_search_layer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">ep</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">lc</span><span class="p">))[</span><span class="mi">1</span><span class="p">]]</span>
+
+        <span class="c1"># Phase 2: for each layer the node lives in, find efc candidates and link.</span>
+        <span class="k">for</span> <span class="n">lc</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="n">level</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">top</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">):</span>
+            <span class="n">W</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_search_layer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">ep</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">efc</span><span class="p">,</span> <span class="n">lc</span><span class="p">)</span>
+            <span class="n">Mmax</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">M0</span> <span class="k">if</span> <span class="n">lc</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">M</span>
+            <span class="n">neighbors</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_select_neighbors</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="p">[</span><span class="n">n</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">W</span><span class="p">],</span> <span class="n">Mmax</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">lc</span><span class="p">]</span> <span class="o">=</span> <span class="n">neighbors</span>
+            <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">neighbors</span><span class="p">:</span>                 <span class="c1"># add the reverse edges</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="p">[</span><span class="n">n</span><span class="p">][</span><span class="n">lc</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="p">[</span><span class="n">n</span><span class="p">][</span><span class="n">lc</span><span class="p">])</span> <span class="o">&gt;</span> <span class="n">Mmax</span><span class="p">:</span>   <span class="c1"># prune n if it got too full</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="p">[</span><span class="n">n</span><span class="p">][</span><span class="n">lc</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_select_neighbors</span><span class="p">(</span>
+                        <span class="n">n</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="p">[</span><span class="n">n</span><span class="p">][</span><span class="n">lc</span><span class="p">],</span> <span class="n">Mmax</span><span class="p">)</span>
+            <span class="n">ep</span> <span class="o">=</span> <span class="p">[</span><span class="n">n</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">W</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="n">level</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">top</span><span class="p">:</span>                    <span class="c1"># this node becomes the new entry</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">entry</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">top</span> <span class="o">=</span> <span class="n">i</span><span class="p">,</span> <span class="n">level</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">search</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">ef</span><span class="o">=</span><span class="mi">50</span><span class="p">):</span>
+        <span class="n">ep</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">entry</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">lc</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">top</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">):</span>       <span class="c1"># descend with beam width 1</span>
+            <span class="n">ep</span> <span class="o">=</span> <span class="p">[</span><span class="nb">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_search_layer</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">ep</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">lc</span><span class="p">))[</span><span class="mi">1</span><span class="p">]]</span>
+        <span class="n">W</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_search_layer</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">ep</span><span class="p">,</span> <span class="n">ef</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>   <span class="c1"># widen the beam at layer 0</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">n</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">W</span><span class="p">[:</span><span class="n">k</span><span class="p">]]</span>
+</code></pre></div>
+<p>When we ran this on 8,000 random 32-d vectors and measured recall@10 against brute force, sweeping the search beam width <code>ef</code> produced exactly the behavior the theory predicts — a smooth recall-latency dial:</p>
+<div class="highlight"><pre><span></span><code>ef= 10   recall@10 = 0.500     (fast, low recall)
+ef= 25   recall@10 = 0.673
+ef= 50   recall@10 = 0.823
+ef=100   recall@10 = 0.895
+ef=200   recall@10 = 0.955     (slow, high recall)
+</code></pre></div>
+<p>That table <em>is</em> the recall-latency tradeoff, made concrete. You turn one knob, <code>ef</code>, and slide along the curve.</p>
+<h3 id="why-hnsw-dominates-and-its-costs">Why HNSW dominates — and its costs<a class="headerlink" href="#why-hnsw-dominates-and-its-costs" title="Permanent link">¶</a></h3>
+<p>HNSW gives the best recall-per-latency of any method for in-memory data, with no training step (unlike IVF/PQ&rsquo;s <span class="arithmatex">\(k\)</span>-means). Its costs are real, though:</p>
+<ul>
+<li><strong>Memory.</strong> It stores full vectors <em>plus</em> the graph. Each node holds up to <span class="arithmatex">\(M\)</span> neighbor ids per layer; layer 0 alone is <span class="arithmatex">\(\sim 2M\)</span> ids <span class="arithmatex">\(\times\)</span> 4–8 bytes. For <span class="arithmatex">\(M=16\)</span>, that is ~64–128 bytes of graph overhead per vector <em>on top of</em> the <span class="arithmatex">\(4d\)</span> bytes of the vector itself. HNSW is memory-hungry, which is why billion-scale systems combine it with PQ (<code>IndexHNSWPQ</code>).</li>
+<li><strong>Build time.</strong> Insertion is <span class="arithmatex">\(O(\log N)\)</span> per node but with a large constant; building a 100M-node graph takes hours and is the dominant offline cost.</li>
+<li><strong>Updates.</strong> Deletes are awkward (you typically tombstone and periodically rebuild). High churn favors IVF, which re-clusters more gracefully.</li>
+</ul>
+<h2 id="scann-and-the-anisotropic-insight">ScaNN and the Anisotropic Insight<a class="headerlink" href="#scann-and-the-anisotropic-insight" title="Permanent link">¶</a></h2>
+<p>Google&rsquo;s <strong>ScaNN</strong> (Scalable Nearest Neighbors; Guo et al., <em>Accelerating Large-Scale Inference with Anisotropic Vector Quantization</em>, ICML 2020) is worth a section because it changed how the field thinks about <em>what</em> quantization should preserve. Classic PQ minimizes reconstruction error <span class="arithmatex">\(\|\mathbf{x} - q(\mathbf{x})\|^2\)</span> uniformly. ScaNN&rsquo;s insight: for <strong>maximum inner product search</strong>, not all reconstruction errors are equally harmful. An error <em>parallel</em> to the database vector changes its inner product with queries; an error <em>orthogonal</em> to it mostly does not. So you should penalize parallel (anisotropic) error more heavily.</p>
+<p>ScaNN replaces the isotropic loss with an <strong>anisotropic</strong> one that weights the parallel residual component more than the orthogonal one:</p>
+<div class="arithmatex">\[
+\ell_{\text{aniso}}(\mathbf{x}, \tilde{\mathbf{x}}) = \eta_{\parallel}\,\big\|\,\text{proj}_{\mathbf{x}}(\mathbf{x} - \tilde{\mathbf{x}})\,\big\|^2 + \eta_{\perp}\,\big\|\,\text{proj}_{\mathbf{x}^\perp}(\mathbf{x} - \tilde{\mathbf{x}})\,\big\|^2, \quad \eta_{\parallel} &gt; \eta_{\perp}.
+\]</div>
+<p>By learning codebooks under this loss, ScaNN preserves the inner products that determine ranking, achieving higher recall at the same compression. Combined with a partitioning tree and a heavily SIMD-optimized in-register distance computation, ScaNN is one of the fastest libraries on standard benchmarks. The broader lesson generalizes well beyond ScaNN: <strong>optimize the quantizer for the <em>task metric</em> (ranking by inner product), not for a generic surrogate (reconstruction MSE).</strong></p>
+<h2 id="the-recalllatencymemory-triangle">The Recall–Latency–Memory Triangle<a class="headerlink" href="#the-recalllatencymemory-triangle" title="Permanent link">¶</a></h2>
+<p>Every ANN deployment is a point inside a triangle whose three corners are <strong>recall</strong> (how often you find the true neighbors), <strong>latency</strong> (how fast), and <strong>memory</strong> (how much RAM/disk). You can have any two cheaply; the third is the price.</p>
+<h3 id="measuring-recall">Measuring recall<a class="headerlink" href="#measuring-recall" title="Permanent link">¶</a></h3>
+<p>Recall@<span class="arithmatex">\(k\)</span> is the fraction of the true top-<span class="arithmatex">\(k\)</span> that your approximate search returns:</p>
+<div class="arithmatex">\[
+\text{recall@}k = \frac{|\,\text{ANN}_k(\mathbf{q}) \cap \text{exact}_k(\mathbf{q})\,|}{k}.
+\]</div>
+<p>Always compute <code>exact_k</code> with brute force on a held-out query set. A subtle but important point: <strong>recall is not accuracy of the downstream task.</strong> In RAG, a missed neighbor only hurts if it was the document that contained the answer. Tune recall against your <em>end-to-end</em> eval (see <a href="../11-evaluation/01-eval-landscape.html">The Evaluation Problem &amp; Benchmark Landscape</a>), not in a vacuum — recall@10 = 0.85 may be plenty.</p>
+<h3 id="the-knobs-summarized">The knobs, summarized<a class="headerlink" href="#the-knobs-summarized" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Speed knob</th>
+<th>Memory knob</th>
+<th>Build cost</th>
+<th>Best regime</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Flat (brute)</td>
+<td>— (always exact)</td>
+<td>none (full vectors)</td>
+<td>none</td>
+<td><span class="arithmatex">\(N \lesssim\)</span> few M; GPU; need recall = 1.0</td>
+</tr>
+<tr>
+<td>IVF-Flat</td>
+<td><code>n_probe</code></td>
+<td>none (full vectors)</td>
+<td><span class="arithmatex">\(k\)</span>-means</td>
+<td>moderate <span class="arithmatex">\(N\)</span>, want simple + exact-ish</td>
+</tr>
+<tr>
+<td>IVF-PQ</td>
+<td><code>n_probe</code></td>
+<td><span class="arithmatex">\(m\)</span> (bytes/vec)</td>
+<td><span class="arithmatex">\(k\)</span>-means <span class="arithmatex">\(\times (1{+}m)\)</span></td>
+<td>billion-scale, RAM-constrained</td>
+</tr>
+<tr>
+<td>HNSW</td>
+<td><code>ef</code></td>
+<td><span class="arithmatex">\(M\)</span> (graph degree)</td>
+<td>high (graph build)</td>
+<td>in-memory, <span class="arithmatex">\(\lesssim\)</span> 100M, top recall/latency</td>
+</tr>
+<tr>
+<td>HNSW-PQ</td>
+<td><code>ef</code></td>
+<td><span class="arithmatex">\(M\)</span> + <span class="arithmatex">\(m\)</span></td>
+<td>high</td>
+<td>large + RAM-constrained</td>
+</tr>
+<tr>
+<td>ScaNN</td>
+<td>leaves/reorder</td>
+<td>aniso codebooks</td>
+<td><span class="arithmatex">\(k\)</span>-means + tree</td>
+<td>MIPS, throughput-critical</td>
+</tr>
+</tbody>
+</table>
+<p>The mental model: <strong>HNSW spends memory to buy recall and latency. PQ spends recall to buy memory. IVF spends recall to buy latency.</strong> Real systems stack them — <code>IVF65536_HNSW32,PQ64</code> is a real FAISS factory string that uses an HNSW graph as the coarse quantizer over IVF cells whose contents are PQ-compressed, hitting all three corners at once.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: the order of operations that actually works</p>
+<ol>
+<li>Start with <strong>Flat</strong> (brute force) on a sample. It is your correctness oracle and is often fast enough below a few million vectors, <em>especially on a GPU</em>. Do not add complexity you cannot justify.</li>
+<li>When Flat is too slow or too big, reach for <strong>HNSW</strong> if it fits in RAM — it needs no training and gives the best recall/latency.</li>
+<li>When it does not fit in RAM, add <strong>PQ</strong> (HNSW-PQ or IVF-PQ) and a <strong>re-ranking</strong> stage that re-scores the top candidates with full-precision vectors.</li>
+<li><strong>Always</strong> measure recall@k against Flat on held-out queries, and tune the knob (<code>ef</code> / <code>n_probe</code>) to the <em>cheapest setting that clears your downstream eval bar</em> — not to the highest recall you can squeeze out.</li>
+</ol>
+</div>
+<h2 id="vector-databases-from-algorithm-to-system">Vector Databases: From Algorithm to System<a class="headerlink" href="#vector-databases-from-algorithm-to-system" title="Permanent link">¶</a></h2>
+<p>An ANN <em>algorithm</em> (FAISS, ScaNN, hnswlib) is a library. A vector <em>database</em> wraps that algorithm with the boring-but-essential machinery that makes it a production service: persistence, replication, CRUD with consistency, <strong>metadata filtering</strong>, multi-tenancy, sharding across machines, and horizontal scaling. Knowing the landscape matters for system-design interviews.</p>
+<ul>
+<li><strong>FAISS</strong> (Facebook AI Similarity Search) — the canonical <em>library</em>, not a database. It implements every index above (Flat, IVF, PQ, HNSW, and combinations) with CPU and GPU backends. If you build retrieval infra, you will use or reimplement FAISS. It has no server, no persistence layer, no metadata filtering — you bring those.</li>
+<li><strong>Milvus</strong> — a distributed vector <em>database</em> built on top of FAISS/HNSW/etc., with sharding, a write-ahead log, object-storage persistence, and a query/data/index node separation for independent scaling.</li>
+<li><strong>Qdrant</strong> — Rust, HNSW-based, with strong <strong>payload filtering</strong> (combine vector search with structured predicates) and good single-node ergonomics.</li>
+<li><strong>Weaviate</strong> — HNSW-based, with hybrid (vector + keyword) search and a built-in module ecosystem.</li>
+<li><strong>pgvector</strong> — a PostgreSQL extension adding a <code>vector</code> column type with IVF-Flat and HNSW indexes. The pragmatic winner when you already run Postgres and your <span class="arithmatex">\(N\)</span> is modest: no new system to operate, transactional consistency for free, trivial joins between vectors and your relational data.</li>
+</ul>
+<h3 id="the-filtering-problem-where-naive-ann-breaks">The filtering problem (where naive ANN breaks)<a class="headerlink" href="#the-filtering-problem-where-naive-ann-breaks" title="Permanent link">¶</a></h3>
+<p>Real queries are rarely &ldquo;find similar vectors.&rdquo; They are &ldquo;find similar vectors <em>where</em> <code>tenant_id = 42</code> <em>and</em> <code>published_at &gt; 2025-01-01</code>.&rdquo; This <strong>filtered ANN</strong> problem is genuinely hard, because the graph/IVF structure was built over <em>all</em> vectors, and the nearest neighbors may all be filtered out, forcing the search to wander. The two strategies — and their failure modes — are interview-classic:</p>
+<ul>
+<li><strong>Pre-filter:</strong> compute the matching id set first, then search only within it. Correct, but if the filter is selective, the matching set may be scattered across the whole HNSW graph; you can lose graph connectivity and recall craters, or you fall back to brute force over the filtered set.</li>
+<li><strong>Post-filter:</strong> run unfiltered ANN, then drop results that fail the predicate. Fast, but if the filter is selective you may retrieve <span class="arithmatex">\(k=10\)</span> candidates and have <em>zero</em> survive — you have to over-fetch by an unknown factor.</li>
+</ul>
+<p>Modern systems (Qdrant, Milvus) use <strong>filtered HNSW</strong> variants that consult the predicate <em>during</em> graph traversal, skipping non-matching nodes while still using them as bridges for connectivity. This is the production frontier and a great thing to mention in a design round.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Minimal real-library usage: FAISS HNSW with a re-ranking refine stage.</span>
+<span class="c1"># pip install faiss-cpu</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">faiss</span><span class="o">,</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="n">d</span><span class="p">,</span> <span class="n">N</span> <span class="o">=</span> <span class="mi">768</span><span class="p">,</span> <span class="mi">200_000</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">xb</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">((</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">))</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+<span class="n">faiss</span><span class="o">.</span><span class="n">normalize_L2</span><span class="p">(</span><span class="n">xb</span><span class="p">)</span>                  <span class="c1"># cosine == inner product on unit vectors</span>
+
+<span class="c1"># Build: HNSW with M=32 links, then wrap with exact refinement.</span>
+<span class="n">index</span> <span class="o">=</span> <span class="n">faiss</span><span class="o">.</span><span class="n">IndexHNSWFlat</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="n">faiss</span><span class="o">.</span><span class="n">METRIC_INNER_PRODUCT</span><span class="p">)</span>
+<span class="n">index</span><span class="o">.</span><span class="n">hnsw</span><span class="o">.</span><span class="n">efConstruction</span> <span class="o">=</span> <span class="mi">200</span>         <span class="c1"># higher =&gt; better graph, slower build</span>
+<span class="n">index</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">xb</span><span class="p">)</span>
+<span class="n">index</span><span class="o">.</span><span class="n">hnsw</span><span class="o">.</span><span class="n">efSearch</span> <span class="o">=</span> <span class="mi">64</span>                <span class="c1"># the recall-latency knob at query time</span>
+
+<span class="n">xq</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">((</span><span class="mi">5</span><span class="p">,</span> <span class="n">d</span><span class="p">))</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">&quot;float32&quot;</span><span class="p">);</span> <span class="n">faiss</span><span class="o">.</span><span class="n">normalize_L2</span><span class="p">(</span><span class="n">xq</span><span class="p">)</span>
+<span class="n">D</span><span class="p">,</span> <span class="n">I</span> <span class="o">=</span> <span class="n">index</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">xq</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>           <span class="c1"># I: (5,10) ids,  D: (5,10) similarities</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">I</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">D</span><span class="p">[</span><span class="mi">0</span><span class="p">][:</span><span class="mi">3</span><span class="p">])</span>                <span class="c1"># nearest-neighbor ids + scores for query 0</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: metric mismatch between embedding and index</p>
+<p>The single most common ANN bug is a mismatch between how the embedding model was trained and how the index measures distance. If your model produces cosine-normalized embeddings but you build an L2 index on un-normalized vectors (or vice versa), you get <em>plausible-looking but wrong</em> neighbors and silently degraded RAG. Two rules: (1) decide your metric up front — for modern text embeddings it is almost always cosine, so <strong>L2-normalize at both index and query time</strong> and use inner product; (2) verify by checking that a vector retrieves <em>itself</em> as the #1 neighbor with similarity 1.0. If it does not, your normalization or metric is wrong.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You have 500 million document embeddings (<span class="arithmatex">\(d = 1024\)</span>) and need sub-50 ms p99 retrieval latency at high QPS. Walk me through how approximate nearest neighbor search works and how you&rsquo;d design the index. Where does the approximation come from, and how do you control the error?</p>
+<p><strong>A:</strong> Exact search is a linear scan — 500M dot products per query, hundreds of milliseconds even on a GPU, and 2 TB of float32 that won&rsquo;t fit on one box. ANN trades a little recall for orders of magnitude in speed and memory by <em>not looking at most vectors</em>. Three mechanisms, which I&rsquo;d combine:</p>
+<ol>
+<li>
+<p><strong>Partition (IVF):</strong> <span class="arithmatex">\(k\)</span>-means the corpus into ~<span class="arithmatex">\(\sqrt{N}\approx 22\)</span>k cells; at query time probe only the <code>n_probe</code> nearest cells. The approximation is the <strong>boundary problem</strong> — true neighbors just across a cell wall get missed — and I control it with <code>n_probe</code> (higher = more cells scanned = higher recall, higher latency).</p>
+</li>
+<li>
+<p><strong>Compress (PQ):</strong> split each vector into <span class="arithmatex">\(m\)</span> sub-blocks, <span class="arithmatex">\(k\)</span>-means each into 256 centroids, store one byte per block. 1024-d float32 (4 KB) → <span class="arithmatex">\(m{=}64\)</span> bytes, a ~64× memory cut, so 500M vectors fit in ~35 GB RAM. The approximation is <strong>quantization error</strong>; I control it with <span class="arithmatex">\(m\)</span> (more bytes = finer = higher recall) and recover it with a <strong>re-ranking</strong> stage that re-scores the top ~1000 candidates against full-precision vectors.</p>
+</li>
+<li>
+<p><strong>Graph (HNSW)</strong> as the coarse quantizer for fast cell selection, with <code>efSearch</code> as the recall-latency dial.</p>
+</li>
+</ol>
+<p>Concretely I&rsquo;d build <code>IVF_HNSW,PQ64</code> in FAISS/Milvus, set the metric to inner product on L2-normalized vectors (so cosine = L2), shard across machines by id, replicate for QPS, and — critically — <strong>measure recall@10 against brute force on a held-out set</strong> and against the end-to-end RAG eval, then pick the <em>cheapest</em> <code>n_probe</code>/<code>efSearch</code>/<span class="arithmatex">\(m\)</span> that clears the bar. The approximation is principled and <em>measured</em>, never assumed. If there are metadata filters, I&rsquo;d use filtered-HNSW that skips non-matching nodes during traversal rather than naive pre/post-filtering.</p>
+</div>
+<h2 id="putting-it-together-a-tiny-end-to-end-benchmark">Putting It Together: A Tiny End-to-End Benchmark<a class="headerlink" href="#putting-it-together-a-tiny-end-to-end-benchmark" title="Permanent link">¶</a></h2>
+<p>To cement the tradeoffs, here is a self-contained harness that builds Flat, IVF, PQ, and HNSW over the same data and reports each method&rsquo;s recall@10 against the exact baseline. Running it is the fastest way to <em>feel</em> the triangle.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span><span class="o">,</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">evaluate</span><span class="p">(</span><span class="n">index_search_fn</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">queries</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">ground_truth</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Generic recall@k evaluator against a brute-force oracle.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">ground_truth</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ground_truth</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">q</span> <span class="ow">in</span> <span class="n">queries</span><span class="p">:</span>
+            <span class="n">dd</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;nd,nd-&gt;n&quot;</span><span class="p">,</span> <span class="n">data</span> <span class="o">-</span> <span class="n">q</span><span class="p">,</span> <span class="n">data</span> <span class="o">-</span> <span class="n">q</span><span class="p">)</span>
+            <span class="n">ground_truth</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">argpartition</span><span class="p">(</span><span class="n">dd</span><span class="p">,</span> <span class="n">k</span><span class="p">)[:</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">()))</span>
+    <span class="n">recalls</span><span class="p">,</span> <span class="n">t0</span> <span class="o">=</span> <span class="p">[],</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">q</span><span class="p">,</span> <span class="n">gt</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">queries</span><span class="p">,</span> <span class="n">ground_truth</span><span class="p">):</span>
+        <span class="n">pred</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">index_search_fn</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">))</span>
+        <span class="n">recalls</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">gt</span> <span class="o">&amp;</span> <span class="n">pred</span><span class="p">)</span> <span class="o">/</span> <span class="n">k</span><span class="p">)</span>
+    <span class="n">dt</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">queries</span><span class="p">)</span> <span class="o">*</span> <span class="mf">1e3</span>   <span class="c1"># ms/query</span>
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">recalls</span><span class="p">)),</span> <span class="n">dt</span><span class="p">,</span> <span class="n">ground_truth</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">7</span><span class="p">)</span>
+    <span class="n">data</span>    <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">((</span><span class="mi">20_000</span><span class="p">,</span> <span class="mi">64</span><span class="p">))</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">queries</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">((</span><span class="mi">200</span><span class="p">,</span> <span class="mi">64</span><span class="p">))</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Flat oracle (recall = 1.0 by construction):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">flat</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span>
+        <span class="n">dd</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;nd,nd-&gt;n&quot;</span><span class="p">,</span> <span class="n">data</span> <span class="o">-</span> <span class="n">q</span><span class="p">,</span> <span class="n">data</span> <span class="o">-</span> <span class="n">q</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">argpartition</span><span class="p">(</span><span class="n">dd</span><span class="p">,</span> <span class="n">k</span><span class="p">)[:</span><span class="n">k</span><span class="p">]</span>
+    <span class="n">r</span><span class="p">,</span> <span class="n">ms</span><span class="p">,</span> <span class="n">gt</span> <span class="o">=</span> <span class="n">evaluate</span><span class="p">(</span><span class="n">flat</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">queries</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Flat     recall=</span><span class="si">{</span><span class="n">r</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms/q&quot;</span><span class="p">)</span>
+
+    <span class="c1"># IVF and HNSW (classes defined earlier in the chapter):</span>
+    <span class="n">ivf</span> <span class="o">=</span> <span class="n">IVFFlat</span><span class="p">(</span><span class="n">n_list</span><span class="o">=</span><span class="mi">256</span><span class="p">)</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">npb</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">64</span><span class="p">):</span>
+        <span class="n">r</span><span class="p">,</span> <span class="n">ms</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">evaluate</span><span class="p">(</span><span class="k">lambda</span> <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="n">ivf</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">n_probe</span><span class="o">=</span><span class="n">npb</span><span class="p">),</span>
+                            <span class="n">data</span><span class="p">,</span> <span class="n">queries</span><span class="p">,</span> <span class="n">ground_truth</span><span class="o">=</span><span class="n">gt</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;IVF np=</span><span class="si">{</span><span class="n">npb</span><span class="si">:</span><span class="s2">&lt;3d</span><span class="si">}</span><span class="s2"> recall=</span><span class="si">{</span><span class="n">r</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms/q&quot;</span><span class="p">)</span>
+
+    <span class="n">hnsw</span> <span class="o">=</span> <span class="n">HNSW</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">M</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">ef_construction</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)):</span>
+        <span class="n">hnsw</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">ef</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">16</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">200</span><span class="p">):</span>
+        <span class="n">r</span><span class="p">,</span> <span class="n">ms</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">evaluate</span><span class="p">(</span><span class="k">lambda</span> <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="n">hnsw</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">ef</span><span class="o">=</span><span class="n">ef</span><span class="p">),</span>
+                            <span class="n">data</span><span class="p">,</span> <span class="n">queries</span><span class="p">,</span> <span class="n">ground_truth</span><span class="o">=</span><span class="n">gt</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;HNSW ef=</span><span class="si">{</span><span class="n">ef</span><span class="si">:</span><span class="s2">&lt;3d</span><span class="si">}</span><span class="s2"> recall=</span><span class="si">{</span><span class="n">r</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms/q&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The shape of the output is always the same story: Flat is exact but its latency grows with <span class="arithmatex">\(N\)</span>; IVF and HNSW each expose one knob (<code>n_probe</code>, <code>ef</code>) that buys recall with latency; and if you swapped the data store to PQ codes you would watch memory drop while recall takes a measured hit. That is the entire chapter, in one runnable file.</p>
+<p>For how these retrievers slot into a generation pipeline — query construction, multi-vector retrieval, fusion with keyword search — continue to <a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a> and <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a>. For the embeddings that feed all of this, revisit <a href="../09-rag-retrieval/01-embeddings-representation.html">Embeddings &amp; Representation Learning</a>. And because retrieval lives in the latency budget of an LLM call, the serving concerns in <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a> apply directly.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Exact NN is a linear scan.</strong> It is the right answer below a few million vectors (especially on a GPU) and is your non-negotiable <em>recall oracle</em> — never ship ANN without measuring recall@k against brute force.</li>
+<li><strong>The curse of dimensionality</strong> makes exact tree structures (<span class="arithmatex">\(k\)</span>-d trees) degrade to linear scan above <span class="arithmatex">\(d \approx 20\)</span>, because distances concentrate and pruning fails. ANN works only because real embeddings live on a low-dimensional manifold.</li>
+<li><strong>Three algorithm families</strong> cover the field: <strong>IVF</strong> (partition into cells, probe a few — buys <em>latency</em>), <strong>PQ</strong> (split + quantize subvectors to bytes via ADC lookup tables — buys <em>memory</em>, ~100–400× compression), and <strong>HNSW</strong> (greedy search on a hierarchical small-world graph, log-<span class="arithmatex">\(N\)</span> hops — best <em>recall/latency</em> but memory-hungry).</li>
+<li><strong>Every deployment is a point in the recall–latency–memory triangle.</strong> You get two corners cheap; the third is the cost. One knob per method slides you along the curve: <code>n_probe</code> (IVF), <code>ef</code> (HNSW), bytes <span class="arithmatex">\(m\)</span> (PQ).</li>
+<li><strong>Production systems stack the families</strong> — e.g. <code>IVF_HNSW,PQ</code> with a full-precision <strong>re-ranking</strong> stage — to hit all three corners, and that is exactly what FAISS factory strings express.</li>
+<li><strong>ScaNN&rsquo;s lesson generalizes:</strong> optimize the quantizer for the <em>task metric</em> (ranking by inner product), not a generic reconstruction MSE.</li>
+<li><strong>A vector database = ANN library + persistence + sharding + metadata filtering.</strong> FAISS is a library; Milvus/Qdrant/Weaviate/pgvector are databases. <strong>Filtered ANN</strong> (search under structured predicates) is the production frontier and a frequent interview probe.</li>
+<li><strong>Watch the metric mismatch footgun:</strong> for text embeddings, L2-normalize at index and query time so cosine = inner product = L2, and sanity-check that a vector retrieves itself with similarity 1.0.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Vector ANN is a mature but actively evolving field: HNSW and IVF-PQ remain the workhorses, while recent work (DiskANN, RaBitQ) pushes recall and memory efficiency to new frontiers, and managed vector databases have made billion-scale retrieval a commodity infrastructure component.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1603.09320">Malkov &amp; Yashunin, <em>Efficient and Robust ANN Search Using HNSW Graphs</em> (2016/2018)</a> — the HNSW paper; the dominant graph-based ANN algorithm in production.</li>
+<li><a href="https://arxiv.org/abs/1702.08734">Johnson, Douze &amp; Jégou, <em>Billion-Scale Similarity Search with GPUs</em> (2017)</a> — the FAISS paper; introduces GPU-accelerated flat and IVF-PQ indexes.</li>
+<li><a href="https://arxiv.org/abs/1908.10396">Guo et al., <em>Accelerating Large-Scale Inference with Anisotropic Vector Quantization</em> (ICML 2020)</a> — ScaNN; shows that optimizing quantization for inner-product ranking beats MSE-based PQ.</li>
+</ul>
+<p><strong>Recent advances (2019–2026)</strong></p>
+<ul>
+<li><a href="https://proceedings.neurips.cc/paper/2019/hash/09853c7fb1d3f8ee67a61b6bf4a7f8e6-Abstract.html">Subramanya et al., <em>DiskANN: Fast Accurate Billion-Point Nearest Neighbor Search on a Single Node</em> (NeurIPS 2019)</a> — graph-based SSD index; 95%+ recall at &lt;3 ms on 1B vectors on commodity hardware.</li>
+<li><a href="https://arxiv.org/abs/2405.12497">Gao &amp; Long, <em>RaBitQ: Quantizing High-Dimensional Vectors with a Theoretical Error Bound for ANN Search</em> (SIGMOD 2024)</a> — 1-bit-per-dimension quantization with provable error bounds; consistently outperforms PQ variants at the same memory budget.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/facebookresearch/faiss">facebookresearch/faiss</a> — the canonical ANN library; every index family (Flat, IVF, PQ, HNSW, ScaNN-style) plus GPU backends and the factory-string API.</li>
+<li><a href="https://github.com/nmslib/hnswlib">nmslib/hnswlib</a> — lightweight header-only C++/Python HNSW implementation by the algorithm&rsquo;s authors; the reference for embedding HNSW in your own system.</li>
+<li><a href="https://github.com/microsoft/DiskANN">microsoft/DiskANN</a> — composable disk+memory ANN library (Vamana graph); supports real-time updates and attribute filtering.</li>
+<li><a href="https://github.com/milvus-io/milvus">milvus-io/milvus</a> — cloud-native distributed vector database supporting HNSW, IVF, DiskANN and PQ indexes with sharding, WAL, and payload filtering.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://github.com/erikbern/ann-benchmarks">erikbern/ann-benchmarks</a> — the standard recall-vs-QPS benchmark harness; run it locally to reproduce the recall-latency curves from this chapter on real data.</li>
+<li><a href="https://www.pinecone.io/learn/a-developers-guide-to-ann-algorithms/">Pinecone, <em>A Developer&rsquo;s Guide to Approximate Nearest Neighbor Algorithms</em> (2024)</a> — practical survey of HNSW, IVF, DiskANN and SPANN with storage-tier trade-offs.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Hervé Jégou, Matthijs Douze, Cordelia Schmid, <em>Product Quantization for Nearest Neighbor Search</em> (IEEE TPAMI, 2011) — the original PQ and ADC.</li>
+<li>Yury Malkov, Dmitry Yashunin, <em>Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs</em> (2016/2018) — HNSW.</li>
+<li>Ruiqi Guo et al., <em>Accelerating Large-Scale Inference with Anisotropic Vector Quantization</em> (ICML 2020) — ScaNN.</li>
+<li>Kevin Beyer, Jonathan Goldstein, Raghu Ramakrishnan, Uri Shaft, <em>When Is &ldquo;Nearest Neighbor&rdquo; Meaningful?</em> (ICDT 1999) — the curse of dimensionality, formalized.</li>
+<li>Jeff Johnson, Matthijs Douze, Hervé Jégou, <em>Billion-Scale Similarity Search with GPUs</em> (2017) — the FAISS paper.</li>
+<li>Jon Kleinberg, <em>Navigation in a Small World</em> (Nature, 2000) — the navigable small-world result underpinning graph ANN.</li>
+<li>The <strong>FAISS</strong> library (<code>facebookresearch/faiss</code>) and its wiki — the canonical reference implementation and index &ldquo;factory&rdquo; documentation.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="01-embeddings-representation.html"><span class="pn-label">← Previous</span><span class="pn-title">Embeddings &amp; Representation Learning</span></a>
+<a class="next" href="03-rag-architectures.html"><span class="pn-label">Next →</span><span class="pn-title">Retrieval-Augmented Generation Architectures</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-problem-exact-nearest-neighbor-search">The Problem: Exact Nearest Neighbor Search</a></li>
+<li class="toc-l3"><a href="#formalizing-the-query">Formalizing the query</a></li>
+<li class="toc-l3"><a href="#brute-force-the-baseline-you-must-always-have">Brute force: the baseline you must always have</a></li>
+<li class="toc-l2"><a href="#the-curse-of-dimensionality">The Curse of Dimensionality</a></li>
+<li class="toc-l3"><a href="#distances-concentrate">Distances concentrate</a></li>
+<li class="toc-l3"><a href="#why-this-kills-exact-structures">Why this kills exact structures</a></li>
+<li class="toc-l2"><a href="#inverted-files-ivf-search-by-coarse-partition">Inverted Files (IVF): Search by Coarse Partition</a></li>
+<li class="toc-l3"><a href="#building-an-ivf-index">Building an IVF index</a></li>
+<li class="toc-l3"><a href="#the-ivf-tradeoff-knob-n_probe">The IVF tradeoff knob: n_probe</a></li>
+<li class="toc-l2"><a href="#product-quantization-pq-compressing-the-vectors">Product Quantization (PQ): Compressing the Vectors</a></li>
+<li class="toc-l3"><a href="#the-core-trick-split-then-quantize-each-piece">The core trick: split, then quantize each piece</a></li>
+<li class="toc-l3"><a href="#asymmetric-distance-computation-adc">Asymmetric Distance Computation (ADC)</a></li>
+<li class="toc-l3"><a href="#ivf-pq-the-workhorse-of-billion-scale-search">IVF + PQ: the workhorse of billion-scale search</a></li>
+<li class="toc-l2"><a href="#hnsw-navigable-small-world-graphs">HNSW: Navigable Small-World Graphs</a></li>
+<li class="toc-l3"><a href="#greedy-search-on-a-proximity-graph">Greedy search on a proximity graph</a></li>
+<li class="toc-l3"><a href="#from-scratch-hnsw">From-scratch HNSW</a></li>
+<li class="toc-l3"><a href="#why-hnsw-dominates-and-its-costs">Why HNSW dominates — and its costs</a></li>
+<li class="toc-l2"><a href="#scann-and-the-anisotropic-insight">ScaNN and the Anisotropic Insight</a></li>
+<li class="toc-l2"><a href="#the-recalllatencymemory-triangle">The Recall–Latency–Memory Triangle</a></li>
+<li class="toc-l3"><a href="#measuring-recall">Measuring recall</a></li>
+<li class="toc-l3"><a href="#the-knobs-summarized">The knobs, summarized</a></li>
+<li class="toc-l2"><a href="#vector-databases-from-algorithm-to-system">Vector Databases: From Algorithm to System</a></li>
+<li class="toc-l3"><a href="#the-filtering-problem-where-naive-ann-breaks">The filtering problem (where naive ANN breaks)</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-tiny-end-to-end-benchmark">Putting It Together: A Tiny End-to-End Benchmark</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

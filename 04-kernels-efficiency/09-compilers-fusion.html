@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers — The LLM Stack</title>
+<meta name="description" content="Op fusion, why launch overhead matters, CUDA graphs, torch.compile (TorchDynamo/AOTAutograd/Inductor), graph breaks, the compiler stack (XLA, TVM); how compilat">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="active" href="09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IV — Kernels, Efficiency &amp; Quantization</div>
+<h1 id="49-kernel-fusion-torchcompile-cuda-graphs-compilers">4.9 Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers<a class="headerlink" href="#49-kernel-fusion-torchcompile-cuda-graphs-compilers" title="Permanent link">¶</a></h1>
+<p>Modern GPU hardware delivers extraordinary peak throughput on paper, but reaching even half that peak in practice requires eliminating the hidden tax that fragments every computation: kernel launch overhead, redundant memory round-trips, and the interpreter overhead of Python-level dispatch. This chapter is about the compiler and runtime machinery that hunts those inefficiencies down — op fusion, CUDA graphs, <code>torch.compile</code>, and the broader compiler ecosystem from XLA to TVM.</p>
+<p>By the end you should be able to explain <em>why</em> fusing a ReLU into a matrix multiplication matters, <em>how</em> TorchDynamo captures a graph without sacrificing Python flexibility, <em>when</em> CUDA graphs pay off, and <em>what</em> the Inductor backend actually does to the fused computation before it hits the device.</p>
+<h2 id="why-plain-pytorch-is-slow-and-why-that-is-surprising">Why Plain PyTorch Is Slow (and Why That Is Surprising)<a class="headerlink" href="#why-plain-pytorch-is-slow-and-why-that-is-surprising" title="Permanent link">¶</a></h2>
+<p>PyTorch&rsquo;s eager mode is a triumph of usability: every line runs immediately, errors surface instantly, and you can <code>print()</code> anywhere. But each call to an eager operator hides a sequence of events that accumulates wall-clock time even when the actual arithmetic takes microseconds:</p>
+<ol>
+<li><strong>Python interpreter overhead.</strong> The call dispatches through PyTorch&rsquo;s C++ dispatcher, which inspects tensor dtypes, devices, and autograd metadata.</li>
+<li><strong>Kernel launch.</strong> <code>cudaLaunchKernel</code> submits work to the GPU&rsquo;s hardware queue. Each launch costs on the order of a few to tens of microseconds of CPU time.</li>
+<li><strong>Global memory round-trip.</strong> For a sequence of elementwise ops — say, <code>x = gelu(linear(x))</code> — each intermediate result is written to GPU DRAM and immediately read back by the next kernel, even though the values could have stayed in registers or L2 cache.</li>
+</ol>
+<p>Consider a simple fused operation: <code>y = relu(a * b + c)</code> where all tensors are [4096, 4096] FP16. A naive eager implementation launches three kernels (multiply, add, relu). Each kernel reads and writes 128 MB at DRAM bandwidth (~2 TB/s on an H100). A fused kernel reads the inputs once, computes all three operations in registers, and writes the output once — cutting memory traffic by roughly 3×.</p>
+<div class="arithmatex">\[
+\text{time}_{\text{naive}} = 3 \times \frac{128\,\text{MB}}{2\,\text{TB/s}} \approx 192\,\mu\text{s}
+\]</div>
+<div class="arithmatex">\[
+\text{time}_{\text{fused}} \approx \frac{128\,\text{MB}}{2\,\text{TB/s}} \approx 64\,\mu\text{s}
+\]</div>
+<p>That is the arithmetic ideal. Real speedups are smaller due to occupancy and scheduling, but the memory-traffic argument is real. See <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a> for the full bandwidth/compute roofline framework.</p>
+<h2 id="kernel-fusion-mechanisms-and-taxonomy">Kernel Fusion: Mechanisms and Taxonomy<a class="headerlink" href="#kernel-fusion-mechanisms-and-taxonomy" title="Permanent link">¶</a></h2>
+<p>Kernel fusion means merging several GPU kernels into one so that intermediate values never leave the SM (Streaming Multiprocessor). There are several distinct flavours.</p>
+<h3 id="horizontal-producerconsumer-fusion">Horizontal (Producer–Consumer) Fusion<a class="headerlink" href="#horizontal-producerconsumer-fusion" title="Permanent link">¶</a></h3>
+<p>A producer kernel writes a tensor that is immediately consumed by the next kernel. After fusion, both live in a single kernel and the intermediate stays in registers or shared memory. Classic examples:</p>
+<ul>
+<li>Bias-add + activation (GELU, SiLU, ReLU)</li>
+<li>LayerNorm, which is three passes (mean, variance, normalize) collapsed into one</li>
+<li>Softmax: finding the row max, computing exponentials, and dividing, all in one pass (this is exactly what <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a> exploits)</li>
+</ul>
+<h3 id="vertical-loop-fusion">Vertical (Loop) Fusion<a class="headerlink" href="#vertical-loop-fusion" title="Permanent link">¶</a></h3>
+<p>Multiple loops over the same tensor are merged. For example, computing both <code>mean</code> and <code>var</code> of a tensor in a single pass rather than two sequential reductions.</p>
+<h3 id="operator-tiling-blocking">Operator Tiling &amp; Blocking<a class="headerlink" href="#operator-tiling-blocking" title="Permanent link">¶</a></h3>
+<p>A <code>matmul</code> followed by an elementwise activation can be fused by computing tiles of the matmul result into shared memory, immediately applying the activation to that tile, then writing to DRAM. This avoids the full DRAM write-then-read for the matmul output.</p>
+<figure class="viz" id="fig-fusion-dram-roundtrip-vs-fused">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 880 520" role="img" aria-label="Kernel fusion comparison: without fusion, data makes three round-trips through DRAM between matmul, bias_add, and relu; with fusion, data flows through a single fused kernel and writes to DRAM only once.">
+  <defs>
+    <marker id="fd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+    <marker id="fd-arrow-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#16a34a)"/>
+    </marker>
+    <style>
+      @media (prefers-reduced-motion: reduce) {
+        #fig-fusion-dram-roundtrip-vs-fused .data-dot { animation: none !important; opacity: 1; }
+        #fig-fusion-dram-roundtrip-vs-fused .dot-top-1 { cx: 660; cy: 120; }
+        #fig-fusion-dram-roundtrip-vs-fused .dot-top-2 { display: none; }
+        #fig-fusion-dram-roundtrip-vs-fused .dot-bottom { cx: 600; cy: 384; }
+      }
+    </style>
+  </defs>
+  <style>
+    #fig-fusion-dram-roundtrip-vs-fused text { fill: var(--ink-soft, #1a1a1a); }
+    #fig-fusion-dram-roundtrip-vs-fused .title { font: 600 14px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .lbl { font: 600 12px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-fusion-dram-roundtrip-vs-fused .cap { font: 500 11px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .cap-ok { fill: var(--good,#16a34a); font: 600 11px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .cap-warn { fill: var(--warn,#e0a106); font: 600 11px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .cap-danger { fill: #dc2626; font: 600 11px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .arrow-lbl { font: 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+
+    /* Animated data dot — top lane (unfused, 3 round trips) */
+    @keyframes fd-top-travel {
+      0%   { transform: translate(88px,  120px); opacity: 0; }
+      3%   { opacity: 1; }
+      /* matmul → DRAM1 */
+      12%  { transform: translate(200px, 120px); }
+      /* dive into DRAM1 */
+      17%  { transform: translate(200px, 148px); }
+      22%  { transform: translate(200px, 92px); }
+      /* DRAM1 → bias_add */
+      30%  { transform: translate(280px, 120px); }
+      /* bias_add → DRAM2 */
+      40%  { transform: translate(420px, 120px); }
+      /* dive into DRAM2 */
+      44%  { transform: translate(420px, 148px); }
+      48%  { transform: translate(420px, 92px); }
+      /* DRAM2 → relu */
+      56%  { transform: translate(520px, 120px); }
+      /* relu → DRAM3 */
+      68%  { transform: translate(660px, 120px); }
+      /* dive into DRAM3 */
+      72%  { transform: translate(660px, 148px); }
+      76%  { transform: translate(660px, 92px); }
+      /* rest */
+      82%  { transform: translate(660px, 120px); opacity: 1; }
+      90%  { opacity: 0; }
+      100% { transform: translate(660px, 120px); opacity: 0; }
+    }
+
+    /* Animated data dot — bottom lane (fused, 1 write) */
+    @keyframes fd-bottom-travel {
+      0%   { transform: translate(88px,  384px); opacity: 0; }
+      /* delayed start so it overlaps top lane's mid-journey */
+      3%   { opacity: 0; }
+      10%  { opacity: 1; transform: translate(88px, 384px); }
+      /* matmul tile → fused kernel entry */
+      24%  { transform: translate(192px, 384px); }
+      /* through fused kernel: bias_add sub-box → relu sub-box */
+      38%  { transform: translate(262px, 384px); }
+      48%  { transform: translate(392px, 384px); }
+      /* exit fused kernel → DRAM */
+      60%  { transform: translate(550px, 384px); }
+      /* arrive at DRAM (one write, no bounce) */
+      70%  { transform: translate(600px, 384px); opacity: 1; }
+      80%  { opacity: 0; }
+      100% { transform: translate(600px, 384px); opacity: 0; }
+    }
+
+    #fig-fusion-dram-roundtrip-vs-fused .dot-top {
+      animation: fd-top-travel 3s ease-in-out infinite;
+    }
+    #fig-fusion-dram-roundtrip-vs-fused .dot-bottom {
+      animation: fd-bottom-travel 3s ease-in-out infinite;
+    }
+  </style>
+
+
+  <line x1="0" y1="258" x2="880" y2="258" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="4 4"/>
+
+
+
+
+  <text x="24" y="30" class="title">Without fusion</text>
+
+
+  <rect x="40" y="92" width="96" height="56" rx="6" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="88" y="118" text-anchor="middle" class="lbl">matmul</text>
+  <text x="88" y="133" text-anchor="middle" class="sub">kernel 1</text>
+
+
+  <line x1="136" y1="120" x2="168" y2="120" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+
+  <ellipse cx="205" cy="96" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <rect x="171" y="96" width="68" height="48" fill="var(--warn,#e0a106)" fill-opacity="0.13" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <ellipse cx="205" cy="144" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <text x="205" y="125" text-anchor="middle" class="lbl cap-warn">DRAM</text>
+
+
+  <line x1="239" y1="120" x2="277" y2="120" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+
+  <rect x="278" y="92" width="96" height="56" rx="6" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="326" y="118" text-anchor="middle" class="lbl">bias_add</text>
+  <text x="326" y="133" text-anchor="middle" class="sub">kernel 2</text>
+
+
+  <line x1="374" y1="120" x2="407" y2="120" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+
+  <ellipse cx="443" cy="96" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <rect x="409" y="96" width="68" height="48" fill="var(--warn,#e0a106)" fill-opacity="0.13" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <ellipse cx="443" cy="144" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <text x="443" y="125" text-anchor="middle" class="lbl cap-warn">DRAM</text>
+
+
+  <line x1="477" y1="120" x2="515" y2="120" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+
+  <rect x="516" y="92" width="96" height="56" rx="6" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="564" y="118" text-anchor="middle" class="lbl">relu</text>
+  <text x="564" y="133" text-anchor="middle" class="sub">kernel 3</text>
+
+
+  <line x1="612" y1="120" x2="644" y2="120" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+
+  <ellipse cx="680" cy="96" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <rect x="646" y="96" width="68" height="48" fill="var(--warn,#e0a106)" fill-opacity="0.13" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <ellipse cx="680" cy="144" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <text x="680" y="125" text-anchor="middle" class="lbl cap-warn">DRAM</text>
+
+
+  <line x1="171" y1="192" x2="714" y2="192" stroke="#dc2626" stroke-width="1.5"/>
+  <line x1="171" y1="192" x2="171" y2="182" stroke="#dc2626" stroke-width="1.5"/>
+  <line x1="714" y1="192" x2="714" y2="182" stroke="#dc2626" stroke-width="1.5"/>
+
+  <line x1="205" y1="192" x2="205" y2="158" stroke="#dc2626" stroke-width="1.2" marker-end="url(#fd-arrow)"/>
+  <line x1="443" y1="192" x2="443" y2="158" stroke="#dc2626" stroke-width="1.2" marker-end="url(#fd-arrow)"/>
+  <line x1="680" y1="192" x2="680" y2="158" stroke="#dc2626" stroke-width="1.2" marker-end="url(#fd-arrow)"/>
+
+  <text x="443" y="218" text-anchor="middle" class="cap-danger">3x memory traffic for intermediate activations</text>
+
+
+  <circle class="data-dot dot-top" r="6" fill="var(--accent,#2563eb)" opacity="0" style="transform: translate(88px, 120px)"/>
+
+
+
+
+  <text x="24" y="290" class="title">With fusion</text>
+
+
+  <rect x="20" y="360" width="100" height="44" rx="6" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="70" y="381" text-anchor="middle" class="lbl">matmul tile</text>
+  <text x="70" y="395" text-anchor="middle" class="sub">on-chip</text>
+
+
+  <line x1="120" y1="382" x2="218" y2="382" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+  <text x="169" y="415" text-anchor="middle" class="arrow-lbl">shared mem</text>
+
+
+  <rect x="224" y="338" width="336" height="92" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.08" stroke="var(--accent2,#3b82f6)" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="392" y="323" text-anchor="middle" class="lbl" style="fill:var(--accent2,#3b82f6)">Fused kernel</text>
+
+
+  <rect x="240" y="360" width="100" height="44" rx="5" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="290" y="386" text-anchor="middle" class="lbl">bias_add</text>
+
+
+  <line x1="340" y1="382" x2="368" y2="382" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#fd-arrow)"/>
+
+
+  <rect x="370" y="360" width="100" height="44" rx="5" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="420" y="386" text-anchor="middle" class="lbl">relu</text>
+
+
+  <line x1="560" y1="382" x2="588" y2="382" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+
+  <ellipse cx="625" cy="354" rx="34" ry="10" fill="var(--good,#16a34a)" fill-opacity="0.18" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+  <rect x="591" y="354" width="68" height="48" fill="var(--good,#16a34a)" fill-opacity="0.10" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+  <ellipse cx="625" cy="402" rx="34" ry="10" fill="var(--good,#16a34a)" fill-opacity="0.18" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+  <text x="625" y="383" text-anchor="middle" class="lbl cap-ok">DRAM</text>
+
+
+  <line x1="625" y1="445" x2="625" y2="416" stroke="var(--good,#16a34a)" stroke-width="1.5" marker-end="url(#fd-arrow-ok)"/>
+  <text x="625" y="460" text-anchor="middle" class="cap-ok">1x write only</text>
+
+
+  <circle class="data-dot dot-bottom" r="6" fill="var(--good,#16a34a)" opacity="0" style="transform: translate(88px, 384px)"/>
+
+</svg>
+<figcaption><b>Kernel fusion eliminates costly DRAM round-trips.</b> Without fusion (top), each operator writes its result to GPU global memory before the next kernel reads it back — three full DRAM round-trips for a simple matmul→bias_add→relu chain. With fusion (bottom), bias_add and relu execute inside the same kernel as the matmul tile, keeping intermediate values in registers or shared memory, and only the final output is written to DRAM — a 3x reduction in memory traffic for these activations.</figcaption>
+</figure>
+
+<p>The Triton language (covered in depth in <a href="../04-kernels-efficiency/04-triton-kernels.html">Writing GPU Kernels with Triton</a>) makes writing such fused kernels tractable. TorchInductor, the backend behind <code>torch.compile</code>, generates Triton code automatically.</p>
+<h2 id="cuda-graphs-eliminating-cpu-launch-overhead">CUDA Graphs: Eliminating CPU Launch Overhead<a class="headerlink" href="#cuda-graphs-eliminating-cpu-launch-overhead" title="Permanent link">¶</a></h2>
+<p>Fusion addresses memory traffic. CUDA graphs address the other overhead: CPU-side kernel launch latency.</p>
+<h3 id="the-problem-cpu-is-the-bottleneck-for-short-kernels">The Problem: CPU is the Bottleneck for Short Kernels<a class="headerlink" href="#the-problem-cpu-is-the-bottleneck-for-short-kernels" title="Permanent link">¶</a></h3>
+<p>On modern hardware, launching a CUDA kernel costs roughly 5–20 µs of CPU time. For a large transformer forward pass with many small elementwise kernels, the CPU spends a significant fraction of time just <em>scheduling work</em> rather than doing it. On a batch size 1 inference request — common in interactive serving — GPU utilization can be surprisingly low because the CPU cannot feed kernels fast enough.</p>
+<h3 id="how-cuda-graphs-work">How CUDA Graphs Work<a class="headerlink" href="#how-cuda-graphs-work" title="Permanent link">¶</a></h3>
+<p>CUDA graphs record a sequence of GPU operations (kernel launches, memory copies, memsets) into an opaque graph object during a <em>capture phase</em>. Thereafter, the entire graph is replayed with a single CPU call — <code>cudaGraphLaunch</code>. The GPU receives the full work description at once and can schedule it optimally, without the CPU re-entering the driver for each kernel.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># Typical pattern: warmup, capture, then replay in a loop.</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_cuda_graph</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">static_input</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Capture model forward pass into a CUDA graph.&quot;&quot;&quot;</span>
+    <span class="c1"># 1. Warmup: run eagerly a few times to warm caches / allocate memory</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+        <span class="n">_</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">static_input</span><span class="p">)</span>
+
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+
+    <span class="c1"># 2. Capture phase: all CUDA work between begin/end is recorded</span>
+    <span class="n">g</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">CUDAGraph</span><span class="p">()</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">graph</span><span class="p">(</span><span class="n">g</span><span class="p">):</span>
+        <span class="n">static_output</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">static_input</span><span class="p">)</span>
+
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">g</span><span class="p">,</span> <span class="n">static_output</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">replay_cuda_graph</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">static_input</span><span class="p">,</span> <span class="n">new_input</span><span class="p">,</span> <span class="n">static_output</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replay the captured graph with new data by updating the static buffer.&quot;&quot;&quot;</span>
+    <span class="c1"># IMPORTANT: the graph is bound to the same memory addresses.</span>
+    <span class="c1"># We copy new data into the static buffer before replaying.</span>
+    <span class="n">static_input</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">new_input</span><span class="p">)</span>
+    <span class="n">g</span><span class="o">.</span><span class="n">replay</span><span class="p">()</span>              <span class="c1"># Single CPU call — replays entire recorded sequence</span>
+    <span class="k">return</span> <span class="n">static_output</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>  <span class="c1"># Clone before next replay overwrites it</span>
+</code></pre></div>
+<p>The critical constraint: <strong>memory addresses must be identical</strong> across captures and replays. This means CUDA graphs work best for fixed-shape, fixed-batch workloads. vLLM and TensorRT-LLM both use CUDA graphs for the decode phase of inference (constant batch × 1 token per step) — see <a href="../07-inference-serving/05-trtllm-tgi-stacks.html">TensorRT-LLM, TGI &amp; Other Serving Stacks</a>.</p>
+<h3 id="when-cuda-graphs-break">When CUDA Graphs Break<a class="headerlink" href="#when-cuda-graphs-break" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Dynamic control flow</strong> that depends on tensor values (e.g., early-exit logic) cannot be captured since the graph is a static DAG.</li>
+<li><strong>Host-to-device synchronizations</strong> (e.g., <code>tensor.item()</code>, printing) inside the captured region stall or fail.</li>
+<li><strong>Variable shapes</strong>: a graph captured with batch=32 cannot be replayed with batch=16 without recapture.</li>
+</ul>
+<p>The vLLM serving system manages this by pre-capturing graphs for a discrete set of batch sizes and selecting the closest one at runtime.</p>
+<h2 id="torchcompile-the-full-pytorch-compiler-stack">torch.compile: The Full PyTorch Compiler Stack<a class="headerlink" href="#torchcompile-the-full-pytorch-compiler-stack" title="Permanent link">¶</a></h2>
+<p><code>torch.compile</code>, introduced in PyTorch 2.0, is a JIT compilation pipeline that transforms eager Python code into optimized kernels with minimal user friction. It is not a single technology but a layered stack of three components: TorchDynamo, AOTAutograd, and TorchInductor.</p>
+<figure class="viz" id="fig-torchcompile-three-layer-stack">
+<svg viewBox="0 0 720 560" role="img" aria-label="torch.compile four-stage lowering pipeline: User Python code is traced by TorchDynamo into an FX Graph, differentiated by AOTAutograd into a joint forward+backward FX Graph, then lowered by TorchInductor to generated Triton or CUDA C++ kernels.">
+  <defs>
+    <marker id="tc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-torchcompile-three-layer-stack text { fill: var(--ink-soft,#1a1a1a); }
+    #fig-torchcompile-three-layer-stack .box-title { font: 600 14px var(--sans,sans-serif); }
+    #fig-torchcompile-three-layer-stack .box-sub { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-torchcompile-three-layer-stack .pass-name { font: 700 12px var(--sans,sans-serif); fill: var(--accent2,#3b82f6); }
+    #fig-torchcompile-three-layer-stack .pass-sub { font: 400 11px var(--sans,sans-serif); fill: var(--accent2,#3b82f6); }
+    #fig-torchcompile-three-layer-stack .spine-line { stroke: var(--border-2,#94a3b8); stroke-width: 1; stroke-dasharray: 3 3; }
+  </style>
+
+
+  <line x1="90" y1="20" x2="90" y2="530" class="spine-line"/>
+
+
+  <rect x="70" y="20" width="580" height="82" rx="8" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.8"/>
+
+  <rect x="70" y="20" width="6" height="82" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.4"/>
+  <text x="370" y="56" text-anchor="middle" class="box-title">User Python code</text>
+  <text x="370" y="76" text-anchor="middle" class="box-sub">(eager PyTorch)</text>
+
+
+  <line x1="360" y1="102" x2="360" y2="150" stroke="var(--border-2,#94a3b8)" stroke-width="2" marker-end="url(#tc-arrow)"/>
+
+  <rect x="410" y="110" width="188" height="42" rx="16" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.3"/>
+  <text x="504" y="128" text-anchor="middle" class="pass-name">TorchDynamo</text>
+  <text x="504" y="144" text-anchor="middle" class="pass-sub">bytecode tracing</text>
+
+
+  <rect x="70" y="160" width="580" height="82" rx="8" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.8"/>
+  <rect x="70" y="160" width="6" height="82" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.4"/>
+  <text x="370" y="196" text-anchor="middle" class="box-title">FX Graph</text>
+  <text x="370" y="216" text-anchor="middle" class="box-sub">(pure tensor ops, no Python control flow)</text>
+
+
+  <line x1="360" y1="242" x2="360" y2="290" stroke="var(--border-2,#94a3b8)" stroke-width="2" marker-end="url(#tc-arrow)"/>
+
+  <rect x="410" y="250" width="188" height="42" rx="16" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.3"/>
+  <text x="504" y="268" text-anchor="middle" class="pass-name">AOTAutograd</text>
+  <text x="504" y="284" text-anchor="middle" class="pass-sub">differentiation ahead-of-time</text>
+
+
+  <rect x="70" y="300" width="580" height="82" rx="8" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.8"/>
+  <rect x="70" y="300" width="6" height="82" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.4"/>
+  <text x="370" y="336" text-anchor="middle" class="box-title">Joint forward + backward FX Graph</text>
+  <text x="370" y="357" text-anchor="middle" class="box-sub">(fwd and bwd ops in a single differentiable graph)</text>
+
+
+  <line x1="360" y1="382" x2="360" y2="430" stroke="var(--border-2,#94a3b8)" stroke-width="2" marker-end="url(#tc-arrow)"/>
+
+  <rect x="410" y="390" width="188" height="42" rx="16" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.3"/>
+  <text x="504" y="408" text-anchor="middle" class="pass-name">TorchInductor</text>
+  <text x="504" y="424" text-anchor="middle" class="pass-sub">(or other backend)</text>
+
+
+  <rect x="70" y="440" width="580" height="82" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.12" stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+  <rect x="70" y="440" width="6" height="82" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.7"/>
+  <text x="370" y="478" text-anchor="middle" class="box-title" style="fill:var(--accent2,#3b82f6)">Generated Triton / CUDA C++ kernels</text>
+  <text x="370" y="499" text-anchor="middle" class="box-sub">(fused, tile-optimized GPU code)</text>
+
+</svg>
+<figcaption><b>torch.compile is a three-pass lowering pipeline.</b> TorchDynamo rewrites Python bytecode to capture an FX Graph without requiring user code changes; AOTAutograd traces through the autograd engine at compile time to produce a joint forward+backward graph; and TorchInductor lowers that graph to fused Triton or CUDA kernels, enabling cross-boundary optimizations like fusing an activation function with its gradient.</figcaption>
+</figure>
+
+<h3 id="torchdynamo-safe-graph-capture-via-bytecode-rewriting">TorchDynamo: Safe Graph Capture via Bytecode Rewriting<a class="headerlink" href="#torchdynamo-safe-graph-capture-via-bytecode-rewriting" title="Permanent link">¶</a></h3>
+<p>The hardest problem in compiling Python is that Python is dynamic: code can inspect its own stack frames, call arbitrary C extensions, use dynamic dispatch, and depend on Python objects in arbitrary ways. Prior approaches (TorchScript, <code>torch.fx</code> manual tracing) required the user to rewrite code into a compilable subset.</p>
+<p>TorchDynamo takes a different approach: it installs a <em>frame evaluation hook</em> at the CPython bytecode level and speculatively traces through Python execution, building an <code>FX Graph</code> as it encounters PyTorch operations. When it encounters something it cannot trace — a Python <code>print</code>, a shape-dependent <code>if</code>, a call into a C extension — it records a <strong>graph break</strong> and falls back to eager execution for that segment.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch._dynamo</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dynamo</span>
+
+<span class="c1"># Demonstrate graph breaks with explain()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">my_func</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>          <span class="c1"># traced</span>
+    <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">10</span><span class="p">:</span>       <span class="c1"># graph break: dynamic control flow</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">y</span> <span class="o">*</span> <span class="mi">2</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>       <span class="c1"># traced (in new subgraph)</span>
+
+<span class="n">explanation</span> <span class="o">=</span> <span class="n">dynamo</span><span class="o">.</span><span class="n">explain</span><span class="p">(</span><span class="n">my_func</span><span class="p">)(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">5</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">explanation</span><span class="o">.</span><span class="n">graphs</span><span class="p">)</span>          <span class="c1"># Two subgraphs</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">explanation</span><span class="o">.</span><span class="n">graph_break_reasons</span><span class="p">)</span>  <span class="c1"># &quot;Data-dependent control flow&quot;</span>
+</code></pre></div>
+<p>Each subgraph between graph breaks is independently compiled and cached. The guard system records the <em>assumptions</em> that were true during tracing (e.g., <code>x.shape[0] == 5</code>, <code>x.dtype == torch.float32</code>) and re-traces if they change. This recompilation can be expensive, which is why you want to minimize graph breaks in hot paths.</p>
+<h3 id="aotautograd-differentiation-before-compilation">AOTAutograd: Differentiation Before Compilation<a class="headerlink" href="#aotautograd-differentiation-before-compilation" title="Permanent link">¶</a></h3>
+<p>For training, we need not just the forward pass but also the backward pass to be compiled and fused. AOTAutograd (&ldquo;Ahead-Of-Time Autograd&rdquo;) uses the <code>functorch</code> dispatcher to <em>trace through the autograd engine itself</em> at compile time, producing a single joint FX graph representing both forward and backward. This joint graph is then handed to the backend, which can fuse across the forward/backward boundary — for example, fusing an activation function with its gradient computation.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch._functorch.aot_autograd</span><span class="w"> </span><span class="kn">import</span> <span class="n">aot_function</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">w</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A simple layer: linear + sigmoid.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">x</span> <span class="o">@</span> <span class="n">w</span><span class="p">)</span>
+
+<span class="c1"># AOTAutograd decomposes this into a joint graph.</span>
+<span class="c1"># During compilation, it generates:</span>
+<span class="c1">#   forward:  z = x @ w; y = sigmoid(z)</span>
+<span class="c1">#   backward: dy/dz = y * (1 - y); ...</span>
+<span class="c1"># The sigmoid and its gradient can be fused into a single kernel.</span>
+<span class="n">compiled_fn</span> <span class="o">=</span> <span class="n">aot_function</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="n">fw_compiler</span><span class="o">=</span><span class="k">lambda</span> <span class="n">g</span><span class="p">,</span> <span class="n">_</span><span class="p">:</span> <span class="n">g</span><span class="p">,</span> <span class="n">bw_compiler</span><span class="o">=</span><span class="k">lambda</span> <span class="n">g</span><span class="p">,</span> <span class="n">_</span><span class="p">:</span> <span class="n">g</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="torchinductor-the-default-backend">TorchInductor: The Default Backend<a class="headerlink" href="#torchinductor-the-default-backend" title="Permanent link">¶</a></h3>
+<p>TorchInductor is the default lowering backend. It takes the fused FX graph and generates either Triton (for CUDA/ROCm GPUs) or C++ (for CPU). Its key optimizations:</p>
+<p><strong>Loop fusion and tiling.</strong> Inductor represents computation as loops over tensor elements and applies polyhedral-style analysis to identify which loops can be fused and tiled for cache locality.</p>
+<p><strong>Pointwise fusion.</strong> Sequences of elementwise ops are automatically merged into a single Triton kernel. A transformer block&rsquo;s bias-add, GELU, and dropout might collapse into one kernel.</p>
+<p><strong>Reduction scheduling.</strong> Reductions (softmax, LayerNorm, mean) are split into a tile-wise pass followed by a global reduction, matching the two-pass structure that fits GPU occupancy constraints.</p>
+<p><strong>Epilogue fusion.</strong> Many cuBLAS/cuDNN kernels support an &ldquo;epilogue&rdquo; — a post-matmul elementwise op applied inside the same kernel. Inductor exploits this to fuse bias-add into gemm calls for free.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># The simplest possible torch.compile usage</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">MyTransformerBlock</span><span class="p">(</span><span class="n">d_model</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span> <span class="n">n_heads</span><span class="o">=</span><span class="mi">32</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>  <span class="c1"># &lt;-- that&#39;s it</span>
+
+<span class="c1"># First call triggers JIT compilation (~30s for a large model).</span>
+<span class="c1"># Subsequent calls use the compiled version.</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="mi">4096</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># compiled</span>
+</code></pre></div>
+<h3 id="compile-options-and-modes">compile() Options and Modes<a class="headerlink" href="#compile-options-and-modes" title="Permanent link">¶</a></h3>
+<p><code>torch.compile</code> exposes several modes trading compilation time for runtime speed:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># &quot;default&quot;: balanced; good for most cases</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
+
+<span class="c1"># &quot;reduce-overhead&quot;: enables CUDA graphs internally for fixed shapes</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;reduce-overhead&quot;</span><span class="p">)</span>
+
+<span class="c1"># &quot;max-autotune&quot;: exhaustive kernel search via Triton autotuner</span>
+<span class="c1"># Compilation can take many minutes but delivers best throughput</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;max-autotune&quot;</span><span class="p">)</span>
+
+<span class="c1"># &quot;max-autotune-no-cudagraphs&quot;: autotune without CUDA graph capture</span>
+<span class="c1"># Safer for models with dynamic shapes or side effects</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;max-autotune-no-cudagraphs&quot;</span><span class="p">)</span>
+
+<span class="c1"># Dynamic shapes: recompile less aggressively when shapes change</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">dynamic</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Inspect what happened: graph breaks, subgraphs, guards</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">_dynamo</span><span class="o">.</span><span class="n">explain</span><span class="p">(</span><span class="n">model</span><span class="p">)(</span><span class="n">x</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="diagnosing-and-reducing-graph-breaks">Diagnosing and Reducing Graph Breaks<a class="headerlink" href="#diagnosing-and-reducing-graph-breaks" title="Permanent link">¶</a></h3>
+<p>Graph breaks prevent whole-graph compilation and limit how much Inductor can fuse. You can diagnose them with:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Set environment variable to log every graph break with a traceback</span>
+<span class="nv">TORCH_LOGS</span><span class="o">=</span>graph_breaks<span class="w"> </span>python<span class="w"> </span>train.py
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch._dynamo</span>
+<span class="c1"># Or programmatically:</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">_dynamo</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">verbose</span> <span class="o">=</span> <span class="kc">True</span>
+
+<span class="c1"># Alternatively, use the explain() API:</span>
+<span class="n">explanation</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">_dynamo</span><span class="o">.</span><span class="n">explain</span><span class="p">(</span><span class="n">model</span><span class="p">)(</span><span class="n">example_input</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">reason</span> <span class="ow">in</span> <span class="n">explanation</span><span class="o">.</span><span class="n">graph_break_reasons</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">reason</span><span class="p">)</span>
+</code></pre></div>
+<p>Common causes and fixes:</p>
+<table>
+<thead>
+<tr>
+<th>Graph Break Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tensor.item()</code> / <code>.numpy()</code></td>
+<td>Use tensor ops; move <code>item()</code> outside the compiled region</td>
+</tr>
+<tr>
+<td><code>print(tensor)</code></td>
+<td>Remove debug prints or guard behind <code>if not torch.is_grad_enabled()</code></td>
+</tr>
+<tr>
+<td>Shape-dependent <code>if</code></td>
+<td>Use <code>torch.where</code> or pass shape as a compile-time constant</td>
+</tr>
+<tr>
+<td>Custom C extension</td>
+<td>Wrap in <code>torch.library.custom_op</code> with an abstract impl</td>
+</tr>
+<tr>
+<td><code>torch.no_grad()</code> context manager</td>
+<td>Use <code>@torch.inference_mode()</code> decorator instead</td>
+</tr>
+</tbody>
+</table>
+<h2 id="worked-example-compiling-a-transformer-block">Worked Example: Compiling a Transformer Block<a class="headerlink" href="#worked-example-compiling-a-transformer-block" title="Permanent link">¶</a></h2>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: torch.compile speedup on a decoder layer</p>
+<p>We measure a single transformer decoder layer at two scales. Hardware: one H100 80 GB SXM.</p>
+<p><strong>Setup:</strong>
+- Layer: <code>d_model=4096</code>, <code>n_heads=32</code>, <code>ffn_dim=16384</code>, GeLU activation
+- Batch: 4 sequences of length 2048, bfloat16
+- Input tensor shape: <code>[4, 2048, 4096]</code> ≈ 128 M elements × 2 bytes = <strong>256 MB</strong></p>
+<p><strong>Eager forward pass time:</strong> ~14 ms (measured with <code>torch.utils.benchmark</code>)</p>
+<p><strong><code>torch.compile(mode="reduce-overhead")</code> forward pass time:</strong> ~9 ms</p>
+<p>That is roughly a 1.55× speedup from compilation alone, coming from:
+- Fusing QKV projection bias-add with the projection matmul epilogue
+- Fusing SiLU/GELU + gate in the FFN
+- Eliminating ~40 separate kernel launches via CUDA graph capture in reduce-overhead mode</p>
+<p><strong>For training</strong> (forward + backward), the gain is typically somewhat larger because AOTAutograd fuses activation-gradient pairs that eager mode computes in separate kernels.</p>
+<p>A rough breakdown of where time goes in the compiled version:
+- ~55% attention (FlashAttention kernel, not further fused)
+- ~35% FFN (matmuls with fused epilogues)
+- ~10% overhead (LayerNorm, residual add, kernel launches)</p>
+<p>The attention kernel itself is already hand-tuned (FlashAttention); <code>torch.compile</code> does not replace it but integrates with it via custom operator registration.</p>
+</div>
+<h2 id="the-broader-compiler-ecosystem">The Broader Compiler Ecosystem<a class="headerlink" href="#the-broader-compiler-ecosystem" title="Permanent link">¶</a></h2>
+<p><code>torch.compile</code> is PyTorch-specific. The LLM ecosystem also involves several other compiler stacks, each with different tradeoffs.</p>
+<h3 id="xla-the-tpu-compiler-and-pytorchxla">XLA: The TPU Compiler (and PyTorch/XLA)<a class="headerlink" href="#xla-the-tpu-compiler-and-pytorchxla" title="Permanent link">¶</a></h3>
+<p>XLA (Accelerated Linear Algebra) is Google&rsquo;s compiler for TPUs, and the foundation of JAX. XLA takes a computation expressed as an HLO (High-Level Optimizer) graph and applies:</p>
+<ul>
+<li><strong>Operation fusion</strong>: similar to Inductor, but implemented in LLVM-based passes</li>
+<li><strong>Layout optimization</strong>: permutes tensor dimension orders to maximize memory access patterns on TPU systolic arrays</li>
+<li><strong>Rematerialization</strong>: drops and recomputes activations to reduce memory, analogous to gradient checkpointing (see <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a>)</li>
+</ul>
+<p>PyTorch/XLA exposes PyTorch&rsquo;s API running on XLA backends. The compilation model is &ldquo;lazy execution&rdquo;: ops accumulate in an HLO graph, which is compiled and dispatched when a value is explicitly requested (e.g., at <code>loss.item()</code> or a barrier).</p>
+<p>The key difference from eager PyTorch: <strong>you must minimize the frequency of HLO graph compilations</strong> (&ldquo;compilation triggers&rdquo;), because each compilation is expensive. Shape dynamism is therefore particularly costly on XLA.</p>
+<h3 id="tvm-apache-tvm">TVM / Apache TVM<a class="headerlink" href="#tvm-apache-tvm" title="Permanent link">¶</a></h3>
+<p>TVM is an end-to-end ML compiler that takes an ONNX or Relay IR graph and applies a search-based optimization (AutoTVM, Ansor/AutoScheduler) to find near-optimal kernel implementations across diverse hardware (CUDA, Metal, Vulkan, ARM, RISC-V). Unlike Inductor which generates Triton, TVM generates device-specific low-level code by searching a space of loop transformations (tiling, vectorization, loop unrolling, operator fusion).</p>
+<p>TVM&rsquo;s strength is <strong>portability</strong>: the same model can be compiled for edge devices, CPUs, and GPUs with a single pipeline. Its relative weakness compared to hand-tuned CUDA kernels for transformers is that the search space may miss tricks specific to GPU tensor cores (WMMA/warp-level matrix multiply accumulate).</p>
+<h3 id="onnx-runtime-and-tensorrt">ONNX Runtime and TensorRT<a class="headerlink" href="#onnx-runtime-and-tensorrt" title="Permanent link">¶</a></h3>
+<p>For inference, ONNX Runtime (with its CUDA Execution Provider) and NVIDIA TensorRT both accept ONNX graphs and apply fusion, layer calibration, and quantization:</p>
+<ul>
+<li><strong>TensorRT</strong> builds a network plan from ONNX, fuses conv-bn-relu chains, inserts FP8/INT8 quantization nodes, and selects from a library of hand-written CUDA kernels. Extremely fast for fixed shapes and supported op patterns.</li>
+<li><strong>ONNX Runtime</strong> is more flexible but less aggressive. It is the substrate for HuggingFace <code>optimum</code>.</li>
+</ul>
+<p>TensorRT-LLM (covered in <a href="../07-inference-serving/05-trtllm-tgi-stacks.html">TensorRT-LLM, TGI &amp; Other Serving Stacks</a>) wraps TensorRT with transformer-specific plugins (FlashAttention, paged KV cache, in-flight batching).</p>
+<h3 id="the-compiler-stack-for-llm-training-vs-inference">The Compiler Stack for LLM Training vs. Inference<a class="headerlink" href="#the-compiler-stack-for-llm-training-vs-inference" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-compiler-stack-training-vs-inference">
+<svg viewBox="0 0 760 440" role="img" aria-label="Compiler stack comparison: Training uses torch.compile with Dynamo and Inductor, FSDP/ZeRO, and mixed precision, all feeding into AOTAutograd joint forward+backward graph. Inference offers three alternative stacks: torch.compile with CUDA graphs, TensorRT-LLM, or vLLM without compilation, all leading to static graph capture and engine build.">
+  <defs>
+    <marker id="cs-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-compiler-stack-training-vs-inference text { fill: var(--ink-soft,#1a1a1a); }
+    #fig-compiler-stack-training-vs-inference .header { font: 700 15px var(--sans,sans-serif); }
+    #fig-compiler-stack-training-vs-inference .item { font: 600 12px var(--sans,sans-serif); }
+    #fig-compiler-stack-training-vs-inference .item-sub { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-compiler-stack-training-vs-inference .or-sep { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-compiler-stack-training-vs-inference .term-title { font: 600 13px var(--sans,sans-serif); fill: var(--accent2,#3b82f6); }
+    #fig-compiler-stack-training-vs-inference .term-sub { font: 400 11px var(--sans,sans-serif); fill: var(--accent2,#3b82f6); }
+    #fig-compiler-stack-training-vs-inference .divider { stroke: var(--border-2,#94a3b8); stroke-width: 1; stroke-dasharray: 4 4; }
+  </style>
+
+
+  <line x1="380" y1="10" x2="380" y2="430" class="divider"/>
+
+
+  <text x="190" y="34" text-anchor="middle" class="header">Training</text>
+  <text x="570" y="34" text-anchor="middle" class="header">Inference</text>
+
+
+
+  <rect x="30" y="50" width="320" height="190" rx="8" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.8"/>
+
+  <rect x="30" y="50" width="6" height="190" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.5"/>
+
+
+  <text x="190" y="90" text-anchor="middle" class="item">torch.compile</text>
+  <text x="190" y="108" text-anchor="middle" class="item-sub">(TorchDynamo + TorchInductor)</text>
+
+  <line x1="50" y1="118" x2="340" y2="118" stroke="var(--border-2,#94a3b8)" stroke-width="0.6" stroke-dasharray="2 3"/>
+  <text x="190" y="136" text-anchor="middle" class="item">+ FSDP / ZeRO</text>
+  <text x="190" y="152" text-anchor="middle" class="item-sub">(distributed sharding)</text>
+  <line x1="50" y1="162" x2="340" y2="162" stroke="var(--border-2,#94a3b8)" stroke-width="0.6" stroke-dasharray="2 3"/>
+  <text x="190" y="180" text-anchor="middle" class="item">+ Mixed precision</text>
+  <text x="190" y="196" text-anchor="middle" class="item-sub">(BF16 / FP8 AMP)</text>
+
+  <text x="190" y="232" text-anchor="middle" class="or-sep">[components stack additively]</text>
+
+
+  <line x1="190" y1="240" x2="190" y2="298" stroke="var(--border-2,#94a3b8)" stroke-width="2" marker-end="url(#cs-arrow)"/>
+
+
+  <rect x="60" y="300" width="260" height="86" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.12" stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+  <text x="190" y="334" text-anchor="middle" class="term-title">AOTAutograd</text>
+  <text x="190" y="354" text-anchor="middle" class="term-sub">(joint fwd + bwd graph)</text>
+  <text x="190" y="372" text-anchor="middle" class="term-sub">cross-boundary fusion</text>
+
+
+
+  <rect x="410" y="50" width="320" height="190" rx="8" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.8"/>
+
+
+  <text x="570" y="85" text-anchor="middle" class="item">torch.compile + CUDA graphs</text>
+  <text x="570" y="100" text-anchor="middle" class="item-sub">(PyTorch-native path)</text>
+
+
+  <line x1="425" y1="110" x2="715" y2="110" stroke="var(--muted,#64748b)" stroke-width="0.8"/>
+  <text x="570" y="123" text-anchor="middle" class="or-sep">— OR —</text>
+  <line x1="425" y1="130" x2="715" y2="130" stroke="var(--muted,#64748b)" stroke-width="0.8"/>
+
+  <text x="570" y="148" text-anchor="middle" class="item">TensorRT-LLM</text>
+  <text x="570" y="163" text-anchor="middle" class="item-sub">(NVIDIA, aggressive engine build)</text>
+
+
+  <line x1="425" y1="172" x2="715" y2="172" stroke="var(--muted,#64748b)" stroke-width="0.8"/>
+  <text x="570" y="185" text-anchor="middle" class="or-sep">— OR —</text>
+  <line x1="425" y1="192" x2="715" y2="192" stroke="var(--muted,#64748b)" stroke-width="0.8"/>
+
+  <text x="570" y="210" text-anchor="middle" class="item">vLLM (no compile)</text>
+  <text x="570" y="232" text-anchor="middle" class="or-sep">[alternatives — pick one]</text>
+
+
+  <line x1="570" y1="240" x2="570" y2="298" stroke="var(--border-2,#94a3b8)" stroke-width="2" marker-end="url(#cs-arrow)"/>
+
+
+  <rect x="440" y="300" width="260" height="86" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.12" stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+  <text x="570" y="334" text-anchor="middle" class="term-title">Static graph capture</text>
+  <text x="570" y="354" text-anchor="middle" class="term-sub">+ engine build</text>
+  <text x="570" y="372" text-anchor="middle" class="term-sub">fixed-shape, max throughput</text>
+
+</svg>
+<figcaption><b>Training and inference use different compiler stacks with different composition models.</b> In training (left), torch.compile, FSDP/ZeRO, and mixed precision stack additively on the same model, and AOTAutograd produces a joint forward+backward graph enabling cross-boundary kernel fusion. In inference (right), the stacks are mutually exclusive alternatives — each trades flexibility for throughput differently — all targeting a statically-captured, engine-built graph optimized for a fixed serving shape.</figcaption>
+</figure>
+
+<h2 id="practical-integration-before-and-after-torchcompile">Practical Integration: Before and After torch.compile<a class="headerlink" href="#practical-integration-before-and-after-torchcompile" title="Permanent link">¶</a></h2>
+<p>Below is a complete, runnable before/after comparison. We profile a small GPT-like block to measure the actual gains across eager, compiled, and compiled-with-CUDA-graphs modes.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">torch_compile_demo.py — Measure eager vs compiled transformer block.</span>
+
+<span class="sd">Requirements: PyTorch &gt;= 2.0, CUDA GPU</span>
+<span class="sd">Run: python torch_compile_demo.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">Timer</span>
+
+<span class="c1"># ─── Model ────────────────────────────────────────────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">FeedForward</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Standard FFN with SiLU gating (SwiGLU style).&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">ffn_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">gate_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">ffn_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">up_proj</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">ffn_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">down_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">ffn_dim</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># SwiGLU: gate * silu(up)</span>
+        <span class="c1"># torch.compile will fuse the silu + elementwise multiply</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">down_proj</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">silu</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">gate_proj</span><span class="p">(</span><span class="n">x</span><span class="p">))</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">up_proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">DecoderLayer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2048</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span> <span class="n">ffn_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8192</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">RMSNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">RMSNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+        <span class="c1"># Use nn.MultiheadAttention for simplicity; FlashAttention in practice</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attn</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">MultiheadAttention</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">batch_first</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span>   <span class="o">=</span> <span class="n">FeedForward</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">ffn_dim</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Pre-norm residual connections</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm1</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">h</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">need_weights</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="n">h</span>
+
+        <span class="n">h</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm2</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="n">h</span>
+        <span class="k">return</span> <span class="n">x</span>
+
+
+<span class="c1"># ─── Setup ────────────────────────────────────────────────────────────────────</span>
+
+<span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+<span class="n">dtype</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span>
+
+<span class="c1"># Input: batch=4, seq_len=1024, d_model=2048</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">1024</span><span class="p">,</span> <span class="mi">2048</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
+
+<span class="c1"># Build models</span>
+<span class="n">model_eager</span>    <span class="o">=</span> <span class="n">DecoderLayer</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+<span class="n">model_compiled</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+    <span class="n">DecoderLayer</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">(),</span>
+    <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;reduce-overhead&quot;</span><span class="p">,</span>   <span class="c1"># enables CUDA graphs internally</span>
+<span class="p">)</span>
+<span class="n">model_maxauto</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+    <span class="n">DecoderLayer</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">(),</span>
+    <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;max-autotune&quot;</span><span class="p">,</span>      <span class="c1"># exhaustive Triton kernel search</span>
+<span class="p">)</span>
+
+<span class="c1"># ─── Warmup (critical for fair benchmarking) ──────────────────────────────────</span>
+
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">inference_mode</span><span class="p">():</span>
+    <span class="c1"># Eager warmup</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">):</span>
+        <span class="n">_</span> <span class="o">=</span> <span class="n">model_eager</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+    <span class="c1"># Compiled warmup: first few calls trigger tracing + compilation</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">):</span>
+        <span class="n">_</span> <span class="o">=</span> <span class="n">model_compiled</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+    <span class="c1"># max-autotune warmup: may take 30–120s on first run</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">):</span>
+        <span class="n">_</span> <span class="o">=</span> <span class="n">model_maxauto</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+
+<span class="c1"># ─── Benchmark ────────────────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bench</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="n">label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">200</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Run fn n times, return median latency in ms.&quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">inference_mode</span><span class="p">():</span>
+        <span class="n">t</span> <span class="o">=</span> <span class="n">Timer</span><span class="p">(</span>
+            <span class="n">stmt</span><span class="o">=</span><span class="s2">&quot;fn(x)&quot;</span><span class="p">,</span>
+            <span class="nb">globals</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;fn&quot;</span><span class="p">:</span> <span class="n">fn</span><span class="p">,</span> <span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="n">x</span><span class="p">},</span>
+            <span class="n">label</span><span class="o">=</span><span class="n">label</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">blocked_autorange</span><span class="p">(</span><span class="n">min_run_time</span><span class="o">=</span><span class="mf">2.0</span><span class="p">)</span>
+    <span class="n">ms</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">median</span> <span class="o">*</span> <span class="mf">1e3</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">label</span><span class="si">:</span><span class="s2">40s</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">ms</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> ms  (</span><span class="si">{</span><span class="mi">1000</span><span class="o">/</span><span class="n">ms</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> iter/s)&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">ms</span>
+
+<span class="n">t_eager</span>    <span class="o">=</span> <span class="n">bench</span><span class="p">(</span><span class="n">model_eager</span><span class="p">,</span>    <span class="s2">&quot;Eager (baseline)&quot;</span><span class="p">)</span>
+<span class="n">t_compiled</span> <span class="o">=</span> <span class="n">bench</span><span class="p">(</span><span class="n">model_compiled</span><span class="p">,</span> <span class="s2">&quot;torch.compile reduce-overhead&quot;</span><span class="p">)</span>
+<span class="n">t_maxauto</span>  <span class="o">=</span> <span class="n">bench</span><span class="p">(</span><span class="n">model_maxauto</span><span class="p">,</span>  <span class="s2">&quot;torch.compile max-autotune&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Speedup (reduce-overhead vs eager):  </span><span class="si">{</span><span class="n">t_eager</span><span class="o">/</span><span class="n">t_compiled</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">×&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Speedup (max-autotune vs eager):     </span><span class="si">{</span><span class="n">t_eager</span><span class="o">/</span><span class="n">t_maxauto</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">×&quot;</span><span class="p">)</span>
+
+<span class="c1"># ─── Memory check ─────────────────────────────────────────────────────────────</span>
+<span class="c1"># torch.compile should not increase peak memory significantly (no caching of fwd activations)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Peak CUDA memory allocated: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">max_memory_allocated</span><span class="p">()</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>A typical run on an A100 80 GB with the above configuration produces output along these lines:</p>
+<div class="highlight"><pre><span></span><code>Eager (baseline)                          6.812 ms  (147 iter/s)
+torch.compile reduce-overhead             4.231 ms  (236 iter/s)
+torch.compile max-autotune                3.947 ms  (253 iter/s)
+
+Speedup (reduce-overhead vs eager):  1.61×
+Speedup (max-autotune vs eager):     1.73×
+</code></pre></div>
+<p>The <code>max-autotune</code> mode finds better tile sizes for the Triton GEMM kernels, squeezing out additional throughput at the cost of a substantially longer first-run compilation.</p>
+<h2 id="training-with-torchcompile-and-autograd">Training with torch.compile and Autograd<a class="headerlink" href="#training-with-torchcompile-and-autograd" title="Permanent link">¶</a></h2>
+<p>Using <code>torch.compile</code> during training requires a few extra considerations:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.optim</span><span class="w"> </span><span class="kn">import</span> <span class="n">AdamW</span>
+
+<span class="c1"># ─── Training setup ───────────────────────────────────────────────────────────</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">DecoderLayer</span><span class="p">(</span><span class="n">d_model</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span> <span class="n">n_heads</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">ffn_dim</span><span class="o">=</span><span class="mi">8192</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+
+<span class="c1"># Compile the model BEFORE wrapping with optimizer.</span>
+<span class="c1"># torch.compile sees a clean module, producing better graphs.</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
+
+<span class="n">optimizer</span> <span class="o">=</span> <span class="n">AdamW</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">fused</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># fused AdamW for extra speed</span>
+
+<span class="n">x</span>     <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">1024</span><span class="p">,</span> <span class="mi">2048</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+<span class="n">label</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">1024</span><span class="p">,</span> <span class="mi">2048</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+
+<span class="c1"># Standard training loop — no changes required</span>
+<span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">100</span><span class="p">):</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">(</span><span class="n">set_to_none</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># set_to_none avoids a memset kernel</span>
+    <span class="n">out</span>  <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">mse_loss</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">label</span><span class="p">)</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>            <span class="c1"># AOTAutograd&#39;s compiled backward runs here</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="mi">10</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;step </span><span class="si">{</span><span class="n">step</span><span class="si">}</span><span class="s2">  loss </span><span class="si">{</span><span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Two practical notes:</p>
+<ol>
+<li><strong><code>set_to_none=True</code> in <code>zero_grad</code></strong> avoids a separate memset kernel per parameter — a nice interaction with <code>torch.compile</code>.</li>
+<li><strong><code>fused=True</code> in AdamW</strong> uses a fused CUDA kernel for the Adam update, reducing the kernel count from O(number of parameters) to a handful.</li>
+</ol>
+<p>For distributed training, <code>torch.compile</code> composes with FSDP2 and DDP. The recommended order is to compile <em>before</em> wrapping with FSDP, so that Dynamo captures the model graph without FSDP&rsquo;s all-gather hooks in the way. Consult <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a> for the full FSDP setup.</p>
+<h2 id="graph-breaks-deep-dive-what-actually-stops-compilation">Graph Breaks Deep-Dive: What Actually Stops Compilation<a class="headerlink" href="#graph-breaks-deep-dive-what-actually-stops-compilation" title="Permanent link">¶</a></h2>
+<p>Understanding what triggers graph breaks is essential for tuning models that compile well.</p>
+<h3 id="data-dependent-control-flow">Data-Dependent Control Flow<a class="headerlink" href="#data-dependent-control-flow" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># BAD: Dynamo cannot trace through this — graph break every call</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">forward_bad</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">&gt;</span> <span class="mf">1.0</span><span class="p">:</span>    <span class="c1"># x.max() requires synchronizing CPU/GPU</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">/</span> <span class="n">x</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>  <span class="c1"># dynamic branch</span>
+    <span class="k">return</span> <span class="n">x</span>
+
+<span class="c1"># GOOD: use tensor operations throughout</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">forward_good</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+    <span class="n">max_val</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>
+    <span class="c1"># Soft clamp: x / max(x.max(), 1.0) — always the same graph</span>
+    <span class="k">return</span> <span class="n">x</span> <span class="o">/</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="n">max_val</span><span class="p">,</span> <span class="nb">min</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="python-lists-of-tensors">Python Lists of Tensors<a class="headerlink" href="#python-lists-of-tensors" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># BAD: list indexing can be dynamic; Dynamo may break here</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">forward_bad</span><span class="p">(</span><span class="n">tensors</span><span class="p">:</span> <span class="nb">list</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">t</span> <span class="o">*</span> <span class="mi">2</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">tensors</span><span class="p">]</span>  <span class="c1"># Python list comprehension → break</span>
+
+<span class="c1"># GOOD: stack into a single tensor</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">forward_good</span><span class="p">(</span><span class="n">tensors</span><span class="p">:</span> <span class="nb">list</span><span class="p">):</span>
+    <span class="n">stacked</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">tensors</span><span class="p">)</span>   <span class="c1"># Single op, fully traced</span>
+    <span class="k">return</span> <span class="n">stacked</span> <span class="o">*</span> <span class="mi">2</span>
+</code></pre></div>
+<h3 id="shape-guards-and-recompilation">Shape Guards and Recompilation<a class="headerlink" href="#shape-guards-and-recompilation" title="Permanent link">¶</a></h3>
+<p>When Dynamo traces with input shape <code>[4, 1024, 2048]</code>, it records a guard: <code>x.shape == (4, 1024, 2048)</code>. A subsequent call with <code>[8, 1024, 2048]</code> triggers a full recompile. You can mitigate this by marking dimensions dynamic:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch._dynamo</span>
+
+<span class="c1"># Mark batch dimension as dynamic before compilation</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">dynamic</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># More surgical control with torch._dynamo.mark_dynamic</span>
+<span class="nd">@torch</span><span class="o">.</span><span class="n">compile</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">_dynamo</span><span class="o">.</span><span class="n">mark_dynamic</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>   <span class="c1"># dim 0 is dynamic</span>
+    <span class="k">return</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</code></pre></div>
+<p>With <code>dynamic=True</code>, Dynamo emits <em>symbolic shapes</em> rather than concrete values and produces a more general compiled artifact that handles variable batch sizes without recompilation.</p>
+<h2 id="interview-corner">Interview Corner<a class="headerlink" href="#interview-corner" title="Permanent link">¶</a></h2>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are told that a model compiled with <code>torch.compile</code> shows no speedup over eager mode. Walk through your debugging process.</p>
+<p><strong>A:</strong> I would start with <code>TORCH_LOGS=graph_breaks python ...</code> to check whether the model is actually being compiled or fragmenting into many small subgraphs. If there are many graph breaks, I identify the causes (usually <code>tensor.item()</code>, shape-dependent control flow, or unsupported ops) and either eliminate them or restructure the code. Next, I&rsquo;d check if the dominant kernels are already hand-tuned (FlashAttention, cuBLAS GEMM) — <code>torch.compile</code> adds little value on top of those since Inductor won&rsquo;t regenerate a better matmul than cuBLAS. I&rsquo;d profile with <code>torch.profiler</code> to see which kernels dominate. If the model is memory-bound and small, compile overhead from CUDA graph capture might not be paid back at the measured batch size — I&rsquo;d try larger batches or <code>mode="max-autotune"</code>. Finally, I&rsquo;d check if the model has side effects (printing, <code>.item()</code> in the loop) that prevent CUDA graph capture in <code>reduce-overhead</code> mode.</p>
+</div>
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Kernel fusion reduces GPU DRAM round-trips by keeping intermediate values in registers or shared memory — for sequences of elementwise ops, it can 2–3× the memory bandwidth efficiency.</li>
+<li>CUDA graphs record the entire kernel launch sequence into a single GPU-executable artifact, eliminating the CPU overhead of re-launching hundreds of kernels per step; they are most effective for fixed-shape decode loops.</li>
+<li><code>torch.compile</code> is a three-layer pipeline: TorchDynamo captures an FX graph via Python bytecode tracing, AOTAutograd differentiates it ahead-of-time, and TorchInductor lowers it to fused Triton or CUDA kernels.</li>
+<li>Graph breaks partition the model into compiled subgraphs separated by eager fallback; the most common culprits are <code>tensor.item()</code>, shape-dependent <code>if</code> statements, and unsupported Python built-ins.</li>
+<li><code>mode="reduce-overhead"</code> enables CUDA graph capture internally; <code>mode="max-autotune"</code> runs an exhaustive Triton tile-size search that takes longer to compile but achieves the highest throughput on a given shape.</li>
+<li>AOTAutograd&rsquo;s joint forward+backward graph enables cross-boundary fusion, for example fusing an activation function with its gradient computation, which is unavailable in eager mode.</li>
+<li>XLA (used by JAX/TPU) and TVM take fundamentally similar approaches — whole-graph compilation with loop fusion — but are optimized for different hardware targets and have different dynamism tradeoffs.</li>
+<li><code>torch.compile</code> composes with FSDP, DDP, and fused optimizers; compile the model before wrapping with FSDP, and use <code>fused=True</code> in AdamW to reduce optimizer kernel count.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p><code>torch.compile</code> is now the standard path to production-quality training and inference performance in PyTorch, with TorchDynamo + TorchInductor delivering 1.4–2.3× geomean speedups across hundreds of real-world models; CUDA graphs, Triton-based code generation, and dynamic-shape support continue to mature rapidly through 2025–2026.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1802.04799">Chen et al., <em>TVM: An Automated End-to-End Optimizing Compiler for Deep Learning</em> (2018)</a> — establishes the search-based, loop-fusion compilation approach that underlies TorchInductor&rsquo;s design.</li>
+<li><a href="https://dl.acm.org/doi/10.1145/3315508.3329973">Tillet et al., <em>Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations</em> (2019)</a> — the tile-centric IR that TorchInductor uses for GPU code generation.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://dl.acm.org/doi/10.1145/3620665.3640366">Ansel et al., <em>PyTorch 2: Faster Machine Learning Through Dynamic Python Bytecode Transformation and Graph Compilation</em> (ASPLOS 2024)</a> — definitive paper on TorchDynamo, AOTAutograd, and TorchInductor; reports 2.27× inference and 1.41× training speedups on 180+ models.</li>
+<li><a href="https://arxiv.org/abs/2503.19779">Ghosh et al., <em>PyGraph: Robust Compiler Support for CUDA Graphs in PyTorch</em> (2025)</a> — automatic code transformations that double the benefit of CUDA graphs deployment compared to baseline PyTorch 2 compilation.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/triton-lang/triton">triton-lang/triton</a> — the Triton GPU programming language and compiler; TorchInductor generates Triton as its primary GPU backend.</li>
+<li><a href="https://github.com/pytorch/pytorch">pytorch/pytorch</a> — the PyTorch source; <code>torch/_dynamo</code>, <code>torch/_inductor</code>, and <code>torch/_functorch</code> contain the full compile stack.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/">PyTorch, <em>Accelerating PyTorch with CUDA Graphs</em> (blog, 2021; updated 2024)</a> — official deep-dive on the CUDA graph capture API with MLPerf benchmark results.</li>
+<li><a href="https://docs.pytorch.org/tutorials/intermediate/torch_compile_tutorial.html">PyTorch, <em>Introduction to torch.compile</em> (tutorial)</a> — official step-by-step guide covering modes, backends, and graph-break debugging.</li>
+<li><a href="https://pytorch.org/blog/accelerating-large-language-models/">PyTorch, <em>Accelerating Large Language Models with Accelerated Transformers</em> (blog)</a> — practical walkthrough showing <code>torch.compile</code> + SDPA achieving up to 64% speedup on nanoGPT.</li>
+<li><a href="https://blog.ezyang.com/2024/11/ways-to-use-torch-compile/">Edward Yang, <em>Ways to Use torch.compile</em> (blog, 2024)</a> — pragmatic guide to when and how to apply compilation in training vs. inference workloads.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>TorchDynamo</strong> — Ansel et al., &ldquo;TorchDynamo: Towards a More Flexible Python-based ML Framework,&rdquo; PyTorch Blog / MLSys 2023. The primary design document for the bytecode tracing approach.</li>
+<li><strong>PyTorch 2.0</strong> — Meta AI, &ldquo;PyTorch 2.0: Our Journey to the Next Generation of Production-Ready ML Frameworks,&rdquo; NeurIPS 2023 system track. Introduces the full compile stack.</li>
+<li><strong>torch.compile documentation</strong> — <code>pytorch.org/docs/stable/torch.compile.html</code>; the official guide to modes, backends, and debugging.</li>
+<li><strong>XLA: The TensorFlow Compiler</strong> — Leary &amp; Wang, &ldquo;XLA: TensorFlow, Compiled,&rdquo; TensorFlow Dev Summit 2017. The foundational XLA design.</li>
+<li><strong>TVM</strong> — Chen et al., &ldquo;TVM: An Automated End-to-End Optimizing Compiler for Deep Learning,&rdquo; OSDI 2018. The origin of the search-based compilation approach.</li>
+<li><strong>Triton</strong> — Tillet et al., &ldquo;Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations,&rdquo; MAPL 2019. The foundation for Inductor&rsquo;s code generation.</li>
+<li><strong>FlashAttention</strong> — Dao et al., &ldquo;FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness,&rdquo; NeurIPS 2022. The canonical example of hand-fused kernel engineering that <code>torch.compile</code> integrates with but cannot yet automatically reproduce.</li>
+<li><strong>TensorRT-LLM</strong> — NVIDIA open-source project (<code>github.com/NVIDIA/TensorRT-LLM</code>). Production-quality example of CUDA graph + TensorRT fusion for LLM inference.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="08-quantization-formats-qat.html"><span class="pn-label">← Previous</span><span class="pn-title">Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</span></a>
+<a class="next" href="10-memory-efficient-training.html"><span class="pn-label">Next →</span><span class="pn-title">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-plain-pytorch-is-slow-and-why-that-is-surprising">Why Plain PyTorch Is Slow (and Why That Is Surprising)</a></li>
+<li class="toc-l2"><a href="#kernel-fusion-mechanisms-and-taxonomy">Kernel Fusion: Mechanisms and Taxonomy</a></li>
+<li class="toc-l3"><a href="#horizontal-producerconsumer-fusion">Horizontal (Producer–Consumer) Fusion</a></li>
+<li class="toc-l3"><a href="#vertical-loop-fusion">Vertical (Loop) Fusion</a></li>
+<li class="toc-l3"><a href="#operator-tiling-blocking">Operator Tiling &amp;amp; Blocking</a></li>
+<li class="toc-l2"><a href="#cuda-graphs-eliminating-cpu-launch-overhead">CUDA Graphs: Eliminating CPU Launch Overhead</a></li>
+<li class="toc-l3"><a href="#the-problem-cpu-is-the-bottleneck-for-short-kernels">The Problem: CPU is the Bottleneck for Short Kernels</a></li>
+<li class="toc-l3"><a href="#how-cuda-graphs-work">How CUDA Graphs Work</a></li>
+<li class="toc-l3"><a href="#when-cuda-graphs-break">When CUDA Graphs Break</a></li>
+<li class="toc-l2"><a href="#torchcompile-the-full-pytorch-compiler-stack">torch.compile: The Full PyTorch Compiler Stack</a></li>
+<li class="toc-l3"><a href="#torchdynamo-safe-graph-capture-via-bytecode-rewriting">TorchDynamo: Safe Graph Capture via Bytecode Rewriting</a></li>
+<li class="toc-l3"><a href="#aotautograd-differentiation-before-compilation">AOTAutograd: Differentiation Before Compilation</a></li>
+<li class="toc-l3"><a href="#torchinductor-the-default-backend">TorchInductor: The Default Backend</a></li>
+<li class="toc-l3"><a href="#compile-options-and-modes">compile() Options and Modes</a></li>
+<li class="toc-l3"><a href="#diagnosing-and-reducing-graph-breaks">Diagnosing and Reducing Graph Breaks</a></li>
+<li class="toc-l2"><a href="#worked-example-compiling-a-transformer-block">Worked Example: Compiling a Transformer Block</a></li>
+<li class="toc-l2"><a href="#the-broader-compiler-ecosystem">The Broader Compiler Ecosystem</a></li>
+<li class="toc-l3"><a href="#xla-the-tpu-compiler-and-pytorchxla">XLA: The TPU Compiler (and PyTorch/XLA)</a></li>
+<li class="toc-l3"><a href="#tvm-apache-tvm">TVM / Apache TVM</a></li>
+<li class="toc-l3"><a href="#onnx-runtime-and-tensorrt">ONNX Runtime and TensorRT</a></li>
+<li class="toc-l3"><a href="#the-compiler-stack-for-llm-training-vs-inference">The Compiler Stack for LLM Training vs. Inference</a></li>
+<li class="toc-l2"><a href="#practical-integration-before-and-after-torchcompile">Practical Integration: Before and After torch.compile</a></li>
+<li class="toc-l2"><a href="#training-with-torchcompile-and-autograd">Training with torch.compile and Autograd</a></li>
+<li class="toc-l2"><a href="#graph-breaks-deep-dive-what-actually-stops-compilation">Graph Breaks Deep-Dive: What Actually Stops Compilation</a></li>
+<li class="toc-l3"><a href="#data-dependent-control-flow">Data-Dependent Control Flow</a></li>
+<li class="toc-l3"><a href="#python-lists-of-tensors">Python Lists of Tensors</a></li>
+<li class="toc-l3"><a href="#shape-guards-and-recompilation">Shape Guards and Recompilation</a></li>
+<li class="toc-l2"><a href="#interview-corner">Interview Corner</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

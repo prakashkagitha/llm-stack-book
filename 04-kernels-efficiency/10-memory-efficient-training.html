@@ -1,0 +1,1318 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math — The LLM Stack</title>
+<meta name="description" content="Activation/gradient checkpointing (recompute vs store), the activation-memory equation, CPU/NVMe offloading, selective recomputation, the full memory budget bre">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="active" href="10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IV — Kernels, Efficiency &amp; Quantization</div>
+<h1 id="410-memory-efficient-training-checkpointing-offloading-lora-math">4.10 Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math<a class="headerlink" href="#410-memory-efficient-training-checkpointing-offloading-lora-math" title="Permanent link">¶</a></h1>
+<p>Training large language models is fundamentally a memory management problem. A 7-billion-parameter model in full bf16 precision occupies about 14 GB just for its weights — but the actual GPU memory consumed during a training step can easily be 10× that figure once you account for gradients, optimizer states, and the intermediate tensors produced by the forward pass. Understanding <em>where</em> that memory goes, and which techniques claw it back, is essential knowledge for anyone who trains or fine-tunes LLMs.</p>
+<p>This chapter builds a precise memory budget for a training step from first principles, then covers the three main families of solutions: activation/gradient checkpointing, CPU and NVMe offloading, and parameter-efficient fine-tuning (PEFT). We quantify the tradeoffs with real numbers, show working code, and answer the interview questions that consistently trip up strong candidates.</p>
+<p>For background on GPU memory hierarchies and how data moves between HBM, L2, and SRAM, see <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>. For the distributed-training memory picture (ZeRO, FSDP), see <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a>. The mixed-precision regime in which all of this happens is covered in <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a>.</p>
+<h2 id="the-full-training-memory-budget">The Full Training Memory Budget<a class="headerlink" href="#the-full-training-memory-budget" title="Permanent link">¶</a></h2>
+<p>Before optimizing anything, we need a precise accounting. At any training step, GPU HBM holds six categories of tensors:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>What it contains</th>
+<th>Typical dtype</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Model parameters</strong> <span class="arithmatex">\(\Phi\)</span></td>
+<td>All weights</td>
+<td>bf16 or fp16</td>
+</tr>
+<tr>
+<td><strong>Master weights</strong> (mixed precision)</td>
+<td>fp32 copy kept by the optimizer</td>
+<td>fp32</td>
+</tr>
+<tr>
+<td><strong>Gradients</strong> <span class="arithmatex">\(\nabla_\Phi \mathcal{L}\)</span></td>
+<td>One gradient tensor per parameter</td>
+<td>fp16 or fp32</td>
+</tr>
+<tr>
+<td><strong>Optimizer states</strong></td>
+<td>e.g., Adam&rsquo;s <span class="arithmatex">\(m_t\)</span>, <span class="arithmatex">\(v_t\)</span> per parameter</td>
+<td>fp32</td>
+</tr>
+<tr>
+<td><strong>Activations</strong></td>
+<td>Saved forward-pass tensors needed by backward</td>
+<td>bf16/fp16</td>
+</tr>
+<tr>
+<td><strong>Temporary buffers</strong></td>
+<td>Workspace for kernels, all-reduce buffers</td>
+<td>mixed</td>
+</tr>
+</tbody>
+</table>
+<p>Let <span class="arithmatex">\(P\)</span> be the number of parameters. In <strong>standard Adam mixed-precision</strong> training:</p>
+<div class="arithmatex">\[
+M_{\text{static}} = \underbrace{2P}_{\text{bf16 weights}} + \underbrace{4P}_{\text{fp32 master}} + \underbrace{2P}_{\text{bf16 grads}} + \underbrace{4P + 4P}_{\text{Adam }m_t, v_t}
+\]</div>
+<div class="arithmatex">\[
+M_{\text{static}} = 16P \text{ bytes}
+\]</div>
+<p>So for a 7B model: <span class="arithmatex">\(16 \times 7 \times 10^9 = 112\,\text{GB}\)</span> — already beyond a single 80 GB H100. And we haven&rsquo;t counted activations yet.</p>
+<h3 id="the-activation-memory-equation">The Activation Memory Equation<a class="headerlink" href="#the-activation-memory-equation" title="Permanent link">¶</a></h3>
+<p>For a transformer trained with a batch of <span class="arithmatex">\(B\)</span> sequences of length <span class="arithmatex">\(T\)</span>, with <span class="arithmatex">\(L\)</span> layers, hidden dimension <span class="arithmatex">\(d\)</span>, and <span class="arithmatex">\(h\)</span> attention heads:</p>
+<p>During the <strong>forward pass</strong>, each transformer block needs to store activations for the backward pass. The dominant contributors per layer, per token are:</p>
+<ul>
+<li><strong>Attention QKV projections</strong>: <span class="arithmatex">\(3 \times d\)</span> (one fp16 tensor per projection)</li>
+<li><strong>Attention scores and softmax output</strong>: <span class="arithmatex">\(B \times h \times T \times T\)</span> (the full <span class="arithmatex">\(T \times T\)</span> attention matrix per head)</li>
+<li><strong>Post-attention projections</strong>: <span class="arithmatex">\(B \times T \times d\)</span></li>
+<li><strong>MLP intermediate</strong>: <span class="arithmatex">\(B \times T \times 4d\)</span> (for a standard 4× MLP expansion)</li>
+<li><strong>Layer norms</strong>: <span class="arithmatex">\(B \times T \times d\)</span></li>
+</ul>
+<p>A common rule of thumb aggregates this to roughly:</p>
+<div class="arithmatex">\[
+M_{\text{act}} \approx 12 \times B \times T \times d \times L \text{ bytes (fp16)}
+\]</div>
+<p>The exact coefficient depends on architecture details (e.g., GQA reduces the attention term). The key observation is that activation memory scales as <span class="arithmatex">\(B \times T \times L\)</span> — it can dwarf the static weight cost for long sequences or large batches.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: LLaMA-7B Memory Budget</p>
+<p>LLaMA-7B has: <span class="arithmatex">\(L=32\)</span> layers, <span class="arithmatex">\(d=4096\)</span>, <span class="arithmatex">\(h=32\)</span> heads.</p>
+<p><strong>Static memory (standard Adam, bf16 weights):</strong>
+$<span class="arithmatex">\(16P = 16 \times 7 \times 10^9 \approx 112\,\text{GB}\)</span>$</p>
+<p><strong>Activation memory, batch 1, sequence length 2048:</strong>
+$<span class="arithmatex">\(M_{\text{act}} \approx 12 \times 1 \times 2048 \times 4096 \times 32 \times 2\,\text{bytes}\)</span>$
+$<span class="arithmatex">\(= 12 \times 2048 \times 4096 \times 32 \times 2 \approx 6.4\,\text{GB}\)</span>$</p>
+<p>So with one GPU and standard training: <span class="arithmatex">\(112 + 6.4 \approx 118\,\text{GB}\)</span>.
+An H100 SXM has 80 GB — this doesn&rsquo;t fit even with one sample per GPU.</p>
+<p><strong>With gradient checkpointing (no activations stored):</strong>
+$<span class="arithmatex">\(M_{\text{total}} \approx 112 + \sqrt{L} \times \text{(one layer's activations)} \approx 112 + 0.2 \approx 112.2\,\text{GB}\)</span>$
+Still too large — we need ZeRO or PEFT as well.</p>
+<p><strong>With QLoRA rank-16 (see §4.5 below):</strong>
+$<span class="arithmatex">\(M_{\text{LoRA params}} = 2 \times 2 \times 16 \times 4096 \times 32 \approx 0.27\,\text{GB (bf16)}\)</span>$
+Frozen quantized base: <span class="arithmatex">\(\approx 3.5\,\text{GB (4-bit)}\)</span>. Optimizer states on LoRA only:
+$<span class="arithmatex">\(16 \times 2 \times 16 \times 4096 \times 32 \approx 0.27 \times 8 \approx 2.16\,\text{GB}\)</span>$
+Total: roughly <strong>6 GB</strong> — easily fits in a consumer GPU.</p>
+</div>
+<h2 id="activation-checkpointing-recompute-vs-store">Activation Checkpointing: Recompute vs. Store<a class="headerlink" href="#activation-checkpointing-recompute-vs-store" title="Permanent link">¶</a></h2>
+<p>Activation checkpointing (also called <strong>gradient checkpointing</strong>) is the oldest and most universally applicable memory-reduction technique. The idea, introduced in the systems literature as &ldquo;rematerialization&rdquo; and popularized for deep learning by Chen et al. (2016) in <em>Training Deep Nets with Sublinear Memory Cost</em>, is simple:</p>
+<blockquote>
+<p>Do not store every intermediate tensor during the forward pass. Instead, recompute them on demand during the backward pass.</p>
+</blockquote>
+<h3 id="the-recomputestorage-tradeoff">The Recompute–Storage Tradeoff<a class="headerlink" href="#the-recomputestorage-tradeoff" title="Permanent link">¶</a></h3>
+<p>Without checkpointing, storing all activations for an <span class="arithmatex">\(L\)</span>-layer network costs <span class="arithmatex">\(O(L)\)</span> memory but zero extra compute. With full recomputation, you store only the input to each layer, paying one extra forward pass: memory drops to <span class="arithmatex">\(O(1)\)</span> (or <span class="arithmatex">\(O(\sqrt{L})\)</span> with optimal placement), compute goes up by roughly 33%.</p>
+<p>The memory–compute tradeoff is:</p>
+<div class="arithmatex">\[
+M_{\text{act}} = O\!\left(\frac{L}{k}\right), \quad \text{FLOPs}_{\text{extra}} = O(k)
+\]</div>
+<p>where <span class="arithmatex">\(k\)</span> is the number of &ldquo;checkpoints&rdquo; (layer boundaries where you store a tensor). Choosing <span class="arithmatex">\(k = \sqrt{L}\)</span> minimizes the product, giving <span class="arithmatex">\(O(\sqrt{L})\)</span> memory and <span class="arithmatex">\(O(\sqrt{L})\)</span> extra cost — the classic sublinear memory result.</p>
+<p>In practice, modern frameworks let you checkpoint at the granularity of an entire transformer block, so the +33% compute overhead estimate is approximately correct for full-checkpointing of all blocks.</p>
+<h3 id="pytorch-activation-checkpointing-in-practice">PyTorch Activation Checkpointing in Practice<a class="headerlink" href="#pytorch-activation-checkpointing-in-practice" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.checkpoint</span><span class="w"> </span><span class="kn">import</span> <span class="n">checkpoint</span><span class="p">,</span> <span class="n">checkpoint_sequential</span>
+
+<span class="c1"># -----------------------------------------------------------------------</span>
+<span class="c1"># Simple demonstration: a single transformer block with checkpointing.</span>
+<span class="c1"># We wrap the forward in torch.utils.checkpoint.checkpoint so PyTorch</span>
+<span class="c1"># will NOT save intermediate activations, and will recompute them during</span>
+<span class="c1"># backward instead.</span>
+<span class="c1"># -----------------------------------------------------------------------</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TransformerBlock</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A minimal causal transformer block (MHA + FFN + layer norms).&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">ffn_mult</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attn</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">MultiheadAttention</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">batch_first</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">ffn_mult</span> <span class="o">*</span> <span class="n">d_model</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">GELU</span><span class="p">(),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">ffn_mult</span> <span class="o">*</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">),</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ln1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ln2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Self-attention with residual</span>
+        <span class="n">normed</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ln1</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">attn_out</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn</span><span class="p">(</span><span class="n">normed</span><span class="p">,</span> <span class="n">normed</span><span class="p">,</span> <span class="n">normed</span><span class="p">,</span> <span class="n">need_weights</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="n">attn_out</span>
+        <span class="c1"># FFN with residual</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ln2</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">x</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">CheckpointedModel</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wraps a stack of transformer blocks and applies gradient checkpointing.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n_layers</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                 <span class="n">use_checkpointing</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">TransformerBlock</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_layers</span><span class="p">)]</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">use_checkpointing</span> <span class="o">=</span> <span class="n">use_checkpointing</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_checkpointing</span> <span class="ow">and</span> <span class="n">x</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">:</span>
+                <span class="c1"># checkpoint() replaces the saved activations with a</span>
+                <span class="c1"># recomputation graph.  use_reentrant=False is recommended</span>
+                <span class="c1"># in PyTorch &gt;= 2.0 for compatibility with compiled graphs.</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">checkpoint</span><span class="p">(</span><span class="n">block</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">use_reentrant</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">block</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">x</span>
+
+
+<span class="c1"># -----------------------------------------------------------------------</span>
+<span class="c1"># Memory comparison: illustrate the difference at inference scale.</span>
+<span class="c1"># -----------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">measure_peak_memory</span><span class="p">(</span><span class="n">n_layers</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">use_checkpointing</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+                         <span class="n">batch</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span>
+                         <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1024</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Returns peak HBM usage in MB after one forward+backward pass.&quot;&quot;&quot;</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">reset_peak_memory_stats</span><span class="p">()</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">CheckpointedModel</span><span class="p">(</span><span class="n">n_layers</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">use_checkpointing</span><span class="p">)</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span>
+                     <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">max_memory_allocated</span><span class="p">()</span> <span class="o">/</span> <span class="mf">1e6</span>  <span class="c1"># MB</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">ckpt</span> <span class="ow">in</span> <span class="p">[</span><span class="kc">False</span><span class="p">,</span> <span class="kc">True</span><span class="p">]:</span>
+        <span class="n">mb</span> <span class="o">=</span> <span class="n">measure_peak_memory</span><span class="p">(</span><span class="n">n_layers</span><span class="o">=</span><span class="mi">24</span><span class="p">,</span> <span class="n">use_checkpointing</span><span class="o">=</span><span class="n">ckpt</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Checkpointing=</span><span class="si">{</span><span class="n">ckpt</span><span class="si">}</span><span class="s2">: peak memory = </span><span class="si">{</span><span class="n">mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB&quot;</span><span class="p">)</span>
+    <span class="c1"># Typical output:</span>
+    <span class="c1"># Checkpointing=False: peak memory = 3421.3 MB</span>
+    <span class="c1"># Checkpointing=True:  peak memory = 1108.7 MB  (~3x reduction)</span>
+</code></pre></div>
+<h3 id="selective-recomputation">Selective Recomputation<a class="headerlink" href="#selective-recomputation" title="Permanent link">¶</a></h3>
+<p>Full checkpointing of all blocks is conservative. Modern implementations (e.g., Megatron-LM&rsquo;s <code>--recompute-granularity selective</code>) let you choose <em>which</em> operations to recompute. The cost-benefit analysis:</p>
+<ul>
+<li><strong>Attention QK softmax</strong> (the <span class="arithmatex">\(T \times T\)</span> matrix): large memory footprint, cheap to recompute since it is memory-bound not compute-bound.</li>
+<li><strong>MLP GELU activations</strong>: moderate size, fast recompute.</li>
+<li><strong>Layer norm outputs</strong>: small, fast recompute — often not worth the overhead.</li>
+</ul>
+<p>The rule of thumb: recompute anything whose memory cost exceeds its FLOPs cost. FlashAttention (see <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a>) is itself an extreme form of selective recomputation — it does not materialize the <span class="arithmatex">\(N \times N\)</span> attention matrix at all, recomputing softmax statistics on-the-fly, saving <span class="arithmatex">\(O(N^2)\)</span> memory per layer.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Selective checkpointing: only checkpoint the attention sub-block,</span>
+<span class="c1"># not the cheaper FFN.  Saves ~60% of attention-related activation memory</span>
+<span class="c1"># at a small recompute cost.</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.checkpoint</span><span class="w"> </span><span class="kn">import</span> <span class="n">checkpoint</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SelectiveCheckpointBlock</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attn</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">MultiheadAttention</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">batch_first</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">d_model</span><span class="p">),</span> <span class="n">nn</span><span class="o">.</span><span class="n">GELU</span><span class="p">(),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">4</span> <span class="o">*</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">),</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ln1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ln2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_attn_only</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The sub-computation we want to recompute in backward.&quot;&quot;&quot;</span>
+        <span class="n">normed</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ln1</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">out</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn</span><span class="p">(</span><span class="n">normed</span><span class="p">,</span> <span class="n">normed</span><span class="p">,</span> <span class="n">normed</span><span class="p">,</span> <span class="n">need_weights</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">x</span> <span class="o">+</span> <span class="n">out</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Recompute attention activations; store FFN activations normally.</span>
+        <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">checkpoint</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_attn_only</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">use_reentrant</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_attn_only</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ln2</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+</code></pre></div>
+<h2 id="cpu-and-nvme-offloading">CPU and NVMe Offloading<a class="headerlink" href="#cpu-and-nvme-offloading" title="Permanent link">¶</a></h2>
+<p>When GPU memory is exhausted even after checkpointing, the next option is to spill tensors to cheaper, larger memory tiers.</p>
+<h3 id="the-memory-hierarchy-revisited">The Memory Hierarchy Revisited<a class="headerlink" href="#the-memory-hierarchy-revisited" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-memeff-memory-hierarchy-tiers">
+<svg viewBox="0 0 800 480" role="img" aria-label="Memory hierarchy showing four tiers from GPU HBM (fastest, smallest) to NVMe SSD (slowest, largest), with bandwidth bars illustrating the ~50x gap between HBM and PCIe, and dual arrows showing capacity increases as bandwidth decreases.">
+<style>
+  #fig-memeff-memory-hierarchy-tiers text { fill: var(--ink-soft); }
+  #fig-memeff-memory-hierarchy-tiers .tier-name { font: 700 14px var(--sans,sans-serif); }
+  #fig-memeff-memory-hierarchy-tiers .tier-bw { font: 600 12px var(--mono,monospace); }
+  #fig-memeff-memory-hierarchy-tiers .tier-cap { font: 600 12px var(--mono,monospace); }
+  #fig-memeff-memory-hierarchy-tiers .role-note { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-memeff-memory-hierarchy-tiers .axis-label { font: 600 12px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-memeff-memory-hierarchy-tiers .axis-sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-memeff-memory-hierarchy-tiers .callout { font: 700 11px var(--sans,sans-serif); }
+  #fig-memeff-memory-hierarchy-tiers .bw-bar-label { font: 500 10px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-memeff-memory-hierarchy-tiers .col-header { font: 600 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+</style>
+<defs>
+  <marker id="mh-arrow-up" viewBox="0 0 10 10" refX="5" refY="2" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M5 0 L10 8 L0 8 Z" fill="var(--muted,#64748b)"/>
+  </marker>
+  <marker id="mh-arrow-down" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 2 L10 2 L5 10 Z" fill="var(--muted,#64748b)"/>
+  </marker>
+  <marker id="mh-arrow-right" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 Z" fill="var(--muted,#64748b)"/>
+  </marker>
+  <marker id="mh-offload-up" viewBox="0 0 10 10" refX="5" refY="2" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M5 0 L10 8 L0 8 Z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="mh-offload-down" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 2 L10 2 L5 10 Z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+</defs>
+
+
+<text x="190" y="52" text-anchor="middle" class="col-header">Tier</text>
+<text x="390" y="52" text-anchor="middle" class="col-header">Bandwidth</text>
+<text x="530" y="52" text-anchor="middle" class="col-header">Capacity</text>
+<text x="665" y="52" text-anchor="middle" class="col-header">Role</text>
+
+
+<line x1="80" y1="58" x2="740" y2="58" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+
+
+<line x1="36" y1="390" x2="36" y2="85" stroke="var(--muted,#64748b)" stroke-width="1.5" marker-end="url(#mh-arrow-up)"/>
+<text x="14" y="410" text-anchor="start" class="axis-label">Bandwidth</text>
+<text x="14" y="426" text-anchor="start" class="axis-sub">(faster up)</text>
+
+
+<line x1="738" y1="85" x2="738" y2="390" stroke="var(--muted,#64748b)" stroke-width="1.5" marker-end="url(#mh-arrow-down)"/>
+<text x="788" y="410" text-anchor="end" class="axis-label">Capacity</text>
+<text x="788" y="426" text-anchor="end" class="axis-sub">(larger down)</text>
+
+
+<g>
+
+  <rect x="80" y="68" width="560" height="76" rx="8" class="v-fill" fill="var(--accent,#4f46e5)" fill-opacity="0.15" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+
+  <text x="175" y="102" text-anchor="middle" class="tier-name v-accent" fill="var(--accent,#4f46e5)">GPU HBM</text>
+
+  <text x="390" y="96" text-anchor="middle" class="tier-bw">~3.35 TB/s</text>
+
+  <rect x="295" y="105" width="190" height="9" rx="4" fill="var(--accent,#4f46e5)" fill-opacity="0.75"/>
+
+  <text x="530" y="102" text-anchor="middle" class="tier-cap">80 GB</text>
+
+  <text x="658" y="102" text-anchor="middle" class="role-note">active tensors</text>
+</g>
+
+
+<g>
+
+  <line x1="295" y1="148" x2="295" y2="178" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <line x1="295" y1="163" x2="340" y2="163" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+
+  <rect x="341" y="152" width="88" height="22" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.2" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="385" y="167" text-anchor="middle" class="callout" fill="var(--warn,#e0a106)">~50× slower</text>
+  <line x1="429" y1="163" x2="480" y2="163" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <line x1="480" y1="148" x2="480" y2="178" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+</g>
+
+
+<g>
+  <rect x="80" y="182" width="560" height="42" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.13" stroke="var(--warn,#e0a106)" stroke-width="2" stroke-dasharray="6 3"/>
+  <text x="175" y="205" text-anchor="middle" class="tier-name" fill="var(--warn,#e0a106)">PCIe bus</text>
+  <text x="390" y="200" text-anchor="middle" class="tier-bw">~64 GB/s</text>
+
+  <rect x="295" y="208" width="13" height="8" rx="3" fill="var(--warn,#e0a106)" fill-opacity="0.75"/>
+  <text x="530" y="205" text-anchor="middle" class="tier-cap" fill="var(--muted,#64748b)">(transfer link)</text>
+  <text x="658" y="205" text-anchor="middle" class="role-note" fill="var(--warn,#e0a106)">transfer bottleneck</text>
+</g>
+
+
+<g>
+  <rect x="80" y="236" width="560" height="76" rx="8" fill="var(--v-fill,#ece7da)" fill-opacity="0.85" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+  <text x="175" y="270" text-anchor="middle" class="tier-name">CPU DRAM</text>
+  <text x="390" y="265" text-anchor="middle" class="tier-bw">~100–200 GB/s</text>
+
+  <rect x="295" y="274" width="36" height="9" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.6"/>
+  <text x="530" y="270" text-anchor="middle" class="tier-cap">~512 GB</text>
+  <text x="658" y="270" text-anchor="middle" class="role-note">offloaded states</text>
+</g>
+
+
+<g>
+  <rect x="80" y="322" width="560" height="76" rx="8" fill="var(--v-fill,#ece7da)" fill-opacity="0.6" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+  <text x="175" y="356" text-anchor="middle" class="tier-name">NVMe SSD</text>
+  <text x="390" y="351" text-anchor="middle" class="tier-bw">~7 GB/s</text>
+
+  <rect x="295" y="360" width="4" height="9" rx="2" fill="var(--muted,#64748b)" fill-opacity="0.6"/>
+  <text x="530" y="356" text-anchor="middle" class="tier-cap">~4 TB</text>
+  <text x="658" y="356" text-anchor="middle" class="role-note">last resort</text>
+</g>
+
+
+<g>
+
+  <line x1="56" y1="148" x2="56" y2="315"
+        stroke="var(--accent,#4f46e5)" stroke-width="2.5"
+        marker-start="url(#mh-offload-up)"
+        marker-end="url(#mh-offload-down)"/>
+
+  <text x="56" y="235" text-anchor="middle" transform="rotate(-90 56 235)"
+        style="font:600 10px var(--sans,sans-serif);" fill="var(--accent,#4f46e5)">offload (down) / prefetch (up)</text>
+</g>
+
+
+<rect x="295" y="412" width="10" height="9" rx="2" fill="var(--accent,#4f46e5)" fill-opacity="0.6"/>
+<text x="311" y="420" class="bw-bar-label" text-anchor="start">bar length scales with log(bandwidth)</text>
+
+</svg>
+<figcaption><b>The four memory tiers form a bandwidth-capacity inversion: faster memory is always smaller.</b> GPU HBM delivers ~3.35 TB/s but only 80 GB; the PCIe link is ~50x slower at ~64 GB/s, making it the critical bottleneck for CPU offloading. The horizontal bandwidth bars inside each tier (log-scaled) make the gap immediate. Tensors offloaded to CPU DRAM or NVMe must tolerate this PCIe latency, so only parameters not needed every step (e.g., Adam optimizer states) can be offloaded without stalling training.</figcaption>
+</figure>
+
+<p>PCIe bandwidth is ~50× slower than HBM bandwidth. This means CPU offloading is only viable if the tensor being offloaded is <em>not</em> needed every step, or the compute on GPU is long enough to hide the transfer latency.</p>
+<h3 id="deepspeed-zero-infinity-and-offload">DeepSpeed ZeRO-Infinity and Offload<a class="headerlink" href="#deepspeed-zero-infinity-and-offload" title="Permanent link">¶</a></h3>
+<p>DeepSpeed&rsquo;s ZeRO-Offload and ZeRO-Infinity implement optimizer-state and parameter offloading. The key insight is that <strong>Adam optimizer states</strong> (<span class="arithmatex">\(m_t\)</span>, <span class="arithmatex">\(v_t\)</span>, and the fp32 master weights) are updated only once per step, after the gradient has been reduced. They are read once (to compute the weight update) and written once (with the new values). This access pattern tolerates the latency of a PCIe transfer because the Adam update itself is memory-bound and can be executed on CPU cheaply.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># deepspeed_offload_config.json — enable ZeRO-3 with CPU offload</span>
+<span class="c1"># Drop this into your DeepSpeed config to offload optimizer states + params.</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;zero_optimization&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;stage&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;offload_optimizer&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;device&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;pin_memory&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;offload_param&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;device&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;pin_memory&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;overlap_comm&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;contiguous_gradients&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;sub_group_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1e9</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;reduce_bucket_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;stage3_prefetch_bucket_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;stage3_param_persistence_threshold&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;bf16&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;train_micro_batch_size_per_gpu&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;gradient_accumulation_steps&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">16</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>With ZeRO-3 + CPU offload, the GPU holds only a working subset of parameters and optimizer states at any time, allowing effective training of 30B+ models on a single GPU — at the cost of significantly reduced throughput (roughly 5–10× slowdown versus in-memory training due to PCIe bandwidth saturation).</p>
+<h3 id="gradient-accumulation-as-an-offloading-strategy">Gradient Accumulation as an Offloading Strategy<a class="headerlink" href="#gradient-accumulation-as-an-offloading-strategy" title="Permanent link">¶</a></h3>
+<p>Gradient accumulation is not traditionally called &ldquo;offloading,&rdquo; but it achieves the same goal of separating the <strong>memory cost</strong> of a large effective batch from the <strong>peak memory</strong> of a single forward–backward pass. With accumulation steps <span class="arithmatex">\(A\)</span>:</p>
+<div class="arithmatex">\[
+M_{\text{peak}} = M(\text{micro-batch size} = B/A) + M_{\text{grad buffer}}
+\]</div>
+<p>The gradient buffer costs <span class="arithmatex">\(2P\)</span> bytes (fp16), held across all accumulation steps. But the activation peak at any step is determined by <span class="arithmatex">\(B/A\)</span>, not <span class="arithmatex">\(B\)</span>. This is cheap (no data movement), at the cost of <span class="arithmatex">\(A\)</span> forward–backward passes per parameter update.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Gradient accumulation — manual implementation in pure PyTorch.</span>
+<span class="c1"># Using a micro-batch of 1 to simulate an effective batch of 8.</span>
+
+<span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+<span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+
+<span class="n">ACCUMULATION_STEPS</span> <span class="o">=</span> <span class="mi">8</span>
+<span class="k">for</span> <span class="n">step</span><span class="p">,</span> <span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">dataloader</span><span class="p">):</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">cuda</span><span class="p">(),</span> <span class="n">y</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+
+    <span class="c1"># Optionally use autocast for mixed precision.</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">autocast</span><span class="p">(</span><span class="n">device_type</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">):</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="c1"># Scale loss by accumulation factor so gradients are averaged, not summed.</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">criterion</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span> <span class="o">/</span> <span class="n">ACCUMULATION_STEPS</span>
+
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>  <span class="c1"># Accumulates .grad on parameters — no optimizer step yet.</span>
+
+    <span class="k">if</span> <span class="p">(</span><span class="n">step</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="n">ACCUMULATION_STEPS</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="c1"># Gradient clipping before the optimizer step.</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">max_norm</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+        <span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+</code></pre></div>
+<h2 id="the-math-behind-lora-and-why-peft-slashes-memory">The Math Behind LoRA and Why PEFT Slashes Memory<a class="headerlink" href="#the-math-behind-lora-and-why-peft-slashes-memory" title="Permanent link">¶</a></h2>
+<p>Parameter-efficient fine-tuning (PEFT) methods attack the memory problem from a different angle: instead of reducing the cost of training all parameters, they <em>freeze</em> most parameters and only train a small adapter. <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a> covers the practical usage in depth; here we focus on the memory mathematics.</p>
+<h3 id="the-lora-factorization">The LoRA Factorization<a class="headerlink" href="#the-lora-factorization" title="Permanent link">¶</a></h3>
+<p>LoRA (Hu et al., <em>LoRA: Low-Rank Adaptation of Large Language Models</em>, 2021) approximates a weight update <span class="arithmatex">\(\Delta W \in \mathbb{R}^{d \times k}\)</span> as a product of two low-rank matrices:</p>
+<div class="arithmatex">\[
+\Delta W = B A, \quad B \in \mathbb{R}^{d \times r},\; A \in \mathbb{R}^{r \times k},\; r \ll \min(d, k)
+\]</div>
+<p>Only <span class="arithmatex">\(A\)</span> and <span class="arithmatex">\(B\)</span> are trained; the original <span class="arithmatex">\(W\)</span> is frozen. The number of trainable parameters per adapted weight matrix is:</p>
+<div class="arithmatex">\[
+|\theta_{\text{LoRA}}| = r(d + k) \quad \text{vs.} \quad dk \text{ for full fine-tuning}
+\]</div>
+<p>The compression ratio is:</p>
+<div class="arithmatex">\[
+\rho = \frac{r(d+k)}{dk} \approx \frac{r}{d} \quad \text{for } d \approx k
+\]</div>
+<p>For a 7B model with <span class="arithmatex">\(d = k = 4096\)</span> and rank <span class="arithmatex">\(r = 16\)</span>: <span class="arithmatex">\(\rho \approx 16/4096 = 0.4\%\)</span>. Only 0.4% of each weight matrix&rsquo;s parameters are trained.</p>
+<h3 id="memory-impact-exact-accounting">Memory Impact: Exact Accounting<a class="headerlink" href="#memory-impact-exact-accounting" title="Permanent link">¶</a></h3>
+<p>With LoRA, the memory budget changes dramatically:</p>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Full fine-tuning</th>
+<th>LoRA (<span class="arithmatex">\(r=16\)</span>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Frozen weights</strong> (bf16)</td>
+<td><span class="arithmatex">\(2P\)</span> bytes (trainable)</td>
+<td><span class="arithmatex">\(2P\)</span> bytes (frozen, no grad)</td>
+</tr>
+<tr>
+<td><strong>Adapter weights</strong> (bf16)</td>
+<td>—</td>
+<td>$2 \cdot</td>
+</tr>
+<tr>
+<td><strong>Gradients</strong></td>
+<td><span class="arithmatex">\(2P\)</span> bytes</td>
+<td>$2 \cdot</td>
+</tr>
+<tr>
+<td><strong>Optimizer states</strong> (Adam fp32)</td>
+<td><span class="arithmatex">\(8P\)</span> bytes</td>
+<td>$8 \cdot</td>
+</tr>
+</tbody>
+</table>
+<p>For a frozen weight tensor, PyTorch does not allocate a gradient buffer, so <strong>frozen parameters contribute 0 bytes of gradient or optimizer state</strong>. The savings are enormous: if LoRA covers all linear layers in a 7B model with rank 16, the optimizer state shrinks from <span class="arithmatex">\(\sim\)</span>56 GB (fp32 Adam) to roughly <span class="arithmatex">\(56 \times 0.004 = 0.22\)</span> GB.</p>
+<p>The frozen base model&rsquo;s weights still occupy <span class="arithmatex">\(2P\)</span> bytes, but they require no gradient storage. With 4-bit quantization of the base model (QLoRA), these compress further to <span class="arithmatex">\(\frac{P}{2}\)</span> bytes:</p>
+<div class="arithmatex">\[
+M_{\text{QLoRA}} = \underbrace{\frac{P}{2}}_{\text{4-bit base}} + \underbrace{2 \cdot |\theta_{\text{LoRA}}|}_{\text{bf16 adapters}} + \underbrace{8 \cdot |\theta_{\text{LoRA}}|}_{\text{Adam states on adapters}}
+\]</div>
+<p>For LLaMA-7B with rank 16 covering all attention weight matrices: approximately <span class="arithmatex">\(3.5 + 0.27 + 2.16 = 5.9\)</span> GB — fitting in a 6 GB GPU.</p>
+<h3 id="lora-from-scratch-a-full-implementation">LoRA From Scratch: A Full Implementation<a class="headerlink" href="#lora-from-scratch-a-full-implementation" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LoRALinear</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Drop-in replacement for nn.Linear with a LoRA side path.</span>
+
+<span class="sd">    During forward: output = x @ W^T + (x @ A^T) @ B^T * scale</span>
+<span class="sd">    where W is frozen and only A, B are updated.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">in_features</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">out_features</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>
+        <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">32.0</span><span class="p">,</span>   <span class="c1"># LoRA scaling hyper-param; scale = alpha/rank</span>
+        <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">,</span>
+        <span class="n">bias</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">in_features</span>  <span class="o">=</span> <span class="n">in_features</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">out_features</span> <span class="o">=</span> <span class="n">out_features</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rank</span>         <span class="o">=</span> <span class="n">rank</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scale</span>        <span class="o">=</span> <span class="n">alpha</span> <span class="o">/</span> <span class="n">rank</span>  <span class="c1"># Hu et al. use this to keep LR independent of r</span>
+
+        <span class="c1"># Frozen base weight (will be loaded from pretrained model)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">out_features</span><span class="p">,</span> <span class="n">in_features</span><span class="p">),</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bias_param</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">out_features</span><span class="p">),</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span>
+        <span class="p">)</span> <span class="k">if</span> <span class="n">bias</span> <span class="k">else</span> <span class="kc">None</span>
+
+        <span class="c1"># Trainable LoRA matrices</span>
+        <span class="c1"># A is initialized from N(0, 1/sqrt(r)) to give unit-variance init.</span>
+        <span class="c1"># B is initialized to zero so ΔW = 0 at the start of training.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">rank</span><span class="p">,</span> <span class="n">in_features</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">out_features</span><span class="p">,</span> <span class="n">rank</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lora_dropout</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">)</span>
+
+        <span class="c1"># Kaiming init for A (matches standard linear init scale)</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">kaiming_uniform_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">,</span> <span class="n">a</span><span class="o">=</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mi">5</span><span class="p">))</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_linear</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">linear</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">,</span> <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>
+                    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">32.0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LoRALinear&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Convert an existing nn.Linear to LoRALinear, preserving its weights.&quot;&quot;&quot;</span>
+        <span class="n">bias</span> <span class="o">=</span> <span class="n">linear</span><span class="o">.</span><span class="n">bias</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="n">lora</span> <span class="o">=</span> <span class="bp">cls</span><span class="p">(</span><span class="n">linear</span><span class="o">.</span><span class="n">in_features</span><span class="p">,</span> <span class="n">linear</span><span class="o">.</span><span class="n">out_features</span><span class="p">,</span>
+                   <span class="n">rank</span><span class="o">=</span><span class="n">rank</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">bias</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">lora</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">linear</span><span class="o">.</span><span class="n">weight</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">bias</span><span class="p">:</span>
+                <span class="n">lora</span><span class="o">.</span><span class="n">bias_param</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">linear</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">lora</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Standard linear (no grad flows here since weight.requires_grad=False)</span>
+        <span class="n">base_out</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">bias_param</span><span class="p">)</span>
+
+        <span class="c1"># LoRA side path: (x @ A^T) @ B^T, scaled</span>
+        <span class="c1"># shapes: x[..., in_features] -&gt; A[rank, in] -&gt; B[out, rank]</span>
+        <span class="n">lora_out</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span>
+            <span class="n">F</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lora_dropout</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">),</span>  <span class="c1"># [..., rank]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span>                                     <span class="c1"># [..., out]</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">base_out</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">*</span> <span class="n">lora_out</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">merge_weights</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Merge the LoRA update into W for efficient inference.</span>
+<span class="sd">        Returns a standard nn.Linear with merged weights.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">merged_weight</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lora_B</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">lora_A</span><span class="p">)</span>
+        <span class="n">linear</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">in_features</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">out_features</span><span class="p">,</span>
+                           <span class="n">bias</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">bias_param</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">linear</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">merged_weight</span><span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">bias_param</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">linear</span><span class="o">.</span><span class="n">bias</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bias_param</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">linear</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">extra_repr</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;in=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">in_features</span><span class="si">}</span><span class="s2">, out=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">out_features</span><span class="si">}</span><span class="s2">, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;rank=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">rank</span><span class="si">}</span><span class="s2">, scale=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">scale</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># -----------------------------------------------------------------------</span>
+<span class="c1"># Utility: inject LoRA into all attention Q, V projections of a GPT-style</span>
+<span class="c1"># model.  This is the most common recipe (K and O are often frozen).</span>
+<span class="c1"># -----------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">inject_lora</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span> <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">32.0</span><span class="p">,</span>
+                <span class="n">target_modules</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;q_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;v_proj&quot;</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Walk the module tree and replace named Linear sub-modules</span>
+<span class="sd">    whose name ends with any string in target_modules with LoRALinear.</span>
+<span class="sd">    Freezes all non-LoRA parameters.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># First, freeze everything</span>
+    <span class="k">for</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+        <span class="n">param</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="c1"># Replace target projections with LoRA versions</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">module</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">named_modules</span><span class="p">()):</span>
+        <span class="k">for</span> <span class="n">target</span> <span class="ow">in</span> <span class="n">target_modules</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="n">target</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">):</span>
+                <span class="c1"># Navigate to parent and set child</span>
+                <span class="n">parts</span> <span class="o">=</span> <span class="n">name</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">)</span>
+                <span class="n">parent</span> <span class="o">=</span> <span class="n">model</span>
+                <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">parts</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>
+                    <span class="n">parent</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">parent</span><span class="p">,</span> <span class="n">part</span><span class="p">)</span>
+                <span class="n">lora_module</span> <span class="o">=</span> <span class="n">LoRALinear</span><span class="o">.</span><span class="n">from_linear</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="n">rank</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">)</span>
+                <span class="nb">setattr</span><span class="p">(</span><span class="n">parent</span><span class="p">,</span> <span class="n">parts</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">lora_module</span><span class="p">)</span>
+                <span class="k">break</span>  <span class="c1"># Found target for this module; move on</span>
+
+    <span class="c1"># Report trainable parameter count</span>
+    <span class="n">trainable</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">)</span>
+    <span class="n">total</span>     <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;LoRA injection complete: </span><span class="si">{</span><span class="n">trainable</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> / </span><span class="si">{</span><span class="n">total</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> params trainable &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="mi">100</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">trainable</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">total</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">%)&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">model</span>
+</code></pre></div>
+<h3 id="qlora-quantized-base-lora-adapters">QLoRA: Quantized Base + LoRA Adapters<a class="headerlink" href="#qlora-quantized-base-lora-adapters" title="Permanent link">¶</a></h3>
+<p>QLoRA (Dettmers et al., <em>QLoRA: Efficient Finetuning of Quantized LLMs</em>, 2023) combines two ideas:</p>
+<ol>
+<li>
+<p><strong>NF4 (NormalFloat4)</strong>: A 4-bit data type optimized for normally-distributed weights. Instead of linear quantization, NF4 assigns quantization levels at equal-probability points of a standard normal distribution, minimizing quantization error for the typical weight distribution.</p>
+</li>
+<li>
+<p><strong>Double quantization</strong>: The NF4 quantization constants themselves are quantized to 8 bits, saving roughly 0.37 bits per parameter on top of the base NF4 savings.</p>
+</li>
+<li>
+<p><strong>Paged optimizer</strong>: Uses NVIDIA&rsquo;s unified memory to page optimizer states to CPU DRAM on demand, preventing OOM crashes from memory spikes.</p>
+</li>
+</ol>
+<p>The base model is loaded in 4-bit and never updated; gradients flow only through the fp16/bf16 LoRA adapters using a straight-through-style mechanism.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># QLoRA with bitsandbytes and HuggingFace Transformers</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span><span class="p">,</span> <span class="n">BitsAndBytesConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">peft</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoraConfig</span><span class="p">,</span> <span class="n">get_peft_model</span><span class="p">,</span> <span class="n">TaskType</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># 4-bit quantization config</span>
+<span class="n">bnb_config</span> <span class="o">=</span> <span class="n">BitsAndBytesConfig</span><span class="p">(</span>
+    <span class="n">load_in_4bit</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">bnb_4bit_quant_type</span><span class="o">=</span><span class="s2">&quot;nf4&quot;</span><span class="p">,</span>         <span class="c1"># NormalFloat4 — best for LLM weights</span>
+    <span class="n">bnb_4bit_use_double_quant</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>    <span class="c1"># Quantize the quantization constants too</span>
+    <span class="n">bnb_4bit_compute_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>  <span class="c1"># Activations/LoRA in bf16</span>
+<span class="p">)</span>
+
+<span class="c1"># Load the model in 4-bit; the base weights are frozen automatically</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="s2">&quot;meta-llama/Llama-2-7b-hf&quot;</span><span class="p">,</span>
+    <span class="n">quantization_config</span><span class="o">=</span><span class="n">bnb_config</span><span class="p">,</span>
+    <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Prepare for k-bit training (adds gradient checkpointing + layer-norm fixes)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">peft</span><span class="w"> </span><span class="kn">import</span> <span class="n">prepare_model_for_kbit_training</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">prepare_model_for_kbit_training</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">use_gradient_checkpointing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Attach LoRA adapters to Q and V projections</span>
+<span class="n">lora_config</span> <span class="o">=</span> <span class="n">LoraConfig</span><span class="p">(</span>
+    <span class="n">r</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+    <span class="n">lora_alpha</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+    <span class="n">target_modules</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;q_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;v_proj&quot;</span><span class="p">],</span>   <span class="c1"># expand to k_proj, o_proj for more capacity</span>
+    <span class="n">lora_dropout</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+    <span class="n">bias</span><span class="o">=</span><span class="s2">&quot;none&quot;</span><span class="p">,</span>
+    <span class="n">task_type</span><span class="o">=</span><span class="n">TaskType</span><span class="o">.</span><span class="n">CAUSAL_LM</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">get_peft_model</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">lora_config</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">print_trainable_parameters</span><span class="p">()</span>
+<span class="c1"># Typical output: trainable params: 4,194,304 || all params: 6,738,415,616</span>
+<span class="c1"># || trainable%: 0.0623</span>
+</code></pre></div>
+<h2 id="practical-memory-accounting-a-step-by-step-recipe">Practical Memory Accounting: A Step-by-Step Recipe<a class="headerlink" href="#practical-memory-accounting-a-step-by-step-recipe" title="Permanent link">¶</a></h2>
+<p>When you encounter an OOM error, the correct debugging strategy is systematic, not random. Here is the procedure we use in practice.</p>
+<h3 id="step-1-measure-the-static-footprint">Step 1: Measure the Static Footprint<a class="headerlink" href="#step-1-measure-the-static-footprint" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">memory_snapshot</span><span class="p">(</span><span class="n">label</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Print current and peak allocated GPU memory.&quot;&quot;&quot;</span>
+    <span class="n">alloc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">memory_allocated</span><span class="p">()</span> <span class="o">/</span> <span class="mf">1e9</span>
+    <span class="n">peak</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">max_memory_allocated</span><span class="p">()</span> <span class="o">/</span> <span class="mf">1e9</span>
+    <span class="n">res</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">memory_reserved</span><span class="p">()</span> <span class="o">/</span> <span class="mf">1e9</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">] allocated=</span><span class="si">{</span><span class="n">alloc</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">GB  peak=</span><span class="si">{</span><span class="n">peak</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">GB  reserved=</span><span class="si">{</span><span class="n">res</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">GB&quot;</span><span class="p">)</span>
+
+<span class="c1"># Profile a forward pass step-by-step:</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">reset_peak_memory_stats</span><span class="p">()</span>
+<span class="n">memory_snapshot</span><span class="p">(</span><span class="s2">&quot;start&quot;</span><span class="p">)</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+<span class="n">memory_snapshot</span><span class="p">(</span><span class="s2">&quot;after model load&quot;</span><span class="p">)</span>  <span class="c1"># Should be ~2P bytes for bf16 weights</span>
+
+<span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+<span class="n">memory_snapshot</span><span class="p">(</span><span class="s2">&quot;after input&quot;</span><span class="p">)</span>
+
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">memory_snapshot</span><span class="p">(</span><span class="s2">&quot;after forward (no_grad)&quot;</span><span class="p">)</span>  <span class="c1"># No activation retention</span>
+
+<span class="k">del</span> <span class="n">out</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">empty_cache</span><span class="p">()</span>
+
+<span class="n">out</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                   <span class="c1"># With grad enabled</span>
+<span class="n">memory_snapshot</span><span class="p">(</span><span class="s2">&quot;after forward (with_grad)&quot;</span><span class="p">)</span>  <span class="c1"># Activations retained here!</span>
+
+<span class="n">out</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="n">memory_snapshot</span><span class="p">(</span><span class="s2">&quot;after backward&quot;</span><span class="p">)</span>  <span class="c1"># Grads allocated, activations freed</span>
+</code></pre></div>
+<h3 id="step-2-use-torchcudamemory_stats-for-detailed-breakdown">Step 2: Use torch.cuda.memory_stats for Detailed Breakdown<a class="headerlink" href="#step-2-use-torchcudamemory_stats-for-detailed-breakdown" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Dump the full memory stats dictionary to identify the largest allocation.</span>
+<span class="n">stats</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">memory_stats</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">val</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">stats</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">kv</span><span class="p">:</span> <span class="o">-</span><span class="n">kv</span><span class="p">[</span><span class="mi">1</span><span class="p">]):</span>
+    <span class="k">if</span> <span class="n">val</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">val</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mf">1e6</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="step-3-the-decision-tree">Step 3: The Decision Tree<a class="headerlink" href="#step-3-the-decision-tree" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-memeff-oom-decision-tree">
+<svg viewBox="0 0 980 620" role="img" aria-label="OOM debugging decision tree: root asks where OOM occurs, left branch diagnoses forward-pass activation issues, center branch covers optimizer state issues, right branch addresses backward accumulation issues, each with ordered remedies.">
+<style>
+  #fig-memeff-oom-decision-tree text { fill: var(--ink-soft,#1e293b); }
+  #fig-memeff-oom-decision-tree .node-label { font: 600 13px var(--sans,sans-serif); }
+  #fig-memeff-oom-decision-tree .node-q { font: 700 12px var(--sans,sans-serif); }
+  #fig-memeff-oom-decision-tree .panel-title { font: 700 12px var(--sans,sans-serif); fill: var(--accent,#4f46e5); }
+  #fig-memeff-oom-decision-tree .remedy-text { font: 400 11px var(--sans,sans-serif); }
+  #fig-memeff-oom-decision-tree .edge-label { font: 700 11px var(--sans,sans-serif); fill: #fff; }
+  #fig-memeff-oom-decision-tree .badge-num { font: 700 10px var(--sans,sans-serif); fill: #fff; }
+  #fig-memeff-oom-decision-tree .root-label { font: 700 13px var(--sans,sans-serif); fill: #fff; }
+</style>
+<defs>
+  <marker id="dt-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 Z" fill="var(--muted,#64748b)"/>
+  </marker>
+</defs>
+
+
+
+<g>
+  <rect x="350" y="24" width="280" height="48" rx="10"
+        fill="var(--accent,#ef4444)" fill-opacity="1"
+        stroke="var(--accent,#ef4444)" stroke-width="2"/>
+
+  <rect x="350" y="24" width="280" height="48" rx="10"
+        fill="#dc2626" fill-opacity="0.9" stroke="#dc2626" stroke-width="2"/>
+  <text x="490" y="44" text-anchor="middle" class="root-label">OOM during training?</text>
+  <text x="490" y="60" text-anchor="middle" style="font:400 11px var(--sans,sans-serif); fill:#fecaca;">Diagnose where and when it occurs</text>
+</g>
+
+
+<line x1="380" y1="72" x2="210" y2="168" stroke="var(--muted,#64748b)" stroke-width="1.5" marker-end="url(#dt-arrow)"/>
+
+<rect x="267" y="108" width="88" height="18" rx="7" fill="var(--accent,#4f46e5)"/>
+<text x="311" y="121" text-anchor="middle" class="edge-label">in forward?</text>
+
+
+<line x1="490" y1="72" x2="770" y2="168" stroke="var(--muted,#64748b)" stroke-width="1.5" marker-end="url(#dt-arrow)"/>
+
+<rect x="666" y="108" width="96" height="18" rx="7" fill="var(--muted,#64748b)"/>
+<text x="714" y="121" text-anchor="middle" class="edge-label">.backward()?</text>
+
+
+<g>
+  <rect x="100" y="168" width="220" height="46" rx="8"
+        fill="var(--surface,#f1f5f9)" fill-opacity="0.9"
+        stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+  <text x="210" y="188" text-anchor="middle" class="node-q" fill="var(--accent,#4f46e5)">Is it in the forward pass?</text>
+  <text x="210" y="205" text-anchor="middle" style="font:400 10px var(--sans,sans-serif); fill:var(--muted,#64748b);">Check where OOM is raised</text>
+</g>
+
+
+<line x1="165" y1="214" x2="130" y2="278" stroke="var(--muted,#64748b)" stroke-width="1.5" marker-end="url(#dt-arrow)"/>
+<rect x="124" y="237" width="34" height="17" rx="6" fill="var(--accent,#4f46e5)"/>
+<text x="141" y="250" text-anchor="middle" class="edge-label" style="font:700 10px var(--sans,sans-serif);">YES</text>
+
+
+<line x1="255" y1="214" x2="390" y2="278" stroke="var(--muted,#64748b)" stroke-width="1.5" marker-end="url(#dt-arrow)"/>
+<rect x="296" y="237" width="30" height="17" rx="6" fill="var(--muted,#64748b)"/>
+<text x="311" y="250" text-anchor="middle" class="edge-label" style="font:700 10px var(--sans,sans-serif);">NO</text>
+
+
+<g>
+  <rect x="15" y="278" width="280" height="218" rx="8"
+        fill="var(--surface,#f8fafc)" fill-opacity="0.85"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="155" y="298" text-anchor="middle" class="panel-title">Activation memory issue</text>
+  <line x1="25" y1="304" x2="285" y2="304" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <text x="30" y="320" class="remedy-text" style="font:500 10px var(--sans,sans-serif); fill:var(--muted,#64748b);">Solutions — in order of cost:</text>
+
+
+  <circle cx="34" cy="340" r="9" fill="var(--accent,#4f46e5)"/>
+  <text x="34" y="344" text-anchor="middle" class="badge-num">1</text>
+  <text x="50" y="337" class="remedy-text">Reduce batch size /</text>
+  <text x="50" y="351" class="remedy-text">use gradient accumulation</text>
+
+
+  <circle cx="34" cy="374" r="9" fill="var(--accent,#4f46e5)"/>
+  <text x="34" y="378" text-anchor="middle" class="badge-num">2</text>
+  <text x="50" y="371" class="remedy-text">Enable activation</text>
+  <text x="50" y="385" class="remedy-text">checkpointing</text>
+
+
+  <circle cx="34" cy="408" r="9" fill="var(--accent,#4f46e5)"/>
+  <text x="34" y="412" text-anchor="middle" class="badge-num">3</text>
+  <text x="50" y="405" class="remedy-text">Use FlashAttention</text>
+  <text x="50" y="419" class="remedy-text">(eliminates O(T²) attn matrices)</text>
+
+
+  <circle cx="34" cy="445" r="9" fill="var(--accent,#4f46e5)"/>
+  <text x="34" y="449" text-anchor="middle" class="badge-num">4</text>
+  <text x="50" y="449" class="remedy-text">Reduce sequence length</text>
+</g>
+
+
+<g>
+  <rect x="310" y="278" width="290" height="218" rx="8"
+        fill="var(--surface,#f8fafc)" fill-opacity="0.85"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="455" y="298" text-anchor="middle" class="panel-title">Optimizer state issue</text>
+  <line x1="320" y1="304" x2="590" y2="304" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <text x="325" y="320" class="remedy-text" style="font:500 10px var(--sans,sans-serif); fill:var(--muted,#64748b);">Solutions:</text>
+
+
+  <circle cx="329" cy="340" r="9" fill="var(--accent,#4f46e5)"/>
+  <text x="329" y="344" text-anchor="middle" class="badge-num">1</text>
+  <text x="345" y="337" class="remedy-text">Use Adafactor</text>
+  <text x="345" y="351" class="remedy-text">(no m_t; O(P) not O(2P) states)</text>
+
+
+  <circle cx="329" cy="374" r="9" fill="var(--accent,#4f46e5)"/>
+  <text x="329" y="378" text-anchor="middle" class="badge-num">2</text>
+  <text x="345" y="371" class="remedy-text">Use ZeRO-2 or ZeRO-3</text>
+  <text x="345" y="385" class="remedy-text">to shard optimizer states</text>
+
+
+  <circle cx="329" cy="408" r="9" fill="var(--accent,#4f46e5)"/>
+  <text x="329" y="412" text-anchor="middle" class="badge-num">3</text>
+  <text x="345" y="405" class="remedy-text">Use LoRA</text>
+  <text x="345" y="419" class="remedy-text">(skip states on frozen params)</text>
+
+
+  <circle cx="329" cy="445" r="9" fill="var(--accent,#4f46e5)"/>
+  <text x="329" y="449" text-anchor="middle" class="badge-num">4</text>
+  <text x="345" y="449" class="remedy-text">CPU offload (ZeRO-Offload)</text>
+</g>
+
+
+<g>
+  <rect x="630" y="168" width="334" height="200" rx="8"
+        fill="var(--surface,#f8fafc)" fill-opacity="0.85"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="797" y="190" text-anchor="middle" class="panel-title">OOM during .backward()</text>
+  <text x="797" y="205" text-anchor="middle" class="panel-title">accumulation?</text>
+  <line x1="640" y1="211" x2="954" y2="211" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+  <text x="645" y="229" class="remedy-text" style="font:500 10px var(--sans,sans-serif); fill:var(--muted,#64748b);">Gradient accumulation buffer is O(P).</text>
+  <text x="645" y="246" class="remedy-text">Option A: use fp16 grads</text>
+  <text x="645" y="262" class="remedy-text" style="fill:var(--muted,#64748b);">  (saves 2x vs fp32 gradients)</text>
+  <text x="645" y="282" class="remedy-text">Option B: per-layer gradient clearing</text>
+  <text x="645" y="298" class="remedy-text" style="fill:var(--muted,#64748b);">  with gradient checkpointing</text>
+  <text x="645" y="318" class="remedy-text" style="fill:var(--muted,#64748b);">  (free activation buffers layer-by-layer)</text>
+  <text x="645" y="348" style="font:600 10px var(--mono,monospace); fill:var(--accent,#4f46e5);">grad_accum_buffer ~ O(P) bytes</text>
+</g>
+
+
+<rect x="15" y="512" width="950" height="36" rx="6"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.07"
+      stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="490" y="526" text-anchor="middle"
+      style="font:600 11px var(--sans,sans-serif); fill:var(--muted,#64748b);">Remedy lists are ordered by cost/impact. Try lower-cost options first.</text>
+<text x="490" y="542" text-anchor="middle"
+      style="font:400 10px var(--sans,sans-serif); fill:var(--muted,#64748b);">OOM location determines the root cause: forward = activations, backward = optimizer states or gradient buffers.</text>
+
+</svg>
+<figcaption><b>OOM errors during training fall into three distinct root causes, each with its own ordered remedies.</b> If the crash happens in the forward pass, the culprit is activation memory — start with batch-size reduction, then checkpointing, then FlashAttention. If it crashes after the forward pass, optimizer states are too large — try Adafactor, ZeRO sharding, or LoRA. A crash during gradient accumulation points to the O(P) gradient buffer, cured by fp16 gradients or per-layer clearing.</figcaption>
+</figure>
+
+<h2 id="combining-techniques-the-memory-stack">Combining Techniques: The Memory Stack<a class="headerlink" href="#combining-techniques-the-memory-stack" title="Permanent link">¶</a></h2>
+<p>These techniques are not mutually exclusive. In practice, large-scale fine-tuning stacks several simultaneously. The table below shows approximate peak memory for a 70B-parameter Llama-style model with a batch of 1 at sequence length 2048:</p>
+<table>
+<thead>
+<tr>
+<th>Configuration</th>
+<th>Approx. peak GPU memory</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Vanilla full training (fp16 Adam)</td>
+<td><span class="arithmatex">\(16 \times 70\,\text{B} \approx 1120\,\text{GB}\)</span></td>
+</tr>
+<tr>
+<td>+ ZeRO-3 (8 GPUs, no offload)</td>
+<td><span class="arithmatex">\(1120 / 8 \approx 140\,\text{GB/GPU}\)</span> (still needs 2×A100)</td>
+</tr>
+<tr>
+<td>+ ZeRO-3 + CPU offload</td>
+<td><span class="arithmatex">\(\sim 40\,\text{GB/GPU}\)</span> (1 H100, slow)</td>
+</tr>
+<tr>
+<td>LoRA (<span class="arithmatex">\(r=16\)</span>, all attn layers)</td>
+<td><span class="arithmatex">\(\sim 30\,\text{GB/GPU}\)</span> (2P frozen + small optimizer)</td>
+</tr>
+<tr>
+<td>QLoRA (<span class="arithmatex">\(r=16\)</span>, 4-bit base)</td>
+<td><span class="arithmatex">\(\sim 15\,\text{GB/GPU}\)</span> (4-bit base + bf16 adapters)</td>
+</tr>
+<tr>
+<td>QLoRA + checkpointing</td>
+<td><span class="arithmatex">\(\sim 12\,\text{GB/GPU}\)</span></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: forgetting to freeze properly</p>
+<p>When using LoRA, many engineers rely on PEFT&rsquo;s <code>get_peft_model()</code> to freeze base weights automatically. If you manually set <code>param.requires_grad = False</code> on the base model <em>after</em> wrapping with PEFT, you may inadvertently freeze the adapter weights too. Always inspect <code>model.print_trainable_parameters()</code> and verify the count matches your expectation (approximately <code>2 * rank * (d_in + d_out) * num_adapted_layers</code>).</p>
+<p>A related pitfall: if gradient checkpointing is enabled and <code>use_reentrant=True</code> (the old default), operations that don&rsquo;t accept keyword arguments will error. Use <code>use_reentrant=False</code> in PyTorch 2.0+.</p>
+</div>
+<h2 id="optimizer-state-memory-reduction">Optimizer State Memory Reduction<a class="headerlink" href="#optimizer-state-memory-reduction" title="Permanent link">¶</a></h2>
+<p>Optimizer state is often the largest single memory consumer in full fine-tuning. Beyond LoRA, several optimizer designs intrinsically reduce state:</p>
+<h3 id="adafactor">Adafactor<a class="headerlink" href="#adafactor" title="Permanent link">¶</a></h3>
+<p>Adafactor (Shazeer &amp; Stern, 2018) replaces the full second-moment matrix with a factored rank-1 approximation:</p>
+<div class="arithmatex">\[
+V_t \approx r_t \cdot c_t^\top, \quad r_t \in \mathbb{R}^{d},\; c_t \in \mathbb{R}^{k}
+\]</div>
+<p>This reduces optimizer state from <span class="arithmatex">\(O(dk)\)</span> (Adam&rsquo;s <span class="arithmatex">\(v_t\)</span> for a <span class="arithmatex">\(d \times k\)</span> weight) to <span class="arithmatex">\(O(d + k)\)</span>. For a 4096×4096 linear layer, that is 16.7 million → 8,192 values: a 2,048× compression. Adafactor also omits the first moment <span class="arithmatex">\(m_t\)</span> (relying on relative step size), further halving the state. The tradeoff is that Adafactor can be less stable for fine-tuning on small datasets; many practitioners use it for pretraining but fall back to Adam for RLHF.</p>
+<h3 id="8-bit-adam">8-bit Adam<a class="headerlink" href="#8-bit-adam" title="Permanent link">¶</a></h3>
+<p>Dettmers et al. introduced 8-bit Adam in <em>8-bit Optimizers via Block-wise Quantization</em> (2022). The fp32 <span class="arithmatex">\(m_t\)</span> and <span class="arithmatex">\(v_t\)</span> are stored in 8-bit integers with per-block scaling factors. Memory for optimizer states drops from <span class="arithmatex">\(8P\)</span> to roughly <span class="arithmatex">\(2P\)</span> bytes — a 4× reduction — with negligible accuracy loss.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># pip install bitsandbytes</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">bitsandbytes</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">bnb</span>
+
+<span class="n">optimizer</span> <span class="o">=</span> <span class="n">bnb</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Adam8bit</span><span class="p">(</span>
+    <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">],</span>
+    <span class="n">lr</span><span class="o">=</span><span class="mf">2e-4</span><span class="p">,</span>
+    <span class="n">betas</span><span class="o">=</span><span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.999</span><span class="p">),</span>
+    <span class="n">eps</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="c1"># Drop-in replacement for torch.optim.Adam; uses ~4x less optimizer state memory.</span>
+</code></pre></div>
+<h3 id="gradient-accumulation-and-fp16-gradients">Gradient Accumulation and FP16 Gradients<a class="headerlink" href="#gradient-accumulation-and-fp16-gradients" title="Permanent link">¶</a></h3>
+<p>When gradient accumulation is used, gradients are held for multiple micro-batches. Using fp16 (rather than fp32) gradient buffers halves the <span class="arithmatex">\(2P\)</span> bytes to <span class="arithmatex">\(P\)</span> bytes. PyTorch&rsquo;s <code>autocast</code> + <code>GradScaler</code> handles this automatically in mixed-precision mode:</p>
+<div class="highlight"><pre><span></span><code><span class="n">scaler</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">amp</span><span class="o">.</span><span class="n">GradScaler</span><span class="p">()</span>  <span class="c1"># Maintains a fp16 loss scale</span>
+
+<span class="k">for</span> <span class="n">micro_batch_x</span><span class="p">,</span> <span class="n">micro_batch_y</span> <span class="ow">in</span> <span class="n">batches</span><span class="p">:</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">autocast</span><span class="p">(</span><span class="n">device_type</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">):</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">micro_batch_x</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">micro_batch_y</span><span class="p">)</span><span class="o">.</span><span class="n">loss</span> <span class="o">/</span> <span class="n">N_ACCUM</span>
+    <span class="c1"># Backward in fp16; GradScaler prevents underflow</span>
+    <span class="n">scaler</span><span class="o">.</span><span class="n">scale</span><span class="p">(</span><span class="n">loss</span><span class="p">)</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+<span class="n">scaler</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>   <span class="c1"># Unscales grads, then steps</span>
+<span class="n">scaler</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+<span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+</code></pre></div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You have an 80 GB A100 and want to fine-tune a 13B-parameter model. Describe the memory budget for standard Adam training, explain which categories dominate, and list techniques in order of impact that would allow the training to fit.</p>
+<p><strong>A:</strong> The static memory breakdown for a 13B model is:
+- bf16 weights: <span class="arithmatex">\(2 \times 13 \times 10^9 \approx 26\,\text{GB}\)</span>
+- fp32 master copy: <span class="arithmatex">\(4 \times 13 \times 10^9 \approx 52\,\text{GB}\)</span>
+- fp32 Adam <span class="arithmatex">\(m_t + v_t\)</span>: another <span class="arithmatex">\(\approx 104\,\text{GB}\)</span></p>
+<p>Total static alone is <span class="arithmatex">\(\approx 182\,\text{GB}\)</span> — more than twice the 80 GB budget, without any activations. Optimizer states (<span class="arithmatex">\(8P\)</span> bytes) dominate for a well-optimized Adam.</p>
+<p>Techniques in decreasing memory impact:
+1. <strong>LoRA (rank 16)</strong>: reduces optimizer states from <span class="arithmatex">\(8P\)</span> to <span class="arithmatex">\(8 \times 0.004P \approx 0.03P\)</span>. This alone saves ~99.6% of optimizer memory, bringing static to roughly <span class="arithmatex">\(\approx 28\,\text{GB}\)</span>.
+2. <strong>QLoRA (4-bit base)</strong>: compresses frozen weights from 26 GB to <span class="arithmatex">\(\approx 6.5\,\text{GB}\)</span>, total <span class="arithmatex">\(\approx 8\,\text{GB}\)</span>.
+3. <strong>Gradient checkpointing</strong>: further reduces activation peak, at ~33% compute cost.
+4. <strong>8-bit Adam</strong> (without LoRA): halves optimizer state to <span class="arithmatex">\(\approx 52\,\text{GB}\)</span> total static — borderline without ZeRO.
+5. <strong>ZeRO-3</strong>: shards all state across GPUs; requires multiple GPUs.</p>
+<p>For a single 80 GB A100, QLoRA is the canonical answer.</p>
+</div>
+<h2 id="key-implementation-patterns-and-pitfalls">Key Implementation Patterns and Pitfalls<a class="headerlink" href="#key-implementation-patterns-and-pitfalls" title="Permanent link">¶</a></h2>
+<h3 id="memory-pinning-for-cpu-offload">Memory Pinning for CPU Offload<a class="headerlink" href="#memory-pinning-for-cpu-offload" title="Permanent link">¶</a></h3>
+<p>When offloading tensors to CPU DRAM, <strong>pinned (page-locked) memory</strong> dramatically accelerates PCIe transfers by allowing DMA without CPU involvement:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Allocate CPU tensor in pinned memory for fast GPU&lt;-&gt;CPU transfer</span>
+<span class="n">cpu_tensor</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">gpu_tensor</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span> <span class="n">pin_memory</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Non-blocking copy from GPU to CPU</span>
+<span class="n">cpu_tensor</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">gpu_tensor</span><span class="p">,</span> <span class="n">non_blocking</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># ... do GPU compute on other tensors while transfer completes ...</span>
+
+<span class="c1"># When needed again, copy back</span>
+<span class="n">gpu_tensor</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">cpu_tensor</span><span class="p">,</span> <span class="n">non_blocking</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>  <span class="c1"># Ensure transfer is complete before using gpu_tensor</span>
+</code></pre></div>
+<p>DeepSpeed&rsquo;s ZeRO-Offload uses this pattern internally, pre-fetching the next layer&rsquo;s parameters while the current layer&rsquo;s backward pass is running.</p>
+<h3 id="gradient-checkpointing-with-compiled-models">Gradient Checkpointing with Compiled Models<a class="headerlink" href="#gradient-checkpointing-with-compiled-models" title="Permanent link">¶</a></h3>
+<p><code>torch.compile</code> and gradient checkpointing interact non-trivially. The recomputed sub-graph is traced separately from the outer graph. As of PyTorch 2.2+, the recommended pattern is:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Compile the model AFTER enabling checkpointing, not before.</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">CheckpointedModel</span><span class="p">(</span><span class="n">n_layers</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">d_model</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span> <span class="n">n_heads</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+                          <span class="n">use_checkpointing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="c1"># torch.compile will trace through checkpoint boundaries correctly</span>
+<span class="c1"># with use_reentrant=False</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;reduce-overhead&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>If you compile first and then toggle checkpointing, the compiled graph may not include the recompute branches, and you will silently fall back to full activation storage.</p>
+<h3 id="the-no_grad-vs-detach-distinction">The <code>no_grad</code> vs. <code>detach</code> Distinction<a class="headerlink" href="#the-no_grad-vs-detach-distinction" title="Permanent link">¶</a></h3>
+<p>A common confusion: <code>torch.no_grad()</code> prevents creation of the autograd graph but does not free existing activation tensors. <code>tensor.detach()</code> severs the graph at a specific point. When implementing custom checkpointing, always use:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Correct: save only the input, discard intermediate activations</span>
+<span class="n">saved_input</span> <span class="o">=</span> <span class="nb">input</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>  <span class="c1"># Severs autograd graph; no grad fn stored</span>
+<span class="c1"># ... run forward normally (intermediates are freed) ...</span>
+<span class="c1"># In backward: rerun from saved_input (now re-attaches to the graph)</span>
+</code></pre></div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Memory-efficient training has matured into a layered stack: activation checkpointing, ZeRO-stage offloading, and LoRA/QLoRA compose cleanly and together enable fine-tuning of 70B+ models on consumer hardware. Active research frontiers in 2024–2026 include gradient-space low-rank projections (GaLore) for full-parameter pretraining on tight budgets and weight-decomposed adaptation (DoRA) for higher-fidelity LoRA updates.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2106.09685">Hu et al., <em>LoRA: Low-Rank Adaptation of Large Language Models</em> (2021)</a> — introduces the rank-decomposed adapter that now underpins virtually all PEFT workflows.</li>
+<li><a href="https://arxiv.org/abs/1910.02054">Rajbhandari et al., <em>ZeRO: Memory Optimizations Toward Training Trillion Parameter Models</em> (2020)</a> — defines ZeRO stages &frac12;/3 and the theoretical memory analysis used throughout this chapter.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2305.14314">Dettmers et al., <em>QLoRA: Efficient Finetuning of Quantized LLMs</em> (2023)</a> — NF4 4-bit base + bf16 LoRA adapters + paged optimizer; enables 65B fine-tuning on a single 48 GB GPU.</li>
+<li><a href="https://arxiv.org/abs/2104.07857">Rajbhandari et al., <em>ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning</em> (2021)</a> — extends ZeRO to NVMe offloading, enabling models beyond GPU + CPU DRAM capacity.</li>
+<li><a href="https://arxiv.org/abs/2402.09353">Liu et al., <em>DoRA: Weight-Decomposed Low-Rank Adaptation</em> (2024)</a> — decomposes weights into magnitude + direction; ICML 2024 oral, consistently outperforms LoRA on instruction-tuning benchmarks.</li>
+<li><a href="https://arxiv.org/abs/2403.03507">Zhao et al., <em>GaLore: Memory-Efficient LLM Training by Gradient Low-Rank Projection</em> (2024)</a> — projects gradients (not weights) to a low-rank subspace, enabling full-parameter pretraining of a 7B model on a 24 GB GPU; ICML 2024 oral.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/huggingface/peft">huggingface/peft</a> — canonical Python library implementing LoRA, QLoRA, DoRA, IA³, and other PEFT methods with HuggingFace Transformers integration.</li>
+<li><a href="https://github.com/bitsandbytes-foundation/bitsandbytes">bitsandbytes-foundation/bitsandbytes</a> — provides 8-bit/4-bit quantization kernels (NF4, LLM.int8()) and 8-bit Adam/AdamW optimizers used by QLoRA.</li>
+<li><a href="https://github.com/deepspeedai/DeepSpeed">deepspeedai/DeepSpeed</a> — production ZeRO-&frac12;/3, ZeRO-Offload, and ZeRO-Infinity implementations; drop-in JSON config as shown in this chapter.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/blog/4bit-transformers-bitsandbytes">HuggingFace blog: <em>Making LLMs even more accessible with bitsandbytes, 4-bit quantization and QLoRA</em> (2023)</a> — practical walkthrough of loading and fine-tuning with 4-bit NF4, with Colab notebooks.</li>
+<li><a href="https://magazine.sebastianraschka.com/p/practical-tips-for-finetuning-llms">Sebastian Raschka, <em>Practical Tips for Finetuning LLMs Using LoRA</em> (2023)</a> — eight evidence-based takeaways on rank selection, target modules, learning rate, and merging, drawn from systematic ablations.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Chen, T., Xu, B., Zhang, C., Guestrin, C. — <em>Training Deep Nets with Sublinear Memory Cost</em> (2016). The original activation checkpointing paper for deep networks.</li>
+<li>Hu, E., et al. — <em>LoRA: Low-Rank Adaptation of Large Language Models</em>, ICLR 2022. The foundational PEFT paper.</li>
+<li>Dettmers, T., et al. — <em>QLoRA: Efficient Finetuning of Quantized LLMs</em>, NeurIPS 2023. Combines NF4 quantization, double quantization, and paged optimizers.</li>
+<li>Dettmers, T., et al. — <em>8-bit Optimizers via Block-wise Quantization</em>, ICLR 2022.</li>
+<li>Rajbhandari, S., et al. — <em>ZeRO: Memory Optimizations Toward Training Trillion Parameter Models</em> (DeepSpeed), SC 2020. Covers ZeRO-&frac12;/3 and the theoretical memory analysis.</li>
+<li>Rajbhandari, S., et al. — <em>ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning</em>, SC 2021. Extends ZeRO to NVMe offloading.</li>
+<li>Shazeer, N., Stern, M. — <em>Adafactor: Adaptive Learning Rates with Sublinear Memory Cost</em>, ICML 2018.</li>
+<li>Dao, T., et al. — <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em>, NeurIPS 2022. Eliminates <span class="arithmatex">\(O(T^2)\)</span> attention materialization.</li>
+<li>HuggingFace PEFT library (github.com/huggingface/peft) — canonical implementation of LoRA, QLoRA, and adapter variants.</li>
+</ul>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The full training memory budget is <span class="arithmatex">\(16P\)</span> bytes per parameter for standard Adam mixed-precision; optimizer states (<span class="arithmatex">\(8P\)</span>) typically dominate — not weights.</li>
+<li>Activation memory scales as <span class="arithmatex">\(B \times T \times L\)</span> and can exceed static costs for long sequences; the activation memory equation gives roughly <span class="arithmatex">\(12 \cdot B \cdot T \cdot d \cdot L\)</span> bytes.</li>
+<li>Gradient checkpointing trades ~33% extra compute for <span class="arithmatex">\(O(\sqrt{L})\)</span> activation memory; FlashAttention achieves a similar win for the <span class="arithmatex">\(O(T^2)\)</span> attention term.</li>
+<li>CPU offloading (ZeRO-Offload, ZeRO-Infinity) works because optimizer states are accessed once per step, tolerating PCIe latency.</li>
+<li>LoRA with rank <span class="arithmatex">\(r\)</span> reduces trainable parameters to <span class="arithmatex">\(\rho \approx r/d\)</span> of the full matrix count, eliminating nearly all optimizer state for frozen layers.</li>
+<li>QLoRA = 4-bit base (NF4) + bf16 LoRA adapters + paged optimizer; enables 70B fine-tuning on a single consumer GPU.</li>
+<li>8-bit Adam provides a 4× optimizer state reduction with no change to architecture or training procedure.</li>
+<li>Techniques compose: QLoRA + gradient checkpointing + gradient accumulation is the standard single-GPU fine-tuning stack.</li>
+<li>When debugging OOM: identify whether the failure is in forward (activation issue) or during parameter update (optimizer state issue), then apply the appropriate remedy.</li>
+</ul>
+</div>
+<nav class="page-nav">
+<a class="prev" href="09-compilers-fusion.html"><span class="pn-label">← Previous</span><span class="pn-title">Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</span></a>
+<a class="next" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="pn-label">Next →</span><span class="pn-title">Supervised Fine-Tuning &amp; Instruction Tuning</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-full-training-memory-budget">The Full Training Memory Budget</a></li>
+<li class="toc-l3"><a href="#the-activation-memory-equation">The Activation Memory Equation</a></li>
+<li class="toc-l2"><a href="#activation-checkpointing-recompute-vs-store">Activation Checkpointing: Recompute vs. Store</a></li>
+<li class="toc-l3"><a href="#the-recomputestorage-tradeoff">The Recompute–Storage Tradeoff</a></li>
+<li class="toc-l3"><a href="#pytorch-activation-checkpointing-in-practice">PyTorch Activation Checkpointing in Practice</a></li>
+<li class="toc-l3"><a href="#selective-recomputation">Selective Recomputation</a></li>
+<li class="toc-l2"><a href="#cpu-and-nvme-offloading">CPU and NVMe Offloading</a></li>
+<li class="toc-l3"><a href="#the-memory-hierarchy-revisited">The Memory Hierarchy Revisited</a></li>
+<li class="toc-l3"><a href="#deepspeed-zero-infinity-and-offload">DeepSpeed ZeRO-Infinity and Offload</a></li>
+<li class="toc-l3"><a href="#gradient-accumulation-as-an-offloading-strategy">Gradient Accumulation as an Offloading Strategy</a></li>
+<li class="toc-l2"><a href="#the-math-behind-lora-and-why-peft-slashes-memory">The Math Behind LoRA and Why PEFT Slashes Memory</a></li>
+<li class="toc-l3"><a href="#the-lora-factorization">The LoRA Factorization</a></li>
+<li class="toc-l3"><a href="#memory-impact-exact-accounting">Memory Impact: Exact Accounting</a></li>
+<li class="toc-l3"><a href="#lora-from-scratch-a-full-implementation">LoRA From Scratch: A Full Implementation</a></li>
+<li class="toc-l3"><a href="#qlora-quantized-base-lora-adapters">QLoRA: Quantized Base + LoRA Adapters</a></li>
+<li class="toc-l2"><a href="#practical-memory-accounting-a-step-by-step-recipe">Practical Memory Accounting: A Step-by-Step Recipe</a></li>
+<li class="toc-l3"><a href="#step-1-measure-the-static-footprint">Step 1: Measure the Static Footprint</a></li>
+<li class="toc-l3"><a href="#step-2-use-torchcudamemory_stats-for-detailed-breakdown">Step 2: Use torch.cuda.memory_stats for Detailed Breakdown</a></li>
+<li class="toc-l3"><a href="#step-3-the-decision-tree">Step 3: The Decision Tree</a></li>
+<li class="toc-l2"><a href="#combining-techniques-the-memory-stack">Combining Techniques: The Memory Stack</a></li>
+<li class="toc-l2"><a href="#optimizer-state-memory-reduction">Optimizer State Memory Reduction</a></li>
+<li class="toc-l3"><a href="#adafactor">Adafactor</a></li>
+<li class="toc-l3"><a href="#8-bit-adam">8-bit Adam</a></li>
+<li class="toc-l3"><a href="#gradient-accumulation-and-fp16-gradients">Gradient Accumulation and FP16 Gradients</a></li>
+<li class="toc-l2"><a href="#key-implementation-patterns-and-pitfalls">Key Implementation Patterns and Pitfalls</a></li>
+<li class="toc-l3"><a href="#memory-pinning-for-cpu-offload">Memory Pinning for CPU Offload</a></li>
+<li class="toc-l3"><a href="#gradient-checkpointing-with-compiled-models">Gradient Checkpointing with Compiled Models</a></li>
+<li class="toc-l3"><a href="#the-no_grad-vs-detach-distinction">The no_grad vs. detach Distinction</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

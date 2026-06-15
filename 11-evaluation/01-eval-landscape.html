@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Evaluation Problem &amp; Benchmark Landscape — The LLM Stack</title>
+<meta name="description" content="Why eval is hard, the benchmark zoo (MMLU/MMLU-Pro, GSM8K/MATH, HumanEval/MBPP, GPQA, BBH, IFEval, AIME, ARC-AGI), contamination, saturation, multiple-choice pi">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="active" href="01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XI — Evaluation</div>
+<h1 id="111-the-evaluation-problem-benchmark-landscape">11.1 The Evaluation Problem &amp; Benchmark Landscape<a class="headerlink" href="#111-the-evaluation-problem-benchmark-landscape" title="Permanent link">¶</a></h1>
+<p>Measuring whether an LLM is good is surprisingly hard. Harder than training it. When a model scores 90 % on a knowledge benchmark, you want to know: does it <em>know</em> more, or does it exploit test artifacts? When a newer model beats a prior one on MMLU, should you deploy it? When a model aces GSM8K but fails on a slightly rephrased version of the same arithmetic problem, what does that tell you?</p>
+<p>This chapter builds the conceptual toolkit for evaluation literacy. We cover <em>why</em> eval is a genuinely unsolved problem, survey the major benchmarks a practitioner will encounter, dissect the failure modes (contamination, saturation, multiple-choice shortcuts), and discuss the gap between benchmark numbers and actual usefulness. The chapter that follows — <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a> — covers the judge-model paradigm; <a href="../11-evaluation/03-eval-harnesses.html">Building Eval Harnesses</a> covers the engineering side; and <a href="../11-evaluation/04-reasoning-coding-agentic-evals.html">Reasoning, Coding &amp; Agentic Evals</a> goes deep on code and agent evaluation.</p>
+<hr />
+<h2 id="the-core-difficulty-of-llm-evaluation">The Core Difficulty of LLM Evaluation<a class="headerlink" href="#the-core-difficulty-of-llm-evaluation" title="Permanent link">¶</a></h2>
+<h3 id="what-makes-a-good-evaluator">What Makes a Good Evaluator?<a class="headerlink" href="#what-makes-a-good-evaluator" title="Permanent link">¶</a></h3>
+<p>A good evaluator for a statistical model has three properties: it is <em>valid</em> (it measures what you care about), <em>reliable</em> (two runs or two evaluators give the same answer), and <em>sensitive</em> (it can detect real differences at the scale you care about). LLM benchmarks routinely fail at least one of these.</p>
+<p><strong>Validity failures.</strong> A question asking &ldquo;What is the capital of France?&rdquo; tests <em>whether the answer appears in training data</em> more than it tests any deeper capability. Multiple-choice benchmarks let models succeed via elimination and surface-form pattern matching rather than genuine reasoning. Open-ended generation benchmarks require a judge, and the judge introduces its own biases.</p>
+<p><strong>Reliability failures.</strong> LLM outputs are stochastic. Sampling with temperature &gt; 0 produces different answers on repeated runs. A single-run evaluation with 500 questions has high variance. The standard error of a proportion <span class="arithmatex">\(p\)</span> estimated from <span class="arithmatex">\(n\)</span> samples is approximately:</p>
+<div class="arithmatex">\[
+\text{SE}(p) = \sqrt{\frac{p(1-p)}{n}}
+\]</div>
+<p>For <span class="arithmatex">\(p = 0.80\)</span> and <span class="arithmatex">\(n = 500\)</span>, that is <span class="arithmatex">\(\sqrt{0.80 \times 0.20 / 500} \approx 0.018\)</span>, meaning the 95 % confidence interval is roughly <span class="arithmatex">\(\pm 3.6\)</span> percentage points. Two models differing by 1 % on MMLU are likely within noise.</p>
+<p><strong>Sensitivity failures.</strong> Benchmarks saturate: once frontier models exceed 90 %, the remaining 10 % is dominated by ambiguous or poorly-worded questions, not model capability. New benchmarks replace old ones, breaking longitudinal comparisons.</p>
+<h3 id="the-objective-mismatch">The Objective Mismatch<a class="headerlink" href="#the-objective-mismatch" title="Permanent link">¶</a></h3>
+<p>Training optimizes next-token prediction on a distribution of text. Evaluation wants to measure something else entirely — helpfulness, factual accuracy, reasoning ability, safety. These are related but not identical. A model trained on a trillion tokens of internet text develops representations that <em>correlate</em> with useful behaviors, but the correspondence is imperfect and the eval design determines what you actually measure.</p>
+<p>Consider the chain of proxies:</p>
+<div class="highlight"><pre><span></span><code>True goal: &quot;Is this model useful for my tasks?&quot;
+         ↓
+Operationalization: &quot;Does it score well on a suite of benchmarks?&quot;
+         ↓
+Measurement: accuracy on multiple-choice / code pass rates / human judgments
+         ↓
+Training signal: cross-entropy loss on next token
+</code></pre></div>
+<p>Each arrow introduces a gap. Evaluation research tries to close those gaps; this chapter is about understanding where they lie.</p>
+<hr />
+<h2 id="the-benchmark-zoo">The Benchmark Zoo<a class="headerlink" href="#the-benchmark-zoo" title="Permanent link">¶</a></h2>
+<p>The field has produced dozens of benchmarks. We organize them by the capability they primarily test, then discuss their mechanics, strengths, and weaknesses.</p>
+<h3 id="knowledge-reasoning-mmlu-and-mmlu-pro">Knowledge &amp; Reasoning: MMLU and MMLU-Pro<a class="headerlink" href="#knowledge-reasoning-mmlu-and-mmlu-pro" title="Permanent link">¶</a></h3>
+<p><strong>MMLU</strong> (Massive Multitask Language Understanding, Hendrycks et al., 2021) contains around 14,000 four-choice questions spanning 57 subjects: STEM, humanities, social sciences, and professional domains (law, medicine, finance). Each question has one correct answer and three distractors.</p>
+<p>The appeal is breadth: a single number summarizes performance across many domains. The weakness is the same breadth: average accuracy conflates wildly different skills, and a model that is superb at general knowledge but weak at formal mathematics and strong on medicine can land at the same number as one with a different profile.</p>
+<p><strong>Scoring.</strong> Most harnesses report normalized accuracy (fraction correct). Log-likelihood scoring — choosing the answer whose completion has highest <span class="arithmatex">\(\log p\)</span> under the model — is common and more reproducible than generation-based scoring.</p>
+<div class="arithmatex">\[
+\hat{y} = \arg\max_{c \in \{A,B,C,D\}} \log p_\theta(\text{answer text of } c \mid \text{question})
+\]</div>
+<p><strong>MMLU-Pro</strong> (Wang et al., 2024) adds harder, ten-choice questions with more complex reasoning requirements, reducing the chance of guessing correctly to 10 % versus 25 %. This makes it more discriminative at the frontier but harder to interpret for smaller models.</p>
+<h3 id="mathematical-reasoning-gsm8k-and-math">Mathematical Reasoning: GSM8K and MATH<a class="headerlink" href="#mathematical-reasoning-gsm8k-and-math" title="Permanent link">¶</a></h3>
+<p><strong>GSM8K</strong> (Grade School Math 8K, Cobbe et al., 2021) is a dataset of roughly 8,500 school-level word problems. A correct answer requires multi-step arithmetic (integer or simple decimal, no calculus). The canonical evaluation uses a model&rsquo;s generated chain-of-thought followed by a numerical extraction regex, and accuracy is the fraction of problems where the extracted number matches the reference answer.</p>
+<p><strong>MATH</strong> (Hendrycks et al., 2021) covers competition mathematics in seven categories — algebra, geometry, number theory, probability, pre-calculus, calculus, and combinatorics — at five difficulty levels. Problems require symbolic manipulation, not just numerical calculation, which makes automated verification harder.</p>
+<p><strong>Why GSM8K saturated fast.</strong> Frontier models exceeded 90 % on GSM8K by 2023. The problems are short and the arithmetic is tractable for any model that learned the step-by-step format. Once a model learns <em>how to write out</em> arithmetic reasoning, the benchmark mainly tests whether that format was in training data. This led to MATH and then to AIME (below).</p>
+<p><strong>AIME</strong> (American Invitational Mathematics Examination). Problems from the real AIME competition test, where top high-school students in the US solve 15 very difficult integer-answer problems. A score of 4–5 out of 15 would historically have been considered noteworthy for language models; frontier reasoning models began surpassing that threshold around 2024–2025. Because new AIME exams are released yearly, contamination can be partially controlled by only evaluating on the most recent year&rsquo;s exam.</p>
+<h3 id="code-humaneval-and-mbpp">Code: HumanEval and MBPP<a class="headerlink" href="#code-humaneval-and-mbpp" title="Permanent link">¶</a></h3>
+<p><strong>HumanEval</strong> (Chen et al., 2021, Codex paper) is 164 hand-written Python programming problems, each consisting of a function signature, a docstring, and a set of unit tests. The primary metric is <strong>pass@k</strong>: the probability that at least one of <span class="arithmatex">\(k\)</span> generated samples passes all tests for a given problem.</p>
+<div class="arithmatex">\[
+\text{pass@k} = \mathbb{E}_{\text{problem}} \left[ 1 - \frac{\binom{n-c}{k}}{\binom{n}{k}} \right]
+\]</div>
+<p>where <span class="arithmatex">\(n\)</span> is the number of samples drawn and <span class="arithmatex">\(c\)</span> is the number that pass. For unbiased estimation one draws <span class="arithmatex">\(n \geq k\)</span> samples and applies this formula. In practice, many papers report pass@1 (single sample, greedy decoding) for simplicity.</p>
+<p><strong>MBPP</strong> (Mostly Basic Programming Problems, Austin et al., 2021) is 374 crowd-sourced Python problems, similarly evaluated with unit tests. Both HumanEval and MBPP are now largely saturated at the frontier; models score above 90 % pass@1.</p>
+<p><strong>Limitations.</strong> Only functional correctness is tested; code style, efficiency, and security are ignored. The test suites are thin — typically 3–8 tests per problem — so it is possible to pass with a solution that is logically wrong but happens to match the test values.</p>
+<h3 id="scientific-reasoning-gpqa">Scientific Reasoning: GPQA<a class="headerlink" href="#scientific-reasoning-gpqa" title="Permanent link">¶</a></h3>
+<p><strong>GPQA</strong> (Graduate-Level Google-Proof Q&amp;A, Rein et al., 2023) is a set of questions in biology, physics, and chemistry that are explicitly designed to be difficult for non-expert humans even with internet access (&ldquo;Google-proof&rdquo;). Domain experts answer correctly at rates in the 60–70 % range; non-experts with internet access are closer to 30–40 %. This makes it one of the few benchmarks where human expert performance is a meaningful, non-trivial ceiling.</p>
+<p>GPQA exists because general knowledge benchmarks are too easy for frontier models and rely on information that was almost certainly in training data. GPQA forces genuine inference from principles, though contamination remains possible for any questions that leaked online before the cutoff.</p>
+<h3 id="instruction-following-ifeval">Instruction Following: IFEval<a class="headerlink" href="#instruction-following-ifeval" title="Permanent link">¶</a></h3>
+<p><strong>IFEval</strong> (Instruction Following Evaluation, Zhou et al., 2023) measures whether a model follows <em>verifiable</em> formatting constraints: &ldquo;respond in exactly N words,&rdquo; &ldquo;use bullet points,&rdquo; &ldquo;include the word X,&rdquo; &ldquo;write N paragraphs,&rdquo; &ldquo;do not use commas.&rdquo; Because compliance can be checked programmatically, no judge model is needed.</p>
+<p>IFEval distinguishes two metrics: <strong>prompt-level accuracy</strong> (did the model satisfy all instructions in the prompt?) and <strong>instruction-level accuracy</strong> (across all individual instructions, what fraction were satisfied?). It is a rare example of an eval where the ground truth is a deterministic function of the output text.</p>
+<h3 id="complex-reasoning-bbh-big-bench-hard">Complex Reasoning: BBH (BIG-Bench Hard)<a class="headerlink" href="#complex-reasoning-bbh-big-bench-hard" title="Permanent link">¶</a></h3>
+<p><strong>BIG-Bench</strong> was a massive collaborative benchmark containing hundreds of tasks. <strong>BBH</strong> (Suzgun et al., 2022) is the subset of 23 tasks on which, at the time, language models performed below human-rater agreement using few-shot prompting. Tasks include multi-step arithmetic, tracking shuffled objects, causal reasoning, and logical deduction. The motivation was to focus on tasks that remained genuinely challenging.</p>
+<p>BBH is typically reported with chain-of-thought prompting, making it a measure of <em>multi-step reasoning ability given an appropriate scaffold</em> rather than raw knowledge retrieval.</p>
+<h3 id="abstraction-arc-agi">Abstraction: ARC-AGI<a class="headerlink" href="#abstraction-arc-agi" title="Permanent link">¶</a></h3>
+<p><strong>ARC-AGI</strong> (Abstraction and Reasoning Corpus for Artificial General Intelligence, Chollet, 2019) is qualitatively different from all the above. Each task presents 3–5 input/output grid pairs where the grids contain colored cells, and the model must infer the transformation rule and apply it to a new test grid. The rules cannot be memorized from training data because they are novel compositions of simple visual primitives (reflection, tiling, counting, etc.).</p>
+<p>The benchmark is designed to test <em>fluid intelligence</em> — generalizing from a handful of examples to a novel rule — rather than crystallized knowledge or skill learned from large datasets. It proved very difficult for standard LLMs (scores in single digits for years); it attracted community attention during the ARC Prize challenge in 2024, where a combination of program synthesis and test-time compute approaches pushed scores meaningfully higher.</p>
+<p>ARC-AGI is important conceptually: it is a benchmark that <em>resists</em> the standard scaling law playbook, because more parameters and more tokens do not straightforwardly help if the capability is principled rule induction rather than pattern completion.</p>
+<hr />
+<h2 id="benchmark-contamination">Benchmark Contamination<a class="headerlink" href="#benchmark-contamination" title="Permanent link">¶</a></h2>
+<h3 id="the-problem">The Problem<a class="headerlink" href="#the-problem" title="Permanent link">¶</a></h3>
+<p><strong>Test contamination</strong> occurs when the evaluation data appears in a model&rsquo;s training corpus, so the model can retrieve answers rather than generate them. This is the single most important validity threat for any benchmark result.</p>
+<p>The internet contains solutions to many benchmarks. GSM8K problems and their step-by-step solutions are widely discussed in blog posts and GitHub repositories. MMLU questions appear in study guides and forums. HumanEval solutions are on Leetcode and other sites. Any model trained on a large, lightly-filtered web crawl will have seen some fraction of these.</p>
+<h3 id="detection-methods">Detection Methods<a class="headerlink" href="#detection-methods" title="Permanent link">¶</a></h3>
+<p><strong>N-gram overlap.</strong> The simplest detection computes the fraction of test questions that appear as near-verbatim substrings in a training document. A common heuristic: if a 13-gram from a test question appears in any training document, flag that example as potentially contaminated.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Minimal contamination detection using n-gram overlap</span>
+<span class="c1"># Assumes training_docs is a list of strings, test_questions similarly.</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_ngram_set</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">13</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">set</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract all n-grams (by word) from a string.&quot;&quot;&quot;</span>
+    <span class="n">tokens</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="k">return</span> <span class="nb">set</span><span class="p">(</span>
+        <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tokens</span><span class="p">[</span><span class="n">i</span> <span class="p">:</span> <span class="n">i</span> <span class="o">+</span> <span class="n">n</span><span class="p">])</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span> <span class="o">-</span> <span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">flag_contaminated</span><span class="p">(</span>
+    <span class="n">test_questions</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">training_docs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">13</span><span class="p">,</span>
+    <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">bool</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns True for each test question that has &gt;= threshold fraction of</span>
+<span class="sd">    its n-grams appearing in any training document.</span>
+
+<span class="sd">    NOTE: This is O(|train| * |test|) in the worst case; in practice you</span>
+<span class="sd">    build a Bloom filter or inverted index over training n-grams.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Build the full training n-gram set (expensive; in practice use a Bloom filter)</span>
+    <span class="n">train_ngrams</span><span class="p">:</span> <span class="nb">set</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">doc</span> <span class="ow">in</span> <span class="n">training_docs</span><span class="p">:</span>
+        <span class="n">train_ngrams</span> <span class="o">|=</span> <span class="n">build_ngram_set</span><span class="p">(</span><span class="n">doc</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+
+    <span class="n">contaminated</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">q</span> <span class="ow">in</span> <span class="n">test_questions</span><span class="p">:</span>
+        <span class="n">q_ngrams</span> <span class="o">=</span> <span class="n">build_ngram_set</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">q_ngrams</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">contaminated</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+            <span class="k">continue</span>
+        <span class="n">overlap</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">q_ngrams</span> <span class="o">&amp;</span> <span class="n">train_ngrams</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">q_ngrams</span><span class="p">)</span>
+        <span class="n">contaminated</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">overlap</span> <span class="o">&gt;=</span> <span class="n">threshold</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">contaminated</span>
+</code></pre></div>
+<p><strong>Memorization probes.</strong> A stronger test presents the first half of a benchmark example and asks the model to complete it. If it produces the exact second half verbatim, that is strong evidence of memorization. The <em>MeMo</em> and <em>DataComp</em> lines of work developed more principled probes.</p>
+<p><strong>Canary strings.</strong> Benchmark authors embed unique, random token sequences into the evaluation set. If a model reproduces these during completion, the training corpus was contaminated.</p>
+<p><strong>Behavioral tests.</strong> Surprisingly, you can sometimes detect contamination by varying the surface form. If a model&rsquo;s accuracy drops sharply when questions are paraphrased or answer choices are shuffled, the model may be recognizing the original form rather than reasoning from the content.</p>
+<h3 id="the-severity-gradient">The Severity Gradient<a class="headerlink" href="#the-severity-gradient" title="Permanent link">¶</a></h3>
+<p>Contamination is not binary. There is a spectrum:</p>
+<ol>
+<li><strong>Verbatim memorization</strong>: exact training data match; the model can reproduce the answer without reasoning.</li>
+<li><strong>Near-verbatim</strong>: training data contains a slightly different version; small generalization still required.</li>
+<li><strong>Topic exposure</strong>: the topic, domain, or reasoning pattern appears in training but not the specific question; this is unavoidable and arguably acceptable.</li>
+<li><strong>Format priming</strong>: the model has seen the <em>format</em> of the benchmark (e.g., four-choice Q&amp;A) during training or fine-tuning; this gives an advantage unrelated to the capability being measured.</li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall</p>
+<p>Reporting a &ldquo;decontaminated&rdquo; score using only 13-gram overlap misses format priming and topic exposure. A more honest evaluation removes any training document whose topic domain significantly overlaps the test question domain — or uses held-out benchmark versions (e.g., AIME 2025 evaluated right after release).</p>
+</div>
+<hr />
+<h2 id="benchmark-saturation">Benchmark Saturation<a class="headerlink" href="#benchmark-saturation" title="Permanent link">¶</a></h2>
+<h3 id="what-saturation-means">What Saturation Means<a class="headerlink" href="#what-saturation-means" title="Permanent link">¶</a></h3>
+<p>Saturation occurs when frontier model performance clusters near the ceiling (90–100 %) so that benchmark scores no longer distinguish models. At that point, score differences are dominated by noise, ambiguous questions, and evaluation methodology choices rather than genuine capability differences.</p>
+<p>GSM8K crossed this threshold around 2023; HumanEval in 2024. MMLU approaches it: multiple frontier models score in the 85–90 % range. When a benchmark saturates, the community moves to harder variants (MMLU → MMLU-Pro) or new benchmarks (GSM8K → MATH → AIME).</p>
+<h3 id="floor-effects-in-smaller-models">Floor Effects in Smaller Models<a class="headerlink" href="#floor-effects-in-smaller-models" title="Permanent link">¶</a></h3>
+<p>The mirror problem affects evaluations of smaller models on very hard benchmarks. If a 7B-parameter model scores 5 % on GPQA, that is near random chance (25 % for four-choice), and we cannot distinguish &ldquo;cannot reason scientifically&rdquo; from &ldquo;cannot read the question.&rdquo; Performance at the floor is equally uninformative.</p>
+<p>The rule of thumb: <strong>a benchmark is most informative when average performance is between roughly 20 % and 80 %.</strong> Below 20 % you are measuring noise; above 80 % you are measuring ceiling effects and question quality.</p>
+<hr />
+<h2 id="multiple-choice-pitfalls">Multiple-Choice Pitfalls<a class="headerlink" href="#multiple-choice-pitfalls" title="Permanent link">¶</a></h2>
+<h3 id="why-multiple-choice-underestimates-and-overestimates">Why Multiple-Choice Underestimates and Overestimates<a class="headerlink" href="#why-multiple-choice-underestimates-and-overestimates" title="Permanent link">¶</a></h3>
+<p>Multiple-choice benchmarks introduce specific artifacts:</p>
+<p><strong>Inflation from guessing.</strong> A four-choice benchmark has a random-chance baseline of 25 %. Models that cannot answer a question can still guess correctly 25 % of the time. Some benchmarks apply a <strong>correction for guessing</strong>:</p>
+<div class="arithmatex">\[
+\text{score}_\text{corrected} = \text{correct} - \frac{\text{wrong}}{k-1}
+\]</div>
+<p>where <span class="arithmatex">\(k = 4\)</span> for four-choice. This is equivalent to the scoring rule for tests where you must mark a question wrong to guess, and makes the random-chance score 0.</p>
+<p><strong>Sensitivity to option ordering.</strong> Multiple experiments have shown that simply swapping which letter (A/B/C/D) carries the correct answer can change model accuracy by several percentage points. Models have biases toward certain positions (often A or the first option) that are purely artifacts of training data distribution.</p>
+<p><strong>Sensitivity to answer format.</strong> Whether the model is asked to output &ldquo;A&rdquo;, &ldquo;(A)&rdquo;, &ldquo;Answer: A&rdquo;, or the full text of the answer all yield different accuracy estimates from the same underlying model knowledge.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_mc_answer</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Robustly extract a multiple-choice answer letter from model output.</span>
+<span class="sd">    Handles common formats: &quot;A&quot;, &quot;(A)&quot;, &quot;Answer: A&quot;, &quot;The answer is A.&quot;, etc.</span>
+<span class="sd">    Returns None if no single unambiguous letter is found.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Try explicit &quot;answer is X&quot; pattern first (most reliable)</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\bthe answer is\s+\(?([A-Da-d])\)?&quot;</span><span class="p">,</span> <span class="n">output</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">IGNORECASE</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span>
+
+    <span class="c1"># Try &quot;Answer: X&quot; pattern</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\banswer\s*:\s*\(?([A-Da-d])\)?&quot;</span><span class="p">,</span> <span class="n">output</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">IGNORECASE</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span>
+
+    <span class="c1"># Fall back to a lone letter on its own line or at end of output</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">output</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="nb">reversed</span><span class="p">(</span><span class="n">lines</span><span class="p">):</span>  <span class="c1"># check from end first</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">fullmatch</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\s*\(?([A-Da-d])\)?\s*[.]?&quot;</span><span class="p">,</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+        <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span>
+
+    <span class="c1"># Last resort: find any capital A-D that appears</span>
+    <span class="n">letters</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\b([A-D])\b&quot;</span><span class="p">,</span> <span class="n">output</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">letters</span><span class="p">))</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">letters</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="kc">None</span>  <span class="c1"># ambiguous or missing</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">evaluate_mc_batch</span><span class="p">(</span>
+    <span class="n">predictions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">gold_labels</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">shuffle_seed</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Evaluate a batch of multiple-choice predictions.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        predictions: raw model output strings.</span>
+<span class="sd">        gold_labels: correct answer letters, e.g. [&quot;A&quot;, &quot;C&quot;, &quot;B&quot;, ...].</span>
+<span class="sd">        shuffle_seed: if set, randomly shuffles answer order to test position bias.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        dict with &#39;accuracy&#39;, &#39;null_rate&#39; (fraction where answer was not extracted),</span>
+<span class="sd">        and &#39;corrected_accuracy&#39; (guessing-corrected, k=4).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+
+    <span class="k">if</span> <span class="n">shuffle_seed</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">rng</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">Random</span><span class="p">(</span><span class="n">shuffle_seed</span><span class="p">)</span>
+        <span class="n">paired</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">predictions</span><span class="p">,</span> <span class="n">gold_labels</span><span class="p">))</span>
+        <span class="n">rng</span><span class="o">.</span><span class="n">shuffle</span><span class="p">(</span><span class="n">paired</span><span class="p">)</span>
+        <span class="n">predictions</span><span class="p">,</span> <span class="n">gold_labels</span> <span class="o">=</span> <span class="nb">zip</span><span class="p">(</span><span class="o">*</span><span class="n">paired</span><span class="p">)</span>
+
+    <span class="n">correct</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">wrong</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">null</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">for</span> <span class="n">pred</span><span class="p">,</span> <span class="n">gold</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">predictions</span><span class="p">,</span> <span class="n">gold_labels</span><span class="p">):</span>
+        <span class="n">extracted</span> <span class="o">=</span> <span class="n">extract_mc_answer</span><span class="p">(</span><span class="n">pred</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">extracted</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">null</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">elif</span> <span class="n">extracted</span> <span class="o">==</span> <span class="n">gold</span><span class="o">.</span><span class="n">upper</span><span class="p">():</span>
+            <span class="n">correct</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">wrong</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="n">total</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">predictions</span><span class="p">)</span>
+    <span class="n">non_null</span> <span class="o">=</span> <span class="n">total</span> <span class="o">-</span> <span class="n">null</span>
+    <span class="n">accuracy</span> <span class="o">=</span> <span class="n">correct</span> <span class="o">/</span> <span class="n">total</span> <span class="k">if</span> <span class="n">total</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+    <span class="n">corrected</span> <span class="o">=</span> <span class="p">(</span><span class="n">correct</span> <span class="o">-</span> <span class="n">wrong</span> <span class="o">/</span> <span class="mi">3</span><span class="p">)</span> <span class="o">/</span> <span class="n">total</span> <span class="k">if</span> <span class="n">total</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="n">accuracy</span><span class="p">,</span>
+        <span class="s2">&quot;corrected_accuracy&quot;</span><span class="p">:</span> <span class="n">corrected</span><span class="p">,</span>
+        <span class="s2">&quot;null_rate&quot;</span><span class="p">:</span> <span class="n">null</span> <span class="o">/</span> <span class="n">total</span> <span class="k">if</span> <span class="n">total</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+        <span class="s2">&quot;n&quot;</span><span class="p">:</span> <span class="n">total</span><span class="p">,</span>
+        <span class="s2">&quot;correct&quot;</span><span class="p">:</span> <span class="n">correct</span><span class="p">,</span>
+        <span class="s2">&quot;wrong&quot;</span><span class="p">:</span> <span class="n">wrong</span><span class="p">,</span>
+        <span class="s2">&quot;null&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+    <span class="p">}</span>
+</code></pre></div>
+<p><strong>Log-likelihood versus generation scoring.</strong> Log-likelihood scoring (ranking answers by <span class="arithmatex">\(\log p\)</span> of their text given the question) does not require a well-calibrated answer extractor, but it has its own artifacts: the probability of a completion depends on its <em>length</em>, so a short correct answer (&ldquo;Yes&rdquo;) and a long incorrect answer (&ldquo;No, because of the following reasons&hellip;&rdquo;) are not comparable without length normalization.</p>
+<p>A common normalization is to divide by the number of tokens in the completion:</p>
+<div class="arithmatex">\[
+\text{score}(c) = \frac{1}{|c|} \sum_{t=1}^{|c|} \log p_\theta(c_t \mid \text{question}, c_{&lt;t})
+\]</div>
+<p>Different harnesses make different choices here, making cross-harness comparisons unreliable.</p>
+<hr />
+<h2 id="worked-example-confidence-intervals-and-minimum-detectable-differences">Worked Example: Confidence Intervals and Minimum Detectable Differences<a class="headerlink" href="#worked-example-confidence-intervals-and-minimum-detectable-differences" title="Permanent link">¶</a></h2>
+<div class="admonition example">
+<p class="admonition-title">Worked example: when is a score difference real?</p>
+<p>Suppose model A scores 82.4 % on MMLU (n = 14,042 questions) and model B scores 83.1 %.
+Is the 0.7 % difference statistically significant?</p>
+<p>The standard error for each proportion:</p>
+<div class="arithmatex">\[
+\text{SE}_A = \sqrt{\frac{0.824 \times 0.176}{14042}} \approx \sqrt{0.00001032} \approx 0.00321
+\]</div>
+<div class="arithmatex">\[
+\text{SE}_B = \sqrt{\frac{0.831 \times 0.169}{14042}} \approx \sqrt{0.00001001} \approx 0.00316
+\]</div>
+<p>The standard error of the <em>difference</em> (assuming independent samples, same questions):</p>
+<div class="arithmatex">\[
+\text{SE}_{A-B} = \sqrt{\text{SE}_A^2 + \text{SE}_B^2} \approx \sqrt{(0.00321)^2 + (0.00316)^2} \approx 0.00452
+\]</div>
+<p>A 95 % confidence interval for the difference covers <span class="arithmatex">\(\pm 1.96 \times 0.00452 \approx \pm 0.009\)</span>, or roughly <span class="arithmatex">\(\pm 0.9\)</span> percentage points.</p>
+<p>The observed difference of 0.7 % falls <em>within</em> the 95 % CI, meaning we cannot reject the null hypothesis that the models are equally capable on MMLU.</p>
+<p>Moral: <strong>a difference smaller than about 1 % on the full MMLU set is not statistically significant without multiple runs or a stricter significance test.</strong> On smaller subsets (e.g., a 500-question domain slice), the CI is roughly <span class="arithmatex">\(\pm 3.5\)</span> points, so differences below 7 % are noise.</p>
+</div>
+<hr />
+<h2 id="the-gap-between-benchmarks-and-usefulness">The Gap Between Benchmarks and Usefulness<a class="headerlink" href="#the-gap-between-benchmarks-and-usefulness" title="Permanent link">¶</a></h2>
+<h3 id="why-high-benchmark-scores-do-not-guarantee-useful-models">Why High Benchmark Scores Do Not Guarantee Useful Models<a class="headerlink" href="#why-high-benchmark-scores-do-not-guarantee-useful-models" title="Permanent link">¶</a></h3>
+<p>Benchmark performance and practical usefulness diverge for several reasons:</p>
+<p><strong>Distribution shift.</strong> Benchmarks test a fixed distribution of questions curated at one point in time. User queries are drawn from a different, continuously shifting distribution. A model can dominate a benchmark while failing on common user requests that the benchmark did not anticipate.</p>
+<p><strong>Capability ≠ behavior.</strong> A model may <em>be able</em> to answer a question correctly but refuse to do so because of overly conservative safety training, choose a verbose format the user dislikes, or give a technically correct but practically useless answer. Benchmarks usually measure capability, not the full response quality a user experiences.</p>
+<p><strong>Task coverage.</strong> No benchmark captures everything users actually want. Coding benchmarks do not test the ability to explain code to a junior developer. Knowledge benchmarks do not test the ability to write a persuasive essay. Instruction-following benchmarks test atomic constraints, not the fluency of a 2,000-word response that also follows constraints.</p>
+<p><strong>Goodhart&rsquo;s Law.</strong> &ldquo;When a measure becomes a target, it ceases to be a good measure.&rdquo; Models fine-tuned specifically on benchmark-adjacent data can inflate benchmark scores without improving on user tasks. The field has seen multiple cases where targeted post-training sharply improved benchmark rankings without corresponding improvements in blind human evaluation.</p>
+<h3 id="the-role-of-human-evaluation">The Role of Human Evaluation<a class="headerlink" href="#the-role-of-human-evaluation" title="Permanent link">¶</a></h3>
+<p>Human evaluation is expensive, slow, and noisy, but it remains the gold standard for usefulness. The standard paradigm is A/B comparison: present two model outputs to human raters and ask which is better (or ask for a score on several dimensions). The LMSYS Chatbot Arena (Chiang et al., 2024) is the most widely used public version of this: users chat with two anonymous models, vote for the better response, and ratings are aggregated into an Elo-style ranking.</p>
+<p>Human evals have their own problems: rater fatigue, verbosity bias (longer answers tend to win even when shallower), positional bias (the first response tends to win slightly), and the fact that casual chatbot preferences may not correlate with performance on professional tasks.</p>
+<p>The evolving practice is to use human evaluation as a calibration signal for automated evaluators — see <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a> — so that the cheap, scalable automated signal can be shown to correlate with expensive human judgment.</p>
+<h3 id="leaderboard-gaming-and-the-meta-benchmark-problem">Leaderboard Gaming and the Meta-Benchmark Problem<a class="headerlink" href="#leaderboard-gaming-and-the-meta-benchmark-problem" title="Permanent link">¶</a></h3>
+<p>When benchmarks become public leaderboards (as MMLU, HumanEval, and others have), they attract optimization pressure. Labs run many ablations and select the checkpoint and prompting strategy that maximizes the leaderboard score, which is a form of implicit overfitting to the test distribution even without literal data contamination.</p>
+<p>The most rigorous evals are:
+1. <strong>Held-out or private</strong>: the test set is never released publicly (e.g., private portions of safety evals at major labs).
+2. <strong>Freshly generated</strong>: questions are generated after the model&rsquo;s training cutoff (e.g., new AIME problems each year).
+3. <strong>Diverse enough to resist targeted optimization</strong>: a large, heterogeneous suite where gaming one task hurts others.</p>
+<p>The <a href="../01-foundations/05-ml-fundamentals.html">Machine Learning Fundamentals</a> chapter discusses the train-test split principle that underlies this; the same logic applies at benchmark scale.</p>
+<hr />
+<h2 id="critical-literacy-reading-benchmark-claims">Critical Literacy: Reading Benchmark Claims<a class="headerlink" href="#critical-literacy-reading-benchmark-claims" title="Permanent link">¶</a></h2>
+<p>When you encounter a model card or paper reporting benchmark results, apply this checklist:</p>
+<div class="highlight"><pre><span></span><code>BENCHMARK CLAIM CHECKLIST
+==========================
+1. WHICH version of the benchmark?
+   - MMLU vs. MMLU-Pro?  5-shot vs. 0-shot?
+   - Log-likelihood or generation scoring?  Which normalization?
+
+2. WHAT prompting strategy?
+   - 0-shot, few-shot (N-shot), chain-of-thought, zero-shot-CoT?
+   - System prompt present?  Format instructions?
+
+3. CONTAMINATION: did training data predate the benchmark release?
+   - Was decontamination performed?  What method?
+   - Does the paper report post-decontamination scores?
+
+4. COMPARISON FAIRNESS:
+   - Are baseline numbers from the same harness with the same settings?
+   - Were baselines re-run or taken from prior papers?
+
+5. STATISTICAL SIGNIFICANCE:
+   - Is the benchmark large enough to support the claimed difference?
+   - Are confidence intervals reported?
+
+6. WHAT&#39;S NOT REPORTED?
+   - Benchmarks where this model underperformed?
+   - Human evaluation?  Real task performance?
+</code></pre></div>
+<p>Reproducibility is a live problem. The same model evaluated with different harnesses (lm-evaluation-harness, HELM, BigBench Lite, etc.) can show multi-percentage-point swings. The <a href="../11-evaluation/03-eval-harnesses.html">Building Eval Harnesses</a> chapter covers how to standardize evaluations.</p>
+<hr />
+<h2 id="the-benchmark-landscape-at-a-glance">The Benchmark Landscape at a Glance<a class="headerlink" href="#the-benchmark-landscape-at-a-glance" title="Permanent link">¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>Benchmark</th>
+<th>Domain</th>
+<th>Format</th>
+<th>Questions</th>
+<th>Primary Metric</th>
+<th>Saturation?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MMLU</td>
+<td>Knowledge (57 domains)</td>
+<td>4-choice</td>
+<td>~14,000</td>
+<td>Accuracy</td>
+<td>Approaching</td>
+</tr>
+<tr>
+<td>MMLU-Pro</td>
+<td>Knowledge (harder)</td>
+<td>10-choice</td>
+<td>~12,000</td>
+<td>Accuracy</td>
+<td>No</td>
+</tr>
+<tr>
+<td>GSM8K</td>
+<td>Grade-school math</td>
+<td>Open answer</td>
+<td>8,500</td>
+<td>Exact match</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>MATH</td>
+<td>Competition math</td>
+<td>Open answer</td>
+<td>12,500</td>
+<td>Exact match</td>
+<td>Partial</td>
+</tr>
+<tr>
+<td>AIME</td>
+<td>Hard competition math</td>
+<td>Integer answer</td>
+<td>15/yr</td>
+<td>Exact match</td>
+<td>No</td>
+</tr>
+<tr>
+<td>HumanEval</td>
+<td>Python coding</td>
+<td>Code gen + unit tests</td>
+<td>164</td>
+<td>pass@1</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>MBPP</td>
+<td>Python coding</td>
+<td>Code gen + unit tests</td>
+<td>374</td>
+<td>pass@1</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>GPQA</td>
+<td>PhD science</td>
+<td>4-choice</td>
+<td>~450</td>
+<td>Accuracy</td>
+<td>No</td>
+</tr>
+<tr>
+<td>BBH</td>
+<td>Complex reasoning</td>
+<td>Open/4-choice</td>
+<td>6,511</td>
+<td>Accuracy</td>
+<td>Partial</td>
+</tr>
+<tr>
+<td>IFEval</td>
+<td>Instruction following</td>
+<td>Open (rule-checked)</td>
+<td>541</td>
+<td>Prompt/instr accuracy</td>
+<td>No</td>
+</tr>
+<tr>
+<td>ARC-AGI</td>
+<td>Visual rule induction</td>
+<td>Grid matching</td>
+<td>400</td>
+<td>Accuracy</td>
+<td>No</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="interview-corner">Interview Corner<a class="headerlink" href="#interview-corner" title="Permanent link">¶</a></h2>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A paper reports that their new model achieves state-of-the-art performance on MMLU, improving from 85.2 % to 86.1 %. Should you believe the result, and why or why not?</p>
+<p><strong>A:</strong> Be skeptical for several reasons. First, do a quick statistical sanity check: MMLU has ~14,000 questions, so the SE of each estimate is about 0.3 %, giving a 95 % CI on the difference of roughly ±0.85 %. The claimed 0.9 % improvement is only marginally outside that CI and could be noise from a single run. Second, check whether the same harness and prompting strategy was used for both models — different log-likelihood normalization or few-shot count can easily shift scores by 1–2 %. Third, check for contamination: if the training data postdates MMLU&rsquo;s release (2021) and no decontamination was done, the gain may reflect memorization. Fourth, check whether MMLU is now near saturation for this class of model — at 85–86 %, the remaining questions may be ambiguous or malformed, so the &ldquo;improvement&rdquo; may be spurious. A more credible evaluation would also report performance on harder benchmarks (MMLU-Pro, GPQA), include human evals or a judge-based comparison, and provide confidence intervals.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Benchmark validity, reliability, and sensitivity all fail in practice: benchmarks measure what is easy to measure, not necessarily what you care about, and confidence intervals are wider than practitioners assume.</li>
+<li>The standard error of a proportion on a benchmark of <span class="arithmatex">\(n\)</span> items is <span class="arithmatex">\(\sqrt{p(1-p)/n}\)</span>; two models differing by less than ~1 % on MMLU (n ≈ 14,000) are likely within noise.</li>
+<li>Contamination is a spectrum from verbatim memorization to format priming; 13-gram overlap detection catches the obvious cases but misses subtler ones.</li>
+<li>Saturation renders benchmarks uninformative at the frontier: once performance exceeds ~80–85 %, the remaining errors are dominated by question quality, not model capability, and the field moves to harder benchmarks.</li>
+<li>Multiple-choice benchmarks introduce artifacts: positional bias, sensitivity to answer formatting, and inflation from guessing. Log-likelihood scoring reduces extraction noise but introduces length-normalization choices.</li>
+<li>High benchmark scores are necessary but not sufficient for usefulness: capability does not equal behavior, benchmarks sample a fixed distribution, and Goodhart&rsquo;s Law applies as soon as a benchmark becomes a leaderboard target.</li>
+<li>Critical benchmark literacy means checking: which version, which prompting strategy, which harness, contamination protocol, statistical significance, and what was <em>not</em> reported.</li>
+<li>ARC-AGI is qualitatively distinct: it tests fluid rule induction from a handful of examples, which resists the standard scaling-law solution and requires principled generalization.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>LLM evaluation remains an open research problem: benchmarks saturate within months, contamination undermines validity, and no single metric reliably predicts real-world usefulness. The field is converging on dynamic, contamination-resistant benchmarks, crowdsourced human preference signals, and multi-dimensional evaluation suites as partial solutions to these challenges.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2009.03300">Hendrycks et al., <em>Measuring Massive Multitask Language Understanding</em> (2021)</a> — introduced MMLU, still the most widely cited knowledge benchmark, defining the 57-domain evaluation paradigm.</li>
+<li><a href="https://arxiv.org/abs/2210.09261">Suzgun et al., <em>Challenging BIG-Bench Tasks and Whether Chain-of-Thought Can Solve Them</em> (2022)</a> — distilled BIG-Bench into 23 hard reasoning tasks (BBH) and showed CoT dramatically improved performance.</li>
+<li><a href="https://arxiv.org/abs/2211.09110">Liang et al., <em>Holistic Evaluation of Language Models</em> (2022)</a> — HELM framework; argued for multi-metric, multi-scenario evaluation beyond single-number leaderboards.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2311.12022">Rein et al., <em>GPQA: A Graduate-Level Google-Proof Q&amp;A Benchmark</em> (2023)</a> — 448 PhD-level science questions where non-expert humans with internet access score ~34%; one of the last benchmarks not yet saturated by frontier models.</li>
+<li><a href="https://arxiv.org/abs/2406.01574">Wang et al., <em>MMLU-Pro: A More Robust and Challenging Multi-Task Language Understanding Benchmark</em> (2024)</a> — ten-choice questions with heavier reasoning load; NeurIPS 2024 Spotlight, replacing MMLU as the standard knowledge eval.</li>
+<li><a href="https://arxiv.org/abs/2406.04127">Gema et al., <em>Are We Done with MMLU?</em> (2024)</a> — systematic audit finding pervasive label errors in MMLU; introduced MMLU-Redux (5,700 re-annotated questions) and showed reported scores are inflated.</li>
+<li><a href="https://arxiv.org/abs/2406.19314">White et al., <em>LiveBench: A Challenging, Contamination-Limited LLM Benchmark</em> (2024)</a> — monthly-updated questions drawn from recent arXiv papers and news; auto-scored with objective ground truth, eliminating judge bias.</li>
+<li><a href="https://arxiv.org/abs/2403.04132">Chiang et al., <em>Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference</em> (2024)</a> — crowdsourced pairwise Elo-style human evaluation with 240K+ votes; the dominant real-world usefulness signal.</li>
+<li><a href="https://arxiv.org/abs/2412.04604">Chollet et al., <em>ARC Prize 2024: Technical Report</em> (2024)</a> — documents the ARC Prize competition where test-time training pushed ARC-AGI scores from 33 % to 55.5 %, revealing the limits of pure scaling for fluid-intelligence tasks.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/EleutherAI/lm-evaluation-harness">EleutherAI/lm-evaluation-harness</a> — de facto standard eval framework backing the HuggingFace Open LLM Leaderboard; supports 60+ benchmarks across HuggingFace, vLLM, and API backends.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Hendrycks et al., <em>Measuring Massive Multitask Language Understanding</em> (MMLU), 2021.</li>
+<li>Cobbe et al., <em>Training Verifiers to Solve Math Word Problems</em> (GSM8K), 2021.</li>
+<li>Hendrycks et al., <em>Measuring Mathematical Problem Solving With the MATH Dataset</em>, 2021.</li>
+<li>Chen et al., <em>Evaluating Large Language Models Trained on Code</em> (HumanEval / Codex), 2021.</li>
+<li>Rein et al., <em>GPQA: A Graduate-Level Google-Proof Q&amp;A Benchmark</em>, 2023.</li>
+<li>Suzgun et al., <em>Challenging BIG-Bench Tasks and Whether Chain-of-Thought Can Solve Them</em> (BBH), 2022.</li>
+<li>Zhou et al., <em>Instruction-Following Evaluation for Large Language Models</em> (IFEval), 2023.</li>
+<li>Chollet, <em>On the Measure of Intelligence</em> (ARC), 2019.</li>
+<li>Wang et al., <em>MMLU-Pro: A More Robust and Challenging Multi-Task Language Understanding Benchmark</em>, 2024.</li>
+<li>Liang et al., <em>Holistic Evaluation of Language Models</em> (HELM), 2022.</li>
+<li>Chiang et al., <em>Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference</em>, 2024.</li>
+<li>EleutherAI, <em>lm-evaluation-harness</em> (GitHub repository).</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="pn-label">← Previous</span><span class="pn-title">Unified &amp; Any-to-Any Models</span></a>
+<a class="next" href="02-llm-as-judge.html"><span class="pn-label">Next →</span><span class="pn-title">LLM-as-a-Judge &amp; Automated Evaluation</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-core-difficulty-of-llm-evaluation">The Core Difficulty of LLM Evaluation</a></li>
+<li class="toc-l3"><a href="#what-makes-a-good-evaluator">What Makes a Good Evaluator?</a></li>
+<li class="toc-l3"><a href="#the-objective-mismatch">The Objective Mismatch</a></li>
+<li class="toc-l2"><a href="#the-benchmark-zoo">The Benchmark Zoo</a></li>
+<li class="toc-l3"><a href="#knowledge-reasoning-mmlu-and-mmlu-pro">Knowledge &amp;amp; Reasoning: MMLU and MMLU-Pro</a></li>
+<li class="toc-l3"><a href="#mathematical-reasoning-gsm8k-and-math">Mathematical Reasoning: GSM8K and MATH</a></li>
+<li class="toc-l3"><a href="#code-humaneval-and-mbpp">Code: HumanEval and MBPP</a></li>
+<li class="toc-l3"><a href="#scientific-reasoning-gpqa">Scientific Reasoning: GPQA</a></li>
+<li class="toc-l3"><a href="#instruction-following-ifeval">Instruction Following: IFEval</a></li>
+<li class="toc-l3"><a href="#complex-reasoning-bbh-big-bench-hard">Complex Reasoning: BBH (BIG-Bench Hard)</a></li>
+<li class="toc-l3"><a href="#abstraction-arc-agi">Abstraction: ARC-AGI</a></li>
+<li class="toc-l2"><a href="#benchmark-contamination">Benchmark Contamination</a></li>
+<li class="toc-l3"><a href="#the-problem">The Problem</a></li>
+<li class="toc-l3"><a href="#detection-methods">Detection Methods</a></li>
+<li class="toc-l3"><a href="#the-severity-gradient">The Severity Gradient</a></li>
+<li class="toc-l2"><a href="#benchmark-saturation">Benchmark Saturation</a></li>
+<li class="toc-l3"><a href="#what-saturation-means">What Saturation Means</a></li>
+<li class="toc-l3"><a href="#floor-effects-in-smaller-models">Floor Effects in Smaller Models</a></li>
+<li class="toc-l2"><a href="#multiple-choice-pitfalls">Multiple-Choice Pitfalls</a></li>
+<li class="toc-l3"><a href="#why-multiple-choice-underestimates-and-overestimates">Why Multiple-Choice Underestimates and Overestimates</a></li>
+<li class="toc-l2"><a href="#worked-example-confidence-intervals-and-minimum-detectable-differences">Worked Example: Confidence Intervals and Minimum Detectable Differences</a></li>
+<li class="toc-l2"><a href="#the-gap-between-benchmarks-and-usefulness">The Gap Between Benchmarks and Usefulness</a></li>
+<li class="toc-l3"><a href="#why-high-benchmark-scores-do-not-guarantee-useful-models">Why High Benchmark Scores Do Not Guarantee Useful Models</a></li>
+<li class="toc-l3"><a href="#the-role-of-human-evaluation">The Role of Human Evaluation</a></li>
+<li class="toc-l3"><a href="#leaderboard-gaming-and-the-meta-benchmark-problem">Leaderboard Gaming and the Meta-Benchmark Problem</a></li>
+<li class="toc-l2"><a href="#critical-literacy-reading-benchmark-claims">Critical Literacy: Reading Benchmark Claims</a></li>
+<li class="toc-l2"><a href="#the-benchmark-landscape-at-a-glance">The Benchmark Landscape at a Glance</a></li>
+<li class="toc-l2"><a href="#interview-corner">Interview Corner</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

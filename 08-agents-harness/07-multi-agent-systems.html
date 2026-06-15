@@ -1,0 +1,1473 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-Agent Systems &amp; Orchestration — The LLM Stack</title>
+<meta name="description" content="Orchestrator-worker, debate, role specialization, handoffs, shared memory/blackboard, when multi-agent helps vs hurts, cost; frameworks (LangGraph, AutoGen, Cre">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="active" href="07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VIII — Agents &amp; Harness Engineering</div>
+<h1 id="87-multi-agent-systems-orchestration">8.7 Multi-Agent Systems &amp; Orchestration<a class="headerlink" href="#87-multi-agent-systems-orchestration" title="Permanent link">¶</a></h1>
+<p>A single LLM call has a bounded context window, bounded compute budget, and bounded reliability — it can hallucinate, lose track of a long task, or simply not have the right &ldquo;persona&rdquo; for every sub-problem. Multi-agent systems attack all three limits by decomposing a task across multiple model invocations that communicate through structured messages or shared state.</p>
+<p>This chapter maps the design space: topologies, communication patterns, shared memory, frameworks, and the often-ignored question of <em>when multi-agent is the wrong answer</em>. We build real code throughout, because the footguns in this space are easiest to understand by running into them.</p>
+<p>Related chapters you should know first: <a href="../08-agents-harness/02-agentic-loop.html">The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a>, <a href="../08-agents-harness/01-tool-use-function-calling.html">Tool Use &amp; Function Calling</a>, <a href="../08-agents-harness/05-agent-memory.html">Memory Systems for Agents</a>, and <a href="../08-agents-harness/06-mcp.html">The Model Context Protocol (MCP)</a>.</p>
+<h2 id="the-case-for-multiple-agents">The Case for Multiple Agents<a class="headerlink" href="#the-case-for-multiple-agents" title="Permanent link">¶</a></h2>
+<p>The intuitive motivation is task decomposition, but the real drivers are more specific.</p>
+<p><strong>Context limits.</strong> A 200k-token context sounds enormous, but a realistic software engineering task can easily involve hundreds of files totalling millions of tokens. Assigning each file to a specialized worker agent that produces a compact summary allows the orchestrator to reason at a higher level of abstraction without blowing its window.</p>
+<p><strong>Error isolation.</strong> When a single monolithic agent fails halfway through a 40-step task, you lose all intermediate work. A workflow with explicit handoff points lets you checkpoint, retry just the failed sub-task, and resume.</p>
+<p><strong>Parallelism.</strong> Many tasks have independent sub-tasks. Searching three databases, writing two code modules, and translating a document into five languages can proceed concurrently when each sub-task runs in a separate agent thread.</p>
+<p><strong>Role specialization.</strong> A &ldquo;critic&rdquo; agent can be prompted with different priorities than a &ldquo;generator&rdquo; agent. When the same model plays both roles in sequence, with different system prompts and therefore different prior distributions over outputs, the critique is often sharper than self-critique in a single context.</p>
+<p><strong>Debate and verification.</strong> Multiple agents can independently solve a problem and then reconcile answers, reducing variance in the same way that ensembling reduces variance for classifiers.</p>
+<p>We can express the expected quality gain from <span class="arithmatex">\(N\)</span> independent agents who each succeed with probability <span class="arithmatex">\(p\)</span> (for tasks where any one correct solution suffices) as:</p>
+<div class="arithmatex">\[
+P(\text{at least one correct}) = 1 - (1-p)^N
+\]</div>
+<p>For <span class="arithmatex">\(p = 0.7\)</span> and <span class="arithmatex">\(N = 3\)</span>, this is <span class="arithmatex">\(1 - 0.3^3 = 0.973\)</span>. The gain is largest when <span class="arithmatex">\(p\)</span> is moderate — for tasks that are either trivial (<span class="arithmatex">\(p \approx 1\)</span>) or impossibly hard (<span class="arithmatex">\(p \approx 0\)</span>), multiple agents add cost without benefit.</p>
+<h2 id="topologies-how-agents-are-wired">Topologies: How Agents Are Wired<a class="headerlink" href="#topologies-how-agents-are-wired" title="Permanent link">¶</a></h2>
+<p>The wiring diagram is the first design decision. There are five canonical patterns; real systems combine them.</p>
+<figure class="viz" id="fig-marl-topologies-five-patterns">
+<svg viewBox="0 0 1000 760" role="img" aria-label="Five canonical multi-agent topologies compared side by side: orchestrator-workers (star), pipeline (chain), debate (peer-to-peer), blackboard (shared state), and hierarchical (tree).">
+  <defs>
+    <marker id="tp-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+    </marker>
+    <marker id="tp-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#c15b39)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-marl-topologies-five-patterns text {
+      font: 400 11px var(--sans,sans-serif);
+      fill: var(--ink-soft,#333);
+    }
+    #fig-marl-topologies-five-patterns .ptitle {
+      font: 700 12px var(--sans,sans-serif);
+      fill: var(--ink-soft,#333);
+    }
+    #fig-marl-topologies-five-patterns .lbl {
+      font: 600 10.5px var(--sans,sans-serif);
+      fill: var(--ink-soft,#333);
+    }
+    #fig-marl-topologies-five-patterns .lbl-on-acc {
+      font: 600 11px var(--sans,sans-serif);
+      fill: #fff;
+    }
+    #fig-marl-topologies-five-patterns .sm {
+      font: 400 9.5px var(--mono,monospace);
+      fill: var(--muted,#666);
+    }
+    #fig-marl-topologies-five-patterns .acc-lbl {
+      font: 600 10px var(--sans,sans-serif);
+      fill: var(--accent,#c15b39);
+    }
+  </style>
+
+
+  <rect x="14" y="38" width="304" height="300" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-opacity="0.6" stroke-width="1.2"/>
+  <text x="24" y="57" class="ptitle">1 · Orchestrator-Workers (Star)</text>
+
+
+  <rect x="95" y="72" width="136" height="52" rx="6" fill="var(--accent,#c15b39)"/>
+  <text x="163" y="93" text-anchor="middle" class="lbl-on-acc">Orchestrator</text>
+  <text x="163" y="109" text-anchor="middle" class="lbl-on-acc">(planner / LLM)</text>
+
+
+  <line x1="126" y1="124" x2="67" y2="188" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+  <line x1="163" y1="124" x2="163" y2="188" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+  <line x1="200" y1="124" x2="247" y2="188" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+
+
+  <rect x="26" y="188" width="82" height="48" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="67" y="208" text-anchor="middle" class="lbl">W1 — coder</text>
+  <text x="67" y="224" text-anchor="middle" class="sm">agent</text>
+
+  <rect x="122" y="188" width="82" height="48" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="163" y="208" text-anchor="middle" class="lbl">W2 — web</text>
+  <text x="163" y="224" text-anchor="middle" class="sm">search</text>
+
+  <rect x="206" y="188" width="82" height="48" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="247" y="208" text-anchor="middle" class="lbl">W3 — data</text>
+  <text x="247" y="224" text-anchor="middle" class="sm">analyst</text>
+
+
+  <rect x="330" y="38" width="300" height="300" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-opacity="0.6" stroke-width="1.2"/>
+  <text x="340" y="57" class="ptitle">2 · Pipeline (Chain)</text>
+
+  <rect x="380" y="72" width="200" height="44" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="480" y="97" text-anchor="middle" class="lbl">Stage 1 — draft</text>
+
+  <line x1="480" y1="116" x2="480" y2="134" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+
+  <rect x="380" y="134" width="200" height="44" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="480" y="159" text-anchor="middle" class="lbl">Stage 2 — fact check</text>
+
+  <line x1="480" y1="178" x2="480" y2="196" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+
+  <rect x="380" y="196" width="200" height="44" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="480" y="221" text-anchor="middle" class="lbl">Stage 3 — edit</text>
+
+  <line x1="480" y1="240" x2="480" y2="258" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+
+  <rect x="380" y="258" width="200" height="44" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="480" y="283" text-anchor="middle" class="lbl">Stage 4 — publish</text>
+
+
+  <rect x="642" y="38" width="344" height="300" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-opacity="0.6" stroke-width="1.2"/>
+  <text x="652" y="57" class="ptitle">3 · Debate (Peer-to-Peer)</text>
+
+
+  <rect x="658" y="72" width="120" height="50" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="718" y="93" text-anchor="middle" class="lbl">Agent A</text>
+  <text x="718" y="110" text-anchor="middle" class="sm">(position)</text>
+
+
+  <rect x="840" y="72" width="120" height="50" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="900" y="93" text-anchor="middle" class="lbl">Agent B</text>
+  <text x="900" y="110" text-anchor="middle" class="sm">(position)</text>
+
+
+  <line x1="780" y1="97" x2="838" y2="97" stroke="var(--accent,#c15b39)" stroke-width="2" marker-start="url(#tp-arr-acc)" marker-end="url(#tp-arr-acc)"/>
+  <text x="809" y="89" text-anchor="middle" class="acc-lbl">rounds</text>
+
+
+  <line x1="718" y1="122" x2="718" y2="180" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+  <line x1="718" y1="180" x2="800" y2="218" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#tp-arr)"/>
+  <line x1="900" y1="122" x2="900" y2="180" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+  <line x1="900" y1="180" x2="820" y2="218" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#tp-arr)"/>
+
+
+  <rect x="758" y="218" width="102" height="50" rx="5" fill="var(--accent,#c15b39)"/>
+  <text x="809" y="239" text-anchor="middle" class="lbl-on-acc">Judge</text>
+  <text x="809" y="256" text-anchor="middle" class="lbl-on-acc">Agent</text>
+
+
+  <rect x="14" y="348" width="455" height="398" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-opacity="0.6" stroke-width="1.2"/>
+  <text x="24" y="367" class="ptitle">4 · Blackboard (Shared State)</text>
+
+
+  <rect x="60" y="382" width="358" height="68" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.15" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+  <text x="239" y="404" text-anchor="middle" style="font:700 12px var(--sans,sans-serif)">Shared Blackboard</text>
+  <text x="239" y="421" text-anchor="middle" class="sm">{ task_state, partial_results,</text>
+  <text x="239" y="436" text-anchor="middle" class="sm">claims, evidence, decisions }</text>
+
+
+  <line x1="110" y1="450" x2="110" y2="490" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-start="url(#tp-arr)" marker-end="url(#tp-arr)"/>
+  <line x1="190" y1="450" x2="190" y2="490" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-start="url(#tp-arr)" marker-end="url(#tp-arr)"/>
+  <line x1="288" y1="450" x2="288" y2="490" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-start="url(#tp-arr)" marker-end="url(#tp-arr)"/>
+  <line x1="366" y1="450" x2="366" y2="490" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-start="url(#tp-arr)" marker-end="url(#tp-arr)"/>
+
+
+  <rect x="66" y="490" width="86" height="48" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="109" y="511" text-anchor="middle" class="lbl">Agg</text>
+  <text x="109" y="527" text-anchor="middle" class="sm" textLength="74" lengthAdjust="spacingAndGlyphs">aggregator</text>
+
+  <rect x="146" y="490" width="86" height="48" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="189" y="511" text-anchor="middle" class="lbl">Ret</text>
+  <text x="189" y="527" text-anchor="middle" class="sm">retriever</text>
+
+  <rect x="244" y="490" width="86" height="48" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="287" y="511" text-anchor="middle" class="lbl">Gen</text>
+  <text x="287" y="527" text-anchor="middle" class="sm" textLength="74" lengthAdjust="spacingAndGlyphs">generator</text>
+
+  <rect x="322" y="490" width="86" height="48" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="365" y="511" text-anchor="middle" class="lbl">Crit</text>
+  <text x="365" y="527" text-anchor="middle" class="sm">critic</text>
+
+
+  <rect x="480" y="348" width="506" height="398" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-opacity="0.6" stroke-width="1.2"/>
+  <text x="490" y="367" class="ptitle">5 · Hierarchical (Tree)</text>
+
+
+  <rect x="644" y="384" width="148" height="48" rx="6" fill="var(--accent,#c15b39)"/>
+  <text x="718" y="404" text-anchor="middle" class="lbl-on-acc">Root</text>
+  <text x="718" y="420" text-anchor="middle" class="lbl-on-acc">Orchestrator</text>
+
+
+  <line x1="688" y1="432" x2="610" y2="480" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+  <line x1="748" y1="432" x2="826" y2="480" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+
+
+  <rect x="530" y="480" width="158" height="44" rx="5" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+  <text x="609" y="506" text-anchor="middle" class="lbl">Sub-Orchestrator 1</text>
+
+
+  <rect x="748" y="480" width="158" height="44" rx="5" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+  <text x="827" y="506" text-anchor="middle" class="lbl">Sub-Orchestrator 2</text>
+
+
+  <line x1="578" y1="524" x2="554" y2="570" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+  <line x1="640" y1="524" x2="660" y2="570" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+
+
+  <line x1="795" y1="524" x2="772" y2="570" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+  <line x1="858" y1="524" x2="878" y2="570" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+
+
+  <rect x="516" y="570" width="58" height="40" rx="4" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="545" y="595" text-anchor="middle" class="lbl">W</text>
+
+  <rect x="630" y="570" width="58" height="40" rx="4" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="659" y="595" text-anchor="middle" class="lbl">W</text>
+
+
+  <rect x="740" y="570" width="58" height="40" rx="4" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="769" y="595" text-anchor="middle" class="lbl">W</text>
+
+  <rect x="852" y="570" width="58" height="40" rx="4" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="881" y="595" text-anchor="middle" class="lbl">W</text>
+
+</svg>
+<figcaption><b>Five canonical multi-agent wiring patterns compared side by side.</b> The star (orchestrator-workers) centralises dispatch; the chain (pipeline) enforces a deterministic sequence; peer-to-peer debate converges two positions through a judge; the blackboard decouples agents via concurrent read/write shared state; and the tree (hierarchical) enables recursive delegation through sub-orchestrators. Real production systems typically compose two or more of these patterns.</figcaption>
+</figure>
+
+<p>Each topology has a natural failure mode:</p>
+<table>
+<thead>
+<tr>
+<th>Topology</th>
+<th>Natural strength</th>
+<th>Natural failure mode</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Orchestrator-workers</td>
+<td>Clear ownership, easy to retry workers</td>
+<td>Orchestrator becomes bottleneck / single point of context</td>
+</tr>
+<tr>
+<td>Pipeline</td>
+<td>Deterministic, debuggable</td>
+<td>Early errors propagate unchecked</td>
+</tr>
+<tr>
+<td>Debate</td>
+<td>Reduces overconfidence</td>
+<td>Agents converge to same wrong answer; judge is biased</td>
+</tr>
+<tr>
+<td>Blackboard</td>
+<td>Concurrent writers, emergent synthesis</td>
+<td>Race conditions, stale reads, key collisions</td>
+</tr>
+<tr>
+<td>Hierarchical</td>
+<td>Scales to large tasks</td>
+<td>Latency explodes; cross-tree communication is awkward</td>
+</tr>
+</tbody>
+</table>
+<h2 id="workflow-vs-agent-the-critical-distinction">Workflow vs. Agent: The Critical Distinction<a class="headerlink" href="#workflow-vs-agent-the-critical-distinction" title="Permanent link">¶</a></h2>
+<p>The LLM agent community overuses the word &ldquo;agent.&rdquo; It is worth being precise.</p>
+<p>A <strong>workflow</strong> is a directed acyclic graph (DAG) of LLM calls where the routing logic is deterministic and written in code by the developer. Each node calls a model; the edges between nodes are if/else or fixed sequences. The model does <em>not</em> decide what to do next.</p>
+<p>An <strong>agent</strong> lets the model itself decide the next action at each step, including whether to call a tool, which tool, and what to pass. The control flow is dynamic and emerges from model outputs.</p>
+<div class="highlight"><pre><span></span><code>WORKFLOW (control flow in code)                AGENT (control flow in model)
+
+code: if intent == &quot;math&quot;:                     model output: {&quot;action&quot;: &quot;calculator&quot;,
+          call(math_model, query)                            &quot;input&quot;: &quot;sqrt(2)&quot;}
+      elif intent == &quot;search&quot;:
+          call(search_model, query)
+</code></pre></div>
+<p>The practical significance: workflows are cheaper to run, easier to test, easier to observe, and less likely to spiral. Agents are more flexible and can handle tasks where the exact steps cannot be enumerated in advance.</p>
+<p>A common design pattern is to use a workflow as the outer shell (so the overall task is deterministic and auditable) and embed agents as the <em>leaves</em> of the workflow — the workers that handle unpredictable sub-tasks.</p>
+<p>We will return to this distinction when discussing frameworks, because LangGraph, AutoGen, CrewAI, and Swarm each stake out a different point on this spectrum.</p>
+<h2 id="orchestrator-worker-in-code">Orchestrator-Worker in Code<a class="headerlink" href="#orchestrator-worker-in-code" title="Permanent link">¶</a></h2>
+<p>Let us build the most common pattern from scratch, without a framework, so the mechanics are transparent.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">orchestrator_worker.py</span>
+<span class="sd">A minimal orchestrator-worker multi-agent system using the OpenAI chat API.</span>
+<span class="sd">Runs end-to-end: the orchestrator decomposes a task, dispatches workers,</span>
+<span class="sd">and synthesises their results.</span>
+
+<span class="sd">Requirements:</span>
+<span class="sd">    pip install openai</span>
+<span class="sd">    OPENAI_API_KEY must be set.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ThreadPoolExecutor</span><span class="p">,</span> <span class="n">as_completed</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAI</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">()</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Data types</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">WorkItem</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A sub-task produced by the orchestrator.&quot;&quot;&quot;</span>
+    <span class="n">worker_id</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># human-readable label, e.g. &quot;researcher_1&quot;</span>
+    <span class="n">system_prompt</span><span class="p">:</span> <span class="nb">str</span>      <span class="c1"># role specialisation</span>
+    <span class="n">task</span><span class="p">:</span> <span class="nb">str</span>               <span class="c1"># the concrete instruction</span>
+    <span class="n">context</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>       <span class="c1"># any shared context the worker needs</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">WorkResult</span><span class="p">:</span>
+    <span class="n">worker_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">output</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">success</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="n">error</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Low-level model call</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">call_model</span><span class="p">(</span>
+    <span class="n">system</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">user</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.3</span><span class="p">,</span>
+    <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1024</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Thin wrapper around chat completions — easy to swap for any provider.&quot;&quot;&quot;</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[</span>
+            <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">system</span><span class="p">},</span>
+            <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>   <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">user</span><span class="p">},</span>
+        <span class="p">],</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="n">temperature</span><span class="p">,</span>
+        <span class="n">max_tokens</span><span class="o">=</span><span class="n">max_tokens</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Orchestrator: produces a plan as structured JSON</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">ORCHESTRATOR_SYSTEM</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">You are a task orchestrator. Given a high-level goal, decompose it into</span>
+<span class="s2">independent sub-tasks that can run in parallel. Each sub-task should be</span>
+<span class="s2">self-contained. Return a JSON array of objects, each with keys:</span>
+<span class="s2">  worker_id   – short snake_case label</span>
+<span class="s2">  system_prompt – the specialist role for this worker</span>
+<span class="s2">  task        – the full instruction for this worker</span>
+
+<span class="s2">Return ONLY the JSON array. No prose.</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">plan</span><span class="p">(</span><span class="n">goal</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">shared_context</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">WorkItem</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Ask the orchestrator to produce a parallel work plan.&quot;&quot;&quot;</span>
+    <span class="n">user_msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Goal: </span><span class="si">{</span><span class="n">goal</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Shared context:</span><span class="se">\n</span><span class="si">{</span><span class="n">shared_context</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">if</span> <span class="n">shared_context</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">&quot;Goal: </span><span class="si">{</span><span class="n">goal</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">call_model</span><span class="p">(</span><span class="n">ORCHESTRATOR_SYSTEM</span><span class="p">,</span> <span class="n">user_msg</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span>
+
+    <span class="c1"># Strip markdown fences if model wrapped the JSON</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">removeprefix</span><span class="p">(</span><span class="s2">&quot;```json&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">removeprefix</span><span class="p">(</span><span class="s2">&quot;```&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">removesuffix</span><span class="p">(</span><span class="s2">&quot;```&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+    <span class="n">items_data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[</span>
+        <span class="n">WorkItem</span><span class="p">(</span>
+            <span class="n">worker_id</span><span class="o">=</span><span class="n">d</span><span class="p">[</span><span class="s2">&quot;worker_id&quot;</span><span class="p">],</span>
+            <span class="n">system_prompt</span><span class="o">=</span><span class="n">d</span><span class="p">[</span><span class="s2">&quot;system_prompt&quot;</span><span class="p">],</span>
+            <span class="n">task</span><span class="o">=</span><span class="n">d</span><span class="p">[</span><span class="s2">&quot;task&quot;</span><span class="p">],</span>
+            <span class="n">context</span><span class="o">=</span><span class="n">shared_context</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">items_data</span>
+    <span class="p">]</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Worker: executes a single sub-task</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_worker</span><span class="p">(</span><span class="n">item</span><span class="p">:</span> <span class="n">WorkItem</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">WorkResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Execute one work item; capture any model or network error.&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">user_msg</span> <span class="o">=</span> <span class="n">item</span><span class="o">.</span><span class="n">task</span>
+        <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">context</span><span class="p">:</span>
+            <span class="n">user_msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Context:</span><span class="se">\n</span><span class="si">{</span><span class="n">item</span><span class="o">.</span><span class="n">context</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Task:</span><span class="se">\n</span><span class="si">{</span><span class="n">item</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="n">call_model</span><span class="p">(</span><span class="n">item</span><span class="o">.</span><span class="n">system_prompt</span><span class="p">,</span> <span class="n">user_msg</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">WorkResult</span><span class="p">(</span><span class="n">worker_id</span><span class="o">=</span><span class="n">item</span><span class="o">.</span><span class="n">worker_id</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="n">output</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">WorkResult</span><span class="p">(</span><span class="n">worker_id</span><span class="o">=</span><span class="n">item</span><span class="o">.</span><span class="n">worker_id</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">success</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">))</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Synthesiser: combines parallel results</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">SYNTHESISER_SYSTEM</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">You are a synthesis agent. You receive the outputs of multiple specialist</span>
+<span class="s2">workers who each tackled a sub-task. Your job is to integrate their outputs</span>
+<span class="s2">into a single coherent, well-structured response. Be concise.</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">synthesise</span><span class="p">(</span><span class="n">goal</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">WorkResult</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Combine worker outputs into a final answer.&quot;&quot;&quot;</span>
+    <span class="n">parts</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;=== </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">worker_id</span><span class="si">}</span><span class="s2"> ===</span><span class="se">\n</span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">output</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">success</span><span class="p">]</span>
+    <span class="n">failed</span> <span class="o">=</span> <span class="p">[</span><span class="n">r</span><span class="o">.</span><span class="n">worker_id</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">r</span><span class="o">.</span><span class="n">success</span><span class="p">]</span>
+    <span class="n">user_msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Original goal: </span><span class="si">{</span><span class="n">goal</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Worker outputs:</span><span class="se">\n\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">failed</span><span class="p">:</span>
+        <span class="n">user_msg</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">Note: workers </span><span class="si">{</span><span class="n">failed</span><span class="si">}</span><span class="s2"> failed and produced no output.&quot;</span>
+    <span class="k">return</span> <span class="n">call_model</span><span class="p">(</span><span class="n">SYNTHESISER_SYSTEM</span><span class="p">,</span> <span class="n">user_msg</span><span class="p">)</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Top-level orchestrate function</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">orchestrate</span><span class="p">(</span><span class="n">goal</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">max_workers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Full orchestrator-worker pipeline for a given goal.&quot;&quot;&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[Orchestrator] Planning: </span><span class="si">{</span><span class="n">goal</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">work_items</span> <span class="o">=</span> <span class="n">plan</span><span class="p">(</span><span class="n">goal</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[Orchestrator] </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">work_items</span><span class="p">)</span><span class="si">}</span><span class="s2"> sub-tasks: </span><span class="si">{</span><span class="p">[</span><span class="n">w</span><span class="o">.</span><span class="n">worker_id</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">work_items</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">WorkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="c1"># Run workers in parallel using a thread pool (each call is IO-bound)</span>
+    <span class="k">with</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="n">max_workers</span><span class="p">)</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>
+        <span class="n">futures</span> <span class="o">=</span> <span class="p">{</span><span class="n">pool</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">run_worker</span><span class="p">,</span> <span class="n">item</span><span class="p">):</span> <span class="n">item</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">work_items</span><span class="p">}</span>
+        <span class="k">for</span> <span class="n">future</span> <span class="ow">in</span> <span class="n">as_completed</span><span class="p">(</span><span class="n">futures</span><span class="p">):</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="n">future</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+            <span class="n">status</span> <span class="o">=</span> <span class="s2">&quot;OK&quot;</span> <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">success</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">&quot;FAILED: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  [Worker </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">worker_id</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">status</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;[Orchestrator] Synthesising results …&quot;</span><span class="p">)</span>
+    <span class="n">answer</span> <span class="o">=</span> <span class="n">synthesise</span><span class="p">(</span><span class="n">goal</span><span class="p">,</span> <span class="n">results</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">answer</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Demo</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">goal</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;Write a brief market analysis report for a new AI-powered note-taking app: &quot;</span>
+        <span class="s2">&quot;competitor landscape, target user segments, and key risks.&quot;</span>
+    <span class="p">)</span>
+    <span class="n">answer</span> <span class="o">=</span> <span class="n">orchestrate</span><span class="p">(</span><span class="n">goal</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== FINAL ANSWER ===&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">answer</span><span class="p">)</span>
+</code></pre></div>
+<p>The key engineering choices above:</p>
+<ol>
+<li><strong>ThreadPoolExecutor for parallelism</strong> — LLM calls are network I/O so Python threads work fine; <code>asyncio</code> with <code>httpx</code> is equally valid and slightly lower overhead.</li>
+<li><strong>Structured JSON plan</strong> — The orchestrator emits a machine-readable plan rather than prose, making the handoff deterministic. Always strip markdown fences defensively.</li>
+<li><strong>Isolated error handling per worker</strong> — A single worker failure does not crash the pipeline; the synthesiser knows which workers succeeded.</li>
+</ol>
+<h2 id="shared-memory-and-the-blackboard-pattern">Shared Memory and the Blackboard Pattern<a class="headerlink" href="#shared-memory-and-the-blackboard-pattern" title="Permanent link">¶</a></h2>
+<p>In the orchestrator-worker model, the orchestrator is the sole integration point — it reads all worker outputs and synthesises them. This works well for 3–8 workers but becomes a bottleneck as the number of workers grows, because every result must fit in the orchestrator&rsquo;s context window at synthesis time.</p>
+<p>The <strong>blackboard pattern</strong> replaces the orchestrator&rsquo;s context with an external shared data structure. Workers read from and write to the blackboard; an optional coordinator polls the blackboard and decides when to advance.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">blackboard.py</span>
+<span class="sd">A minimal blackboard for multi-agent coordination.</span>
+<span class="sd">Thread-safe for concurrent workers using a threading.Lock.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">BlackboardEntry</span><span class="p">:</span>
+    <span class="n">author</span><span class="p">:</span> <span class="nb">str</span>           <span class="c1"># which agent wrote this</span>
+    <span class="n">content</span><span class="p">:</span> <span class="n">Any</span>          <span class="c1"># arbitrary Python object (str, dict, etc.)</span>
+    <span class="n">timestamp</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Blackboard</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Shared key-value store for agent communication.</span>
+<span class="sd">    Keys are namespaced: &quot;agent_id:key_name&quot;.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_store</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">BlackboardEntry</span><span class="p">]]</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">list</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">write</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">content</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">author</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Append a versioned entry. Never overwrites — full audit trail.&quot;&quot;&quot;</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+        <span class="n">entry</span> <span class="o">=</span> <span class="n">BlackboardEntry</span><span class="p">(</span><span class="n">author</span><span class="o">=</span><span class="n">author</span><span class="p">,</span> <span class="n">content</span><span class="o">=</span><span class="n">content</span><span class="p">,</span> <span class="n">timestamp</span><span class="o">=</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">())</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_store</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">read_latest</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BlackboardEntry</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the most recently written entry for a key.&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="n">entries</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="p">[])</span>
+            <span class="k">return</span> <span class="n">entries</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="n">entries</span> <span class="k">else</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">read_all</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">BlackboardEntry</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return full history for a key (useful for debate/critique).&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="p">[]))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">keys</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_store</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">snapshot</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return a plain dict of latest values — useful for debugging.&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">content</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_store</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">v</span><span class="p">}</span>
+</code></pre></div>
+<p>Agents interact with the blackboard rather than passing messages directly:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Example: two agents using the blackboard</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">research_agent</span><span class="p">(</span><span class="n">board</span><span class="p">:</span> <span class="n">Blackboard</span><span class="p">,</span> <span class="n">topic</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Writes findings to the blackboard.&quot;&quot;&quot;</span>
+    <span class="n">findings</span> <span class="o">=</span> <span class="n">call_model</span><span class="p">(</span>
+        <span class="s2">&quot;You are a research specialist. Be factual and concise.&quot;</span><span class="p">,</span>
+        <span class="sa">f</span><span class="s2">&quot;Research: </span><span class="si">{</span><span class="n">topic</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">board</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="s2">&quot;research:findings&quot;</span><span class="p">,</span> <span class="n">content</span><span class="o">=</span><span class="n">findings</span><span class="p">,</span> <span class="n">author</span><span class="o">=</span><span class="s2">&quot;researcher&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">critic_agent</span><span class="p">(</span><span class="n">board</span><span class="p">:</span> <span class="n">Blackboard</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Reads the latest research and writes a critique.&quot;&quot;&quot;</span>
+    <span class="n">entry</span> <span class="o">=</span> <span class="n">board</span><span class="o">.</span><span class="n">read_latest</span><span class="p">(</span><span class="s2">&quot;research:findings&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">entry</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">board</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;critic:status&quot;</span><span class="p">,</span> <span class="s2">&quot;No findings to critique yet.&quot;</span><span class="p">,</span> <span class="n">author</span><span class="o">=</span><span class="s2">&quot;critic&quot;</span><span class="p">)</span>
+        <span class="k">return</span>
+    <span class="n">critique</span> <span class="o">=</span> <span class="n">call_model</span><span class="p">(</span>
+        <span class="s2">&quot;You are a rigorous critic. Identify gaps and unsupported claims.&quot;</span><span class="p">,</span>
+        <span class="sa">f</span><span class="s2">&quot;Critique this research:</span><span class="se">\n\n</span><span class="si">{</span><span class="n">entry</span><span class="o">.</span><span class="n">content</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">board</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="s2">&quot;critic:critique&quot;</span><span class="p">,</span> <span class="n">content</span><span class="o">=</span><span class="n">critique</span><span class="p">,</span> <span class="n">author</span><span class="o">=</span><span class="s2">&quot;critic&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The blackboard&rsquo;s append-only design gives you a full audit trail for free. This matters for debugging: you can replay the entire agent interaction post-hoc to find where reasoning went wrong.</p>
+<h2 id="frameworks-langgraph-autogen-crewai-and-openai-swarm">Frameworks: LangGraph, AutoGen, CrewAI, and OpenAI Swarm<a class="headerlink" href="#frameworks-langgraph-autogen-crewai-and-openai-swarm" title="Permanent link">¶</a></h2>
+<p>Four frameworks dominate the multi-agent landscape as of mid-2025. They differ fundamentally in their mental models.</p>
+<h3 id="langgraph">LangGraph<a class="headerlink" href="#langgraph" title="Permanent link">¶</a></h3>
+<p>LangGraph (from the LangChain team) models agent workflows as <strong>explicit state machines</strong> with typed state. Nodes are Python functions or model-calling steps; edges can be conditional. This is close to the <em>workflow</em> end of the spectrum — the developer writes the graph topology.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">langgraph_example.py</span>
+<span class="sd">A minimal LangGraph orchestrator-worker for a research task.</span>
+<span class="sd">Requires: pip install langgraph langchain-openai</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TypedDict</span><span class="p">,</span> <span class="n">Annotated</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">langgraph.graph</span><span class="w"> </span><span class="kn">import</span> <span class="n">StateGraph</span><span class="p">,</span> <span class="n">END</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">langgraph.graph.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">add_messages</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">langchain_openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatOpenAI</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 1. Define state — the &quot;blackboard&quot; is strongly typed</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ResearchState</span><span class="p">(</span><span class="n">TypedDict</span><span class="p">):</span>
+    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">research_notes</span><span class="p">:</span> <span class="nb">str</span>     <span class="c1"># filled by researcher node</span>
+    <span class="n">critique</span><span class="p">:</span> <span class="nb">str</span>           <span class="c1"># filled by critic node</span>
+    <span class="n">final_answer</span><span class="p">:</span> <span class="nb">str</span>       <span class="c1"># filled by synthesiser node</span>
+    <span class="n">iteration</span><span class="p">:</span> <span class="nb">int</span>          <span class="c1"># how many research-critique loops so far</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 2. Define nodes (each is a pure function: state → state patch)</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.3</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">researcher</span><span class="p">(</span><span class="n">state</span><span class="p">:</span> <span class="n">ResearchState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Node: produce research notes on the question.&quot;&quot;&quot;</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Research the following and produce concise notes:</span><span class="se">\n</span><span class="si">{</span><span class="n">state</span><span class="p">[</span><span class="s1">&#39;question&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">if</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;critique&quot;</span><span class="p">):</span>
+        <span class="n">prompt</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">Previous critique to address:</span><span class="se">\n</span><span class="si">{</span><span class="n">state</span><span class="p">[</span><span class="s1">&#39;critique&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;research_notes&quot;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">content</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">critic</span><span class="p">(</span><span class="n">state</span><span class="p">:</span> <span class="n">ResearchState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Node: critique the research notes, or approve them.&quot;&quot;&quot;</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Question: </span><span class="si">{</span><span class="n">state</span><span class="p">[</span><span class="s1">&#39;question&#39;</span><span class="p">]</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Research notes:</span><span class="se">\n</span><span class="si">{</span><span class="n">state</span><span class="p">[</span><span class="s1">&#39;research_notes&#39;</span><span class="p">]</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;Identify missing information or unsupported claims. &quot;</span>
+        <span class="s2">&quot;If the notes are sufficient, reply with exactly: APPROVED&quot;</span>
+    <span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;critique&quot;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">content</span><span class="p">,</span>
+        <span class="s2">&quot;iteration&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;iteration&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">synthesiser</span><span class="p">(</span><span class="n">state</span><span class="p">:</span> <span class="n">ResearchState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Node: produce the final answer from approved notes.&quot;&quot;&quot;</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Question: </span><span class="si">{</span><span class="n">state</span><span class="p">[</span><span class="s1">&#39;question&#39;</span><span class="p">]</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Approved research notes:</span><span class="se">\n</span><span class="si">{</span><span class="n">state</span><span class="p">[</span><span class="s1">&#39;research_notes&#39;</span><span class="p">]</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;Write a clear, concise final answer.&quot;</span>
+    <span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;final_answer&quot;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">content</span><span class="p">}</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 3. Routing: decide whether to loop or to synthesise</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">route_after_critic</span><span class="p">(</span><span class="n">state</span><span class="p">:</span> <span class="n">ResearchState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Conditional edge: approve ends the loop; critique sends us back.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="s2">&quot;APPROVED&quot;</span> <span class="ow">in</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;critique&quot;</span><span class="p">]</span> <span class="ow">or</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;iteration&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;synthesise&quot;</span>   <span class="c1"># edge label → goes to synthesiser node</span>
+    <span class="k">return</span> <span class="s2">&quot;revise&quot;</span>           <span class="c1"># edge label → goes back to researcher</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 4. Build the graph</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">builder</span> <span class="o">=</span> <span class="n">StateGraph</span><span class="p">(</span><span class="n">ResearchState</span><span class="p">)</span>
+
+<span class="n">builder</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;researcher&quot;</span><span class="p">,</span>   <span class="n">researcher</span><span class="p">)</span>
+<span class="n">builder</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;critic&quot;</span><span class="p">,</span>       <span class="n">critic</span><span class="p">)</span>
+<span class="n">builder</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;synthesiser&quot;</span><span class="p">,</span>  <span class="n">synthesiser</span><span class="p">)</span>
+
+<span class="n">builder</span><span class="o">.</span><span class="n">set_entry_point</span><span class="p">(</span><span class="s2">&quot;researcher&quot;</span><span class="p">)</span>
+<span class="n">builder</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="s2">&quot;researcher&quot;</span><span class="p">,</span> <span class="s2">&quot;critic&quot;</span><span class="p">)</span>
+<span class="n">builder</span><span class="o">.</span><span class="n">add_conditional_edges</span><span class="p">(</span>
+    <span class="s2">&quot;critic&quot;</span><span class="p">,</span>
+    <span class="n">route_after_critic</span><span class="p">,</span>
+    <span class="p">{</span>
+        <span class="s2">&quot;revise&quot;</span><span class="p">:</span>     <span class="s2">&quot;researcher&quot;</span><span class="p">,</span>   <span class="c1"># loop back</span>
+        <span class="s2">&quot;synthesise&quot;</span><span class="p">:</span> <span class="s2">&quot;synthesiser&quot;</span><span class="p">,</span>  <span class="c1"># exit</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+<span class="n">builder</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="s2">&quot;synthesiser&quot;</span><span class="p">,</span> <span class="n">END</span><span class="p">)</span>
+
+<span class="n">graph</span> <span class="o">=</span> <span class="n">builder</span><span class="o">.</span><span class="n">compile</span><span class="p">()</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 5. Run</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">graph</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
+        <span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;What are the main differences between RLHF and DPO?&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;research_notes&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;critique&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;final_answer&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;iteration&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="p">})</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;final_answer&quot;</span><span class="p">])</span>
+</code></pre></div>
+<p>LangGraph&rsquo;s chief virtue is <strong>observability</strong>: the state at every node transition is a typed dict you can log, checkpoint, and resume from. Its chief cost is verbosity — simple pipelines require more boilerplate than raw Python.</p>
+<h3 id="autogen">AutoGen<a class="headerlink" href="#autogen" title="Permanent link">¶</a></h3>
+<p>Microsoft&rsquo;s AutoGen models multi-agent systems as <strong>conversational agents</strong> that exchange natural-language messages. The programmer registers agents and defines their reply functions; the conversation drives control flow. AutoGen sits closer to the <em>agent</em> end of the spectrum.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">autogen_debate.py</span>
+<span class="sd">A two-agent debate using AutoGen&#39;s ConversableAgent API.</span>
+<span class="sd">Requires: pip install pyautogen</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">autogen</span>
+
+<span class="c1"># Shared config for both agents</span>
+<span class="n">llm_config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;config_list&quot;</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;api_key&quot;</span><span class="p">:</span> <span class="s2">&quot;...&quot;</span><span class="p">}]}</span>
+
+<span class="c1"># Agent A: takes the PRO position</span>
+<span class="n">pro_agent</span> <span class="o">=</span> <span class="n">autogen</span><span class="o">.</span><span class="n">ConversableAgent</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;ProAgent&quot;</span><span class="p">,</span>
+    <span class="n">system_message</span><span class="o">=</span><span class="p">(</span>
+        <span class="s2">&quot;You argue FOR the proposition that large language models will &quot;</span>
+        <span class="s2">&quot;replace most knowledge workers within 10 years. Be specific and &quot;</span>
+        <span class="s2">&quot;evidence-based. Keep responses under 200 words.&quot;</span>
+    <span class="p">),</span>
+    <span class="n">llm_config</span><span class="o">=</span><span class="n">llm_config</span><span class="p">,</span>
+    <span class="n">human_input_mode</span><span class="o">=</span><span class="s2">&quot;NEVER&quot;</span><span class="p">,</span>  <span class="c1"># fully automated</span>
+<span class="p">)</span>
+
+<span class="c1"># Agent B: takes the CON position</span>
+<span class="n">con_agent</span> <span class="o">=</span> <span class="n">autogen</span><span class="o">.</span><span class="n">ConversableAgent</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;ConAgent&quot;</span><span class="p">,</span>
+    <span class="n">system_message</span><span class="o">=</span><span class="p">(</span>
+        <span class="s2">&quot;You argue AGAINST the proposition that large language models will &quot;</span>
+        <span class="s2">&quot;replace most knowledge workers within 10 years. Be specific and &quot;</span>
+        <span class="s2">&quot;evidence-based. Keep responses under 200 words.&quot;</span>
+    <span class="p">),</span>
+    <span class="n">llm_config</span><span class="o">=</span><span class="n">llm_config</span><span class="p">,</span>
+    <span class="n">human_input_mode</span><span class="o">=</span><span class="s2">&quot;NEVER&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Judge: produces a verdict after the debate</span>
+<span class="n">judge</span> <span class="o">=</span> <span class="n">autogen</span><span class="o">.</span><span class="n">ConversableAgent</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Judge&quot;</span><span class="p">,</span>
+    <span class="n">system_message</span><span class="o">=</span><span class="p">(</span>
+        <span class="s2">&quot;You are a neutral judge. After reading the debate, you produce a &quot;</span>
+        <span class="s2">&quot;balanced verdict on who made the stronger arguments and why.&quot;</span>
+    <span class="p">),</span>
+    <span class="n">llm_config</span><span class="o">=</span><span class="n">llm_config</span><span class="p">,</span>
+    <span class="n">human_input_mode</span><span class="o">=</span><span class="s2">&quot;NEVER&quot;</span><span class="p">,</span>
+    <span class="n">is_termination_msg</span><span class="o">=</span><span class="k">lambda</span> <span class="n">msg</span><span class="p">:</span> <span class="s2">&quot;VERDICT:&quot;</span> <span class="ow">in</span> <span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;content&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+<span class="p">)</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="c1"># Initiate a 3-round debate between pro and con agents</span>
+    <span class="n">pro_agent</span><span class="o">.</span><span class="n">initiate_chat</span><span class="p">(</span>
+        <span class="n">recipient</span><span class="o">=</span><span class="n">con_agent</span><span class="p">,</span>
+        <span class="n">message</span><span class="o">=</span><span class="s2">&quot;LLMs will replace most knowledge workers within 10 years.&quot;</span><span class="p">,</span>
+        <span class="n">max_turns</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="c1"># Then ask the judge to weigh in on the full transcript</span>
+    <span class="c1"># (In practice you&#39;d collect and pass the conversation history)</span>
+</code></pre></div>
+<h3 id="crewai">CrewAI<a class="headerlink" href="#crewai" title="Permanent link">¶</a></h3>
+<p>CrewAI provides a higher-level abstraction: you define <strong>Agents</strong> with <code>role</code>, <code>goal</code>, and <code>backstory</code>, then assemble them into a <strong>Crew</strong> with a list of <strong>Tasks</strong>. Control flow is either sequential or hierarchical (where a manager LLM decides task order). The framework is opinionated and quick to prototype.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">crewai_example.py</span>
+<span class="sd">A minimal CrewAI pipeline for writing a technical blog post.</span>
+<span class="sd">Requires: pip install crewai</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">crewai</span><span class="w"> </span><span class="kn">import</span> <span class="n">Agent</span><span class="p">,</span> <span class="n">Task</span><span class="p">,</span> <span class="n">Crew</span><span class="p">,</span> <span class="n">Process</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">langchain_openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatOpenAI</span>
+
+<span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.4</span><span class="p">)</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Define specialist agents</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">researcher</span> <span class="o">=</span> <span class="n">Agent</span><span class="p">(</span>
+    <span class="n">role</span><span class="o">=</span><span class="s2">&quot;Technical Researcher&quot;</span><span class="p">,</span>
+    <span class="n">goal</span><span class="o">=</span><span class="s2">&quot;Find accurate, up-to-date information on the given topic.&quot;</span><span class="p">,</span>
+    <span class="n">backstory</span><span class="o">=</span><span class="s2">&quot;A meticulous research scientist who double-checks every claim.&quot;</span><span class="p">,</span>
+    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
+    <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">writer</span> <span class="o">=</span> <span class="n">Agent</span><span class="p">(</span>
+    <span class="n">role</span><span class="o">=</span><span class="s2">&quot;Technical Writer&quot;</span><span class="p">,</span>
+    <span class="n">goal</span><span class="o">=</span><span class="s2">&quot;Write a clear, engaging technical blog post from research notes.&quot;</span><span class="p">,</span>
+    <span class="n">backstory</span><span class="o">=</span><span class="s2">&quot;An experienced writer who makes complex ideas accessible.&quot;</span><span class="p">,</span>
+    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
+    <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">editor</span> <span class="o">=</span> <span class="n">Agent</span><span class="p">(</span>
+    <span class="n">role</span><span class="o">=</span><span class="s2">&quot;Editor&quot;</span><span class="p">,</span>
+    <span class="n">goal</span><span class="o">=</span><span class="s2">&quot;Polish the draft for clarity, accuracy, and style.&quot;</span><span class="p">,</span>
+    <span class="n">backstory</span><span class="o">=</span><span class="s2">&quot;A demanding editor who improves every sentence.&quot;</span><span class="p">,</span>
+    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
+    <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Define tasks (sequential pipeline)</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">research_task</span> <span class="o">=</span> <span class="n">Task</span><span class="p">(</span>
+    <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Research the key concepts behind mixture-of-experts LLM architectures.&quot;</span><span class="p">,</span>
+    <span class="n">agent</span><span class="o">=</span><span class="n">researcher</span><span class="p">,</span>
+    <span class="n">expected_output</span><span class="o">=</span><span class="s2">&quot;A structured set of notes covering architecture, training, and key papers.&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">writing_task</span> <span class="o">=</span> <span class="n">Task</span><span class="p">(</span>
+    <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Write a 500-word technical blog post based on the research notes.&quot;</span><span class="p">,</span>
+    <span class="n">agent</span><span class="o">=</span><span class="n">writer</span><span class="p">,</span>
+    <span class="n">expected_output</span><span class="o">=</span><span class="s2">&quot;A polished 500-word blog post draft.&quot;</span><span class="p">,</span>
+    <span class="n">context</span><span class="o">=</span><span class="p">[</span><span class="n">research_task</span><span class="p">],</span>  <span class="c1"># this task receives research_task&#39;s output</span>
+<span class="p">)</span>
+
+<span class="n">editing_task</span> <span class="o">=</span> <span class="n">Task</span><span class="p">(</span>
+    <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Edit the blog post draft for accuracy, flow, and style.&quot;</span><span class="p">,</span>
+    <span class="n">agent</span><span class="o">=</span><span class="n">editor</span><span class="p">,</span>
+    <span class="n">expected_output</span><span class="o">=</span><span class="s2">&quot;A final, publication-ready blog post.&quot;</span><span class="p">,</span>
+    <span class="n">context</span><span class="o">=</span><span class="p">[</span><span class="n">writing_task</span><span class="p">],</span>
+<span class="p">)</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Assemble and run the crew</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">crew</span> <span class="o">=</span> <span class="n">Crew</span><span class="p">(</span>
+    <span class="n">agents</span><span class="o">=</span><span class="p">[</span><span class="n">researcher</span><span class="p">,</span> <span class="n">writer</span><span class="p">,</span> <span class="n">editor</span><span class="p">],</span>
+    <span class="n">tasks</span><span class="o">=</span><span class="p">[</span><span class="n">research_task</span><span class="p">,</span> <span class="n">writing_task</span><span class="p">,</span> <span class="n">editing_task</span><span class="p">],</span>
+    <span class="n">process</span><span class="o">=</span><span class="n">Process</span><span class="o">.</span><span class="n">sequential</span><span class="p">,</span>  <span class="c1"># or Process.hierarchical for a manager LLM</span>
+    <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">crew</span><span class="o">.</span><span class="n">kickoff</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="openai-swarm">OpenAI Swarm<a class="headerlink" href="#openai-swarm" title="Permanent link">¶</a></h3>
+<p>OpenAI&rsquo;s Swarm (released as an educational framework) is deliberately minimal: agents are plain Python functions plus a system prompt, and they communicate by <strong>handing off</strong> control to one another. There is no persistent orchestrator — instead, an agent hands control to a different agent by returning a <code>Result</code> object with a <code>agent</code> field. This is the <em>agent-as-router</em> pattern.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">swarm_handoff.py</span>
+<span class="sd">A triage-and-specialist handoff pattern using OpenAI Swarm.</span>
+<span class="sd">Requires: pip install openai-swarm</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">swarm</span><span class="w"> </span><span class="kn">import</span> <span class="n">Swarm</span><span class="p">,</span> <span class="n">Agent</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">Swarm</span><span class="p">()</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Specialist agents</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">billing_agent</span> <span class="o">=</span> <span class="n">Agent</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;BillingAgent&quot;</span><span class="p">,</span>
+    <span class="n">instructions</span><span class="o">=</span><span class="p">(</span>
+        <span class="s2">&quot;You handle billing inquiries: invoices, payment methods, refunds. &quot;</span>
+        <span class="s2">&quot;If the question is not billing-related, transfer back to triage.&quot;</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+
+<span class="n">technical_agent</span> <span class="o">=</span> <span class="n">Agent</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;TechnicalAgent&quot;</span><span class="p">,</span>
+    <span class="n">instructions</span><span class="o">=</span><span class="p">(</span>
+        <span class="s2">&quot;You handle technical support: bugs, API errors, configuration issues. &quot;</span>
+        <span class="s2">&quot;If the question is not technical, transfer back to triage.&quot;</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Triage agent: routes to the right specialist</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">transfer_to_billing</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Agent</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Handoff function — returning an Agent transfers control.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">billing_agent</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">transfer_to_technical</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Agent</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">technical_agent</span>
+
+<span class="n">triage_agent</span> <span class="o">=</span> <span class="n">Agent</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;TriageAgent&quot;</span><span class="p">,</span>
+    <span class="n">instructions</span><span class="o">=</span><span class="p">(</span>
+        <span class="s2">&quot;You are a customer service triage agent. &quot;</span>
+        <span class="s2">&quot;For billing questions call transfer_to_billing(). &quot;</span>
+        <span class="s2">&quot;For technical questions call transfer_to_technical(). &quot;</span>
+        <span class="s2">&quot;Otherwise answer directly.&quot;</span>
+    <span class="p">),</span>
+    <span class="n">functions</span><span class="o">=</span><span class="p">[</span><span class="n">transfer_to_billing</span><span class="p">,</span> <span class="n">transfer_to_technical</span><span class="p">],</span>
+<span class="p">)</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Run a conversation</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">messages</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;My invoice shows the wrong amount.&quot;</span><span class="p">}]</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">agent</span><span class="o">=</span><span class="n">triage_agent</span><span class="p">,</span> <span class="n">messages</span><span class="o">=</span><span class="n">messages</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">messages</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;content&quot;</span><span class="p">])</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Final agent: </span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">agent</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="framework-comparison">Framework Comparison<a class="headerlink" href="#framework-comparison" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>LangGraph</th>
+<th>AutoGen</th>
+<th>CrewAI</th>
+<th>Swarm</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mental model</td>
+<td>State machine / DAG</td>
+<td>Conversational agents</td>
+<td>Crew with roles &amp; tasks</td>
+<td>Agent-as-router, handoffs</td>
+</tr>
+<tr>
+<td>Control flow owner</td>
+<td>Developer (graph edges)</td>
+<td>Model (message replies)</td>
+<td>Framework + model</td>
+<td>Model (function calls)</td>
+</tr>
+<tr>
+<td>State management</td>
+<td>Typed dict per node</td>
+<td>Message history</td>
+<td>Task context passing</td>
+<td>Context variables</td>
+</tr>
+<tr>
+<td>Debugging</td>
+<td>Excellent (typed state)</td>
+<td>Moderate</td>
+<td>Moderate</td>
+<td>Minimal</td>
+</tr>
+<tr>
+<td>Best for</td>
+<td>Complex stateful workflows</td>
+<td>Open-ended debates</td>
+<td>Structured pipelines</td>
+<td>Simple routing</td>
+</tr>
+<tr>
+<td>Maturity (mid-2025)</td>
+<td>High</td>
+<td>High</td>
+<td>High</td>
+<td>Low (educational)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="handoff-protocols-and-communication-patterns">Handoff Protocols and Communication Patterns<a class="headerlink" href="#handoff-protocols-and-communication-patterns" title="Permanent link">¶</a></h2>
+<p>How agents pass information to each other determines much of the system&rsquo;s reliability.</p>
+<p><strong>String-to-string (opaque)</strong> is the simplest: agent A&rsquo;s output text becomes agent B&rsquo;s input text. It is easy to implement but fragile — B must parse prose that A may format inconsistently.</p>
+<p><strong>Structured handoff</strong> uses typed schemas (JSON, Pydantic models) at every boundary. The orchestrator validates the payload before forwarding. This adds a small overhead but makes errors explicit rather than silently propagating malformed text.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ResearchHandoff</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Validated payload from researcher → writer.&quot;&quot;&quot;</span>
+    <span class="n">topic</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">key_facts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>          <span class="c1"># at most 10 bullet points</span>
+    <span class="n">source_urls</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>        <span class="c1"># cited sources (may be empty)</span>
+    <span class="n">confidence</span><span class="p">:</span> <span class="nb">float</span>             <span class="c1"># researcher&#39;s self-assessed confidence 0–1</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">WritingHandoff</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Validated payload from writer → editor.&quot;&quot;&quot;</span>
+    <span class="n">draft_text</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">word_count</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">flagged_sections</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>   <span class="c1"># writer&#39;s own uncertainty flags</span>
+</code></pre></div>
+<p><strong>Message bus</strong> — agents subscribe to topics (e.g. &ldquo;findings&rdquo;, &ldquo;code_output&rdquo;) rather than passing messages directly. This decouples the topology and makes it easy to add new agents without rewiring the graph. Apache Kafka or even Redis pub/sub serve as the bus in production systems; for local development a simple Python <code>queue.Queue</code> suffices.</p>
+<p><strong>Context forwarding</strong> is the mechanism used by most LLM-native systems: each agent&rsquo;s context window includes a summary or verbatim copy of the preceding step&rsquo;s output. The cost is linear in chain length — a 10-step pipeline may inject up to 10 prior summaries into each new model call. Managing this is the subject of <a href="../08-agents-harness/04-context-engineering.html">Context Engineering &amp; Management</a>.</p>
+<h2 id="when-multi-agent-hurts-costs-anti-patterns-and-failure-modes">When Multi-Agent Hurts: Costs, Anti-Patterns, and Failure Modes<a class="headerlink" href="#when-multi-agent-hurts-costs-anti-patterns-and-failure-modes" title="Permanent link">¶</a></h2>
+<p>Adding agents is not free. Before designing a multi-agent system, run through this checklist.</p>
+<p><strong>Latency.</strong> Even with parallelism, the critical path latency of a multi-agent system is the sum of sequential LLM calls on the critical path. A 4-node sequential chain where each call takes 2 s adds 8 s of minimum latency before any response.</p>
+<p><strong>Token cost.</strong> Each agent call incurs its own prompt tokens (system prompt + context). A 5-agent pipeline with a 2,000-token system prompt each and 1,000 tokens of shared context per call spends 15,000 input tokens just on overhead, before any actual work.</p>
+<p><strong>Error amplification.</strong> In a pipeline, a hallucination in stage 1 is treated as ground truth by stage 2. Without a verification step, errors compound across stages. The same hallucination that a careful single agent might self-correct (because it contradicts itself within one context) goes undetected when each agent starts fresh.</p>
+<p><strong>Coordination overhead.</strong> Agents that communicate extensively spend a growing fraction of their token budget on housekeeping — summarising their own state, re-establishing context, and formatting handoffs — rather than on the actual task.</p>
+<p><strong>Anti-patterns to avoid:</strong></p>
+<ul>
+<li><strong>Agent soup</strong> — spawning many agents without clear role boundaries. If two agents&rsquo; instructions overlap, they produce contradictory outputs and the synthesiser cannot reconcile them.</li>
+<li><strong>Infinite loops</strong> — without a hard iteration cap, debate and reflection loops can cycle indefinitely (and rack up large bills). Always set <code>max_turns</code> or <code>max_iterations</code>.</li>
+<li><strong>Blind trust</strong> — an orchestrator that passes a worker&rsquo;s output to the next stage without validation. A worker that returns malformed JSON or a code snippet containing an injection should fail loudly, not silently corrupt downstream agents.</li>
+<li><strong>Over-parallelism</strong> — spawning 20 workers in parallel when the rate limit is 60 requests/minute will cause most to fail or be throttled. Always model the rate-limit as a resource constraint on your thread pool.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">The multi-agent tax</p>
+<p>Every inter-agent boundary costs tokens and latency. A task that takes 500 tokens and 1 s as a single call may cost 3,000 tokens and 5 s when decomposed into a 3-agent pipeline with context forwarding. Benchmark the single-agent baseline before reaching for multi-agent decomposition.</p>
+</div>
+<div class="admonition example">
+<p class="admonition-title">Cost worked example: 5-agent pipeline</p>
+<p>Suppose you have a pipeline with 5 sequential agents:</p>
+<ul>
+<li>Each agent has a system prompt of ~1,000 tokens.</li>
+<li>The shared &ldquo;briefing&rdquo; context forwarded from earlier stages grows: stage 1 receives 0, stage 2 receives ~500, stage 3 receives ~1,000, stage 4 receives ~1,500, stage 5 receives ~2,000 tokens of prior output.</li>
+<li>Each agent generates ~400 output tokens.</li>
+<li>Model price: USD 0.15 / 1M input tokens, USD 0.60 / 1M output tokens (gpt-4o-mini tier, illustrative).</li>
+</ul>
+<p><strong>Input tokens:</strong> <span class="arithmatex">\(5 \times 1000_\text{system} + (0+500+1000+1500+2000)_\text{context} = 5000 + 5000 = 10000\)</span> input tokens.</p>
+<p><strong>Output tokens:</strong> <span class="arithmatex">\(5 \times 400 = 2000\)</span> output tokens.</p>
+<p><strong>Cost per pipeline run:</strong></p>
+<div class="arithmatex">\[
+C = \frac{10000 \times 0.15}{10^6} + \frac{2000 \times 0.60}{10^6} = \$0.0015 + \$0.0012 = \$0.0027
+\]</div>
+<p>At 10,000 pipeline runs per day, that is USD 27/day or roughly USD 800/month just for this pipeline — before any tool calls or RAG retrieval costs. Contrast with a single well-prompted agent that might cost USD 0.0008/call at the same volume: USD 240/month. The multi-agent premium here is roughly 3.4×.</p>
+<p>The premium is justified only if the quality gain exceeds the cost. Measure both.</p>
+</div>
+<h2 id="agentic-rl-and-learning-to-orchestrate">Agentic RL and Learning to Orchestrate<a class="headerlink" href="#agentic-rl-and-learning-to-orchestrate" title="Permanent link">¶</a></h2>
+<p>Multi-agent systems are not only engineered; they can be <em>trained</em>. Reinforcement learning from verifiable rewards (see <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a>) can be applied at the orchestrator level: the orchestrator is the policy, its actions are &ldquo;dispatch worker X with context Y&rdquo;, and the reward is the quality of the final task completion.</p>
+<p>This is the regime where <a href="../06-rl-infra/10-agentic-multiturn-rl.html">Agentic &amp; Multi-Turn RL</a> becomes relevant: the value function must account for multi-step credit assignment across agent boundaries, not just within a single model call.</p>
+<p>A simpler approach — and one deployable today — is <strong>self-critique with routing</strong>: the orchestrator scores each worker&rsquo;s output against a rubric and re-dispatches to the same worker (with the critique as additional context) if the score is below a threshold. This is a policy gradient in disguise, but the gradient is computed by a scoring LLM rather than a reward model.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">self_critique_loop</span><span class="p">(</span>
+    <span class="n">orchestrator_prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">worker_fn</span><span class="p">,</span>
+    <span class="n">scoring_fn</span><span class="p">,</span>
+    <span class="n">task</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.8</span><span class="p">,</span>
+    <span class="n">max_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run a worker, score its output, and retry with critique if below threshold.</span>
+<span class="sd">    scoring_fn: (task, output) -&gt; float in [0, 1]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">attempt</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_retries</span><span class="p">):</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="n">worker_fn</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+        <span class="n">score</span> <span class="o">=</span> <span class="n">scoring_fn</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">output</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">score</span> <span class="o">&gt;=</span> <span class="n">threshold</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">output</span>
+        <span class="c1"># Generate a critique and append it to the task for the next attempt</span>
+        <span class="n">critique</span> <span class="o">=</span> <span class="n">call_model</span><span class="p">(</span>
+            <span class="s2">&quot;You are a quality assessor. Identify what is wrong or missing.&quot;</span><span class="p">,</span>
+            <span class="sa">f</span><span class="s2">&quot;Task: </span><span class="si">{</span><span class="n">task</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Output:</span><span class="se">\n</span><span class="si">{</span><span class="n">output</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Score: </span><span class="si">{</span><span class="n">score</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">task</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">task</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">[Previous attempt scored </span><span class="si">{</span><span class="n">score</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">. Critique: </span><span class="si">{</span><span class="n">critique</span><span class="si">}</span><span class="s2">]&quot;</span>
+    <span class="k">return</span> <span class="n">output</span>  <span class="c1"># return best-effort after max_retries</span>
+</code></pre></div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re designing a multi-agent system for a code-generation task. The system has an orchestrator, a code-writing worker, a test-running worker, and a documentation worker. The latency SLA is 5 seconds. How do you architect this?</p>
+<p><strong>A:</strong> The critical insight is to identify which steps must be sequential (the test runner depends on code the writer produces) and which can be parallel (documentation can be generated at the same time tests are running, given access to the same code). A minimal architecture:</p>
+<ol>
+<li><strong>Orchestrator</strong> (step 1, ~0.5 s): decomposes the task, produces a function signature and test specification as structured JSON.</li>
+<li><strong>Writer</strong> (step 2, ~1.5 s): generates code given the spec.</li>
+<li><strong>Test runner and doc writer in parallel</strong> (step 3, ~1.5 s each): test runner executes the code and returns pass/fail + error messages; doc writer generates docstrings and README from the code and spec simultaneously.</li>
+<li><strong>Orchestrator again</strong> (step 4, ~0.5 s): if tests pass, assemble the final output. If tests fail, dispatch the writer again with the error messages; but this retry exceeds the 5-second SLA, so the system should return a partial result with a flag rather than timing out silently.</li>
+</ol>
+<p>Total on the happy path: 0.5 + 1.5 + 1.5 + 0.5 = <strong>4 seconds</strong>, within SLA. The critical path goes through writer → test runner; documentation can run in parallel without contributing to critical-path latency.</p>
+<p>Secondary concerns: rate limits (if all three parallel agents share the same API key), token budget (pass only the function signature to the doc writer, not full context history), and retry policy (exponential backoff on transient API errors, hard cutoff at 4.5 s to leave room for the final assembly step).</p>
+</div>
+<h2 id="putting-it-together-a-reference-architecture">Putting It Together: A Reference Architecture<a class="headerlink" href="#putting-it-together-a-reference-architecture" title="Permanent link">¶</a></h2>
+<p>A production multi-agent system for a complex task (e.g., automated software engineering, research synthesis, data pipeline construction) typically has this layered structure:</p>
+<figure class="viz" id="fig-marl-reference-architecture-layers">
+<svg viewBox="0 0 900 720" role="img" aria-label="Production multi-agent reference architecture: Harness Layer on top with request router, rate limiter, budget enforcer, prompt registry, retry logic, and circuit breaker; Orchestration Layer in the middle containing a Planner/Orchestrator LLM connected via read/write arrow to a State/Blackboard, which dispatches down to a Worker Pool of Coder, Searcher, and Critic agents; Tool/Resource Layer at the bottom with code executor, web search, vector DB, SQL DB, file system, external APIs, and MCP servers.">
+  <defs>
+    <marker id="ra-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+    </marker>
+    <marker id="ra-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#c15b39)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-marl-reference-architecture-layers text {
+      font: 400 11px var(--sans,sans-serif);
+      fill: var(--ink-soft,#333);
+    }
+    #fig-marl-reference-architecture-layers .layer-title {
+      font: 700 13px var(--sans,sans-serif);
+      fill: var(--ink-soft,#333);
+      letter-spacing: 0.04em;
+    }
+    #fig-marl-reference-architecture-layers .chip-lbl {
+      font: 500 10.5px var(--sans,sans-serif);
+    }
+    #fig-marl-reference-architecture-layers .lbl-acc {
+      font: 600 11.5px var(--sans,sans-serif);
+      fill: #fff;
+    }
+    #fig-marl-reference-architecture-layers .lbl-bold {
+      font: 700 11px var(--sans,sans-serif);
+    }
+    #fig-marl-reference-architecture-layers .lbl-mono {
+      font: 400 9.5px var(--mono,monospace);
+      fill: var(--muted,#888);
+    }
+    #fig-marl-reference-architecture-layers .pool-title {
+      font: 700 10px var(--sans,sans-serif);
+      fill: var(--muted,#888);
+      letter-spacing: 0.06em;
+    }
+    #fig-marl-reference-architecture-layers .dispatch-lbl {
+      font: 500 9.5px var(--sans,sans-serif);
+      fill: var(--muted,#888);
+    }
+  </style>
+
+
+  <rect x="38" y="16" width="824" height="144" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+  <text x="450" y="40" text-anchor="middle" class="layer-title">HARNESS LAYER</text>
+
+
+  <rect x="80" y="52" width="130" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="145" y="72" text-anchor="middle" class="chip-lbl">Request router</text>
+
+  <rect x="226" y="52" width="114" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="283" y="72" text-anchor="middle" class="chip-lbl">Rate limiter</text>
+
+  <rect x="356" y="52" width="132" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="422" y="72" text-anchor="middle" class="chip-lbl">Budget enforcer</text>
+
+
+  <rect x="80" y="98" width="134" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="147" y="118" text-anchor="middle" class="chip-lbl">Prompt registry</text>
+
+  <rect x="230" y="98" width="110" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="285" y="118" text-anchor="middle" class="chip-lbl">Retry logic</text>
+
+  <rect x="356" y="98" width="132" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="422" y="118" text-anchor="middle" class="chip-lbl">Circuit breaker</text>
+
+
+  <line x1="450" y1="160" x2="450" y2="196" stroke="var(--ink-soft,#555)" stroke-width="1.8" marker-end="url(#ra-arr)"/>
+
+
+  <rect x="38" y="196" width="824" height="316" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+  <text x="450" y="220" text-anchor="middle" class="layer-title">ORCHESTRATION LAYER</text>
+
+
+  <rect x="70" y="234" width="200" height="86" rx="6" fill="var(--accent,#c15b39)"/>
+  <text x="170" y="263" text-anchor="middle" class="lbl-acc">Planner /</text>
+  <text x="170" y="281" text-anchor="middle" class="lbl-acc">Orchestrator</text>
+  <text x="170" y="299" text-anchor="middle" class="lbl-acc">(LLM)</text>
+
+
+  <line x1="272" y1="277" x2="336" y2="277" stroke="var(--accent,#c15b39)" stroke-width="2" marker-start="url(#ra-arr-acc)" marker-end="url(#ra-arr-acc)"/>
+
+
+  <rect x="336" y="234" width="284" height="86" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.14" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+  <text x="478" y="260" text-anchor="middle" class="lbl-bold">State / Blackboard</text>
+  <text x="478" y="279" text-anchor="middle" class="lbl-mono">{ plan, results, claims,</text>
+  <text x="478" y="295" text-anchor="middle" class="lbl-mono">errors, iteration_count }</text>
+
+
+  <line x1="170" y1="320" x2="170" y2="360" stroke="var(--ink-soft,#555)" stroke-width="1.6" marker-end="url(#ra-arr)"/>
+  <text x="178" y="342" class="dispatch-lbl">dispatch /</text>
+  <text x="178" y="354" class="dispatch-lbl">results</text>
+
+
+  <rect x="56" y="358" width="784" height="130" rx="6" fill="none" stroke="var(--border-2,#ccc)" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="450" y="378" text-anchor="middle" class="pool-title">WORKER POOL</text>
+
+
+  <rect x="76" y="386" width="186" height="80" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="169" y="412" text-anchor="middle" class="lbl-bold">Coder</text>
+  <text x="169" y="430" text-anchor="middle" class="lbl-mono">(LLM + tools)</text>
+
+  <rect x="284" y="386" width="186" height="80" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="377" y="412" text-anchor="middle" class="lbl-bold">Searcher</text>
+  <text x="377" y="430" text-anchor="middle" class="lbl-mono">(LLM + web)</text>
+
+  <rect x="492" y="386" width="186" height="80" rx="5" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.2"/>
+  <text x="585" y="412" text-anchor="middle" class="lbl-bold">Critic</text>
+  <text x="585" y="430" text-anchor="middle" class="lbl-mono">(LLM)</text>
+
+  <text x="730" y="432" text-anchor="middle" style="font:700 24px var(--sans,sans-serif);fill:var(--muted,#888)">…</text>
+
+
+  <line x1="450" y1="512" x2="450" y2="548" stroke="var(--ink-soft,#555)" stroke-width="1.8" marker-end="url(#ra-arr)"/>
+
+
+  <rect x="38" y="548" width="824" height="158" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+  <text x="450" y="572" text-anchor="middle" class="layer-title">TOOL / RESOURCE LAYER</text>
+
+
+  <rect x="66" y="586" width="128" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="130" y="606" text-anchor="middle" class="chip-lbl">Code executor</text>
+
+  <rect x="210" y="586" width="110" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="265" y="606" text-anchor="middle" class="chip-lbl">Web search</text>
+
+  <rect x="336" y="586" width="104" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="388" y="606" text-anchor="middle" class="chip-lbl">Vector DB</text>
+
+  <rect x="456" y="586" width="96" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="504" y="606" text-anchor="middle" class="chip-lbl">SQL DB</text>
+
+
+  <rect x="130" y="632" width="110" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="185" y="652" text-anchor="middle" class="chip-lbl">File system</text>
+
+  <rect x="256" y="632" width="124" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="318" y="652" text-anchor="middle" class="chip-lbl">External APIs</text>
+
+  <rect x="396" y="632" width="116" height="30" rx="15" class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.1"/>
+  <text x="454" y="652" text-anchor="middle" class="chip-lbl">MCP servers</text>
+
+</svg>
+<figcaption><b>Production multi-agent reference architecture as three stacked layers.</b> The Harness Layer enforces SLAs, cost limits, and reliability concerns before requests reach the Orchestration Layer, where an LLM-backed Planner/Orchestrator reads and writes a shared State/Blackboard and dispatches work to a nested Worker Pool of specialised agents (Coder, Searcher, Critic). Workers call down into the Tool/Resource Layer where code execution, search, databases, and MCP servers live.</figcaption>
+</figure>
+
+<p>The harness layer (addressed further in <a href="../08-agents-harness/03-harness-coding-agent.html">Harness Engineering: Building a Coding Agent</a>) enforces SLAs, cost limits, and per-agent sandboxing. The tool layer is where <a href="../08-agents-harness/01-tool-use-function-calling.html">Tool Use &amp; Function Calling</a> and <a href="../08-agents-harness/06-mcp.html">The Model Context Protocol (MCP)</a> operate. Agent evaluation — how you know the system is working — is covered in <a href="../08-agents-harness/08-agent-evaluation.html">Agent Evaluation &amp; Benchmarks</a>.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Multi-agent systems attack context limits, error isolation, and parallelism — but every agent boundary costs tokens and latency. Benchmark the single-agent baseline first.</li>
+<li>The five canonical topologies are orchestrator-worker (star), pipeline (chain), debate (peer-to-peer), blackboard (shared state), and hierarchical (tree). Real systems compose them.</li>
+<li>The workflow vs. agent distinction matters: a workflow has developer-written control flow; an agent has model-driven control flow. Use workflows for predictable, auditable steps; use agents at the leaves where flexibility is needed.</li>
+<li>LangGraph is best for stateful workflows where you want typed, inspectable state. AutoGen suits open-ended multi-turn conversations. CrewAI speeds up structured pipelines. OpenAI Swarm illustrates the handoff pattern but is educational-grade.</li>
+<li>Shared-state (blackboard) architectures enable concurrent writers and emergent synthesis, but require thread-safe access and explicit conflict resolution.</li>
+<li>Structured handoffs (Pydantic schemas at every inter-agent boundary) reduce silent error propagation. Validate payloads before forwarding.</li>
+<li>The multi-agent &ldquo;tax&rdquo; is real: a 5-agent pipeline with context forwarding can cost 3–5× more tokens than a single well-prompted call. The premium is justified only when measurable quality gain exceeds the cost.</li>
+<li>Self-critique loops (worker → scorer → retry with critique) are simple forms of policy gradient that can be applied without any model fine-tuning.</li>
+<li>Anti-patterns: agent soup (unclear role boundaries), infinite loops (no iteration cap), blind trust (no output validation), and over-parallelism (ignoring rate limits).</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Multi-agent LLM orchestration has matured rapidly since 2023: production frameworks now support typed state machines, conversational handoffs, and role-based crews, while research on debate, self-critique, and agentic RL continues to push quality ceilings. The central engineering challenge remains balancing the quality gains of decomposition against the latency, token cost, and error-propagation penalties of inter-agent boundaries.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2308.08155">Wu et al., <em>AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation</em> (2023)</a> — introduced the conversational-agent model where agents exchange natural-language messages; the most-cited multi-agent framework paper.</li>
+<li><a href="https://arxiv.org/abs/2308.00352">Hong et al., <em>MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework</em> (2023)</a> — encodes software-engineering SOPs into structured roles and shared message pools, achieving SOTA on code-generation benchmarks.</li>
+<li><a href="https://arxiv.org/abs/2309.02427">Sumers et al., <em>Cognitive Architectures for Language Agents</em> (2024)</a> — unified theoretical framework (CoALA) connecting memory, action space, and planning to cognitive science; the canonical survey for understanding <em>why</em> agent architectures are designed the way they are.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2305.19118">Liang et al., <em>Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate</em> (2023)</a> — empirical study showing structured debate between agents reduces degeneration-of-thought and improves factual accuracy over single-model self-reflection.</li>
+<li><a href="https://arxiv.org/abs/2412.17481">Chen et al., <em>A Survey on LLM-based Multi-Agent System: Recent Advances and New Frontiers</em> (2024)</a> — comprehensive survey covering topologies, communication patterns, and open challenges across 200+ recent papers.</li>
+<li><a href="https://www.anthropic.com/research/building-effective-agents">Anthropic, <em>Building Effective Agents</em> (2024)</a> — practitioner guide distinguishing workflows from agents, advocating simple composable patterns before complex frameworks; widely referenced in production teams.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/langchain-ai/langgraph">langchain-ai/langgraph</a> — low-level state-machine orchestration framework for stateful, long-running agents; typed state dicts, conditional edges, and built-in checkpointing.</li>
+<li><a href="https://github.com/microsoft/autogen">microsoft/autogen</a> — conversational-agent framework where agents coordinate via natural-language message exchange; 58k+ GitHub stars.</li>
+<li><a href="https://github.com/crewaiinc/crewai">crewAIInc/crewai</a> — role-based multi-agent framework with Crews (autonomous collaboration) and Flows (production event-driven pipelines); 52k+ stars, independent of LangChain.</li>
+<li><a href="https://github.com/openai/swarm">openai/swarm</a> — minimal educational reference implementation of the agent-handoff pattern; superseded in production by the OpenAI Agents SDK but ideal for studying core mechanics.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://openai.github.io/openai-agents-python/multi_agent/">OpenAI Agents SDK — Agent Orchestration Guide</a> — official docs covering orchestration-via-code vs. LLM-driven routing, handoffs, and agents-as-tools patterns; the production successor to Swarm.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Wu et al., &ldquo;AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation,&rdquo; Microsoft Research, 2023</strong> — the paper introducing the AutoGen conversational-agent framework.</li>
+<li><strong>Hong et al., &ldquo;MetaGPT: Meta Programming for Multi-Agent Collaborative Framework,&rdquo; 2023</strong> — introduces structured role assignment and shared message pools for software engineering tasks.</li>
+<li><strong>OpenAI Swarm repository (github.com/openai/swarm)</strong> — minimal reference implementation of the handoff pattern, useful for studying the core mechanics.</li>
+<li><strong>LangGraph documentation and examples (github.com/langchain-ai/langgraph)</strong> — the canonical source for state-machine-based agent orchestration.</li>
+<li><strong>Liang et al., &ldquo;Encouraging Divergent Thinking in Large Language Models through Debate,&rdquo; 2023</strong> — empirical study of multi-agent debate improving factual accuracy over single-model baselines.</li>
+<li><strong>Chase, &ldquo;LangChain Expression Language (LCEL) and agent patterns,&rdquo; LangChain blog</strong> — practical treatment of chain composition and routing in production systems.</li>
+<li><strong>Sumers et al., &ldquo;Cognitive Architectures for Language Agents,&rdquo; TMLR 2024</strong> — a unified theoretical framework covering memory, action, and planning in LLM agents, connecting multi-agent patterns to cognitive science.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="06-mcp.html"><span class="pn-label">← Previous</span><span class="pn-title">The Model Context Protocol (MCP)</span></a>
+<a class="next" href="08-agent-evaluation.html"><span class="pn-label">Next →</span><span class="pn-title">Agent Evaluation &amp; Benchmarks</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-case-for-multiple-agents">The Case for Multiple Agents</a></li>
+<li class="toc-l2"><a href="#topologies-how-agents-are-wired">Topologies: How Agents Are Wired</a></li>
+<li class="toc-l2"><a href="#workflow-vs-agent-the-critical-distinction">Workflow vs. Agent: The Critical Distinction</a></li>
+<li class="toc-l2"><a href="#orchestrator-worker-in-code">Orchestrator-Worker in Code</a></li>
+<li class="toc-l2"><a href="#shared-memory-and-the-blackboard-pattern">Shared Memory and the Blackboard Pattern</a></li>
+<li class="toc-l2"><a href="#frameworks-langgraph-autogen-crewai-and-openai-swarm">Frameworks: LangGraph, AutoGen, CrewAI, and OpenAI Swarm</a></li>
+<li class="toc-l3"><a href="#langgraph">LangGraph</a></li>
+<li class="toc-l3"><a href="#autogen">AutoGen</a></li>
+<li class="toc-l3"><a href="#crewai">CrewAI</a></li>
+<li class="toc-l3"><a href="#openai-swarm">OpenAI Swarm</a></li>
+<li class="toc-l3"><a href="#framework-comparison">Framework Comparison</a></li>
+<li class="toc-l2"><a href="#handoff-protocols-and-communication-patterns">Handoff Protocols and Communication Patterns</a></li>
+<li class="toc-l2"><a href="#when-multi-agent-hurts-costs-anti-patterns-and-failure-modes">When Multi-Agent Hurts: Costs, Anti-Patterns, and Failure Modes</a></li>
+<li class="toc-l2"><a href="#agentic-rl-and-learning-to-orchestrate">Agentic RL and Learning to Orchestrate</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-reference-architecture">Putting It Together: A Reference Architecture</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

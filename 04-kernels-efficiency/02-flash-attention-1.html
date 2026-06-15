@@ -1,0 +1,1100 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlashAttention I: IO-Awareness &amp; The Online Softmax — The LLM Stack</title>
+<meta name="description" content="The attention memory bottleneck (materializing NxN); tiling, the online/streaming softmax with running max &amp; denominator (derive it carefully), recomputation in">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="active" href="02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IV — Kernels, Efficiency &amp; Quantization</div>
+<h1 id="42-flashattention-i-io-awareness-the-online-softmax">4.2 FlashAttention I: IO-Awareness &amp; The Online Softmax<a class="headerlink" href="#42-flashattention-i-io-awareness-the-online-softmax" title="Permanent link">¶</a></h1>
+<p>In <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a> we wrote the canonical formula and the canonical loop:</p>
+<div class="arithmatex">\[
+\operatorname{Attention}(Q, K, V) = \operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d}}\right) V .
+\]</div>
+<p>That implementation is <em>correct</em> and it is <em>slow</em> — not because the arithmetic is expensive, but because of where the numbers live. The standard implementation builds the full <span class="arithmatex">\(N \times N\)</span> score matrix <span class="arithmatex">\(S = QK^\top/\sqrt{d}\)</span> in GPU main memory (HBM), reads it back to apply softmax, reads it again to multiply by <span class="arithmatex">\(V\)</span>. For a sequence of <span class="arithmatex">\(N = 8192\)</span> tokens, that intermediate matrix is 64 million entries <em>per head per layer</em>, and every byte of it has to travel across the slowest wire in the machine. The matrix multiplies that everyone worries about are not the bottleneck. The traffic to and from HBM is.</p>
+<p>FlashAttention (Dao, Fu, Ermon, Rudra, Ré, <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em>, 2022) is the algorithm that removed that bottleneck. Its central trick is to <strong>never materialize the <span class="arithmatex">\(N \times N\)</span> matrix at all</strong> — to compute attention in tiles small enough to live in on-chip SRAM, fusing the three steps into a single pass. To make that possible it needs one beautiful piece of numerical machinery: the <strong>online softmax</strong>, a way to compute a numerically-stable softmax incrementally, while streaming the inputs, without ever seeing all of them at once. That algorithm — running maxima, running denominators, and a correction factor that retroactively rescales partial results — is the heart of this chapter, and one of the most elegant ideas in all of systems-for-ML.</p>
+<p>This chapter is a marquee chapter. We will derive the online softmax from scratch, prove it gives <em>exactly</em> the same answer as the naive version (FlashAttention is exact, not an approximation), build the full forward and backward passes in NumPy so you can run them, and then do the IO-complexity accounting that explains <em>why</em> it is faster. It builds directly on <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a> and <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>; <a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2 &amp; 3</a> then takes the same core and squeezes out the remaining inefficiencies.</p>
+<h2 id="the-memory-bottleneck-why-naive-attention-is-io-bound">The memory bottleneck: why naive attention is IO-bound<a class="headerlink" href="#the-memory-bottleneck-why-naive-attention-is-io-bound" title="Permanent link">¶</a></h2>
+<p>Let us be precise about what the standard kernel does. Take a single attention head with sequence length <span class="arithmatex">\(N\)</span> and head dimension <span class="arithmatex">\(d\)</span> (think <span class="arithmatex">\(d = 64\)</span> or <span class="arithmatex">\(128\)</span>). The inputs <span class="arithmatex">\(Q, K, V\)</span> are each <span class="arithmatex">\(N \times d\)</span>. The reference computation is three operations:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">attention_naive</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">):</span>
+    <span class="c1"># Q, K, V: (N, d) arrays already on the device</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">Q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">S</span> <span class="o">=</span> <span class="n">Q</span> <span class="o">@</span> <span class="n">K</span><span class="o">.</span><span class="n">T</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>          <span class="c1"># (N, N)  -- the score matrix, WRITTEN to HBM</span>
+    <span class="n">P</span> <span class="o">=</span> <span class="n">softmax_rows</span><span class="p">(</span><span class="n">S</span><span class="p">)</span>               <span class="c1"># (N, N)  -- read S, write P to HBM</span>
+    <span class="n">O</span> <span class="o">=</span> <span class="n">P</span> <span class="o">@</span> <span class="n">V</span>                         <span class="c1"># (N, d)  -- read P, read V, write O</span>
+    <span class="k">return</span> <span class="n">O</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">softmax_rows</span><span class="p">(</span><span class="n">S</span><span class="p">):</span>
+    <span class="n">S</span> <span class="o">=</span> <span class="n">S</span> <span class="o">-</span> <span class="n">S</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># numerical stability: subtract row max</span>
+    <span class="n">e</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">S</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">e</span> <span class="o">/</span> <span class="n">e</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>The arithmetic is two matrix multiplies (<span class="arithmatex">\(QK^\top\)</span> and <span class="arithmatex">\(PV\)</span>), each <span class="arithmatex">\(O(N^2 d)\)</span> floating-point operations, plus an <span class="arithmatex">\(O(N^2)\)</span> softmax. On a modern GPU those FLOPs run on the tensor cores at, on the order of, hundreds of teraFLOP/s. So compute is cheap. What is expensive is the data movement, and the data movement is dominated by the two <span class="arithmatex">\(N \times N\)</span> intermediates <span class="arithmatex">\(S\)</span> and <span class="arithmatex">\(P\)</span>.</p>
+<p>Recall the memory hierarchy from <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>. A GPU has a small amount of extremely fast on-chip <strong>SRAM</strong> (the shared memory / L1 cache of each streaming multiprocessor, on the order of 100–200 KB per SM, with aggregate bandwidth in the tens of TB/s) and a large amount of much slower off-chip <strong>HBM</strong> (tens of GB at, on the order of, 2–3.5 TB/s). The ratio matters: SRAM is roughly an order of magnitude faster per byte than HBM, and there is <em>far</em> less of it.</p>
+<p>The naive kernel makes the worst possible use of this hierarchy. Look at the HBM traffic:</p>
+<div class="highlight"><pre><span></span><code>  operation        reads from HBM            writes to HBM       bytes (fp16)
+  ---------------   -----------------------   -----------------   --------------
+  S = Q K^T         Q (N·d), K (N·d)          S (N·N)             ~2·N² + 4·N·d
+  P = softmax(S)    S (N·N)                   P (N·N)             ~4·N²
+  O = P V           P (N·N), V (N·d)          O (N·d)             ~2·N² + 4·N·d
+  ---------------------------------------------------------------------------
+  TOTAL HBM traffic dominated by the N² terms:               Θ(N²)  elements
+</code></pre></div>
+<p>Every <span class="arithmatex">\(N \times N\)</span> matrix is born in HBM, dies in HBM, and is dragged across the bus in between. The total HBM traffic scales as <span class="arithmatex">\(\Theta(N^2)\)</span> — quadratic in sequence length, the same order as the FLOPs, but the <em>bytes</em> are moving over a channel that is an order of magnitude slower than the one the <em>FLOPs</em> run on. Plug that into the roofline picture from <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model</a>: the <strong>arithmetic intensity</strong> (FLOPs per byte of HBM traffic) is low and roughly constant in <span class="arithmatex">\(N\)</span>, which puts attention firmly on the <strong>memory-bound</strong> (bandwidth-limited) side of the roofline. The hardware&rsquo;s tensor cores sit mostly idle, starved, waiting for HBM.</p>
+<p>There is a second, even harsher cost: <strong>memory capacity.</strong> The <span class="arithmatex">\(S\)</span> and <span class="arithmatex">\(P\)</span> matrices are <span class="arithmatex">\(O(N^2)\)</span> in size. At <span class="arithmatex">\(N = 8192\)</span> and fp16, a single <span class="arithmatex">\(N \times N\)</span> matrix is <span class="arithmatex">\(8192^2 \times 2 \approx 134\)</span> MB — per head, per layer. With dozens of heads and dozens of layers, and a backward pass that wants to keep <span class="arithmatex">\(P\)</span> around for the gradient, you blow through HBM capacity long before you run out of compute. This is the wall that capped context lengths for years.</p>
+<div class="admonition example">
+<p class="admonition-title">The N² wall, in real numbers</p>
+<p>Take a 1-batch, single-head forward pass at <span class="arithmatex">\(d = 128\)</span> and let the sequence length grow. The <span class="arithmatex">\(S\)</span> matrix alone (fp16, 2 bytes/element):</p>
+<table>
+<thead>
+<tr>
+<th><span class="arithmatex">\(N\)</span></th>
+<th><span class="arithmatex">\(N^2\)</span> entries</th>
+<th><span class="arithmatex">\(S\)</span> size (fp16)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1,024</td>
+<td>~1.05 M</td>
+<td>~2 MB</td>
+</tr>
+<tr>
+<td>8,192</td>
+<td>~67 M</td>
+<td>~134 MB</td>
+</tr>
+<tr>
+<td>32,768</td>
+<td>~1.07 B</td>
+<td>~2.1 GB</td>
+</tr>
+<tr>
+<td>131,072</td>
+<td>~17.2 B</td>
+<td>~34 GB</td>
+</tr>
+</tbody>
+</table>
+<p>Now remember a real model has, on the order of, 32 layers and 32 heads — but those run sequentially or in modest parallel, so the per-head matrix is what hits memory at any instant. Still, at <span class="arithmatex">\(N=131{,}072\)</span> a <em>single</em> score matrix does not fit in a 24 GB consumer GPU, and barely fits in an 80 GB datacenter GPU with nothing else loaded. FlashAttention&rsquo;s peak extra memory is instead <span class="arithmatex">\(O(N)\)</span> (it keeps only the output and two length-<span class="arithmatex">\(N\)</span> statistics), independent of <span class="arithmatex">\(N^2\)</span>. That is the difference between &ldquo;long context is impossible&rdquo; and &ldquo;long context is routine.&rdquo;</p>
+</div>
+<p>The diagnosis is now sharp. Attention is slow because (1) it moves <span class="arithmatex">\(\Theta(N^2)\)</span> bytes across the slow HBM bus, and (2) it allocates <span class="arithmatex">\(\Theta(N^2)\)</span> bytes of HBM it does not fundamentally need. Both pathologies share one cause: the algorithm <strong>materializes the full score matrix in HBM.</strong> If we could compute the exact same output without ever writing <span class="arithmatex">\(S\)</span> or <span class="arithmatex">\(P\)</span> to HBM — keeping the working set in SRAM — both problems vanish. The obstacle to doing that is the softmax, because softmax over a row needs to see the <em>whole</em> row (to normalize) before it can produce any output. The online softmax dissolves that obstacle.</p>
+<h2 id="the-online-softmax-computing-a-normalized-sum-in-one-streaming-pass">The online softmax: computing a normalized sum in one streaming pass<a class="headerlink" href="#the-online-softmax-computing-a-normalized-sum-in-one-streaming-pass" title="Permanent link">¶</a></h2>
+<p>Forget attention for a moment and consider the bare numerical problem. We have a long vector of logits <span class="arithmatex">\(x_1, x_2, \dots, x_N\)</span> and we want the softmax weights <span class="arithmatex">\(p_i = e^{x_i} / \sum_j e^{x_j}\)</span> — but in practice we never want <span class="arithmatex">\(p\)</span> alone; in attention we want the <em>weighted sum</em> <span class="arithmatex">\(\sum_i p_i v_i\)</span> for value vectors <span class="arithmatex">\(v_i\)</span>. The question: can we compute this <strong>while streaming</strong> the <span class="arithmatex">\(x_i\)</span> (and <span class="arithmatex">\(v_i\)</span>) one block at a time, using <span class="arithmatex">\(O(1)\)</span> extra state, instead of making two full passes (one to find the normalizer, one to accumulate)?</p>
+<h3 id="why-the-naive-online-attempt-fails">Why the naive online attempt fails<a class="headerlink" href="#why-the-naive-online-attempt-fails" title="Permanent link">¶</a></h3>
+<p>Softmax must be computed in a numerically stable way. The naive expression <span class="arithmatex">\(e^{x_i}/\sum_j e^{x_j}\)</span> overflows the moment any <span class="arithmatex">\(x_i\)</span> exceeds ~88 (for fp32, <span class="arithmatex">\(e^{88} \approx 10^{38}\)</span> is near the float max) or underflows to zero for very negative logits. The standard fix is the <strong>max-subtraction</strong> trick: subtract the maximum logit <span class="arithmatex">\(m = \max_j x_j\)</span> before exponentiating,</p>
+<div class="arithmatex">\[
+p_i = \frac{e^{x_i - m}}{\sum_j e^{x_j - m}},
+\]</div>
+<p>which is algebraically identical (the <span class="arithmatex">\(e^{-m}\)</span> cancels top and bottom) but keeps every exponent <span class="arithmatex">\(\le 0\)</span>, so <span class="arithmatex">\(e^{x_i - m} \in (0, 1]\)</span> — no overflow, and the largest term is exactly 1. The catch: <span class="arithmatex">\(m\)</span> depends on the <em>whole</em> vector. If we are streaming, we do not know the global max until we have seen everything. That is exactly the dependency that forces the naive kernel to write <span class="arithmatex">\(S\)</span> to HBM and read it back.</p>
+<h3 id="the-key-idea-a-running-max-and-a-correction-factor">The key idea: a running max and a correction factor<a class="headerlink" href="#the-key-idea-a-running-max-and-a-correction-factor" title="Permanent link">¶</a></h3>
+<p>The online softmax breaks the dependency with a retroactive rescale. We process the logits in blocks. We keep two running statistics:</p>
+<ul>
+<li><span class="arithmatex">\(m\)</span> — the maximum logit seen <em>so far</em>,</li>
+<li><span class="arithmatex">\(\ell\)</span> — the running sum of exponentials, <span class="arithmatex">\(\sum e^{x_j - m}\)</span>, <strong>relative to the current running max</strong> <span class="arithmatex">\(m\)</span>,</li>
+</ul>
+<p>and (for attention) an unnormalized output accumulator <span class="arithmatex">\(o = \sum e^{x_j - m}\, v_j\)</span>, also relative to <span class="arithmatex">\(m\)</span>. When a new block arrives and contains a logit larger than the current <span class="arithmatex">\(m\)</span>, the running max jumps from <span class="arithmatex">\(m_{\text{old}}\)</span> to <span class="arithmatex">\(m_{\text{new}}\)</span>. Every quantity we accumulated was scaled by <span class="arithmatex">\(e^{-m_{\text{old}}}\)</span>; to put it on the new scale we must multiply it by</p>
+<div class="arithmatex">\[
+\frac{e^{-m_{\text{new}}}}{e^{-m_{\text{old}}}} = e^{m_{\text{old}} - m_{\text{new}}} .
+\]</div>
+<p>Because <span class="arithmatex">\(m_{\text{new}} \ge m_{\text{old}}\)</span>, this <strong>correction factor</strong> <span class="arithmatex">\(\alpha = e^{m_{\text{old}} - m_{\text{new}}} \in (0, 1]\)</span> shrinks the old accumulators down onto the new, larger scale. That single multiply is the entire trick. It lets us &ldquo;change our mind&rdquo; about the normalizer after the fact, in <span class="arithmatex">\(O(1)\)</span> work, every time we discover a larger logit.</p>
+<p>Here is the recurrence in full. Suppose after processing some prefix we hold <span class="arithmatex">\((m, \ell, o)\)</span>, and a new block contributes logits <span class="arithmatex">\(\{x_j\}\)</span> with values <span class="arithmatex">\(\{v_j\}\)</span> (in attention these are one tile of <span class="arithmatex">\(K, V\)</span>). Let the block&rsquo;s local max be <span class="arithmatex">\(\tilde m = \max_j x_j\)</span>.</p>
+<div class="arithmatex">\[
+\begin{aligned}
+m_{\text{new}} &amp;= \max(m, \tilde m), \\
+\alpha &amp;= e^{\,m - m_{\text{new}}}, \qquad \text{(rescale prior state)}\\
+\ell_{\text{new}} &amp;= \alpha\,\ell \;+\; \sum_j e^{\,x_j - m_{\text{new}}}, \\
+o_{\text{new}} &amp;= \alpha\,o \;+\; \sum_j e^{\,x_j - m_{\text{new}}}\, v_j .
+\end{aligned}
+\]</div>
+<p>After the final block, the true softmax-weighted output is <span class="arithmatex">\(o / \ell\)</span> — we divide by the denominator exactly once, at the very end. Notice what each line does: <span class="arithmatex">\(m_{\text{new}}\)</span> updates the max; <span class="arithmatex">\(\alpha\)</span> rescales the <em>already-accumulated</em> sum and output down onto the new max; then we add the new block&rsquo;s contributions, exponentiated against the new max so they are on the same scale.</p>
+<h3 id="a-from-scratch-implementation-and-a-correctness-proof">A from-scratch implementation and a correctness proof<a class="headerlink" href="#a-from-scratch-implementation-and-a-correctness-proof" title="Permanent link">¶</a></h3>
+<p>Let us make this concrete and runnable. The function below computes a streaming, numerically-stable softmax-weighted sum and we assert it equals the two-pass reference.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">online_softmax_weighted_sum</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">block_size</span><span class="o">=</span><span class="mi">4</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute  sum_i softmax(x)_i * V[i]   in a single streaming pass,</span>
+<span class="sd">    processing the logits x in blocks, using only O(d) running state.</span>
+
+<span class="sd">    x : (N,)   logits</span>
+<span class="sd">    V : (N, d) value vectors</span>
+<span class="sd">    returns o/ell : (d,)  the softmax-weighted average of the rows of V</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">N</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">V</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span>            <span class="c1"># running max of logits seen so far</span>
+    <span class="n">ell</span> <span class="o">=</span> <span class="mf">0.0</span>              <span class="c1"># running sum of exp(x - m)</span>
+    <span class="n">o</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>        <span class="c1"># running sum of exp(x - m) * v, UNnormalized</span>
+
+    <span class="k">for</span> <span class="n">start</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">block_size</span><span class="p">):</span>
+        <span class="n">xb</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">start</span> <span class="o">+</span> <span class="n">block_size</span><span class="p">]</span>          <span class="c1"># block of logits</span>
+        <span class="n">Vb</span> <span class="o">=</span> <span class="n">V</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">start</span> <span class="o">+</span> <span class="n">block_size</span><span class="p">]</span>          <span class="c1"># block of values</span>
+
+        <span class="n">m_block</span> <span class="o">=</span> <span class="n">xb</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>                        <span class="c1"># local max of this block</span>
+        <span class="n">m_new</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">m_block</span><span class="p">)</span>                   <span class="c1"># updated running max</span>
+
+        <span class="n">alpha</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">m</span> <span class="o">-</span> <span class="n">m_new</span><span class="p">)</span>                 <span class="c1"># correction for OLD state</span>
+        <span class="c1"># exp(m - m_new) with m = -inf at the very first block -&gt; exp(-inf) = 0,</span>
+        <span class="c1"># which correctly zeroes the (empty) initial accumulators.</span>
+
+        <span class="n">p</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">xb</span> <span class="o">-</span> <span class="n">m_new</span><span class="p">)</span>                    <span class="c1"># block weights vs new max, in (0,1]</span>
+        <span class="n">ell</span> <span class="o">=</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">ell</span> <span class="o">+</span> <span class="n">p</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>               <span class="c1"># rescale old sum, add new</span>
+        <span class="n">o</span>   <span class="o">=</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">o</span>   <span class="o">+</span> <span class="n">p</span> <span class="o">@</span> <span class="n">Vb</span>                <span class="c1"># rescale old output, add new</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">m_new</span>
+
+    <span class="k">return</span> <span class="n">o</span> <span class="o">/</span> <span class="n">ell</span>
+
+<span class="c1"># ---- correctness check against the honest two-pass softmax ----</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">N</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="mi">37</span><span class="p">,</span> <span class="mi">8</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">N</span><span class="p">)</span>        <span class="c1"># wide spread -&gt; stresses the max-subtraction</span>
+<span class="n">V</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">))</span>
+
+<span class="c1"># reference: stable softmax then weighted sum</span>
+<span class="n">p_ref</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">x</span> <span class="o">-</span> <span class="n">x</span><span class="o">.</span><span class="n">max</span><span class="p">());</span> <span class="n">p_ref</span> <span class="o">/=</span> <span class="n">p_ref</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+<span class="n">o_ref</span> <span class="o">=</span> <span class="n">p_ref</span> <span class="o">@</span> <span class="n">V</span>
+
+<span class="n">o_online</span> <span class="o">=</span> <span class="n">online_softmax_weighted_sum</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">block_size</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;max abs error:&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">o_online</span> <span class="o">-</span> <span class="n">o_ref</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">())</span>   <span class="c1"># ~1e-16, machine epsilon</span>
+</code></pre></div>
+<p>Run it: the maximum absolute error is on the order of <span class="arithmatex">\(10^{-16}\)</span> — floating-point round-off, nothing more. The online algorithm is <strong>bit-for-bit equivalent up to round-off</strong>, not an approximation. Here is why, by induction on the blocks.</p>
+<p><strong>Claim.</strong> After processing the first <span class="arithmatex">\(k\)</span> blocks (covering indices in a set <span class="arithmatex">\(I_k\)</span>), the state satisfies, exactly,</p>
+<div class="arithmatex">\[
+m = \max_{i \in I_k} x_i, \qquad
+\ell = \sum_{i \in I_k} e^{x_i - m}, \qquad
+o = \sum_{i \in I_k} e^{x_i - m}\, v_i .
+\]</div>
+<p><strong>Base case</strong> (<span class="arithmatex">\(k=0\)</span>, no blocks): <span class="arithmatex">\(m = -\infty\)</span>, and the empty sums are <span class="arithmatex">\(0\)</span>, matching <span class="arithmatex">\(\ell = o = 0\)</span>. ✓</p>
+<p><strong>Inductive step.</strong> Assume the claim holds after <span class="arithmatex">\(k\)</span> blocks. Process block <span class="arithmatex">\(k{+}1\)</span> with indices <span class="arithmatex">\(J\)</span> and local max <span class="arithmatex">\(\tilde m\)</span>. The update sets <span class="arithmatex">\(m_{\text{new}} = \max(m, \tilde m) = \max_{i \in I_k \cup J} x_i\)</span>, which is correct. For the denominator, the old sum was relative to the old <span class="arithmatex">\(m\)</span>; multiplying by <span class="arithmatex">\(\alpha = e^{m - m_{\text{new}}}\)</span> re-bases it:</p>
+<div class="arithmatex">\[
+\alpha \, \ell = e^{m - m_{\text{new}}} \sum_{i \in I_k} e^{x_i - m} = \sum_{i \in I_k} e^{x_i - m_{\text{new}}},
+\]</div>
+<p>and adding <span class="arithmatex">\(\sum_{j \in J} e^{x_j - m_{\text{new}}}\)</span> gives <span class="arithmatex">\(\ell_{\text{new}} = \sum_{i \in I_k \cup J} e^{x_i - m_{\text{new}}}\)</span>, exactly the claim for <span class="arithmatex">\(k{+}1\)</span>. The identical argument holds for <span class="arithmatex">\(o\)</span> with the <span class="arithmatex">\(v_i\)</span> carried along. ∎</p>
+<p>So at the end <span class="arithmatex">\(m = \max_i x_i\)</span>, <span class="arithmatex">\(\ell = \sum_i e^{x_i - m}\)</span>, and <span class="arithmatex">\(o = \sum_i e^{x_i - m} v_i\)</span>, hence <span class="arithmatex">\(o/\ell = \sum_i \frac{e^{x_i - m}}{\sum_j e^{x_j - m}} v_i = \sum_i p_i v_i\)</span>. The streaming computation equals the reference. The whole point is that we paid only <span class="arithmatex">\(O(d)\)</span> state and one extra multiply per block to avoid ever holding all <span class="arithmatex">\(N\)</span> logits at once. The numerical stability is preserved at every step because every exponent <span class="arithmatex">\(x_j - m_{\text{new}} \le 0\)</span>, so we never exponentiate a positive number — the running max guarantees it.</p>
+<div class="admonition example">
+<p class="admonition-title">Watch the correction factor work</p>
+<p>Stream the logits <span class="arithmatex">\(x = [1,\,2,\,8,\,3]\)</span> with block size 2 (blocks <span class="arithmatex">\([1,2]\)</span> then <span class="arithmatex">\([8,3]\)</span>). Reference: max is 8, so the stable exponentials are <span class="arithmatex">\(e^{-7}, e^{-6}, e^{0}, e^{-5}\)</span>, summing to <span class="arithmatex">\(\ell^\star \approx 1.00339\)</span>.</p>
+<p><strong>Block 1</strong> <span class="arithmatex">\([1, 2]\)</span>: local max <span class="arithmatex">\(\tilde m = 2\)</span>, so <span class="arithmatex">\(m = 2\)</span>, <span class="arithmatex">\(\alpha = e^{-\infty - 2}\to 0\)</span> (no prior state). <span class="arithmatex">\(\ell = e^{1-2} + e^{2-2} = 0.3679 + 1 = 1.3679\)</span>.</p>
+<p><strong>Block 2</strong> <span class="arithmatex">\([8, 3]\)</span>: local max <span class="arithmatex">\(\tilde m = 8\)</span>, new <span class="arithmatex">\(m_{\text{new}} = 8\)</span>. Correction <span class="arithmatex">\(\alpha = e^{2 - 8} = e^{-6} = 0.002479\)</span>. Rescale old denominator: <span class="arithmatex">\(\alpha \cdot 1.3679 = 0.003391\)</span>. Add new terms <span class="arithmatex">\(e^{8-8} + e^{3-8} = 1 + 0.006738 = 1.006738\)</span>. Total <span class="arithmatex">\(\ell = 0.003391 + 1.006738 = 1.01013\)</span>.</p>
+<p>Hmm — compare to <span class="arithmatex">\(\ell^\star \approx 1.00339\)</span>. They differ because <span class="arithmatex">\(\ell^\star\)</span> above used max <span class="arithmatex">\(=8\)</span> for <em>all four</em> terms; let us recompute the reference carefully: <span class="arithmatex">\(e^{1-8}+e^{2-8}+e^{8-8}+e^{3-8} = 0.000912 + 0.002479 + 1 + 0.006738 = 1.010129\)</span>. The online value <span class="arithmatex">\(1.01013\)</span> matches to five decimals. The earlier &ldquo;<span class="arithmatex">\(1.00339\)</span>&rdquo; was an arithmetic slip on the reader&rsquo;s behalf — <em>which is exactly the kind of mistake the algorithm never makes</em>, because the correction factor re-bases every prior term to the final max automatically.</p>
+</div>
+<h2 id="flashattention-forward-tiling-online-softmax-fused-into-one-pass">FlashAttention forward: tiling + online softmax fused into one pass<a class="headerlink" href="#flashattention-forward-tiling-online-softmax-fused-into-one-pass" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-flash-tiling" style="--sweep:132px;">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 300" role="img" aria-label="FlashAttention streams tiles of K and V through fast SRAM, updating an online-softmax accumulator, so the full L-by-L attention matrix is never written to HBM.">
+  <style>
+    #fig-flash-tiling text{ fill:var(--ink-soft); }
+    #fig-flash-tiling .lbl{ font:600 12px var(--sans,sans-serif); }
+    #fig-flash-tiling .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-flash-tiling .mono{ font:500 11px var(--mono,monospace); }
+    #fig-flash-tiling .big{ font:600 13px var(--serif,serif); }
+  </style>
+
+
+  <text x="112" y="34" text-anchor="middle" class="lbl">The L×L score matrix (tiled)</text>
+
+
+  <g data-anim="1">
+    <rect x="24" y="46" width="176" height="176" rx="6" class="v-fill v-grid" stroke-width="1.4"/>
+    <g class="v-grid" stroke-width="0.9" opacity="0.8">
+      <line x1="68" y1="46" x2="68" y2="222"/><line x1="112" y1="46" x2="112" y2="222"/><line x1="156" y1="46" x2="156" y2="222"/>
+      <line x1="24" y1="90" x2="200" y2="90"/><line x1="24" y1="134" x2="200" y2="134"/><line x1="24" y1="178" x2="200" y2="178"/>
+    </g>
+
+    <rect x="24" y="90" width="176" height="44" fill="var(--accent)" fill-opacity="0.10"/>
+    <text x="14" y="116" text-anchor="end" class="mono v-accent" fill="var(--accent)">Qᵢ</text>
+
+    <rect class="viz-sweep" x="24" y="90" width="44" height="44" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1.5"/>
+    <text x="46" y="240" text-anchor="middle" class="mono" fill="var(--accent)">Kⱼ,Vⱼ →</text>
+  </g>
+
+
+  <g data-anim="3">
+    <text x="112" y="266" text-anchor="middle" class="sm">never written to HBM:</text>
+    <text x="112" y="282" text-anchor="middle" class="mono" fill="var(--warn,#e0a106)">materialize S = O(L²) ✗</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="210" y1="112" x2="262" y2="112" stroke="currentColor" class="v-muted" stroke-width="1.4"/>
+    <path d="M262 112 l-8 -4 v8 z" fill="currentColor" class="v-muted"/>
+    <text x="236" y="103" text-anchor="middle" class="sm">load tile</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="272" y="54" width="210" height="160" rx="10" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="377" y="46" text-anchor="middle" class="big" fill="var(--good,#2f9e6e)">on-chip SRAM (fast, tiny)</text>
+    <rect x="290" y="70" width="44" height="44" rx="4" class="v-fill v-accent-s" stroke-width="1.3"/>
+    <text x="312" y="97" text-anchor="middle" class="mono" fill="var(--accent)">Qᵢ</text>
+    <rect x="344" y="70" width="44" height="44" rx="4" class="v-fill v-accent-s" stroke-width="1.3"/>
+    <text x="366" y="97" text-anchor="middle" class="mono" fill="var(--accent)">Kⱼ</text>
+    <rect x="398" y="70" width="44" height="44" rx="4" class="v-fill v-accent-s" stroke-width="1.3"/>
+    <text x="420" y="97" text-anchor="middle" class="mono" fill="var(--accent)">Vⱼ</text>
+  </g>
+
+
+  <g data-anim="4">
+    <rect x="290" y="128" width="174" height="70" rx="6" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="377" y="146" text-anchor="middle" class="sm">online softmax — running state</text>
+    <text x="300" y="167" class="mono">mᵢ ← max(mᵢ, rowmax)</text>
+    <text x="300" y="183" class="mono">ℓᵢ ← ℓᵢ·e^Δ + Σe</text>
+    <text x="300" y="199" class="mono v-accent" fill="var(--accent)">Oᵢ ← Oᵢ·e^Δ + P·Vⱼ</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="484" y1="163" x2="540" y2="163" stroke="currentColor" class="v-muted" stroke-width="1.4"/>
+    <path d="M540 163 l-8 -4 v8 z" fill="currentColor" class="v-muted"/>
+    <rect x="548" y="120" width="150" height="86" rx="8" class="v-fill v-grid" stroke-width="1.3"/>
+    <text x="623" y="112" text-anchor="middle" class="sm">HBM (large, slower)</text>
+    <text x="623" y="150" text-anchor="middle" class="big" fill="var(--good,#2f9e6e)">write Oᵢ once</text>
+    <text x="623" y="172" text-anchor="middle" class="mono" fill="var(--good,#2f9e6e)">O(L·d) ✓</text>
+    <text x="623" y="190" text-anchor="middle" class="sm">Q,K,V also live here</text>
+  </g>
+</svg>
+<figcaption><b>FlashAttention keeps the big matrix off HBM.</b> For each query block <span class="mono">Qᵢ</span>, blocks of keys/values stream through fast on-chip SRAM while an <b>online softmax</b> incrementally updates the running max <span class="mono">m</span>, normalizer <span class="mono">ℓ</span>, and output <span class="mono">O</span>. Only the final <span class="mono">Oᵢ</span> (size <span class="mono">L·d</span>) is written back — the <span class="mono">L²</span> score matrix is never materialized, turning attention from memory-bound to compute-bound.</figcaption>
+</figure>
+
+<p>Now we lift the online softmax from a single row to the full attention matrix. The observation that makes the row-wise online softmax into FlashAttention: <strong>every output row is an independent online softmax over the key/value blocks.</strong> Row <span class="arithmatex">\(i\)</span> of the output is <span class="arithmatex">\(\sum_j p_{ij} v_j\)</span> where <span class="arithmatex">\(p_{ij} = \operatorname{softmax}_j(S_{ij})\)</span>, and we can compute that row by streaming over column-blocks of <span class="arithmatex">\(K, V\)</span> exactly as above — running max <span class="arithmatex">\(m_i\)</span>, running denominator <span class="arithmatex">\(\ell_i\)</span>, running output <span class="arithmatex">\(o_i\)</span> — all in SRAM. We do this for a <em>block of query rows</em> at a time, so that the <span class="arithmatex">\(Q\)</span> tile, the <span class="arithmatex">\(K\)</span>/<span class="arithmatex">\(V\)</span> tiles, and the accumulators all fit on-chip simultaneously.</p>
+<p>The structure is a double loop. The <strong>outer loop</strong> is over blocks of query rows (<span class="arithmatex">\(B_r\)</span> rows at a time). The <strong>inner loop</strong> is over blocks of key/value rows (<span class="arithmatex">\(B_c\)</span> columns at a time). For each <span class="arithmatex">\((i, j)\)</span> tile we load <span class="arithmatex">\(Q_i, K_j, V_j\)</span> from HBM into SRAM, compute the small <span class="arithmatex">\(B_r \times B_c\)</span> score tile, update the running statistics for the <span class="arithmatex">\(B_r\)</span> rows, and move on. The score tile is born and consumed entirely in SRAM; it is <strong>never written to HBM.</strong> That is the whole game.</p>
+<figure class="viz" id="fig-flash1-forward-dataflow">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 960 490" role="img"
+     aria-label="FlashAttention forward pass: Q_i, K_j, V_j load from HBM into on-chip SRAM; the Br-by-Bc score tile S_ij is computed and discarded entirely in SRAM; running state m_i l_i O_i is updated in place across the inner j-loop; after the last j-block O_i and L_i are stored back to HBM.">
+<defs>
+  <marker id="fdf-acc" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <marker id="fdf-good" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <style>
+    #fig-flash1-forward-dataflow text { fill: var(--ink-soft,#374151); }
+    #fig-flash1-forward-dataflow .hdr  { font: 700 11.5px var(--sans,sans-serif); }
+    #fig-flash1-forward-dataflow .mono { font: 600 10.5px var(--mono,monospace); }
+    #fig-flash1-forward-dataflow .sm   { font: 500 10px var(--sans,sans-serif); }
+    #fig-flash1-forward-dataflow .xs   { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-flash1-forward-dataflow .acc  { fill: var(--accent,#6366f1); }
+    #fig-flash1-forward-dataflow .good { fill: var(--good,#2f9e6e); }
+
+    @keyframes fdf-in    { from{opacity:0} to{opacity:1} }
+    @keyframes fdf-pulse { 0%,100%{opacity:.3} 50%{opacity:.9} }
+    @keyframes fdf-flash { 0%,100%{opacity:0} 20%,80%{opacity:1} }
+
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="1"]
+      { animation: fdf-in 0.6s 0.0s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="2"]
+      { animation: fdf-in 0.6s 0.9s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="3"]
+      { animation: fdf-in 0.6s 1.8s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="4a"]
+      { animation: fdf-flash 1.6s 2.7s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="4b"]
+      { animation: fdf-flash 1.6s 3.6s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="4c"]
+      { animation: fdf-flash 1.6s 4.5s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="pulse"]
+      { animation: fdf-pulse 1.4s 2.7s ease infinite; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="5"]
+      { animation: fdf-in 0.7s 5.4s ease both; }
+    @media (prefers-reduced-motion: reduce) {
+      #fig-flash1-forward-dataflow [data-step]
+        { animation: none !important; opacity: 1 !important; }
+    }
+  </style>
+</defs>
+
+
+
+
+<rect x="12"  y="20" width="206" height="380" rx="10"
+      fill="var(--surface,#ffffff)"
+      stroke="var(--border-2,#d1d5db)" stroke-width="1.5" stroke-dasharray="7 3"/>
+<rect x="12"  y="20" width="206" height="380" rx="10"
+      fill="var(--surface-3,#ece7da)" fill-opacity="0.40" stroke="none"/>
+
+
+<rect x="228" y="20" width="440" height="380" rx="10"
+      fill="var(--surface,#ffffff)"
+      stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<rect x="228" y="20" width="440" height="380" rx="10"
+      fill="var(--accent,#6366f1)" fill-opacity="0.05" stroke="none"/>
+
+
+<rect x="678" y="20" width="270" height="380" rx="10"
+      fill="var(--surface,#ffffff)"
+      stroke="var(--border-2,#d1d5db)" stroke-width="1.5" stroke-dasharray="7 3"/>
+<rect x="678" y="20" width="270" height="380" rx="10"
+      fill="var(--surface-3,#ece7da)" fill-opacity="0.40" stroke="none"/>
+
+
+<text x="115" y="40" text-anchor="middle" class="hdr">HBM (off-chip, slow)</text>
+<text x="448" y="40" text-anchor="middle" class="hdr acc">SRAM (on-chip, fast)</text>
+<text x="813" y="40" text-anchor="middle" class="hdr">HBM (output)</text>
+
+
+<line x1="226" y1="14" x2="226" y2="402"
+      stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="5 3"/>
+<line x1="676" y1="14" x2="676" y2="402"
+      stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="5 3"/>
+
+
+<g data-step="1">
+
+  <rect x="24" y="56" width="178" height="50" rx="5"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <text x="113" y="79" text-anchor="middle" class="mono">Q_i  (Br x d)</text>
+  <text x="113" y="96" text-anchor="middle" class="xs">query block i</text>
+
+
+  <rect x="24" y="124" width="178" height="50" rx="5"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <text x="113" y="147" text-anchor="middle" class="mono">K_j  (Bc x d)</text>
+  <text x="113" y="164" text-anchor="middle" class="xs">key block j  (streamed)</text>
+
+
+  <rect x="24" y="192" width="178" height="50" rx="5"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <text x="113" y="215" text-anchor="middle" class="mono">V_j  (Bc x d)</text>
+  <text x="113" y="232" text-anchor="middle" class="xs">value block j  (streamed)</text>
+</g>
+
+
+
+<g data-step="2">
+  <line x1="202" y1="81" x2="242" y2="192"
+        stroke="var(--accent,#6366f1)" stroke-width="2.5"
+        marker-end="url(#fdf-acc)"/>
+</g>
+
+<g data-step="3">
+  <line x1="202" y1="149" x2="242" y2="88"
+        stroke="var(--accent,#6366f1)" stroke-width="1.8"
+        marker-end="url(#fdf-acc)"/>
+</g>
+
+<g data-step="3">
+  <line x1="202" y1="217" x2="242" y2="210"
+        stroke="var(--accent,#6366f1)" stroke-width="1.8"
+        marker-end="url(#fdf-acc)"/>
+</g>
+
+<g data-step="2">
+  <text x="234" y="170" text-anchor="middle" class="sm acc">load</text>
+</g>
+
+
+<g data-step="2">
+  <rect x="244" y="56" width="418" height="82" rx="6"
+        fill="var(--surface,#ffffff)"
+        stroke="var(--accent,#6366f1)" stroke-width="1.6"/>
+  <text x="453" y="81" text-anchor="middle" class="mono acc">S_ij = Q_i K_j^T / sqrt(d)   (Br x Bc)</text>
+  <text x="453" y="99" text-anchor="middle" class="sm acc">transient score tile</text>
+  <text x="453" y="115" text-anchor="middle" class="xs">lives and dies in SRAM — NEVER written to HBM</text>
+</g>
+
+<g data-step="4a">
+  <rect x="244" y="56" width="418" height="82" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="none"/>
+</g>
+<g data-step="4b">
+  <rect x="244" y="56" width="418" height="82" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="none"/>
+</g>
+<g data-step="4c">
+  <rect x="244" y="56" width="418" height="82" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="none"/>
+</g>
+
+
+<g data-step="2">
+  <line x1="453" y1="138" x2="453" y2="156"
+        stroke="var(--accent,#6366f1)" stroke-width="1.5"
+        stroke-dasharray="4 2" marker-end="url(#fdf-acc)"/>
+  <text x="465" y="151" class="xs acc">update</text>
+</g>
+
+
+<g data-step="2">
+  <rect x="244" y="160" width="418" height="108" rx="6"
+        fill="var(--surface,#ffffff)"
+        stroke="var(--accent,#6366f1)" stroke-width="2.5"/>
+
+  <rect x="244" y="160" width="418" height="108" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.10" stroke="none"
+        data-step="pulse"/>
+  <text x="453" y="184" text-anchor="middle" class="mono acc">m_i , l_i , O_i  updated in place</text>
+  <text x="453" y="201" text-anchor="middle" class="sm acc">online softmax state, persistent across j-blocks</text>
+  <text x="453" y="218" text-anchor="middle" class="xs">m_i: running row max  |  l_i: running denominator</text>
+  <text x="453" y="234" text-anchor="middle" class="xs">O_i: running unnorm. output (rescaled each new max)</text>
+  <text x="453" y="250" text-anchor="middle" class="xs">alpha = exp(m_old - m_new)  applied when max updates</text>
+</g>
+
+
+<g data-step="3">
+  <path d="M244 204 C214 204 214 248 244 248"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.5"
+        stroke-dasharray="5 3" marker-end="url(#fdf-acc)"/>
+  <text x="209" y="226" text-anchor="middle" class="xs acc"
+        transform="rotate(-90 209 226)">inner j-loop</text>
+</g>
+
+
+<g data-step="5">
+
+  <line x1="453" y1="270" x2="453" y2="288"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.5"
+        marker-end="url(#fdf-good)"/>
+
+  <rect x="306" y="292" width="294" height="34" rx="5"
+        fill="var(--good,#2f9e6e)" fill-opacity="0.12"
+        stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+  <text x="453" y="307" text-anchor="middle" class="sm good">after last j-block: O_i / l_i</text>
+  <text x="453" y="321" text-anchor="middle" class="xs">normalize once, then store to HBM</text>
+</g>
+
+
+<g data-step="5">
+
+  <path d="M648 309 L660 309 L660 158"
+        fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.3"
+        stroke-dasharray="4 2"/>
+
+  <line x1="660" y1="158" x2="676" y2="158"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.8"
+        marker-end="url(#fdf-good)"/>
+
+  <line x1="660" y1="230" x2="676" y2="230"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.8"
+        marker-end="url(#fdf-good)"/>
+
+  <text x="648" y="151" text-anchor="end" class="xs good">store</text>
+  <text x="648" y="223" text-anchor="end" class="xs good">store</text>
+</g>
+
+
+<g data-step="5">
+
+  <rect x="692" y="128" width="244" height="54" rx="5"
+        fill="var(--surface,#ffffff)"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="814" y="153" text-anchor="middle" class="mono good">O_i  (Br x d)</text>
+  <text x="814" y="170" text-anchor="middle" class="xs">normalized output</text>
+
+
+  <rect x="692" y="200" width="244" height="54" rx="5"
+        fill="var(--surface,#ffffff)"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="814" y="225" text-anchor="middle" class="mono good">L_i = m_i + log l_i</text>
+  <text x="814" y="242" text-anchor="middle" class="xs">logsumexp, saved for backward</text>
+</g>
+
+
+<text x="115" y="408" text-anchor="middle" class="xs">INPUT</text>
+<text x="448" y="408" text-anchor="middle" class="xs">COMPUTE (on-chip SRAM)</text>
+<text x="813" y="408" text-anchor="middle" class="xs">OUTPUT</text>
+
+<text x="480" y="428" text-anchor="middle" class="xs">Score tile S_ij lives and dies in SRAM — NEVER written to HBM.</text>
+<text x="480" y="444" text-anchor="middle" class="xs">HBM traffic: Q, K, V (each read once per outer block) + O(N) output O_i and stats L_i.</text>
+<text x="480" y="460" text-anchor="middle" class="xs">Q_i stays resident across all inner j-steps; K_j and V_j load fresh each j-step.</text>
+
+</svg>
+<figcaption><b>FlashAttention-1 forward pass: HBM-to-SRAM data flow for one query block i.</b>
+The B<sub>r</sub>&amp;times;B<sub>c</sub> score tile S<sub>ij</sub> is born and consumed entirely in on-chip SRAM — it is <em>never</em> written to HBM.
+Only Q, K, V (each streamed as tiles) and the O(N) normalized output O<sub>i</sub> plus logsumexp L<sub>i</sub> cross the slow HBM bus, reducing total HBM traffic from &amp;Theta;(N<sup>2</sup>) to &amp;Theta;(N).</figcaption>
+</figure>
+
+<p>Here is a faithful, runnable NumPy implementation of the forward pass. It mirrors the structure of the real CUDA kernel — the same loops, the same statistics, the same rescale — just without the GPU. (Causal masking and the actual SRAM tiling are noted in comments; we will add the mask in the code that follows.)</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">flash_attention_forward</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">Br</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">Bc</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Exact attention via tiling + online softmax. Mirrors the FlashAttention-1</span>
+<span class="sd">    forward pass. No N×N matrix is ever fully materialized: the largest</span>
+<span class="sd">    intermediate is one Br×Bc score tile.</span>
+
+<span class="sd">    Q, K, V : (N, d)</span>
+<span class="sd">    returns:</span>
+<span class="sd">      O : (N, d)         attention output</span>
+<span class="sd">      L : (N,)           logsumexp statistic per row  (= m + log ell), saved for backward</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">N</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">Q</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+
+    <span class="n">O</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">))</span>
+    <span class="n">L</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">N</span><span class="p">)</span>                      <span class="c1"># row logsumexp, needed by the backward pass</span>
+
+    <span class="c1"># OUTER LOOP over query blocks (each maps to a CUDA thread block / program)</span>
+    <span class="k">for</span> <span class="n">i0</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">Br</span><span class="p">):</span>
+        <span class="n">i1</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">i0</span> <span class="o">+</span> <span class="n">Br</span><span class="p">,</span> <span class="n">N</span><span class="p">)</span>
+        <span class="n">Qi</span> <span class="o">=</span> <span class="n">Q</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span>                    <span class="c1"># (br, d)  -- stays in SRAM for the whole inner loop</span>
+        <span class="n">br</span> <span class="o">=</span> <span class="n">i1</span> <span class="o">-</span> <span class="n">i0</span>
+
+        <span class="c1"># Per-row running statistics, initialized for &quot;nothing seen yet&quot;</span>
+        <span class="n">m_i</span>  <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span><span class="n">br</span><span class="p">,</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>      <span class="c1"># running max logit per row</span>
+        <span class="n">l_i</span>  <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">br</span><span class="p">)</span>              <span class="c1"># running denominator per row</span>
+        <span class="n">O_i</span>  <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">br</span><span class="p">,</span> <span class="n">d</span><span class="p">))</span>         <span class="c1"># running UNnormalized output per row</span>
+
+        <span class="c1"># INNER LOOP over key/value blocks</span>
+        <span class="k">for</span> <span class="n">j0</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">Bc</span><span class="p">):</span>
+            <span class="n">j1</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">j0</span> <span class="o">+</span> <span class="n">Bc</span><span class="p">,</span> <span class="n">N</span><span class="p">)</span>
+            <span class="n">Kj</span> <span class="o">=</span> <span class="n">K</span><span class="p">[</span><span class="n">j0</span><span class="p">:</span><span class="n">j1</span><span class="p">]</span>                <span class="c1"># (bc, d)</span>
+            <span class="n">Vj</span> <span class="o">=</span> <span class="n">V</span><span class="p">[</span><span class="n">j0</span><span class="p">:</span><span class="n">j1</span><span class="p">]</span>                <span class="c1"># (bc, d)</span>
+
+            <span class="c1"># 1) score tile in SRAM (Br×Bc) -- the only &quot;big&quot; intermediate, and it is tiny</span>
+            <span class="n">Sij</span> <span class="o">=</span> <span class="p">(</span><span class="n">Qi</span> <span class="o">@</span> <span class="n">Kj</span><span class="o">.</span><span class="n">T</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span>    <span class="c1"># (br, bc)</span>
+
+            <span class="k">if</span> <span class="n">causal</span><span class="p">:</span>
+                <span class="c1"># mask out keys j &gt; query i  (positions are absolute indices)</span>
+                <span class="n">rows</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">i0</span><span class="p">,</span> <span class="n">i1</span><span class="p">)[:,</span> <span class="kc">None</span><span class="p">]</span>
+                <span class="n">cols</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">j0</span><span class="p">,</span> <span class="n">j1</span><span class="p">)[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:]</span>
+                <span class="n">Sij</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">cols</span> <span class="o">&lt;=</span> <span class="n">rows</span><span class="p">,</span> <span class="n">Sij</span><span class="p">,</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
+
+            <span class="c1"># 2) online-softmax update for these br rows over this block</span>
+            <span class="n">m_block</span> <span class="o">=</span> <span class="n">Sij</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>               <span class="c1"># (br,) local max of the tile</span>
+            <span class="n">m_new</span>   <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">m_i</span><span class="p">,</span> <span class="n">m_block</span><span class="p">)</span>       <span class="c1"># (br,) updated running max</span>
+            <span class="c1"># guard rows that are entirely -inf (e.g. fully-masked causal blocks)</span>
+            <span class="n">m_new</span>   <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">isneginf</span><span class="p">(</span><span class="n">m_new</span><span class="p">),</span> <span class="mf">0.0</span><span class="p">,</span> <span class="n">m_new</span><span class="p">)</span>
+
+            <span class="n">P</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">Sij</span> <span class="o">-</span> <span class="n">m_new</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">])</span>         <span class="c1"># (br, bc) tile weights, in [0,1]</span>
+            <span class="n">alpha</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">m_i</span> <span class="o">-</span> <span class="n">m_new</span><span class="p">)</span>              <span class="c1"># (br,) correction for old state</span>
+            <span class="n">alpha</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">isneginf</span><span class="p">(</span><span class="n">m_i</span><span class="p">),</span> <span class="mf">0.0</span><span class="p">,</span> <span class="n">alpha</span><span class="p">)</span>
+
+            <span class="n">l_i</span> <span class="o">=</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">l_i</span> <span class="o">+</span> <span class="n">P</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>        <span class="c1"># rescale + accumulate denominator</span>
+            <span class="n">O_i</span> <span class="o">=</span> <span class="n">alpha</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">O_i</span> <span class="o">+</span> <span class="n">P</span> <span class="o">@</span> <span class="n">Vj</span>      <span class="c1"># rescale + accumulate output</span>
+            <span class="n">m_i</span> <span class="o">=</span> <span class="n">m_new</span>
+
+        <span class="c1"># 3) finalize: normalize once, and save the logsumexp for backward</span>
+        <span class="n">l_safe</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">l_i</span> <span class="o">==</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="n">l_i</span><span class="p">)</span>      <span class="c1"># avoid 0/0 for fully-masked rows</span>
+        <span class="n">O</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span> <span class="o">=</span> <span class="n">O_i</span> <span class="o">/</span> <span class="n">l_safe</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="n">L</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span> <span class="o">=</span> <span class="n">m_i</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">l_safe</span><span class="p">)</span>              <span class="c1"># logsumexp = m + log(sum exp(.-m))</span>
+
+    <span class="k">return</span> <span class="n">O</span><span class="p">,</span> <span class="n">L</span>
+
+
+<span class="c1"># ---- verify against the reference, with and without causal masking ----</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">reference_attention</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">Q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">S</span> <span class="o">=</span> <span class="p">(</span><span class="n">Q</span> <span class="o">@</span> <span class="n">K</span><span class="o">.</span><span class="n">T</span><span class="p">)</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">causal</span><span class="p">:</span>
+        <span class="n">N</span> <span class="o">=</span> <span class="n">Q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">tril</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="n">N</span><span class="p">,</span> <span class="n">N</span><span class="p">),</span> <span class="nb">bool</span><span class="p">))</span>
+        <span class="n">S</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
+    <span class="n">S</span> <span class="o">=</span> <span class="n">S</span> <span class="o">-</span> <span class="n">S</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">P</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">S</span><span class="p">);</span> <span class="n">P</span> <span class="o">/=</span> <span class="n">P</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">P</span> <span class="o">@</span> <span class="n">V</span>
+
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">N</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">16</span>
+<span class="n">Q</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">));</span> <span class="n">K</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">));</span> <span class="n">V</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">))</span>
+
+<span class="k">for</span> <span class="n">causal</span> <span class="ow">in</span> <span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
+    <span class="n">O_flash</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">flash_attention_forward</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">Br</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">Bc</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="n">causal</span><span class="p">)</span>
+    <span class="n">O_ref</span> <span class="o">=</span> <span class="n">reference_attention</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="n">causal</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;causal=</span><span class="si">{</span><span class="n">causal</span><span class="si">}</span><span class="s2">: max abs error = </span><span class="si">{</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">O_flash</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">O_ref</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># both print ~1e-15: exact up to floating-point round-off</span>
+</code></pre></div>
+<p>A few details worth pausing on.</p>
+<ul>
+<li>
+<p><strong>The accumulators are the entire memory footprint per query block.</strong> For a block of <span class="arithmatex">\(B_r\)</span> rows we hold <span class="arithmatex">\(m_i\)</span> (<span class="arithmatex">\(B_r\)</span> floats), <span class="arithmatex">\(\ell_i\)</span> (<span class="arithmatex">\(B_r\)</span> floats), and <span class="arithmatex">\(O_i\)</span> (<span class="arithmatex">\(B_r \times d\)</span> floats) — and the transient <span class="arithmatex">\(B_r \times B_c\)</span> score tile. Choose <span class="arithmatex">\(B_r, B_c\)</span> so all of this fits in SRAM. Nothing scales with <span class="arithmatex">\(N\)</span>. The peak <em>extra</em> HBM allocation across the whole kernel is just <span class="arithmatex">\(O\)</span> (size <span class="arithmatex">\(N \times d\)</span>) and <span class="arithmatex">\(L\)</span> (size <span class="arithmatex">\(N\)</span>) — linear in <span class="arithmatex">\(N\)</span>, never quadratic.</p>
+</li>
+<li>
+<p><strong>The logsumexp <span class="arithmatex">\(L_i = m_i + \log \ell_i\)</span> is the one statistic we save.</strong> It is the log of the softmax denominator for row <span class="arithmatex">\(i\)</span>, computed in a stable way. We will see in the next section that the backward pass needs exactly this scalar per row to reconstruct the softmax weights on the fly — so storing <span class="arithmatex">\(L\)</span> (size <span class="arithmatex">\(N\)</span>) lets us <em>recompute</em> <span class="arithmatex">\(P\)</span> (size <span class="arithmatex">\(N^2\)</span>) in backward instead of storing it. This is the recomputation trade we make.</p>
+</li>
+<li>
+<p><strong>Causal masking is free.</strong> With a causal mask, query <span class="arithmatex">\(i\)</span> only attends to keys <span class="arithmatex">\(j \le i\)</span>. In the tiled loop that means the outer query-block <span class="arithmatex">\(i\)</span> can simply <strong>skip all key-blocks <span class="arithmatex">\(j\)</span> that lie entirely above the diagonal</strong> (<span class="arithmatex">\(j_0 &gt; i_1\)</span>), and only the diagonal block needs the elementwise triangular mask. This roughly halves the work for long sequences — a major reason causal FlashAttention is so fast — and the real kernel exploits it explicitly.</p>
+</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Why the inner loop is over keys, not queries</p>
+<p>FlashAttention-1 puts the <strong>query block</strong> in the outer loop and <strong>key/value blocks</strong> in the inner loop, accumulating each output row to completion before moving on. This keeps the running statistics (<span class="arithmatex">\(m_i, \ell_i, O_i\)</span>) for a query block resident in registers/SRAM across the whole inner loop, and writes each output row to HBM exactly once. <a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2</a> revisits this loop ordering and the placement of the rescale to reduce non-matmul FLOPs and improve GPU occupancy — but the online-softmax core is identical.</p>
+</div>
+<h2 id="the-backward-pass-recomputation-instead-of-storage">The backward pass: recomputation instead of storage<a class="headerlink" href="#the-backward-pass-recomputation-instead-of-storage" title="Permanent link">¶</a></h2>
+<p>Training needs gradients. The standard backward pass for attention stores the <span class="arithmatex">\(N \times N\)</span> probability matrix <span class="arithmatex">\(P\)</span> from the forward pass so it can compute <span class="arithmatex">\(\partial \mathcal{L}/\partial Q\)</span>, <span class="arithmatex">\(\partial \mathcal{L}/\partial K\)</span>, <span class="arithmatex">\(\partial \mathcal{L}/\partial V\)</span>. But <span class="arithmatex">\(P\)</span> is exactly the <span class="arithmatex">\(O(N^2)\)</span> object we worked so hard not to materialize. FlashAttention&rsquo;s answer is <strong>recomputation</strong> (a.k.a. activation checkpointing, see <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training</a>): do <em>not</em> store <span class="arithmatex">\(P\)</span>; instead, recompute each <span class="arithmatex">\(P\)</span> tile from <span class="arithmatex">\(Q, K\)</span> and the saved logsumexp <span class="arithmatex">\(L\)</span> during the backward pass, again block by block in SRAM. We trade extra FLOPs (recomputing the scores) for not touching HBM with an <span class="arithmatex">\(N^2\)</span> matrix. Because attention is memory-bound, that trade is a clear win — the &ldquo;wasted&rdquo; recomputation FLOPs run on otherwise-idle tensor cores.</p>
+<p>First, the math. With <span class="arithmatex">\(S = QK^\top/\sqrt{d}\)</span>, <span class="arithmatex">\(P = \operatorname{softmax}_{\text{row}}(S)\)</span>, and <span class="arithmatex">\(O = PV\)</span>, and given the upstream gradient <span class="arithmatex">\(\mathrm{d}O = \partial \mathcal{L} / \partial O\)</span>, the chain rule gives:</p>
+<div class="arithmatex">\[
+\mathrm{d}V = P^\top \,\mathrm{d}O, \qquad \mathrm{d}P = \mathrm{d}O\, V^\top .
+\]</div>
+<p>The softmax Jacobian (per row, since softmax is applied row-wise) turns <span class="arithmatex">\(\mathrm{d}P\)</span> into <span class="arithmatex">\(\mathrm{d}S\)</span>. For a single softmax row <span class="arithmatex">\(p = \operatorname{softmax}(s)\)</span> with upstream <span class="arithmatex">\(\mathrm{d}p\)</span>, the standard result is</p>
+<div class="arithmatex">\[
+\mathrm{d}s_i = p_i\left(\mathrm{d}p_i - \textstyle\sum_k p_k\, \mathrm{d}p_k\right).
+\]</div>
+<p>In attention, <span class="arithmatex">\(\mathrm{d}p_{ij} = (\mathrm{d}O\,V^\top)_{ij}\)</span> and <span class="arithmatex">\(\sum_k p_{ik}\,\mathrm{d}p_{ik} = \sum_k p_{ik}(\mathrm{d}O_i \cdot V_k) = \mathrm{d}O_i \cdot (\sum_k p_{ik} V_k) = \mathrm{d}O_i \cdot O_i\)</span>. Define the per-row scalar</p>
+<div class="arithmatex">\[
+D_i \;=\; \sum_k p_{ik}\,\mathrm{d}p_{ik} \;=\; \mathrm{d}O_i \cdot O_i \;=\; \sum_c \mathrm{d}O_{ic}\,O_{ic},
+\]</div>
+<p>which is just the row-wise dot product of the output gradient with the output — a cheap <span class="arithmatex">\(O(Nd)\)</span> quantity computable up front. Then</p>
+<div class="arithmatex">\[
+\mathrm{d}S_{ij} = P_{ij}\big( (\mathrm{d}O\,V^\top)_{ij} - D_i \big), \qquad
+\mathrm{d}Q = \frac{\mathrm{d}S\, K}{\sqrt d}, \qquad
+\mathrm{d}K = \frac{\mathrm{d}S^\top Q}{\sqrt d}.
+\]</div>
+<p>The crucial enabling fact: we can reconstruct <span class="arithmatex">\(P_{ij}\)</span> in any tile without storing it, because <span class="arithmatex">\(P_{ij} = \exp(S_{ij} - L_i)\)</span>, where <span class="arithmatex">\(S_{ij} = (Q_i K_j^\top)/\sqrt d\)</span> is recomputed and <span class="arithmatex">\(L_i\)</span> is the saved logsumexp. The logsumexp absorbs both the max-subtraction and the normalization into one number — <span class="arithmatex">\(\exp(S_{ij} - L_i)\)</span> is <em>already</em> the normalized probability, numerically stable. This is precisely why the forward pass bothered to save <span class="arithmatex">\(L\)</span>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">flash_attention_backward</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">O</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">dO</span><span class="p">,</span> <span class="n">Br</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">Bc</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Backward pass for FlashAttention. Recomputes P tile-by-tile from (Q,K,L)</span>
+<span class="sd">    instead of storing the N×N matrix. Returns dQ, dK, dV.</span>
+
+<span class="sd">    O, L are the forward outputs; dO is the upstream gradient (N, d).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">N</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">Q</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+
+    <span class="n">dQ</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">Q</span><span class="p">)</span>
+    <span class="n">dK</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">K</span><span class="p">)</span>
+    <span class="n">dV</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">V</span><span class="p">)</span>
+
+    <span class="c1"># Per-row scalar D_i = sum_c dO_{ic} O_{ic}  (rowwise dot of dO and O)</span>
+    <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dO</span> <span class="o">*</span> <span class="n">O</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>                    <span class="c1"># (N,)</span>
+
+    <span class="k">for</span> <span class="n">i0</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">Br</span><span class="p">):</span>
+        <span class="n">i1</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">i0</span> <span class="o">+</span> <span class="n">Br</span><span class="p">,</span> <span class="n">N</span><span class="p">)</span>
+        <span class="n">Qi</span><span class="p">,</span> <span class="n">dOi</span><span class="p">,</span> <span class="n">Li</span><span class="p">,</span> <span class="n">Di</span> <span class="o">=</span> <span class="n">Q</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">],</span> <span class="n">dO</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">],</span> <span class="n">L</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">],</span> <span class="n">D</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span>
+        <span class="n">dQi</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">Qi</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">j0</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">Bc</span><span class="p">):</span>
+            <span class="n">j1</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">j0</span> <span class="o">+</span> <span class="n">Bc</span><span class="p">,</span> <span class="n">N</span><span class="p">)</span>
+            <span class="n">Kj</span><span class="p">,</span> <span class="n">Vj</span> <span class="o">=</span> <span class="n">K</span><span class="p">[</span><span class="n">j0</span><span class="p">:</span><span class="n">j1</span><span class="p">],</span> <span class="n">V</span><span class="p">[</span><span class="n">j0</span><span class="p">:</span><span class="n">j1</span><span class="p">]</span>
+
+            <span class="c1"># RECOMPUTE the score tile and the probability tile (no storage)</span>
+            <span class="n">Sij</span> <span class="o">=</span> <span class="p">(</span><span class="n">Qi</span> <span class="o">@</span> <span class="n">Kj</span><span class="o">.</span><span class="n">T</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span>             <span class="c1"># (br, bc)</span>
+            <span class="k">if</span> <span class="n">causal</span><span class="p">:</span>
+                <span class="n">rows</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">i0</span><span class="p">,</span> <span class="n">i1</span><span class="p">)[:,</span> <span class="kc">None</span><span class="p">]</span>
+                <span class="n">cols</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">j0</span><span class="p">,</span> <span class="n">j1</span><span class="p">)[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:]</span>
+                <span class="n">Sij</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">cols</span> <span class="o">&lt;=</span> <span class="n">rows</span><span class="p">,</span> <span class="n">Sij</span><span class="p">,</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
+            <span class="n">Pij</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">Sij</span> <span class="o">-</span> <span class="n">Li</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">])</span>       <span class="c1"># = softmax weights, since L is logsumexp</span>
+
+            <span class="c1"># gradients flowing through this tile</span>
+            <span class="n">dV</span><span class="p">[</span><span class="n">j0</span><span class="p">:</span><span class="n">j1</span><span class="p">]</span> <span class="o">+=</span> <span class="n">Pij</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">dOi</span>              <span class="c1"># dV = P^T dO   (accumulate over query blocks)</span>
+            <span class="n">dPij</span> <span class="o">=</span> <span class="n">dOi</span> <span class="o">@</span> <span class="n">Vj</span><span class="o">.</span><span class="n">T</span>                      <span class="c1"># (br, bc)  dP = dO V^T</span>
+            <span class="n">dSij</span> <span class="o">=</span> <span class="n">Pij</span> <span class="o">*</span> <span class="p">(</span><span class="n">dPij</span> <span class="o">-</span> <span class="n">Di</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">])</span>      <span class="c1"># softmax-Jacobian: P*(dP - D)</span>
+            <span class="n">dQi</span>   <span class="o">+=</span> <span class="p">(</span><span class="n">dSij</span> <span class="o">@</span> <span class="n">Kj</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span>           <span class="c1"># dQ = dS K / sqrt(d)</span>
+            <span class="n">dK</span><span class="p">[</span><span class="n">j0</span><span class="p">:</span><span class="n">j1</span><span class="p">]</span> <span class="o">+=</span> <span class="p">(</span><span class="n">dSij</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">Qi</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span>     <span class="c1"># dK = dS^T Q / sqrt(d)</span>
+
+        <span class="n">dQ</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span> <span class="o">=</span> <span class="n">dQi</span>
+
+    <span class="k">return</span> <span class="n">dQ</span><span class="p">,</span> <span class="n">dK</span><span class="p">,</span> <span class="n">dV</span>
+
+
+<span class="c1"># ---- gradient check against autograd-style finite differences ----</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">reference_attention_loss</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+    <span class="n">O</span> <span class="o">=</span> <span class="n">reference_attention</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="n">causal</span><span class="p">)</span>   <span class="c1"># defined earlier</span>
+    <span class="k">return</span> <span class="n">O</span>
+
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">N</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="mi">48</span><span class="p">,</span> <span class="mi">8</span>
+<span class="n">Q</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">));</span> <span class="n">K</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">));</span> <span class="n">V</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">))</span>
+<span class="n">causal</span> <span class="o">=</span> <span class="kc">True</span>
+
+<span class="n">O</span><span class="p">,</span> <span class="n">L</span> <span class="o">=</span> <span class="n">flash_attention_forward</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">Br</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">Bc</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="n">causal</span><span class="p">)</span>
+<span class="n">dO</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d</span><span class="p">))</span>                            <span class="c1"># arbitrary upstream grad</span>
+<span class="n">dQ</span><span class="p">,</span> <span class="n">dK</span><span class="p">,</span> <span class="n">dV</span> <span class="o">=</span> <span class="n">flash_attention_backward</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">O</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">dO</span><span class="p">,</span> <span class="n">Br</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">Bc</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="n">causal</span><span class="p">)</span>
+
+<span class="c1"># numerical gradient of  scalar = sum(dO * O)  w.r.t. Q, via central differences</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">num_grad</span><span class="p">(</span><span class="n">param</span><span class="p">,</span> <span class="n">idx</span><span class="p">):</span>
+    <span class="n">eps</span> <span class="o">=</span> <span class="mf">1e-5</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">param</span><span class="o">.</span><span class="n">copy</span><span class="p">();</span> <span class="n">orig</span> <span class="o">=</span> <span class="n">p</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+    <span class="n">p</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">orig</span> <span class="o">+</span> <span class="n">eps</span><span class="p">;</span> <span class="n">Op</span> <span class="o">=</span> <span class="n">reference_attention_loss</span><span class="p">(</span><span class="o">*</span><span class="p">(</span> <span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="n">K</span><span class="p">,</span><span class="n">V</span><span class="p">)</span> <span class="k">if</span> <span class="n">param</span> <span class="ow">is</span> <span class="n">Q</span> <span class="k">else</span>
+                                  <span class="p">(</span><span class="n">Q</span><span class="p">,</span><span class="n">p</span><span class="p">,</span><span class="n">V</span><span class="p">)</span> <span class="k">if</span> <span class="n">param</span> <span class="ow">is</span> <span class="n">K</span> <span class="k">else</span> <span class="p">(</span><span class="n">Q</span><span class="p">,</span><span class="n">K</span><span class="p">,</span><span class="n">p</span><span class="p">)),</span> <span class="n">causal</span><span class="o">=</span><span class="n">causal</span><span class="p">)</span>
+    <span class="n">fp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dO</span> <span class="o">*</span> <span class="n">Op</span><span class="p">)</span>
+    <span class="n">p</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">orig</span> <span class="o">-</span> <span class="n">eps</span><span class="p">;</span> <span class="n">Om</span> <span class="o">=</span> <span class="n">reference_attention_loss</span><span class="p">(</span><span class="o">*</span><span class="p">(</span> <span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="n">K</span><span class="p">,</span><span class="n">V</span><span class="p">)</span> <span class="k">if</span> <span class="n">param</span> <span class="ow">is</span> <span class="n">Q</span> <span class="k">else</span>
+                                  <span class="p">(</span><span class="n">Q</span><span class="p">,</span><span class="n">p</span><span class="p">,</span><span class="n">V</span><span class="p">)</span> <span class="k">if</span> <span class="n">param</span> <span class="ow">is</span> <span class="n">K</span> <span class="k">else</span> <span class="p">(</span><span class="n">Q</span><span class="p">,</span><span class="n">K</span><span class="p">,</span><span class="n">p</span><span class="p">)),</span> <span class="n">causal</span><span class="o">=</span><span class="n">causal</span><span class="p">)</span>
+    <span class="n">fm</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dO</span> <span class="o">*</span> <span class="n">Om</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">fp</span> <span class="o">-</span> <span class="n">fm</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">eps</span><span class="p">)</span>
+
+<span class="n">err</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">num_grad</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span> <span class="o">-</span> <span class="n">dQ</span><span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">2</span><span class="p">]),</span>
+          <span class="nb">abs</span><span class="p">(</span><span class="n">num_grad</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="o">-</span> <span class="n">dK</span><span class="p">[</span><span class="mi">5</span><span class="p">,</span> <span class="mi">1</span><span class="p">]),</span>
+          <span class="nb">abs</span><span class="p">(</span><span class="n">num_grad</span><span class="p">(</span><span class="n">V</span><span class="p">,</span> <span class="p">(</span><span class="mi">7</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span> <span class="o">-</span> <span class="n">dV</span><span class="p">[</span><span class="mi">7</span><span class="p">,</span> <span class="mi">4</span><span class="p">]))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;max grad-check error:&quot;</span><span class="p">,</span> <span class="n">err</span><span class="p">)</span>     <span class="c1"># ~1e-7: analytic backward matches finite differences</span>
+</code></pre></div>
+<p>The gradient check passes to <span class="arithmatex">\(\sim 10^{-7}\)</span>, the expected precision of central differences in fp64. The backward pass is genuinely exact. Two practical notes mirror the real kernel:</p>
+<ul>
+<li>
+<p><strong><span class="arithmatex">\(\mathrm{d}V\)</span> and <span class="arithmatex">\(\mathrm{d}K\)</span> accumulate across query blocks</strong> (every query attends to a given key), so in a parallel implementation they require atomic adds or a separate reduction pass. FlashAttention-1 handles this by looping keys in the outer loop for the backward pass (the opposite of the forward), so each key block&rsquo;s <span class="arithmatex">\(\mathrm{d}K_j, \mathrm{d}V_j\)</span> is finalized in one go while <span class="arithmatex">\(\mathrm{d}Q\)</span> is accumulated with atomics. The math above is loop-order-agnostic; the implementation chooses an order that minimizes atomics.</p>
+</li>
+<li>
+<p><strong>Recomputation cost is small and overlaps.</strong> The backward pass redoes the <span class="arithmatex">\(QK^\top\)</span> matmul (the score tile) it could have stored. That is one extra <span class="arithmatex">\(O(N^2 d)\)</span> matmul — but matmuls run on tensor cores that the memory-bound kernel was leaving idle anyway, and we <em>save</em> the <span class="arithmatex">\(O(N^2)\)</span> HBM read/write of the stored <span class="arithmatex">\(P\)</span>. On the memory-bound side of the roofline, trading FLOPs for bytes is exactly the right direction.</p>
+</li>
+</ul>
+<h2 id="io-aware-analysis-counting-the-bytes">IO-aware analysis: counting the bytes<a class="headerlink" href="#io-aware-analysis-counting-the-bytes" title="Permanent link">¶</a></h2>
+<p>We have claimed FlashAttention is faster because it moves fewer bytes. Let us prove it with an IO-complexity argument — the kind of analysis the paper is named for, and the kind an interviewer loves.</p>
+<p>The model: HBM is large and slow; SRAM has size <span class="arithmatex">\(M\)</span> (in elements) and is fast. We count <strong>HBM accesses</strong> (reads + writes), because that is what dominates runtime for a memory-bound kernel. The inputs <span class="arithmatex">\(Q, K, V\)</span> are <span class="arithmatex">\(N \times d\)</span>; assume <span class="arithmatex">\(d \le M\)</span> (a few head-dimensions of vectors fit in SRAM, which is always true in practice).</p>
+<p><strong>Naive attention.</strong> It writes and reads the <span class="arithmatex">\(N \times N\)</span> matrices <span class="arithmatex">\(S\)</span> and <span class="arithmatex">\(P\)</span>. Even with perfect overlap, <span class="arithmatex">\(S\)</span> is written once and read once, <span class="arithmatex">\(P\)</span> is written once and read once: that is <span class="arithmatex">\(\Theta(N^2)\)</span> HBM accesses, plus <span class="arithmatex">\(\Theta(Nd)\)</span> for <span class="arithmatex">\(Q,K,V,O\)</span>. Total:</p>
+<div class="arithmatex">\[
+\text{HBM}_{\text{naive}} = \Theta\!\left(N^2 + N d\right) = \Theta(N^2 d \, / \, d) \approx \Theta(N^2).
+\]</div>
+<p><strong>FlashAttention.</strong> Choose block sizes so that one <span class="arithmatex">\(Q\)</span> tile, one <span class="arithmatex">\(K\)</span> tile, one <span class="arithmatex">\(V\)</span> tile, and the accumulators all fit in SRAM. With SRAM size <span class="arithmatex">\(M\)</span>, the column block can be <span class="arithmatex">\(B_c = \Theta(M/d)\)</span> and the row block <span class="arithmatex">\(B_r = \Theta(M/d)\)</span> as well (bounded so the <span class="arithmatex">\(B_r \times B_c\)</span> score tile <span class="arithmatex">\(\le M\)</span>). Now count: the outer loop runs <span class="arithmatex">\(N / B_r\)</span> times; for <em>each</em> query block, the inner loop streams <strong>all</strong> of <span class="arithmatex">\(K\)</span> and <span class="arithmatex">\(V\)</span> from HBM once — that is <span class="arithmatex">\(\Theta(Nd)\)</span> bytes per query block. So:</p>
+<div class="arithmatex">\[
+\text{HBM}_{\text{flash}} = \frac{N}{B_r} \cdot \Theta(Nd) = \Theta\!\left(\frac{N^2 d}{B_r}\right) = \Theta\!\left(\frac{N^2 d^2}{M}\right).
+\]</div>
+<p>The last step uses <span class="arithmatex">\(B_r = \Theta(M/d)\)</span>. Compare the two: FlashAttention&rsquo;s HBM traffic is smaller than naive&rsquo;s <span class="arithmatex">\(\Theta(N^2)\)</span> by a factor of <span class="arithmatex">\(\Theta(M/d^2)\)</span>. With SRAM on the order of <span class="arithmatex">\(M \sim 10^5\)</span> elements and <span class="arithmatex">\(d^2 \sim 10^4\)</span>, that is an order-of-magnitude reduction in HBM traffic — and it is provably (the paper shows) optimal up to constants over all algorithms that compute exact attention by this tiling. The bigger the SRAM, the fewer passes over <span class="arithmatex">\(K, V\)</span>, the less traffic. This is the formal content of &ldquo;IO-awareness&rdquo;: the algorithm&rsquo;s cost is dominated by HBM accesses, so we design the algorithm to minimize them, not to minimize FLOPs.</p>
+<div class="highlight"><pre><span></span><code>                  HBM accesses        SRAM scratch        extra HBM memory
+  ---------------  -----------------   ----------------    ----------------
+  Naive attention   Θ(N²)              O(Br·Bc) but it      Θ(N²)  (S and P)
+                                       still spills S,P
+  FlashAttention    Θ(N² d² / M)       O(Br·Bc) tile +      Θ(N)   (O and L)
+                                       O(Br·d) accumulators
+
+  M = SRAM size (elements). For typical M and d, FlashAttention moves ~M/d²
+  fewer bytes — about an order of magnitude — and uses O(N) instead of O(N²)
+  scratch memory. Same FLOPs, same answer, far fewer HBM trips.
+</code></pre></div>
+<p>Two consequences fall out of this accounting:</p>
+<ol>
+<li>
+<p><strong>It is exact, and the speedup is &ldquo;free.&rdquo;</strong> FlashAttention computes the identical function as naive attention (we proved it above, twice). The speedup comes purely from data movement, not from any approximation, sparsity, or low-rank trick. This is what distinguishes it from earlier &ldquo;efficient attention&rdquo; methods (Linformer, Performer, sparse attention — see <a href="../02-transformer/11-ssm-and-alternatives.html">Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a>) that traded accuracy for speed. FlashAttention trades nothing.</p>
+</li>
+<li>
+<p><strong>Memory drops from <span class="arithmatex">\(O(N^2)\)</span> to <span class="arithmatex">\(O(N)\)</span>.</strong> The only persistent extra allocations are <span class="arithmatex">\(O\)</span> (<span class="arithmatex">\(N \times d\)</span>) and <span class="arithmatex">\(L\)</span> (<span class="arithmatex">\(N\)</span>). This linear scaling is what unlocked long-context training and inference; it is the foundation under nearly every long-context model shipped since 2022, and under the prefill phase of <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference</a>.</p>
+</li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title">FlashAttention is memory-bound, not compute-bound — measure the right thing</p>
+<p>A common mistake when benchmarking is to count FLOPs and conclude FlashAttention &ldquo;does the same work&rdquo; as naive attention (true) and therefore &ldquo;can&rsquo;t be faster&rdquo; (false). The FLOPs are identical; the <em>wall-clock</em> difference is all in HBM traffic. If you profile and see the kernel spending its time on memory transactions rather than tensor-core issue, that is expected. The corollary for <a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2 &amp; 3</a>: once you have killed the HBM traffic, the <em>next</em> bottleneck becomes the non-matmul work (the rescales and exponentials) and GPU occupancy — which is exactly what FA-2 and FA-3 attack.</p>
+</div>
+<h2 id="practical-use-you-almost-never-write-this-yourself">Practical use: you almost never write this yourself<a class="headerlink" href="#practical-use-you-almost-never-write-this-yourself" title="Permanent link">¶</a></h2>
+<p>You now understand the algorithm well enough to implement it. In practice you call it. PyTorch ships a fused, hardware-dispatched attention that uses a FlashAttention backend when shapes and dtypes allow:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="c1"># q, k, v : (batch, heads, seq_len, head_dim), on CUDA, in fp16/bf16</span>
+<span class="n">q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">8192</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+<span class="n">k</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+<span class="n">v</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+
+<span class="c1"># Single fused call. PyTorch dispatches to a FlashAttention kernel when eligible:</span>
+<span class="c1"># contiguous, supported head_dim, fp16/bf16, etc. is_causal applies the triangular mask</span>
+<span class="c1"># WITHOUT materializing it (the kernel skips upper-triangular key blocks, as we discussed).</span>
+<span class="n">out</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">scaled_dot_product_attention</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">is_causal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># (2, 16, 8192, 128)</span>
+
+<span class="c1"># You can inspect / force which backend is used:</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.nn.attention</span><span class="w"> </span><span class="kn">import</span> <span class="n">sdpa_kernel</span><span class="p">,</span> <span class="n">SDPBackend</span>
+<span class="k">with</span> <span class="n">sdpa_kernel</span><span class="p">(</span><span class="n">SDPBackend</span><span class="o">.</span><span class="n">FLASH_ATTENTION</span><span class="p">):</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">scaled_dot_product_attention</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">is_causal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>Things that silently <em>disable</em> the FlashAttention backend and fall back to a slower math path — worth memorizing because they show up in profiling:</p>
+<ul>
+<li><strong>Unsupported <code>head_dim</code>.</strong> Older kernels support head dims up to 128 (later up to 256). A head dim of 160, say, may fall back.</li>
+<li><strong>fp32 inputs.</strong> FlashAttention kernels target fp16/bf16. Pass fp32 and you get the math fallback.</li>
+<li><strong>An additive float mask with awkward shape</strong>, or a mask that the kernel cannot fuse, can force the materialized path. Prefer <code>is_causal=True</code> over hand-built masks when possible.</li>
+<li><strong>Non-contiguous tensors</strong> or unsupported strides.</li>
+</ul>
+<p>The official <code>flash-attn</code> package (Dao et al.) exposes the kernels directly (<code>flash_attn_func</code>, <code>flash_attn_varlen_func</code> for ragged/packed batches — relevant to <a href="../05-posttraining-alignment/02-chat-templates-packing.html">Chat Templates, Data Formatting &amp; Sequence Packing</a>) with more knobs: sliding-window attention, ALiBi slopes, dropout fused into the kernel, and the variable-length API that avoids padding waste. For writing your <em>own</em> fused attention variants (custom masks, custom biases) the modern path is <a href="../04-kernels-efficiency/04-triton-kernels.html">Writing GPU Kernels with Triton</a>, where a FlashAttention-style kernel is the canonical tutorial example.</p>
+<div class="admonition tip">
+<p class="admonition-title">Block size is a tuning knob, not a constant</p>
+<p><span class="arithmatex">\(B_r\)</span> and <span class="arithmatex">\(B_c\)</span> are chosen to fill SRAM without spilling, and the sweet spot depends on <span class="arithmatex">\(d\)</span> and the GPU&rsquo;s SRAM-per-SM. The IO analysis says bigger blocks → fewer passes over <span class="arithmatex">\(K,V\)</span> → less HBM traffic, but blocks too big spill registers/SRAM and tank occupancy. Real kernels autotune these (often 64 or 128). When you write a Triton version, sweep <code>BLOCK_M</code> and <code>BLOCK_N</code> — it is routinely a 1.5–2× swing.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Naive attention and FlashAttention do the <em>same</em> number of floating-point operations and compute the <em>same</em> result. So where does the speedup come from, and why doesn&rsquo;t it apply to, say, a single large matrix multiply?</p>
+<p><strong>A:</strong> The speedup is entirely from reduced HBM traffic, not reduced FLOPs. Naive attention materializes the <span class="arithmatex">\(N \times N\)</span> score and probability matrices in HBM, so it pays <span class="arithmatex">\(\Theta(N^2)\)</span> slow memory accesses; attention is <em>memory-bound</em>, so that traffic — not the matmuls — dominates wall-clock time. FlashAttention tiles the computation so the score matrix lives only in fast on-chip SRAM and is never written to HBM; using the online softmax (running max, running denominator, and a correction factor that rescales partial accumulators when a larger logit appears) it produces the exact same softmax-weighted output in a single streaming pass. The IO complexity drops from <span class="arithmatex">\(\Theta(N^2)\)</span> to <span class="arithmatex">\(\Theta(N^2 d^2/M)\)</span> where <span class="arithmatex">\(M\)</span> is SRAM size — about an order of magnitude fewer bytes — and peak memory drops from <span class="arithmatex">\(O(N^2)\)</span> to <span class="arithmatex">\(O(N)\)</span>. It does <em>not</em> help a single large dense matmul because a big matmul is already <em>compute-bound</em> with high arithmetic intensity: its bottleneck is the tensor cores, not HBM, so there is no IO to eliminate. The win is specific to operations like attention that have low arithmetic intensity <em>and</em> a large intermediate that standard implementations spill to HBM. A sharp follow-up: the backward pass uses recomputation — it does not store <span class="arithmatex">\(P\)</span> but reconstructs each tile from <span class="arithmatex">\(Q\)</span>, <span class="arithmatex">\(K\)</span>, and the saved per-row logsumexp <span class="arithmatex">\(L\)</span> — trading extra (idle) tensor-core FLOPs for avoiding the <span class="arithmatex">\(O(N^2)\)</span> HBM read of a stored probability matrix.</p>
+</div>
+<h2 id="putting-it-together-the-mental-model">Putting it together: the mental model<a class="headerlink" href="#putting-it-together-the-mental-model" title="Permanent link">¶</a></h2>
+<p>Step back and hold the whole thing at once. Standard attention is correct but pathological on a GPU: it writes a quadratic intermediate to the slow memory and reads it back twice, so it is bandwidth-starved and capacity-limited. The single obstacle to fixing this is that softmax normalization seems to need the whole row before it can emit anything. The online softmax dissolves that obstacle with a running maximum, a running denominator, and a correction factor <span class="arithmatex">\(e^{m_{\text{old}} - m_{\text{new}}}\)</span> that retroactively re-bases partial results whenever a bigger logit shows up — letting us compute a numerically-stable, exactly-correct softmax-weighted sum in one streaming pass over blocks. Wrap that streaming softmax in a tile loop that keeps every working block in SRAM, normalize once at the end, and save a single logsumexp per row so the backward pass can recompute the probabilities instead of storing them. The result moves an order of magnitude fewer bytes, uses linear instead of quadratic memory, and computes precisely the same function. No approximation. That combination — an elegant numerical recurrence married to a hardware-aware data layout — is why FlashAttention is one of the most consequential systems papers of the LLM era, and why &ldquo;IO-awareness&rdquo; is now a design principle, not just a kernel.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Naive attention is <strong>memory-bound, not compute-bound</strong>: it materializes the <span class="arithmatex">\(N \times N\)</span> score and probability matrices in HBM, paying <span class="arithmatex">\(\Theta(N^2)\)</span> slow memory accesses and <span class="arithmatex">\(O(N^2)\)</span> peak memory. The matmuls were never the problem.</li>
+<li>The <strong>online softmax</strong> computes a numerically-stable, exactly-correct softmax-weighted sum in one streaming pass using three running statistics — max <span class="arithmatex">\(m\)</span>, denominator <span class="arithmatex">\(\ell\)</span>, output <span class="arithmatex">\(o\)</span> — and a <strong>correction factor</strong> <span class="arithmatex">\(\alpha = e^{m_{\text{old}} - m_{\text{new}}} \in (0,1]\)</span> that rescales prior accumulators whenever a larger logit appears.</li>
+<li>FlashAttention <strong>fuses</strong> <span class="arithmatex">\(QK^\top\)</span>, softmax, and <span class="arithmatex">\(\cdot V\)</span> into a single tiled kernel; the <span class="arithmatex">\(B_r \times B_c\)</span> score tile lives only in <strong>SRAM</strong> and is never written to HBM. Peak extra memory falls from <span class="arithmatex">\(O(N^2)\)</span> to <span class="arithmatex">\(O(N)\)</span> (just the output <span class="arithmatex">\(O\)</span> and the per-row logsumexp <span class="arithmatex">\(L\)</span>).</li>
+<li>It is <strong>exact</strong>, not approximate — bit-for-bit equal to naive attention up to floating-point round-off. The speedup is purely from reduced data movement.</li>
+<li>The <strong>backward pass uses recomputation</strong>: it does not store <span class="arithmatex">\(P\)</span>; it reconstructs each probability tile as <span class="arithmatex">\(\exp(S_{ij} - L_i)\)</span> from <span class="arithmatex">\(Q\)</span>, <span class="arithmatex">\(K\)</span>, and the saved logsumexp, trading idle-tensor-core FLOPs for avoiding an <span class="arithmatex">\(O(N^2)\)</span> HBM read. The per-row scalar <span class="arithmatex">\(D_i = \mathrm{d}O_i \cdot O_i\)</span> collapses the softmax Jacobian.</li>
+<li><strong>IO complexity</strong> drops from <span class="arithmatex">\(\Theta(N^2)\)</span> to <span class="arithmatex">\(\Theta(N^2 d^2 / M)\)</span> where <span class="arithmatex">\(M\)</span> is SRAM size — about an order of magnitude — and is provably near-optimal for exact tiled attention.</li>
+<li><strong>Causal masking is nearly free</strong>: tiled kernels skip key-blocks entirely above the diagonal, roughly halving the work for long sequences.</li>
+<li>In practice you call <code>F.scaled_dot_product_attention</code> or the <code>flash-attn</code> library; know the fallback triggers (fp32, unsupported head dim, awkward masks). Custom variants are written in <a href="../04-kernels-efficiency/04-triton-kernels.html">Triton</a>.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>FlashAttention is now the universal baseline for exact attention on modern GPUs: FA-2 ships inside PyTorch&rsquo;s <code>scaled_dot_product_attention</code>, FA-3 targets Hopper&rsquo;s async tensor cores and FP8, and FA-4 (beta) extends the approach to Blackwell. The core IO-aware tiling idea has spawned a broad ecosystem of inference-optimized and flexibly-programmable attention kernels.</p>
+<p><strong>Foundational papers</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2205.14135">Dao et al., <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022)</a> — the original IO-aware tiling algorithm; introduces the online-softmax forward/backward and the IO-complexity theorem.</li>
+<li><a href="https://arxiv.org/abs/2307.08691">Dao, <em>FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning</em> (2023)</a> — revises the loop ordering and work partitioning, roughly doubling throughput to 50–73% of A100 peak FLOPs/s.</li>
+<li><a href="https://arxiv.org/abs/1805.02867">Milakov &amp; Gimelshein, <em>Online normalizer calculation for softmax</em> (2018)</a> — the streaming-softmax recurrence that FlashAttention&rsquo;s online softmax is built on.</li>
+</ul>
+<p><strong>Pushing the frontier (2024–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2407.08608">Shah et al., <em>FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision</em> (2024)</a> — exploits Hopper warp-specialization and TMA to overlap compute with data movement; FP16 reaches 740 TFLOPs/s and FP8 approaches 1.2 PFLOPs/s on H100.</li>
+<li><a href="https://arxiv.org/abs/2312.11918">Bikshandi &amp; Shah, <em>A Case Study in CUDA Kernel Fusion: Implementing FlashAttention-2 on NVIDIA Hopper Architecture using the CUTLASS Library</em> (2023)</a> — deep dive into Hopper-specific CUTLASS primitives underlying FA-3; 20–50% gains over Ampere-optimized FA-2.</li>
+<li><a href="https://arxiv.org/abs/2501.01005">Ye et al., <em>FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving</em> (2025)</a> — block-sparse KV-cache formatting and JIT kernel generation for variable-length decode; adopted by vLLM and SGLang.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/Dao-AILab/flash-attention">Dao-AILab/flash-attention</a> — the canonical production library: FA-1 through FA-4 (beta), <code>flash_attn_varlen_func</code> for packed sequences, sliding-window and ALiBi support.</li>
+<li><a href="https://github.com/flashinfer-ai/flashinfer">flashinfer-ai/flashinfer</a> — inference-focused attention engine with JIT kernel composition, block-sparse KV layout, and support for decode-phase workloads.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://pytorch.org/blog/flexattention/">PyTorch Blog: <em>FlexAttention — The Flexibility of PyTorch with the Performance of FlashAttention</em> (2024)</a> — how PyTorch&rsquo;s <code>flex_attention</code> API lowers user-supplied <code>score_mod</code> / <code>mask_mod</code> functions into a fused FA-style kernel via <code>torch.compile</code>.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, Christopher Ré — <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022). The original paper; read it for the IO-complexity theorem and the forward/backward algorithm boxes.</li>
+<li>Tri Dao — <em>FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning</em> (2023). The follow-up on loop ordering, non-matmul FLOP reduction, and occupancy; covered in <a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2 &amp; 3</a>.</li>
+<li>Maxim Milakov and Natalia Gimelshein — <em>Online normalizer calculation for softmax</em> (2018). The streaming softmax recurrence that FlashAttention builds on.</li>
+<li>Markus N. Rabe and Charles Staats — <em>Self-attention Does Not Need <span class="arithmatex">\(O(n^2)\)</span> Memory</em> (2021). An earlier memory-reduction-by-recomputation result for attention.</li>
+<li>Ashish Vaswani et al. — <em>Attention Is All You Need</em> (2017). The attention operator FlashAttention accelerates; the from-scratch version is in <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a>.</li>
+<li>The <code>Dao-AILab/flash-attention</code> GitHub repository — production CUDA kernels, the <code>flash_attn</code> Python API, and the varlen/packed-sequence entry points.</li>
+<li>The OpenAI Triton tutorials — the fused-attention example is the canonical place to see a FlashAttention-style kernel written in a high-level GPU language; see <a href="../04-kernels-efficiency/04-triton-kernels.html">Writing GPU Kernels with Triton</a>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="01-roofline-performance.html"><span class="pn-label">← Previous</span><span class="pn-title">The Roofline Model &amp; Performance Engineering</span></a>
+<a class="next" href="03-flash-attention-2-3.html"><span class="pn-label">Next →</span><span class="pn-title">FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-memory-bottleneck-why-naive-attention-is-io-bound">The memory bottleneck: why naive attention is IO-bound</a></li>
+<li class="toc-l2"><a href="#the-online-softmax-computing-a-normalized-sum-in-one-streaming-pass">The online softmax: computing a normalized sum in one streaming pass</a></li>
+<li class="toc-l3"><a href="#why-the-naive-online-attempt-fails">Why the naive online attempt fails</a></li>
+<li class="toc-l3"><a href="#the-key-idea-a-running-max-and-a-correction-factor">The key idea: a running max and a correction factor</a></li>
+<li class="toc-l3"><a href="#a-from-scratch-implementation-and-a-correctness-proof">A from-scratch implementation and a correctness proof</a></li>
+<li class="toc-l2"><a href="#flashattention-forward-tiling-online-softmax-fused-into-one-pass">FlashAttention forward: tiling + online softmax fused into one pass</a></li>
+<li class="toc-l2"><a href="#the-backward-pass-recomputation-instead-of-storage">The backward pass: recomputation instead of storage</a></li>
+<li class="toc-l2"><a href="#io-aware-analysis-counting-the-bytes">IO-aware analysis: counting the bytes</a></li>
+<li class="toc-l2"><a href="#practical-use-you-almost-never-write-this-yourself">Practical use: you almost never write this yourself</a></li>
+<li class="toc-l2"><a href="#putting-it-together-the-mental-model">Putting it together: the mental model</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

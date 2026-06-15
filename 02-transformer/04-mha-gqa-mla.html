@@ -1,0 +1,1655 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-Head Attention, MQA, GQA &amp; MLA — The LLM Stack</title>
+<meta name="description" content="Multi-head attention motivation and implementation; KV-cache cost; Multi-Query (MQA), Grouped-Query (GQA), and Multi-head Latent Attention (MLA, DeepSeek). Memo">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="active" href="04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part II — The Transformer Architecture</div>
+<h1 id="24-multi-head-attention-mqa-gqa-mla">2.4 Multi-Head Attention, MQA, GQA &amp; MLA<a class="headerlink" href="#24-multi-head-attention-mqa-gqa-mla" title="Permanent link">¶</a></h1>
+<p>In <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a> we built a single attention head — one query/key/value projection feeding one scaled dot-product softmax. It works, but a single head is a surprisingly blunt instrument: every position is forced to mix information through <em>one</em> similarity function, <em>one</em> notion of &ldquo;what is relevant.&rdquo; Real language needs many notions of relevance at once. To resolve &ldquo;it&rdquo; in a sentence, one part of the model wants to look at the nearest preceding noun; another wants to track the subject of the clause; another wants to watch the quotation marks; another wants positional, short-range smoothing. <strong>Multi-head attention</strong> (MHA) is how the Transformer runs many such retrievals in parallel and then fuses them.</p>
+<p>This chapter does two things. First, it builds MHA properly — the reshape gymnastics, the parameter accounting, what &ldquo;heads&rdquo; buy you and what they cost. Second, and this is where most of the chapter&rsquo;s weight lies, it confronts the single biggest operational problem MHA creates at inference time: <strong>the KV cache.</strong> During autoregressive decoding, the keys and values of every past token must be kept in GPU memory, and for MHA that cache grows linearly with the number of heads, layers, and sequence length until it — not the model weights — becomes the thing that limits how many users you can serve and how long a context you can afford. The modern lineage of attention variants — <strong>Multi-Query Attention (MQA)</strong>, <strong>Grouped-Query Attention (GQA)</strong>, and DeepSeek&rsquo;s <strong>Multi-head Latent Attention (MLA)</strong> — are all, at their core, answers to one question: <em>how do we keep the expressive power of many heads while shrinking the KV cache?</em> By the end you will be able to derive the cache size of any of these schemes from first principles, implement the conversion from MHA to GQA in PyTorch, and argue crisply in an interview why GQA became the default.</p>
+<p>We assume the single-head machinery and the <span class="arithmatex">\(\sqrt{d_k}\)</span> scaling from the previous chapter, and the GPU memory-hierarchy intuition from <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>. The serving-side consequences are developed fully in <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a> and <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>; here we develop the <em>architecture</em> that those systems serve.</p>
+<h2 id="why-more-than-one-head-the-motivation-for-mha">Why More Than One Head? The Motivation for MHA<a class="headerlink" href="#why-more-than-one-head-the-motivation-for-mha" title="Permanent link">¶</a></h2>
+<p>Start from a limitation. A single attention head produces, for each query position, exactly one probability distribution over the keys and returns one blended value. That distribution is a <em>bottleneck</em>: whatever the head decides to attend to, it attends to with one shared softmax. If the model needs to simultaneously (a) copy the syntactic subject and (b) track a coreferent pronoun, a single head must somehow average those two retrieval patterns into one — and averaging two sharp distributions usually gives a blurry, less useful one. Worse, the <em>representation subspace</em> is shared: the keys and queries live in one <span class="arithmatex">\(d_\text{model}\)</span>-dimensional space, so all &ldquo;kinds&rdquo; of similarity compete for the same dimensions.</p>
+<p>Multi-head attention removes both bottlenecks with a simple idea: <strong>split the model dimension into <span class="arithmatex">\(h\)</span> smaller subspaces and run an independent attention head in each, then concatenate.</strong> Concretely, with model dimension <span class="arithmatex">\(d_\text{model}\)</span> and <span class="arithmatex">\(h\)</span> heads, each head operates on a head dimension <span class="arithmatex">\(d_h = d_\text{model}/h\)</span>. Head <span class="arithmatex">\(i\)</span> gets its own learned projections <span class="arithmatex">\(W_Q^{(i)}, W_K^{(i)}, W_V^{(i)} \in \mathbb{R}^{d_\text{model}\times d_h}\)</span>, computes ordinary scaled dot-product attention in its little <span class="arithmatex">\(d_h\)</span>-dimensional world, and the <span class="arithmatex">\(h\)</span> outputs are concatenated back to width <span class="arithmatex">\(d_\text{model}\)</span> and passed through a final output projection <span class="arithmatex">\(W_O\)</span>.</p>
+<div class="arithmatex">\[
+\operatorname{head}_i = \operatorname{Attention}(XW_Q^{(i)},\, XW_K^{(i)},\, XW_V^{(i)})
+\]</div>
+<div class="arithmatex">\[
+\operatorname{MHA}(X) = \operatorname{Concat}(\operatorname{head}_1, \dots, \operatorname{head}_h)\, W_O, \qquad W_O \in \mathbb{R}^{d_\text{model}\times d_\text{model}}.
+\]</div>
+<p>Three properties make this work and are worth internalizing:</p>
+<ul>
+<li><strong>Parallel, independent retrieval.</strong> Each head has its own QKV subspace, so it can specialize in one <em>kind</em> of relationship — local syntax, long-range coreference, positional copying — without interference from the others. Interpretability work (Elhage et al., <em>A Mathematical Framework for Transformer Circuits</em>) repeatedly finds heads with crisp, human-legible jobs: &ldquo;previous-token heads,&rdquo; &ldquo;induction heads&rdquo; that complete <code>[A][B] ... [A] -&gt; [B]</code>, &ldquo;duplicate-token heads,&rdquo; and so on.</li>
+<li><strong>Same total FLOPs as one big head, roughly.</strong> Because <span class="arithmatex">\(d_h = d_\text{model}/h\)</span>, the per-head cost shrinks exactly as the head count grows. Splitting <span class="arithmatex">\(d_\text{model}=512\)</span> into 8 heads of 64 costs essentially the same arithmetic as one 512-wide head — you get the expressivity of multiple distributions almost for free in compute.</li>
+<li><strong>The output projection <span class="arithmatex">\(W_O\)</span> mixes across heads.</strong> Concatenation alone would keep heads in disjoint slots; <span class="arithmatex">\(W_O\)</span> is what lets the model recombine information <em>across</em> heads before it re-enters the residual stream. It is not optional decoration — it is the cross-head communication channel.</li>
+</ul>
+<figure class="viz" id="fig-mha-forward-dataflow">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 760 670" role="img" aria-label="Multi-head attention forward pass: input x is projected to Q, K, V via one fused matrix each; each projection is reshaped into h=4 heads; all heads run scaled dot-product attention in parallel; outputs are concatenated back to d_model width; W_O mixes information across heads to produce the final output.">
+  <defs>
+    <marker id="mhaf-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-mha-forward-dataflow text { fill: var(--ink-soft); }
+    #fig-mha-forward-dataflow .lbl  { font: 600 13px var(--sans,sans-serif); }
+    #fig-mha-forward-dataflow .sub  { font: 400 10px var(--mono,monospace); fill: var(--muted); }
+    #fig-mha-forward-dataflow .ann  { font: italic 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-mha-forward-dataflow .cap  { font: 400 10px var(--mono,monospace); fill: var(--muted); }
+    #fig-mha-forward-dataflow .hlbl { font: 500 8.5px var(--mono,monospace); fill: var(--ink-soft); }
+    #fig-mha-forward-dataflow .wo-note { font: italic 10px var(--sans,sans-serif); fill: var(--accent,#6c5ce7); }
+    #fig-mha-forward-dataflow .arr { stroke: var(--ink-soft); fill: none; stroke-width: 1.4; marker-end: url(#mhaf-arr); }
+
+    /* pulse dots */
+    #fig-mha-forward-dataflow .dot {
+      fill: var(--accent,#6c5ce7);
+      opacity: 0;
+    }
+    #fig-mha-forward-dataflow .d0 { animation: mhapulse 5s 0.3s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d1 { animation: mhapulse 5s 0.5s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d2 { animation: mhapulse 5s 0.7s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d3 { animation: mhapulse 5s 1.0s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d4 { animation: mhapulse 5s 1.2s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d5 { animation: mhapulse 5s 1.4s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d6 { animation: mhapulse 5s 1.9s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d7 { animation: mhapulse 5s 2.8s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d8 { animation: mhapulse 5s 3.5s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d9 { animation: mhapulse 5s 4.1s ease-in-out infinite; }
+    @keyframes mhapulse {
+      0%,4%  { opacity: 0; }
+      8%     { opacity: 1; }
+      18%    { opacity: 1; }
+      26%    { opacity: 0; }
+      100%   { opacity: 0; }
+    }
+
+    /* head card highlight */
+    #fig-mha-forward-dataflow .hc0 { animation: hflash 5s 1.9s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .hc1 { animation: hflash 5s 2.1s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .hc2 { animation: hflash 5s 2.3s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .hc3 { animation: hflash 5s 2.5s ease-in-out infinite; }
+    @keyframes hflash {
+      0%,2%  { stroke-opacity: 0.35; }
+      6%     { stroke-opacity: 1; }
+      16%    { stroke-opacity: 0.35; }
+      100%   { stroke-opacity: 0.35; }
+    }
+
+    /* W_O glow */
+    #fig-mha-forward-dataflow .woglow { animation: wog 5s 3.5s ease-in-out infinite; }
+    @keyframes wog {
+      0%,2%  { stroke-width: 2; }
+      6%     { stroke-width: 3.5; }
+      16%    { stroke-width: 2; }
+      100%   { stroke-width: 2; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #fig-mha-forward-dataflow .dot,
+      #fig-mha-forward-dataflow .hc0,
+      #fig-mha-forward-dataflow .hc1,
+      #fig-mha-forward-dataflow .hc2,
+      #fig-mha-forward-dataflow .hc3,
+      #fig-mha-forward-dataflow .woglow { animation: none; }
+      #fig-mha-forward-dataflow .dot { display: none; }
+    }
+  </style>
+
+
+  <g data-anim="1">
+    <rect x="280" y="16" width="200" height="42" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="380" y="42" text-anchor="middle" class="lbl">x  (B, L, d_model)</text>
+  </g>
+
+
+  <text x="500" y="82" class="ann">project once per role,</text>
+  <text x="500" y="95" class="ann">each d_model -&gt; d_model</text>
+
+
+  <line x1="332" y1="58" x2="200" y2="126" class="arr"/>
+  <line x1="380" y1="58" x2="380" y2="126" class="arr"/>
+  <line x1="428" y1="58" x2="560" y2="126" class="arr"/>
+
+
+  <circle cx="332" cy="65" r="5" class="dot d0" opacity="0"/>
+  <circle cx="380" cy="65" r="5" class="dot d1" opacity="0"/>
+  <circle cx="428" cy="65" r="5" class="dot d2" opacity="0"/>
+
+
+  <g data-anim="2">
+    <rect x="130" y="128" width="140" height="42" rx="8" class="v-fill" stroke="var(--accent,#6c5ce7)" stroke-width="1.8"/>
+    <text x="200" y="154" text-anchor="middle" class="lbl">W_Q</text>
+    <text x="200" y="185" text-anchor="middle" class="sub">(d_model -&gt; d_model)</text>
+
+    <rect x="310" y="128" width="140" height="42" rx="8" class="v-fill" stroke="var(--accent,#6c5ce7)" stroke-width="1.8"/>
+    <text x="380" y="154" text-anchor="middle" class="lbl">W_K</text>
+    <text x="380" y="185" text-anchor="middle" class="sub">(d_model -&gt; d_model)</text>
+
+    <rect x="490" y="128" width="140" height="42" rx="8" class="v-fill" stroke="var(--accent,#6c5ce7)" stroke-width="1.8"/>
+    <text x="560" y="154" text-anchor="middle" class="lbl">W_V</text>
+    <text x="560" y="185" text-anchor="middle" class="sub">(d_model -&gt; d_model)</text>
+  </g>
+
+
+  <line x1="200" y1="170" x2="200" y2="210" class="arr"/>
+  <line x1="380" y1="170" x2="380" y2="210" class="arr"/>
+  <line x1="560" y1="170" x2="560" y2="210" class="arr"/>
+
+
+  <circle cx="200" cy="155" r="5" class="dot d3" opacity="0"/>
+  <circle cx="380" cy="155" r="5" class="dot d3" opacity="0"/>
+  <circle cx="560" cy="155" r="5" class="dot d3" opacity="0"/>
+
+
+  <text x="500" y="228" class="ann">split d_model axis</text>
+  <text x="500" y="241" class="ann">into h x d_h</text>
+
+
+  <g data-anim="3">
+    <rect x="125" y="212" width="150" height="44" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="200" y="231" text-anchor="middle" class="cap">reshape -&gt;</text>
+    <text x="200" y="246" text-anchor="middle" class="cap">(B, h, L, d_h)</text>
+
+    <rect x="305" y="212" width="150" height="44" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="380" y="231" text-anchor="middle" class="cap">reshape -&gt;</text>
+    <text x="380" y="246" text-anchor="middle" class="cap">(B, h, L, d_h)</text>
+
+    <rect x="485" y="212" width="150" height="44" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="560" y="231" text-anchor="middle" class="cap">reshape -&gt;</text>
+    <text x="560" y="246" text-anchor="middle" class="cap">(B, h, L, d_h)</text>
+  </g>
+
+
+  <circle cx="200" cy="235" r="5" class="dot d4" opacity="0"/>
+  <circle cx="380" cy="235" r="5" class="dot d4" opacity="0"/>
+  <circle cx="560" cy="235" r="5" class="dot d4" opacity="0"/>
+
+
+  <line x1="200" y1="256" x2="254" y2="308" class="arr"/>
+  <line x1="380" y1="256" x2="380" y2="308" class="arr"/>
+  <line x1="560" y1="256" x2="506" y2="308" class="arr"/>
+
+
+  <g data-anim="4">
+    <rect x="98" y="310" width="564" height="118" rx="10"
+          fill="var(--surface-3,rgba(108,92,231,0.05))"
+          stroke="var(--accent,#6c5ce7)" stroke-width="2"/>
+    <text x="380" y="329" text-anchor="middle" style="font:600 11px var(--sans,sans-serif); fill:var(--ink-soft)">scaled dot-product attention &#8212; per head, in parallel</text>
+
+
+
+    <rect x="110" y="338" width="122" height="54" rx="6" class="v-fill hc0" stroke="var(--accent,#6c5ce7)" stroke-opacity="0.35" stroke-width="1.3"/>
+    <text x="171" y="358" text-anchor="middle" class="hlbl">head 0</text>
+    <text x="171" y="371" text-anchor="middle" class="hlbl">softmax(QKT/</text>
+    <text x="171" y="383" text-anchor="middle" class="hlbl">sqrt(d_h)) . V</text>
+
+
+    <rect x="244" y="338" width="122" height="54" rx="6" class="v-fill hc1" stroke="var(--accent,#6c5ce7)" stroke-opacity="0.35" stroke-width="1.3"/>
+    <text x="305" y="358" text-anchor="middle" class="hlbl">head 1</text>
+    <text x="305" y="371" text-anchor="middle" class="hlbl">softmax(QKT/</text>
+    <text x="305" y="383" text-anchor="middle" class="hlbl">sqrt(d_h)) . V</text>
+
+
+    <rect x="378" y="338" width="122" height="54" rx="6" class="v-fill hc2" stroke="var(--accent,#6c5ce7)" stroke-opacity="0.35" stroke-width="1.3"/>
+    <text x="439" y="358" text-anchor="middle" class="hlbl">head 2</text>
+    <text x="439" y="371" text-anchor="middle" class="hlbl">softmax(QKT/</text>
+    <text x="439" y="383" text-anchor="middle" class="hlbl">sqrt(d_h)) . V</text>
+
+
+    <rect x="512" y="338" width="122" height="54" rx="6" class="v-fill hc3" stroke="var(--accent,#6c5ce7)" stroke-opacity="0.35" stroke-width="1.3"/>
+    <text x="573" y="358" text-anchor="middle" class="hlbl">head 3</text>
+    <text x="573" y="371" text-anchor="middle" class="hlbl">softmax(QKT/</text>
+    <text x="573" y="383" text-anchor="middle" class="hlbl">sqrt(d_h)) . V</text>
+  </g>
+
+
+  <text x="380" y="444" text-anchor="middle" class="cap">output per head (B, h, L, d_h)</text>
+
+
+  <circle cx="380" cy="316" r="5" class="dot d6" opacity="0"/>
+
+
+  <line x1="380" y1="428" x2="380" y2="468" class="arr"/>
+
+
+  <g data-anim="5">
+    <rect x="220" y="470" width="320" height="42" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="380" y="496" text-anchor="middle" class="lbl">concat heads -&gt; (B, L, d_model)</text>
+  </g>
+
+
+  <circle cx="380" cy="491" r="5" class="dot d7" opacity="0"/>
+
+
+  <line x1="380" y1="512" x2="380" y2="542" class="arr"/>
+
+
+  <g data-anim="5">
+    <rect x="260" y="544" width="240" height="46" rx="8" class="v-fill woglow" stroke="var(--accent,#6c5ce7)" stroke-width="2"/>
+    <text x="380" y="572" text-anchor="middle" class="lbl">W_O  (d_model -&gt; d_model)</text>
+    <text x="512" y="561" class="wo-note">mixes information</text>
+    <text x="512" y="574" class="wo-note">across heads</text>
+  </g>
+
+
+  <circle cx="380" cy="567" r="5" class="dot d8" opacity="0"/>
+
+
+  <line x1="380" y1="590" x2="380" y2="618" class="arr"/>
+
+
+  <g data-anim="5">
+    <rect x="270" y="620" width="220" height="36" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="380" y="643" text-anchor="middle" class="lbl">output (B, L, d_model)</text>
+  </g>
+
+
+  <circle cx="310" cy="638" r="5" class="dot d9" opacity="0"/>
+</svg>
+<figcaption><b>Multi-head attention as a single forward pass.</b> One fused matrix per role (W_Q, W_K, W_V) projects the residual stream; the result is reshaped &#8212; not split into separate matrices &#8212; into h=4 independent subspaces. All heads run scaled dot-product attention in parallel; their outputs are concatenated and mixed by W_O, the only point where information crosses head boundaries before re-entering the residual stream.</figcaption>
+
+</figure>
+
+<h3 id="a-subtle-but-important-point-heads-are-an-implementation-reshape">A subtle but important point: heads are an <em>implementation reshape</em><a class="headerlink" href="#a-subtle-but-important-point-heads-are-an-implementation-reshape" title="Permanent link">¶</a></h3>
+<p>It is tempting to think of <span class="arithmatex">\(h\)</span> heads as <span class="arithmatex">\(h\)</span> literally separate <code>nn.Linear</code> layers. In practice we use <strong>one</strong> big projection of size <span class="arithmatex">\(d_\text{model}\to d_\text{model}\)</span> for <span class="arithmatex">\(Q\)</span> (and likewise for <span class="arithmatex">\(K\)</span>, <span class="arithmatex">\(V\)</span>), then <em>reshape</em> the output&rsquo;s last axis from <span class="arithmatex">\(d_\text{model}\)</span> into <span class="arithmatex">\((h, d_h)\)</span>. The two are mathematically identical — a block-structured big matrix is the same as <span class="arithmatex">\(h\)</span> small matrices stacked — but the single-matmul form is far friendlier to the GPU (one large GEMM instead of <span class="arithmatex">\(h\)</span> tiny ones). This reshape, <code>(B, L, d_model) -&gt; (B, L, h, d_h) -&gt; (B, h, L, d_h)</code>, is the source of nearly every shape bug in attention code, so we will be pedantic about it below.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: do heads really specialize, and how many do you need?</p>
+<p>Empirically, many heads in a trained model can be pruned with little quality loss (Michel et al., <em>Are Sixteen Heads Really Better than One?</em>), which tells you the <em>number</em> of heads is over-provisioned for expressivity — most of the work is done by a minority of specialized heads. This observation is exactly what makes MQA and GQA plausible: if you don&rsquo;t need <span class="arithmatex">\(h\)</span> independent <em>value</em> lookups, maybe you don&rsquo;t need <span class="arithmatex">\(h\)</span> independent <em>key/value</em> projections either. Hold that thought; it is the seed of the whole chapter.</p>
+</div>
+<h2 id="implementing-multi-head-attention-from-scratch">Implementing Multi-Head Attention From Scratch<a class="headerlink" href="#implementing-multi-head-attention-from-scratch" title="Permanent link">¶</a></h2>
+<p>Here is a complete, batched, causal-capable MHA module. It uses one fused QKV projection and the standard reshape, and calls into PyTorch&rsquo;s fused <code>scaled_dot_product_attention</code> (the same math we hand-rolled in 2.3, just IO-aware under the hood). Read the comments on the reshapes carefully — they are the part that bites.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MultiHeadAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Standard multi-head self-attention (MHA).</span>
+
+<span class="sd">    d_model : model/embedding width</span>
+<span class="sd">    n_heads : number of attention heads; head_dim = d_model // n_heads</span>
+<span class="sd">    All of Q, K, V have n_heads heads — this is the &quot;vanilla&quot; MHA that every</span>
+<span class="sd">    KV-cache-reduction variant later in this chapter tries to slim down.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dropout</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">d_model</span> <span class="o">%</span> <span class="n">n_heads</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;d_model must be divisible by n_heads&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_model</span> <span class="o">=</span> <span class="n">d_model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span> <span class="o">=</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span> <span class="o">=</span> <span class="n">d_model</span> <span class="o">//</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">causal</span> <span class="o">=</span> <span class="n">causal</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="o">=</span> <span class="n">dropout</span>
+
+        <span class="c1"># One fused projection per role. Output width d_model = n_heads * head_dim.</span>
+        <span class="c1"># Using three separate Linears (rather than one packed QKV) for clarity;</span>
+        <span class="c1"># production code often fuses them into a single (d_model -&gt; 3*d_model) GEMM.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_q</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_k</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_v</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>  <span class="c1"># cross-head mixing</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_split_heads</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="c1"># x: (B, L, d_model) -&gt; (B, n_heads, L, head_dim)</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="c1"># Split the last axis into (n_heads, head_dim), then move heads up front</span>
+        <span class="c1"># so each head is a contiguous (L, head_dim) matrix the kernel can batch.</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>   <span class="c1"># (B, L, h, d_h)</span>
+        <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>                          <span class="c1"># (B, h, L, d_h)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_merge_heads</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="c1"># x: (B, n_heads, L, head_dim) -&gt; (B, L, d_model)</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">Dh</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>                <span class="c1"># (B, L, h, d_h)</span>
+        <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">H</span> <span class="o">*</span> <span class="n">Dh</span><span class="p">)</span>                        <span class="c1"># (B, L, d_model)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">attn_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="c1"># x: (B, L, d_model)</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_split_heads</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W_q</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>                <span class="c1"># (B, h, L, d_h)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_split_heads</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W_k</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>                <span class="c1"># (B, h, L, d_h)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_split_heads</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W_v</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>                <span class="c1"># (B, h, L, d_h)</span>
+
+        <span class="c1"># Fused SDPA: softmax(QKᵀ/√d_h + mask) V, computed without materializing</span>
+        <span class="c1"># the L×L score matrix. is_causal builds the triangular mask internally.</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">scaled_dot_product_attention</span><span class="p">(</span>
+            <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span>
+            <span class="n">attn_mask</span><span class="o">=</span><span class="n">attn_mask</span><span class="p">,</span>
+            <span class="n">dropout_p</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">training</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+            <span class="n">is_causal</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">causal</span> <span class="ow">and</span> <span class="n">attn_mask</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="p">)</span>                                                  <span class="c1"># (B, h, L, d_h)</span>
+
+        <span class="n">out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_merge_heads</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>                       <span class="c1"># (B, L, d_model)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>                               <span class="c1"># (B, L, d_model)</span>
+
+
+<span class="c1"># Smoke test: shapes, causality, gradient flow.</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">8</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">mha</span> <span class="o">=</span> <span class="n">MultiHeadAttention</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">mha</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;output:&quot;</span><span class="p">,</span> <span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>                                  <span class="c1"># (2, 6, 64)</span>
+<span class="n">y</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;grad flows:&quot;</span><span class="p">,</span> <span class="n">x</span><span class="o">.</span><span class="n">grad</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>        <span class="c1"># True</span>
+</code></pre></div>
+<h3 id="parameter-count-of-mha">Parameter count of MHA<a class="headerlink" href="#parameter-count-of-mha" title="Permanent link">¶</a></h3>
+<p>Every linear is <span class="arithmatex">\(d_\text{model}\times d_\text{model}\)</span> (ignoring biases), and there are four of them — <span class="arithmatex">\(W_Q, W_K, W_V, W_O\)</span>:</p>
+<div class="arithmatex">\[
+P_\text{MHA} = 4\, d_\text{model}^2.
+\]</div>
+<p>For <span class="arithmatex">\(d_\text{model}=4096\)</span> that is <span class="arithmatex">\(4\times 4096^2 \approx 67\)</span> million parameters <em>per attention layer</em>. Note this is independent of <span class="arithmatex">\(h\)</span>: rebalancing the head count does not change the parameter budget, only how the same dimensions are partitioned. This is the first hint that the heads themselves are nearly free; the expense — at inference — lives elsewhere, in the <em>cache</em>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: forgetting <code>.contiguous()</code> after transpose</p>
+<p><code>transpose(1, 2)</code> returns a <em>view</em> with permuted strides, not a freshly laid-out tensor. Calling <code>.view(...)</code> on it to merge heads will raise a &ldquo;view size is not compatible with input tensor&rsquo;s size and stride&rdquo; error, or worse, silently work on some shapes and not others. Always <code>.contiguous()</code> before the merging <code>.view()</code>. The fused kernels (and <code>reshape</code>, which copies when needed) hide this, but hand-written attention code trips on it constantly.</p>
+</div>
+<h2 id="the-kv-cache-why-inference-memory-not-flops-becomes-the-bottleneck">The KV Cache: Why Inference Memory, Not FLOPs, Becomes the Bottleneck<a class="headerlink" href="#the-kv-cache-why-inference-memory-not-flops-becomes-the-bottleneck" title="Permanent link">¶</a></h2>
+<p>Autoregressive generation produces one token at a time. To generate token <span class="arithmatex">\(t+1\)</span>, the model runs attention where the query is the single new token but the keys and values span <em>all</em> <span class="arithmatex">\(t\)</span> previous tokens. Recomputing <span class="arithmatex">\(K\)</span> and <span class="arithmatex">\(V\)</span> for the entire prefix at every step would be hopelessly wasteful — it would make decoding <span class="arithmatex">\(\mathcal{O}(t^2)\)</span> work per token. The fix is the <strong>KV cache</strong>: after we compute each token&rsquo;s key and value vectors, we <em>store</em> them, and at the next step we only compute <span class="arithmatex">\(K\)</span> and <span class="arithmatex">\(V\)</span> for the one new token and append it. The query is fresh each step; the keys and values accumulate.</p>
+<figure class="viz" id="fig-mha-kvcache-append">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="-18 0 838 420" role="img" aria-label="KV cache append during autoregressive decoding: at step t, a new token produces one query vector q_t and one key-value pair k_t/v_t; k_t and v_t are appended to growing K and V caches; q_t attends over the entire accumulated prefix to produce the output.">
+  <defs>
+    <marker id="kvc-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="kvc-arr-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6c5ce7)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-mha-kvcache-append text { fill: var(--ink-soft); }
+    #fig-mha-kvcache-append .lbl  { font: 600 12px var(--sans,sans-serif); }
+    #fig-mha-kvcache-append .sub  { font: 400 9.5px var(--mono,monospace); fill: var(--muted); }
+    #fig-mha-kvcache-append .cap  { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-mha-kvcache-append .mono { font: 500 10px var(--mono,monospace); }
+    #fig-mha-kvcache-append .rowlbl { font: 600 10px var(--sans,sans-serif); fill: var(--ink-soft); }
+    #fig-mha-kvcache-append .arr { stroke: var(--ink-soft); fill: none; stroke-width: 1.3; marker-end: url(#kvc-arr); }
+    #fig-mha-kvcache-append .arr-acc { stroke: var(--accent,#6c5ce7); fill: none; stroke-width: 1.5; marker-end: url(#kvc-arr-accent); }
+    #fig-mha-kvcache-append .cell { stroke: var(--border-2); stroke-width: 1; }
+    #fig-mha-kvcache-append .cell-new { stroke: var(--accent,#6c5ce7); stroke-width: 1.8; }
+
+    /* animation: chip slides */
+    #fig-mha-kvcache-append .chip-k { animation: kvcSlideK 4.5s 0s ease-in-out infinite; opacity: 0; }
+    #fig-mha-kvcache-append .chip-v { animation: kvcSlideV 4.5s 0.2s ease-in-out infinite; opacity: 0; }
+    #fig-mha-kvcache-append .chip-q { animation: kvcPulseQ 4.5s 0.4s ease-in-out infinite; opacity: 0; }
+
+    @keyframes kvcSlideK {
+      0%,5%   { opacity: 0; transform: translateX(0); }
+      12%     { opacity: 1; transform: translateX(0); }
+      28%     { opacity: 1; transform: translateX(180px); }
+      40%     { opacity: 0; transform: translateX(180px); }
+      100%    { opacity: 0; transform: translateX(0); }
+    }
+    @keyframes kvcSlideV {
+      0%,7%   { opacity: 0; transform: translateX(0); }
+      14%     { opacity: 1; transform: translateX(0); }
+      30%     { opacity: 1; transform: translateX(180px); }
+      42%     { opacity: 0; transform: translateX(180px); }
+      100%    { opacity: 0; transform: translateX(0); }
+    }
+    @keyframes kvcPulseQ {
+      0%,20%  { opacity: 0; }
+      30%     { opacity: 1; }
+      50%     { opacity: 1; }
+      65%     { opacity: 0; }
+      100%    { opacity: 0; }
+    }
+
+    /* sweep highlight across K row */
+    #fig-mha-kvcache-append .sweep {
+      animation: kvcSweep 4.5s 1.8s ease-in-out infinite;
+      opacity: 0;
+    }
+    @keyframes kvcSweep {
+      0%,2%   { opacity: 0; transform: translateX(0); }
+      8%      { opacity: 0.4; transform: translateX(0); }
+      30%     { opacity: 0.4; transform: translateX(290px); }
+      40%     { opacity: 0; transform: translateX(290px); }
+      100%    { opacity: 0; transform: translateX(0); }
+    }
+
+    /* result box flash */
+    #fig-mha-kvcache-append .res-flash {
+      animation: resFlash 4.5s 2.8s ease-in-out infinite;
+    }
+    @keyframes resFlash {
+      0%,2%  { stroke-opacity: 0.6; }
+      8%     { stroke-opacity: 1; }
+      18%    { stroke-opacity: 0.6; }
+      100%   { stroke-opacity: 0.6; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #fig-mha-kvcache-append .chip-k,
+      #fig-mha-kvcache-append .chip-v,
+      #fig-mha-kvcache-append .chip-q,
+      #fig-mha-kvcache-append .sweep { animation: none; opacity: 0; display: none; }
+      #fig-mha-kvcache-append .res-flash { animation: none; }
+    }
+  </style>
+
+
+  <g data-anim="1">
+    <rect x="10" y="48" width="146" height="38" rx="7" class="v-fill" stroke="var(--border-2)" stroke-width="1.4"/>
+    <text x="83" y="71" text-anchor="middle" class="lbl">new token (step t)</text>
+  </g>
+
+
+  <g data-anim="1">
+
+    <rect x="24" y="108" width="44" height="24" rx="5" class="v-fill" stroke="var(--accent,#6c5ce7)" stroke-width="1.6"/>
+    <text x="46" y="124" text-anchor="middle" class="mono" fill="var(--accent,#6c5ce7)">q_t</text>
+    <text x="-8" y="190" text-anchor="start" class="sub">q_t: 1 query vec,</text>
+    <text x="-8" y="202" text-anchor="start" class="sub">recomputed each step</text>
+
+
+    <rect x="88" y="108" width="44" height="24" rx="5" class="v-fill" stroke="var(--border-2)" stroke-width="1.4"/>
+    <text x="110" y="124" text-anchor="middle" class="mono">k_t</text>
+
+
+    <rect x="88" y="142" width="44" height="24" rx="5" class="v-fill" stroke="var(--border-2)" stroke-width="1.4"/>
+    <text x="110" y="158" text-anchor="middle" class="mono">v_t</text>
+  </g>
+
+
+  <line x1="60" y1="86" x2="46" y2="106" class="arr"/>
+  <line x1="92" y1="86" x2="110" y2="106" class="arr"/>
+  <line x1="92" y1="86" x2="110" y2="140" class="arr"/>
+
+
+  <g data-anim="2">
+    <rect x="168" y="78" width="430" height="192" rx="10"
+          fill="var(--surface-3,rgba(108,92,231,0.04))"
+          stroke="var(--accent,#6c5ce7)" stroke-width="1.8"/>
+    <text x="383" y="98" text-anchor="middle" style="font:600 11px var(--sans,sans-serif); fill:var(--ink-soft)">KV cache (grows by one column per step)</text>
+
+
+    <text x="182" y="138" class="rowlbl">K:</text>
+
+
+
+    <rect x="200" y="122" width="40" height="26" rx="3" class="v-fill cell"/><text x="220" y="139" text-anchor="middle" class="sub">k_1</text>
+    <rect x="244" y="122" width="40" height="26" rx="3" class="v-fill cell"/><text x="264" y="139" text-anchor="middle" class="sub">k_2</text>
+    <rect x="288" y="122" width="40" height="26" rx="3" class="v-fill cell"/><text x="308" y="139" text-anchor="middle" class="sub">k_3</text>
+    <rect x="332" y="122" width="40" height="26" rx="3" class="v-fill cell"/><text x="352" y="139" text-anchor="middle" class="sub">...</text>
+    <rect x="376" y="122" width="52" height="26" rx="3" class="v-fill cell"/><text x="402" y="139" text-anchor="middle" class="sub">k_{t-1}</text>
+
+    <rect x="432" y="122" width="40" height="26" rx="3"
+          fill="var(--surface-3,rgba(108,92,231,0.12))"
+          stroke="var(--accent,#6c5ce7)" stroke-width="1.8"/>
+    <text x="452" y="139" text-anchor="middle" class="sub" fill="var(--accent,#6c5ce7)">k_t</text>
+
+
+    <text x="182" y="196" class="rowlbl">V:</text>
+
+
+    <rect x="200" y="180" width="40" height="26" rx="3" class="v-fill cell"/><text x="220" y="197" text-anchor="middle" class="sub">v_1</text>
+    <rect x="244" y="180" width="40" height="26" rx="3" class="v-fill cell"/><text x="264" y="197" text-anchor="middle" class="sub">v_2</text>
+    <rect x="288" y="180" width="40" height="26" rx="3" class="v-fill cell"/><text x="308" y="197" text-anchor="middle" class="sub">v_3</text>
+    <rect x="332" y="180" width="40" height="26" rx="3" class="v-fill cell"/><text x="352" y="197" text-anchor="middle" class="sub">...</text>
+    <rect x="376" y="180" width="52" height="26" rx="3" class="v-fill cell"/><text x="402" y="197" text-anchor="middle" class="sub">v_{t-1}</text>
+
+    <rect x="432" y="180" width="40" height="26" rx="3"
+          fill="var(--surface-3,rgba(108,92,231,0.12))"
+          stroke="var(--accent,#6c5ce7)" stroke-width="1.8"/>
+    <text x="452" y="197" text-anchor="middle" class="sub" fill="var(--accent,#6c5ce7)">v_t</text>
+
+
+
+    <line x1="200" y1="154" x2="472" y2="154" stroke="var(--border-2)" stroke-width="0.8"/>
+    <line x1="200" y1="154" x2="200" y2="160" stroke="var(--border-2)" stroke-width="0.8"/>
+    <line x1="472" y1="154" x2="472" y2="160" stroke="var(--border-2)" stroke-width="0.8"/>
+    <text x="336" y="172" text-anchor="middle" class="cap">whole prefix (length t)</text>
+
+
+    <line x1="200" y1="212" x2="472" y2="212" stroke="var(--border-2)" stroke-width="0.8"/>
+    <line x1="200" y1="212" x2="200" y2="218" stroke="var(--border-2)" stroke-width="0.8"/>
+    <line x1="472" y1="212" x2="472" y2="218" stroke="var(--border-2)" stroke-width="0.8"/>
+    <text x="336" y="232" text-anchor="middle" class="cap">whole prefix (length t)</text>
+
+
+    <rect x="200" y="122" width="28" height="26" rx="3" class="sweep"
+          fill="var(--accent,#6c5ce7)" opacity="0"/>
+  </g>
+
+
+  <path d="M132,118 C155,108 190,118 230,128" class="arr-acc" fill="none"/>
+
+  <path d="M132,152 C155,172 190,178 230,185" class="arr-acc" fill="none"/>
+
+
+  <path d="M46,132 C100,160 150,178 150,215 C150,278 235,322 352,333" class="arr-acc" fill="none"/>
+
+
+  <line x1="336" y1="270" x2="336" y2="330" class="arr" stroke="var(--ink-soft)"/>
+
+
+  <g data-anim="3">
+    <rect x="170" y="332" width="428" height="56" rx="8" class="v-fill res-flash" stroke="var(--border-2)" stroke-width="1.4" stroke-opacity="0.6"/>
+    <text x="384" y="355" text-anchor="middle" class="mono" style="font-size:10px">attention = softmax(q_t . [k_1..k_t]T / sqrt(d_h)) . [v_1..v_t]</text>
+    <text x="384" y="374" text-anchor="middle" class="cap">query reads the ENTIRE prefix; keys/values reused from cache</text>
+  </g>
+
+
+  <text x="18" y="406" class="cap">per-step cost O(t), not O(t^2) -- values reused, not recomputed</text>
+
+
+
+  <g class="chip-k" opacity="0">
+    <rect x="88" y="108" width="44" height="24" rx="5" fill="var(--surface,#fff)" stroke="var(--accent,#6c5ce7)" stroke-width="1.6"/>
+    <text x="110" y="124" text-anchor="middle" class="mono" fill="var(--accent,#6c5ce7)">k_t</text>
+  </g>
+
+  <g class="chip-v" opacity="0">
+    <rect x="88" y="142" width="44" height="24" rx="5" fill="var(--surface,#fff)" stroke="var(--accent,#6c5ce7)" stroke-width="1.6"/>
+    <text x="110" y="158" text-anchor="middle" class="mono" fill="var(--accent,#6c5ce7)">v_t</text>
+  </g>
+</svg>
+<figcaption><b>KV cache: append one column per decode step, attend over the whole prefix.</b> At each step t the model computes a fresh single-vector query q_t and a new key-value pair (k_t, v_t). The new k_t and v_t are appended to the growing K and V caches; then q_t attends over the full accumulated prefix [k_1..k_t] and [v_1..v_t]. This makes the per-step cost O(t) rather than O(t^2), at the expense of linear memory growth.</figcaption>
+</figure>
+
+<p>This makes per-step decode cost <span class="arithmatex">\(\mathcal{O}(t)\)</span> instead of <span class="arithmatex">\(\mathcal{O}(t^2)\)</span> — a huge win. But it moves the problem from compute to <strong>memory</strong>, and that memory is large. For standard MHA the cache must hold, for every <strong>layer</strong> <span class="arithmatex">\(L_\text{layers}\)</span>, every <strong>head</strong> <span class="arithmatex">\(h\)</span>, every <strong>token</strong> in the context <span class="arithmatex">\(S\)</span>, a key vector and a value vector of dimension <span class="arithmatex">\(d_h\)</span>, for every sequence in the <strong>batch</strong> <span class="arithmatex">\(B\)</span>. Each number takes <span class="arithmatex">\(P\)</span> bytes (2 for fp16/bf16). The total:</p>
+<div class="arithmatex">\[
+\text{KV bytes} = 2 \times B \times L_\text{layers} \times S \times h \times d_h \times P = 2 \, B \, L_\text{layers} \, S \, d_\text{model}\, P,
+\]</div>
+<p>using <span class="arithmatex">\(h\, d_h = d_\text{model}\)</span>. The leading <strong>2</strong> is for <em>both</em> K and V. Notice the cache scales linearly in everything you care about at serving time — batch size (concurrency), context length, and depth — and crucially it is proportional to <span class="arithmatex">\(d_\text{model}\)</span>, i.e. to the <em>full</em> width across all heads.</p>
+<p>Why does this dominate? Because during decode, generating one token touches every weight once (compute-light, memory-bandwidth-bound) but must <em>read the entire KV cache</em> to do attention. The cache is read from high-bandwidth memory (HBM) on every single decode step. So the KV cache hurts you twice: it occupies precious HBM that could otherwise hold more concurrent requests, and it must be streamed through the memory system every step, making decode <strong>memory-bandwidth bound</strong> (see the roofline analysis in <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>). Shrinking the cache simultaneously raises the batch size you can fit <em>and</em> speeds up each decode step. That is the prize the whole MQA/GQA/MLA family is chasing.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: KV-cache size for a 70B-class model</p>
+<p>Take a Llama-2-70B-style configuration: <span class="arithmatex">\(L_\text{layers}=80\)</span> layers, <span class="arithmatex">\(d_\text{model}=8192\)</span>, <span class="arithmatex">\(h=64\)</span> heads of <span class="arithmatex">\(d_h=128\)</span>, stored in bf16 (<span class="arithmatex">\(P=2\)</span> bytes). Standard MHA. For a <strong>single</strong> sequence (<span class="arithmatex">\(B=1\)</span>) at context length <span class="arithmatex">\(S=4096\)</span>:</p>
+<div class="arithmatex">\[
+2 \times 1 \times 80 \times 4096 \times 8192 \times 2 \;\text{bytes} \approx 1.07 \times 10^{10}\ \text{bytes} \approx 10.7\ \text{GB}.
+\]</div>
+<p>Ten gigabytes of cache for <em>one</em> user at a modest 4K context. The model weights themselves are ~140 GB in bf16, so on an 8×80 GB node you have roughly 500 GB free after weights — meaning naïve MHA caps you at on the order of ~45 concurrent 4K sequences before the cache alone exhausts memory. Push the context to 32K and a <em>single</em> sequence wants ~86 GB of cache — more than an entire 80 GB GPU. This is the wall. Now suppose we replace MHA with GQA using 8 KV groups instead of 64 (the actual Llama-2-70B choice): the cache shrinks by exactly <span class="arithmatex">\(64/8 = 8\times\)</span>, to about <strong>1.34 GB</strong> at 4K — and suddenly you can serve ~8× more users or 8× longer contexts from the same hardware. <em>That single architectural decision is worth more than most kernel optimizations.</em></p>
+</div>
+<h3 id="decomposing-the-cache-which-factors-can-architecture-actually-change">Decomposing the cache: which factors can architecture actually change?<a class="headerlink" href="#decomposing-the-cache-which-factors-can-architecture-actually-change" title="Permanent link">¶</a></h3>
+<p>Look again at <span class="arithmatex">\(2\, B\, L_\text{layers}\, S\, h\, d_h\, P\)</span>. As a serving operator you can pick <span class="arithmatex">\(B\)</span> and <span class="arithmatex">\(S\)</span> (workload), and you can quantize the cache to shrink <span class="arithmatex">\(P\)</span> (covered in <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a>). As an <em>architect</em> the only knobs are <span class="arithmatex">\(L_\text{layers}\)</span>, <span class="arithmatex">\(h\)</span>, and <span class="arithmatex">\(d_h\)</span> — and you cannot freely cut layers or head dimension without hurting quality. The clever insight of MQA/GQA is that the <span class="arithmatex">\(h\)</span> in the cache formula need not equal the <span class="arithmatex">\(h\)</span> used for <em>queries</em>. <strong>You can have many query heads but few key/value heads.</strong> That decoupling is the entire game.</p>
+<h2 id="mqa-and-gqa-sharing-keys-and-values-across-heads">MQA and GQA: Sharing Keys and Values Across Heads<a class="headerlink" href="#mqa-and-gqa-sharing-keys-and-values-across-heads" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-gqa-kv-sharing">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 776 340" role="img" aria-label="Three attention schemes with eight query heads: MHA maps eight query heads to eight KV heads, GQA groups them into two shared KV heads, and MQA shares a single KV head, shrinking the KV cache from eight-times to two-times to one-times.">
+  <defs>
+    <marker id="gq-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-gqa-kv-sharing text{ fill:var(--ink-soft); }
+    #fig-gqa-kv-sharing .title{ font:700 14px var(--sans,sans-serif); }
+    #fig-gqa-kv-sharing .sub{ font:500 11px var(--mono,monospace); fill:var(--muted); }
+    #fig-gqa-kv-sharing .rowlbl{ font:600 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-gqa-kv-sharing .hd{ font:600 10px var(--mono,monospace); }
+    #fig-gqa-kv-sharing .cache{ font:700 13px var(--mono,monospace); }
+    #fig-gqa-kv-sharing .note{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+  </style>
+
+
+  <text x="14" y="88"  class="rowlbl">query</text>
+  <text x="14" y="100" class="rowlbl">heads</text>
+  <text x="14" y="186" class="rowlbl">KV</text>
+  <text x="14" y="198" class="rowlbl">heads</text>
+
+
+
+
+  <g data-anim="1">
+    <text x="170" y="34" text-anchor="middle" class="title">MHA</text>
+    <text x="170" y="50" text-anchor="middle" class="sub">8 query / 8 KV</text>
+
+
+    <g class="v-fill v-accent-s" stroke-width="1.3">
+      <rect x="62"  y="64" width="26" height="26" rx="4"/>
+      <rect x="92"  y="64" width="26" height="26" rx="4"/>
+      <rect x="122" y="64" width="26" height="26" rx="4"/>
+      <rect x="152" y="64" width="26" height="26" rx="4"/>
+      <rect x="182" y="64" width="26" height="26" rx="4"/>
+      <rect x="212" y="64" width="26" height="26" rx="4"/>
+      <rect x="242" y="64" width="26" height="26" rx="4"/>
+      <rect x="272" y="64" width="26" height="26" rx="4"/>
+    </g>
+    <g class="hd v-accent" fill="var(--accent)" text-anchor="middle">
+      <text x="75"  y="81">q0</text><text x="105" y="81">q1</text>
+      <text x="135" y="81">q2</text><text x="165" y="81">q3</text>
+      <text x="195" y="81">q4</text><text x="225" y="81">q5</text>
+      <text x="255" y="81">q6</text><text x="285" y="81">q7</text>
+    </g>
+
+
+    <g class="v-muted" fill="currentColor" stroke="currentColor" stroke-width="1.2" marker-end="url(#gq-arrow)" opacity="0.85">
+      <line x1="75"  y1="92" x2="75"  y2="158"/>
+      <line x1="105" y1="92" x2="105" y2="158"/>
+      <line x1="135" y1="92" x2="135" y2="158"/>
+      <line x1="165" y1="92" x2="165" y2="158"/>
+      <line x1="195" y1="92" x2="195" y2="158"/>
+      <line x1="225" y1="92" x2="225" y2="158"/>
+      <line x1="255" y1="92" x2="255" y2="158"/>
+      <line x1="285" y1="92" x2="285" y2="158"/>
+    </g>
+
+
+    <g class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.3">
+      <rect x="62"  y="160" width="26" height="26" rx="4"/>
+      <rect x="92"  y="160" width="26" height="26" rx="4"/>
+      <rect x="122" y="160" width="26" height="26" rx="4"/>
+      <rect x="152" y="160" width="26" height="26" rx="4"/>
+      <rect x="182" y="160" width="26" height="26" rx="4"/>
+      <rect x="212" y="160" width="26" height="26" rx="4"/>
+      <rect x="242" y="160" width="26" height="26" rx="4"/>
+      <rect x="272" y="160" width="26" height="26" rx="4"/>
+    </g>
+    <g class="hd" fill="var(--good,#2f9e6e)" text-anchor="middle">
+      <text x="75"  y="177">k0</text><text x="105" y="177">k1</text>
+      <text x="135" y="177">k2</text><text x="165" y="177">k3</text>
+      <text x="195" y="177">k4</text><text x="225" y="177">k5</text>
+      <text x="255" y="177">k6</text><text x="285" y="177">k7</text>
+    </g>
+
+
+    <rect x="62" y="208" width="236" height="30" rx="8" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="180" y="228" text-anchor="middle" class="cache" fill="var(--good,#2f9e6e)">cache = 8×</text>
+  </g>
+
+
+
+
+  <g data-anim="2">
+    <text x="455" y="34" text-anchor="middle" class="title">GQA (g = 2)</text>
+    <text x="455" y="50" text-anchor="middle" class="sub">8 query / 2 KV</text>
+
+
+    <g class="v-fill v-accent-s" stroke-width="1.3">
+      <rect x="347" y="64" width="26" height="26" rx="4"/>
+      <rect x="377" y="64" width="26" height="26" rx="4"/>
+      <rect x="407" y="64" width="26" height="26" rx="4"/>
+      <rect x="437" y="64" width="26" height="26" rx="4"/>
+      <rect x="467" y="64" width="26" height="26" rx="4"/>
+      <rect x="497" y="64" width="26" height="26" rx="4"/>
+      <rect x="527" y="64" width="26" height="26" rx="4"/>
+      <rect x="557" y="64" width="26" height="26" rx="4"/>
+    </g>
+    <g class="hd v-accent" fill="var(--accent)" text-anchor="middle">
+      <text x="360" y="81">q0</text><text x="390" y="81">q1</text>
+      <text x="420" y="81">q2</text><text x="450" y="81">q3</text>
+      <text x="480" y="81">q4</text><text x="510" y="81">q5</text>
+      <text x="540" y="81">q6</text><text x="570" y="81">q7</text>
+    </g>
+
+
+    <line x1="478" y1="58" x2="478" y2="192" class="v-stroke" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>
+
+
+    <g class="v-muted" fill="currentColor" stroke="currentColor" stroke-width="1.1" marker-end="url(#gq-arrow)" opacity="0.85">
+      <line x1="360" y1="92" x2="402" y2="158"/>
+      <line x1="390" y1="92" x2="404" y2="158"/>
+      <line x1="420" y1="92" x2="406" y2="158"/>
+      <line x1="450" y1="92" x2="408" y2="158"/>
+    </g>
+
+    <g class="v-muted" fill="currentColor" stroke="currentColor" stroke-width="1.1" marker-end="url(#gq-arrow)" opacity="0.85">
+      <line x1="480" y1="92" x2="522" y2="158"/>
+      <line x1="510" y1="92" x2="524" y2="158"/>
+      <line x1="540" y1="92" x2="526" y2="158"/>
+      <line x1="570" y1="92" x2="528" y2="158"/>
+    </g>
+
+
+    <g class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.3">
+      <rect x="392" y="160" width="26" height="26" rx="4"/>
+      <rect x="512" y="160" width="26" height="26" rx="4"/>
+    </g>
+    <g class="hd" fill="var(--good,#2f9e6e)" text-anchor="middle">
+      <text x="405" y="177">k0</text><text x="525" y="177">k1</text>
+    </g>
+
+
+    <rect x="347" y="208" width="236" height="30" rx="8" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="465" y="228" text-anchor="middle" class="cache" fill="var(--good,#2f9e6e)">cache = 2×</text>
+  </g>
+
+
+
+
+  <g data-anim="3">
+    <text x="700" y="34" text-anchor="middle" class="title">MQA</text>
+    <text x="700" y="50" text-anchor="middle" class="sub">8 query / 1 KV</text>
+
+
+    <g class="v-fill v-accent-s" stroke-width="1.3">
+      <rect x="632" y="64" width="15" height="26" rx="3"/>
+      <rect x="649" y="64" width="15" height="26" rx="3"/>
+      <rect x="666" y="64" width="15" height="26" rx="3"/>
+      <rect x="683" y="64" width="15" height="26" rx="3"/>
+      <rect x="700" y="64" width="15" height="26" rx="3"/>
+      <rect x="717" y="64" width="15" height="26" rx="3"/>
+      <rect x="734" y="64" width="15" height="26" rx="3"/>
+      <rect x="751" y="64" width="15" height="26" rx="3"/>
+    </g>
+
+    <g class="v-muted" fill="currentColor" stroke="currentColor" stroke-width="1" marker-end="url(#gq-arrow)" opacity="0.85">
+      <line x1="639" y1="92" x2="694" y2="158"/>
+      <line x1="656" y1="92" x2="696" y2="158"/>
+      <line x1="673" y1="92" x2="698" y2="158"/>
+      <line x1="691" y1="92" x2="699" y2="158"/>
+      <line x1="708" y1="92" x2="701" y2="158"/>
+      <line x1="725" y1="92" x2="702" y2="158"/>
+      <line x1="742" y1="92" x2="704" y2="158"/>
+      <line x1="759" y1="92" x2="706" y2="158"/>
+    </g>
+
+
+    <rect x="687" y="160" width="26" height="26" rx="4" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+    <text x="700" y="177" text-anchor="middle" class="hd" fill="var(--good,#2f9e6e)">k0</text>
+
+
+    <rect x="632" y="208" width="136" height="30" rx="8" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="700" y="228" text-anchor="middle" class="cache" fill="var(--good,#2f9e6e)">cache = 1×</text>
+  </g>
+
+
+  <g data-anim="4">
+    <line x1="62" y1="266" x2="744" y2="266" class="v-accent-s" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#gq-arrow)" opacity="0.8"/>
+    <text x="403" y="284" text-anchor="middle" class="note">fewer KV heads → smaller KV cache: query heads stay at 8 (expressivity kept), only K/V are shared</text>
+    <text x="403" y="300" text-anchor="middle" class="sub">KV cache ∝ (KV-head count) · d_head &#160;&#160;—&#160;&#160; MHA 8 → GQA 2 → MQA 1</text>
+  </g>
+</svg>
+<figcaption><b>Query heads stay; key/value heads get shared.</b> All three schemes keep eight query heads, but they differ in how many distinct KV heads those queries attend against — eight (MHA), two groups (GQA), or one (MQA). Since the KV cache scales with the number of KV heads, this single knob shrinks the cache from 8× to 2× to 1× while leaving query-side expressivity untouched.</figcaption>
+</figure>
+
+<h3 id="multi-query-attention-mqa">Multi-Query Attention (MQA)<a class="headerlink" href="#multi-query-attention-mqa" title="Permanent link">¶</a></h3>
+<p>Multi-Query Attention (Shazeer, <em>Fast Transformer Decoding: One Write-Head is All You Need</em>, 2019) takes the decoupling to its extreme: keep all <span class="arithmatex">\(h\)</span> <strong>query</strong> heads, but use a <strong>single</strong> shared key head and a <strong>single</strong> shared value head. Every query head attends against the <em>same</em> <span class="arithmatex">\(K\)</span> and the <em>same</em> <span class="arithmatex">\(V\)</span>.</p>
+<div class="arithmatex">\[
+\operatorname{head}_i = \operatorname{Attention}\big(X W_Q^{(i)},\, X W_K,\, X W_V\big), \qquad i = 1,\dots,h,
+\]</div>
+<p>where now there is just one <span class="arithmatex">\(W_K, W_V \in \mathbb{R}^{d_\text{model}\times d_h}\)</span> shared across all <span class="arithmatex">\(i\)</span>. The KV cache shrinks by a factor of <span class="arithmatex">\(h\)</span> — instead of caching <span class="arithmatex">\(h\)</span> key vectors and <span class="arithmatex">\(h\)</span> value vectors per token, you cache exactly one of each:</p>
+<div class="arithmatex">\[
+\text{KV bytes (MQA)} = 2\, B\, L_\text{layers}\, S\, d_h\, P \quad\Longrightarrow\quad \frac{1}{h}\ \text{the size of MHA}.
+\]</div>
+<p>For the 70B example, MQA would cut the 10.7 GB cache to roughly <span class="arithmatex">\(10.7/64 \approx 0.17\)</span> GB. The decode step also reads <span class="arithmatex">\(h\times\)</span> less KV from HBM, so it is much faster. The cost: quality. Forcing all query heads to share one key/value subspace removes most of the representational diversity on the K/V side. In practice MQA can cause a measurable quality regression and, notably, <strong>training instability</strong> for large models — the shared KV head becomes a fragile bottleneck. MQA was used in some production models (e.g. PaLM, Falcon) but the regression motivated a middle ground.</p>
+<h3 id="grouped-query-attention-gqa">Grouped-Query Attention (GQA)<a class="headerlink" href="#grouped-query-attention-gqa" title="Permanent link">¶</a></h3>
+<p>Grouped-Query Attention (Ainslie et al., <em>GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</em>, 2023) interpolates between MHA and MQA with a single integer knob <span class="arithmatex">\(g\)</span> = the number of <strong>KV groups</strong> (also written <span class="arithmatex">\(n_\text{kv}\)</span>, the number of key/value heads). The <span class="arithmatex">\(h\)</span> query heads are partitioned into <span class="arithmatex">\(g\)</span> groups; all query heads in a group share one key head and one value head.</p>
+<ul>
+<li><span class="arithmatex">\(g = h\)</span>  ⟶ every query head has its own KV head ⟶ <strong>this is exactly MHA</strong>.</li>
+<li><span class="arithmatex">\(g = 1\)</span>  ⟶ all query heads share one KV head ⟶ <strong>this is exactly MQA</strong>.</li>
+<li><span class="arithmatex">\(1 &lt; g &lt; h\)</span> ⟶ <strong>GQA</strong>, the spectrum in between.</li>
+</ul>
+<p>The KV cache scales with <span class="arithmatex">\(g\)</span>, not <span class="arithmatex">\(h\)</span>:</p>
+<div class="arithmatex">\[
+\boxed{\ \text{KV bytes (GQA)} = 2\, B\, L_\text{layers}\, S\, g\, d_h\, P \ }
+\]</div>
+<p>so choosing <span class="arithmatex">\(g = h/8\)</span> gives an <span class="arithmatex">\(8\times\)</span> cache reduction. The beauty of GQA is empirical: a small number of groups (commonly <span class="arithmatex">\(g = 8\)</span>) recovers nearly all of MHA&rsquo;s quality while keeping most of MQA&rsquo;s memory savings. Llama-2-70B and Llama-3 use <span class="arithmatex">\(g=8\)</span>; Mistral-7B uses <span class="arithmatex">\(g=8\)</span> with 32 query heads. The pattern — 8 KV heads regardless of how many query heads — is now the de facto standard, partly because <span class="arithmatex">\(g=8\)</span> aligns naturally with 8-way tensor parallelism (each GPU owns one KV head; see <a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a>).</p>
+<figure class="viz" id="fig-mhagqamla-headsharing-spectrum">
+<svg viewBox="0 0 780 580" role="img" aria-label="Three-panel diagram showing how 8 query heads map to progressively fewer KV heads: MHA has 8 KV heads (1-to-1), GQA has 2 KV heads (4 queries share each), and MQA has 1 KV head (all queries share it).">
+<defs>
+  <marker id="hs-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+</defs>
+<style>
+  #fig-mhagqamla-headsharing-spectrum text { font: 500 11px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-mhagqamla-headsharing-spectrum .panel-title { font: 700 13px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-mhagqamla-headsharing-spectrum .cache-tag { font: 800 13px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+  #fig-mhagqamla-headsharing-spectrum .annot { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-mhagqamla-headsharing-spectrum .box-label { font: 600 10px var(--mono,monospace); }
+  #fig-mhagqamla-headsharing-spectrum .kv-label { font: 600 9px var(--mono,monospace); fill: #fff; }
+  #fig-mhagqamla-headsharing-spectrum .sep-line { stroke: var(--border-2,#94a3b8); stroke-width: 1.5; stroke-dasharray: 3 3; }
+</style>
+
+
+<rect x="8" y="8" width="764" height="172" rx="8"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+
+<text x="20" y="32" class="panel-title">MHA (h=8)  —  </text>
+<text x="165" y="32" class="cache-tag">cache = 8×</text>
+
+
+<text x="20" y="170" class="annot">8 query heads / 8 KV heads — every query head has its own K,V</text>
+
+
+<rect x="148" y="44" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="175" y="64" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q0</text>
+<rect x="222" y="44" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="249" y="64" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q1</text>
+<rect x="296" y="44" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="323" y="64" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q2</text>
+<rect x="370" y="44" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="397" y="64" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q3</text>
+<rect x="444" y="44" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="471" y="64" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q4</text>
+<rect x="518" y="44" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="545" y="64" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q5</text>
+<rect x="592" y="44" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="619" y="64" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q6</text>
+<rect x="666" y="44" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="693" y="64" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q7</text>
+
+
+<line x1="175" y1="74" x2="175" y2="110" stroke="var(--ink-soft,#64748b)" stroke-width="1.3" marker-end="url(#hs-arrow)"/>
+<line x1="249" y1="74" x2="249" y2="110" stroke="var(--ink-soft,#64748b)" stroke-width="1.3" marker-end="url(#hs-arrow)"/>
+<line x1="323" y1="74" x2="323" y2="110" stroke="var(--ink-soft,#64748b)" stroke-width="1.3" marker-end="url(#hs-arrow)"/>
+<line x1="397" y1="74" x2="397" y2="110" stroke="var(--ink-soft,#64748b)" stroke-width="1.3" marker-end="url(#hs-arrow)"/>
+<line x1="471" y1="74" x2="471" y2="110" stroke="var(--ink-soft,#64748b)" stroke-width="1.3" marker-end="url(#hs-arrow)"/>
+<line x1="545" y1="74" x2="545" y2="110" stroke="var(--ink-soft,#64748b)" stroke-width="1.3" marker-end="url(#hs-arrow)"/>
+<line x1="619" y1="74" x2="619" y2="110" stroke="var(--ink-soft,#64748b)" stroke-width="1.3" marker-end="url(#hs-arrow)"/>
+<line x1="693" y1="74" x2="693" y2="110" stroke="var(--ink-soft,#64748b)" stroke-width="1.3" marker-end="url(#hs-arrow)"/>
+
+
+<rect x="148" y="112" width="54" height="34" rx="5" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="175" y="127" text-anchor="middle" class="kv-label">k0</text>
+<text x="175" y="140" text-anchor="middle" class="kv-label">v0</text>
+<rect x="222" y="112" width="54" height="34" rx="5" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="249" y="127" text-anchor="middle" class="kv-label">k1</text>
+<text x="249" y="140" text-anchor="middle" class="kv-label">v1</text>
+<rect x="296" y="112" width="54" height="34" rx="5" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="323" y="127" text-anchor="middle" class="kv-label">k2</text>
+<text x="323" y="140" text-anchor="middle" class="kv-label">v2</text>
+<rect x="370" y="112" width="54" height="34" rx="5" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="397" y="127" text-anchor="middle" class="kv-label">k3</text>
+<text x="397" y="140" text-anchor="middle" class="kv-label">v3</text>
+<rect x="444" y="112" width="54" height="34" rx="5" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="471" y="127" text-anchor="middle" class="kv-label">k4</text>
+<text x="471" y="140" text-anchor="middle" class="kv-label">v4</text>
+<rect x="518" y="112" width="54" height="34" rx="5" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="545" y="127" text-anchor="middle" class="kv-label">k5</text>
+<text x="545" y="140" text-anchor="middle" class="kv-label">v5</text>
+<rect x="592" y="112" width="54" height="34" rx="5" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="619" y="127" text-anchor="middle" class="kv-label">k6</text>
+<text x="619" y="140" text-anchor="middle" class="kv-label">v6</text>
+<rect x="666" y="112" width="54" height="34" rx="5" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="693" y="127" text-anchor="middle" class="kv-label">k7</text>
+<text x="693" y="140" text-anchor="middle" class="kv-label">v7</text>
+
+
+<rect x="8" y="194" width="764" height="180" rx="8"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+<text x="20" y="218" class="panel-title">GQA (g=2)  —  </text>
+<text x="163" y="218" class="cache-tag">cache = 2×</text>
+
+
+<text x="288" y="232" text-anchor="middle" class="annot">group A (q0–q3)</text>
+<text x="583" y="232" text-anchor="middle" class="annot">group B (q4–q7)</text>
+
+
+<rect x="142" y="236" width="290" height="36" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.09"/>
+<rect x="438" y="236" width="290" height="36" rx="6" fill="var(--accent2,#3b82f6)" fill-opacity="0.09"/>
+
+
+<rect x="148" y="238" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="175" y="258" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q0</text>
+<rect x="222" y="238" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="249" y="258" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q1</text>
+<rect x="296" y="238" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="323" y="258" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q2</text>
+<rect x="370" y="238" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="397" y="258" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q3</text>
+<rect x="444" y="238" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="471" y="258" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q4</text>
+<rect x="518" y="238" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="545" y="258" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q5</text>
+<rect x="592" y="238" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="619" y="258" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q6</text>
+<rect x="666" y="238" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="693" y="258" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q7</text>
+
+
+<line x1="431" y1="230" x2="431" y2="360" class="sep-line"/>
+
+
+<line x1="175" y1="268" x2="263" y2="316" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="249" y1="268" x2="272" y2="316" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="323" y1="268" x2="300" y2="316" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="397" y1="268" x2="309" y2="316" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+
+
+<line x1="471" y1="268" x2="559" y2="316" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="545" y1="268" x2="568" y2="316" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="619" y1="268" x2="596" y2="316" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="693" y1="268" x2="605" y2="316" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+
+
+<rect x="255" y="318" width="64" height="36" rx="5" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="287" y="333" text-anchor="middle" class="kv-label">k0</text>
+<text x="287" y="347" text-anchor="middle" class="kv-label">v0</text>
+<rect x="551" y="318" width="64" height="36" rx="5" fill="var(--accent2,#3b82f6)" stroke="none"/>
+<text x="583" y="333" text-anchor="middle" class="kv-label">k1</text>
+<text x="583" y="347" text-anchor="middle" class="kv-label">v1</text>
+
+<text x="20" y="368" class="annot">8 query heads / 2 KV heads — 4 query heads share one K,V</text>
+
+
+<rect x="8" y="388" width="764" height="183" rx="8"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+<text x="20" y="412" class="panel-title">MQA (g=1)  —  </text>
+<text x="163" y="412" class="cache-tag">cache = 1×</text>
+
+
+<rect x="142" y="420" width="586" height="36" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.07"/>
+
+
+<rect x="148" y="422" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="175" y="442" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q0</text>
+<rect x="222" y="422" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="249" y="442" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q1</text>
+<rect x="296" y="422" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="323" y="442" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q2</text>
+<rect x="370" y="422" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="397" y="442" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q3</text>
+<rect x="444" y="422" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="471" y="442" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q4</text>
+<rect x="518" y="422" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="545" y="442" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q5</text>
+<rect x="592" y="422" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="619" y="442" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q6</text>
+<rect x="666" y="422" width="54" height="30" rx="5" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="693" y="442" text-anchor="middle" class="box-label" fill="var(--ink-soft,#374151)">q7</text>
+
+
+<line x1="175" y1="452" x2="410" y2="498" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="249" y1="452" x2="418" y2="498" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="323" y1="452" x2="425" y2="498" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="397" y1="452" x2="430" y2="498" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="471" y1="452" x2="442" y2="498" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="545" y1="452" x2="450" y2="498" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="619" y1="452" x2="457" y2="498" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+<line x1="693" y1="452" x2="464" y2="498" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#hs-arrow)"/>
+
+
+<rect x="397" y="500" width="74" height="38" rx="5" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="434" y="516" text-anchor="middle" class="kv-label">k0</text>
+<text x="434" y="530" text-anchor="middle" class="kv-label">v0</text>
+
+<text x="20" y="564" class="annot">8 query heads / 1 KV head — all queries share one K,V</text>
+
+</svg>
+<figcaption><b>MHA, GQA, and MQA differ only in how many KV heads the query heads share.</b> The query row stays identical across all three schemes (8 heads, unchanged expressivity), while the KV row collapses from 8 heads (MHA, 1:1 mapping) to 2 groups (GQA, fan-in of 4) to a single shared head (MQA, maximal fan-in). KV cache cost tracks the KV-head count, so this progression cuts memory 4x (GQA g=2) or 8x (MQA) relative to MHA.</figcaption>
+</figure>
+
+<h3 id="implementing-the-mha-gqa-conversion">Implementing the MHA → GQA conversion<a class="headerlink" href="#implementing-the-mha-gqa-conversion" title="Permanent link">¶</a></h3>
+<p>The mechanical heart of GQA is <em>repeating</em> each KV head to match its group of query heads before the dot product, so the kernel still sees aligned <span class="arithmatex">\((h, L, d_h)\)</span> tensors. Here is GQA from scratch, written so that <code>n_kv_heads == n_heads</code> recovers MHA and <code>n_kv_heads == 1</code> recovers MQA — one module covering the whole spectrum.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">repeat_kv</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">n_rep</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Expand KV heads to match query heads (the GQA broadcast).</span>
+
+<span class="sd">    x: (B, n_kv, L, d_h). Repeat each KV head n_rep times along the head axis,</span>
+<span class="sd">    producing (B, n_kv * n_rep, L, d_h) = (B, n_heads, L, d_h).</span>
+
+<span class="sd">    This is a memory-cheap expand (no data copy until the kernel reads it):</span>
+<span class="sd">    head order becomes [kv0, kv0, ..., kv1, kv1, ...], so query head j uses</span>
+<span class="sd">    KV group j // n_rep. Mirrors Llama&#39;s reference implementation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">n_kv</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d_h</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+    <span class="k">if</span> <span class="n">n_rep</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">x</span>
+    <span class="c1"># Insert a length-1 axis after the head axis, expand it, then flatten.</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:,</span> <span class="p">:,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:]</span>                       <span class="c1"># (B, n_kv, 1,     L, d_h)</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">n_kv</span><span class="p">,</span> <span class="n">n_rep</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d_h</span><span class="p">)</span>          <span class="c1"># (B, n_kv, n_rep, L, d_h)</span>
+    <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">n_kv</span> <span class="o">*</span> <span class="n">n_rep</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d_h</span><span class="p">)</span>     <span class="c1"># (B, n_heads, L, d_h)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">GroupedQueryAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;GQA that unifies MHA / GQA / MQA via a single n_kv_heads knob.</span>
+
+<span class="sd">        n_kv_heads == n_heads  -&gt;  MHA  (one KV head per query head)</span>
+<span class="sd">        1 &lt; n_kv_heads &lt; n_heads -&gt; GQA (KV heads shared within groups)</span>
+<span class="sd">        n_kv_heads == 1        -&gt;  MQA  (one KV head for all query heads)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">n_kv_heads</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dropout</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="n">n_kv_heads</span> <span class="o">=</span> <span class="n">n_heads</span> <span class="k">if</span> <span class="n">n_kv_heads</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">n_kv_heads</span>
+        <span class="k">assert</span> <span class="n">n_heads</span> <span class="o">%</span> <span class="n">n_kv_heads</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;n_heads must be a multiple of n_kv_heads&quot;</span>
+        <span class="k">assert</span> <span class="n">d_model</span> <span class="o">%</span> <span class="n">n_heads</span> <span class="o">==</span> <span class="mi">0</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span> <span class="o">=</span> <span class="n">n_heads</span>            <span class="c1"># number of QUERY heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_kv_heads</span> <span class="o">=</span> <span class="n">n_kv_heads</span>      <span class="c1"># number of KEY/VALUE heads (= groups g)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span> <span class="o">=</span> <span class="n">d_model</span> <span class="o">//</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_rep</span> <span class="o">=</span> <span class="n">n_heads</span> <span class="o">//</span> <span class="n">n_kv_heads</span>  <span class="c1"># query heads per KV head</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">causal</span> <span class="o">=</span> <span class="n">causal</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="o">=</span> <span class="n">dropout</span>
+
+        <span class="c1"># KEY INSIGHT: Q projects to the FULL d_model (n_heads * head_dim),</span>
+        <span class="c1"># but K and V project only to n_kv_heads * head_dim — a SMALLER matrix.</span>
+        <span class="c1"># That smaller K/V projection is exactly what shrinks the cache.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_q</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span>    <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_k</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_kv_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_v</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_kv_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">n_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">attn_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+
+        <span class="c1"># Project. Q has n_heads heads; K, V have only n_kv_heads heads.</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_q</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span>    <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_k</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_kv_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_v</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_kv_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="c1"># q: (B, n_heads, L, d_h)   k,v: (B, n_kv_heads, L, d_h)</span>
+
+        <span class="c1"># Broadcast each KV head across its group so shapes align with q.</span>
+        <span class="c1"># (At inference, you cache the UNREPEATED k, v — size ∝ n_kv_heads —</span>
+        <span class="c1">#  and repeat on the fly; that is where the memory saving lives.)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">repeat_kv</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_rep</span><span class="p">)</span>             <span class="c1"># (B, n_heads, L, d_h)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">repeat_kv</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_rep</span><span class="p">)</span>             <span class="c1"># (B, n_heads, L, d_h)</span>
+
+        <span class="n">out</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">scaled_dot_product_attention</span><span class="p">(</span>
+            <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span>
+            <span class="n">attn_mask</span><span class="o">=</span><span class="n">attn_mask</span><span class="p">,</span>
+            <span class="n">dropout_p</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">training</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+            <span class="n">is_causal</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">causal</span> <span class="ow">and</span> <span class="n">attn_mask</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="p">)</span>                                         <span class="c1"># (B, n_heads, L, d_h)</span>
+
+        <span class="n">out</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+
+
+<span class="c1"># Verify the spectrum: MHA, GQA, and MQA all run and produce correct shapes.</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">8</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">n_kv</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">):</span>                            <span class="c1"># MHA, GQA(g=2), MQA</span>
+    <span class="n">attn</span> <span class="o">=</span> <span class="n">GroupedQueryAttention</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">n_kv_heads</span><span class="o">=</span><span class="n">n_kv</span><span class="p">)</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">attn</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="c1"># Cache width per token (one layer, one sequence), bf16 = 2 bytes, ×2 for K&amp;V:</span>
+    <span class="n">kv_bytes</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">n_kv</span> <span class="o">*</span> <span class="p">(</span><span class="n">d_model</span> <span class="o">//</span> <span class="n">n_heads</span><span class="p">)</span> <span class="o">*</span> <span class="mi">2</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;n_kv=</span><span class="si">{</span><span class="n">n_kv</span><span class="si">}</span><span class="s2">: out </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">, KV bytes/token/layer = </span><span class="si">{</span><span class="n">kv_bytes</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># n_kv=8: 256 B   n_kv=2: 64 B   n_kv=1: 32 B  -&gt; 8× and 16× smaller than MHA</span>
+</code></pre></div>
+<p>The two load-bearing facts in that code: (1) <code>W_k</code> and <code>W_v</code> output <code>n_kv_heads * head_dim</code>, which is <em>smaller</em> than <code>d_model</code> — that is where parameters and, more importantly, cache are saved; (2) <code>repeat_kv</code> is a cheap <code>expand</code> that does not copy the cached data, so at inference you store only the small KV tensors and broadcast them into the kernel. The query side is untouched, so the model keeps all <span class="arithmatex">\(h\)</span> query heads&rsquo; worth of expressivity in <em>how it asks questions</em>, sacrificing only the diversity of <em>what it can address</em>.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: uptraining — converting an existing MHA checkpoint to GQA</p>
+<p>A delightful result from the GQA paper is that you don&rsquo;t have to train from scratch. You can take a pretrained MHA model and <em>construct</em> a GQA model by <strong>mean-pooling</strong> the key/value projection weights within each group — average the <span class="arithmatex">\(W_K\)</span> of the heads in a group to get the group&rsquo;s shared <span class="arithmatex">\(W_K\)</span> — then &ldquo;uptrain&rdquo; with a small fraction (e.g. ~5%) of the original pretraining compute to recover quality. This made GQA a cheap retrofit, which is a big reason it spread so fast: model providers could ship GQA variants of existing models without a full pretrain.</p>
+</div>
+<h2 id="multi-head-latent-attention-mla-compress-the-cache-itself">Multi-head Latent Attention (MLA): Compress the Cache Itself<a class="headerlink" href="#multi-head-latent-attention-mla-compress-the-cache-itself" title="Permanent link">¶</a></h2>
+<p>GQA shrinks the cache by reducing the <em>number</em> of KV heads. DeepSeek&rsquo;s <strong>Multi-head Latent Attention</strong> (MLA), introduced with DeepSeek-V2, attacks the same target from a completely different angle: keep many KV heads&rsquo; worth of expressivity, but <strong>cache a low-rank compressed latent</strong> of the keys and values instead of the keys and values themselves. It is, in spirit, a learned low-rank factorization of the KV cache.</p>
+<h3 id="the-core-idea-low-rank-joint-compression">The core idea: low-rank joint compression<a class="headerlink" href="#the-core-idea-low-rank-joint-compression" title="Permanent link">¶</a></h3>
+<p>In MHA, for each token the keys and values across all heads together form a <span class="arithmatex">\(2 d_\text{model}\)</span>-dimensional object that we cache. MLA introduces a small <strong>latent dimension</strong> <span class="arithmatex">\(d_c \ll d_\text{model}\)</span> and a <em>down-projection</em> <span class="arithmatex">\(W^{DKV}\)</span> that maps each token&rsquo;s hidden state into a single compressed latent vector <span class="arithmatex">\(c^{KV}_t \in \mathbb{R}^{d_c}\)</span>. <strong>Only this latent is cached.</strong> At attention time, two <em>up-projection</em> matrices <span class="arithmatex">\(W^{UK}\)</span> and <span class="arithmatex">\(W^{UV}\)</span> reconstruct the per-head keys and values from the latent:</p>
+<div class="arithmatex">\[
+c^{KV}_t = W^{DKV} h_t \in \mathbb{R}^{d_c}, \qquad k_t = W^{UK} c^{KV}_t, \qquad v_t = W^{UV} c^{KV}_t .
+\]</div>
+<p>Because <span class="arithmatex">\(d_c\)</span> is small (DeepSeek-V2 uses <span class="arithmatex">\(d_c\)</span> on the order of a few hundred, far below <span class="arithmatex">\(d_\text{model}\)</span>), the cached object per token is <span class="arithmatex">\(d_c\)</span> numbers instead of <span class="arithmatex">\(2\, h\, d_h\)</span> numbers. The keys and values for <em>all</em> heads are regenerated from that one shared latent, so MLA retains far more head diversity than MQA/GQA at a comparable cache budget. The queries are similarly given a low-rank treatment (a query down/up pair) to save <em>training</em> activation memory, though queries are not cached.</p>
+<figure class="viz" id="fig-mhagqamla-cache-layout-compare">
+<svg viewBox="0 0 720 530" role="img" aria-label="Per-token KV cache layout comparison: MHA stores a wide K and V bar, GQA stores a narrower K and V bar, and MLA stores a tiny shared latent c^KV which is up-projected at attention time to reconstruct K and V for all heads.">
+<defs>
+  <marker id="cl-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="cl-arrow-split" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+</defs>
+<style>
+  #fig-mhagqamla-cache-layout-compare text { font: 500 11px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-mhagqamla-cache-layout-compare .row-label { font: 700 11.5px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-mhagqamla-cache-layout-compare .size-tag { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-mhagqamla-cache-layout-compare .bar-text { font: 600 10px var(--mono,monospace); fill: #fff; }
+  #fig-mhagqamla-cache-layout-compare .bar-text-dark { font: 600 10px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+  #fig-mhagqamla-cache-layout-compare .arrow-label { font: 500 10px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-mhagqamla-cache-layout-compare .muted-note { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#64748b); font-style: italic; }
+  #fig-mhagqamla-cache-layout-compare .recon-label { font: 600 9px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+  #fig-mhagqamla-cache-layout-compare .slat-k { fill: #818cf8; }
+  #fig-mhagqamla-cache-layout-compare .slat-v { fill: #34d399; }
+</style>
+
+
+<text x="360" y="22" text-anchor="middle" style="font:700 13px var(--sans,sans-serif); fill:var(--ink-soft,#374151)">Cache stored per token  (proportional bar widths = relative size)</text>
+
+
+
+<text x="14" y="54" class="row-label">MHA</text>
+<text x="14" y="68" style="font:400 9.5px var(--sans,sans-serif); fill:var(--muted,#64748b)">per token</text>
+
+
+<rect x="130" y="40" width="210" height="36" rx="4" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="235" y="62" text-anchor="middle" class="bar-text">K for all h heads</text>
+
+
+<rect x="340" y="40" width="210" height="36" rx="4" fill="var(--good,#2f9e6e)" stroke="none"/>
+<text x="445" y="62" text-anchor="middle" class="bar-text">V for all h heads</text>
+
+
+<line x1="130" y1="82" x2="550" y2="82" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<line x1="130" y1="78" x2="130" y2="82" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<line x1="550" y1="78" x2="550" y2="82" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+
+<text x="560" y="62" class="size-tag">(large)</text>
+<text x="560" y="75" class="size-tag">2·h·d_h</text>
+
+
+<text x="14" y="112" class="row-label">GQA</text>
+<text x="14" y="126" style="font:400 9.5px var(--sans,sans-serif); fill:var(--muted,#64748b)">per token</text>
+
+
+<rect x="130" y="98" width="105" height="36" rx="4" fill="var(--accent,#6366f1)" stroke="none"/>
+<text x="182" y="120" text-anchor="middle" class="bar-text">K (g groups)</text>
+
+
+<rect x="235" y="98" width="105" height="36" rx="4" fill="var(--good,#2f9e6e)" stroke="none"/>
+<text x="287" y="120" text-anchor="middle" class="bar-text">V (g groups)</text>
+
+<line x1="130" y1="140" x2="340" y2="140" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<line x1="130" y1="136" x2="130" y2="140" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<line x1="340" y1="136" x2="340" y2="140" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+
+<text x="350" y="118" class="size-tag">(g/h x MHA)</text>
+<text x="350" y="131" class="size-tag">2·g·d_h</text>
+
+
+<text x="14" y="170" class="row-label">MLA</text>
+<text x="14" y="184" style="font:400 9.5px var(--sans,sans-serif); fill:var(--muted,#64748b)">per token</text>
+
+
+<rect x="130" y="156" width="76" height="36" rx="4" fill="var(--warn,#e0a106)" stroke="none"/>
+<text x="168" y="169" text-anchor="middle" style="font:700 10px var(--mono,monospace); fill:#fff;">c^KV</text>
+<text x="168" y="183" text-anchor="middle" style="font:500 9px var(--sans,sans-serif); fill:#fff;">(latent)</text>
+
+<line x1="130" y1="198" x2="206" y2="198" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<line x1="130" y1="194" x2="130" y2="198" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<line x1="206" y1="194" x2="206" y2="198" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+
+<text x="216" y="172" class="size-tag">(tiny — d_c numbers,</text>
+<text x="216" y="185" class="size-tag">shared latent)</text>
+
+
+<line x1="14" y1="212" x2="706" y2="212" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="4 4"/>
+<text x="360" y="226" text-anchor="middle" style="font:600 11px var(--sans,sans-serif); fill:var(--muted,#64748b)">MLA: reconstruction at attention time</text>
+
+
+
+<rect x="295" y="238" width="130" height="32" rx="4" fill="var(--warn,#e0a106)" stroke="none"/>
+<text x="360" y="252" text-anchor="middle" style="font:700 10px var(--mono,monospace); fill:#fff;">c^KV (cached)</text>
+<text x="360" y="265" text-anchor="middle" style="font:500 9px var(--sans,sans-serif); fill:#fff;">d_c numbers</text>
+
+
+<line x1="360" y1="270" x2="360" y2="300" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#cl-arrow)"/>
+<text x="364" y="290" style="font:500 9.5px var(--sans,sans-serif); fill:var(--ink-soft,#374151)">up-project (W^UK, W^UV)</text>
+
+
+<circle cx="360" cy="306" r="4" fill="var(--ink-soft,#64748b)"/>
+
+
+<line x1="356" y1="306" x2="160" y2="346" stroke="var(--ink-soft,#64748b)" stroke-width="1.4" marker-end="url(#cl-arrow)"/>
+
+<line x1="364" y1="306" x2="562" y2="346" stroke="var(--ink-soft,#64748b)" stroke-width="1.4" marker-end="url(#cl-arrow)"/>
+
+
+<text x="230" y="326" text-anchor="middle" style="font:500 9.5px var(--sans,sans-serif); fill:var(--ink-soft,#374151)">W^UK</text>
+<text x="494" y="326" text-anchor="middle" style="font:500 9.5px var(--sans,sans-serif); fill:var(--ink-soft,#374151)">W^UV</text>
+
+
+<rect x="110" y="348" width="100" height="90" rx="4" fill="var(--surface-3,#e2e8f0)" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<rect x="112" y="350" width="96" height="9" fill="var(--accent2,#818cf8)"/>
+<rect x="112" y="361" width="96" height="9" fill="var(--accent2,#818cf8)"/>
+<rect x="112" y="372" width="96" height="9" fill="var(--accent2,#818cf8)"/>
+<rect x="112" y="383" width="96" height="9" fill="var(--accent2,#818cf8)"/>
+<rect x="112" y="394" width="96" height="9" fill="var(--accent2,#818cf8)"/>
+<rect x="112" y="405" width="96" height="9" fill="var(--accent2,#818cf8)"/>
+<rect x="112" y="416" width="96" height="9" fill="var(--accent2,#818cf8)"/>
+<rect x="112" y="427" width="96" height="9" fill="var(--accent2,#818cf8)"/>
+<text x="160" y="454" text-anchor="middle" class="recon-label" fill="var(--accent,#6366f1)">K for all h heads</text>
+<text x="160" y="466" text-anchor="middle" class="recon-label" fill="var(--accent,#6366f1)">(reconstructed)</text>
+
+
+<rect x="512" y="348" width="100" height="90" rx="4" fill="var(--surface-3,#e2e8f0)" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+<rect x="514" y="350" width="96" height="9" fill="var(--good,#34d399)"/>
+<rect x="514" y="361" width="96" height="9" fill="var(--good,#34d399)"/>
+<rect x="514" y="372" width="96" height="9" fill="var(--good,#34d399)"/>
+<rect x="514" y="383" width="96" height="9" fill="var(--good,#34d399)"/>
+<rect x="514" y="394" width="96" height="9" fill="var(--good,#34d399)"/>
+<rect x="514" y="405" width="96" height="9" fill="var(--good,#34d399)"/>
+<rect x="514" y="416" width="96" height="9" fill="var(--good,#34d399)"/>
+<rect x="514" y="427" width="96" height="9" fill="var(--good,#34d399)"/>
+<text x="562" y="454" text-anchor="middle" class="recon-label" fill="var(--good,#2f9e6e)">V for all h heads</text>
+<text x="562" y="466" text-anchor="middle" class="recon-label" fill="var(--good,#2f9e6e)">(reconstructed)</text>
+
+
+<text x="360" y="490" text-anchor="middle" class="muted-note">absorbed into W^Q / W^O in practice — no K,V materialization needed</text>
+
+</svg>
+<figcaption><b>MLA caches a tiny shared latent instead of explicit key and value tensors.</b> MHA stores a full-width K and V bar per token (2·h·d_h values); GQA shrinks to 2·g·d_h; MLA stores only a single d_c-dimensional vector c^KV — then up-projects it with fixed matrices W^UK and W^UV to reconstruct K and V for all heads at attention time. In practice these up-projections are absorbed into neighboring weight matrices so no extra materialization is needed, giving MLA a tiny cache footprint with full multi-head expressivity.</figcaption>
+</figure>
+
+<h3 id="the-absorption-trick-and-why-rope-forces-a-split">The absorption trick and why RoPE forces a split<a class="headerlink" href="#the-absorption-trick-and-why-rope-forces-a-split" title="Permanent link">¶</a></h3>
+<p>Two subtleties make MLA more than a textbook low-rank trick.</p>
+<p><strong>(1) Weight absorption.</strong> A naive reading says you must up-project the latent to full keys/values at every step, which would cost compute. But the up-projections are <em>linear and fixed</em>, so they can be <strong>absorbed</strong> into neighboring matrices: <span class="arithmatex">\(W^{UK}\)</span> folds into the query projection <span class="arithmatex">\(W^{Q}\)</span> (since attention scores are <span class="arithmatex">\(q^\top k = q^\top W^{UK} c^{KV} = (W^{UK\top} q)^\top c^{KV}\)</span>), and <span class="arithmatex">\(W^{UV}\)</span> folds into the output projection <span class="arithmatex">\(W^{O}\)</span>. After absorption you can compute attention <em>directly against the cached latent</em> without ever materializing the full per-head K/V — so MLA keeps the tiny cache <em>and</em> avoids an extra projection in the decode loop. This is the engineering reason MLA is fast, not just small.</p>
+<p><strong>(2) RoPE incompatibility, and the decoupled fix.</strong> Rotary position embeddings (RoPE; see <a href="../02-transformer/05-positional-encoding.html">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a>) apply a <em>position-dependent rotation</em> to keys. That rotation does not commute with the absorption trick — a position-dependent matrix cannot be folded into a position-independent up-projection. DeepSeek&rsquo;s solution is a <strong>decoupled RoPE</strong>: each head&rsquo;s key is split into two parts, a larger <em>content</em> part carried by the compressed latent (no RoPE, absorbable) and a smaller <em>positional</em> part that does carry RoPE and is computed/cached separately (a small shared per-token RoPE key). The query is split analogously. So MLA caches <em>two</em> things per token — the big content latent <span class="arithmatex">\(c^{KV}\)</span> and a small decoupled RoPE key — but the sum is still dramatically smaller than GQA&rsquo;s cache while preserving full multi-head expressivity. The net effect reported by DeepSeek is a KV cache comparable to (or smaller than) GQA with 2.25 KV groups while matching or exceeding MHA quality.</p>
+<h3 id="a-minimal-mla-forward-pass">A minimal MLA forward pass<a class="headerlink" href="#a-minimal-mla-forward-pass" title="Permanent link">¶</a></h3>
+<p>The following strips MLA to its essentials (content path only, RoPE omitted for clarity) so you can see the down/up structure. Production MLA adds the decoupled RoPE keys and the absorption optimization above.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MultiHeadLatentAttentionCore</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Simplified MLA: cache a low-rank latent c^{KV}, reconstruct per-head K,V.</span>
+
+<span class="sd">    Omits decoupled-RoPE and weight-absorption for clarity. The point to see:</span>
+<span class="sd">    the CACHED object is c_kv of width d_c (small), not the full per-head K,V.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">d_c</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span> <span class="o">=</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span> <span class="o">=</span> <span class="n">d_model</span> <span class="o">//</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_c</span> <span class="o">=</span> <span class="n">d_c</span>                                   <span class="c1"># latent dim, d_c &lt;&lt; d_model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">causal</span> <span class="o">=</span> <span class="n">causal</span>
+
+        <span class="c1"># Down-projection: hidden -&gt; compressed latent (this is what gets cached).</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_dkv</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_c</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="c1"># Up-projections: latent -&gt; per-head keys / values.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_uk</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_c</span><span class="p">,</span> <span class="n">n_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_uv</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_c</span><span class="p">,</span> <span class="n">n_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="c1"># Queries: a normal (optionally low-rank) projection; not cached.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_q</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">n_heads</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">H</span><span class="p">,</span> <span class="n">Dh</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span>
+
+        <span class="n">c_kv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_dkv</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                              <span class="c1"># (B, L, d_c)  &lt;-- CACHED</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_uk</span><span class="p">(</span><span class="n">c_kv</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">Dh</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>   <span class="c1"># (B, H, L, Dh)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_uv</span><span class="p">(</span><span class="n">c_kv</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">Dh</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>   <span class="c1"># (B, H, L, Dh)</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_q</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">Dh</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>       <span class="c1"># (B, H, L, Dh)</span>
+
+        <span class="n">out</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">scaled_dot_product_attention</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">is_causal</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">causal</span><span class="p">)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">H</span> <span class="o">*</span> <span class="n">Dh</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+
+
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">m</span> <span class="o">=</span> <span class="n">MultiHeadLatentAttentionCore</span><span class="p">(</span><span class="n">d_model</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">n_heads</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">d_c</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">m</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">512</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;MLA out:&quot;</span><span class="p">,</span> <span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>                               <span class="c1"># (2, 16, 512)</span>
+<span class="c1"># Cache per token/layer = d_c numbers (+ a small decoupled-RoPE key in full MLA),</span>
+<span class="c1"># vs MHA&#39;s 2 * d_model. Here 128 vs 1024 -&gt; ~8× smaller, full head diversity kept.</span>
+</code></pre></div>
+<p>MLA is more complex to implement and to serve (the kernel and the cache layout differ from the GQA path that vLLM/SGLang were originally built around), which is why GQA remains the broad default and MLA is found mainly in models specifically designed for it (the DeepSeek-V2/V3 line). But MLA is the clearest demonstration that the cache, not the head count, is the real object of optimization — and that you can compress it directly.</p>
+<h2 id="memoryquality-tradeoffs-choosing-a-scheme">Memory–Quality Tradeoffs: Choosing a Scheme<a class="headerlink" href="#memoryquality-tradeoffs-choosing-a-scheme" title="Permanent link">¶</a></h2>
+<p>Put the four schemes side by side. Let <span class="arithmatex">\(h\)</span> be the number of query heads, <span class="arithmatex">\(g\)</span> the KV groups, <span class="arithmatex">\(d_h\)</span> the head dim, <span class="arithmatex">\(d_c\)</span> the MLA latent. All cache figures are <em>per token, per layer, per sequence</em>, in elements (multiply by bytes-per-element and by <span class="arithmatex">\(B\, L_\text{layers}\, S\)</span> for totals).</p>
+<table>
+<thead>
+<tr>
+<th>Scheme</th>
+<th>KV heads</th>
+<th>Cache (elements/token/layer)</th>
+<th>Relative cache</th>
+<th>Quality</th>
+<th>Used by (examples)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MHA</td>
+<td><span class="arithmatex">\(h\)</span></td>
+<td><span class="arithmatex">\(2\,h\,d_h = 2\,d_\text{model}\)</span></td>
+<td><span class="arithmatex">\(1\times\)</span> (baseline)</td>
+<td>best</td>
+<td>original Transformer, GPT-&#8532;, Llama-1</td>
+</tr>
+<tr>
+<td>GQA</td>
+<td><span class="arithmatex">\(g\)</span></td>
+<td><span class="arithmatex">\(2\,g\,d_h\)</span></td>
+<td><span class="arithmatex">\(g/h\)</span></td>
+<td>≈ MHA</td>
+<td>Llama-2-70B/3, Mistral, Gemma</td>
+</tr>
+<tr>
+<td>MQA</td>
+<td><span class="arithmatex">\(1\)</span></td>
+<td><span class="arithmatex">\(2\,d_h\)</span></td>
+<td><span class="arithmatex">\(1/h\)</span></td>
+<td>noticeable drop, can be unstable</td>
+<td>PaLM, Falcon</td>
+</tr>
+<tr>
+<td>MLA</td>
+<td>(latent)</td>
+<td><span class="arithmatex">\(\approx d_c\,(+\text{small RoPE key})\)</span></td>
+<td>small, tunable</td>
+<td>≈ MHA or better</td>
+<td>DeepSeek-V2/V3</td>
+</tr>
+</tbody>
+</table>
+<p>How to reason about the choice:</p>
+<ul>
+<li><strong>GQA is the safe default.</strong> It gives a large, tunable cache reduction (pick <span class="arithmatex">\(g\)</span>) with negligible quality loss at <span class="arithmatex">\(g \approx 8\)</span>, it is trivially supported by every serving stack, and it can be retrofitted onto an MHA checkpoint by uptraining. If you are building a conventional dense or MoE model in 2024–2026, GQA is the path of least resistance and the strong baseline. (<a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts (MoE) Architectures</a> addresses the <em>FFN</em> cost; GQA addresses the <em>attention cache</em> cost — they compose.)</li>
+<li><strong>MQA only when memory is desperate and you accept the risk.</strong> The full <span class="arithmatex">\(1/h\)</span> reduction is tempting, but the quality regression and training instability mean most teams stop at GQA. MQA makes sense in tightly constrained settings (small on-device models, extreme batch) where every byte counts.</li>
+<li><strong>MLA when you control the whole stack and want the Pareto frontier.</strong> MLA pushes the memory–quality frontier beyond GQA, but it demands custom kernels, a different cache layout, and the decoupled-RoPE machinery. It pays off most for very long contexts and at large scale, where the absolute cache savings are enormous — but it is an architectural commitment, not a drop-in.</li>
+<li><strong>Quantizing the cache is orthogonal and stacks.</strong> All four schemes can additionally store the cache in fp8 or int8/int4, multiplying the savings (see <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>). GQA + fp8 cache is a very common, very effective combination.</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: pick <span class="arithmatex">\(g\)</span> to match your tensor-parallel degree</p>
+<p>A neat systems consideration: when you shard attention across <span class="arithmatex">\(T\)</span> GPUs with tensor parallelism, you want each GPU to own a whole number of KV heads so it can compute its share of attention without cross-GPU KV gather. Choosing <span class="arithmatex">\(g\)</span> equal to (or a multiple of) your TP degree — e.g. <span class="arithmatex">\(g=8\)</span> for 8-way TP — makes the sharding clean and avoids replicating KV heads across GPUs. This is part of why <span class="arithmatex">\(g=8\)</span> is so common: it matches the 8-GPU node. If you instead picked <span class="arithmatex">\(g=6\)</span> on an 8-GPU node, two GPUs would sit idle on the KV side or you&rsquo;d replicate, wasting the very memory you were trying to save.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: comparing cache savings without holding context length fixed</p>
+<p>A frequent analysis error is to celebrate an <span class="arithmatex">\(8\times\)</span> cache reduction and then immediately spend it all on a longer context, concluding &ldquo;GQA didn&rsquo;t help.&rdquo; The cache scales linearly in <span class="arithmatex">\(S\)</span>, so an <span class="arithmatex">\(8\times\)</span> reduction lets you go to <span class="arithmatex">\(8\times\)</span> the context <em>or</em> <span class="arithmatex">\(8\times\)</span> the batch <em>or</em> some product of the two — it is a budget, not a free lunch. Always state what you are holding fixed (concurrency, context, or hardware) when quoting a savings factor, or the comparison is meaningless.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Why did Grouped-Query Attention become the default for modern LLMs over both standard Multi-Head Attention and Multi-Query Attention? Walk me through the tradeoff and give me the cache formula.</p>
+<p><strong>A:</strong> The bottleneck GQA targets is the <strong>KV cache at inference</strong>, not FLOPs or parameters. During autoregressive decode you must keep every past token&rsquo;s keys and values in HBM; for standard MHA the cache is <span class="arithmatex">\(2\, B\, L_\text{layers}\, S\, h\, d_h\, P\)</span> bytes — it scales with the number of heads <span class="arithmatex">\(h\)</span>, and it both consumes memory that limits concurrency and must be streamed every decode step, making decode memory-bandwidth bound. <strong>MQA</strong> cuts this by a full factor of <span class="arithmatex">\(h\)</span> by sharing a single key/value head across all query heads, but collapsing all KV diversity into one head causes a measurable quality drop and training instability at scale. <strong>GQA</strong> keeps all <span class="arithmatex">\(h\)</span> query heads but uses <span class="arithmatex">\(g\)</span> KV groups (each shared by <span class="arithmatex">\(h/g\)</span> query heads), so the cache becomes <span class="arithmatex">\(2\, B\, L_\text{layers}\, S\, g\, d_h\, P\)</span> — a tunable <span class="arithmatex">\(g/h\)</span> reduction. The empirical finding is that a small <span class="arithmatex">\(g\)</span> (typically 8) recovers essentially all of MHA&rsquo;s quality while giving most of MQA&rsquo;s memory savings, so it sits at the sweet spot of the memory–quality curve. Three more reasons it won: <span class="arithmatex">\(g=8\)</span> aligns with 8-way tensor parallelism (clean sharding, one KV head per GPU); you can <em>uptrain</em> an existing MHA checkpoint into GQA by mean-pooling KV weights with ~5% extra compute rather than pretraining from scratch; and it requires no special kernels. A strong closing point: GQA&rsquo;s savings are orthogonal to KV quantization and to MoE, so they stack — and the frontier beyond GQA is MLA, which compresses the cache into a low-rank latent rather than just reducing head count.</p>
+</div>
+<h2 id="putting-it-all-together">Putting It All Together<a class="headerlink" href="#putting-it-all-together" title="Permanent link">¶</a></h2>
+<p>The arc of this chapter is a single tension and four answers to it. Multi-head attention is the right idea: run many specialized retrievals in parallel and fuse them with <span class="arithmatex">\(W_O\)</span>, getting the expressivity of multiple attention distributions for roughly the FLOPs of one wide head. But MHA&rsquo;s gift — independent keys and values per head — is exactly what makes its <strong>KV cache</strong> balloon at inference, and that cache, not the weights, is what caps concurrency and context length on real hardware. MQA, GQA, and MLA are three points on the resulting memory–quality frontier: MQA shares one KV head (maximal savings, real quality cost), GQA shares KV heads within groups (the pragmatic default, nearly free quality-wise at <span class="arithmatex">\(g=8\)</span>), and MLA caches a low-rank latent that reconstructs all heads (the frontier, at the cost of implementation complexity and a decoupled-RoPE wrinkle).</p>
+<p>The single most useful skill to walk away with is the ability to <em>derive a cache size in your head</em>: <span class="arithmatex">\(2\, B\, L_\text{layers}\, S \times (\text{KV-head count}) \times d_h \times P\)</span>. Plug in a model and a workload and you immediately know whether you are weight-bound or cache-bound, how much context you can afford, and how much a given attention variant buys you. That number drives more serving decisions than almost anything else in the stack.</p>
+<p>From here, the cache reappears everywhere downstream: the serving systems that <em>manage</em> it page-by-page in <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a> and <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a>; the kernels that <em>read</em> it efficiently in <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a>; the prefix-sharing tricks that <em>reuse</em> it in <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>; and the quantization that <em>shrinks</em> it further in <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II</a>. Next we give attention its missing sense of position in <a href="../02-transformer/05-positional-encoding.html">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a> — including the RoPE that complicated MLA — before assembling the full <a href="../02-transformer/06-transformer-block.html">Transformer block</a>.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Multi-head attention splits <span class="arithmatex">\(d_\text{model}\)</span> into <span class="arithmatex">\(h\)</span> subspaces</strong> and runs independent scaled-dot-product heads in parallel, then concatenates and mixes them with <span class="arithmatex">\(W_O\)</span>. It costs roughly the same FLOPs as one wide head but lets the model attend to many <em>kinds</em> of relationships at once; parameters are <span class="arithmatex">\(4\,d_\text{model}^2\)</span> per layer, independent of <span class="arithmatex">\(h\)</span>.</li>
+<li><strong>The KV cache is the real inference bottleneck.</strong> Its size is <span class="arithmatex">\(2\, B\, L_\text{layers}\, S \times (\text{KV-head count}) \times d_h \times P\)</span> bytes — for a 70B model at 4K context, standard MHA wants ~10 GB <em>per sequence</em>, and it must be streamed from HBM every decode step (memory-bandwidth bound).</li>
+<li><strong>The query-head count and the KV-head count can be decoupled.</strong> Many query heads can share few key/value heads — this single observation generates MQA, GQA, and MLA.</li>
+<li><strong>MQA</strong> uses one shared KV head (<span class="arithmatex">\(1/h\)</span> cache) but loses quality and can destabilize training. <strong>GQA</strong> uses <span class="arithmatex">\(g\)</span> KV groups (<span class="arithmatex">\(g/h\)</span> cache); at <span class="arithmatex">\(g\approx 8\)</span> it recovers ≈ MHA quality and is the modern default.</li>
+<li><strong>GQA implementation</strong> = smaller <span class="arithmatex">\(W_K, W_V\)</span> projections (output <span class="arithmatex">\(g\,d_h\)</span>, not <span class="arithmatex">\(d_\text{model}\)</span>) plus a cheap <code>repeat_kv</code> broadcast to align KV heads with query heads; setting <span class="arithmatex">\(n_\text{kv}=h\)</span> recovers MHA and <span class="arithmatex">\(n_\text{kv}=1\)</span> recovers MQA.</li>
+<li><strong>MLA (DeepSeek)</strong> caches a low-rank latent <span class="arithmatex">\(c^{KV}\)</span> and up-projects per-head K/V from it, with weight absorption to keep decode cheap and a decoupled RoPE key to remain position-aware — pushing the memory–quality frontier beyond GQA at the cost of complexity.</li>
+<li><strong>An MHA checkpoint can be uptrained into GQA</strong> by mean-pooling KV weights within groups and fine-tuning with a small fraction of pretraining compute — a cheap retrofit that accelerated GQA&rsquo;s adoption.</li>
+<li><strong>Cache savings are a budget, not a free lunch</strong>, and they stack with KV quantization and TP-aligned head counts (<span class="arithmatex">\(g=8\)</span> for 8-way tensor parallelism). Always state what you hold fixed when quoting a reduction factor.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Multi-head attention variants are now a mature design space: GQA (typically g=8) is the universal default across open-weight models, MLA has pushed the Pareto frontier further for long-context serving, and FlashAttention-&frac34; kernels make reading the KV cache fast enough that the cache <em>size</em> remains the binding constraint.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al., <em>Attention Is All You Need</em> (2017)</a> — introduces multi-head attention with the concatenate-then-project structure that all variants build on.</li>
+<li><a href="https://arxiv.org/abs/1911.02150">Shazeer, <em>Fast Transformer Decoding: One Write-Head is All You Need</em> (2019)</a> — defines multi-query attention (MQA) and frames the KV cache as the primary decoding bottleneck.</li>
+<li><a href="https://arxiv.org/abs/1905.10650">Michel, Levy &amp; Neubig, <em>Are Sixteen Heads Really Better than One?</em> (2019)</a> — shows most heads are prunable, providing the empirical motivation for head-sharing schemes.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2305.13245">Ainslie et al., <em>GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</em> (2023)</a> — introduces grouped-query attention and the mean-pool uptraining recipe that made GQA the modern default.</li>
+<li><a href="https://arxiv.org/abs/2405.04434">DeepSeek-AI, <em>DeepSeek-V2</em> (2024)</a> — introduces Multi-head Latent Attention (MLA) with low-rank KV compression, weight absorption, and decoupled RoPE, cutting KV cache by 93% vs MHA.</li>
+<li><a href="https://arxiv.org/abs/2307.08691">Dao, <em>FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning</em> (2023)</a> — 2× speedup over FlashAttention-1 via improved thread-block parallelism; the kernel underlying PyTorch&rsquo;s <code>scaled_dot_product_attention</code>.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/Dao-AILab/flash-attention">Dao-AILab/flash-attention</a> — reference CUDA/ROCm implementation of FlashAttention 1–4; now supports MQA/GQA attention patterns natively.</li>
+<li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm</a> — production LLM serving engine with PagedAttention, GQA support, and KV-cache quantization baked in.</li>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — high-performance serving framework with first-class MLA support (7× faster DeepSeek MLA vs earlier baselines) and RadixAttention prefix caching.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://sebastianraschka.com/llm-architecture-gallery/mla/">Sebastian Raschka, <em>Multi-Head Latent Attention (MLA)</em></a> — clear visual walkthrough of MLA&rsquo;s low-rank compression, weight absorption, and real-world adoption across DeepSeek-V3, Kimi K2, and GLM-5.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, Polosukhin — <em>Attention Is All You Need</em> (2017). Introduces multi-head attention and the concatenate-then-project structure.</li>
+<li>Shazeer — <em>Fast Transformer Decoding: One Write-Head is All You Need</em> (2019). The Multi-Query Attention paper; frames the KV cache as the decoding bottleneck.</li>
+<li>Ainslie, Lee-Thorp, de Jong, Zemlyanskiy, Lebrón, Sanghai — <em>GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</em> (2023). Introduces Grouped-Query Attention and the mean-pool uptraining recipe.</li>
+<li>DeepSeek-AI — <em>DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model</em> (2024) and <em>DeepSeek-V3 Technical Report</em> (2024). Introduce and refine Multi-head Latent Attention, weight absorption, and decoupled RoPE.</li>
+<li>Michel, Levy, Neubig — <em>Are Sixteen Heads Really Better than One?</em> (2019). Evidence that many heads are prunable, motivating the head-sharing intuition behind MQA/GQA.</li>
+<li>Elhage, Nanda, Olsson, et al. (Anthropic) — <em>A Mathematical Framework for Transformer Circuits</em> (2021). Reads individual heads as interpretable information-movement operations (induction heads, previous-token heads).</li>
+<li>Dao, Fu, Ermon, Rudra, Ré — <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022). The IO-aware kernel that makes reading the KV cache efficient and underlies the fused <code>scaled_dot_product_attention</code> used throughout this chapter.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="03-attention-from-scratch.html"><span class="pn-label">← Previous</span><span class="pn-title">The Attention Mechanism From Scratch</span></a>
+<a class="next" href="05-positional-encoding.html"><span class="pn-label">Next →</span><span class="pn-title">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-more-than-one-head-the-motivation-for-mha">Why More Than One Head? The Motivation for MHA</a></li>
+<li class="toc-l3"><a href="#a-subtle-but-important-point-heads-are-an-implementation-reshape">A subtle but important point: heads are an implementation reshape</a></li>
+<li class="toc-l2"><a href="#implementing-multi-head-attention-from-scratch">Implementing Multi-Head Attention From Scratch</a></li>
+<li class="toc-l3"><a href="#parameter-count-of-mha">Parameter count of MHA</a></li>
+<li class="toc-l2"><a href="#the-kv-cache-why-inference-memory-not-flops-becomes-the-bottleneck">The KV Cache: Why Inference Memory, Not FLOPs, Becomes the Bottleneck</a></li>
+<li class="toc-l3"><a href="#decomposing-the-cache-which-factors-can-architecture-actually-change">Decomposing the cache: which factors can architecture actually change?</a></li>
+<li class="toc-l2"><a href="#mqa-and-gqa-sharing-keys-and-values-across-heads">MQA and GQA: Sharing Keys and Values Across Heads</a></li>
+<li class="toc-l3"><a href="#multi-query-attention-mqa">Multi-Query Attention (MQA)</a></li>
+<li class="toc-l3"><a href="#grouped-query-attention-gqa">Grouped-Query Attention (GQA)</a></li>
+<li class="toc-l3"><a href="#implementing-the-mha-gqa-conversion">Implementing the MHA → GQA conversion</a></li>
+<li class="toc-l2"><a href="#multi-head-latent-attention-mla-compress-the-cache-itself">Multi-head Latent Attention (MLA): Compress the Cache Itself</a></li>
+<li class="toc-l3"><a href="#the-core-idea-low-rank-joint-compression">The core idea: low-rank joint compression</a></li>
+<li class="toc-l3"><a href="#the-absorption-trick-and-why-rope-forces-a-split">The absorption trick and why RoPE forces a split</a></li>
+<li class="toc-l3"><a href="#a-minimal-mla-forward-pass">A minimal MLA forward pass</a></li>
+<li class="toc-l2"><a href="#memoryquality-tradeoffs-choosing-a-scheme">Memory–Quality Tradeoffs: Choosing a Scheme</a></li>
+<li class="toc-l2"><a href="#putting-it-all-together">Putting It All Together</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1224 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Designing an LLM Serving System — The LLM Stack</title>
+<meta name="description" content="End-to-end system design: gateway, load balancer, model routing, replica/cluster sizing, queueing, SLOs (p50/p99 TTFT), autoscaling on GPUs, multi-model serving">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="active" href="01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XII — Production, Systems &amp; MLOps</div>
+<h1 id="121-designing-an-llm-serving-system">12.1 Designing an LLM Serving System<a class="headerlink" href="#121-designing-an-llm-serving-system" title="Permanent link">¶</a></h1>
+<p>A single model running under <code>vllm serve</code> on one GPU is a demo. A <em>serving system</em> is what stands between a million daily users and a fleet of GPUs: it terminates connections, authenticates and meters traffic, decides which replica of which model handles each request, protects the GPUs from overload, keeps tail latency inside a contractual budget, and scales the fleet up and down as load swings by 10x between 3 a.m. and 3 p.m. This chapter is about the <em>system</em> — the boxes and arrows around the model — and the quantitative reasoning that sizes each box.</p>
+<p>It assumes you already understand what happens <em>inside</em> one engine. If prefill, decode, and the KV cache are not yet second nature, read <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a> first; the batching machinery comes from <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>; the cost arithmetic comes from <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a>. Here we zoom <em>out</em> and design the thing that wraps dozens of those engines into a service with an SLO. This chapter also doubles as a system-design interview script — see <a href="../interview/03-ml-system-design-framework.html">ML System Design: A Framework</a> for the meta-framework and <a href="../interview/04-ml-system-design-cases.html">ML System Design: Worked Cases</a> for adjacent cases.</p>
+<h2 id="why-llm-serving-is-not-just-microservices-with-a-gpu">Why LLM Serving Is Not Just &ldquo;Microservices With a GPU&rdquo;<a class="headerlink" href="#why-llm-serving-is-not-just-microservices-with-a-gpu" title="Permanent link">¶</a></h2>
+<p>If you have served a REST API before, your instincts are mostly right and dangerously incomplete. Three properties make LLM serving a different animal.</p>
+<p><strong>Requests are not uniform-cost.</strong> A normal web request takes a few milliseconds and returns a fixed-size payload. An LLM request streams for <em>seconds to minutes</em> and its cost is dominated by an output length you do not know in advance. A 20-token classification and a 4,000-token essay enter the same queue. This means classical load balancers that distribute by request <em>count</em> will badly imbalance GPU <em>work</em>. You must balance by tokens, or better, by predicted compute.</p>
+<p><strong>The unit of work is a long-lived, stateful stream.</strong> Each generation holds a KV cache that grows with every token, pinning a slice of HBM (high-bandwidth memory) for the request&rsquo;s entire lifetime. You cannot freely move an in-flight request to another replica — its KV cache lives in one GPU&rsquo;s memory. Statelessness, the thing that makes web services trivially scalable, is gone.</p>
+<p><strong>Latency has two numbers, not one.</strong> Users perceive two distinct quantities: <strong>TTFT</strong> (time to first token), how long until words start appearing, and <strong>TPOT / ITL</strong> (time per output token / inter-token latency), how fast they then stream. These trade against each other and against throughput. A single &ldquo;latency&rdquo; SLO is meaningless; you need both.</p>
+<figure class="viz" id="fig-serving-ttft-tpot-timeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 920 280" role="img" aria-label="Horizontal timeline showing one LLM streaming request decomposed into TTFT (queue plus prefill) and TPOT (per-output-token inter-token latency) phases, with an animated playhead sweeping through each phase.">
+<defs>
+  <marker id="ttft-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+  <marker id="ttft-arrow-t" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+  <clipPath id="ttft-box-clip">
+    <rect x="90" y="116" width="272" height="68" rx="8"/>
+  </clipPath>
+  <clipPath id="tok-region-clip">
+    <rect x="366" y="116" width="538" height="68" rx="4"/>
+  </clipPath>
+</defs>
+<style>
+  #fig-serving-ttft-tpot-timeline text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-ttft-tpot-timeline .lbl-sm { font: 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-serving-ttft-tpot-timeline .lbl-bold { font: 700 13px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-ttft-tpot-timeline .lbl-mono { font: 600 12px var(--mono,monospace); }
+  #fig-serving-ttft-tpot-timeline .brace-label { font: 700 12px var(--sans,sans-serif); }
+  #fig-serving-ttft-tpot-timeline .phase-label { font: 600 12px var(--sans,sans-serif); fill: white; }
+</style>
+
+
+<line x1="30" y1="222" x2="890" y2="222" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2" marker-end="url(#ttft-arrow-t)"/>
+<text x="898" y="226" class="lbl-sm" text-anchor="start">t</text>
+
+
+<circle cx="50" cy="222" r="7" fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="50" y="204" text-anchor="middle" class="lbl-bold">request</text>
+<text x="20" y="240" text-anchor="start" class="lbl-sm">t=0 / enqueue</text>
+
+
+<line x1="58" y1="222" x2="86" y2="222" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ttft-arrow)"/>
+
+
+<rect x="90" y="116" width="272" height="68" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+
+<rect id="ttft-sweep" x="90" y="116" width="0" height="68" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.35" clip-path="url(#ttft-box-clip)">
+  <animate attributeName="width" from="0" to="272" dur="1.6s" begin="0.3s" fill="freeze" calcMode="ease-in-out" id="ttft-anim"/>
+</rect>
+<text x="226" y="153" text-anchor="middle" class="phase-label" fill="var(--accent,#6366f1)" font-weight="700" font-size="13">queue + prefill compute</text>
+
+
+<path d="M90,104 L90,96 L362,96 L362,104" fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+<text x="226" y="90" text-anchor="middle" class="brace-label" fill="var(--accent,#6366f1)">TTFT</text>
+
+
+<line x1="362" y1="108" x2="362" y2="236" stroke="var(--ink-soft,#475569)" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="362" y="248" text-anchor="middle" class="lbl-sm">first token</text>
+
+<circle id="ft-marker" cx="362" cy="184" r="6" fill="var(--good,#2f9e6e)">
+  <animate attributeName="r" values="6;10;6" dur="0.5s" begin="ttft-anim.end" repeatCount="1"/>
+</circle>
+
+
+
+<path d="M366,104 L366,96 L876,96 L876,104" fill="none" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+<text x="621" y="90" text-anchor="middle" class="brace-label" fill="var(--ink-soft,#475569)">streaming (TPOT each)</text>
+
+
+
+<g id="tok-cells">
+
+  <rect id="tok1" x="368" y="130" width="68" height="44" rx="6" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="402" y="157" text-anchor="middle" class="lbl-mono" fill="var(--ink-soft,#475569)">tok</text>
+
+  <rect x="368" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0">
+    <animate attributeName="fill-opacity" values="0;0.4;0" dur="0.5s" begin="ttft-anim.end+0.1s" repeatCount="1"/>
+  </rect>
+
+
+  <text x="438" y="186" text-anchor="middle" class="lbl-sm">TPOT</text>
+  <line x1="438" y1="178" x2="438" y2="174" stroke="var(--muted,#94a3b8)" stroke-width="1"/>
+
+
+  <rect id="tok2" x="448" y="130" width="68" height="44" rx="6" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="482" y="157" text-anchor="middle" class="lbl-mono" fill="var(--ink-soft,#475569)">tok</text>
+  <rect x="448" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0">
+    <animate attributeName="fill-opacity" values="0;0.4;0" dur="0.5s" begin="ttft-anim.end+0.6s" repeatCount="1"/>
+  </rect>
+
+
+  <rect id="tok3" x="528" y="130" width="68" height="44" rx="6" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="562" y="157" text-anchor="middle" class="lbl-mono" fill="var(--ink-soft,#475569)">tok</text>
+  <rect x="528" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0">
+    <animate attributeName="fill-opacity" values="0;0.4;0" dur="0.5s" begin="ttft-anim.end+1.1s" repeatCount="1"/>
+  </rect>
+
+
+  <rect id="tok4" x="608" y="130" width="68" height="44" rx="6" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="642" y="157" text-anchor="middle" class="lbl-mono" fill="var(--ink-soft,#475569)">tok</text>
+  <rect x="608" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0">
+    <animate attributeName="fill-opacity" values="0;0.4;0" dur="0.5s" begin="ttft-anim.end+1.6s" repeatCount="1"/>
+  </rect>
+
+
+  <text x="706" y="157" text-anchor="middle" class="lbl-mono" fill="var(--muted,#94a3b8)">...</text>
+
+
+  <rect id="tokeos" x="730" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="764" y="157" text-anchor="middle" class="lbl-mono" fill="var(--accent,#6366f1)" font-weight="700">EOS</text>
+
+  <rect x="730" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0">
+    <animate attributeName="fill-opacity" values="0;0.45;0.12" dur="0.6s" begin="ttft-anim.end+2.4s" repeatCount="1"/>
+  </rect>
+</g>
+
+
+<text x="764" y="240" text-anchor="middle" class="lbl-sm">done</text>
+
+
+<circle id="playhead" cx="50" cy="184" r="5" fill="var(--warn,#e0a106)" opacity="0.9">
+  <animate attributeName="cx" from="50" to="362" dur="1.6s" begin="0.3s" fill="freeze" calcMode="ease-in-out" id="ph-anim"/>
+  <animate attributeName="opacity" from="0.9" to="0" dur="0.4s" begin="ttft-anim.end" fill="freeze"/>
+</circle>
+
+
+<text x="226" y="176" text-anchor="middle" fill="var(--accent,#6366f1)" font-size="11" font-style="italic" opacity="0">
+  waiting...<animate attributeName="opacity" values="0;0.8;0" dur="1.6s" begin="0.3s" fill="freeze"/>
+</text>
+
+
+<line x1="50" y1="219" x2="50" y2="225" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<line x1="362" y1="219" x2="362" y2="225" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+<line x1="764" y1="219" x2="764" y2="225" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+
+</svg>
+<figcaption><b>Two distinct latency numbers govern every streaming LLM request.</b> TTFT (time to first token) is the one-time wait while the prompt is queued and prefilled — users feel this as "how long until words appear." TPOT (time per output token) is the repeated inter-token interval during streaming — users feel this as "how fast do words flow." Optimizing one often hurts the other, which is why a single latency SLO is insufficient.</figcaption>
+</figure>
+
+<p>The job of a serving system is to keep both of these numbers inside a budget while keeping the GPUs — the expensive part — busy. Everything below is in service of that tension.</p>
+<h2 id="the-reference-architecture">The Reference Architecture<a class="headerlink" href="#the-reference-architecture" title="Permanent link">¶</a></h2>
+<p>Let us lay out the full stack top to bottom, then dissect each layer. Requests flow downward; tokens stream back upward.</p>
+<figure class="viz" id="fig-serving-reference-architecture">
+<svg viewBox="0 0 1040 760" role="img" aria-label="Layered reference serving architecture: clients send requests via HTTPS/gRPC to the API gateway, which routes down to a router (the brain), which fans out to three model pools, which share common infrastructure below. Tokens stream back upward to the client.">
+<defs>
+  <marker id="sra-arrow-down" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+  <marker id="sra-arrow-up" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="sra-arrow-fan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+</defs>
+<style>
+  #fig-serving-reference-architecture text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-reference-architecture .title { font: 700 15px var(--sans,sans-serif); }
+  #fig-serving-reference-architecture .duty { font: 12px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-serving-reference-architecture .duty-white { font: 12px var(--sans,sans-serif); fill: rgba(255,255,255,0.85); }
+  #fig-serving-reference-architecture .title-white { font: 700 15px var(--sans,sans-serif); fill: white; }
+  #fig-serving-reference-architecture .caption { font: 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-serving-reference-architecture .rep { font: 600 11px var(--mono,monospace); fill: var(--ink-soft,#475569); }
+  #fig-serving-reference-architecture .pool-title { font: 700 13px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-reference-architecture .pool-sub { font: 11px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-serving-reference-architecture .infra-title { font: 700 13px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-reference-architecture .ret-lbl { font: 11px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+</style>
+
+
+<rect x="20" y="20" width="920" height="110" rx="10" fill="var(--surface,#eef2ff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+
+
+<text x="36" y="72" class="title" fill="var(--muted,#94a3b8)">clients</text>
+<text x="36" y="90" class="caption">( browsers,</text>
+<text x="36" y="104" class="caption">  apps, APIs )</text>
+
+
+<line x1="130" y1="75" x2="220" y2="75" stroke="var(--ink-soft,#475569)" stroke-width="1.8" marker-end="url(#sra-arrow-down)"/>
+<text x="175" y="68" text-anchor="middle" class="caption">HTTPS / gRPC</text>
+
+
+<rect x="225" y="34" width="680" height="92" rx="8" fill="var(--surface,#eef2ff)" stroke="var(--border-2,#cbd5e1)" stroke-width="2"/>
+<text x="565" y="60" text-anchor="middle" class="title">API GATEWAY</text>
+<text x="565" y="82" text-anchor="middle" class="duty">TLS, authN/authZ, rate limit, quota</text>
+<text x="565" y="99" text-anchor="middle" class="duty">request validation, usage metering</text>
+
+
+<line x1="560" y1="132" x2="560" y2="160" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#sra-arrow-down)"/>
+
+
+<rect x="160" y="164" width="800" height="112" rx="10" fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="560" y="194" text-anchor="middle" class="title-white">ROUTER</text>
+<text x="560" y="216" text-anchor="middle" class="duty-white">model selection (by name / policy)</text>
+<text x="560" y="234" text-anchor="middle" class="duty-white">load-aware replica pick (least-load)</text>
+<text x="560" y="252" text-anchor="middle" class="duty-white">prefix-cache affinity, A/B split</text>
+
+<rect x="886" y="172" width="64" height="22" rx="10" fill="rgba(255,255,255,0.2)"/>
+<text x="918" y="187" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="10" font-weight="700">the brain</text>
+
+
+
+<path d="M560,278 L560,306 L240,306 L240,328" fill="none" stroke="var(--ink-soft,#475569)" stroke-width="1.8" marker-end="url(#sra-arrow-fan)"/>
+
+<line x1="560" y1="278" x2="560" y2="328" stroke="var(--ink-soft,#475569)" stroke-width="1.8" marker-end="url(#sra-arrow-fan)"/>
+
+<path d="M560,278 L560,306 L880,306 L880,328" fill="none" stroke="var(--ink-soft,#475569)" stroke-width="1.8" marker-end="url(#sra-arrow-fan)"/>
+
+
+
+
+<rect x="60" y="330" width="320" height="210" rx="10" fill="var(--surface,#e0e7ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="2"/>
+<text x="220" y="358" text-anchor="middle" class="pool-title">MODEL POOL A</text>
+<text x="220" y="376" text-anchor="middle" class="pool-sub">(70B, TP=4)</text>
+
+<rect x="90" y="392" width="70" height="34" rx="6" fill="var(--surface,#c7d2fe)" stroke="var(--border-2,#a5b4fc)" stroke-width="1.5"/>
+<text x="125" y="414" text-anchor="middle" class="rep">rep0</text>
+<rect x="180" y="392" width="70" height="34" rx="6" fill="var(--surface,#c7d2fe)" stroke="var(--border-2,#a5b4fc)" stroke-width="1.5"/>
+<text x="215" y="414" text-anchor="middle" class="rep">rep1</text>
+
+<text x="220" y="454" text-anchor="middle" class="caption">each replica = inference engine</text>
+<text x="220" y="469" text-anchor="middle" class="caption">(vLLM / SGLang / TRT-LLM)</text>
+<text x="220" y="490" text-anchor="middle" class="caption">continuous-batching scheduler</text>
+<text x="220" y="505" text-anchor="middle" class="caption">+ KV cache per replica</text>
+
+
+<rect x="400" y="330" width="320" height="210" rx="10" fill="var(--surface,#e0e7ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="2"/>
+<text x="560" y="358" text-anchor="middle" class="pool-title">MODEL POOL B</text>
+<text x="560" y="376" text-anchor="middle" class="pool-sub">(8B, TP=1)</text>
+<rect x="430" y="392" width="70" height="34" rx="6" fill="var(--surface,#c7d2fe)" stroke="var(--border-2,#a5b4fc)" stroke-width="1.5"/>
+<text x="465" y="414" text-anchor="middle" class="rep">rep0</text>
+<rect x="520" y="392" width="70" height="34" rx="6" fill="var(--surface,#c7d2fe)" stroke="var(--border-2,#a5b4fc)" stroke-width="1.5"/>
+<text x="555" y="414" text-anchor="middle" class="rep">rep1</text>
+<text x="610" y="414" text-anchor="start" class="rep" fill="var(--muted,#94a3b8)">…</text>
+<text x="560" y="454" text-anchor="middle" class="caption">each replica = inference engine</text>
+<text x="560" y="469" text-anchor="middle" class="caption">(vLLM / SGLang / TRT-LLM)</text>
+<text x="560" y="490" text-anchor="middle" class="caption">continuous-batching scheduler</text>
+<text x="560" y="505" text-anchor="middle" class="caption">+ KV cache per replica</text>
+
+
+<rect x="740" y="330" width="240" height="210" rx="10" fill="var(--surface,#e0e7ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="2"/>
+<text x="860" y="358" text-anchor="middle" class="pool-title">MODEL POOL C</text>
+<text x="860" y="376" text-anchor="middle" class="pool-sub">(embeddings)</text>
+<rect x="770" y="392" width="70" height="34" rx="6" fill="var(--surface,#c7d2fe)" stroke="var(--border-2,#a5b4fc)" stroke-width="1.5"/>
+<text x="805" y="414" text-anchor="middle" class="rep">rep0</text>
+<rect x="860" y="392" width="70" height="34" rx="6" fill="var(--surface,#c7d2fe)" stroke="var(--border-2,#a5b4fc)" stroke-width="1.5"/>
+<text x="895" y="414" text-anchor="middle" class="rep">rep1</text>
+<text x="860" y="454" text-anchor="middle" class="caption">continuous-batching</text>
+<text x="860" y="469" text-anchor="middle" class="caption">scheduler + KV cache</text>
+
+
+<line x1="220" y1="542" x2="220" y2="582" stroke="var(--ink-soft,#475569)" stroke-width="1.8" marker-end="url(#sra-arrow-down)"/>
+<line x1="560" y1="542" x2="560" y2="582" stroke="var(--ink-soft,#475569)" stroke-width="1.8" marker-end="url(#sra-arrow-down)"/>
+<line x1="860" y1="542" x2="860" y2="582" stroke="var(--ink-soft,#475569)" stroke-width="1.8" marker-end="url(#sra-arrow-down)"/>
+
+
+<rect x="20" y="585" width="960" height="120" rx="10" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="500" y="618" text-anchor="middle" class="infra-title">SHARED INFRA</text>
+<text x="500" y="642" text-anchor="middle" class="duty">KV/prefix cache store, metrics (Prometheus),</text>
+<text x="500" y="660" text-anchor="middle" class="duty">autoscaler controller, model weight registry / object store</text>
+
+
+<line x1="1010" y1="540" x2="1010" y2="132" stroke="var(--good,#2f9e6e)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#sra-arrow-up)"/>
+
+<line x1="982" y1="435" x2="1006" y2="435" stroke="var(--good,#2f9e6e)" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+<text x="1016" y="350" class="ret-lbl" text-anchor="start" transform="rotate(-90,1016,350)">tokens stream back ▲</text>
+
+</svg>
+<figcaption><b>The reference LLM serving stack: requests descend through five layers; tokens stream back up.</b> The <b>gateway</b> is cheap and stateless (TLS, auth, rate limits). The <b>router</b> is the brain — it picks model and replica using token-weighted load and prefix-cache affinity. <b>Model pools</b> group identical replicas each running a continuous-batching engine. <b>Shared infra</b> cross-cuts all pools with caching, metrics, and the autoscaler.</figcaption>
+</figure>
+
+<p>A few non-obvious points about this picture. The <strong>gateway</strong> is cheap, stateless, CPU-bound, and trivially horizontally scalable; you run many of them behind a standard L4/L7 load balancer. The <strong>router</strong> is the brain — it makes per-request placement decisions and is where most of the interesting policy lives. The <strong>model pools</strong> are groups of identical replicas of one model configuration; each replica is a full inference engine with its own continuous-batching scheduler and its own KV cache. The <strong>autoscaler</strong> watches metrics and changes the number of replicas per pool. Below we walk these in order.</p>
+<h2 id="the-gateway-the-cheap-stateless-front-door">The Gateway: The Cheap, Stateless Front Door<a class="headerlink" href="#the-gateway-the-cheap-stateless-front-door" title="Permanent link">¶</a></h2>
+<p>The gateway does everything that is <em>not</em> model inference and <em>is</em> per-request bookkeeping. Keep it dumb and fast so it never becomes the bottleneck.</p>
+<ul>
+<li><strong>TLS termination</strong> and HTTP/2 or gRPC handling. Streaming responses go out as Server-Sent Events (SSE) or chunked transfer; the gateway must support streaming without buffering the whole response.</li>
+<li><strong>Authentication and authorization</strong>: validate API keys / OAuth tokens, resolve the caller&rsquo;s org and tier.</li>
+<li><strong>Rate limiting and quota</strong>: per-key requests-per-minute <em>and</em> tokens-per-minute. LLM rate limits must be token-aware, because one request can be 1,000x another.</li>
+<li><strong>Usage metering</strong>: count prompt and completion tokens for billing and for the data flywheel (<a href="../12-production-mlops/05-data-flywheel.html">Data Flywheels &amp; Continuous Improvement</a>).</li>
+<li><strong>Request validation and normalization</strong>: enforce <code>max_tokens</code> caps, reject malformed JSON early, apply default sampling params.</li>
+</ul>
+<p>A token-aware rate limiter is the one piece worth showing, because the naive &ldquo;N requests per minute&rdquo; limiter is wrong for LLMs. We use a token bucket keyed on <em>tokens</em>, refilling continuously.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TokenBucketLimiter</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Token-aware rate limiter. The &#39;tokens&#39; here are LLM tokens (prompt+completion),</span>
+<span class="sd">    not generic request credits. We refill `rate` tokens/sec up to `capacity`.</span>
+
+<span class="sd">    Each LLM request first RESERVES an estimate (prompt_len + max_new_tokens),</span>
+<span class="sd">    then RECONCILES with the true completion length when the stream finishes.</span>
+<span class="sd">    This prevents a flood of long-generation requests from blowing the budget.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rate_per_sec</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">capacity</span><span class="p">:</span> <span class="nb">float</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rate</span> <span class="o">=</span> <span class="n">rate_per_sec</span>          <span class="c1"># e.g. 50_000 tokens/sec for a tier</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">capacity</span> <span class="o">=</span> <span class="n">capacity</span>          <span class="c1"># burst ceiling, e.g. 100_000 tokens</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">=</span> <span class="n">capacity</span>            <span class="c1"># start full</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">last</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_refill</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
+        <span class="n">elapsed</span> <span class="o">=</span> <span class="n">now</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">last</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">capacity</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">+</span> <span class="n">elapsed</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">rate</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">last</span> <span class="o">=</span> <span class="n">now</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">try_reserve</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">estimated_tokens</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Reserve up-front. Returns False (429 -&gt; client backs off) if over budget.&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">lock</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_refill</span><span class="p">()</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">&gt;=</span> <span class="n">estimated_tokens</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">-=</span> <span class="n">estimated_tokens</span>
+                <span class="k">return</span> <span class="kc">True</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">reconcile</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">estimated_tokens</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">actual_tokens</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Refund or charge the difference once the true length is known.&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">lock</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_refill</span><span class="p">()</span>
+            <span class="c1"># If we over-estimated, give tokens back (capped at capacity).</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">capacity</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">+</span> <span class="p">(</span><span class="n">estimated_tokens</span> <span class="o">-</span> <span class="n">actual_tokens</span><span class="p">))</span>
+</code></pre></div>
+<p>The crucial idea is <strong>reserve-then-reconcile</strong>: because output length is unknown, you charge a pessimistic estimate up front (so a burst of long requests cannot overrun the budget) and refund the slack when the stream ends. This same pattern reappears in admission control and in cost accounting.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>Put a hard server-side cap on <code>max_tokens</code> at the gateway and refuse requests that omit one or ask for absurd lengths. Unbounded generation is the single most common cause of a &ldquo;healthy&rdquo; cluster suddenly blowing its p99 — a handful of 16k-token requests can monopolize KV cache and starve everyone else. A cap is a one-line policy that prevents a class of incidents.</p>
+</div>
+<h2 id="the-router-where-the-intelligence-lives">The Router: Where the Intelligence Lives<a class="headerlink" href="#the-router-where-the-intelligence-lives" title="Permanent link">¶</a></h2>
+<p>The router answers two questions for every request: <em>which model</em> and <em>which replica of that model</em>. Both are policy decisions, and both matter for latency and cost.</p>
+<h3 id="model-routing">Model routing<a class="headerlink" href="#model-routing" title="Permanent link">¶</a></h3>
+<p>Sometimes the caller names the model explicitly (<code>"model": "llama-3-70b"</code>) and routing is a lookup. More interesting is <strong>policy routing</strong>, where the system chooses the model: send easy queries to a cheap 8B model and hard ones to an expensive 70B, gated by a small classifier or by the prompt&rsquo;s characteristics. This <em>cascade</em> pattern is a major cost lever and is developed in depth in <a href="../12-production-mlops/03-caching-routing-cost.html">Caching, Routing &amp; Cost Control in Production</a>; here we note only that the router is the natural home for it, and that any routing classifier must itself be cheap (sub-millisecond) or you have just added latency to every request.</p>
+<h3 id="replica-selection-do-not-use-round-robin">Replica selection: do not use round-robin<a class="headerlink" href="#replica-selection-do-not-use-round-robin" title="Permanent link">¶</a></h3>
+<p>The seductive default is round-robin or random. For LLMs this is a mistake, because replicas are <em>stateful and unevenly loaded</em>. Two better signals:</p>
+<ol>
+<li><strong>Least outstanding load.</strong> Pick the replica with the fewest queued + running tokens (not requests). Because cost scales with tokens, balancing tokens balances work.</li>
+<li><strong>Prefix-cache affinity.</strong> If a request shares a long prefix (system prompt, few-shot examples, a document) with a recent request, routing it to the replica that already has those KV blocks cached turns an expensive prefill into a near-free cache hit. This is the central idea of <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a> and of SGLang&rsquo;s RadixAttention (<a href="../07-inference-serving/04-sglang-radixattention.html">SGLang: RadixAttention &amp; Structured Programs</a>).</li>
+</ol>
+<p>These two goals conflict: affinity says &ldquo;send it where the cache is,&rdquo; load-balancing says &ldquo;send it where it&rsquo;s quiet.&rdquo; The router blends them. A simple, effective scheme is <strong>power-of-two-choices with a cache bonus</strong>: sample two candidate replicas at random, and pick the one with the lower <em>effective</em> load, where effective load subtracts a bonus for cached prefix overlap.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ReplicaState</span><span class="p">:</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">queued_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>        <span class="c1"># tokens waiting (prefill not yet started)</span>
+    <span class="n">running_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>       <span class="c1"># tokens of active sequences (KV held)</span>
+    <span class="n">cached_prefixes</span><span class="p">:</span> <span class="nb">set</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">set</span><span class="p">)</span>  <span class="c1"># hashes of cached prefix blocks</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">effective_load</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">req_prefix_hashes</span><span class="p">:</span> <span class="nb">set</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="c1"># Base load = work in flight. Tokens are the right unit, not request count.</span>
+        <span class="n">load</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">queued_tokens</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">running_tokens</span>
+        <span class="c1"># Cache bonus: each overlapping prefix block we DON&#39;T have to recompute</span>
+        <span class="c1"># is real prefill work saved, so we subtract it from effective load.</span>
+        <span class="n">overlap</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cached_prefixes</span> <span class="o">&amp;</span> <span class="n">req_prefix_hashes</span><span class="p">)</span>
+        <span class="n">CACHE_BLOCK_TOKENS</span> <span class="o">=</span> <span class="mi">16</span>
+        <span class="k">return</span> <span class="n">load</span> <span class="o">-</span> <span class="n">overlap</span> <span class="o">*</span> <span class="n">CACHE_BLOCK_TOKENS</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">pick_replica</span><span class="p">(</span><span class="n">replicas</span><span class="p">,</span> <span class="n">req_prefix_hashes</span><span class="p">,</span> <span class="n">d</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Power-of-d-choices, load- and cache-aware. O(d), no global scan needed.&quot;&quot;&quot;</span>
+    <span class="n">candidates</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">replicas</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="nb">min</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">replicas</span><span class="p">)))</span>
+    <span class="k">return</span> <span class="nb">min</span><span class="p">(</span><span class="n">candidates</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">effective_load</span><span class="p">(</span><span class="n">req_prefix_hashes</span><span class="p">))</span>
+</code></pre></div>
+<p>Power-of-two-choices is a beautiful result from balls-into-bins theory: sampling <em>two</em> random replicas and picking the less loaded one reduces the maximum load from <span class="arithmatex">\(\Theta(\log n / \log\log n)\)</span> (pure random) to <span class="arithmatex">\(\Theta(\log\log n)\)</span> — an exponential improvement — while needing only local state for two replicas, not a global scan. It is the workhorse of large fleets precisely because it avoids the herd behavior and central-state bottleneck of &ldquo;always pick the global minimum.&rdquo;</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: the thundering herd to the least-loaded replica</p>
+<p>If every router instance always sends to the <em>single</em> globally least-loaded replica, they all pick the same one simultaneously, overload it, then all stampede to the next — load oscillates instead of balancing. This is why power-of-<em>d</em>-choices (with randomization) beats &ldquo;always pick the minimum&rdquo; in a distributed router. Randomize, and never let all routers share one synchronous view of &ldquo;the best&rdquo; replica.</p>
+</div>
+<h2 id="slos-defining-fast-enough-precisely">SLOs: Defining &ldquo;Fast Enough&rdquo; Precisely<a class="headerlink" href="#slos-defining-fast-enough-precisely" title="Permanent link">¶</a></h2>
+<p>You cannot design a system without a target. For LLM serving the target is a set of <strong>SLOs</strong> (service-level objectives) on latency, stated as <em>percentiles</em>, because averages hide the tail that users actually feel.</p>
+<p>The canonical four metrics:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Definition</th>
+<th>Why it matters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>TTFT</strong></td>
+<td>enqueue → first output token</td>
+<td>Perceived responsiveness; dominated by queue wait + prefill</td>
+</tr>
+<tr>
+<td><strong>TPOT / ITL</strong></td>
+<td>mean time between successive output tokens</td>
+<td>Streaming smoothness; dominated by decode step time</td>
+</tr>
+<tr>
+<td><strong>E2E latency</strong></td>
+<td>enqueue → last token</td>
+<td><span class="arithmatex">\(\approx \text{TTFT} + \text{TPOT}\times(N_{out}-1)\)</span></td>
+</tr>
+<tr>
+<td><strong>Throughput</strong></td>
+<td>tokens/sec across the fleet</td>
+<td>Drives cost-per-token (the business metric)</td>
+</tr>
+</tbody>
+</table>
+<p>A real SLO names a percentile and a number, e.g. <em>&ldquo;p50 TTFT ≤ 300 ms, p99 TTFT ≤ 1,000 ms, p90 TPOT ≤ 50 ms, for prompts ≤ 2k tokens.&rdquo;</em> The percentile matters enormously: the gap between p50 and p99 is almost entirely <strong>queueing delay</strong> under load, which is why batching and admission control (below) are SLO tools, not just throughput tools.</p>
+<p>The fundamental tension is <strong>throughput vs. latency</strong>, mediated by batch size. Bigger batches amortize weight loads across more tokens, raising throughput (lower cost), but they make each decode step take longer (worse TPOT) and make a newly arrived request wait behind a larger in-flight batch (worse TTFT). Continuous batching (<a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>) and chunked prefill (<a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>) exist to move this frontier outward, but the tradeoff never disappears. The serving system&rsquo;s batching <em>policy</em> is the knob that places you on the curve where your SLOs are met at the lowest cost.</p>
+<figure class="viz" id="fig-serving-throughput-tpot-frontier">
+<svg viewBox="0 0 820 570" role="img" aria-label="Scatter plot showing the throughput versus per-token latency (TPOT) tradeoff curve with a vertical SLO constraint line. A small-batch operating point sits at low throughput and low TPOT; a large-batch point sits at high throughput and high TPOT. The SLO line marks the maximum allowable TPOT budget; the optimal operating point is where the curve meets the SLO line.">
+<defs>
+  <marker id="tpf-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+  <linearGradient id="tpf-forbidden-grad" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="var(--warn,#ef4444)" stop-opacity="0.10"/>
+    <stop offset="100%" stop-color="var(--warn,#ef4444)" stop-opacity="0.20"/>
+  </linearGradient>
+  <linearGradient id="tpf-feasible-grad" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="var(--good,#2f9e6e)" stop-opacity="0.08"/>
+    <stop offset="100%" stop-color="var(--good,#2f9e6e)" stop-opacity="0.04"/>
+  </linearGradient>
+</defs>
+<style>
+  #fig-serving-throughput-tpot-frontier text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-throughput-tpot-frontier .axis-lbl { font: 600 13px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-throughput-tpot-frontier .callout { font: 11.5px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-throughput-tpot-frontier .slo-lbl { font: 700 12px var(--sans,sans-serif); fill: var(--warn,#ef4444); }
+  #fig-serving-throughput-tpot-frontier .cap { font: 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-serving-throughput-tpot-frontier .optimal-lbl { font: 700 11px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+</style>
+
+
+
+
+
+
+<rect x="116" y="58" width="374" height="414" fill="url(#tpf-feasible-grad)"/>
+
+<rect x="490" y="58" width="298" height="414" fill="url(#tpf-forbidden-grad)"/>
+
+
+<line x1="116" y1="472" x2="116" y2="52" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#tpf-arrow)"/>
+<line x1="116" y1="472" x2="778" y2="472" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#tpf-arrow)"/>
+
+
+
+<text x="38" y="265" text-anchor="middle" transform="rotate(-90 38 265)" class="axis-lbl">throughput (tok/s)</text>
+
+<text x="440" y="520" text-anchor="middle" class="axis-lbl">per-token latency (TPOT)</text>
+
+
+<line x1="116" y1="372" x2="770" y2="372" stroke="var(--border-2,#e2e8f0)" stroke-width="1" stroke-dasharray="4 4"/>
+<line x1="116" y1="272" x2="770" y2="272" stroke="var(--border-2,#e2e8f0)" stroke-width="1" stroke-dasharray="4 4"/>
+<line x1="116" y1="172" x2="770" y2="172" stroke="var(--border-2,#e2e8f0)" stroke-width="1" stroke-dasharray="4 4"/>
+<line x1="270" y1="58" x2="270" y2="472" stroke="var(--border-2,#e2e8f0)" stroke-width="1" stroke-dasharray="4 4"/>
+<line x1="490" y1="58" x2="490" y2="472" stroke="var(--border-2,#e2e8f0)" stroke-width="1" stroke-dasharray="4 4"/>
+<line x1="660" y1="58" x2="660" y2="472" stroke="var(--border-2,#e2e8f0)" stroke-width="1" stroke-dasharray="4 4"/>
+
+
+<path d="M162,452 C200,388 250,308 318,228 C368,184 438,154 516,130 C594,108 654,102 714,98"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="3.5" stroke-linecap="round"/>
+
+
+<line x1="490" y1="52" x2="490" y2="480" stroke="var(--warn,#ef4444)" stroke-width="2.5" stroke-dasharray="8 5"/>
+
+<text x="490" y="47" text-anchor="middle" class="slo-lbl">SLO: stay LEFT of this line</text>
+
+<text x="622" y="310" text-anchor="middle" class="slo-lbl" font-size="11" opacity="0.7">forbidden zone</text>
+<text x="622" y="327" text-anchor="middle" class="slo-lbl" font-size="11" opacity="0.7">(TPOT over budget)</text>
+
+<text x="300" y="495" text-anchor="middle" class="cap" fill="var(--good,#2f9e6e)">feasible region</text>
+
+
+<circle cx="235" cy="316" r="8" fill="var(--good,#2f9e6e)" stroke="var(--surface,white)" stroke-width="2"/>
+
+<rect x="122" y="256" width="170" height="44" rx="6" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="207" y="275" text-anchor="middle" class="callout">small batch: fast TPOT</text>
+<text x="207" y="291" text-anchor="middle" class="callout">but low throughput (costly)</text>
+
+<line x1="226" y1="300" x2="228" y2="308" stroke="var(--good,#2f9e6e)" stroke-width="1.2" stroke-dasharray="3 2"/>
+
+
+<circle cx="654" cy="102" r="8" fill="var(--warn,#e0a106)" stroke="var(--surface,white)" stroke-width="2"/>
+
+<rect x="470" y="148" width="196" height="30" rx="6" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="568" y="168" text-anchor="middle" class="callout">large batch: cheap but slow TPOT</text>
+
+<line x1="648" y1="112" x2="606" y2="148" stroke="var(--warn,#e0a106)" stroke-width="1.2" stroke-dasharray="3 2"/>
+
+
+
+<circle cx="490" cy="131" r="8" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2.5"/>
+<circle cx="490" cy="131" r="3" fill="var(--good,#2f9e6e)"/>
+
+<line x1="490" y1="119" x2="490" y2="111" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+<line x1="502" y1="123" x2="509" y2="117" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+<line x1="478" y1="123" x2="471" y2="117" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+
+<rect x="386" y="60" width="208" height="30" rx="6" fill="var(--surface,#f8fafc)" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+<text x="490" y="80" text-anchor="middle" class="optimal-lbl">best feasible op point</text>
+<line x1="490" y1="111" x2="490" y2="92" stroke="var(--good,#2f9e6e)" stroke-width="1" stroke-dasharray="3 2"/>
+
+
+<text x="440" y="548" text-anchor="middle" class="cap">the SLO is a vertical line you must stay left of, at max throughput</text>
+
+</svg>
+<figcaption><b>The throughput-vs-TPOT frontier shows the fundamental tradeoff mediated by batch size.</b> Each point on the curve is an operating regime: small batches deliver fast per-token latency but low throughput (expensive), while large batches invert this. The SLO budget is a vertical constraint — the system must operate to its left, and the goal is to reach the highest throughput still satisfying the SLO (the marked optimal point).</figcaption>
+</figure>
+
+<h2 id="queueing-littles-law-and-why-p99-explodes">Queueing: Little&rsquo;s Law and Why p99 Explodes<a class="headerlink" href="#queueing-littles-law-and-why-p99-explodes" title="Permanent link">¶</a></h2>
+<p>Here is the single most useful piece of quantitative reasoning for a serving interview. Treat one model pool as a queueing system. <strong>Little&rsquo;s Law</strong> relates the three core quantities of any stable queue:</p>
+<div class="arithmatex">\[
+L = \lambda \cdot W
+\]</div>
+<p>where <span class="arithmatex">\(L\)</span> is the mean number of requests in the system, <span class="arithmatex">\(\lambda\)</span> is the arrival rate (requests/sec), and <span class="arithmatex">\(W\)</span> is the mean time a request spends in the system. It holds for <em>any</em> stable system regardless of arrival or service distribution — which is what makes it so powerful for capacity planning.</p>
+<p>Now define <strong>utilization</strong> <span class="arithmatex">\(\rho = \lambda / (c\,\mu)\)</span>, where <span class="arithmatex">\(c\)</span> is the number of parallel &ldquo;servers&rdquo; (think: batch slots / replicas) and <span class="arithmatex">\(\mu\)</span> is the service rate per server. The brutal fact of queueing theory is that waiting time does not grow linearly as you approach saturation — it grows like <span class="arithmatex">\(1/(1-\rho)\)</span>. For a simple M/M/1 model the mean time in system is:</p>
+<div class="arithmatex">\[
+W = \frac{1}{\mu - \lambda} = \frac{1/\mu}{1 - \rho}
+\]</div>
+<p>As <span class="arithmatex">\(\rho \to 1\)</span>, <span class="arithmatex">\(W \to \infty\)</span>. This is the mathematical reason a cluster that looks &ldquo;80% utilized and fine&rdquo; falls off a cliff at 95%: the queueing term <span class="arithmatex">\(1/(1-\rho)\)</span> goes from <span class="arithmatex">\(5\)</span> to <span class="arithmatex">\(20\)</span> — a 4x latency increase from a 15-point utilization change. The tail percentiles explode even faster than the mean. <strong>This is why you provision LLM clusters to run at 60–75% utilization, not 95%.</strong> The headroom is not waste; it is the budget that keeps p99 bounded.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: sizing a pool to a p99 TTFT SLO</p>
+<p><strong>Goal.</strong> Serve Llama-3-8B with <strong>p99 TTFT ≤ 1.0 s</strong> at a peak of <strong>λ = 60 requests/sec</strong>, average prompt = 800 tokens.</p>
+<p><strong>Step 1 — single-replica prefill capacity.</strong> Suppose one A100 replica running vLLM prefills at a sustained ~10,000 tokens/sec (illustrative; measure yours). A request&rsquo;s prefill compute is <span class="arithmatex">\(800\)</span> tokens, so the <em>prefill service time</em> per request is</p>
+<div class="arithmatex">\[
+\frac{800}{10{,}000} = 0.08\ \text{s}.
+\]</div>
+<p>Service rate per replica <span class="arithmatex">\(\mu \approx 1/0.08 = 12.5\)</span> requests/sec.</p>
+<p><strong>Step 2 — replicas for throughput alone.</strong> Raw capacity needed: <span class="arithmatex">\(\lambda/\mu = 60 / 12.5 = 4.8\)</span>, so <strong>5 replicas</strong> would handle the mean load. But at 5 replicas, utilization is <span class="arithmatex">\(\rho = 60/(5 \times 12.5) = 0.96\)</span> — deep in the danger zone.</p>
+<p><strong>Step 3 — size for the tail, not the mean.</strong> Target <span class="arithmatex">\(\rho \le 0.7\)</span>. Required replicas:</p>
+<div class="arithmatex">\[
+c \ge \frac{\lambda}{0.7\,\mu} = \frac{60}{0.7 \times 12.5} = 6.86 \Rightarrow \textbf{7 replicas}.
+\]</div>
+<p><strong>Step 4 — sanity-check the tail.</strong> With <span class="arithmatex">\(c = 7\)</span>, the system behaves like an M/M/c with <span class="arithmatex">\(\rho = 60/(7\times12.5)=0.686\)</span>. Mean queue wait is small (tens of ms); the p99 wait — roughly a few multiples of the mean service time at this <span class="arithmatex">\(\rho\)</span> — lands comfortably under the prefill+queue budget of 1.0 s. The 2 &ldquo;extra&rdquo; replicas beyond the throughput minimum are buying you the tail.</p>
+<p><strong>Takeaway:</strong> the SLO, not the average load, sets the replica count. Sizing to the mean (<span class="arithmatex">\(\rho \approx 0.96\)</span>) would <em>technically</em> keep up on average while violating p99 constantly.</p>
+</div>
+<p>The admission-control corollary: when a queue starts to build, it is usually better to <strong>shed load fast</strong> (return HTTP 429 so the client retries elsewhere or backs off) than to admit a request that will violate its SLO anyway <em>and</em> consume a KV slot that degrades everyone behind it. A queue that grows without bound is a worse outcome than a clean rejection.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">admit</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">replica</span><span class="p">,</span> <span class="n">slo_ttft_s</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">prefill_tok_per_s</span><span class="o">=</span><span class="mi">10_000</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Predictive admission control. Estimate the TTFT this request WOULD see if</span>
+<span class="sd">    admitted to `replica` right now; reject (429) if it can&#39;t meet the SLO.</span>
+<span class="sd">    This protects the requests already in flight from a late-arriving straggler.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Work ahead of us in the queue (tokens), plus our own prefill cost.</span>
+    <span class="n">work_ahead</span> <span class="o">=</span> <span class="n">replica</span><span class="o">.</span><span class="n">queued_tokens</span>
+    <span class="n">our_prefill</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">prompt_len</span>
+    <span class="n">predicted_ttft</span> <span class="o">=</span> <span class="p">(</span><span class="n">work_ahead</span> <span class="o">+</span> <span class="n">our_prefill</span><span class="p">)</span> <span class="o">/</span> <span class="n">prefill_tok_per_s</span>
+    <span class="k">if</span> <span class="n">predicted_ttft</span> <span class="o">&gt;</span> <span class="n">slo_ttft_s</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>   <span class="c1"># shed load: 429, let the client retry / route elsewhere</span>
+    <span class="n">replica</span><span class="o">.</span><span class="n">queued_tokens</span> <span class="o">+=</span> <span class="n">our_prefill</span>
+    <span class="k">return</span> <span class="kc">True</span>
+</code></pre></div>
+<h2 id="replica-and-cluster-sizing-memory-is-the-real-constraint">Replica and Cluster Sizing: Memory Is the Real Constraint<a class="headerlink" href="#replica-and-cluster-sizing-memory-is-the-real-constraint" title="Permanent link">¶</a></h2>
+<p>Throughput sizing (above) tells you how many replicas you need for <em>speed</em>. A second, independent constraint sets how many concurrent requests <em>fit</em>: <strong>HBM capacity</strong>, almost entirely consumed by model weights plus KV cache. If you do not budget memory, the autoscaler will happily place a replica that OOMs on the first big batch.</p>
+<p>The memory budget for one replica is:</p>
+<div class="arithmatex">\[
+M_{\text{HBM}} = \underbrace{M_{\text{weights}}}_{\text{fixed}} + \underbrace{M_{\text{activations}}}_{\text{small, transient}} + \underbrace{M_{\text{KV}}}_{\text{scales with concurrency}\times\text{context}}
+\]</div>
+<p>The KV-cache term per token, for a model with <span class="arithmatex">\(L\)</span> layers, <span class="arithmatex">\(H_{kv}\)</span> key/value heads, head dimension <span class="arithmatex">\(d_h\)</span>, in <code>bytes_per_elem</code> precision, storing both K and V, is:</p>
+<div class="arithmatex">\[
+\text{bytes/token} = 2 \cdot L \cdot H_{kv} \cdot d_h \cdot \text{bytes\_per\_elem}
+\]</div>
+<p>The factor <span class="arithmatex">\(H_{kv}\)</span> (not the full head count <span class="arithmatex">\(H\)</span>) is exactly why grouped-query attention matters so much for serving — see <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>. Fewer KV heads means more concurrent requests fit. The number of requests you can serve concurrently is then the leftover memory divided by per-request KV footprint:</p>
+<div class="arithmatex">\[
+N_{\text{concurrent}} \approx \frac{M_{\text{HBM}} - M_{\text{weights}} - M_{\text{reserve}}}{(\text{bytes/token}) \times \overline{L_{\text{ctx}}}}
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">kv_bytes_per_token</span><span class="p">(</span><span class="n">num_layers</span><span class="p">,</span> <span class="n">num_kv_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">,</span> <span class="n">bytes_per_elem</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+    <span class="c1"># 2 for K and V; bytes_per_elem=2 for fp16/bf16, 1 for fp8.</span>
+    <span class="k">return</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">num_layers</span> <span class="o">*</span> <span class="n">num_kv_heads</span> <span class="o">*</span> <span class="n">head_dim</span> <span class="o">*</span> <span class="n">bytes_per_elem</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">max_concurrent_requests</span><span class="p">(</span><span class="n">hbm_gb</span><span class="p">,</span> <span class="n">weight_gb</span><span class="p">,</span> <span class="n">reserve_gb</span><span class="p">,</span>
+                            <span class="n">num_layers</span><span class="p">,</span> <span class="n">num_kv_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">,</span>
+                            <span class="n">avg_ctx_tokens</span><span class="p">,</span> <span class="n">bytes_per_elem</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;How many simultaneous sequences fit in one replica&#39;s HBM.&quot;&quot;&quot;</span>
+    <span class="n">free_bytes</span> <span class="o">=</span> <span class="p">(</span><span class="n">hbm_gb</span> <span class="o">-</span> <span class="n">weight_gb</span> <span class="o">-</span> <span class="n">reserve_gb</span><span class="p">)</span> <span class="o">*</span> <span class="mf">1e9</span>
+    <span class="n">per_tok</span> <span class="o">=</span> <span class="n">kv_bytes_per_token</span><span class="p">(</span><span class="n">num_layers</span><span class="p">,</span> <span class="n">num_kv_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">,</span> <span class="n">bytes_per_elem</span><span class="p">)</span>
+    <span class="n">per_request</span> <span class="o">=</span> <span class="n">per_tok</span> <span class="o">*</span> <span class="n">avg_ctx_tokens</span>
+    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">free_bytes</span> <span class="o">//</span> <span class="n">per_request</span><span class="p">)</span>
+
+<span class="c1"># Llama-3-70B-ish on one 80GB H100 shard would not fit weights alone (140GB bf16),</span>
+<span class="c1"># so 70B needs tensor parallelism. Let&#39;s size an 8B model on a single 80GB H100:</span>
+<span class="c1">#   8B bf16 weights ~= 16 GB. L=32, num_kv_heads=8 (GQA), head_dim=128.</span>
+<span class="n">n</span> <span class="o">=</span> <span class="n">max_concurrent_requests</span><span class="p">(</span>
+    <span class="n">hbm_gb</span><span class="o">=</span><span class="mi">80</span><span class="p">,</span> <span class="n">weight_gb</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">reserve_gb</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">num_layers</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">num_kv_heads</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">head_dim</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span>
+    <span class="n">avg_ctx_tokens</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span> <span class="n">bytes_per_elem</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>  <span class="c1"># -&gt; ~488 concurrent 2k-token sequences fit in KV cache</span>
+</code></pre></div>
+<p>For a 70B model the weights alone (≈140 GB in bf16) exceed one 80 GB GPU, forcing <strong>tensor parallelism</strong> (TP) across GPUs — covered in <a href="../07-inference-serving/11-multi-gpu-inference.html">Multi-GPU &amp; Multi-Node Inference</a>. The sizing rule then operates per-shard: with TP=4, each GPU holds a quarter of the weights and a quarter of each layer&rsquo;s KV, and the four GPUs together form <em>one replica</em>. PagedAttention (<a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>) is what lets you actually pack memory to near this theoretical <span class="arithmatex">\(N_{\text{concurrent}}\)</span> instead of wasting it on fragmentation and worst-case pre-allocation.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: two sizing constraints, take the binding one</p>
+<p>You now have two independent replica counts: one from <em>throughput</em> (<span class="arithmatex">\(\lambda / (0.7\mu)\)</span>) and one from <em>concurrency/memory</em> (<span class="arithmatex">\(N_{\text{requests}} / N_{\text{concurrent}}\)</span>). The real fleet size is the <strong>maximum</strong> of the two. Compute-bound workloads (long prompts, short outputs) are limited by prefill throughput; memory-bound workloads (many concurrent long-context chats) are limited by KV capacity. Know which regime you are in before you order GPUs.</p>
+</div>
+<h2 id="batching-policy-the-throughput-engine">Batching Policy: The Throughput Engine<a class="headerlink" href="#batching-policy-the-throughput-engine" title="Permanent link">¶</a></h2>
+<p>Inside each replica, the scheduler decides which sequences run in each forward pass. The serving system&rsquo;s job is to <em>configure</em> that policy, not reinvent it. Three levers, in increasing sophistication.</p>
+<p><strong>Continuous (in-flight) batching.</strong> Static batching — wait for <span class="arithmatex">\(B\)</span> requests, run them lockstep until all finish — wastes the GPU because short sequences sit idle waiting for the longest one. Continuous batching instead adds and evicts sequences <em>every decode step</em>: the moment one finishes, a waiting request takes its slot. This is the single biggest throughput win in modern serving and is the default in vLLM, SGLang, and TGI. The mechanism is detailed in <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>; the serving system mainly tunes its admission limits (<code>max_num_seqs</code>, <code>max_num_batched_tokens</code>).</p>
+<p><strong>Chunked prefill.</strong> Prefill is compute-heavy and <em>bursty</em>; a single long prompt&rsquo;s prefill can stall the decode loop, spiking the TPOT of everyone else (a &ldquo;decode stall&rdquo;). Chunked prefill splits a long prefill into token-sized chunks and interleaves them with ongoing decode steps, smoothing TPOT at a small TTFT cost. See <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>.</p>
+<p><strong>Prefill/decode disaggregation.</strong> Because prefill is compute-bound and decode is memory-bandwidth-bound, they want different hardware and different batch sizes. Disaggregation runs them on <em>separate</em> replica pools and streams the KV cache between them. This eliminates prefill-vs-decode interference entirely at the cost of a KV transfer over the network — worth it at scale, overkill for small deployments.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">BatchPolicy</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Serving-side knobs that bound a replica&#39;s continuous-batching scheduler.</span>
+<span class="sd">    These are the parameters the autoscaler and SLO budget actually control.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span>
+                 <span class="n">max_num_seqs</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>           <span class="c1"># concurrency cap (KV-memory bound)</span>
+                 <span class="n">max_num_batched_tokens</span><span class="o">=</span><span class="mi">8192</span><span class="p">,</span><span class="c1"># per-step token budget (TPOT bound)</span>
+                 <span class="n">enable_chunked_prefill</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                 <span class="n">prefill_chunk_size</span><span class="o">=</span><span class="mi">512</span><span class="p">):</span>     <span class="c1"># split long prefills into 512-tok chunks</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_num_seqs</span> <span class="o">=</span> <span class="n">max_num_seqs</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_num_batched_tokens</span> <span class="o">=</span> <span class="n">max_num_batched_tokens</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">enable_chunked_prefill</span> <span class="o">=</span> <span class="n">enable_chunked_prefill</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">prefill_chunk_size</span> <span class="o">=</span> <span class="n">prefill_chunk_size</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">step_budget</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">running_seqs</span><span class="p">,</span> <span class="n">waiting_prefills</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Decide this step&#39;s work. Decode tokens are cheap (1 tok/seq); reserve the</span>
+<span class="sd">        rest of the token budget for prefill chunks. This is the policy that</span>
+<span class="sd">        trades TTFT (admit prefills) against TPOT (keep decode steps small).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">decode_tokens</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">running_seqs</span><span class="p">)</span>            <span class="c1"># 1 token per running seq</span>
+        <span class="n">prefill_budget</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_num_batched_tokens</span> <span class="o">-</span> <span class="n">decode_tokens</span>
+        <span class="n">chunks</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">req</span> <span class="ow">in</span> <span class="n">waiting_prefills</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">prefill_budget</span> <span class="o">&lt;=</span> <span class="mi">0</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">running_seqs</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_num_seqs</span><span class="p">:</span>
+                <span class="k">break</span>
+            <span class="n">take</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">prefill_chunk_size</span><span class="p">,</span> <span class="n">req</span><span class="o">.</span><span class="n">remaining_prefill</span><span class="p">,</span> <span class="n">prefill_budget</span><span class="p">)</span>
+            <span class="n">chunks</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">req</span><span class="p">,</span> <span class="n">take</span><span class="p">))</span>
+            <span class="n">prefill_budget</span> <span class="o">-=</span> <span class="n">take</span>
+        <span class="k">return</span> <span class="n">decode_tokens</span><span class="p">,</span> <span class="n">chunks</span>
+</code></pre></div>
+<p>The deep lesson: <strong>the batch policy is how you spend your latency budget.</strong> A bigger <code>max_num_batched_tokens</code> raises throughput (cheaper) but lengthens each decode step (worse TPOT); enabling chunked prefill protects TPOT at the cost of slightly higher TTFT. There is no universally correct setting — there is only the setting that meets <em>your</em> SLO at the lowest cost, found by load-testing against your real traffic distribution.</p>
+<h2 id="autoscaling-on-gpus-scaling-a-resource-you-cannot-get-instantly">Autoscaling on GPUs: Scaling a Resource You Cannot Get Instantly<a class="headerlink" href="#autoscaling-on-gpus-scaling-a-resource-you-cannot-get-instantly" title="Permanent link">¶</a></h2>
+<p>Autoscaling a stateless web service is easy: CPU goes up, add pods, pods are ready in seconds. GPU autoscaling for LLMs is hard for three reasons, and a good system designer names all three.</p>
+<ol>
+<li><strong>Cold starts are minutes, not seconds.</strong> A new replica must acquire a GPU node (possibly from a cloud quota or a cluster autoscaler that itself takes minutes), pull a multi-gigabyte container, load tens of gigabytes of weights from object storage into HBM, warm up CUDA graphs / <code>torch.compile</code>, and prime the KV allocator. A 70B replica can take several minutes to become ready.</li>
+<li><strong>The scaling signal must be a leading indicator.</strong> Scaling on GPU utilization is too late — by the time utilization saturates, the queue is already building and p99 is already violated. Scale on <strong>queue depth / waiting-tokens</strong> or on a <strong>predicted-TTFT</strong> signal, which rise <em>before</em> the SLO breaks.</li>
+<li><strong>Scale-down must drain, not kill.</strong> You cannot SIGKILL a replica with 200 in-flight streaming requests; their KV caches and partial generations vanish. Scale-down marks a replica as <strong>draining</strong> (router stops sending new work), waits for in-flight requests to finish (with a timeout), <em>then</em> releases the GPU.</li>
+</ol>
+<p>Because cold starts are slow, the standard pattern is <strong>predictive + buffered autoscaling</strong>: keep a warm headroom of <span class="arithmatex">\(k\)</span> idle replicas (or a small pool of pre-warmed standby nodes) so demand spikes are absorbed instantly, while the slow path provisions more capacity in the background. The control law is a target-tracking loop on queue-derived load.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">desired_replicas</span><span class="p">(</span><span class="n">current_replicas</span><span class="p">,</span>
+                     <span class="n">waiting_tokens</span><span class="p">,</span> <span class="n">running_tokens</span><span class="p">,</span>
+                     <span class="n">replica_token_capacity</span><span class="p">,</span>   <span class="c1"># tokens/sec one replica sustains</span>
+                     <span class="n">target_utilization</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span>
+                     <span class="n">warm_buffer</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+                     <span class="n">min_replicas</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">max_replicas</span><span class="o">=</span><span class="mi">64</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Target-tracking autoscaler driven by QUEUE load (a leading indicator),</span>
+<span class="sd">    not GPU utilization (a lagging one).</span>
+
+<span class="sd">    offered_load: tokens of work the fleet currently owes (queued + in-flight).</span>
+<span class="sd">    We size so that this load sits at `target_utilization` of total capacity,</span>
+<span class="sd">    then add a warm buffer to absorb spikes during the slow cold-start window.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">offered_load</span> <span class="o">=</span> <span class="n">waiting_tokens</span> <span class="o">+</span> <span class="n">running_tokens</span>
+    <span class="n">total_capacity_needed</span> <span class="o">=</span> <span class="n">offered_load</span> <span class="o">/</span> <span class="n">target_utilization</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">total_capacity_needed</span> <span class="o">/</span> <span class="n">replica_token_capacity</span><span class="p">)</span>
+    <span class="n">desired</span> <span class="o">=</span> <span class="n">raw</span> <span class="o">+</span> <span class="n">warm_buffer</span>
+    <span class="c1"># Hysteresis: clamp and let the caller apply scale-down delay separately.</span>
+    <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="n">min_replicas</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">max_replicas</span><span class="p">,</span> <span class="n">desired</span><span class="p">))</span>
+</code></pre></div>
+<p>Two operational guardrails make this stable in practice. <strong>Hysteresis / asymmetric timing</strong>: scale <em>up</em> aggressively (spikes hurt users now) but scale <em>down</em> slowly (e.g. only after load stays low for several minutes), so a brief dip does not trigger an expensive teardown-then-rebuild cycle. <strong>Cost-aware bounds</strong>: GPUs are expensive enough that the <code>min_replicas</code> floor and <code>warm_buffer</code> are real budget decisions, not afterthoughts — a warm H100 sitting idle still bills by the second. Scale-to-zero is attractive for rarely-used models but pays the full multi-minute cold start on the next request, so reserve it for latency-tolerant or batch workloads.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: autoscaling on the wrong metric</p>
+<p>Scaling on GPU utilization or even on request count feels natural and is wrong for LLMs. Utilization saturates at 100% and stays pinned while the queue (and p99) grows underneath it — it cannot tell you <em>how much</em> you are behind. Request count ignores that one 8k-token request is worth a hundred 80-token ones. Scale on <strong>waiting/running tokens</strong> (or predicted TTFT). It is the only signal that is both a leading indicator and proportional to actual GPU work.</p>
+</div>
+<h2 id="multi-model-serving-many-models-finite-gpus">Multi-Model Serving: Many Models, Finite GPUs<a class="headerlink" href="#multi-model-serving-many-models-finite-gpus" title="Permanent link">¶</a></h2>
+<p>Production fleets serve dozens of models: base + fine-tunes, multiple sizes, embedding models, a moderation classifier, several customer-specific adapters. Giving each its own always-on dedicated GPUs is simple but ruinously expensive when most are lightly used. Three strategies, from cheapest-but-slowest to most-isolated.</p>
+<p><strong>LoRA / adapter multiplexing (best for fine-tunes).</strong> If twenty models are LoRA fine-tunes (<a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a>) of one base, you load the base weights <em>once</em> and swap only the small low-rank adapter matrices per request — even <em>within a single batch</em>, different requests can use different adapters (multi-LoRA batching, as in vLLM&rsquo;s S-LoRA-style support). One GPU&rsquo;s worth of base weights serves twenty &ldquo;models&rdquo; at near-zero marginal memory. This is the highest-leverage multi-model trick when it applies.</p>
+<p><strong>Time-sharing with hot-swap (best for many independent models, spiky traffic).</strong> Keep a pool of GPUs and load/evict <em>full</em> model weights on demand, treating HBM like a cache with an LRU policy keyed on recent traffic. The cost is the cold-start latency on a cache miss; mitigate it by keeping the top-<span class="arithmatex">\(k\)</span> models pinned and streaming weights fast from a local NVMe tier.</p>
+<p><strong>Static partitioning (best for a few high-QPS models).</strong> Give each big, busy model its own dedicated pool. Simplest to reason about, best isolation (no noisy-neighbor), worst utilization. Reserve it for the handful of models that are busy enough to justify full GPUs.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">OrderedDict</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ModelLRUCache</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    HBM-as-cache for whole-model hot-swapping. Keeps total loaded weights under</span>
+<span class="sd">    `capacity_gb`; evicts the least-recently-used model on a miss. Production</span>
+<span class="sd">    systems pin the top-k busiest models so they are never evicted (anti-thrash).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">capacity_gb</span><span class="p">,</span> <span class="n">pinned</span><span class="o">=</span><span class="p">()):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">capacity_gb</span> <span class="o">=</span> <span class="n">capacity_gb</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">loaded</span> <span class="o">=</span> <span class="n">OrderedDict</span><span class="p">()</span>    <span class="c1"># model_id -&gt; size_gb, MRU at the end</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pinned</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">pinned</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">used_gb</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_id</span><span class="p">,</span> <span class="n">size_gb</span><span class="p">,</span> <span class="n">load_fn</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">model_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">loaded</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">loaded</span><span class="o">.</span><span class="n">move_to_end</span><span class="p">(</span><span class="n">model_id</span><span class="p">)</span>   <span class="c1"># mark most-recently-used</span>
+            <span class="k">return</span>  <span class="c1"># hot path: already resident, zero cold-start</span>
+        <span class="c1"># Cache miss: evict LRU (never a pinned model) until it fits.</span>
+        <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">used_gb</span> <span class="o">+</span> <span class="n">size_gb</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">capacity_gb</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">victim</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">loaded</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">victim</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">pinned</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">used_gb</span> <span class="o">-=</span> <span class="bp">self</span><span class="o">.</span><span class="n">loaded</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">victim</span><span class="p">)</span>
+                    <span class="k">break</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">MemoryError</span><span class="p">(</span><span class="s2">&quot;cannot fit model; all residents pinned&quot;</span><span class="p">)</span>
+        <span class="n">load_fn</span><span class="p">(</span><span class="n">model_id</span><span class="p">)</span>                <span class="c1"># SLOW: weights -&gt; HBM (the cold start)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">loaded</span><span class="p">[</span><span class="n">model_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">size_gb</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">used_gb</span> <span class="o">+=</span> <span class="n">size_gb</span>
+</code></pre></div>
+<p>The decision tree is: <em>Are they adapters of one base?</em> → multiplex. <em>Are they distinct but individually low-QPS?</em> → time-share with hot-swap. <em>Are a few of them high-QPS?</em> → give those static pools and time-share the long tail. Most real fleets do all three at once.</p>
+<h2 id="putting-it-together-an-end-to-end-request-trace">Putting It Together: An End-to-End Request Trace<a class="headerlink" href="#putting-it-together-an-end-to-end-request-trace" title="Permanent link">¶</a></h2>
+<p>To consolidate, here is the life of one streaming chat request through the whole system.</p>
+<figure class="viz" id="fig-serving-e2e-request-trace">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 940 1080" role="img" aria-label="Vertical pipeline tracing one streaming LLM request through 10 layers: client, gateway, router, admit, replica, first token, decode, EOS, meter, and autoscaler. A token descends through steps 1 to 5, then streams back upward through steps 6 to 7.">
+<defs>
+  <marker id="e2e-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+  <marker id="e2e-arrow-up" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+<style>
+  #fig-serving-e2e-request-trace text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-e2e-request-trace .step-num { font: 700 14px var(--sans,sans-serif); fill: white; }
+  #fig-serving-e2e-request-trace .layer-tag { font: 700 11px var(--sans,sans-serif); }
+  #fig-serving-e2e-request-trace .action { font: 12px var(--mono,monospace); fill: var(--ink-soft,#475569); }
+  #fig-serving-e2e-request-trace .action-sm { font: 11px var(--mono,monospace); fill: var(--ink-soft,#475569); }
+  #fig-serving-e2e-request-trace .ret-lbl { font: 700 11px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+</style>
+
+
+<line x1="58" y1="30" x2="58" y2="1048" stroke="var(--border-2,#cbd5e1)" stroke-width="2"/>
+
+
+
+
+<rect x="78" y="30" width="840" height="82" rx="8" fill="var(--surface-3,#f8fafc)" stroke="var(--border-2,#e2e8f0)" stroke-width="1.5" id="e2e-s1"/>
+
+<circle cx="58" cy="72" r="16" fill="var(--muted,#94a3b8)" id="e2e-b1"/>
+<text x="58" y="77" text-anchor="middle" class="step-num">1</text>
+<text x="106" y="58" class="layer-tag" fill="var(--muted,#94a3b8)">CLIENT</text>
+<text x="106" y="78" class="action">POST /v1/chat/completions  (stream=true)</text>
+<text x="106" y="96" class="action">--&gt; nearest gateway</text>
+
+
+<rect x="78" y="122" width="840" height="108" rx="8" fill="var(--surface,#eef2ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="1.5" id="e2e-s2"/>
+<circle cx="58" cy="176" r="16" fill="var(--accent2,#3b82f6)" id="e2e-b2"/>
+<text x="58" y="181" text-anchor="middle" class="step-num">2</text>
+<text x="106" y="144" class="layer-tag" fill="var(--accent2,#3b82f6)">GATEWAY</text>
+<text x="106" y="164" class="action-sm">TLS terminate; validate API key;</text>
+<text x="106" y="181" class="action-sm">check token-bucket quota (reserve prompt_len + max_tokens);</text>
+<text x="106" y="198" class="action-sm">enforce max_tokens cap</text>
+
+
+<rect x="78" y="240" width="840" height="108" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="2" id="e2e-s3"/>
+<circle cx="58" cy="294" r="16" fill="var(--accent,#6366f1)" id="e2e-b3"/>
+<text x="58" y="299" text-anchor="middle" class="step-num">3</text>
+<text x="106" y="262" class="layer-tag" fill="var(--accent,#6366f1)">ROUTER</text>
+<text x="106" y="282" class="action-sm" fill="var(--accent,#6366f1)">model="llama-3-8b" -> Pool B; hash prompt prefix blocks;</text>
+<text x="106" y="299" class="action-sm" fill="var(--accent,#6366f1)">power-of-2-choices over Pool B replicas with cache bonus</text>
+<text x="106" y="316" class="action-sm" fill="var(--accent,#6366f1)">-> rep1</text>
+
+
+<rect x="78" y="358" width="840" height="90" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="2" id="e2e-s4"/>
+<circle cx="58" cy="403" r="16" fill="var(--accent,#6366f1)" id="e2e-b4"/>
+<text x="58" y="408" text-anchor="middle" class="step-num">4</text>
+<text x="106" y="378" class="layer-tag" fill="var(--accent,#6366f1)">ADMIT</text>
+<text x="106" y="398" class="action-sm" fill="var(--accent,#6366f1)">predicted TTFT on rep1 = (queued_tokens + prompt_len)/prefill_rate</text>
+<text x="106" y="416" class="action-sm" fill="var(--accent,#6366f1)">&lt;= SLO?  yes -&gt; admit; charge queued_tokens</text>
+
+
+<rect x="78" y="458" width="840" height="120" rx="8" fill="var(--surface,#e0e7ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="1.5" id="e2e-s5"/>
+<circle cx="58" cy="518" r="16" fill="var(--accent2,#3b82f6)" fill-opacity="0.8" id="e2e-b5"/>
+<text x="58" y="523" text-anchor="middle" class="step-num">5</text>
+<text x="106" y="478" class="layer-tag" fill="var(--accent2,#3b82f6)">REPLICA</text>
+<text x="106" y="498" class="action-sm">scheduler: chunked prefill interleaved with decode</text>
+<text x="106" y="515" class="action-sm">of other in-flight sequences (continuous batching);</text>
+<text x="106" y="532" class="action-sm">prefix cache HIT on 1.2k-token system prompt</text>
+<text x="106" y="549" class="action-sm">-&gt; skip its prefill</text>
+
+
+<rect x="78" y="588" width="840" height="82" rx="8" fill="var(--surface,#e0e7ff)" stroke="var(--good,#2f9e6e)" stroke-width="2.5" id="e2e-s6"/>
+<circle cx="58" cy="629" r="16" fill="var(--good,#2f9e6e)" id="e2e-b6"/>
+<text x="58" y="634" text-anchor="middle" class="step-num">6</text>
+<text x="106" y="610" class="layer-tag" fill="var(--good,#2f9e6e)">FIRST TOKEN</text>
+<text x="106" y="632" class="action-sm">streamed back: gateway forwards SSE chunk to client</text>
+<text x="106" y="650" class="action-sm" fill="var(--good,#2f9e6e)">(TTFT clock stops)</text>
+
+
+<rect x="78" y="680" width="840" height="82" rx="8" fill="var(--surface,#e0e7ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="1.5" id="e2e-s7"/>
+<circle cx="58" cy="721" r="16" fill="var(--accent2,#3b82f6)" fill-opacity="0.8" id="e2e-b7"/>
+<text x="58" y="726" text-anchor="middle" class="step-num">7</text>
+<text x="106" y="700" class="layer-tag" fill="var(--accent2,#3b82f6)">DECODE</text>
+<text x="106" y="720" class="action-sm">each step emits 1 token/seq; gateway streams</text>
+<text x="106" y="737" class="action-sm">each as an SSE event  (TPOT measured between events)</text>
+
+
+<rect x="78" y="772" width="840" height="82" rx="8" fill="var(--surface,#e0e7ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="1.5" id="e2e-s8"/>
+<circle cx="58" cy="813" r="16" fill="var(--accent2,#3b82f6)" fill-opacity="0.8" id="e2e-b8"/>
+<text x="58" y="818" text-anchor="middle" class="step-num">8</text>
+<text x="106" y="792" class="layer-tag" fill="var(--accent2,#3b82f6)">EOS</text>
+<text x="106" y="812" class="action-sm">sequence finishes; KV blocks freed;</text>
+<text x="106" y="829" class="action-sm">slot handed to a waiting request</text>
+
+
+<rect x="78" y="864" width="840" height="82" rx="8" fill="var(--surface,#eef2ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="1.5" id="e2e-s9"/>
+<circle cx="58" cy="905" r="16" fill="var(--accent2,#3b82f6)" id="e2e-b9"/>
+<text x="58" y="910" text-anchor="middle" class="step-num">9</text>
+<text x="106" y="884" class="layer-tag" fill="var(--accent2,#3b82f6)">METER</text>
+<text x="106" y="904" class="action-sm">gateway reconciles quota (refund unused reserved tokens),</text>
+<text x="106" y="921" class="action-sm">logs usage, emits prompt/completion token metrics -&gt; Prometheus</text>
+
+
+<rect x="78" y="956" width="840" height="84" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#e2e8f0)" stroke-width="1.5" id="e2e-s10"/>
+<circle cx="58" cy="998" r="16" fill="var(--ink-soft,#64748b)" id="e2e-b10"/>
+<text x="58" y="1003" text-anchor="middle" class="step-num">10</text>
+<text x="106" y="976" class="layer-tag" fill="var(--ink-soft,#64748b)">AUTOSCALER</text>
+<text x="106" y="996" class="action-sm">independently watches waiting_tokens across Pool B;</text>
+<text x="106" y="1013" class="action-sm">if queue trends up, raises desired_replicas; warm buffer absorbs the spike</text>
+
+
+<line x1="58" y1="115" x2="58" y2="118" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="234" x2="58" y2="237" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="352" x2="58" y2="355" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="452" x2="58" y2="455" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="582" x2="58" y2="585" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="674" x2="58" y2="677" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="766" x2="58" y2="769" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="858" x2="58" y2="861" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="950" x2="58" y2="953" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+
+
+<line x1="924" y1="762" x2="924" y2="591" stroke="var(--good,#2f9e6e)" stroke-width="2.5" stroke-dasharray="7 4" marker-end="url(#e2e-arrow-up)"/>
+
+<line x1="918" y1="629" x2="922" y2="629" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+
+<line x1="918" y1="721" x2="922" y2="721" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+
+<text transform="rotate(-90,930,680)" x="930" y="680" text-anchor="middle" class="ret-lbl">tokens stream up to client</text>
+
+
+<circle cx="58" cy="72" r="9" fill="var(--warn,#e0a106)" opacity="0" id="e2e-ph">
+
+  <animate attributeName="opacity" values="0;1" dur="0.2s" begin="0.5s" fill="freeze"/>
+
+  <animate attributeName="cy" values="72;176" dur="0.6s" begin="0.7s" fill="freeze" id="ph-to-2"/>
+
+  <animate attributeName="cy" values="176;294" dur="0.6s" begin="ph-to-2.end+0.3s" fill="freeze" id="ph-to-3"/>
+
+  <animate attributeName="cy" values="294;403" dur="0.6s" begin="ph-to-3.end+0.3s" fill="freeze" id="ph-to-4"/>
+
+  <animate attributeName="cy" values="403;518" dur="0.6s" begin="ph-to-4.end+0.3s" fill="freeze" id="ph-to-5"/>
+
+  <animate attributeName="fill" values="var(--warn,#e0a106);var(--good,#2f9e6e)" dur="0.3s" begin="ph-to-5.end+0.3s" fill="freeze"/>
+  <animate attributeName="cy" values="518;629" dur="0.6s" begin="ph-to-5.end+0.3s" fill="freeze" id="ph-to-6"/>
+
+  <animate attributeName="opacity" values="1;0" dur="0.3s" begin="ph-to-6.end+0.5s" fill="freeze"/>
+</circle>
+
+
+
+<rect x="78" y="30" width="840" height="82" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0" id="e2e-hl1">
+  <animate attributeName="fill-opacity" values="0;0.12;0" dur="0.5s" begin="0.5s" fill="freeze"/>
+</rect>
+
+<rect x="78" y="122" width="840" height="108" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0" id="e2e-hl2">
+  <animate attributeName="fill-opacity" values="0;0.12;0" dur="0.5s" begin="ph-to-2.end" fill="freeze"/>
+</rect>
+
+<rect x="78" y="240" width="840" height="108" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0" id="e2e-hl3">
+  <animate attributeName="fill-opacity" values="0;0.18;0" dur="0.5s" begin="ph-to-3.end" fill="freeze"/>
+</rect>
+
+<rect x="78" y="358" width="840" height="90" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0" id="e2e-hl4">
+  <animate attributeName="fill-opacity" values="0;0.18;0" dur="0.5s" begin="ph-to-4.end" fill="freeze"/>
+</rect>
+
+<rect x="78" y="458" width="840" height="120" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0" id="e2e-hl5">
+  <animate attributeName="fill-opacity" values="0;0.15;0" dur="0.5s" begin="ph-to-5.end" fill="freeze"/>
+</rect>
+
+<rect x="78" y="588" width="840" height="82" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0" id="e2e-hl6">
+  <animate attributeName="fill-opacity" values="0;0.25;0.05" dur="0.8s" begin="ph-to-6.end" fill="freeze"/>
+</rect>
+
+<rect x="78" y="680" width="840" height="82" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0" id="e2e-hl7a">
+  <animate attributeName="fill-opacity" values="0;0.15;0;0.15;0;0.15;0" dur="2.4s" begin="ph-to-6.end+0.8s" fill="freeze"/>
+</rect>
+
+<rect x="78" y="772" width="840" height="82" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0" id="e2e-hl8">
+  <animate attributeName="fill-opacity" values="0;0.2;0" dur="0.6s" begin="ph-to-6.end+3.4s" fill="freeze"/>
+</rect>
+
+<rect x="78" y="864" width="840" height="82" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0" id="e2e-hl9">
+  <animate attributeName="fill-opacity" values="0;0.15;0" dur="0.6s" begin="ph-to-6.end+4.2s" fill="freeze"/>
+</rect>
+
+<rect x="78" y="956" width="840" height="84" rx="8" fill="var(--ink-soft,#64748b)" fill-opacity="0" id="e2e-hl10">
+  <animate attributeName="fill-opacity" values="0;0.12;0;0.12;0" dur="3s" begin="ph-to-3.end" fill="freeze"/>
+</rect>
+
+</svg>
+<figcaption><b>Every layer of the serving system touches one streaming chat request, in order.</b> The request descends through gateway (auth, quota), router (model + replica selection), admission control (SLO prediction), and the replica (continuous batching, prefix cache). At step 6, flow reverses: the first token streams back up (TTFT stops), followed by per-token SSE events (TPOT). Steps 9–10 run asynchronously to reconcile billing and adjust autoscaler state.</figcaption>
+</figure>
+
+<p>Every numbered step maps to a layer we designed. Notice how the <em>same</em> request touches quota (gateway), placement and cache affinity (router), admission and SLO prediction (admit), batching policy (replica), and feeds the autoscaler and metering — these are not separate systems, they are one control loop around the GPUs.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re designing an LLM serving system for a chat product. Peak load is 500 requests/sec, average prompt 1,000 tokens, average output 500 tokens. The SLO is p99 TTFT ≤ 800 ms and p90 TPOT ≤ 60 ms. Walk me through how you&rsquo;d size the fleet and what your main failure modes are.</p>
+<p><strong>A:</strong> I&rsquo;d start by separating the two sizing constraints. <strong>Throughput sizing:</strong> measure single-replica prefill rate (say ~12k tok/s on the target GPU) and decode capacity; prefill load is <span class="arithmatex">\(500 \times 1000 = 5\times10^5\)</span> prompt tok/s, so I need ~42 replica-equivalents of prefill <em>at 100% util</em>, but I size to ~70% utilization for the p99 tail — Little&rsquo;s Law plus the <span class="arithmatex">\(1/(1-\rho)\)</span> queueing blowup means running near saturation will blow the p99 even if the mean keeps up — so ~60 replicas for throughput. <strong>Memory sizing:</strong> compute KV bytes/token from the model&rsquo;s layers, KV-head count (GQA helps a lot here), and precision; check how many concurrent (prompt+output ≈ 1.5k-token) sequences fit per GPU, and convert peak concurrency (Little&rsquo;s Law: <span class="arithmatex">\(L = \lambda W\)</span>) into a second replica count. I take the <strong>max</strong> of the two.</p>
+<p>For <strong>TTFT</strong> I&rsquo;d use chunked prefill so long prompts don&rsquo;t stall the decode loop, prefix caching for the shared system prompt (likely a big win in chat), and predictive admission control that sheds load with a 429 rather than admitting requests that will miss the SLO. For <strong>TPOT</strong> I&rsquo;d cap <code>max_num_batched_tokens</code> so decode steps stay small enough to hit 60 ms.</p>
+<p><strong>Main failure modes:</strong> (1) unbounded <code>max_tokens</code> letting a few long generations monopolize KV and wreck p99 — fix with a hard cap; (2) autoscaling on GPU utilization instead of queue depth, so we scale too late given multi-minute cold starts — fix with queue/predicted-TTFT scaling plus a warm buffer; (3) round-robin routing imbalancing token-work and ignoring prefix-cache affinity — fix with power-of-two-choices weighted by tokens and cache overlap; (4) running at 95% utilization &ldquo;to save cost&rdquo; and falling off the queueing cliff — provision headroom instead.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>LLM serving is stateful, long-lived, and two-dimensional in latency.</strong> Design around TTFT <em>and</em> TPOT, not a single &ldquo;latency&rdquo;; the unit of work is a streaming sequence pinning a KV cache, not a stateless request.</li>
+<li><strong>The router is the brain.</strong> Balance by <em>tokens</em>, not request count, and use power-of-two-choices with prefix-cache affinity — never round-robin and never &ldquo;always pick the global minimum.&rdquo;</li>
+<li><strong>SLOs are percentiles, and p99 is dominated by queueing.</strong> Because wait time scales as <span class="arithmatex">\(1/(1-\rho)\)</span>, you provision LLM clusters to ~60–75% utilization; the headroom is the budget that keeps the tail bounded.</li>
+<li><strong>Two independent sizing constraints — throughput and memory — and you take the max.</strong> Throughput sizing comes from prefill rate and Little&rsquo;s Law; memory sizing comes from KV bytes/token and HBM capacity. Know whether you are compute- or memory-bound.</li>
+<li><strong>Batching policy is how you spend the latency budget.</strong> <code>max_num_batched_tokens</code>, chunked prefill, and prefill/decode disaggregation place you on the throughput-vs-TPOT frontier; tune them against your real traffic, not a benchmark.</li>
+<li><strong>Autoscale on a leading indicator (queue depth / waiting tokens), not GPU utilization.</strong> Cold starts are minutes, so keep a warm buffer, scale up fast and down slow, and <em>drain</em> before releasing a GPU.</li>
+<li><strong>Multi-model serving is a memory-management problem.</strong> Multiplex LoRA adapters over a shared base, hot-swap whole models with an LRU/pinned cache, and statically partition only the few high-QPS models.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>LLM serving systems have matured into a rich stack: continuous batching (Orca/vLLM) and PagedAttention are now table-stakes defaults, while prefill/decode disaggregation, KVCache-centric architectures (Mooncake), and multi-LoRA multiplexing define the production frontier for high-throughput, SLO-compliant fleets.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://www.usenix.org/conference/osdi22/presentation/yu">Yu et al., <em>Orca: A Distributed Serving System for Transformer-Based Generative Models</em> (OSDI 2022)</a> — introduced iteration-level (continuous) batching, the single biggest throughput step-change in LLM serving.</li>
+<li><a href="https://arxiv.org/abs/2309.06180">Kwon et al., <em>Efficient Memory Management for LLM Serving with PagedAttention</em> (SOSP 2023)</a> — virtual-memory-inspired KV cache; enables near-theoretical concurrency and underpins vLLM.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2312.07104">Zheng et al., <em>SGLang: Efficient Execution of Structured Language Model Programs</em> (2023)</a> — RadixAttention for prefix-cache-aware routing; now one of the two dominant open serving frameworks.</li>
+<li><a href="https://arxiv.org/abs/2311.18677">Patel et al., <em>Splitwise: Efficient Generative LLM Inference Using Phase Splitting</em> (ISCA 2024)</a> — hardware case for running prefill and decode on separate machines; foundational disaggregation paper.</li>
+<li><a href="https://arxiv.org/abs/2401.09670">Zhong et al., <em>DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving</em> (OSDI 2024)</a> — co-optimizes per-phase resource allocation and parallelism to maximize requests meeting both TTFT and TPOT SLOs.</li>
+<li><a href="https://arxiv.org/abs/2403.02310">Agrawal et al., <em>Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve</em> (OSDI 2024)</a> — chunked prefill with stall-free scheduling; directly controls the TTFT/TPOT frontier.</li>
+<li><a href="https://arxiv.org/abs/2407.00079">Qin et al., <em>Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving</em> (FAST 2025 Best Paper)</a> — production architecture (Kimi) treating KV cache as a first-class distributed resource; shows 525% throughput gain in overload scenarios.</li>
+<li><a href="https://arxiv.org/abs/2311.03285">Sheng et al., <em>S-LoRA: Serving Thousands of Concurrent LoRA Adapters</em> (2023)</a> — multi-adapter batching over a shared base; the canonical reference for LoRA multiplexing.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm</a> — the leading open-source serving engine (81k+ stars); PagedAttention, continuous batching, multi-LoRA, 200+ model architectures.</li>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — high-performance alternative with RadixAttention, disaggregated prefill/decode, powering 400k+ GPUs in production.</li>
+<li><a href="https://github.com/NVIDIA/TensorRT-LLM">NVIDIA/TensorRT-LLM</a> — NVIDIA&rsquo;s optimized inference library with custom attention kernels, speculative decoding, and Triton integration.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.databricks.com/blog/reliable-llm-inference-scale">Databricks, <em>Reliable LLM Inference at Scale</em> (2025)</a> — production war stories: model-unit abstractions, cost-aware autoscaling, silent failure detection serving 125 trillion tokens/month.</li>
+<li><a href="https://vllm.ai/blog/2025-12-13-vllm-router-release">vLLM Blog, <em>vLLM Router: A High-Performance Prefill/Decode-Aware Load Balancer</em> (2025)</a> — power-of-two-choices, consistent-hash affinity routing, and P/D disaggregation orchestration in a production Rust router.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Yu et al., <em>Orca: A Distributed Serving System for Transformer-Based Generative Models</em> (OSDI 2022) — the paper that introduced iteration-level (continuous) batching.</li>
+<li>Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (the vLLM paper, SOSP 2023).</li>
+<li>Zheng et al., <em>SGLang: Efficient Execution of Structured Language Model Programs</em> — RadixAttention and prefix-cache-aware serving.</li>
+<li>Patel et al., <em>Splitwise: Efficient Generative LLM Inference Using Phase Splitting</em> — the case for prefill/decode disaggregation.</li>
+<li>Agrawal et al., <em>Sarathi-Serve</em> (Taming Throughput-Latency Tradeoff with chunked prefill) — chunked prefill and the TTFT/TPOT tradeoff.</li>
+<li>Sheng et al., <em>S-LoRA: Serving Thousands of Concurrent LoRA Adapters</em> — multi-adapter batching for multi-model serving.</li>
+<li>Mitzenmacher, <em>The Power of Two Choices in Randomized Load Balancing</em> — the load-balancing result behind power-of-<em>d</em>-choices routing.</li>
+<li>Kleinrock, <em>Queueing Systems, Volume 1: Theory</em> — Little&rsquo;s Law and the <span class="arithmatex">\(1/(1-\rho)\)</span> behavior, the foundation of capacity planning.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="pn-label">← Previous</span><span class="pn-title">Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</span></a>
+<a class="next" href="02-observability-llmops.html"><span class="pn-label">Next →</span><span class="pn-title">Observability, Logging &amp; LLMOps</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-llm-serving-is-not-just-microservices-with-a-gpu">Why LLM Serving Is Not Just &amp;ldquo;Microservices With a GPU&amp;rdquo;</a></li>
+<li class="toc-l2"><a href="#the-reference-architecture">The Reference Architecture</a></li>
+<li class="toc-l2"><a href="#the-gateway-the-cheap-stateless-front-door">The Gateway: The Cheap, Stateless Front Door</a></li>
+<li class="toc-l2"><a href="#the-router-where-the-intelligence-lives">The Router: Where the Intelligence Lives</a></li>
+<li class="toc-l3"><a href="#model-routing">Model routing</a></li>
+<li class="toc-l3"><a href="#replica-selection-do-not-use-round-robin">Replica selection: do not use round-robin</a></li>
+<li class="toc-l2"><a href="#slos-defining-fast-enough-precisely">SLOs: Defining &amp;ldquo;Fast Enough&amp;rdquo; Precisely</a></li>
+<li class="toc-l2"><a href="#queueing-littles-law-and-why-p99-explodes">Queueing: Little&amp;rsquo;s Law and Why p99 Explodes</a></li>
+<li class="toc-l2"><a href="#replica-and-cluster-sizing-memory-is-the-real-constraint">Replica and Cluster Sizing: Memory Is the Real Constraint</a></li>
+<li class="toc-l2"><a href="#batching-policy-the-throughput-engine">Batching Policy: The Throughput Engine</a></li>
+<li class="toc-l2"><a href="#autoscaling-on-gpus-scaling-a-resource-you-cannot-get-instantly">Autoscaling on GPUs: Scaling a Resource You Cannot Get Instantly</a></li>
+<li class="toc-l2"><a href="#multi-model-serving-many-models-finite-gpus">Multi-Model Serving: Many Models, Finite GPUs</a></li>
+<li class="toc-l2"><a href="#putting-it-together-an-end-to-end-request-trace">Putting It Together: An End-to-End Request Trace</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

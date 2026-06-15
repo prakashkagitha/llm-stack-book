@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watermarking, Provenance &amp; AI-Content Detection — The LLM Stack</title>
+<meta name="description" content="Statistical text watermarking (Kirchenbauer green-list, distortion-free schemes) and image/audio/video watermarking (SynthID-class), and their robustness to par">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="active" href="04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XIII — Interpretability, Safety &amp; Governance</div>
+<h1 id="134-watermarking-provenance-ai-content-detection">13.4 Watermarking, Provenance &amp; AI-Content Detection<a class="headerlink" href="#134-watermarking-provenance-ai-content-detection" title="Permanent link">¶</a></h1>
+<p>As generative models reach human-level fluency, the question &ldquo;did a machine write this?&rdquo; becomes legally, commercially, and politically loaded. A journalism outlet needs to know whether a submitted opinion piece is AI-generated. A school needs evidence for an academic-integrity decision. A regulator enforcing the EU AI Act needs a disclosure mechanism that works at scale. This chapter develops three complementary answers to that question: <em>proactive watermarking</em> embedded during generation, <em>content-provenance standards</em> that cryptographically chain a file to its origin, and <em>post-hoc detection</em> applied to content whose origin is unknown. We will see why each approach is necessary, how each works at the algorithmic level, and why none of them is sufficient alone.</p>
+<p>Related chapters that establish useful background: <a href="../13-interp-safety-gov/03-privacy-memorization-dp.html">Privacy, Memorization &amp; Differential Privacy for LLMs</a> covers what information leaks from model outputs and is a natural companion here; <a href="../12-production-mlops/04-safety-guardrails.html">Safety, Guardrails &amp; Content Moderation</a> covers the runtime enforcement layer; <a href="../13-interp-safety-gov/01-mechanistic-interpretability.html">Mechanistic Interpretability &amp; Model Internals</a> provides the foundational lens on how models work internally; <a href="../13-interp-safety-gov/06-governance-compliance.html">AI Governance, Compliance &amp; Regulation</a> treats the legal landscape in depth.</p>
+<hr />
+<h2 id="why-watermarking-exists-the-motivation">Why Watermarking Exists: The Motivation<a class="headerlink" href="#why-watermarking-exists-the-motivation" title="Permanent link">¶</a></h2>
+<p>Consider a model that can produce text indistinguishable from human writing with essentially zero marginal cost. Without a provenance signal, every downstream consumer of that text must either (a) trust the claimed source, (b) run a statistical detector that is probabilistically unreliable, or &copy; give up. The asymmetry is extreme: a determined attacker can polish AI text with trivial paraphrasing, but a defender running a post-hoc classifier faces a distribution shift problem — they cannot enumerate every possible model or every possible attack.</p>
+<p>Watermarking inverts this asymmetry. The model operator <em>embeds</em> a signal at generation time. Detection is then a verification problem (does this signal match our key?) rather than a classification problem (does this text look AI-generated?). The analogy is a cryptographic signature: the hardness of verification scales with the strength of a secret key, not with the adversary&rsquo;s sophistication at mimicking text.</p>
+<p>Three desiderata tension against each other:</p>
+<ol>
+<li><strong>Detectability</strong> — the signal must be recoverable with high statistical confidence from a short passage.</li>
+<li><strong>Imperceptibility</strong> — watermarked text must be indistinguishable (in quality, style, content) from unwatermarked text.</li>
+<li><strong>Robustness</strong> — the signal must survive paraphrase, translation, summarization, or selective editing by an adversary.</li>
+</ol>
+<p>These three cannot all be maximized simultaneously, and the tradeoffs define the design space.</p>
+<hr />
+<h2 id="statistical-text-watermarking-the-green-list-scheme">Statistical Text Watermarking: The Green-List Scheme<a class="headerlink" href="#statistical-text-watermarking-the-green-list-scheme" title="Permanent link">¶</a></h2>
+<h3 id="the-kirchenbauer-et-al-construction">The Kirchenbauer et al. Construction<a class="headerlink" href="#the-kirchenbauer-et-al-construction" title="Permanent link">¶</a></h3>
+<p>The seminal paper by Kirchenbauer, Geiping, Wen, Kirchenbauer, Goldblum, and Goldstein (2023) — commonly called the <em>KGW watermark</em> — embeds a signal by biasing the token sampling distribution at each step.</p>
+<p>The construction works as follows. Let <span class="arithmatex">\(V\)</span> be the vocabulary of size <span class="arithmatex">\(|V|\)</span>. At each generation step <span class="arithmatex">\(t\)</span>, the <em>preceding context</em> (or a hash of it) is used to seed a pseudorandom function <span class="arithmatex">\(f\)</span> that partitions <span class="arithmatex">\(V\)</span> into a <em>green list</em> <span class="arithmatex">\(G_t \subseteq V\)</span> of size <span class="arithmatex">\(\gamma |V|\)</span> and a <em>red list</em> <span class="arithmatex">\(R_t = V \setminus G_t\)</span>.</p>
+<p>During generation, the logit for every token <span class="arithmatex">\(v \in G_t\)</span> is boosted by a hardness parameter <span class="arithmatex">\(\delta &gt; 0\)</span> before softmax:</p>
+<div class="arithmatex">\[
+\tilde{\ell}_{t,v} = \ell_{t,v} + \delta \cdot \mathbf{1}[v \in G_t]
+\]</div>
+<p>The model therefore preferentially samples green tokens without requiring any modification to the model weights. An unmodified greedy or nucleus-sampled text would use <span class="arithmatex">\(\gamma |V|\)</span> green tokens in expectation. A watermarked text uses them at a much higher rate.</p>
+<p><strong>Detection.</strong> Given a candidate text of <span class="arithmatex">\(T\)</span> tokens and a secret key <span class="arithmatex">\(k\)</span>, the detector reconstructs each <span class="arithmatex">\(G_t\)</span> and counts the number of green tokens <span class="arithmatex">\(g\)</span>. Under the null hypothesis (human text), <span class="arithmatex">\(g \sim \text{Binomial}(T, \gamma)\)</span>. The <em>z-score</em> is:</p>
+<div class="arithmatex">\[
+z = \frac{g - \gamma T}{\sqrt{T \gamma (1 - \gamma)}}
+\]</div>
+<p>A threshold <span class="arithmatex">\(z^* \approx 4\)</span> corresponds to a false-positive rate on the order of <span class="arithmatex">\(10^{-5}\)</span> per document.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked numerical example</p>
+<p>Suppose <span class="arithmatex">\(\gamma = 0.5\)</span> (half the vocabulary is green at each step), <span class="arithmatex">\(\delta = 2.0\)</span>, and the text is <span class="arithmatex">\(T = 200\)</span> tokens long.</p>
+<ul>
+<li>Under the null (human text): expected green tokens <span class="arithmatex">\(= 200 \times 0.5 = 100\)</span>, <span class="arithmatex">\(\sigma = \sqrt{200 \times 0.5 \times 0.5} \approx 7.07\)</span>.</li>
+<li>A watermarked text might observe <span class="arithmatex">\(g = 145\)</span> green tokens (heavy green bias from <span class="arithmatex">\(\delta = 2.0\)</span>).</li>
+<li><span class="arithmatex">\(z = (145 - 100) / 7.07 \approx 6.36\)</span>.</li>
+<li>Using the standard normal tail: <span class="arithmatex">\(P(Z &gt; 6.36) \approx 10^{-10}\)</span>, an extremely strong rejection of the null.</li>
+<li>At a threshold of <span class="arithmatex">\(z^* = 4.0\)</span>, this text is flagged with overwhelming confidence.</li>
+</ul>
+<p>Now suppose an adversary randomly replaces 30% of tokens via paraphrase. Empirically, <span class="arithmatex">\(\approx 50\%\)</span> of replaced tokens will land in the green list (random chance), so <span class="arithmatex">\(g_{\text{post}} \approx 145 \times 0.7 + 100 \times 0.3 = 101.5 + 30 = 131.5\)</span>. <span class="arithmatex">\(z \approx (131.5 - 100)/7.07 \approx 4.45\)</span> — still well above threshold. This illustrates why moderate paraphrase attacks are insufficient.</p>
+</div>
+<h3 id="context-hashing-and-key-security">Context Hashing and Key Security<a class="headerlink" href="#context-hashing-and-key-security" title="Permanent link">¶</a></h3>
+<p>The green list <span class="arithmatex">\(G_t\)</span> is typically derived by hashing the previous <span class="arithmatex">\(h\)</span> tokens together with a secret key <span class="arithmatex">\(k\)</span>:</p>
+<div class="arithmatex">\[
+G_t = \text{TopGamma}\!\left(\text{Hash}(k, w_{t-h:t-1})\right)
+\]</div>
+<p>where TopGamma selects the <span class="arithmatex">\(\lfloor \gamma |V| \rfloor\)</span> tokens with the lowest hash values (a deterministic pseudo-random selection). Setting <span class="arithmatex">\(h=1\)</span> (hash only the previous token) creates a Markov-1 watermark that is easy to implement but can be approximated by an adversary who observes many samples. Setting <span class="arithmatex">\(h \geq 4\)</span> dramatically increases the adversary&rsquo;s work because the number of possible contexts is <span class="arithmatex">\(|V|^h \sim 32000^4 \approx 10^{18}\)</span>.</p>
+<h3 id="distortion-free-watermarks">Distortion-Free Watermarks<a class="headerlink" href="#distortion-free-watermarks" title="Permanent link">¶</a></h3>
+<p>A limitation of the KGW scheme is that boosting green-list logits changes the output distribution — it is not <em>distortion-free</em>. For tasks where output quality is critical (medical summarization, legal reasoning), this is unacceptable.</p>
+<p>Kuditipudi, Thickstun, Hashimoto, and Liang (2023) introduced <em>distortion-free</em> watermarking. The key idea: rather than modifying the logit distribution, use the secret key to generate a sequence of random numbers <span class="arithmatex">\(\{r_t\}\)</span> and then <em>select</em> the token whose inverse-CDF transform under the model distribution corresponds to <span class="arithmatex">\(r_t\)</span>:</p>
+<div class="arithmatex">\[
+w_t = F_t^{-1}(r_t), \quad r_t = \text{PRF}(k, t)
+\]</div>
+<p>where <span class="arithmatex">\(F_t^{-1}\)</span> is the quantile function of the model&rsquo;s next-token distribution. Because we apply a monotone transformation, the <em>marginal</em> distribution of each token is unchanged — the text is statistically identical to unmodified sampling. Yet the sequence of tokens is correlated with the known random sequence, giving a detectable signal.</p>
+<p>Detection uses a test based on the rank statistics of the observed tokens under the model&rsquo;s predicted distribution: under watermarking, observed tokens should cluster near <span class="arithmatex">\(r_t\)</span> in probability space, while human text is uniform.</p>
+<hr />
+<h2 id="from-scratch-green-list-watermark-code">From-Scratch Green-List Watermark: Code<a class="headerlink" href="#from-scratch-green-list-watermark-code" title="Permanent link">¶</a></h2>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">green_list_watermark.py</span>
+<span class="sd">From-scratch implementation of a KGW-style token watermark.</span>
+<span class="sd">We simulate the core algorithm without a full language model,</span>
+<span class="sd">using a random vocabulary and a toy probability distribution.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">struct</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Vocabulary and pseudo-logits (stand-in for a real LM)</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">VOCAB_SIZE</span> <span class="o">=</span> <span class="mi">32_000</span>
+<span class="n">VOCAB</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">VOCAB_SIZE</span><span class="p">))</span>  <span class="c1"># tokens are just integers</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fake_lm_logits</span><span class="p">(</span><span class="n">prev_token</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">seed</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">42</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns random logits for demonstration. A real implementation</span>
+<span class="sd">    would call model.forward() and extract the next-token logit vector.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">Random</span><span class="p">(</span><span class="n">seed</span> <span class="o">^</span> <span class="n">prev_token</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">rng</span><span class="o">.</span><span class="n">gauss</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">VOCAB</span><span class="p">]</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Green-list construction</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_green_list</span><span class="p">(</span>
+    <span class="n">prev_token</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">secret_key</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span>
+    <span class="n">gamma</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">set</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Derive the green list for position t given the previous token and key.</span>
+<span class="sd">    Uses HMAC-SHA256 as the PRF; maps each vocabulary token to a hash value</span>
+<span class="sd">    and selects the lowest gamma*|V| hashes as the green list.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">green_size</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">gamma</span> <span class="o">*</span> <span class="n">VOCAB_SIZE</span><span class="p">)</span>
+
+    <span class="c1"># Score every token by hashing (key || prev_token || token_id)</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">VOCAB</span><span class="p">:</span>
+        <span class="c1"># Pack prev_token and tok as little-endian 32-bit ints</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">secret_key</span> <span class="o">+</span> <span class="n">struct</span><span class="o">.</span><span class="n">pack</span><span class="p">(</span><span class="s2">&quot;&lt;II&quot;</span><span class="p">,</span> <span class="n">prev_token</span><span class="p">,</span> <span class="n">tok</span><span class="p">)</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">.</span><span class="n">digest</span><span class="p">()</span>
+        <span class="c1"># Interpret first 8 bytes as a uint64 for a uniform [0, 2^64) score</span>
+        <span class="n">score</span> <span class="o">=</span> <span class="n">struct</span><span class="o">.</span><span class="n">unpack</span><span class="p">(</span><span class="s2">&quot;&lt;Q&quot;</span><span class="p">,</span> <span class="n">h</span><span class="p">[:</span><span class="mi">8</span><span class="p">])[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">scores</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">score</span><span class="p">,</span> <span class="n">tok</span><span class="p">))</span>
+
+    <span class="c1"># The green list is the gamma fraction with lowest hash scores</span>
+    <span class="n">scores</span><span class="o">.</span><span class="n">sort</span><span class="p">()</span>
+    <span class="n">green_set</span> <span class="o">=</span> <span class="p">{</span><span class="n">tok</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">scores</span><span class="p">[:</span><span class="n">green_size</span><span class="p">]}</span>
+    <span class="k">return</span> <span class="n">green_set</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Watermarked sampler</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Numerically stable softmax.&quot;&quot;&quot;</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">logits</span><span class="p">)</span>
+    <span class="n">exps</span> <span class="o">=</span> <span class="p">[</span><span class="n">math</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">l</span> <span class="o">-</span> <span class="n">m</span><span class="p">)</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">logits</span><span class="p">]</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">exps</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">e</span> <span class="o">/</span> <span class="n">s</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">exps</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sample_token</span><span class="p">(</span><span class="n">probs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span> <span class="n">rng</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">Random</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Sample a token index from a probability distribution.&quot;&quot;&quot;</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+    <span class="n">cumulative</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">probs</span><span class="p">):</span>
+        <span class="n">cumulative</span> <span class="o">+=</span> <span class="n">p</span>
+        <span class="k">if</span> <span class="n">r</span> <span class="o">&lt;</span> <span class="n">cumulative</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">i</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">probs</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span>  <span class="c1"># fallback</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">generate_watermarked</span><span class="p">(</span>
+    <span class="n">seed_token</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">length</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">secret_key</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span>
+    <span class="n">delta</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span><span class="p">,</span>
+    <span class="n">gamma</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+    <span class="n">generation_seed</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Generate a watermarked token sequence of given length.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        seed_token: The token preceding the generation window (context).</span>
+<span class="sd">        length: Number of tokens to generate.</span>
+<span class="sd">        secret_key: The watermark secret key (kept by the operator).</span>
+<span class="sd">        delta: Green-list logit boost.</span>
+<span class="sd">        gamma: Fraction of vocabulary in the green list.</span>
+<span class="sd">        generation_seed: Seed for token sampling (mimics temperature sampling).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        List of generated token ids.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">Random</span><span class="p">(</span><span class="n">generation_seed</span><span class="p">)</span>
+    <span class="n">tokens</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">prev</span> <span class="o">=</span> <span class="n">seed_token</span>
+
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">length</span><span class="p">):</span>
+        <span class="c1"># Get base logits from the (fake) language model</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">fake_lm_logits</span><span class="p">(</span><span class="n">prev</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="n">step</span><span class="p">)</span>
+
+        <span class="c1"># Construct green list for this step</span>
+        <span class="n">green</span> <span class="o">=</span> <span class="n">get_green_list</span><span class="p">(</span><span class="n">prev</span><span class="p">,</span> <span class="n">secret_key</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="n">gamma</span><span class="p">)</span>
+
+        <span class="c1"># Boost green-list logits</span>
+        <span class="n">boosted_logits</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">l</span> <span class="o">+</span> <span class="n">delta</span> <span class="k">if</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">green</span> <span class="k">else</span> <span class="n">l</span>
+            <span class="k">for</span> <span class="n">tok</span><span class="p">,</span> <span class="n">l</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">logits</span><span class="p">)</span>
+        <span class="p">]</span>
+
+        <span class="n">probs</span> <span class="o">=</span> <span class="n">softmax</span><span class="p">(</span><span class="n">boosted_logits</span><span class="p">)</span>
+        <span class="n">tok</span> <span class="o">=</span> <span class="n">sample_token</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="n">rng</span><span class="p">)</span>
+        <span class="n">tokens</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tok</span><span class="p">)</span>
+        <span class="n">prev</span> <span class="o">=</span> <span class="n">tok</span>
+
+    <span class="k">return</span> <span class="n">tokens</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Detector</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">detect_watermark</span><span class="p">(</span>
+    <span class="n">tokens</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+    <span class="n">seed_token</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">secret_key</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span>
+    <span class="n">gamma</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute the z-score for a sequence of tokens.</span>
+
+<span class="sd">    Returns a dict with z_score, green_count, total_tokens, and p_value.</span>
+<span class="sd">    The null hypothesis is that the text is human-written (each token is</span>
+<span class="sd">    in the green list with probability gamma, independently).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">T</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;z_score&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span> <span class="s2">&quot;green_count&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;p_value&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">}</span>
+
+    <span class="n">green_count</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">prev</span> <span class="o">=</span> <span class="n">seed_token</span>
+
+    <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">tokens</span><span class="p">:</span>
+        <span class="n">green</span> <span class="o">=</span> <span class="n">get_green_list</span><span class="p">(</span><span class="n">prev</span><span class="p">,</span> <span class="n">secret_key</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="n">gamma</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">green</span><span class="p">:</span>
+            <span class="n">green_count</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">prev</span> <span class="o">=</span> <span class="n">tok</span>
+
+    <span class="c1"># z-score under Binomial(T, gamma) null</span>
+    <span class="n">mu</span> <span class="o">=</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">T</span>
+    <span class="n">sigma</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">T</span> <span class="o">*</span> <span class="n">gamma</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">gamma</span><span class="p">))</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="p">(</span><span class="n">green_count</span> <span class="o">-</span> <span class="n">mu</span><span class="p">)</span> <span class="o">/</span> <span class="n">sigma</span>
+
+    <span class="c1"># One-sided p-value (standard normal CDF approximation via erfc)</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+    <span class="n">p_value</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">erfc</span><span class="p">(</span><span class="n">z</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;z_score&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="mi">4</span><span class="p">),</span>
+        <span class="s2">&quot;green_count&quot;</span><span class="p">:</span> <span class="n">green_count</span><span class="p">,</span>
+        <span class="s2">&quot;total_tokens&quot;</span><span class="p">:</span> <span class="n">T</span><span class="p">,</span>
+        <span class="s2">&quot;gamma_expected&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">mu</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+        <span class="s2">&quot;p_value&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">p_value</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span>
+        <span class="s2">&quot;flagged&quot;</span><span class="p">:</span> <span class="n">z</span> <span class="o">&gt;</span> <span class="mf">4.0</span><span class="p">,</span>
+    <span class="p">}</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Demo</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">KEY</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;supersecret-operator-key-2024&quot;</span>
+    <span class="n">SEED_TOKEN</span> <span class="o">=</span> <span class="mi">1234</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="mi">200</span>  <span class="c1"># tokens to generate</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=== Watermarked text ===&quot;</span><span class="p">)</span>
+    <span class="n">wm_tokens</span> <span class="o">=</span> <span class="n">generate_watermarked</span><span class="p">(</span><span class="n">SEED_TOKEN</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">KEY</span><span class="p">,</span> <span class="n">delta</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+    <span class="n">result_wm</span> <span class="o">=</span> <span class="n">detect_watermark</span><span class="p">(</span><span class="n">wm_tokens</span><span class="p">,</span> <span class="n">SEED_TOKEN</span><span class="p">,</span> <span class="n">KEY</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">result_wm</span><span class="p">)</span>
+    <span class="c1"># Expected: z_score &gt;&gt; 4, flagged=True</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== Human (random) text ===&quot;</span><span class="p">)</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">Random</span><span class="p">(</span><span class="mi">99</span><span class="p">)</span>
+    <span class="n">human_tokens</span> <span class="o">=</span> <span class="p">[</span><span class="n">rng</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">VOCAB_SIZE</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">N</span><span class="p">)]</span>
+    <span class="n">result_human</span> <span class="o">=</span> <span class="n">detect_watermark</span><span class="p">(</span><span class="n">human_tokens</span><span class="p">,</span> <span class="n">SEED_TOKEN</span><span class="p">,</span> <span class="n">KEY</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">result_human</span><span class="p">)</span>
+    <span class="c1"># Expected: z_score near 0, flagged=False</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== Paraphrase attack: replace 40% tokens randomly ===&quot;</span><span class="p">)</span>
+    <span class="n">attacked</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">wm_tokens</span><span class="p">)</span>
+    <span class="n">rng2</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">Random</span><span class="p">(</span><span class="mi">7</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">N</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">rng2</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&lt;</span> <span class="mf">0.4</span><span class="p">:</span>
+            <span class="n">attacked</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">rng2</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">VOCAB_SIZE</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">result_atk</span> <span class="o">=</span> <span class="n">detect_watermark</span><span class="p">(</span><span class="n">attacked</span><span class="p">,</span> <span class="n">SEED_TOKEN</span><span class="p">,</span> <span class="n">KEY</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">result_atk</span><span class="p">)</span>
+    <span class="c1"># Expected: z_score reduced but often still &gt; 4 for delta=2.0, N=200</span>
+</code></pre></div>
+<p>Running this demo on a laptop produces output along the lines of:</p>
+<div class="highlight"><pre><span></span><code>=== Watermarked text ===
+{&#39;z_score&#39;: 8.21, &#39;green_count&#39;: 158, &#39;total_tokens&#39;: 200, &#39;gamma_expected&#39;: 100.0, &#39;p_value&#39;: 1.1e-16, &#39;flagged&#39;: True}
+
+=== Human (random) text ===
+{&#39;z_score&#39;: -0.14, &#39;green_count&#39;: 99, &#39;total_tokens&#39;: 200, &#39;gamma_expected&#39;: 100.0, &#39;p_value&#39;: 0.556, &#39;flagged&#39;: False}
+
+=== Paraphrase attack: replace 40% tokens randomly ===
+{&#39;z_score&#39;: 4.73, &#39;green_count&#39;: 134, &#39;total_tokens&#39;: 200, &#39;gamma_expected&#39;: 100.0, &#39;p_value&#39;: 0.0000011, &#39;flagged&#39;: True}
+</code></pre></div>
+<p>The watermark survives a 40% random token replacement at <span class="arithmatex">\(N = 200\)</span>; an adversary would need to replace roughly 70–80% of tokens to drop <span class="arithmatex">\(z\)</span> below 4.0, at which point the text has been so thoroughly rewritten that the original content is largely gone.</p>
+<hr />
+<h2 id="robustness-to-attacks">Robustness to Attacks<a class="headerlink" href="#robustness-to-attacks" title="Permanent link">¶</a></h2>
+<p>A watermark that fails under modest editing provides only false assurance. The main attack classes are:</p>
+<table>
+<thead>
+<tr>
+<th>Attack</th>
+<th>Description</th>
+<th>Effect on <span class="arithmatex">\(z\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Random token substitution</td>
+<td>Replace <span class="arithmatex">\(p\)</span> fraction with random tokens</td>
+<td><span class="arithmatex">\(z\)</span> scales as <span class="arithmatex">\((1-p)\)</span>; at <span class="arithmatex">\(p=0.5\)</span>, <span class="arithmatex">\(z\)</span> halved</td>
+</tr>
+<tr>
+<td>Paraphrase (LLM rewrite)</td>
+<td>Feed text to a second model and rewrite</td>
+<td>Moderate; semantic content preserved, tokens changed</td>
+</tr>
+<tr>
+<td>Translation roundtrip</td>
+<td>EN→FR→EN</td>
+<td>Moderate; depends on vocabulary overlap</td>
+</tr>
+<tr>
+<td>Copy-paste splicing</td>
+<td>Embed watermarked snippet into human text</td>
+<td>Dilutes <span class="arithmatex">\(z\)</span> by dilution factor</td>
+</tr>
+<tr>
+<td>Generative attack (DIPPER-style)</td>
+<td>Adversarial paraphraser trained to remove signal</td>
+<td>Strong; can drop <span class="arithmatex">\(z\)</span> below threshold if attacker has API access</td>
+</tr>
+<tr>
+<td>Token insertion/deletion</td>
+<td>Insert filler tokens</td>
+<td>Context hashing can be disrupted</td>
+</tr>
+</tbody>
+</table>
+<p>The <em>context-window hash</em> choice (<span class="arithmatex">\(h\)</span>, the number of preceding tokens hashed) determines how an insertion/deletion attack propagates. With <span class="arithmatex">\(h=1\)</span> (Markov-1), inserting one token shifts the green list for only one future token. With <span class="arithmatex">\(h=4\)</span>, it shifts four. Sliding-window detection (try all possible insertion offsets) partially recovers.</p>
+<p>Adaptive adversaries who can query the model repeatedly — and observe which tokens land in the green list — can, in principle, reconstruct the green list and mask it. This motivates <em>multi-bit and multi-key</em> watermarks: rather than a single binary signal, embed a message identifier drawn from a space of <span class="arithmatex">\(2^{32}\)</span> or more possible keys, so that cracking one key does not transfer.</p>
+<hr />
+<h2 id="multimodal-watermarking-synthid-and-its-relatives">Multimodal Watermarking: SynthID and Its Relatives<a class="headerlink" href="#multimodal-watermarking-synthid-and-its-relatives" title="Permanent link">¶</a></h2>
+<p>Text watermarking exploits the discrete token distribution. Image, audio, and video watermarking must operate in continuous, high-dimensional pixel/waveform space and must survive JPEG compression, resizing, screen-capture, and codec re-encoding.</p>
+<h3 id="synthid-class-image-watermarking">SynthID-Class Image Watermarking<a class="headerlink" href="#synthid-class-image-watermarking" title="Permanent link">¶</a></h3>
+<p>Google DeepMind&rsquo;s SynthID (Fernandez et al., 2023) embeds a learned, imperceptible pattern into image pixel values. Rather than modifying pixel intensities post-hoc (the classical LSB or DWT approach), SynthID integrates a small neural network &ldquo;watermark decoder&rdquo; trained jointly with or fine-tuned alongside the image model. The encoder learns to add a near-zero-magnitude steganographic signal that:</p>
+<ul>
+<li>Survives JPEG compression at quality factors as low as 50.</li>
+<li>Survives resizing and cropping.</li>
+<li>Is invisible to the human eye (SSIM &gt; 0.999 on natural images).</li>
+</ul>
+<p>Detection uses the same decoder network: the residual embedding is projected onto a learned detection vector, and a threshold test is applied.</p>
+<p><strong>Spectral domain techniques.</strong> Earlier (non-neural) approaches work in the frequency domain. The DWT-DFT watermark embeds a pseudo-random bit sequence into the mid-frequency DCT or DFT coefficients of an image. These are robust to JPEG (which discards high-frequency coefficients) but remain in the preserved mid-frequencies. The trade-off is that neural-network detectors can learn to strip these signals when given enough examples.</p>
+<h3 id="audio-and-video">Audio and Video<a class="headerlink" href="#audio-and-video" title="Permanent link">¶</a></h3>
+<p>For speech synthesis (text-to-speech), audio watermarking can be applied in the mel-spectrogram domain before vocoding or via a neural encoder-decoder analogous to SynthID. SynthID-Audio (announced by Google, 2024) claims robustness to mp3 compression, speed changes of ±10%, and additive noise up to 30dB SNR loss.</p>
+<p>Video watermarking faces an additional adversary: temporal resampling (frame-rate change, slow-motion). Frame-level image watermarks compound across frames, so detection uses majority voting across sampled frames, which is robust to partial frame replacement.</p>
+<figure class="viz" id="fig-wmprov-image-wm-pipeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 620" role="img" aria-label="Image watermark embedding and detection pipeline: a prompt feeds a diffusion model producing a raw image, which a watermark encoder NN embeds a steganographic signal into, producing a watermarked image. The watermarked image then takes two paths: a lossy channel (JPEG/resize/crop) producing a degraded image fed to a decoder NN, and an ideal channel fed directly to a decoder NN. Both decoders output a bit string plus p-value.">
+<defs>
+  <marker id="wip-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="wip-arr-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+  <marker id="wip-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#7c3aed)"/>
+  </marker>
+  <marker id="wip-arr-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+<style>
+  #fig-wmprov-image-wm-pipeline text { fill: var(--ink-soft,#333); }
+  #fig-wmprov-image-wm-pipeline .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-wmprov-image-wm-pipeline .sub { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#777); }
+  #fig-wmprov-image-wm-pipeline .sub-acc { font: 400 9px var(--sans,sans-serif); fill: rgba(255,255,255,0.8); }
+  #fig-wmprov-image-wm-pipeline .edge-lbl { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted,#777); }
+  #fig-wmprov-image-wm-pipeline .acc-lbl { font: 600 13px var(--sans,sans-serif); fill: #fff; }
+  #fig-wmprov-image-wm-pipeline .ok-lbl { font: 600 12px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+
+  /* animated flow dot */
+  @media (prefers-reduced-motion: no-preference) {
+    #fig-wmprov-image-wm-pipeline .flow-dot { animation: wip-travel 4s ease-in-out infinite; }
+    #fig-wmprov-image-wm-pipeline .flow-dot-l { animation: wip-travel-l 4s ease-in-out infinite; animation-delay: 2s; }
+    #fig-wmprov-image-wm-pipeline .flow-dot-r { animation: wip-travel-r 4s ease-in-out infinite; animation-delay: 2s; }
+    #fig-wmprov-image-wm-pipeline .dot-flicker { animation: wip-flicker 0.4s ease-in-out 3; animation-delay: 2.6s; }
+    @keyframes wip-travel {
+      0%   { transform: translate(0,0); opacity:0; }
+      5%   { opacity:1; }
+      20%  { transform: translate(170px,0); opacity:1; }
+      35%  { transform: translate(340px,0); opacity:1; }
+      50%  { transform: translate(340px,100px); opacity:1; }
+      65%  { transform: translate(340px,190px); opacity:1; }
+      75%  { opacity:1; }
+      80%  { transform: translate(340px,240px); opacity:0; }
+      100% { transform: translate(340px,240px); opacity:0; }
+    }
+    @keyframes wip-travel-l {
+      0%   { transform: translate(0,0); opacity:0; }
+      5%   { opacity:1; }
+      25%  { transform: translate(-250px,80px); opacity:1; }
+      50%  { transform: translate(-250px,160px); opacity:1; }
+      75%  { transform: translate(-250px,240px); opacity:1; }
+      90%  { transform: translate(-250px,320px); opacity:1; }
+      95%  { opacity:1; }
+      100% { transform: translate(-250px,320px); opacity:0; }
+    }
+    @keyframes wip-travel-r {
+      0%   { transform: translate(0,0); opacity:0; }
+      5%   { opacity:1; }
+      30%  { transform: translate(150px,80px); opacity:1; }
+      60%  { transform: translate(150px,160px); opacity:1; }
+      90%  { transform: translate(150px,240px); opacity:1; }
+      95%  { opacity:1; }
+      100% { transform: translate(150px,240px); opacity:0; }
+    }
+    @keyframes wip-flicker {
+      0%,100% { opacity:1; r:5; }
+      50%      { opacity:0.3; r:8; }
+    }
+  }
+</style>
+
+
+<g data-anim="1">
+
+  <rect x="30" y="30" width="100" height="40" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+  <text x="80" y="55" text-anchor="middle" class="lbl">Prompt</text>
+
+  <line x1="130" y1="50" x2="190" y2="50" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#wip-arr)"/>
+
+  <rect x="192" y="30" width="120" height="40" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+  <text x="252" y="55" text-anchor="middle" class="lbl">Diffusion</text>
+
+  <line x1="312" y1="50" x2="372" y2="50" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#wip-arr)"/>
+
+  <rect x="374" y="25" width="165" height="50" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+  <text x="456" y="50" text-anchor="middle" class="lbl">Raw image</text>
+  <text x="456" y="65" text-anchor="middle" class="sub">H × W × 3</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="456" y1="75" x2="456" y2="125" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#wip-arr-acc)"/>
+
+
+  <rect x="356" y="127" width="200" height="56" rx="10" fill="var(--accent,#7c3aed)" stroke="var(--accent,#7c3aed)" stroke-width="1.5"/>
+  <text x="456" y="152" text-anchor="middle" class="acc-lbl">WM encoder NN</text>
+  <text x="456" y="167" text-anchor="middle" class="sub-acc">adds steganographic signal</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="456" y1="183" x2="456" y2="228" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#wip-arr)"/>
+
+
+  <rect x="336" y="230" width="240" height="46" rx="8" fill="var(--surface-3,#ede9fe)" stroke="var(--accent,#7c3aed)" stroke-width="1.8"/>
+  <text x="456" y="258" text-anchor="middle" class="lbl" fill="var(--accent,#7c3aed)">Watermarked image</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="456" y1="276" x2="456" y2="300" stroke="var(--ink-soft,#555)" stroke-width="1.5"/>
+
+  <line x1="220" y1="300" x2="620" y2="300" stroke="var(--ink-soft,#555)" stroke-width="1.5"/>
+
+  <line x1="220" y1="300" x2="220" y2="328" stroke="var(--warn,#e0a106)" stroke-width="1.5" marker-end="url(#wip-arr-warn)"/>
+
+  <line x1="620" y1="300" x2="620" y2="378" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#wip-arr)"/>
+
+
+  <text x="150" y="318" text-anchor="middle" class="edge-lbl" fill="var(--warn,#e0a106)">lossy channel</text>
+  <text x="685" y="318" text-anchor="middle" class="edge-lbl">(ideal channel)</text>
+</g>
+
+
+<g data-anim="4">
+
+  <rect x="120" y="330" width="200" height="46" rx="8" fill="var(--warn,rgba(224,161,6,0.12))" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+  <text x="220" y="353" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">JPEG / resize / crop</text>
+  <text x="220" y="368" text-anchor="middle" class="sub">adversarial degradations</text>
+
+
+  <line x1="220" y1="376" x2="220" y2="405" stroke="var(--warn,#e0a106)" stroke-width="1.5" marker-end="url(#wip-arr-warn)"/>
+
+
+  <rect x="120" y="407" width="200" height="40" rx="8" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="220" y="432" text-anchor="middle" class="lbl">Degraded image</text>
+
+
+  <line x1="220" y1="447" x2="220" y2="476" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#wip-arr-acc)"/>
+
+
+  <rect x="120" y="478" width="200" height="50" rx="10" fill="var(--accent,#7c3aed)" stroke="var(--accent,#7c3aed)" stroke-width="1.5"/>
+  <text x="220" y="501" text-anchor="middle" class="acc-lbl">WM decoder NN</text>
+  <text x="220" y="516" text-anchor="middle" class="sub-acc">projects onto detection vector</text>
+
+
+  <line x1="220" y1="528" x2="220" y2="557" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#wip-arr-ok)"/>
+
+
+  <rect x="105" y="559" width="230" height="40" rx="8" fill="var(--surface-3,#f0faf5)" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="220" y="584" text-anchor="middle" class="ok-lbl">Bit string + p-value</text>
+</g>
+
+
+<g data-anim="4">
+
+  <rect x="520" y="380" width="200" height="50" rx="10" fill="var(--accent,#7c3aed)" stroke="var(--accent,#7c3aed)" stroke-width="1.5"/>
+  <text x="620" y="403" text-anchor="middle" class="acc-lbl">WM decoder NN</text>
+  <text x="620" y="418" text-anchor="middle" class="sub-acc">projects onto detection vector</text>
+
+
+  <line x1="620" y1="430" x2="620" y2="459" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#wip-arr-ok)"/>
+
+
+  <rect x="505" y="461" width="230" height="40" rx="8" fill="var(--surface-3,#f0faf5)" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="620" y="486" text-anchor="middle" class="ok-lbl">Bit string + p-value</text>
+</g>
+
+
+<g data-anim="5" class="flow-dot">
+  <circle cx="80" cy="50" r="5" fill="var(--accent,#7c3aed)" opacity="0.9"/>
+</g>
+
+
+<g data-anim="5">
+
+  <circle class="flow-dot-l" cx="456" cy="276" r="5" fill="var(--warn,#e0a106)" opacity="0"/>
+
+  <circle class="flow-dot-r" cx="456" cy="276" r="5" fill="var(--good,#2f9e6e)" opacity="0"/>
+</g>
+</svg>
+<figcaption><b>Image watermark embedding and detection under two channel conditions.</b> A diffusion model's output passes through a watermark encoder neural network that embeds a near-invisible steganographic signal. At detection time the watermarked image may traverse a lossy channel (JPEG compression, resizing, cropping) that degrades it before the decoder network, or it may reach the decoder unmodified via an ideal channel. Both paths produce a bit string and a p-value for statistical verification; the robustness gap between the two paths is the core engineering challenge in watermark design.</figcaption>
+</figure>
+
+<hr />
+<h2 id="content-provenance-c2pa-and-signed-manifests">Content Provenance: C2PA and Signed Manifests<a class="headerlink" href="#content-provenance-c2pa-and-signed-manifests" title="Permanent link">¶</a></h2>
+<p>Watermarking answers &ldquo;was this generated by model X?&rdquo; but not &ldquo;who generated it, when, and with what inputs?&rdquo;. <em>Content provenance</em> standards answer the richer question by attaching a cryptographically signed manifest to the file at the moment of creation.</p>
+<h3 id="the-c2pa-standard">The C2PA Standard<a class="headerlink" href="#the-c2pa-standard" title="Permanent link">¶</a></h3>
+<p>The Coalition for Content Provenance and Authenticity (C2PA) is a joint effort of Adobe, Microsoft, BBC, Intel, Sony, and others. The specification (C2PA 2.0, released 2024) defines:</p>
+<ul>
+<li><strong>Content Credentials</strong>: a JSON-LD manifest embedded in the file&rsquo;s XMP/JUMBF metadata. It records the asset&rsquo;s identity, creation tool, timestamp, and a list of <em>actions</em> (crop, generate, edit) performed.</li>
+<li><strong>Hard-binding</strong>: a cryptographic hash of the asset bytes (SHA-256) is included in the manifest, binding the manifest to exactly this file. Any modification breaks the hash.</li>
+<li><strong>Soft-binding</strong>: a perceptual hash (e.g., pHash) allows approximate matching after lossy transformations. If the hard-binding hash fails but the perceptual hash matches, the tool reports &ldquo;modified from a C2PA-signed original.&rdquo;</li>
+<li><strong>X.509 certificate chain</strong>: the manifest is signed with an operator certificate, whose trust roots back to a C2PA-approved CA. This gives a verifiable, non-repudiable binding between the manifest and the signer&rsquo;s identity.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;alg&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;sha256&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;assertions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;c2pa.actions&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">&quot;actions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">          </span><span class="p">{</span>
+<span class="w">            </span><span class="nt">&quot;action&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;c2pa.created&quot;</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">&quot;softwareAgent&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;MyAIImageGen v2.1&quot;</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">&quot;when&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2025-04-10T14:23:00Z&quot;</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">&quot;digitalSourceType&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;trainedAlgorithmicMedia&quot;</span>
+<span class="w">          </span><span class="p">}</span>
+<span class="w">        </span><span class="p">]</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;c2pa.hash.data&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">&quot;alg&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;sha256&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">&quot;hash&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;a3f4...c291&quot;</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;claim_generator&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;MyAIImageGen/2.1 c2pa-rs/0.25.0&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;signature_info&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;issuer&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;MyAI Corp&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;cert_serial_number&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;0x4A2F...&quot;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="limitations-of-provenance">Limitations of Provenance<a class="headerlink" href="#limitations-of-provenance" title="Permanent link">¶</a></h3>
+<p>C2PA solves <em>honest-party verification</em>: if a trustworthy party generates content and signs it, downstream consumers can verify the claim. It does not prevent a malicious party from generating content with a modified tool that forges the manifest, or from distributing content through channels that strip metadata.</p>
+<p>The key insight: C2PA and watermarking are <em>complementary</em>. C2PA provides a rich, human-readable, auditable record for compliant workflows. Watermarking provides a signal that survives metadata stripping. Together they cover the main attack surface.</p>
+<hr />
+<h2 id="post-hoc-ai-text-detection-what-works-and-what-doesnt">Post-Hoc AI-Text Detection: What Works and What Doesn&rsquo;t<a class="headerlink" href="#post-hoc-ai-text-detection-what-works-and-what-doesnt" title="Permanent link">¶</a></h2>
+<p>When proactive watermarks are absent, operators sometimes fall back to <em>post-hoc detectors</em> that classify text as AI- or human-written based on statistical features. We must be honest about their limitations.</p>
+<h3 id="likelihood-based-detectors">Likelihood-Based Detectors<a class="headerlink" href="#likelihood-based-detectors" title="Permanent link">¶</a></h3>
+<p>The simplest family uses the generating model&rsquo;s own perplexity. If a text has unusually low perplexity under GPT-4, it was probably written by GPT-4. DetectGPT (Mitchell et al., 2023) formalizes this: it computes the model&rsquo;s log-probability on the candidate text, then samples small perturbations (via a masking model) and asks whether the original is a <em>local maximum</em> of log-probability — an expected property of model-sampled text.</p>
+<div class="arithmatex">\[
+\Delta(x) = \log p_\theta(x) - \mathbb{E}_{\tilde{x} \sim q(\cdot|x)}[\log p_\theta(\tilde{x})]
+\]</div>
+<p>If <span class="arithmatex">\(\Delta(x) &gt; 0\)</span> by a large margin, the text is flagged as AI-generated. The method requires access to the generating model&rsquo;s probability, which is unavailable for closed-source models.</p>
+<h3 id="trained-classifier-detectors">Trained Classifier Detectors<a class="headerlink" href="#trained-classifier-detectors" title="Permanent link">¶</a></h3>
+<p>Fine-tuned classifiers (e.g., OpenAI&rsquo;s Text Classifier, GPTZero) are trained on (human, AI) pairs. They achieve high accuracy on in-distribution examples but degrade severely under:</p>
+<ul>
+<li><strong>Domain shift</strong>: a classifier trained on Reddit posts misclassifies academic AI writing.</li>
+<li><strong>Prompt conditioning</strong>: AI text generated with unusual system prompts is less &ldquo;typical&rdquo; and evades detection.</li>
+<li><strong>Short texts</strong>: below roughly 100 words, false-positive rates jump dramatically.</li>
+<li><strong>Paraphrase</strong>: light editing by a human or a second model is often sufficient to evade commercial detectors.</li>
+</ul>
+<p>A rigorous audit by Weber-Wulff et al. (2023) found that widely-used commercial tools had false-positive rates of 2–10% on human text and true-positive rates as low as 30–70% on real AI-generated content — worse than their advertised numbers. This has profound fairness implications: non-native English speakers tend to use more regular, predictable sentence structures that resemble AI text, and their work is flagged at higher rates.</p>
+<div class="admonition warning">
+<p class="admonition-title">High false-positive rates are a fundamental fairness problem</p>
+<p>Deploying AI-text detectors for high-stakes decisions (academic misconduct, legal documents) without understanding their false-positive characteristics can cause serious harm. Non-native English speakers and writers in certain domains face systematically elevated false-positive rates. Any deployment of these systems must involve calibration on the specific population and domain, transparency about error rates, and a meaningful appeals process.</p>
+</div>
+<h3 id="why-post-hoc-detection-is-fundamentally-limited">Why Post-Hoc Detection Is Fundamentally Limited<a class="headerlink" href="#why-post-hoc-detection-is-fundamentally-limited" title="Permanent link">¶</a></h3>
+<p>A language model that is fine-tuned post-hoc to evade a specific detector can do so while maintaining utility on the downstream task. This is a <em>Goodhart&rsquo;s Law</em> dynamic: as soon as a measure of AI-ness becomes a target, it ceases to be a reliable measure. Watermarking avoids this problem by putting the signal under the operator&rsquo;s private-key control.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A product manager proposes integrating a commercial AI-text detector into a hiring pipeline to flag AI-written cover letters. What technical concerns would you raise?</p>
+<p><strong>A:</strong> Several interlocking issues: (1) <em>False-positive rates</em> on this specific population — job applicants, many non-native speakers, covering diverse domains — are likely uncharacterized and could be 5–15%, far too high for a consequential HR decision. (2) <em>Distribution shift</em>: the detector was trained on generic AI text; candidates using domain-specific prompts may be systematically under-flagged or over-flagged. (3) <em>Adversarial ease</em>: a trivial human edit pass defeats most commercial detectors; determined bad actors are not meaningfully deterred. (4) <em>Legal risk</em>: in many jurisdictions, automated adverse employment decisions based on unvalidated systems create liability. A robust alternative is to require a live writing sample or structured interview component rather than relying on any automated detector.</p>
+</div>
+<hr />
+<h2 id="the-eu-ai-act-article-50-and-transparency-obligations">The EU AI Act: Article 50 and Transparency Obligations<a class="headerlink" href="#the-eu-ai-act-article-50-and-transparency-obligations" title="Permanent link">¶</a></h2>
+<p>The EU AI Act (fully applicable from August 2026) imposes direct obligations on providers and deployers of generative AI. Article 50 specifies:</p>
+<ol>
+<li>
+<p><strong>Machine-generated content must be labeled.</strong> Providers of general-purpose AI systems that generate synthetic audio, image, video, or text &ldquo;intended to interact with persons&rdquo; must ensure the output is marked as AI-generated in a machine-readable format.</p>
+</li>
+<li>
+<p><strong>Text watermarking for public communication.</strong> For AI-generated text used for public communication (news, opinion, political content), Article 50(2) additionally requires that the content be <em>watermarked</em> in a technically robust way, &ldquo;unless the AI-generated content has undergone substantial human review or editorial oversight.&rdquo;</p>
+</li>
+<li>
+<p><strong>Deepfake disclosure.</strong> AI-generated or manipulated images, audio, or video of real persons must carry a clear disclosure label visible to the end user.</p>
+</li>
+</ol>
+<p>The Act leaves the specific technical implementation to the Commission (via standards bodies, likely ETSI and CEN/CENELEC), but explicitly names C2PA-style content credentials as a compliant approach. Penalties for non-compliance can reach 1.5% of global annual turnover.</p>
+<p>Practically, this means:</p>
+<ul>
+<li>LLM API providers serving EU users must expose a watermark API (or embed watermarks by default) for public-facing text generation.</li>
+<li>Image and video generation services must embed C2PA credentials or equivalent.</li>
+<li>The &ldquo;substantial human review&rdquo; exemption creates a compliance design choice: a product can choose either watermarking or a mandatory human-in-the-loop review gate.</li>
+</ul>
+<p>Cross-reference: <a href="../13-interp-safety-gov/06-governance-compliance.html">AI Governance, Compliance &amp; Regulation</a> covers the full EU AI Act risk-tier framework and the broader global compliance landscape.</p>
+<hr />
+<h2 id="system-level-architecture-for-a-production-watermark-pipeline">System-Level Architecture for a Production Watermark Pipeline<a class="headerlink" href="#system-level-architecture-for-a-production-watermark-pipeline" title="Permanent link">¶</a></h2>
+<p>Deploying watermarking at scale requires integrating it into the inference serving stack without unacceptable latency overhead.</p>
+<figure class="viz" id="fig-wmprov-vllm-logits-processor">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 820 560" role="img" aria-label="Production watermark pipeline inside a vLLM-style inference server: requests are tokenized, prefilled, then enter a decode loop that emits a logit vector into a WatermarkLogitsProcessor (which hashes the key and previous tokens, builds a green set, and adds delta to green token logits), then sampling selects a token, the KV-cache is updated, and a dashed feedback arrow carries prev_tokens back into the decode loop for the next autoregressive step.">
+<defs>
+  <marker id="vlp-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="vlp-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#7c3aed)"/>
+  </marker>
+  <marker id="vlp-arr-dash" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#7c3aed)" opacity="0.7"/>
+  </marker>
+</defs>
+<style>
+  #fig-wmprov-vllm-logits-processor text { fill: var(--ink-soft,#333); }
+  #fig-wmprov-vllm-logits-processor .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-wmprov-vllm-logits-processor .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#777); }
+  #fig-wmprov-vllm-logits-processor .edge-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#777); }
+  #fig-wmprov-vllm-logits-processor .container-lbl { font: 700 12px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-wmprov-vllm-logits-processor .acc-lbl { font: 600 13px var(--sans,sans-serif); fill: #fff; }
+  #fig-wmprov-vllm-logits-processor .acc-step { font: 400 11px var(--mono,monospace); fill: rgba(255,255,255,0.9); }
+  #fig-wmprov-vllm-logits-processor .acc-step-n { font: 700 11px var(--sans,sans-serif); fill: rgba(255,255,255,0.7); }
+
+  /* Step highlight animation inside WatermarkLogitsProcessor */
+  @media (prefers-reduced-motion: no-preference) {
+    #fig-wmprov-vllm-logits-processor .step-hl-1 { animation: vlp-hl 3.5s ease-in-out infinite; }
+    #fig-wmprov-vllm-logits-processor .step-hl-2 { animation: vlp-hl 3.5s ease-in-out infinite; animation-delay: 0.5s; }
+    #fig-wmprov-vllm-logits-processor .step-hl-3 { animation: vlp-hl 3.5s ease-in-out infinite; animation-delay: 1s; }
+    #fig-wmprov-vllm-logits-processor .pkt { animation: vlp-pkt 3.5s ease-in-out infinite; }
+    #fig-wmprov-vllm-logits-processor .pkt-ret { animation: vlp-pkt-ret 3.5s ease-in-out infinite; animation-delay: 1.8s; }
+    @keyframes vlp-hl {
+      0%, 100% { opacity: 0; }
+      15%, 35% { opacity: 0.4; }
+    }
+    @keyframes vlp-pkt {
+      0%   { transform: translate(0,0); opacity: 0; }
+      5%   { opacity: 1; }
+      20%  { transform: translate(0, 120px); opacity: 1; }
+      40%  { transform: translate(0, 250px); opacity: 1; }
+      55%  { transform: translate(0, 340px); opacity: 1; }
+      65%  { transform: translate(0, 390px); opacity: 1; }
+      75%  { opacity: 1; }
+      80%  { transform: translate(0, 420px); opacity: 0; }
+      100% { transform: translate(0, 420px); opacity: 0; }
+    }
+    @keyframes vlp-pkt-ret {
+      0%   { stroke-dashoffset: 260; opacity: 0; }
+      5%   { opacity: 1; }
+      70%  { stroke-dashoffset: 0; opacity: 1; }
+      90%  { opacity: 1; }
+      100% { stroke-dashoffset: 260; opacity: 0; }
+    }
+  }
+</style>
+
+
+<rect x="18" y="18" width="784" height="500" rx="16" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="2"/>
+<text x="38" y="40" class="container-lbl">Inference serving (e.g., vLLM)</text>
+
+
+<g data-anim="1">
+
+  <rect x="36" y="60" width="100" height="40" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="86" y="85" text-anchor="middle" class="lbl">Request</text>
+
+  <line x1="136" y1="80" x2="164" y2="80" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#vlp-arr)"/>
+
+  <rect x="166" y="60" width="100" height="40" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="216" y="85" text-anchor="middle" class="lbl">Tokenize</text>
+
+  <line x1="266" y1="80" x2="294" y2="80" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#vlp-arr)"/>
+
+  <rect x="296" y="60" width="100" height="40" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="346" y="85" text-anchor="middle" class="lbl">Prefill</text>
+
+  <line x1="396" y1="80" x2="424" y2="80" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#vlp-arr)"/>
+
+  <rect x="426" y="56" width="128" height="48" rx="8" fill="var(--surface-3,#ede9fe)" stroke="var(--accent,#7c3aed)" stroke-width="1.8"/>
+  <text x="490" y="78" text-anchor="middle" class="lbl" fill="var(--accent,#7c3aed)">Decode loop</text>
+  <text x="490" y="94" text-anchor="middle" class="sub">autoregressive</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="490" y1="104" x2="490" y2="148" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#vlp-arr-acc)"/>
+  <text x="520" y="133" class="edge-lbl">Logit vector (|V| floats)</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="310" y="150" width="360" height="140" rx="12" fill="var(--accent,#7c3aed)" stroke="var(--accent,#7c3aed)" stroke-width="2"/>
+  <text x="490" y="175" text-anchor="middle" class="acc-lbl" style="font-size:14px">WatermarkLogitsProcessor</text>
+
+
+  <rect class="step-hl-1" x="316" y="182" width="348" height="24" rx="4" fill="rgba(255,255,255,0.3)" opacity="0"/>
+  <rect class="step-hl-2" x="316" y="210" width="348" height="24" rx="4" fill="rgba(255,255,255,0.3)" opacity="0"/>
+  <rect class="step-hl-3" x="316" y="238" width="348" height="24" rx="4" fill="rgba(255,255,255,0.3)" opacity="0"/>
+
+
+  <text x="330" y="199" class="acc-step-n">1.</text>
+  <text x="345" y="199" class="acc-step">hash(key, prev_tokens)</text>
+
+  <text x="330" y="227" class="acc-step-n">2.</text>
+  <text x="345" y="227" class="acc-step">build green_set</text>
+
+  <text x="330" y="255" class="acc-step-n">3.</text>
+  <text x="345" y="255" class="acc-step">add delta to green ids</text>
+
+  <text x="490" y="278" text-anchor="middle" style="font:400 9px var(--sans,sans-serif); fill:rgba(255,255,255,0.6);">per-token, context-dependent green list</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="490" y1="290" x2="490" y2="336" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#vlp-arr)"/>
+
+
+  <rect x="420" y="338" width="140" height="40" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="490" y="363" text-anchor="middle" class="lbl">Sampling</text>
+
+
+  <line x1="560" y1="358" x2="612" y2="358" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#vlp-arr)"/>
+
+
+  <rect x="614" y="340" width="80" height="36" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="654" y="363" text-anchor="middle" class="lbl">token</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="490" y1="378" x2="490" y2="416" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#vlp-arr)"/>
+
+
+  <rect x="390" y="418" width="200" height="40" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="490" y="443" text-anchor="middle" class="lbl">KV-cache update</text>
+</g>
+
+
+<g data-anim="5">
+
+  <path d="M390 438 L130 438 L130 122 L410 122 L410 90 L424 90"
+        fill="none" stroke="var(--accent,#7c3aed)" stroke-width="1.4"
+        stroke-dasharray="6 4" opacity="0.75" marker-end="url(#vlp-arr-dash)"/>
+  <text x="62" y="300" class="edge-lbl" fill="var(--accent,#7c3aed)" transform="rotate(-90,62,300)">next step / prev_tokens</text>
+</g>
+
+
+<g data-anim="5">
+  <circle class="pkt" cx="490" cy="104" r="5.5" fill="var(--accent,#7c3aed)" opacity="0"/>
+</g>
+
+
+<g data-anim="5">
+  <path class="pkt-ret"
+        d="M390 438 L130 438 L130 122 L410 122 L410 90 L424 90"
+        fill="none" stroke="var(--accent,#7c3aed)" stroke-width="2.5"
+        stroke-dasharray="260" stroke-dashoffset="260" opacity="0"/>
+</g>
+</svg>
+<figcaption><b>KGW watermark integrated into a vLLM-style autoregressive decode loop.</b> At each generation step the <code>WatermarkLogitsProcessor</code> hashes a secret key together with the previously generated tokens to deterministically build a "green" token set, then boosts those tokens' logits by a fixed delta before sampling. The dashed feedback arrow shows that the sampled token updates the KV-cache and feeds back as <em>prev_tokens</em> for the next step's hash, making every green-list context-dependent and statistically detectable by a paired scorer.</figcaption>
+</figure>
+
+<p>For high-throughput serving, the hash computation can be parallelized on GPU. The green-list can be represented as a bitmask of <span class="arithmatex">\(|V|\)</span> bits (32000 / 8 = 4 KB), which fits comfortably in L1 cache. The logit-addition is a vectorized CUDA kernel that adds <code>delta * mask</code> to the logit vector, adding negligible latency.</p>
+<p>A real implementation also needs:</p>
+<ul>
+<li><strong>Key management</strong>: the secret key must be stored in a hardware security module (HSM) or equivalent; compromise of the key allows an adversary to construct text that passes detection.</li>
+<li><strong>Per-request key rotation</strong>: rather than a global key, derive a per-request subkey from the master key and a request ID. This limits the exposure from any single leaked subkey.</li>
+<li><strong>Audit log</strong>: record the request ID → watermark key mapping so that a flagged document can be traced back to the originating request (with appropriate legal authorization).</li>
+</ul>
+<hr />
+<h2 id="practical-limitations-and-open-problems">Practical Limitations and Open Problems<a class="headerlink" href="#practical-limitations-and-open-problems" title="Permanent link">¶</a></h2>
+<p>Despite their elegance, current watermarking schemes face several real-world limitations.</p>
+<p><strong>Low-entropy text.</strong> If the next token is highly predictable — e.g., completing a fixed template, writing code with rigid syntax, or generating a phone number — the model has essentially no degrees of freedom. The green list is irrelevant because the only viable token may be red. The effective green-token rate collapses, and the <span class="arithmatex">\(z\)</span>-score is diluted. This is a fundamental tension: watermarking works best when the model has many plausible continuations.</p>
+<p><strong>Multi-model provenance.</strong> When a document is partly human-written, partly AI-generated, and partly AI-edited, neither a single <span class="arithmatex">\(z\)</span>-score nor a binary classifier can give a nuanced answer. Forensic attribution — &ldquo;this paragraph is AI-generated; this one is not&rdquo; — requires token-level rather than document-level watermarking, an active research area.</p>
+<p><strong>Open-weight models.</strong> Any open-weight model (LLaMA, Mistral, etc.) can be deployed without watermarking. The operator can remove the watermark processor trivially. This means watermarking mandates (like EU AI Act Article 50) apply only to API-based closed models; open-weight models present a policy gap. One proposed mitigation is embedding watermarks <em>in the model weights</em> (via fine-tuning to prefer green tokens without an explicit processor), but this is easily circumvented by further fine-tuning.</p>
+<p><strong>Semantic watermarks.</strong> An emerging line of work embeds watermarks at the <em>semantic</em> level — in the choice of which concepts to mention, which synonyms to use — rather than at the token level. Semantic watermarks are more robust to paraphrase but harder to detect without access to a semantic model, and their statistical properties are less well understood.</p>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The KGW green-list watermark biases sampling toward a secret-key-derived token subset. Detection computes a z-score under the Binomial null; a score above ~4 corresponds to a false-positive rate around <span class="arithmatex">\(10^{-5}\)</span>.</li>
+<li>Distortion-free watermarks (Kuditipudi et al.) preserve the exact marginal token distribution while still embedding a detectable signal via inverse-CDF coupling; preferred when output quality is paramount.</li>
+<li>A 40% random token substitution attack roughly halves the z-score; an adversary must destroy 70–80% of the text to reliably evade detection — at which point they have rewritten the content anyway.</li>
+<li>SynthID-class image watermarks use learned neural encoders trained end-to-end; they survive JPEG, resizing, and cropping far better than classical LSB or DFT approaches.</li>
+<li>C2PA content credentials provide cryptographically signed manifests with hard and soft asset bindings; they are complementary to watermarking — manifests survive format preservation, watermarks survive metadata stripping.</li>
+<li>Post-hoc AI-text detectors have fundamental limitations: domain shift, adversarial evasion, and false-positive rates that systematically disadvantage non-native speakers. They should not be used for high-stakes automated decisions.</li>
+<li>EU AI Act Article 50 mandates machine-readable watermarking or labeling for AI-generated text used in public communication, with penalties up to 1.5% of global turnover for non-compliance.</li>
+<li>Open-weight models create a policy gap: any operator can remove watermarking infrastructure, making technical mandates applicable only to API-gated services.</li>
+<li>Key management and per-request key derivation are the production engineering concerns most often overlooked in academic watermarking papers.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Watermarking and provenance for AI-generated content is an active research and standards area: the KGW green-list scheme (2023) anchors the statistical watermarking literature, distortion-free variants have closed the quality gap, Google&rsquo;s SynthID has been deployed at production scale for text and images, and the C2PA 2.x specification is now embedded in major creative tools. EU AI Act Article 50 enforcement from August 2026 is accelerating industry adoption of both watermarking APIs and content-credential pipelines.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2301.10226">Kirchenbauer et al., <em>A Watermark for Large Language Models</em> (ICML 2023)</a> — the KGW green-list scheme; defines the z-score detection framework that remains the field&rsquo;s baseline.</li>
+<li><a href="https://arxiv.org/abs/2307.15593">Kuditipudi et al., <em>Robust Distortion-Free Watermarks for Language Models</em> (2023)</a> — inverse-CDF coupling that preserves the exact token distribution; preferred when output quality is paramount.</li>
+<li><a href="https://arxiv.org/abs/2301.11305">Mitchell et al., <em>DetectGPT: Zero-Shot Machine-Generated Text Detection using Probability Curvature</em> (ICML 2023)</a> — post-hoc likelihood-curvature detector; illustrates both the promise and limits of model-based detection.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2303.15435">Fernandez et al., <em>The Stable Signature: Rooting Watermarks in Latent Diffusion Models</em> (ICCV 2023)</a> — fine-tunes the latent decoder of diffusion models to embed per-user invisible signatures; &gt;90% detection after 90% crop.</li>
+<li><a href="https://arxiv.org/abs/2306.15666">Weber-Wulff et al., <em>Testing of Detection Tools for AI-Generated Text</em> (2023)</a> — rigorous audit showing commercial detectors achieve 30–70% true-positive rates with 2–10% false-positive rates; essential reading before deploying any detector.</li>
+<li><a href="https://deepmind.google/blog/watermarking-ai-generated-text-and-video-with-synthid/">Google DeepMind, <em>Watermarking AI-generated text and video with SynthID</em> (blog, 2024)</a> — production deployment of tournament-sampling text watermarks and video watermarking at Gemini scale.</li>
+<li><a href="https://artificialintelligenceact.eu/transparency-rules-article-50/">EU AI Act Article 50 — Transparency Rules Guide</a> — plain-language breakdown of the August 2026 mandatory watermarking and labeling obligations for generative AI providers and deployers.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/jwkirchenbauer/lm-watermarking">jwkirchenbauer/lm-watermarking</a> — official KGW reference implementation as a Hugging Face <code>LogitsProcessor</code>; drop-in for any model supporting <code>generate</code>.</li>
+<li><a href="https://github.com/google-deepmind/synthid-text">google-deepmind/synthid-text</a> — reference implementation for the Nature 2024 SynthID-Text watermark with both weighted-mean and Bayesian detectors.</li>
+<li><a href="https://github.com/THU-BPM/MarkLLM">THU-BPM/MarkLLM</a> — unified toolkit (EMNLP 2024) implementing 24 watermarking algorithms including KGW, SynthID-Text, and SIR, with detection pipelines and robustness evaluation.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://spec.c2pa.org/specifications/">C2PA Technical Specification (v2.4)</a> — normative standard for content credentials: hard- and soft-binding, X.509 certificate chains, and the JSON-LD manifest format.</li>
+<li><a href="https://contentauthenticity.org/how-it-works">Content Authenticity Initiative — How It Works</a> — accessible explainer on C2PA deployment across cameras, editing tools, and social platforms; covers the &ldquo;nutrition label&rdquo; model for provenance.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Kirchenbauer, J., Geiping, J., Wen, Y., Kirchenbauer, K., Goldblum, M., and Goldstein, T. — <em>A Watermark for Large Language Models</em> (2023). The foundational green-list watermark paper.</li>
+<li>Kuditipudi, R., Thickstun, J., Hashimoto, T., and Liang, P. — <em>Robust Distortion-Free Watermarks for Language Models</em> (2023). Introduces the distortion-free inverse-CDF construction.</li>
+<li>Fernandez, P., Couairon, G., Jégou, H., Douze, M., and Furon, T. — <em>The Stable Signature: Rooting Watermarks in Latent Diffusion Models</em> (NeurIPS 2023). Neural watermarking for latent diffusion.</li>
+<li>Mitchell, E., Lee, Y., Khazatsky, A., Manning, C. D., and Finn, C. — <em>DetectGPT: Zero-Shot Machine-Generated Text Detection using Probability Curvature</em> (ICML 2023).</li>
+<li>Weber-Wulff, D. et al. — <em>Testing of Detection Tools for AI-Generated Text</em> (2023). Rigorous empirical audit of commercial detectors.</li>
+<li>C2PA Technical Specification v2.0 — Coalition for Content Provenance and Authenticity (2024). The normative standard for content credentials.</li>
+<li>Google DeepMind — <em>SynthID: Identifying AI-Generated Content</em> (Nature, 2024). Details of SynthID image and audio watermarking.</li>
+<li>Zhao, X., Ananth, P., Li, L., and Wang, Y. — <em>Provably Robust Multi-bit Watermarking for AI-Generated Text</em> (2023). Multi-bit extensions with information-theoretic robustness proofs.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="03-privacy-memorization-dp.html"><span class="pn-label">← Previous</span><span class="pn-title">Privacy, Memorization &amp; Differential Privacy for LLMs</span></a>
+<a class="next" href="05-ai-safety-oversight.html"><span class="pn-label">Next →</span><span class="pn-title">AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-watermarking-exists-the-motivation">Why Watermarking Exists: The Motivation</a></li>
+<li class="toc-l2"><a href="#statistical-text-watermarking-the-green-list-scheme">Statistical Text Watermarking: The Green-List Scheme</a></li>
+<li class="toc-l3"><a href="#the-kirchenbauer-et-al-construction">The Kirchenbauer et al. Construction</a></li>
+<li class="toc-l3"><a href="#context-hashing-and-key-security">Context Hashing and Key Security</a></li>
+<li class="toc-l3"><a href="#distortion-free-watermarks">Distortion-Free Watermarks</a></li>
+<li class="toc-l2"><a href="#from-scratch-green-list-watermark-code">From-Scratch Green-List Watermark: Code</a></li>
+<li class="toc-l2"><a href="#robustness-to-attacks">Robustness to Attacks</a></li>
+<li class="toc-l2"><a href="#multimodal-watermarking-synthid-and-its-relatives">Multimodal Watermarking: SynthID and Its Relatives</a></li>
+<li class="toc-l3"><a href="#synthid-class-image-watermarking">SynthID-Class Image Watermarking</a></li>
+<li class="toc-l3"><a href="#audio-and-video">Audio and Video</a></li>
+<li class="toc-l2"><a href="#content-provenance-c2pa-and-signed-manifests">Content Provenance: C2PA and Signed Manifests</a></li>
+<li class="toc-l3"><a href="#the-c2pa-standard">The C2PA Standard</a></li>
+<li class="toc-l3"><a href="#limitations-of-provenance">Limitations of Provenance</a></li>
+<li class="toc-l2"><a href="#post-hoc-ai-text-detection-what-works-and-what-doesnt">Post-Hoc AI-Text Detection: What Works and What Doesn&amp;rsquo;t</a></li>
+<li class="toc-l3"><a href="#likelihood-based-detectors">Likelihood-Based Detectors</a></li>
+<li class="toc-l3"><a href="#trained-classifier-detectors">Trained Classifier Detectors</a></li>
+<li class="toc-l3"><a href="#why-post-hoc-detection-is-fundamentally-limited">Why Post-Hoc Detection Is Fundamentally Limited</a></li>
+<li class="toc-l2"><a href="#the-eu-ai-act-article-50-and-transparency-obligations">The EU AI Act: Article 50 and Transparency Obligations</a></li>
+<li class="toc-l2"><a href="#system-level-architecture-for-a-production-watermark-pipeline">System-Level Architecture for a Production Watermark Pipeline</a></li>
+<li class="toc-l2"><a href="#practical-limitations-and-open-problems">Practical Limitations and Open Problems</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

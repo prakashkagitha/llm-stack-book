@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inference Economics: Latency, Throughput &amp; Cost — The LLM Stack</title>
+<meta name="description" content="The latency-throughput-cost triangle, batching vs latency SLOs, tokens-per-dollar, GPU selection, capacity planning, autoscaling, the math of $/1M tokens, why d">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="active" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="712-inference-economics-latency-throughput-cost">7.12 Inference Economics: Latency, Throughput &amp; Cost<a class="headerlink" href="#712-inference-economics-latency-throughput-cost" title="Permanent link">¶</a></h1>
+<p>Every LLM serving system is a negotiation between three forces: latency (how fast a single request finishes), throughput (how many requests the system handles per second), and cost (how much you pay per token produced). These three forces are coupled in fundamental ways — you cannot optimize all three simultaneously, and understanding the trade-offs quantitatively is what separates engineers who ship sustainable inference systems from those who run out of GPU budget six weeks after launch.</p>
+<p>This chapter is the capstone of Part VII. We assume you have read about the mechanics of prefill and decode in <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>, continuous batching in <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>, and the memory machinery in <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>. Here we focus on the economics: the math of dollars per million tokens, the hardware selection calculus, and the operational playbook for keeping costs under control.</p>
+<h2 id="the-latencythroughputcost-triangle">The Latency–Throughput–Cost Triangle<a class="headerlink" href="#the-latencythroughputcost-triangle" title="Permanent link">¶</a></h2>
+<p>The fundamental constraint is that a GPU can do roughly a fixed number of floating-point operations per second (FLOP/s) and move a fixed number of bytes per second across its memory bus (bandwidth). Every inference workload maps to a point on the roofline (see <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>):</p>
+<div class="arithmatex">\[
+\text{Arithmetic Intensity} = \frac{\text{FLOPs performed}}{\text{Bytes read from/written to HBM}}
+\]</div>
+<p>Decode is almost always memory-bandwidth-bound: for a batch of size <span class="arithmatex">\(B\)</span> generating one token, we read all model weights once (roughly <span class="arithmatex">\(2P\)</span> bytes for an <span class="arithmatex">\(FP16\)</span> model with <span class="arithmatex">\(P\)</span> parameters) but do only <span class="arithmatex">\(2PB\)</span> FLOPs — arithmetic intensity is <span class="arithmatex">\(B\)</span>. An H100 has roughly 3,350 GB/s of HBM bandwidth and ~989 TFLOP/s of BF16 MMA throughput. The breakeven arithmetic intensity is:</p>
+<div class="arithmatex">\[
+\text{AI}^* = \frac{989 \times 10^{12}}{3350 \times 10^9} \approx 295
+\]</div>
+<p>Until batch size exceeds ~295, decode is bandwidth-bound, and <strong>adding more arithmetic units does not help</strong> — you are just waiting for weights to stream from HBM.</p>
+<p>Prefill, by contrast, is compute-bound at large sequence lengths (the attention FLOPs scale as <span class="arithmatex">\(O(L^2)\)</span>, eventually dominating weight-loading). This asymmetry drives the disaggregated prefill/decode architectures described in <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>.</p>
+<h3 id="the-three-way-trade-off-stated-clearly">The Three-Way Trade-off Stated Clearly<a class="headerlink" href="#the-three-way-trade-off-stated-clearly" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Goal</th>
+<th>Lever</th>
+<th>Downside</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Minimize TTFT (time-to-first-token)</td>
+<td>Small batch, high-priority prefill</td>
+<td>Low GPU utilization, high $/token</td>
+</tr>
+<tr>
+<td>Maximize throughput (tokens/s/GPU)</td>
+<td>Large batch, full GPU utilization</td>
+<td>Higher latency per request</td>
+</tr>
+<tr>
+<td>Minimize $/1M tokens</td>
+<td>Fill GPU to arithmetic intensity breakeven</td>
+<td>Latency SLO may be missed</td>
+</tr>
+</tbody>
+</table>
+<p>There is no free lunch. Your job is to find the operating point that satisfies the latency SLO while maximizing GPU utilization — because utilization is the primary driver of cost efficiency.</p>
+<h2 id="the-math-of-dollars-per-million-tokens">The Math of Dollars Per Million Tokens<a class="headerlink" href="#the-math-of-dollars-per-million-tokens" title="Permanent link">¶</a></h2>
+<p>Let&rsquo;s derive the cost formula from scratch and then plug in real numbers.</p>
+<h3 id="gpu-rental-cost">GPU Rental Cost<a class="headerlink" href="#gpu-rental-cost" title="Permanent link">¶</a></h3>
+<p>Suppose you rent a node with <span class="arithmatex">\(G\)</span> GPUs at a price of <span class="arithmatex">\(\$R\)</span> per hour. The node delivers <span class="arithmatex">\(T_{\text{sustained}}\)</span> output tokens per second (measured at your operating batch size). In one hour you produce:</p>
+<div class="arithmatex">\[
+\text{tokens/hour} = T_{\text{sustained}} \times 3600
+\]</div>
+<p>The cost per token is therefore:</p>
+<div class="arithmatex">\[
+\text{cost/token} = \frac{R}{T_{\text{sustained}} \times 3600}
+\]</div>
+<p>And per million tokens:</p>
+<div class="arithmatex">\[
+\boxed{\text{\$/1M tokens} = \frac{R \times 10^6}{T_{\text{sustained}} \times 3600}}
+\]</div>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: H100 cluster serving Llama-3 70B</p>
+<p><strong>Setup:</strong> 4× H100 SXM (8 GPU node rented at around $20/hour, or roughly $2.50/GPU-hour). Serving Llama-3 70B in BF16 (140 GB weights), tensor-parallel across 4 GPUs. At a busy batch of 32 concurrent requests each generating 512 tokens:</p>
+<ul>
+<li>Sustained decode throughput (measured): roughly 1,800 output tokens/second for the 4-GPU node.</li>
+<li>Rental cost: $20/hour for the node.</li>
+</ul>
+<div class="arithmatex">\[
+\text{\$/1M tokens} = \frac{20 \times 10^6}{1800 \times 3600} = \frac{20{,}000{,}000}{6{,}480{,}000} \approx \$3.09 \text{ per 1M output tokens}
+\]</div>
+<p>If we instead run a small batch of 4 (low traffic), throughput drops to ~550 tokens/s:</p>
+<div class="arithmatex">\[
+\text{\$/1M tokens} = \frac{20 \times 10^6}{550 \times 3600} \approx \$10.10 \text{ per 1M output tokens}
+\]</div>
+<p><strong>Lesson:</strong> at &#8539;th the traffic, cost per token triples. Low utilization is the enemy of cost efficiency.</p>
+</div>
+<h3 id="input-tokens-vs-output-tokens">Input Tokens vs. Output Tokens<a class="headerlink" href="#input-tokens-vs-output-tokens" title="Permanent link">¶</a></h3>
+<p>Output tokens are expensive because they require an autoregressive decode step — one weight-loading pass per token. Input (prefill) tokens are cheap relative to output because they are processed in parallel. As a rough rule of thumb, at large batch sizes and typical prompt/completion ratios, output tokens cost roughly 3–5× more compute per token than input tokens (the exact ratio depends on sequence lengths and batch size).</p>
+<p>Public API providers charge differently for input and output tokens for exactly this reason. When optimizing your prompt, shortening the <em>completion</em> (e.g., via structured generation or speculative decoding — see <a href="../07-inference-serving/06-speculative-decoding.html">Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a>) has a higher ROI than shortening the prompt.</p>
+<h2 id="batching-vs-latency-slos">Batching vs. Latency SLOs<a class="headerlink" href="#batching-vs-latency-slos" title="Permanent link">¶</a></h2>
+<p>Batching is the primary mechanism by which you trade latency for efficiency. Understanding the math helps you set the right operating point.</p>
+<h3 id="continuous-batching-and-effective-batch-size">Continuous Batching and Effective Batch Size<a class="headerlink" href="#continuous-batching-and-effective-batch-size" title="Permanent link">¶</a></h3>
+<p>With continuous batching (see <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>), the effective batch size at any instant is the number of sequences that are currently in the decode phase. Call this <span class="arithmatex">\(B_{\text{eff}}\)</span>. The decode throughput scales approximately linearly with <span class="arithmatex">\(B_{\text{eff}}\)</span> until the arithmetic intensity breakeven, after which it saturates at compute capacity.</p>
+<p>For a model with <span class="arithmatex">\(P\)</span> parameters in FP16/BF16, the time to generate one token for a batch of size <span class="arithmatex">\(B\)</span> is approximately:</p>
+<div class="arithmatex">\[
+t_{\text{decode}}(B) = \max\!\left(\frac{2P}{\text{BW}},\ \frac{2PB}{\text{FLOP/s}}\right)
+\]</div>
+<p>where BW is HBM bandwidth. The first term is the bandwidth-bound floor (weight streaming), and the second is the compute-bound ceiling. The knee of the curve — where bandwidth and compute balance — is at <span class="arithmatex">\(B^* = \text{FLOP/s} / \text{BW}\)</span> (the arithmetic intensity breakeven from above).</p>
+<h3 id="latency-slos-in-practice">Latency SLOs in Practice<a class="headerlink" href="#latency-slos-in-practice" title="Permanent link">¶</a></h3>
+<p>Typical production SLOs take two forms:
+- <strong>TTFT (time-to-first-token)</strong>: often 200–500 ms for interactive chat.
+- <strong>TBT (time-between-tokens)</strong>: often 30–80 ms/token for a streaming UX that feels &ldquo;fast&rdquo; (roughly 12–33 tokens/second perceived).
+- <strong>P99 end-to-end latency</strong> for a fixed-length response.</p>
+<p>A key insight is that <em>batching affects TBT but not TTFT in the same way</em>. TTFT is dominated by prefill time (which scales with prompt length and is bounded by compute), whereas TBT is dominated by decode speed (which scales with batch size up to the bandwidth floor).</p>
+<p>The scheduler must balance these. The simplest heuristic: saturate batch up to <span class="arithmatex">\(B^*\)</span>, which gives maximum throughput without exceeding the compute-bound regime. Beyond <span class="arithmatex">\(B^*\)</span> you pay in latency without gaining more tokens per dollar.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Illustrative scheduler: fill batch up to the bandwidth breakeven point.</span>
+<span class="c1"># This is a simplified model; real systems use token budgets and KV cache limits.</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bandwidth_breakeven</span><span class="p">(</span><span class="n">flops_per_sec</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">bandwidth_bytes_per_sec</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Return the batch size B* at which decode transitions from bandwidth-bound</span>
+<span class="sd">    to compute-bound. Below B*, adding more sequences to the batch is free in</span>
+<span class="sd">    terms of time (you&#39;re already waiting for weights to stream from HBM).</span>
+<span class="sd">    Above B*, decode time grows linearly with batch size.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        flops_per_sec: Peak BF16 FLOP/s (e.g., 989e12 for H100 SXM5)</span>
+<span class="sd">        bandwidth_bytes_per_sec: HBM bandwidth in bytes/s (e.g., 3.35e12 for H100)</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        B*: arithmetic intensity breakeven batch size</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">flops_per_sec</span> <span class="o">/</span> <span class="n">bandwidth_bytes_per_sec</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">decode_step_time_ms</span><span class="p">(</span>
+    <span class="n">n_params</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">flops_per_sec</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">bandwidth_bytes_per_sec</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">bytes_per_param</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span>  <span class="c1"># BF16 / FP16</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Estimate the wall-clock time for one decode step (one new token per sequence).</span>
+
+<span class="sd">    The model weights must be streamed from HBM once per step regardless of batch</span>
+<span class="sd">    size (bandwidth-bound regime). At large batch sizes the MMA units become the</span>
+<span class="sd">    bottleneck (compute-bound regime).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Bytes read: all parameters once (both weight read and result write)</span>
+    <span class="n">bytes_read</span> <span class="o">=</span> <span class="n">n_params</span> <span class="o">*</span> <span class="n">bytes_per_param</span>
+    <span class="c1"># FLOPs: 2 MACs per parameter per batch element</span>
+    <span class="n">flops</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">n_params</span> <span class="o">*</span> <span class="n">batch_size</span>
+
+    <span class="c1"># Time in each regime (seconds)</span>
+    <span class="n">t_bandwidth</span> <span class="o">=</span> <span class="n">bytes_read</span> <span class="o">/</span> <span class="n">bandwidth_bytes_per_sec</span>
+    <span class="n">t_compute</span>   <span class="o">=</span> <span class="n">flops</span> <span class="o">/</span> <span class="n">flops_per_sec</span>
+
+    <span class="c1"># Actual time is the max; report in ms</span>
+    <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="n">t_bandwidth</span><span class="p">,</span> <span class="n">t_compute</span><span class="p">)</span> <span class="o">*</span> <span class="mf">1000.0</span>
+
+
+<span class="c1"># --- Hardware constants ---</span>
+<span class="n">H100_FLOPS</span> <span class="o">=</span> <span class="mf">989e12</span>      <span class="c1"># BF16 tensor core FLOP/s (H100 SXM5)</span>
+<span class="n">H100_BW</span>    <span class="o">=</span> <span class="mf">3.35e12</span>     <span class="c1"># HBM bandwidth bytes/s</span>
+
+<span class="c1"># --- Model: Llama 3 70B (70e9 params, BF16) ---</span>
+<span class="n">N_PARAMS</span> <span class="o">=</span> <span class="mf">70e9</span>
+
+<span class="n">B_STAR</span> <span class="o">=</span> <span class="n">bandwidth_breakeven</span><span class="p">(</span><span class="n">H100_FLOPS</span><span class="p">,</span> <span class="n">H100_BW</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;H100 arithmetic intensity breakeven batch size: </span><span class="si">{</span><span class="n">B_STAR</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="n">B_STAR</span><span class="p">]:</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">decode_step_time_ms</span><span class="p">(</span><span class="n">N_PARAMS</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">H100_FLOPS</span><span class="p">,</span> <span class="n">H100_BW</span><span class="p">)</span>
+    <span class="n">regime</span> <span class="o">=</span> <span class="s2">&quot;bandwidth-bound&quot;</span> <span class="k">if</span> <span class="n">batch</span> <span class="o">&lt;=</span> <span class="n">B_STAR</span> <span class="k">else</span> <span class="s2">&quot;compute-bound&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">:</span><span class="s2">4d</span><span class="si">}</span><span class="s2">  step_time=</span><span class="si">{</span><span class="n">t</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ms  regime=</span><span class="si">{</span><span class="n">regime</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Running this produces output along the lines of:</p>
+<div class="highlight"><pre><span></span><code>H100 arithmetic intensity breakeven batch size: 295
+  batch=   1  step_time=41.79 ms  regime=bandwidth-bound
+  batch=   4  step_time=41.79 ms  regime=bandwidth-bound
+  batch=  16  step_time=41.79 ms  regime=bandwidth-bound
+  batch=  64  step_time=41.79 ms  regime=bandwidth-bound
+  batch= 128  step_time=41.79 ms  regime=bandwidth-bound
+  batch= 256  step_time=41.79 ms  regime=bandwidth-bound
+  batch= 295  step_time=41.79 ms  regime=bandwidth-bound
+</code></pre></div>
+<p>Below <span class="arithmatex">\(B^* \approx 295\)</span> the decode step time is flat at ~42 ms per step (bandwidth-bound floor). Each new request added below this threshold contributes zero extra latency but produces one more output token — a pure win. Above this, each additional request adds proportional latency.</p>
+<p>The practical lesson: on a single H100 serving a 70B BF16 model, you can pack up to ~295 concurrent decoding sequences before latency starts climbing. That is the regime where <code>tokens/s/GPU</code> is maximized.</p>
+<h2 id="gpu-selection-and-the-hardware-cost-function">GPU Selection and the Hardware Cost Function<a class="headerlink" href="#gpu-selection-and-the-hardware-cost-function" title="Permanent link">¶</a></h2>
+<h3 id="key-gpu-metrics-for-inference">Key GPU Metrics for Inference<a class="headerlink" href="#key-gpu-metrics-for-inference" title="Permanent link">¶</a></h3>
+<p>When choosing a GPU for inference, the relevant specs are different from those for training:</p>
+<table>
+<thead>
+<tr>
+<th>GPU</th>
+<th>HBM (GB)</th>
+<th>BW (TB/s)</th>
+<th>BF16 TFLOP/s</th>
+<th>$/hr (spot, approx)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A10G</td>
+<td>24</td>
+<td>0.60</td>
+<td>31.2</td>
+<td>~$0.70</td>
+</tr>
+<tr>
+<td>A100 40GB</td>
+<td>40</td>
+<td>2.00</td>
+<td>312</td>
+<td>~$2.50</td>
+</tr>
+<tr>
+<td>A100 80GB</td>
+<td>80</td>
+<td>2.00</td>
+<td>312</td>
+<td>~$3.50</td>
+</tr>
+<tr>
+<td>H100 SXM5</td>
+<td>80</td>
+<td>3.35</td>
+<td>989</td>
+<td>~$5.00</td>
+</tr>
+<tr>
+<td>H200 SXM</td>
+<td>141</td>
+<td>4.80</td>
+<td>989</td>
+<td>~$7.00</td>
+</tr>
+<tr>
+<td>B200 SXM</td>
+<td>192</td>
+<td>8.00</td>
+<td>~4,500</td>
+<td>~$10.00</td>
+</tr>
+</tbody>
+</table>
+<p>Note: prices are illustrative order-of-magnitude estimates and vary significantly by provider, region, and contract.</p>
+<p>For inference on a fixed model, the figures of merit are:
+1. <strong>Tokens/s/dollar</strong>: dominated by HBM bandwidth for decode-heavy workloads.
+2. <strong>Max batch size before KV-cache OOM</strong>: dominated by HBM capacity.
+3. <strong>TTFT for long prompts</strong>: dominated by compute (FLOP/s).</p>
+<p>The H100&rsquo;s jump in bandwidth (3.35 vs. 2.00 TB/s for A100) directly translates to a 1.67× speedup in decode throughput per GPU when bandwidth-bound — before any software optimization.</p>
+<h3 id="tensor-parallelism-across-gpus">Tensor Parallelism Across GPUs<a class="headerlink" href="#tensor-parallelism-across-gpus" title="Permanent link">¶</a></h3>
+<p>Splitting a model across <span class="arithmatex">\(N\)</span> GPUs with tensor parallelism (TP) reduces per-GPU memory by <span class="arithmatex">\(1/N\)</span> but also splits both FLOPs and bandwidth by roughly <span class="arithmatex">\(1/N\)</span>. The bandwidth-bound decode time becomes:</p>
+<div class="arithmatex">\[
+t_{\text{decode, TP=N}}(B) \approx \max\!\left(\frac{2P / N}{\text{BW}_{\text{GPU}}},\ \frac{2PB / N}{\text{FLOP/s}_{\text{GPU}}}\right) + t_{\text{allreduce}}
+\]</div>
+<p>The all-reduce adds a fixed per-step communication overhead (typically a few ms over NVLink). Since the weight-streaming time halves with TP=2, the effective batch size breakeven also halves — you saturate compute with fewer concurrent requests.</p>
+<p>For very large models (&gt;70B), TP is often mandatory to fit in memory. The key point is that <strong>TP does not improve tokens/s/dollar beyond what&rsquo;s needed to fit the model</strong> — it just allows serving. Sequence parallelism and disaggregated architectures are needed for further scaling (see <a href="../07-inference-serving/11-multi-gpu-inference.html">Multi-GPU &amp; Multi-Node Inference</a>).</p>
+<h2 id="why-decode-heavy-workloads-are-expensive">Why Decode-Heavy Workloads Are Expensive<a class="headerlink" href="#why-decode-heavy-workloads-are-expensive" title="Permanent link">¶</a></h2>
+<p>Reasoning models, coding assistants, and long-form generation are all examples of decode-heavy workloads: the ratio of output tokens to input tokens is high (sometimes 10:1 or more). This matters economically for three reasons:</p>
+<ol>
+<li>
+<p><strong>Compute cost scales with output length.</strong> Each output token requires one full forward pass through the decode stage (weight loading from HBM). A 10× longer output costs roughly 10× more GPU time.</p>
+</li>
+<li>
+<p><strong>KV cache memory scales with context length.</strong> For a model with <span class="arithmatex">\(n_{\text{heads}}\)</span> KV heads, head dimension <span class="arithmatex">\(d\)</span>, <span class="arithmatex">\(L\)</span> layers, in BF16, the KV cache for one sequence of length <span class="arithmatex">\(S\)</span> is:</p>
+</li>
+</ol>
+<div class="arithmatex">\[
+\text{KV bytes} = 2 \times n_{\text{kv}} \times d \times L \times S \times 2 \text{ bytes}
+\]</div>
+<p>For Llama-3 70B: <span class="arithmatex">\(n_{\text{kv}}=8\)</span> (GQA), <span class="arithmatex">\(d=128\)</span>, <span class="arithmatex">\(L=80\)</span>. At <span class="arithmatex">\(S=32{,}768\)</span> tokens:</p>
+<div class="arithmatex">\[
+\text{KV bytes} = 2 \times 8 \times 128 \times 80 \times 32768 \times 2 = 10.7 \text{ GB per sequence}
+\]</div>
+<p>A single 80GB H100 serving 70B at TP=2 (40 GB available for KV after weights) can hold at most about 3–4 concurrent long-context sequences. Batch size is severely limited.</p>
+<ol start="3">
+<li><strong>Speculative decoding helps but has limits.</strong> Speculative decoding (see <a href="../07-inference-serving/06-speculative-decoding.html">Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a>) can recover 2–3× speed for predictable outputs (code, factual answers) by verifying multiple tokens per step, but the draft model adds HBM bandwidth overhead and is less effective for creative or reasoning-heavy outputs.</li>
+</ol>
+<h3 id="chain-of-thought-tax">Chain-of-Thought Tax<a class="headerlink" href="#chain-of-thought-tax" title="Permanent link">¶</a></h3>
+<p>The reasoning models popularized by OpenAI o1 and DeepSeek-R1 generate long internal reasoning traces before the final answer. If a reasoning model generates 2,000 thinking tokens before a 200-token answer, the effective output-to-answer token ratio is 11:1. At $3/1M output tokens, reasoning for 1,000 queries costs:</p>
+<div class="arithmatex">\[
+\text{cost} = \frac{1000 \times 2200}{10^6} \times 3 = \$6.60
+\]</div>
+<p>vs. $0.60 for a direct-answer model with 200 tokens. The quality premium has a concrete dollar tag. See <a href="../05-posttraining-alignment/10-reasoning-test-time-compute.html">Reasoning, Chain-of-Thought &amp; Test-Time Compute</a> for the quality vs. cost trade-off in detail.</p>
+<h2 id="capacity-planning-and-autoscaling">Capacity Planning and Autoscaling<a class="headerlink" href="#capacity-planning-and-autoscaling" title="Permanent link">¶</a></h2>
+<h3 id="the-capacity-planning-formula">The Capacity Planning Formula<a class="headerlink" href="#the-capacity-planning-formula" title="Permanent link">¶</a></h3>
+<p>Capacity planning starts from traffic projections. Given:
+- <span class="arithmatex">\(\lambda\)</span> = peak requests per second
+- <span class="arithmatex">\(\bar{o}\)</span> = average output tokens per request
+- <span class="arithmatex">\(T_{\text{decode}}\)</span> = sustained decode tokens/s per GPU
+- <span class="arithmatex">\(U_{\text{target}}\)</span> = target GPU utilization (e.g., 0.7 to leave headroom)</p>
+<p>The number of GPUs required for decode is:</p>
+<div class="arithmatex">\[
+N_{\text{GPUs}} = \lceil \frac{\lambda \cdot \bar{o}}{T_{\text{decode}} \cdot U_{\text{target}}} \rceil
+\]</div>
+<p>For prefill-heavy workloads, a similar formula applies based on TTFT SLO and prefill FLOP/s.</p>
+<div class="admonition example">
+<p class="admonition-title">Capacity planning for a mid-size API</p>
+<p>Suppose your API sees peak traffic of 50 requests/second, each generating an average of 400 output tokens. You are using A100 80GB GPUs with TP=1 serving a 13B model. The 13B model fits on one GPU with plenty of KV cache headroom.</p>
+<p>Sustained decode throughput at batch=50 (all bandwidth-bound): roughly 8,000 tokens/s per A100 (illustrative).</p>
+<p>Target utilization = 0.70 (30% headroom for traffic spikes and cold starts).</p>
+<div class="arithmatex">\[
+N_{\text{GPUs}} = \left\lceil \frac{50 \times 400}{8000 \times 0.70} \right\rceil = \left\lceil \frac{20000}{5600} \right\rceil = \lceil 3.57 \rceil = 4 \text{ GPUs}
+\]</div>
+<p>At ~$3.50/GPU-hour (A100 80GB), this cluster costs $14/hour or $336/day at peak. During off-peak at 10% load, you may scale down to 1–2 GPUs and save ~70%.</p>
+</div>
+<h3 id="autoscaling-strategies">Autoscaling Strategies<a class="headerlink" href="#autoscaling-strategies" title="Permanent link">¶</a></h3>
+<p>Autoscaling for LLM serving is different from stateless web services because:</p>
+<ol>
+<li>
+<p><strong>Startup latency is high.</strong> Loading a 70B model from disk to GPU memory takes tens of seconds. Cold-start latency makes traditional reactive autoscaling painful.</p>
+</li>
+<li>
+<p><strong>The batch size effect creates sudden non-linearity.</strong> At low traffic, fewer GPUs may be <em>just as fast</em> (since decode is bandwidth-bound and batch size doesn&rsquo;t affect per-step latency until saturation). The breakeven batch size gives you a natural hysteresis threshold.</p>
+</li>
+<li>
+<p><strong>GPU memory is the binding constraint, not CPU.</strong> You cannot partially load a model; you need the whole thing in HBM.</p>
+</li>
+</ol>
+<p>Practical approaches:</p>
+<ul>
+<li><strong>Predictive (proactive) scaling</strong>: use historical traffic patterns to pre-scale 5–10 minutes ahead of predicted ramp-up.</li>
+<li><strong>Scale to zero with warm pools</strong>: maintain 1 &ldquo;warm&rdquo; replica always; scale-to-zero on truly idle queues.</li>
+<li><strong>Model sharding and multiplexing</strong>: run multiple smaller models on the same GPU (e.g., several 7B fine-tunes with different LoRA adapters via LoRA adapter hot-swap, as in <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a>).</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Minimal autoscaler mock: decides how many replicas to run based on queue depth</span>
+<span class="c1"># and current tokens/s, with hysteresis to avoid thrashing.</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">deque</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">AutoscalerConfig</span><span class="p">:</span>
+    <span class="n">min_replicas</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">max_replicas</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span>
+    <span class="n">target_tokens_per_sec_per_replica</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2000.0</span>  <span class="c1"># sustained decode tps/replica</span>
+    <span class="n">scale_up_queue_threshold</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100</span>    <span class="c1"># tokens queued → add replica</span>
+    <span class="n">scale_down_idle_seconds</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">120.0</span>  <span class="c1"># idle for 2 min → remove replica</span>
+    <span class="n">cooldown_seconds</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">60.0</span>          <span class="c1"># min time between scale events</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">AutoscalerState</span><span class="p">:</span>
+    <span class="n">n_replicas</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">last_scale_time</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">)</span>
+    <span class="n">idle_since</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>  <span class="c1"># replica_id → time became idle</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">autoscale_step</span><span class="p">(</span>
+    <span class="n">config</span><span class="p">:</span> <span class="n">AutoscalerConfig</span><span class="p">,</span>
+    <span class="n">state</span><span class="p">:</span> <span class="n">AutoscalerState</span><span class="p">,</span>
+    <span class="n">queue_depth_tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>     <span class="c1"># tokens currently waiting in the request queue</span>
+    <span class="n">active_tokens_per_sec</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="c1"># current measured throughput</span>
+    <span class="n">now</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Return the desired number of replicas. Does not actually spin up/down anything —</span>
+<span class="sd">    the orchestrator (Kubernetes, Ray Serve, etc.) handles the actual scaling.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">now</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+
+    <span class="c1"># Don&#39;t scale more often than the cooldown window</span>
+    <span class="k">if</span> <span class="n">now</span> <span class="o">-</span> <span class="n">state</span><span class="o">.</span><span class="n">last_scale_time</span> <span class="o">&lt;</span> <span class="n">config</span><span class="o">.</span><span class="n">cooldown_seconds</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">state</span><span class="o">.</span><span class="n">n_replicas</span>
+
+    <span class="n">desired</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">n_replicas</span>
+
+    <span class="c1"># Scale UP: queue is building faster than current replicas can drain it</span>
+    <span class="n">tokens_capacity</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">n_replicas</span> <span class="o">*</span> <span class="n">config</span><span class="o">.</span><span class="n">target_tokens_per_sec_per_replica</span>
+    <span class="k">if</span> <span class="n">queue_depth_tokens</span> <span class="o">&gt;</span> <span class="n">config</span><span class="o">.</span><span class="n">scale_up_queue_threshold</span><span class="p">:</span>
+        <span class="c1"># Estimate replicas needed to drain queue within 30 seconds</span>
+        <span class="n">needed</span> <span class="o">=</span> <span class="nb">int</span><span class="p">((</span><span class="n">active_tokens_per_sec</span> <span class="o">+</span> <span class="n">queue_depth_tokens</span> <span class="o">/</span> <span class="mf">30.0</span><span class="p">)</span>
+                     <span class="o">/</span> <span class="n">config</span><span class="o">.</span><span class="n">target_tokens_per_sec_per_replica</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="n">desired</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">needed</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">max_replicas</span><span class="p">)</span>
+
+    <span class="c1"># Scale DOWN: we have spare capacity</span>
+    <span class="k">elif</span> <span class="n">active_tokens_per_sec</span> <span class="o">&lt;</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">tokens_capacity</span> <span class="ow">and</span> <span class="n">state</span><span class="o">.</span><span class="n">n_replicas</span> <span class="o">&gt;</span> <span class="n">config</span><span class="o">.</span><span class="n">min_replicas</span><span class="p">:</span>
+        <span class="n">desired</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">min_replicas</span><span class="p">,</span> <span class="n">state</span><span class="o">.</span><span class="n">n_replicas</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">desired</span> <span class="o">!=</span> <span class="n">state</span><span class="o">.</span><span class="n">n_replicas</span><span class="p">:</span>
+        <span class="n">state</span><span class="o">.</span><span class="n">n_replicas</span> <span class="o">=</span> <span class="n">desired</span>
+        <span class="n">state</span><span class="o">.</span><span class="n">last_scale_time</span> <span class="o">=</span> <span class="n">now</span>
+
+    <span class="k">return</span> <span class="n">desired</span>
+</code></pre></div>
+<h2 id="quantization-and-its-cost-impact">Quantization and Its Cost Impact<a class="headerlink" href="#quantization-and-its-cost-impact" title="Permanent link">¶</a></h2>
+<p>Quantization (see <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a> and <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a>) is one of the most powerful tools in the inference economist&rsquo;s toolkit.</p>
+<h3 id="how-quantization-changes-the-economics">How Quantization Changes the Economics<a class="headerlink" href="#how-quantization-changes-the-economics" title="Permanent link">¶</a></h3>
+<p>Going from BF16 to INT8 halves the number of bytes loaded from HBM per decode step — directly halving the bandwidth-bound decode time (for the same batch size) or equivalently, halving the number of GPUs needed to sustain the same throughput.</p>
+<p>Going from BF16 to INT4 (e.g., via GPTQ or AWQ) approximately quarters the decode memory bandwidth, but introduces some quality degradation and requires dequantization overhead.</p>
+<div class="arithmatex">\[
+\text{speedup}_{\text{BW}} = \frac{\text{bits}_{original}}{\text{bits}_{quantized}}
+\]</div>
+<p>For a 70B model:</p>
+<table>
+<thead>
+<tr>
+<th>Precision</th>
+<th>Weights size</th>
+<th>Decode BW factor</th>
+<th>GPUs for 70B (TP)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BF16</td>
+<td>140 GB</td>
+<td>1.0×</td>
+<td>2× H100</td>
+</tr>
+<tr>
+<td>FP8</td>
+<td>70 GB</td>
+<td>2.0×</td>
+<td>1× H100</td>
+</tr>
+<tr>
+<td>INT4 (AWQ)</td>
+<td>35 GB</td>
+<td>4.0×</td>
+<td>1× H100 (with KV headroom)</td>
+</tr>
+</tbody>
+</table>
+<p>FP8 inference is now supported natively on H100 and B200 hardware via the FP8 matmul units, offering near-BF16 quality with roughly 2× throughput improvement. This is a straightforward win for most production workloads.</p>
+<h3 id="kv-cache-quantization">KV Cache Quantization<a class="headerlink" href="#kv-cache-quantization" title="Permanent link">¶</a></h3>
+<p>Beyond weight quantization, the KV cache itself can be quantized. From the 70B example above (10.7 GB per sequence at 32k context in BF16), switching KV cache to INT8 halves this to 5.35 GB/sequence — roughly doubling the number of concurrent long-context sequences a single node can handle.</p>
+<h2 id="optimizing-the-bill-a-practitioner-playbook">Optimizing the Bill: A Practitioner Playbook<a class="headerlink" href="#optimizing-the-bill-a-practitioner-playbook" title="Permanent link">¶</a></h2>
+<p>Pulling all the above together, here is a concrete checklist for reducing inference costs.</p>
+<h3 id="tier-1-cheapest-wins-deploy-immediately">Tier 1: Cheapest wins (deploy immediately)<a class="headerlink" href="#tier-1-cheapest-wins-deploy-immediately" title="Permanent link">¶</a></h3>
+<ol>
+<li>
+<p><strong>Maximize continuous-batch utilization.</strong> If your average GPU utilization during peak is below 70%, you have headroom to serve more traffic at zero incremental cost. Profile with <code>nvidia-smi dmon</code> or vLLM&rsquo;s built-in metrics.</p>
+</li>
+<li>
+<p><strong>Enable FP8 or INT8 quantization</strong> where quality is acceptable. Use AWQ or GPTQ for INT4 on older hardware. This halves or quarters your GPU memory footprint, often allowing you to cut replicas.</p>
+</li>
+<li>
+<p><strong>Enable prefix caching</strong> (see <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>) for workloads with shared system prompts or few-shot examples. Recomputing a 2,000-token system prompt on every request wastes significant compute.</p>
+</li>
+<li>
+<p><strong>Choose the right model size.</strong> A well-fine-tuned 13B model may outperform a generic 70B on your specific task at &#8533;th the compute cost. Evaluate empirically.</p>
+</li>
+</ol>
+<h3 id="tier-2-architectural-changes-higher-leverage-more-work">Tier 2: Architectural changes (higher leverage, more work)<a class="headerlink" href="#tier-2-architectural-changes-higher-leverage-more-work" title="Permanent link">¶</a></h3>
+<ol start="5">
+<li>
+<p><strong>Speculative decoding</strong> for predictable outputs (code, templates, FAQ answers). Properly configured, a 2–3× throughput gain is achievable with no quality loss.</p>
+</li>
+<li>
+<p><strong>Disaggregated prefill/decode</strong> for mixed-length workloads. Prefill-heavy requests (long documents) run on FLOP-optimized nodes; decode runs on bandwidth-optimized nodes. This avoids decode latency spikes caused by large prefill batches blocking the decode queue.</p>
+</li>
+<li>
+<p><strong>Knowledge distillation</strong> into a smaller task-specific model. If your deployment uses a general 70B model but only for one narrow task, distilling a fine-tuned 7B model can yield 10× cost reduction. See <a href="../05-posttraining-alignment/12-distillation-compression.html">Distillation, Model Compression &amp; Knowledge Transfer</a>.</p>
+</li>
+</ol>
+<h3 id="tier-3-systemic-cost-management">Tier 3: Systemic cost management<a class="headerlink" href="#tier-3-systemic-cost-management" title="Permanent link">¶</a></h3>
+<ol start="8">
+<li>
+<p><strong>Prompt compression</strong> (prompt caching, summarization, retrieval rather than full context) reduces input tokens. Though cheaper per token, input tokens still consume compute and KV cache memory.</p>
+</li>
+<li>
+<p><strong>Routing to model tiers.</strong> Route simple queries (keyword lookup, formatting) to small/fast/cheap models, and complex queries to large models. See <a href="../12-production-mlops/03-caching-routing-cost.html">Caching, Routing &amp; Cost Control in Production</a>.</p>
+</li>
+<li>
+<p><strong>Spot/preemptible instances</strong> for batch inference workloads (embeddings, offline scoring, eval runs). Spot pricing is typically 60–70% cheaper; use checkpoint-and-resume for fault tolerance.</p>
+</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="c1"># Cost-aware router: send queries to a small or large model based on estimated complexity.</span>
+<span class="c1"># In production, use a lightweight classifier; here we use a heuristic proxy.</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+
+<span class="n">ModelTier</span> <span class="o">=</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;fast_small&quot;</span><span class="p">,</span> <span class="s2">&quot;capable_large&quot;</span><span class="p">]</span>
+
+<span class="c1"># Illustrative cost per 1M output tokens (update to your actual prices)</span>
+<span class="n">COST_PER_1M</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;fast_small&quot;</span><span class="p">:</span>   <span class="mf">0.50</span><span class="p">,</span>   <span class="c1"># e.g., a 7B fine-tuned model on cheap hardware</span>
+    <span class="s2">&quot;capable_large&quot;</span><span class="p">:</span> <span class="mf">8.00</span><span class="p">,</span>  <span class="c1"># e.g., a 70B frontier model</span>
+<span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">classify_complexity</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">n_few_shot</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Estimate query complexity as a float in [0, 1].</span>
+<span class="sd">    Real systems train a small classifier on human-labeled routing decisions.</span>
+<span class="sd">    Here we use proxy features: prompt length, question words, code keywords.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">words</span> <span class="o">=</span> <span class="n">prompt</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="n">n_words</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">)</span>
+
+    <span class="n">code_keywords</span>  <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;def&quot;</span><span class="p">,</span> <span class="s2">&quot;class&quot;</span><span class="p">,</span> <span class="s2">&quot;import&quot;</span><span class="p">,</span> <span class="s2">&quot;function&quot;</span><span class="p">,</span> <span class="s2">&quot;algorithm&quot;</span><span class="p">,</span>
+                      <span class="s2">&quot;implement&quot;</span><span class="p">,</span> <span class="s2">&quot;debug&quot;</span><span class="p">,</span> <span class="s2">&quot;explain&quot;</span><span class="p">,</span> <span class="s2">&quot;analyze&quot;</span><span class="p">}</span>
+    <span class="n">hard_keywords</span>  <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;compare&quot;</span><span class="p">,</span> <span class="s2">&quot;contrast&quot;</span><span class="p">,</span> <span class="s2">&quot;design&quot;</span><span class="p">,</span> <span class="s2">&quot;evaluate&quot;</span><span class="p">,</span> <span class="s2">&quot;synthesize&quot;</span><span class="p">,</span>
+                      <span class="s2">&quot;critique&quot;</span><span class="p">,</span> <span class="s2">&quot;reason&quot;</span><span class="p">,</span> <span class="s2">&quot;proof&quot;</span><span class="p">,</span> <span class="s2">&quot;derive&quot;</span><span class="p">}</span>
+
+    <span class="n">code_signal</span>  <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">words</span> <span class="k">if</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">code_keywords</span><span class="p">)</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">n_words</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">hard_signal</span>  <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">words</span> <span class="k">if</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">hard_keywords</span><span class="p">)</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">n_words</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">length_signal</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">n_words</span> <span class="o">/</span> <span class="mf">200.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>  <span class="c1"># normalize at 200 words</span>
+
+    <span class="k">return</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">code_signal</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">+</span> <span class="n">hard_signal</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">+</span> <span class="n">length_signal</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">route_query</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">complexity_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.25</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelTier</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Return which model tier to use for this prompt.</span>
+<span class="sd">    Below the threshold, the small fast model suffices.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">score</span> <span class="o">=</span> <span class="n">classify_complexity</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">score</span> <span class="o">&lt;</span> <span class="n">complexity_threshold</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;fast_small&quot;</span>
+    <span class="k">return</span> <span class="s2">&quot;capable_large&quot;</span>
+
+
+<span class="c1"># Simulate routing 1000 queries and compute expected cost</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">simulate_cost</span><span class="p">(</span><span class="n">n_queries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span><span class="p">,</span>
+                  <span class="n">avg_output_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">300</span><span class="p">,</span>
+                  <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.25</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+    <span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+    <span class="n">total_small</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">total_large</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="c1"># Synthetic prompts: mix of simple and complex</span>
+    <span class="n">prompts</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="p">[</span><span class="s2">&quot;What is 2+2?&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="mi">400</span>              <span class="c1"># trivial</span>
+        <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;List the top 5 European capitals&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="mi">200</span>  <span class="c1"># easy</span>
+        <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;Implement a red-black tree in Python with full docstrings&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="mi">200</span>  <span class="c1"># hard</span>
+        <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;Compare DPO vs PPO for RLHF alignment&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="mi">200</span>  <span class="c1"># hard</span>
+    <span class="p">)</span>
+    <span class="n">random</span><span class="o">.</span><span class="n">shuffle</span><span class="p">(</span><span class="n">prompts</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prompts</span><span class="p">[:</span><span class="n">n_queries</span><span class="p">]:</span>
+        <span class="n">tier</span> <span class="o">=</span> <span class="n">route_query</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">threshold</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">tier</span> <span class="o">==</span> <span class="s2">&quot;fast_small&quot;</span><span class="p">:</span>
+            <span class="n">total_small</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">total_large</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="n">cost_small</span> <span class="o">=</span> <span class="p">(</span><span class="n">total_small</span> <span class="o">*</span> <span class="n">avg_output_tokens</span> <span class="o">/</span> <span class="mf">1e6</span><span class="p">)</span> <span class="o">*</span> <span class="n">COST_PER_1M</span><span class="p">[</span><span class="s2">&quot;fast_small&quot;</span><span class="p">]</span>
+    <span class="n">cost_large</span> <span class="o">=</span> <span class="p">(</span><span class="n">total_large</span> <span class="o">*</span> <span class="n">avg_output_tokens</span> <span class="o">/</span> <span class="mf">1e6</span><span class="p">)</span> <span class="o">*</span> <span class="n">COST_PER_1M</span><span class="p">[</span><span class="s2">&quot;capable_large&quot;</span><span class="p">]</span>
+    <span class="n">cost_all_large</span> <span class="o">=</span> <span class="p">(</span><span class="n">n_queries</span> <span class="o">*</span> <span class="n">avg_output_tokens</span> <span class="o">/</span> <span class="mf">1e6</span><span class="p">)</span> <span class="o">*</span> <span class="n">COST_PER_1M</span><span class="p">[</span><span class="s2">&quot;capable_large&quot;</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;routed_small&quot;</span><span class="p">:</span> <span class="n">total_small</span><span class="p">,</span>
+        <span class="s2">&quot;routed_large&quot;</span><span class="p">:</span> <span class="n">total_large</span><span class="p">,</span>
+        <span class="s2">&quot;cost_with_routing&quot;</span><span class="p">:</span> <span class="n">cost_small</span> <span class="o">+</span> <span class="n">cost_large</span><span class="p">,</span>
+        <span class="s2">&quot;cost_all_large&quot;</span><span class="p">:</span> <span class="n">cost_all_large</span><span class="p">,</span>
+        <span class="s2">&quot;savings_pct&quot;</span><span class="p">:</span> <span class="mf">100.0</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="p">(</span><span class="n">cost_small</span> <span class="o">+</span> <span class="n">cost_large</span><span class="p">)</span> <span class="o">/</span> <span class="n">cost_all_large</span><span class="p">),</span>
+    <span class="p">}</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">simulate_cost</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Routed to small: </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">&#39;routed_small&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> / Routed to large: </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">&#39;routed_large&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cost with routing: $</span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">&#39;cost_with_routing&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cost all-large:    $</span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">&#39;cost_all_large&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Savings:           </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">&#39;savings_pct&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="the-full-cost-stack-beyond-gpu-compute">The Full Cost Stack: Beyond GPU Compute<a class="headerlink" href="#the-full-cost-stack-beyond-gpu-compute" title="Permanent link">¶</a></h2>
+<p>GPU compute is the dominant but not the only cost. A complete cost breakdown for a production LLM API includes:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Typical fraction of total cost</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU compute</td>
+<td>60–80%</td>
+<td>Model serving (decode, prefill)</td>
+</tr>
+<tr>
+<td>GPU memory-tied KV cache overhead</td>
+<td>included above</td>
+<td>But drives replica count</td>
+</tr>
+<tr>
+<td>Networking</td>
+<td>5–10%</td>
+<td>NVLink within node; Infiniband/Ethernet cross-node</td>
+</tr>
+<tr>
+<td>Storage &amp; I/O</td>
+<td>2–5%</td>
+<td>Model checkpoints, logging, dataset serving</td>
+</tr>
+<tr>
+<td>CPU/orchestration</td>
+<td>3–8%</td>
+<td>Kubernetes, API servers, tokenizers, routers</td>
+</tr>
+<tr>
+<td>Observability</td>
+<td>1–3%</td>
+<td>Tracing, metrics, logging pipelines</td>
+</tr>
+<tr>
+<td>Engineering time</td>
+<td>Variable</td>
+<td>Often dominates at &lt; $10k/month GPU spend</td>
+</tr>
+</tbody>
+</table>
+<p>At small scale, the marginal dollar usually goes further when spent on engineering (prompt compression, fine-tuning a smaller model, prefix caching implementation) than on more hardware.</p>
+<p>At large scale (&gt; $1M/month), negotiated reserved instance pricing, custom silicon (Google TPUs, AWS Trainium2, NVIDIA A100/H100 3-year reservations), and distillation programs pay off significantly.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are designing an LLM API serving a mix of chat queries (avg 200 output tokens, latency-sensitive, TTFT &lt; 300 ms) and batch document summarization jobs (avg 1500 output tokens, latency-insensitive). Both run on the same 70B model. How would you architect the serving system, and what are the key cost-saving opportunities?</p>
+<p><strong>A:</strong> The core insight is that these two workloads have opposite requirements: chat needs low TTFT (fast prefill, priority scheduling) while batch jobs want maximum throughput (large batches, no SLO pressure). Running them on the same fleet means batch jobs inflate queue latency for chat, and the low latency requirement of chat prevents batch jobs from filling the GPUs.</p>
+<p>The right architecture is <strong>workload disaggregation</strong>: a dedicated chat tier (2–4 GPUs per replica, continuous batching with a tight TTFT SLO, FP8 quantization for speed, prefix caching for common system prompts) and a separate batch tier (larger batch sizes, potentially INT4 quantization, spot/preemptible instances since failures can be retried). A router (based on request metadata or a flag in the API call) directs traffic to the appropriate tier.</p>
+<p>Key cost-saving opportunities in order of leverage: (1) INT4/FP8 quantization on both tiers — halves or quarters GPU count; (2) prefix caching on chat tier for shared system prompts; (3) spot instances on the batch tier for 60–70% compute cost reduction; (4) routing simpler chat queries to a smaller distilled model (7B or 13B fine-tune); (5) speculative decoding on the batch tier where output patterns are predictable (document templates, structured summaries).</p>
+</div>
+<h2 id="putting-it-all-together-a-reference-dashboard">Putting It All Together: A Reference Dashboard<a class="headerlink" href="#putting-it-all-together-a-reference-dashboard" title="Permanent link">¶</a></h2>
+<p>A good inference cost dashboard tracks these key metrics in real time:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Reference metrics to instrument in your serving stack (e.g., via Prometheus)</span>
+<span class="c1"># Each metric name maps to a Prometheus gauge/histogram.</span>
+
+<span class="n">INFERENCE_METRICS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="c1"># Throughput</span>
+    <span class="s2">&quot;output_tokens_per_second&quot;</span><span class="p">:</span>   <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># Overall system output rate</span>
+    <span class="s2">&quot;input_tokens_per_second&quot;</span><span class="p">:</span>    <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># Overall system prefill rate</span>
+
+    <span class="c1"># Latency</span>
+    <span class="s2">&quot;ttft_p50_ms&quot;</span><span class="p">:</span>                <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># Median time to first token</span>
+    <span class="s2">&quot;ttft_p99_ms&quot;</span><span class="p">:</span>                <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># p99 time to first token</span>
+    <span class="s2">&quot;tbt_p50_ms&quot;</span><span class="p">:</span>                 <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># Median time between tokens</span>
+    <span class="s2">&quot;tbt_p99_ms&quot;</span><span class="p">:</span>                 <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># p99 time between tokens</span>
+
+    <span class="c1"># Efficiency</span>
+    <span class="s2">&quot;gpu_utilization_pct&quot;</span><span class="p">:</span>        <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># Per-GPU utilization</span>
+    <span class="s2">&quot;kv_cache_utilization_pct&quot;</span><span class="p">:</span>   <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># KV cache fill rate (via vLLM metrics)</span>
+    <span class="s2">&quot;batch_size_mean&quot;</span><span class="p">:</span>            <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># Average active batch size</span>
+    <span class="s2">&quot;batch_size_p99&quot;</span><span class="p">:</span>             <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># p99 active batch size</span>
+
+    <span class="c1"># Cost</span>
+    <span class="s2">&quot;cost_per_1m_output_tokens&quot;</span><span class="p">:</span>  <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># Derived: $/1M output tokens</span>
+    <span class="s2">&quot;gpu_cost_per_hour&quot;</span><span class="p">:</span>          <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># Cluster cost rate (from cloud API or fixed)</span>
+    <span class="s2">&quot;requests_per_dollar&quot;</span><span class="p">:</span>        <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># Inverse cost efficiency</span>
+
+    <span class="c1"># Quality proxy</span>
+    <span class="s2">&quot;generation_errors_per_min&quot;</span><span class="p">:</span>  <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># Truncations, OOM aborts, timeouts</span>
+    <span class="s2">&quot;queue_depth_tokens&quot;</span><span class="p">:</span>         <span class="s2">&quot;gauge&quot;</span><span class="p">,</span>    <span class="c1"># Pending tokens in request queue</span>
+<span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_cost_per_1m_tokens</span><span class="p">(</span>
+    <span class="n">gpu_cost_per_hour</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">output_tokens_per_second</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute the current effective cost per 1M output tokens from live metrics.</span>
+<span class="sd">    This number should be tracked and alerted on if it exceeds budget.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">output_tokens_per_second</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;inf&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">gpu_cost_per_hour</span> <span class="o">*</span> <span class="mf">1e6</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">output_tokens_per_second</span> <span class="o">*</span> <span class="mf">3600.0</span><span class="p">)</span>
+</code></pre></div>
+<p>Alert thresholds to set:
+- <code>cost_per_1m_output_tokens</code> &gt; 2× your baseline → something is wrong (traffic spike, failed GPU, KV cache thrashing).
+- <code>kv_cache_utilization_pct</code> &gt; 90% → risk of request preemption/OOM; scale out or reduce max context.
+- <code>ttft_p99_ms</code> &gt; SLO → prefill queue is backing up; consider <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>.
+- <code>batch_size_mean</code> consistently &lt; 10% of <span class="arithmatex">\(B^*\)</span> at peak hours → you are over-provisioned; scale down.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The latency–throughput–cost triangle is governed by the roofline: decode is bandwidth-bound until batch size exceeds <span class="arithmatex">\(B^* = \text{FLOP/s} / \text{BW}\)</span> (roughly 295 for H100 serving a 70B BF16 model). Below <span class="arithmatex">\(B^*\)</span>, adding concurrent sequences improves throughput at zero latency cost.</li>
+<li>Cost per million output tokens is <span class="arithmatex">\(\text{\$/1M} = (R \times 10^6) / (T_{\text{sustained}} \times 3600)\)</span>. The dominant lever is sustained throughput, which is maximized by keeping GPU utilization near the saturation point.</li>
+<li>Output tokens are 3–5× more expensive per token than input tokens because each requires a full autoregressive decode step. Reasoning models that produce long chains-of-thought carry a significant cost multiplier.</li>
+<li>FP8 and INT8 quantization are the single highest-leverage optimization: they halve or quarter decode bandwidth consumption with minimal quality degradation on modern hardware.</li>
+<li>Continuous batching near <span class="arithmatex">\(B^*\)</span> is the core mechanism for cost efficiency; your scheduler should target this operating point subject to your TTFT/TBT SLOs.</li>
+<li>For mixed workloads, disaggregate latency-sensitive (chat) and throughput-optimized (batch) serving tiers, using spot instances for the latter.</li>
+<li>KV cache memory is a first-class resource: at long contexts (32k+), a single sequence can occupy 10+ GB of HBM, severely limiting concurrent requests. KV cache quantization (INT8) roughly doubles the number of long-context sequences a node can hold.</li>
+<li>Always measure <code>cost_per_1m_output_tokens</code> as a first-class production metric alongside TTFT and GPU utilization. It surfaces inefficiencies that neither metric alone reveals.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Inference economics is a rapidly maturing discipline: by 2025 the field had moved from ad-hoc throughput maximization toward principled SLO-aware goodput optimization, hardware-native FP8 serving, and disaggregated prefill/decode architectures that are now standard in production clusters handling billions of tokens per day.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2309.06180">Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (2023)</a> — introduced the KV-cache paging abstraction underlying vLLM; the baseline cost and throughput benchmark the whole field references.</li>
+<li><a href="https://arxiv.org/abs/2211.05102">Pope et al., <em>Efficiently Scaling Transformer Inference</em> (2022)</a> — Google&rsquo;s analytical roofline model for partitioning transformer inference across TPU/GPU slices; the canonical reference for hardware utilization math.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2401.09670">Zhong et al., <em>DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving</em> (2024)</a> — formalises &ldquo;goodput&rdquo; (SLO-attaining requests/s) and shows disaggregating prefill and decode onto separate GPU pools yields up to 4.5× better goodput.</li>
+<li><a href="https://arxiv.org/abs/2403.02310">Agrawal et al., <em>Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve</em> (2024)</a> — chunked prefill + stall-free scheduling; up to 6.9× higher throughput over vLLM at the same TTFT SLO on multi-GPU deployments.</li>
+<li><a href="https://arxiv.org/abs/2407.00079">Qin et al., <em>Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving</em> (2024)</a> — Best Paper at FAST 2025; the production architecture behind Kimi, disaggregates KV cache across DRAM/SSD/NIC to boost throughput 59–498% in real traces.</li>
+<li><a href="https://arxiv.org/abs/2402.16363">Yuan et al., <em>LLM Inference Unveiled: Survey and Roofline Model Insights</em> (2024)</a> — systematic roofline-model survey of quantization, batching, and parallelism strategies with an open-source LLM-Viewer analysis tool.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm</a> — the reference high-throughput serving engine (PagedAttention, continuous batching, FP8, LoRA hot-swap); its <code>/metrics</code> endpoint is the fastest way to observe the cost formulas in this chapter on real hardware.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://haoailab.com/blogs/distserve/">DistServe Blog: Throughput is Not All You Need</a> — accessible write-up from Hao AI Lab on why goodput beats raw throughput as an operational metric.</li>
+<li><a href="https://www.digitalocean.com/blog/llm-inference-tradeoffs">DigitalOcean: The LLM Inference Trilemma</a> — practitioner-oriented breakdown of the latency/throughput/cost triangle with a workload-type decision framework.</li>
+<li><a href="https://www.baseten.co/blog/33-faster-llm-inference-with-fp8-quantization/">Baseten: 33% Faster LLM Inference with FP8 Quantization</a> — measured results on H100 hardware showing 33% throughput gain and 24% cost reduction per million tokens when moving from FP16 to FP8.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Kwon et al., &ldquo;Efficient Memory Management for Large Language Model Serving with PagedAttention&rdquo;</strong>, SOSP 2023. The foundational paper behind vLLM; introduces the KV cache memory problem and paged allocation.</li>
+<li><strong>Yu et al., &ldquo;Orca: A Distributed Serving System for Transformer-Based Generative Models&rdquo;</strong>, OSDI 2022. Introduces continuous batching (iteration-level scheduling) and quantifies the throughput gains.</li>
+<li><strong>Sheng et al., &ldquo;FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU&rdquo;</strong>, ICML 2023. Shows how to trade latency for throughput on memory-constrained hardware via offloading.</li>
+<li><strong>Pope et al., &ldquo;Efficiently Scaling Transformer Inference&rdquo;</strong>, MLSys 2023 (Google). Detailed analysis of model parallelism strategies and hardware trade-offs for serving large models at scale.</li>
+<li><strong>Agrawal et al., &ldquo;Sarathi-Serve: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills&rdquo;</strong>, OSDI 2024. Quantifies the prefill-decode interference problem and the benefit of chunked prefill for latency.</li>
+<li><strong>vLLM project</strong> (github.com/vllm-project/vllm): The reference open-source implementation; its metrics endpoint is the best way to observe the concepts in this chapter in a real system.</li>
+<li><strong>LLM-Perf Leaderboard</strong> (HuggingFace): Community benchmarks for tokens/s and cost across models, hardware, and quantization levels — useful for calibrating the numbers in this chapter against real measurements.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="11-multi-gpu-inference.html"><span class="pn-label">← Previous</span><span class="pn-title">Multi-GPU &amp; Multi-Node Inference</span></a>
+<a class="next" href="13-serving-moe.html"><span class="pn-label">Next →</span><span class="pn-title">Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-latencythroughputcost-triangle">The Latency–Throughput–Cost Triangle</a></li>
+<li class="toc-l3"><a href="#the-three-way-trade-off-stated-clearly">The Three-Way Trade-off Stated Clearly</a></li>
+<li class="toc-l2"><a href="#the-math-of-dollars-per-million-tokens">The Math of Dollars Per Million Tokens</a></li>
+<li class="toc-l3"><a href="#gpu-rental-cost">GPU Rental Cost</a></li>
+<li class="toc-l3"><a href="#input-tokens-vs-output-tokens">Input Tokens vs. Output Tokens</a></li>
+<li class="toc-l2"><a href="#batching-vs-latency-slos">Batching vs. Latency SLOs</a></li>
+<li class="toc-l3"><a href="#continuous-batching-and-effective-batch-size">Continuous Batching and Effective Batch Size</a></li>
+<li class="toc-l3"><a href="#latency-slos-in-practice">Latency SLOs in Practice</a></li>
+<li class="toc-l2"><a href="#gpu-selection-and-the-hardware-cost-function">GPU Selection and the Hardware Cost Function</a></li>
+<li class="toc-l3"><a href="#key-gpu-metrics-for-inference">Key GPU Metrics for Inference</a></li>
+<li class="toc-l3"><a href="#tensor-parallelism-across-gpus">Tensor Parallelism Across GPUs</a></li>
+<li class="toc-l2"><a href="#why-decode-heavy-workloads-are-expensive">Why Decode-Heavy Workloads Are Expensive</a></li>
+<li class="toc-l3"><a href="#chain-of-thought-tax">Chain-of-Thought Tax</a></li>
+<li class="toc-l2"><a href="#capacity-planning-and-autoscaling">Capacity Planning and Autoscaling</a></li>
+<li class="toc-l3"><a href="#the-capacity-planning-formula">The Capacity Planning Formula</a></li>
+<li class="toc-l3"><a href="#autoscaling-strategies">Autoscaling Strategies</a></li>
+<li class="toc-l2"><a href="#quantization-and-its-cost-impact">Quantization and Its Cost Impact</a></li>
+<li class="toc-l3"><a href="#how-quantization-changes-the-economics">How Quantization Changes the Economics</a></li>
+<li class="toc-l3"><a href="#kv-cache-quantization">KV Cache Quantization</a></li>
+<li class="toc-l2"><a href="#optimizing-the-bill-a-practitioner-playbook">Optimizing the Bill: A Practitioner Playbook</a></li>
+<li class="toc-l3"><a href="#tier-1-cheapest-wins-deploy-immediately">Tier 1: Cheapest wins (deploy immediately)</a></li>
+<li class="toc-l3"><a href="#tier-2-architectural-changes-higher-leverage-more-work">Tier 2: Architectural changes (higher leverage, more work)</a></li>
+<li class="toc-l3"><a href="#tier-3-systemic-cost-management">Tier 3: Systemic cost management</a></li>
+<li class="toc-l2"><a href="#the-full-cost-stack-beyond-gpu-compute">The Full Cost Stack: Beyond GPU Compute</a></li>
+<li class="toc-l2"><a href="#putting-it-all-together-a-reference-dashboard">Putting It All Together: A Reference Dashboard</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

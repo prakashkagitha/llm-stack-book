@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Attention Mechanism From Scratch — The LLM Stack</title>
+<meta name="description" content="Build scaled dot-product attention from first principles: queries/keys/values, why scale by sqrt(d), softmax, the attention matrix, masking (causal/padding). De">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="active" href="03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part II — The Transformer Architecture</div>
+<h1 id="23-the-attention-mechanism-from-scratch">2.3 The Attention Mechanism From Scratch<a class="headerlink" href="#23-the-attention-mechanism-from-scratch" title="Permanent link">¶</a></h1>
+<p>If you remember one equation from this entire book, make it this one:</p>
+<div class="arithmatex">\[
+\operatorname{Attention}(Q, K, V) = \operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V
+\]</div>
+<p>Every GPT, every Llama, every Claude, every Gemini — at its computational heart — is this line, stacked and repeated a few hundred times. The Multi-Layer Perceptrons (MLPs) store knowledge; the normalization layers keep gradients sane; the positional encodings tell the model <em>where</em> tokens are. But <strong>attention is the only operation in the Transformer that lets one token&rsquo;s representation depend on another token&rsquo;s representation.</strong> It is the mechanism for <em>mixing information across the sequence</em>. Remove it and you have an expensive per-token MLP that can never relate &ldquo;it&rdquo; to the noun three sentences ago.</p>
+<p>This chapter builds that one line from the ground up. We will derive it as <strong>differentiable soft retrieval</strong> — a database lookup that returns a smooth blend of values rather than a single hard match — and we will see <em>why every piece is there</em>: why we project into queries, keys, and values; why we take a dot product; why we divide by <span class="arithmatex">\(\sqrt{d_k}\)</span> (a detail that looks cosmetic but actually controls whether your network trains at all); why softmax and not something else; and how masking turns the same machinery into either a bidirectional encoder or a causal language model.</p>
+<p>We assume you are comfortable with <a href="../01-foundations/01-linear-algebra.html">Linear Algebra for Deep Learning</a> (matrix multiplication, transposes, the dot product as similarity) and with the softmax and cross-entropy from <a href="../01-foundations/02-probability-information.html">Probability, Statistics &amp; Information Theory</a>. We will write everything twice: once in pure NumPy so you can see the arithmetic with no framework magic, and once in PyTorch with autograd so it is actually usable. This is the crown-jewel chapter; we will take our time.</p>
+<h2 id="from-hard-retrieval-to-soft-retrieval">From Hard Retrieval to Soft Retrieval<a class="headerlink" href="#from-hard-retrieval-to-soft-retrieval" title="Permanent link">¶</a></h2>
+<p>The cleanest way to <em>understand</em> attention is to start with a thing you already know: a dictionary lookup, or a key–value store like Redis or a Python <code>dict</code>.</p>
+<p>A hard key–value store holds a set of <code>(key, value)</code> pairs. You issue a <strong>query</strong>, the store finds the key that exactly matches your query, and returns the associated <strong>value</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">store</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;paris&quot;</span><span class="p">:</span> <span class="s2">&quot;france&quot;</span><span class="p">,</span> <span class="s2">&quot;tokyo&quot;</span><span class="p">:</span> <span class="s2">&quot;japan&quot;</span><span class="p">,</span> <span class="s2">&quot;lima&quot;</span><span class="p">:</span> <span class="s2">&quot;peru&quot;</span><span class="p">}</span>
+<span class="n">store</span><span class="p">[</span><span class="s2">&quot;tokyo&quot;</span><span class="p">]</span>   <span class="c1"># -&gt; &quot;japan&quot;   (exact match on the key &quot;tokyo&quot;)</span>
+</code></pre></div>
+<p>Three things are happening, and naming them precisely is the whole trick:</p>
+<ol>
+<li>A <strong>query</strong> (<span class="arithmatex">\(q\)</span>) — the thing you are looking up (&ldquo;tokyo&rdquo;).</li>
+<li>A set of <strong>keys</strong> (<span class="arithmatex">\(k_1, \dots, k_n\)</span>) — the addressable handles (&ldquo;paris&rdquo;, &ldquo;tokyo&rdquo;, &ldquo;lima&rdquo;).</li>
+<li>A set of <strong>values</strong> (<span class="arithmatex">\(v_1, \dots, v_n\)</span>) — the payloads you actually want back.</li>
+</ol>
+<p>The lookup compares the query against every key, picks the matching one, and returns its value. In a Python <code>dict</code> the comparison is exact string equality and the selection is &ldquo;take exactly one.&rdquo; That makes it <strong>non-differentiable</strong>: there is no smooth notion of &ldquo;the query is 70% like this key.&rdquo; You cannot backpropagate through <code>store["tokyo"]</code>.</p>
+<p>Attention is what you get when you make every step of that lookup <em>soft and differentiable</em>:</p>
+<ul>
+<li><strong>Keys and queries become vectors</strong>, and &ldquo;match&rdquo; becomes a continuous <strong>similarity score</strong> — the dot product <span class="arithmatex">\(q \cdot k\)</span>. A bigger dot product means a better match.</li>
+<li><strong>Selection becomes a weighted average</strong> instead of a hard pick. We convert the scores into a probability distribution with softmax, then return the <em>blend</em> of all values weighted by how much each key matched. If the query is 70% like key 3 and 30% like key 7, we return <span class="arithmatex">\(0.7\,v_3 + 0.3\,v_7\)</span>.</li>
+</ul>
+<figure class="viz" id="fig-attn-hard-vs-soft-retrieval">
+<svg viewBox="0 0 720 380" role="img" aria-label="Side-by-side comparison of hard dictionary lookup versus soft attention retrieval, showing how each hard step (exact equality, hard argmax, single value) is relaxed into a differentiable soft step (dot-product score, softmax weights, weighted blend).">
+<defs>
+  <marker id="hvs-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="currentColor"/>
+  </marker>
+  <marker id="hvs-arrow-down" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M1 0 L5 9 L9 0 z" fill="currentColor"/>
+  </marker>
+  <marker id="hvs-arrow-dashed" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+</defs>
+<style>
+  #fig-attn-hard-vs-soft-retrieval text { fill: currentColor; }
+  #fig-attn-hard-vs-soft-retrieval .hdr  { font: 700 14px var(--sans,sans-serif); }
+  #fig-attn-hard-vs-soft-retrieval .step-cap { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-attn-hard-vs-soft-retrieval .mono  { font: 600 12px var(--mono,monospace); }
+  #fig-attn-hard-vs-soft-retrieval .relax { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-attn-hard-vs-soft-retrieval .badge { font: 600 10px var(--sans,sans-serif); }
+</style>
+
+
+<line x1="360" y1="20" x2="360" y2="360" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="4 4"/>
+
+
+<text x="185" y="46" text-anchor="middle" class="hdr" fill="var(--accent,#f59e0b)">HARD lookup (dict)</text>
+<line x1="40" y1="54" x2="330" y2="54" stroke="var(--muted,#94a3b8)" stroke-width="0.8"/>
+
+
+<text x="535" y="46" text-anchor="middle" class="hdr" fill="var(--accent,#f59e0b)">SOFT lookup (attention)</text>
+<line x1="390" y1="54" x2="680" y2="54" stroke="var(--muted,#94a3b8)" stroke-width="0.8"/>
+
+
+
+
+<rect x="44" y="92" width="282" height="56" rx="8" class="v-fill" stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="185" y="114" text-anchor="middle" class="mono">query == key_i ?</text>
+<text x="185" y="132" text-anchor="middle" class="step-cap">compare (exact equality)</text>
+
+
+<rect x="44" y="172" width="282" height="56" rx="8" class="v-fill" stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="185" y="194" text-anchor="middle" class="mono">pick the one match</text>
+<text x="185" y="212" text-anchor="middle" class="step-cap">hard arg-max select</text>
+
+
+<rect x="44" y="252" width="282" height="56" rx="8" class="v-fill" stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="185" y="274" text-anchor="middle" class="mono">return value_i</text>
+<text x="185" y="292" text-anchor="middle" class="step-cap">single payload</text>
+
+
+<rect x="100" y="324" width="172" height="22" rx="11" fill="var(--danger,#c0392b)" fill-opacity="0.18" stroke="var(--danger,#c0392b)" stroke-width="1"/>
+<text x="186" y="339" text-anchor="middle" class="badge" fill="var(--danger,#c0392b)">non-differentiable</text>
+
+
+
+
+<rect x="394" y="92" width="282" height="56" rx="8" class="v-fill" stroke="var(--accent,#f59e0b)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="535" y="114" text-anchor="middle" class="mono">score_i = q · k_i</text>
+<text x="535" y="132" text-anchor="middle" class="step-cap">dot-product similarity</text>
+
+
+<rect x="394" y="172" width="282" height="56" rx="8" class="v-fill" stroke="var(--accent,#f59e0b)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="535" y="194" text-anchor="middle" class="mono">weights = softmax(scores)</text>
+<text x="535" y="212" text-anchor="middle" class="step-cap">soft, normalized weights</text>
+
+
+<rect x="394" y="252" width="282" height="56" rx="8" class="v-fill" stroke="var(--accent,#f59e0b)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="535" y="270" text-anchor="middle" class="mono">return</text>
+<text x="535" y="286" text-anchor="middle" class="mono">&#x3A3;_i weights_i · value_i</text>
+<text x="535" y="301" text-anchor="middle" class="step-cap">weighted blend of all values</text>
+
+
+<rect x="448" y="324" width="172" height="22" rx="11" fill="var(--good,#2f9e6e)" fill-opacity="0.18" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+<text x="534" y="339" text-anchor="middle" class="badge" fill="var(--good,#2f9e6e)">fully differentiable</text>
+
+
+<line x1="185" y1="148" x2="185" y2="168" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#hvs-arrow-down)" class="v-muted"/>
+<line x1="185" y1="228" x2="185" y2="248" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#hvs-arrow-down)" class="v-muted"/>
+
+
+<line x1="535" y1="148" x2="535" y2="168" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#hvs-arrow-down)" class="v-muted"/>
+<line x1="535" y1="228" x2="535" y2="248" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#hvs-arrow-down)" class="v-muted"/>
+
+
+
+
+<line x1="326" y1="120" x2="392" y2="120" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#hvs-arrow-dashed)"/>
+<text x="359" y="113" text-anchor="middle" class="relax">relax</text>
+
+
+<line x1="326" y1="200" x2="392" y2="200" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#hvs-arrow-dashed)"/>
+<text x="359" y="193" text-anchor="middle" class="relax">soften</text>
+
+
+<line x1="326" y1="280" x2="392" y2="280" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#hvs-arrow-dashed)"/>
+<text x="359" y="273" text-anchor="middle" class="relax">blend</text>
+
+</svg>
+<figcaption><b>Hard dictionary lookup versus soft (differentiable) attention retrieval.</b> Each rigid step in a Python dict lookup — exact equality comparison, hard argmax selection, and single-value return — has a differentiable relaxation: a dot-product similarity score, a softmax-normalized weight distribution, and a weighted blend of all values. The dashed arrows show how attention is literally a soft, trainable version of key–value retrieval.</figcaption>
+</figure>
+
+<p>This &ldquo;soft retrieval&rdquo; framing is not a loose analogy bolted on after the fact — it is <em>literally</em> what the math computes, and it pays off immediately. It tells you what each tensor <em>means</em>: a query says &ldquo;here is what I am looking for,&rdquo; a key says &ldquo;here is what I contain, address me with this,&rdquo; and a value says &ldquo;if you decide to read me, here is the information I hand back.&rdquo; It also tells you why attention can implement things like &ldquo;copy the value from the most similar earlier token&rdquo; (induction heads), &ldquo;average over all tokens that mention the subject,&rdquo; or &ldquo;ignore everything except the punctuation.&rdquo; Those are all just different shapes of the weight distribution.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: where Q, K, V come from</p>
+<p>In self-attention, queries, keys, and values are all <em>learned linear projections of the same input</em>. If <span class="arithmatex">\(x_i \in \mathbb{R}^{d_\text{model}}\)</span> is the representation of token <span class="arithmatex">\(i\)</span>, then <span class="arithmatex">\(q_i = x_i W_Q\)</span>, <span class="arithmatex">\(k_i = x_i W_K\)</span>, <span class="arithmatex">\(v_i = x_i W_V\)</span> with learned matrices <span class="arithmatex">\(W_Q, W_K, W_V\)</span>. The token gets to ask a question (<span class="arithmatex">\(q\)</span>), advertise itself (<span class="arithmatex">\(k\)</span>), and offer content (<span class="arithmatex">\(v\)</span>) — three different <em>roles</em> carved out of one representation. In cross-attention (encoder–decoder), the queries come from one sequence and the keys/values from another; see <a href="../02-transformer/08-architecture-variants.html">Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a>.</p>
+</div>
+<h2 id="scaled-dot-product-attention-one-query-at-a-time">Scaled Dot-Product Attention, One Query at a Time<a class="headerlink" href="#scaled-dot-product-attention-one-query-at-a-time" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-attention-flow">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 812 250" role="img" aria-label="Scaled dot-product attention data flow: Q times K-transpose gives scores, row-wise softmax gives weights, times V gives the output.">
+  <defs>
+    <marker id="af-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-attention-flow .lbl{ font:600 13px var(--sans,sans-serif); }
+    #fig-attention-flow .dim{ font:400 10px var(--mono,monospace); }
+    #fig-attention-flow .op{ font:600 18px var(--serif,serif); }
+    #fig-attention-flow .cap{ font:500 10.5px var(--sans,sans-serif); }
+    #fig-attention-flow text{ fill: var(--ink-soft); }
+    #fig-attention-flow .dim{ fill: var(--muted); }
+  </style>
+
+
+  <g data-anim="1">
+    <rect x="14" y="78" width="58" height="84" rx="6" class="v-fill v-accent-s" fill-opacity="1" stroke-width="1.5"/>
+    <text x="43" y="124" text-anchor="middle" class="op v-accent" fill="var(--accent)">Q</text>
+    <text x="43" y="176" text-anchor="middle" class="dim">L × d</text>
+  </g>
+  <text x="86" y="126" text-anchor="middle" class="op">×</text>
+
+
+  <g data-anim="1">
+    <rect x="100" y="92" width="84" height="56" rx="6" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <text x="142" y="126" text-anchor="middle" class="op v-accent" fill="var(--accent)">Kᵀ</text>
+    <text x="142" y="162" text-anchor="middle" class="dim">d × L</text>
+  </g>
+  <text x="200" y="126" text-anchor="middle" class="op">=</text>
+
+
+  <g data-anim="2">
+    <rect x="216" y="80" width="80" height="80" rx="4" class="v-fill v-grid" stroke-width="1.2"/>
+    <g class="v-grid" stroke-width="0.8" opacity="0.7">
+      <line x1="216" y1="100" x2="296" y2="100"/><line x1="216" y1="120" x2="296" y2="120"/><line x1="216" y1="140" x2="296" y2="140"/>
+      <line x1="236" y1="80" x2="236" y2="160"/><line x1="256" y1="80" x2="256" y2="160"/><line x1="276" y1="80" x2="276" y2="160"/>
+    </g>
+    <text x="256" y="180" text-anchor="middle" class="cap dim">QKᵀ / √d</text>
+    <text x="256" y="193" text-anchor="middle" class="cap dim">L × L scores</text>
+  </g>
+
+
+  <line x1="300" y1="120" x2="338" y2="120" class="v-muted" stroke="currentColor" stroke-width="1.4" marker-end="url(#af-arrow)"/>
+  <text x="319" y="110" text-anchor="middle" class="cap">softmax</text>
+  <text x="319" y="136" text-anchor="middle" class="cap dim">per row</text>
+
+
+  <g data-anim="3">
+    <rect x="342" y="80" width="80" height="80" rx="4" class="v-fill v-grid" stroke-width="1.2"/>
+    <g class="v-grid" stroke-width="0.8" opacity="0.7">
+      <line x1="342" y1="100" x2="422" y2="100"/><line x1="342" y1="120" x2="422" y2="120"/><line x1="342" y1="140" x2="422" y2="140"/>
+      <line x1="362" y1="80" x2="362" y2="160"/><line x1="382" y1="80" x2="382" y2="160"/><line x1="402" y1="80" x2="402" y2="160"/>
+    </g>
+
+    <rect x="342" y="100" width="80" height="20" class="v-accent viz-pulse" fill="var(--accent)" fill-opacity="0.5"/>
+    <text x="382" y="180" text-anchor="middle" class="cap dim">attention weights</text>
+    <text x="382" y="193" text-anchor="middle" class="cap dim">each row sums to 1</text>
+  </g>
+  <text x="438" y="126" text-anchor="middle" class="op">×</text>
+
+
+  <g data-anim="4">
+    <rect x="452" y="78" width="58" height="84" rx="6" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <text x="481" y="124" text-anchor="middle" class="op v-accent" fill="var(--accent)">V</text>
+    <text x="481" y="176" text-anchor="middle" class="dim">L × d</text>
+  </g>
+  <text x="524" y="126" text-anchor="middle" class="op">=</text>
+
+
+  <g data-anim="5">
+    <rect x="540" y="78" width="58" height="84" rx="6" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+    <rect x="540" y="98" width="58" height="20" class="viz-pulse" fill="var(--good,#2f9e6e)" fill-opacity="0.45"/>
+    <text x="569" y="124" text-anchor="middle" class="op" fill="var(--good,#2f9e6e)">O</text>
+    <text x="569" y="176" text-anchor="middle" class="dim">L × d</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="382" y1="120" x2="540" y2="108" class="v-accent-s" stroke="var(--accent)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>
+    <text x="630" y="100" class="cap dim">one query's</text>
+    <text x="630" y="113" class="cap dim">output row =</text>
+    <text x="630" y="126" class="cap dim">weighted Σ of V</text>
+  </g>
+</svg>
+<figcaption><b>Scaled dot-product attention as soft retrieval.</b> Each query compares against every key (<b>QKᵀ/√d</b>), a row-wise <b>softmax</b> turns those scores into weights that sum to one, and the output is the weighted sum of the value vectors. The highlighted row traces a single query producing a single output vector.</figcaption>
+</figure>
+
+<p>Let us derive the formula for a single query <span class="arithmatex">\(q \in \mathbb{R}^{d_k}\)</span> attending over <span class="arithmatex">\(n\)</span> key–value pairs. Stack the keys as rows of a matrix <span class="arithmatex">\(K \in \mathbb{R}^{n \times d_k}\)</span> and the values as rows of <span class="arithmatex">\(V \in \mathbb{R}^{n \times d_v}\)</span>. (We allow <span class="arithmatex">\(d_v \neq d_k\)</span> in general, though in practice they are usually equal.)</p>
+<p><strong>Step 1 — Score every key against the query.</strong> The similarity between the query and key <span class="arithmatex">\(j\)</span> is the dot product <span class="arithmatex">\(s_j = q \cdot k_j = \sum_{c=1}^{d_k} q_c\, k_{j,c}\)</span>. Computing all <span class="arithmatex">\(n\)</span> scores at once is a single matrix–vector product:</p>
+<div class="arithmatex">\[
+s = K q \in \mathbb{R}^{n}, \qquad s_j = q \cdot k_j.
+\]</div>
+<p>The dot product is the natural similarity here for a reason: it is large and positive when <span class="arithmatex">\(q\)</span> and <span class="arithmatex">\(k_j\)</span> point in the same direction, near zero when they are orthogonal, and negative when they oppose. It rewards both <em>alignment of direction</em> and <em>magnitude</em>. (Compare to <a href="../02-transformer/02-embeddings-input.html">Embeddings &amp; The Input Pipeline</a>, where the same dot-product-as-similarity intuition underlies nearest-neighbor search over embeddings.)</p>
+<p><strong>Step 2 — Scale by <span class="arithmatex">\(\sqrt{d_k}\)</span>.</strong> We divide every score by <span class="arithmatex">\(\sqrt{d_k}\)</span>:</p>
+<div class="arithmatex">\[
+\tilde{s}_j = \frac{q \cdot k_j}{\sqrt{d_k}}.
+\]</div>
+<p>This is the &ldquo;scaled&rdquo; in scaled dot-product attention, and we devote the next section to <em>why</em> it matters. For now, take it as: it keeps the scores from blowing up as the head dimension <span class="arithmatex">\(d_k\)</span> grows.</p>
+<p><strong>Step 3 — Softmax into attention weights.</strong> Turn the scaled scores into a probability distribution over the <span class="arithmatex">\(n\)</span> positions:</p>
+<div class="arithmatex">\[
+a_j = \operatorname{softmax}(\tilde{s})_j = \frac{e^{\tilde{s}_j}}{\sum_{\ell=1}^{n} e^{\tilde{s}_\ell}}, \qquad \sum_{j=1}^{n} a_j = 1, \quad a_j &gt; 0.
+\]</div>
+<p>The vector <span class="arithmatex">\(a \in \mathbb{R}^n\)</span> is the <strong>attention distribution</strong> for this query: <span class="arithmatex">\(a_j\)</span> is the fraction of &ldquo;attention&rdquo; the query pays to position <span class="arithmatex">\(j\)</span>. Softmax is the right choice because it is the smooth, differentiable relaxation of <span class="arithmatex">\(\arg\max\)</span>: it concentrates mass on the largest scores (recovering near-hard selection when one score dominates) while staying differentiable everywhere and always producing a valid probability vector. We unpack softmax&rsquo;s numerical behavior — overflow, the log-sum-exp trick, the temperature induced by the scale — below.</p>
+<p><strong>Step 4 — Blend the values.</strong> The output is the attention-weighted sum of the value vectors:</p>
+<div class="arithmatex">\[
+\operatorname{attn}(q, K, V) = \sum_{j=1}^{n} a_j\, v_j = a^\top V \in \mathbb{R}^{d_v}.
+\]</div>
+<p>That is the entire single-query mechanism. Notice the output lives in value-space (<span class="arithmatex">\(\mathbb{R}^{d_v}\)</span>), is a <em>convex combination</em> of the value vectors (it lies inside their convex hull — it can never extrapolate beyond the values it is given), and is differentiable with respect to <span class="arithmatex">\(q\)</span>, every <span class="arithmatex">\(k_j\)</span>, and every <span class="arithmatex">\(v_j\)</span>. Information has flowed from the positions the query cared about into a single output vector.</p>
+<h3 id="batching-all-queries-at-once">Batching all queries at once<a class="headerlink" href="#batching-all-queries-at-once" title="Permanent link">¶</a></h3>
+<p>In practice we have not one query but one <em>per position</em>: <span class="arithmatex">\(n\)</span> tokens each emit a query, so <span class="arithmatex">\(Q \in \mathbb{R}^{n \times d_k}\)</span>. We want every query to attend over every key independently. Stacking step 1 over all queries turns the matrix–vector product into a matrix–matrix product:</p>
+<div class="arithmatex">\[
+S = \frac{QK^\top}{\sqrt{d_k}} \in \mathbb{R}^{n \times n}, \qquad S_{ij} = \frac{q_i \cdot k_j}{\sqrt{d_k}}.
+\]</div>
+<p>This <span class="arithmatex">\(n \times n\)</span> object is <strong>the attention matrix</strong> (pre-softmax it is the &ldquo;score matrix&rdquo; or &ldquo;logits&rdquo;; post-softmax it is the &ldquo;attention weights&rdquo;). Row <span class="arithmatex">\(i\)</span> holds the scores of query <span class="arithmatex">\(i\)</span> against all keys. We softmax <strong>along each row</strong> (dimension <code>-1</code>, the key axis) so each query&rsquo;s weights sum to 1, then multiply by <span class="arithmatex">\(V\)</span>:</p>
+<div class="arithmatex">\[
+\operatorname{Attention}(Q, K, V) = \underbrace{\operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)}_{A \,\in\, \mathbb{R}^{n \times n}} V \;\in\; \mathbb{R}^{n \times d_v}.
+\]</div>
+<p>Output row <span class="arithmatex">\(i\)</span> is query <span class="arithmatex">\(i\)</span>&rsquo;s personalized blend of the values. We have arrived at the headline equation, and now every symbol has a meaning rooted in soft retrieval.</p>
+<figure class="viz" id="fig-attn-sdpa-pipeline-masked">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 700 720" role="img" aria-label="Scaled dot-product attention pipeline: Q and K enter a matrix multiply to form the n-by-n score matrix, divided by sqrt d_k for variance-preserving scale, an optional mask sets forbidden positions to negative infinity, row-wise softmax produces attention weights A, and finally A times V blends the values to produce the output of shape n by d_v. V bypasses the early operations and enters only at the final blend.">
+<defs>
+  <marker id="sdpa-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="currentColor"/>
+  </marker>
+  <marker id="sdpa-arrow-v" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+</defs>
+<style>
+  #fig-attn-sdpa-pipeline-masked text { fill: currentColor; }
+  #fig-attn-sdpa-pipeline-masked .inp-lbl  { font: 700 22px var(--sans,sans-serif); }
+  #fig-attn-sdpa-pipeline-masked .inp-sub  { font: 400 11px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-attn-sdpa-pipeline-masked .inp-role { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-attn-sdpa-pipeline-masked .op-lbl   { font: 600 13px var(--sans,sans-serif); }
+  #fig-attn-sdpa-pipeline-masked .op-cap   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-attn-sdpa-pipeline-masked .shape    { font: 400 10px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-attn-sdpa-pipeline-masked .out-lbl  { font: 700 16px var(--sans,sans-serif); }
+</style>
+
+
+
+
+<g data-anim="1">
+  <rect x="40" y="20" width="110" height="68" rx="8" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="95" y="52" text-anchor="middle" class="inp-lbl" fill="var(--accent,#f59e0b)">Q</text>
+  <text x="95" y="68" text-anchor="middle" class="inp-sub">(n × d_k)</text>
+  <text x="95" y="82" text-anchor="middle" class="inp-role">what I seek</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="240" y="20" width="110" height="68" rx="8" fill="var(--muted,#94a3b8)" fill-opacity="0.12" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+  <text x="295" y="52" text-anchor="middle" class="inp-lbl" fill="var(--muted,#94a3b8)">K</text>
+  <text x="295" y="68" text-anchor="middle" class="inp-sub">(n × d_k)</text>
+  <text x="295" y="82" text-anchor="middle" class="inp-role">the keys</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="490" y="20" width="110" height="68" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="545" y="52" text-anchor="middle" class="inp-lbl" fill="var(--accent2,#3b82f6)">V</text>
+  <text x="545" y="68" text-anchor="middle" class="inp-sub">(n × d_v)</text>
+  <text x="545" y="82" text-anchor="middle" class="inp-role">the values</text>
+</g>
+
+
+<line x1="95" y1="88" x2="190" y2="150" stroke="var(--accent,#f59e0b)" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+<line x1="295" y1="88" x2="245" y2="150" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+
+
+<g data-anim="2">
+  <rect x="130" y="155" width="185" height="58" rx="8" class="v-fill" stroke="currentColor" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.5"/>
+  <text x="222" y="179" text-anchor="middle" class="op-lbl">Q K&#x1D40;</text>
+  <text x="222" y="196" text-anchor="middle" class="op-cap">matmul of queries and keys</text>
+
+  <text x="338" y="179" text-anchor="start" class="shape">score matrix S</text>
+  <text x="338" y="193" text-anchor="start" class="shape">(n × n)</text>
+</g>
+
+
+<line x1="222" y1="213" x2="222" y2="248" stroke="currentColor" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+<text x="232" y="235" text-anchor="start" class="shape">(n×n)</text>
+
+
+<g data-anim="2">
+  <rect x="130" y="253" width="185" height="58" rx="8" class="v-fill" stroke="currentColor" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.5"/>
+  <text x="222" y="277" text-anchor="middle" class="op-lbl">/ sqrt(d_k)</text>
+  <text x="222" y="294" text-anchor="middle" class="op-cap">scale (variance -&gt; 1)</text>
+
+  <text x="325" y="277" text-anchor="start" class="shape">variance-preserving</text>
+  <text x="325" y="291" text-anchor="start" class="shape">scale (Var-&gt;1)</text>
+</g>
+
+
+<line x1="222" y1="311" x2="222" y2="346" stroke="currentColor" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+
+
+<g data-anim="3">
+  <rect x="130" y="351" width="185" height="58" rx="8" fill="var(--surface,#1e293b)" fill-opacity="0.3" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="222" y="375" text-anchor="middle" class="op-lbl">+ mask (optional)</text>
+  <text x="222" y="392" text-anchor="middle" class="op-cap">causal / padding</text>
+
+  <text x="325" y="375" text-anchor="start" class="shape">forbidden -&gt; -inf</text>
+  <text x="325" y="389" text-anchor="start" class="shape">causal / padding</text>
+</g>
+
+
+<line x1="222" y1="409" x2="222" y2="444" stroke="currentColor" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+
+
+<g data-anim="4">
+  <rect x="130" y="449" width="185" height="58" rx="8" class="v-fill" stroke="currentColor" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.5"/>
+  <text x="222" y="473" text-anchor="middle" class="op-lbl">softmax (row-wise)</text>
+  <text x="222" y="490" text-anchor="middle" class="op-cap">over key axis (dim = -1)</text>
+
+  <text x="325" y="470" text-anchor="start" class="shape">A  (n × n)</text>
+  <text x="325" y="484" text-anchor="start" class="shape">rows sum to 1</text>
+</g>
+
+
+<line x1="222" y1="507" x2="222" y2="542" stroke="currentColor" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+<text x="232" y="529" text-anchor="start" class="shape">A (n×n)</text>
+
+
+<g data-anim="5">
+  <rect x="130" y="547" width="185" height="58" rx="8" class="v-fill" stroke="currentColor" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.5"/>
+  <text x="222" y="571" text-anchor="middle" class="op-lbl">A V</text>
+  <text x="222" y="588" text-anchor="middle" class="op-cap">blend values by weights</text>
+</g>
+
+
+<line x1="222" y1="605" x2="222" y2="642" stroke="currentColor" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+<text x="232" y="628" text-anchor="start" class="shape">(n×d_v)</text>
+
+
+<g data-anim="5">
+  <rect x="142" y="647" width="162" height="52" rx="10" fill="var(--accent,#f59e0b)" fill-opacity="0.22" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+  <text x="223" y="669" text-anchor="middle" class="out-lbl" fill="var(--accent,#f59e0b)">output</text>
+  <text x="223" y="688" text-anchor="middle" class="inp-sub">(n × d_v)</text>
+</g>
+
+
+<g data-anim="1">
+
+  <line x1="545" y1="88" x2="545" y2="558" stroke="var(--accent2,#3b82f6)" stroke-width="1.5" stroke-dasharray="5 3"/>
+
+  <line x1="545" y1="558" x2="320" y2="576" stroke="var(--accent2,#3b82f6)" stroke-width="1.5" marker-end="url(#sdpa-arrow-v)"/>
+
+  <text x="555" y="350" text-anchor="start" class="shape" fill="var(--accent2,#3b82f6)">V bypasses</text>
+  <text x="555" y="363" text-anchor="start" class="shape" fill="var(--accent2,#3b82f6)">score ops</text>
+  <text x="555" y="376" text-anchor="start" class="shape" fill="var(--accent2,#3b82f6)">enters here</text>
+</g>
+
+</svg>
+<figcaption><b>Scaled dot-product attention as a sequential pipeline.</b> Queries and keys enter a matrix multiply producing the n×n score matrix; a /sqrt(d_k) scale keeps variance at 1; an optional mask zeros out forbidden positions; row-wise softmax converts scores to attention weights A; and finally A multiplies V to blend the value vectors. Note that V bypasses the entire score computation and enters only at the final blend step.</figcaption>
+</figure>
+
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: softmax along the wrong axis</p>
+<p>The single most common attention bug is applying softmax over the <em>query</em> axis instead of the <em>key</em> axis. In <code>S</code> of shape <code>(n_queries, n_keys)</code>, you must normalize over <code>dim=-1</code> (keys) so that <strong>each query&rsquo;s</strong> weights sum to 1. Normalizing over <code>dim=0</code> (queries) silently produces a model that trains — slowly, badly, and confusingly — to a worse loss. Always assert <code>A.sum(dim=-1)</code> is all-ones during development.</p>
+</div>
+<h2 id="why-divide-by-sqrtd_k-the-variance-argument">Why Divide by <span class="arithmatex">\(\sqrt{d_k}\)</span>? The Variance Argument<a class="headerlink" href="#why-divide-by-sqrtd_k-the-variance-argument" title="Permanent link">¶</a></h2>
+<p>The scale factor <span class="arithmatex">\(1/\sqrt{d_k}\)</span> looks like a footnote. It is not. Get it wrong and softmax saturates, gradients vanish, and the network refuses to learn. Here is the argument from <em>Attention Is All You Need</em> (Vaswani et al., 2017), made fully explicit.</p>
+<p>Treat the components of a query <span class="arithmatex">\(q\)</span> and a key <span class="arithmatex">\(k\)</span> as independent random variables, each with mean 0 and variance 1 — a reasonable approximation at initialization, where the projection weights are small-random and the inputs are normalized. The raw score is their dot product:</p>
+<div class="arithmatex">\[
+s = q \cdot k = \sum_{c=1}^{d_k} q_c\, k_c.
+\]</div>
+<p>Each term <span class="arithmatex">\(q_c k_c\)</span> is a product of two independent zero-mean, unit-variance variables, so it has mean <span class="arithmatex">\(\mathbb{E}[q_c k_c] = \mathbb{E}[q_c]\mathbb{E}[k_c] = 0\)</span> and variance <span class="arithmatex">\(\operatorname{Var}(q_c k_c) = \mathbb{E}[q_c^2]\mathbb{E}[k_c^2] = 1 \cdot 1 = 1\)</span>. Summing <span class="arithmatex">\(d_k\)</span> independent such terms, the variances add:</p>
+<div class="arithmatex">\[
+\mathbb{E}[s] = 0, \qquad \operatorname{Var}(s) = \sum_{c=1}^{d_k} \operatorname{Var}(q_c k_c) = d_k.
+\]</div>
+<p>So the <strong>standard deviation of the raw score grows like <span class="arithmatex">\(\sqrt{d_k}\)</span>.</strong> For a typical head dimension <span class="arithmatex">\(d_k = 64\)</span>, scores have a standard deviation of <span class="arithmatex">\(8\)</span>. For <span class="arithmatex">\(d_k = 128\)</span>, about <span class="arithmatex">\(11\)</span>. These are large numbers to feed into a softmax.</p>
+<p>Why is that bad? Softmax is <em>extremely</em> sensitive to the spread of its inputs. If one logit is, say, 24 (three standard deviations out at <span class="arithmatex">\(d_k=64\)</span>) and the rest sit near 0, then <span class="arithmatex">\(e^{24} \approx 2.6\times10^{10}\)</span> dwarfs every other term: the softmax output is essentially a one-hot vector. The distribution has <strong>saturated</strong> — it has effectively become a hard <span class="arithmatex">\(\arg\max\)</span>. And the gradient of a saturated softmax is nearly zero: the Jacobian of softmax is <span class="arithmatex">\(\operatorname{diag}(a) - a a^\top\)</span>, and when <span class="arithmatex">\(a\)</span> is one-hot, that matrix is all zeros. <strong>No gradient flows back to the queries and keys.</strong> Training stalls.</p>
+<p>Dividing by <span class="arithmatex">\(\sqrt{d_k}\)</span> exactly cancels the growth:</p>
+<div class="arithmatex">\[
+\operatorname{Var}\!\left(\frac{s}{\sqrt{d_k}}\right) = \frac{\operatorname{Var}(s)}{d_k} = \frac{d_k}{d_k} = 1.
+\]</div>
+<p>The scaled scores have unit variance regardless of head dimension. Softmax receives inputs of a sane, dimension-independent spread, starts life close to uniform (gradients flow to all positions), and <em>learns</em> to sharpen as training progresses. The scale is a <strong>variance-preserving normalization</strong> that decouples the temperature of the attention distribution from an architectural hyperparameter (<span class="arithmatex">\(d_k\)</span>) it has no business being coupled to. This is the same family of reasoning that motivates careful initialization and normalization throughout deep nets; see <a href="../01-foundations/06-neural-nets-from-scratch.html">Neural Networks From Scratch: MLPs &amp; Backprop</a>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: scores with and without the scale</p>
+<p>Let <span class="arithmatex">\(d_k = 64\)</span> and draw <span class="arithmatex">\(q, k \sim \mathcal{N}(0, I_{64})\)</span>. A representative raw dot product <span class="arithmatex">\(q \cdot k\)</span> lands around <span class="arithmatex">\(\pm 8\)</span> in magnitude (std <span class="arithmatex">\(= \sqrt{64} = 8\)</span>); occasional scores reach <span class="arithmatex">\(\pm 20\)</span> or more.</p>
+<p>Suppose for one query the four raw scores against four keys are <span class="arithmatex">\([20, 4, -3, 1]\)</span>.</p>
+<p><strong>Without scaling</strong>, softmax of <span class="arithmatex">\([20, 4, -3, 1]\)</span>:
+<span class="arithmatex">\(e^{20} \approx 4.85\times10^8\)</span> swamps <span class="arithmatex">\(e^4 \approx 54.6\)</span>, <span class="arithmatex">\(e^{-3}\approx 0.05\)</span>, <span class="arithmatex">\(e^{1}\approx 2.72\)</span>. The weights are about <span class="arithmatex">\([0.99999988,\ 0.00000011,\ \approx 0,\ \approx 0]\)</span> — a one-hot vector. Effectively a hard pick; gradient to the other keys is essentially zero.</p>
+<p><strong>With scaling</strong> by <span class="arithmatex">\(\sqrt{64} = 8\)</span>, the scores become <span class="arithmatex">\([2.5,\ 0.5,\ -0.375,\ 0.125]\)</span>. Now softmax gives roughly <span class="arithmatex">\([0.77,\ 0.10,\ 0.04,\ 0.07]\)</span> — still peaked on the first key (good, it <em>was</em> the best match) but soft enough that gradient flows to all four. The model can still learn to adjust which key wins. Same data, wildly different trainability — entirely because of one <span class="arithmatex">\(\div\sqrt{d_k}\)</span>.</p>
+</div>
+<h2 id="a-from-scratch-implementation-in-numpy">A From-Scratch Implementation in NumPy<a class="headerlink" href="#a-from-scratch-implementation-in-numpy" title="Permanent link">¶</a></h2>
+<p>Let us write the whole thing with nothing but NumPy so there is no framework to hide behind. We will build a numerically stable softmax first (this matters — naïve softmax overflows), then attention on top of it, then verify on a tiny hand-checkable example.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">softmax</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Numerically stable softmax along `axis`.</span>
+
+<span class="sd">    The math identity softmax(x) = softmax(x - c) for any constant c lets us</span>
+<span class="sd">    subtract the per-row max BEFORE exponentiating. This guarantees the largest</span>
+<span class="sd">    exponent is exp(0) = 1, so we never overflow to +inf. Without this, a logit</span>
+<span class="sd">    of, say, 1000 would make exp(1000) = inf and the whole row becomes NaN.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">x_max</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>      <span class="c1"># largest logit per row</span>
+    <span class="n">e</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">x</span> <span class="o">-</span> <span class="n">x_max</span><span class="p">)</span>                             <span class="c1"># in (0, 1], no overflow</span>
+    <span class="k">return</span> <span class="n">e</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">e</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>    <span class="c1"># normalize -&gt; sums to 1</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">scaled_dot_product_attention</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">mask</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Scaled dot-product attention, fully from scratch.</span>
+
+<span class="sd">    Shapes (single, unbatched):</span>
+<span class="sd">        Q : (n_q, d_k)   one query per output position</span>
+<span class="sd">        K : (n_k, d_k)   one key per source position</span>
+<span class="sd">        V : (n_k, d_v)   one value per source position</span>
+<span class="sd">        mask : (n_q, n_k) or None. Entries that are True (or 1) are positions</span>
+<span class="sd">               we are ALLOWED to attend to; False/0 positions are forbidden</span>
+<span class="sd">               and get score -inf before softmax (so weight -&gt; exactly 0).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        out     : (n_q, d_v)  the attended output, one vector per query</span>
+<span class="sd">        weights : (n_q, n_k)  the attention distribution (rows sum to 1)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">d_k</span> <span class="o">=</span> <span class="n">Q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># Step 1: raw similarity scores. scores[i, j] = q_i · k_j</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">Q</span> <span class="o">@</span> <span class="n">K</span><span class="o">.</span><span class="n">T</span>                                  <span class="c1"># (n_q, n_k)</span>
+
+    <span class="c1"># Step 2: scale so the variance of scores is ~1 regardless of d_k</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">d_k</span><span class="p">)</span>
+
+    <span class="c1"># Step 3 (optional): masking. Set forbidden scores to -inf so that</span>
+    <span class="c1"># exp(-inf) = 0 and those positions receive exactly zero attention weight.</span>
+    <span class="k">if</span> <span class="n">mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="n">scores</span><span class="p">,</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
+
+    <span class="c1"># Step 4: softmax over the KEY axis (last axis) -&gt; attention weights</span>
+    <span class="n">weights</span> <span class="o">=</span> <span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>                <span class="c1"># (n_q, n_k)</span>
+
+    <span class="c1"># Step 5: weighted sum of values</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">weights</span> <span class="o">@</span> <span class="n">V</span>                                 <span class="c1"># (n_q, d_v)</span>
+    <span class="k">return</span> <span class="n">out</span><span class="p">,</span> <span class="n">weights</span>
+</code></pre></div>
+<p>Now a tiny worked sanity check we can verify by hand. We make the keys <em>axis-aligned</em> (one-hot-ish) and the values easy-to-read tags, then issue a query that points almost exactly at the second key.</p>
+<div class="highlight"><pre><span></span><code><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="c1"># Three keys, deliberately pointing along distinct axes, in d_k = 4.</span>
+<span class="n">K</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span>
+    <span class="p">[</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>   <span class="c1"># key 0</span>
+    <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>   <span class="c1"># key 1</span>
+    <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>   <span class="c1"># key 2</span>
+<span class="p">])</span>
+<span class="c1"># Values are easy to recognize: value j is the number (j+1) repeated.</span>
+<span class="n">V</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span>
+    <span class="p">[</span><span class="mf">10.0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">],</span>           <span class="c1"># value 0</span>
+    <span class="p">[</span><span class="mf">20.0</span><span class="p">,</span> <span class="mf">20.0</span><span class="p">],</span>           <span class="c1"># value 1</span>
+    <span class="p">[</span><span class="mf">30.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">],</span>           <span class="c1"># value 2</span>
+<span class="p">])</span>
+<span class="c1"># One query that aligns strongly with key 1 (the second axis).</span>
+<span class="n">Q</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">]])</span>
+
+<span class="n">out</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">scaled_dot_product_attention</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;attention weights:&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>   <span class="c1"># ~ [[0.13 0.74 0.13]]</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;output:&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>            <span class="c1"># ~ [[20.1 20.1]] -&gt; mostly value 1</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;rows sum to 1:&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">w</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">),</span> <span class="mf">1.0</span><span class="p">))</span>  <span class="c1"># True</span>
+</code></pre></div>
+<p>The query points mostly along axis 1, so it scores highest against key 1, softmax concentrates ~0.74 of its mass there, and the output is pulled toward value 1 (<code>[20, 20]</code>) — a soft retrieval of &ldquo;the value whose key best matches my query.&rdquo; Crank the query&rsquo;s second component up to, say, 30 and the weight on key 1 approaches 1.0 and the output approaches exactly <code>[20, 20]</code>: hard retrieval recovered in the limit. That single experiment <em>is</em> the intuition for everything attention does.</p>
+<h2 id="causal-padding-masks-same-machinery-different-information-flow">Causal &amp; Padding Masks: Same Machinery, Different Information Flow<a class="headerlink" href="#causal-padding-masks-same-machinery-different-information-flow" title="Permanent link">¶</a></h2>
+<p>The <code>mask</code> argument we slipped into the implementation is what makes attention flexible enough to serve as both a bidirectional encoder and an autoregressive decoder. A mask is just an additive bias on the score matrix — set forbidden entries to <span class="arithmatex">\(-\infty\)</span> before softmax so they receive exactly zero weight afterward. Two masks matter in practice.</p>
+<h3 id="the-causal-autoregressive-mask">The causal (autoregressive) mask<a class="headerlink" href="#the-causal-autoregressive-mask" title="Permanent link">¶</a></h3>
+<p>A language model predicts token <span class="arithmatex">\(t+1\)</span> from tokens <span class="arithmatex">\(1, \dots, t\)</span>. During training we feed the whole sequence at once for efficiency, but we must forbid each position from &ldquo;peeking&rdquo; at future tokens — otherwise the model could trivially copy the answer and learn nothing. We enforce this by allowing query <span class="arithmatex">\(i\)</span> to attend only to keys <span class="arithmatex">\(j \le i\)</span>: a <strong>lower-triangular</strong> mask.</p>
+<div class="arithmatex">\[
+\operatorname{mask}_{ij} = \begin{cases} 0 &amp; j \le i \ \ (\text{allowed, keep score}) \\ -\infty &amp; j &gt; i \ \ (\text{forbidden, zero out}) \end{cases}
+\]</div>
+<figure class="viz" id="fig-attn-causal-mask-grid">
+<svg viewBox="0 0 600 480" role="img" aria-label="4 by 4 lower-triangular causal attention mask grid. Allowed positions (column index at most row index) are shown with a check mark; forbidden future positions are shown with X and -inf to indicate they are zeroed out before softmax. Query 0 sees only itself; query 1 sees tokens 0 to 1; query 2 sees tokens 0 to 2; query 3 sees tokens 0 to 3.">
+<style>
+  #fig-attn-causal-mask-grid text { fill: currentColor; }
+  #fig-attn-causal-mask-grid .hdr      { font: 600 12px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-attn-causal-mask-grid .row-hdr  { font: 600 12px var(--mono,monospace); }
+  #fig-attn-causal-mask-grid .cell-ok  { font: 700 20px var(--sans,sans-serif); fill: var(--accent,#f59e0b); }
+  #fig-attn-causal-mask-grid .cell-no  { font: 700 14px var(--sans,sans-serif); fill: var(--danger,#c0392b); }
+  #fig-attn-causal-mask-grid .cell-ninf{ font: 600 9px var(--mono,monospace); fill: var(--danger,#c0392b); }
+  #fig-attn-causal-mask-grid .row-cap  { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-attn-causal-mask-grid .leg-lbl  { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-attn-causal-mask-grid .top-cap  { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+</style>
+
+
+<text x="290" y="68" text-anchor="middle" class="top-cap">positions a query may read</text>
+
+
+<text x="185" y="90" text-anchor="middle" class="hdr">key0</text>
+<text x="255" y="90" text-anchor="middle" class="hdr">key1</text>
+<text x="325" y="90" text-anchor="middle" class="hdr">key2</text>
+<text x="395" y="90" text-anchor="middle" class="hdr">key3</text>
+
+
+<text x="110" y="163" text-anchor="end" class="row-hdr">query0</text>
+<text x="110" y="233" text-anchor="end" class="row-hdr">query1</text>
+<text x="110" y="303" text-anchor="end" class="row-hdr">query2</text>
+<text x="110" y="373" text-anchor="end" class="row-hdr">query3</text>
+
+
+
+
+
+<rect x="150" y="105" width="70" height="70" rx="2" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="185" y="150" text-anchor="middle" class="cell-ok">OK</text>
+
+
+<rect x="220" y="105" width="70" height="70" rx="2" fill="var(--danger,#c0392b)" fill-opacity="0.10" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="255" y="143" text-anchor="middle" class="cell-no">X</text>
+<text x="255" y="160" text-anchor="middle" class="cell-ninf">-inf</text>
+
+
+<rect x="290" y="105" width="70" height="70" rx="2" fill="var(--danger,#c0392b)" fill-opacity="0.10" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="325" y="143" text-anchor="middle" class="cell-no">X</text>
+<text x="325" y="160" text-anchor="middle" class="cell-ninf">-inf</text>
+
+
+<rect x="360" y="105" width="70" height="70" rx="2" fill="var(--danger,#c0392b)" fill-opacity="0.10" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="395" y="143" text-anchor="middle" class="cell-no">X</text>
+<text x="395" y="160" text-anchor="middle" class="cell-ninf">-inf</text>
+
+
+
+<rect x="150" y="175" width="70" height="70" rx="2" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="185" y="220" text-anchor="middle" class="cell-ok">OK</text>
+
+
+<rect x="220" y="175" width="70" height="70" rx="2" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="255" y="220" text-anchor="middle" class="cell-ok">OK</text>
+
+
+<rect x="290" y="175" width="70" height="70" rx="2" fill="var(--danger,#c0392b)" fill-opacity="0.10" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="325" y="213" text-anchor="middle" class="cell-no">X</text>
+<text x="325" y="230" text-anchor="middle" class="cell-ninf">-inf</text>
+
+
+<rect x="360" y="175" width="70" height="70" rx="2" fill="var(--danger,#c0392b)" fill-opacity="0.10" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="395" y="213" text-anchor="middle" class="cell-no">X</text>
+<text x="395" y="230" text-anchor="middle" class="cell-ninf">-inf</text>
+
+
+
+<rect x="150" y="245" width="70" height="70" rx="2" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="185" y="290" text-anchor="middle" class="cell-ok">OK</text>
+
+
+<rect x="220" y="245" width="70" height="70" rx="2" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="255" y="290" text-anchor="middle" class="cell-ok">OK</text>
+
+
+<rect x="290" y="245" width="70" height="70" rx="2" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="325" y="290" text-anchor="middle" class="cell-ok">OK</text>
+
+
+<rect x="360" y="245" width="70" height="70" rx="2" fill="var(--danger,#c0392b)" fill-opacity="0.10" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="395" y="283" text-anchor="middle" class="cell-no">X</text>
+<text x="395" y="300" text-anchor="middle" class="cell-ninf">-inf</text>
+
+
+
+<rect x="150" y="315" width="70" height="70" rx="2" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="185" y="360" text-anchor="middle" class="cell-ok">OK</text>
+
+
+<rect x="220" y="315" width="70" height="70" rx="2" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="255" y="360" text-anchor="middle" class="cell-ok">OK</text>
+
+
+<rect x="290" y="315" width="70" height="70" rx="2" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="325" y="360" text-anchor="middle" class="cell-ok">OK</text>
+
+
+<rect x="360" y="315" width="70" height="70" rx="2" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="395" y="360" text-anchor="middle" class="cell-ok">OK</text>
+
+
+<text x="445" y="143" text-anchor="start" class="row-cap">sees only itself</text>
+<text x="445" y="213" text-anchor="start" class="row-cap">sees tokens 0-1</text>
+<text x="445" y="283" text-anchor="start" class="row-cap">sees tokens 0-2</text>
+<text x="445" y="353" text-anchor="start" class="row-cap">sees tokens 0-3</text>
+
+
+<rect x="118" y="406" width="18" height="18" rx="2" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="141" y="419" text-anchor="start" class="leg-lbl">OK = score kept</text>
+
+<rect x="290" y="406" width="18" height="18" rx="2" fill="var(--danger,#c0392b)" fill-opacity="0.10" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="313" y="419" text-anchor="start" class="leg-lbl">X = set to -inf before softmax</text>
+
+</svg>
+<figcaption><b>The 4x4 lower-triangular causal attention mask.</b> Each row represents a query; each column a key position it may read. Allowed positions (column &amp;le; row) are tinted OK; future positions are marked X and receive a score of -inf before softmax, making their attention weight exactly zero. This single mask allows efficient parallel training while maintaining autoregressive causality at inference.</figcaption>
+</figure>
+
+<p>This single triangular mask is the entire reason a decoder-only Transformer can be trained with one forward pass yet still behave autoregressively at inference. It also makes the <strong>KV cache</strong> possible: because token <span class="arithmatex">\(i\)</span>&rsquo;s output never depends on future keys/values, those keys and values are fixed once computed and can be cached and reused at each decode step — the foundation of fast generation, covered in <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>. For the variants and trade-offs of where causal masking is or isn&rsquo;t applied (prefix-LM, encoder–decoder), see <a href="../02-transformer/08-architecture-variants.html">Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a>.</p>
+<h3 id="the-padding-mask">The padding mask<a class="headerlink" href="#the-padding-mask" title="Permanent link">¶</a></h3>
+<p>To batch sequences of different lengths together, we pad short sequences with a special <code>&lt;pad&gt;</code> token up to a common length. Those pad positions are meaningless and must never contribute to or receive attention. A <strong>padding mask</strong> zeroes out every score whose <em>key</em> is a pad token, for every query. In a real model you combine the causal and padding masks by taking the logical AND (a position is attendable only if it is both non-future and non-pad).</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: use a large negative number, not Python&rsquo;s −inf, in low precision</p>
+<p>Setting masked scores to exactly <span class="arithmatex">\(-\infty\)</span> is mathematically clean, but in float16/bfloat16 a row that is <em>entirely</em> masked (which can happen with padding bugs) makes softmax compute <code>exp(-inf - (-inf)) = exp(nan) = nan</code>, poisoning the whole batch. Production kernels use a large finite negative number (e.g. the most negative representable value of the dtype, or <code>-1e9</code> in fp32) instead of true <code>-inf</code>, and they guard against fully-masked rows. We discuss the numerics further in <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a>.</p>
+</div>
+<h3 id="causal-attention-in-numpy">Causal attention in NumPy<a class="headerlink" href="#causal-attention-in-numpy" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">causal_mask</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Lower-triangular boolean mask: entry (i, j) is True iff j &lt;= i.</span>
+<span class="sd">    True = allowed to attend. Shape (n, n).&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">tril</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">))</span>       <span class="c1"># tril keeps j &lt;= i</span>
+
+<span class="c1"># Demonstrate that future tokens get exactly zero weight.</span>
+<span class="n">n</span><span class="p">,</span> <span class="n">d_k</span><span class="p">,</span> <span class="n">d_v</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">8</span>
+<span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">Q</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">d_k</span><span class="p">)</span>
+<span class="n">K</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">d_k</span><span class="p">)</span>
+<span class="n">V</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">d_v</span><span class="p">)</span>
+
+<span class="n">out</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">scaled_dot_product_attention</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">mask</span><span class="o">=</span><span class="n">causal_mask</span><span class="p">(</span><span class="n">n</span><span class="p">))</span>
+<span class="c1"># Upper triangle of the weight matrix (strictly future) must be all zeros:</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;no future leakage:&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">triu</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="mf">0.0</span><span class="p">))</span>  <span class="c1"># True</span>
+<span class="c1"># Row 0 attends only to position 0, so its weight there must be exactly 1:</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;row 0 weight:&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">w</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">3</span><span class="p">))</span>   <span class="c1"># [1. 0. 0. 0.]</span>
+</code></pre></div>
+<h2 id="the-same-thing-in-pytorch-with-autograd-and-batching">The Same Thing in PyTorch, With Autograd and Batching<a class="headerlink" href="#the-same-thing-in-pytorch-with-autograd-and-batching" title="Permanent link">¶</a></h2>
+<p>The NumPy version teaches the mechanism; the PyTorch version is what you would actually train. The two differences that matter in real code are (1) a <strong>batch and head dimension</strong> so we process <code>(batch, heads, seq, d_k)</code> tensors at once, and (2) <strong>autograd</strong>, so gradients flow back through the whole computation automatically. The arithmetic is byte-for-byte the same.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">scaled_dot_product_attention</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">attn_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">dropout_p</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+                                 <span class="n">is_causal</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;From-scratch SDPA matching torch.nn.functional.scaled_dot_product_attention.</span>
+
+<span class="sd">    Tensor shapes (the canonical Transformer layout):</span>
+<span class="sd">        q : (B, H, Lq, d_k)   B=batch, H=heads, Lq=query length</span>
+<span class="sd">        k : (B, H, Lk, d_k)</span>
+<span class="sd">        v : (B, H, Lk, d_v)</span>
+<span class="sd">        attn_mask : broadcastable to (B, H, Lq, Lk). Either a boolean mask</span>
+<span class="sd">                    (True = keep) or an additive float mask (-inf = forbid).</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        out : (B, H, Lq, d_v)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">d_k</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># (B,H,Lq,d_k) @ (B,H,d_k,Lk) -&gt; (B,H,Lq,Lk). transpose(-2,-1) makes Kᵀ.</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">matmul</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="p">(</span><span class="n">d_k</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>
+
+    <span class="c1"># Build / apply the causal mask if requested.</span>
+    <span class="k">if</span> <span class="n">is_causal</span><span class="p">:</span>
+        <span class="n">Lq</span><span class="p">,</span> <span class="n">Lk</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">),</span> <span class="n">k</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">)</span>
+        <span class="c1"># Lower-triangular: position i may see j &lt;= i. Forbidden -&gt; -inf.</span>
+        <span class="n">causal</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">Lq</span><span class="p">,</span> <span class="n">Lk</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">q</span><span class="o">.</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">tril</span><span class="p">()</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="o">~</span><span class="n">causal</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">))</span>
+
+    <span class="c1"># Apply an explicit mask (padding, or arbitrary attention bias).</span>
+    <span class="k">if</span> <span class="n">attn_mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">attn_mask</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">:</span>
+            <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="o">~</span><span class="n">attn_mask</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span> <span class="o">+</span> <span class="n">attn_mask</span>          <span class="c1"># additive bias (e.g. ALiBi)</span>
+
+    <span class="c1"># Softmax over the KEY axis (last dim). Cast to fp32 for a stable softmax</span>
+    <span class="c1"># even when q/k/v are bf16 — a standard trick in production kernels.</span>
+    <span class="n">weights</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">q</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">dropout_p</span> <span class="o">&gt;</span> <span class="mf">0.0</span><span class="p">:</span>
+        <span class="n">weights</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="n">weights</span><span class="p">,</span> <span class="n">p</span><span class="o">=</span><span class="n">dropout_p</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">matmul</span><span class="p">(</span><span class="n">weights</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>              <span class="c1"># (B,H,Lq,d_v)</span>
+</code></pre></div>
+<h3 id="a-complete-trainable-self-attention-module">A complete, trainable self-attention module<a class="headerlink" href="#a-complete-trainable-self-attention-module" title="Permanent link">¶</a></h3>
+<p>Now we wrap the kernel in a module that <em>creates</em> the queries, keys, and values from a single input via learned projections — i.e. genuine self-attention. This is single-head; <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a> generalizes it to many heads (and to the memory-saving GQA/MLA variants that modern models use).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SelfAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single-head self-attention: x -&gt; (Q,K,V) -&gt; attention -&gt; output projection.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">d_k</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">dropout</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="n">d_k</span> <span class="o">=</span> <span class="n">d_k</span> <span class="ow">or</span> <span class="n">d_model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">causal</span> <span class="o">=</span> <span class="n">causal</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dropout_p</span> <span class="o">=</span> <span class="n">dropout</span>
+        <span class="c1"># One learned linear map per role. No bias is the modern default.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_q</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_k</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_k</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_k</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_v</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_k</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_k</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>   <span class="c1"># mix attended info back</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">attn_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="c1"># x : (B, L, d_model). Project into the three roles.</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_q</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                          <span class="c1"># (B, L, d_k): &quot;what I seek&quot;</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_k</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                          <span class="c1"># (B, L, d_k): &quot;how to address me&quot;</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_v</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                          <span class="c1"># (B, L, d_k): &quot;what I return&quot;</span>
+
+        <span class="c1"># Add a singleton head dim so we can reuse the (B,H,L,d) kernel with H=1.</span>
+        <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">))</span>    <span class="c1"># (B, 1, L, d_k)</span>
+
+        <span class="n">attended</span> <span class="o">=</span> <span class="n">scaled_dot_product_attention</span><span class="p">(</span>
+            <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">attn_mask</span><span class="o">=</span><span class="n">attn_mask</span><span class="p">,</span>
+            <span class="n">dropout_p</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">dropout_p</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">training</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+            <span class="n">is_causal</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">causal</span><span class="p">,</span>
+        <span class="p">)</span>                                         <span class="c1"># (B, 1, L, d_k)</span>
+
+        <span class="n">attended</span> <span class="o">=</span> <span class="n">attended</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>            <span class="c1"># (B, L, d_k)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span><span class="p">(</span><span class="n">attended</span><span class="p">)</span>                 <span class="c1"># (B, L, d_model)</span>
+
+
+<span class="c1"># Smoke test: shapes, gradient flow, and causality.</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d_model</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">16</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">attn</span> <span class="o">=</span> <span class="n">SelfAttention</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">y</span> <span class="o">=</span> <span class="n">attn</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;output shape:&quot;</span><span class="p">,</span> <span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>                  <span class="c1"># (2, 5, 16)</span>
+
+<span class="n">y</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>                               <span class="c1"># autograd through the whole op</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;grad flows to input:&quot;</span><span class="p">,</span> <span class="n">x</span><span class="o">.</span><span class="n">grad</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">x</span><span class="o">.</span><span class="n">grad</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+<p>Two things are worth emphasizing about this module. First, the <strong>output projection <span class="arithmatex">\(W_O\)</span></strong> is not decoration: after the attention step each position holds a blend of value vectors, and <span class="arithmatex">\(W_O\)</span> is what lets the model recombine and reshape that blend before it re-enters the residual stream. (With multiple heads, <span class="arithmatex">\(W_O\)</span> also mixes information <em>across</em> heads.) Second, notice that we never wrote a backward pass. Because every operation — <code>matmul</code>, <code>softmax</code>, <code>masked_fill</code>, the linear layers — is a differentiable primitive with a registered gradient, PyTorch&rsquo;s autograd assembles the full backward pass for us; see <a href="../01-foundations/07-autodiff-pytorch.html">Automatic Differentiation &amp; PyTorch Internals</a>.</p>
+<h3 id="validating-against-pytorchs-built-in-kernel">Validating against PyTorch&rsquo;s built-in kernel<a class="headerlink" href="#validating-against-pytorchs-built-in-kernel" title="Permanent link">¶</a></h3>
+<p>A good from-scratch implementation should agree with the library to floating-point tolerance. PyTorch ships a fused, memory-efficient <code>scaled_dot_product_attention</code> (it dispatches to a FlashAttention-style kernel under the hood). Let us check our hand-rolled version matches it.</p>
+<div class="highlight"><pre><span></span><code><span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">32</span>
+<span class="n">q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+<span class="n">k</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+<span class="n">v</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+
+<span class="n">ours</span> <span class="o">=</span> <span class="n">scaled_dot_product_attention</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">is_causal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">ref</span>  <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">scaled_dot_product_attention</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">is_causal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># PyTorch builtin</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;max abs diff:&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">ours</span> <span class="o">-</span> <span class="n">ref</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>   <span class="c1"># ~1e-6, fp32 noise</span>
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">ours</span><span class="p">,</span> <span class="n">ref</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">)</span>
+</code></pre></div>
+<p>The built-in does the <em>exact same math</em> — it just never materializes the full <span class="arithmatex">\(L \times L\)</span> score matrix in slow high-bandwidth memory, computing softmax incrementally instead. That IO-aware reformulation is the heart of FlashAttention; we devote a whole chapter to it in <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a>. For everyday work, prefer the fused builtin; reach for the from-scratch version to understand, debug, or modify the mechanism.</p>
+<h2 id="cost-complexity-what-the-gradients-look-like">Cost, Complexity &amp; What the Gradients Look Like<a class="headerlink" href="#cost-complexity-what-the-gradients-look-like" title="Permanent link">¶</a></h2>
+<p>Two practical facts about attention dominate every systems decision downstream: its quadratic cost and the shape of its gradient.</p>
+<h3 id="the-quadratic-bottleneck">The quadratic bottleneck<a class="headerlink" href="#the-quadratic-bottleneck" title="Permanent link">¶</a></h3>
+<p>For a sequence of length <span class="arithmatex">\(n\)</span>, head dimension <span class="arithmatex">\(d\)</span>, the score matrix <span class="arithmatex">\(QK^\top\)</span> is <span class="arithmatex">\(n \times n\)</span> and costs <span class="arithmatex">\(\mathcal{O}(n^2 d)\)</span> multiply-adds; the <span class="arithmatex">\(AV\)</span> product costs another <span class="arithmatex">\(\mathcal{O}(n^2 d)\)</span>. Both <strong>compute and the memory to store the attention matrix scale as <span class="arithmatex">\(\mathcal{O}(n^2)\)</span></strong> in the sequence length. Double the context and you quadruple the attention cost.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: the <span class="arithmatex">\(n^2\)</span> memory of the score matrix</p>
+<p>Take a single attention head, sequence length <span class="arithmatex">\(n = 8192\)</span>, processing one sequence (batch 1). The score matrix <span class="arithmatex">\(A\)</span> has <span class="arithmatex">\(n^2 = 8192^2 \approx 6.7 \times 10^7\)</span> entries. In fp32 (4 bytes) that is about <strong>268 MB — for one head, one layer, one sequence.</strong> A model with, say, 32 heads and 32 layers that naïvely materialized every score matrix at once would need on the order of <span class="arithmatex">\(268\text{ MB} \times 32 \times 32 \approx 274\text{ GB}\)</span> just for attention scratch — far more than any single GPU. This is <em>exactly</em> why FlashAttention (which never stores the full matrix) and the quadratic-cost framing of long-context work matter so much; see <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a> and <a href="../03-pretraining/13-long-context-pretraining.html">Long-Context Pretraining &amp; Context Extension</a>. It also motivates the entirely different architectures in <a href="../02-transformer/11-ssm-and-alternatives.html">Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a>, which trade the <span class="arithmatex">\(n^2\)</span> for linear cost.</p>
+</div>
+<h3 id="the-softmax-jacobian-and-why-values-get-clean-gradients">The softmax Jacobian and why values get clean gradients<a class="headerlink" href="#the-softmax-jacobian-and-why-values-get-clean-gradients" title="Permanent link">¶</a></h3>
+<p>Where do gradients go when we backprop through attention? The output is <span class="arithmatex">\(o_i = \sum_j a_{ij} v_j\)</span>. By the product rule, gradient flows along two routes: through the <strong>values</strong> <span class="arithmatex">\(v_j\)</span> (weighted by the attention <span class="arithmatex">\(a_{ij}\)</span>) and through the <strong>weights</strong> <span class="arithmatex">\(a_{ij}\)</span> (and from there through softmax back into the scores, queries, and keys).</p>
+<p>The value path is beautifully simple: <span class="arithmatex">\(\partial o_i / \partial v_j = a_{ij}\)</span>. A value vector receives gradient <em>in proportion to how much it was attended to</em> — attended values get strong learning signal, ignored values get little. The query/key path runs through the softmax Jacobian. For a single row with weights <span class="arithmatex">\(a\)</span>, the Jacobian of softmax is</p>
+<div class="arithmatex">\[
+\frac{\partial a_m}{\partial s_\ell} = a_m(\delta_{m\ell} - a_\ell), \qquad J = \operatorname{diag}(a) - a a^\top.
+\]</div>
+<p>This is where the <span class="arithmatex">\(\sqrt{d_k}\)</span> scaling pays off a second time. When <span class="arithmatex">\(a\)</span> is near-uniform (early training, thanks to scaling) the Jacobian has healthy non-zero entries and gradients propagate to queries and keys. When <span class="arithmatex">\(a\)</span> is saturated (one-hot), <span class="arithmatex">\(J \to 0\)</span> and the query/key gradients vanish — the failure mode the scale factor exists to prevent. The scale is not just numerically tidy at the forward pass; it keeps the <em>backward</em> pass alive.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: read the attention maps, but don&rsquo;t over-read them</p>
+<p>Visualizing the rows of <span class="arithmatex">\(A\)</span> (which keys each query attends to) is a genuinely useful debugging and interpretability tool — you can literally watch induction heads form, see attention sinks land on the first token, or catch a padding-mask bug as stray weight on <code>&lt;pad&gt;</code>. But resist the temptation to treat attention weights as a faithful &ldquo;explanation&rdquo; of the model&rsquo;s decision: a value vector that is heavily attended to may carry little task-relevant information, and information also flows through the MLPs and residual stream. Attention weights show <em>where</em> information was mixed, not <em>why</em> the model produced a given output.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Walk me through scaled dot-product attention and justify the <span class="arithmatex">\(\frac{1}{\sqrt{d_k}}\)</span> factor specifically. What goes wrong if you drop it, and what goes wrong if you instead divide by <span class="arithmatex">\(d_k\)</span>?</p>
+<p><strong>A:</strong> Attention computes, for each query, a softmax-weighted average of value vectors, where the weights come from scaled dot-product similarities between the query and every key: <span class="arithmatex">\(\operatorname{softmax}(QK^\top/\sqrt{d_k})\,V\)</span>. The <span class="arithmatex">\(1/\sqrt{d_k}\)</span> exists because, treating query and key components as independent zero-mean unit-variance variables, the raw dot product <span class="arithmatex">\(q\cdot k\)</span> has variance <span class="arithmatex">\(d_k\)</span> — so its standard deviation grows like <span class="arithmatex">\(\sqrt{d_k}\)</span>. Feeding scores of that magnitude into softmax saturates it into a near one-hot distribution, and the softmax Jacobian <span class="arithmatex">\(\operatorname{diag}(a)-aa^\top\)</span> collapses toward zero, so queries and keys get essentially no gradient and the layer won&rsquo;t train. Dividing by <span class="arithmatex">\(\sqrt{d_k}\)</span> restores unit variance, keeping the distribution soft and gradients flowing, independent of head size. <strong>If you drop the scale</strong>, deeper/wider heads saturate at init and training stalls or is very brittle. <strong>If you over-correct and divide by <span class="arithmatex">\(d_k\)</span></strong>, you shrink the score variance to <span class="arithmatex">\(1/d_k\)</span> — the logits become tiny, softmax stays stuck near uniform, and the model struggles to ever sharpen its attention, learning slowly. <span class="arithmatex">\(\sqrt{d_k}\)</span> is the unique factor that makes the score variance dimension-independent (equal to 1). A strong follow-up: this is purely an initialization-time argument; once trained, the projections learn whatever effective temperature they need, but starting in the well-conditioned regime is what lets them get there.</p>
+</div>
+<h2 id="putting-it-all-together">Putting It All Together<a class="headerlink" href="#putting-it-all-together" title="Permanent link">¶</a></h2>
+<p>We started with a <code>dict</code> lookup and ended with a trainable, batched, masked, autograd-ready attention layer — and at no point did we wave our hands. Every component earned its place: queries/keys/values are the three roles a token plays in a soft retrieval; the dot product is the similarity; <span class="arithmatex">\(\sqrt{d_k}\)</span> keeps that similarity&rsquo;s variance dimension-independent so softmax stays soft and gradients stay alive; softmax is the differentiable relaxation of &ldquo;pick the best match&rdquo; into &ldquo;blend by match quality&rdquo;; the attention matrix is the explicit, inspectable record of who-attends-to-whom; and masking is a single additive bias that reshapes information flow into causal, padding-aware, or arbitrary patterns.</p>
+<p>From here the path forks in three directions, all of which build directly on this chapter. <strong>Up the stack</strong>: replicate this kernel across many <a href="../02-transformer/04-mha-gqa-mla.html">heads</a>, inject <a href="../02-transformer/05-positional-encoding.html">position information</a> (since bare attention is permutation-equivariant — it has no inherent notion of order), wrap it in <a href="../02-transformer/06-transformer-block.html">a Transformer block</a> with norms and residuals and an MLP, and stack the blocks into a <a href="../02-transformer/07-build-gpt-from-scratch.html">full GPT</a>. <strong>Down to the metal</strong>: make this kernel fast and memory-frugal with <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention</a> and serve it with a <a href="../07-inference-serving/01-anatomy-inference.html">KV cache</a>. <strong>Sideways</strong>: question whether the <span class="arithmatex">\(n^2\)</span> cost is fundamental at all, in <a href="../02-transformer/11-ssm-and-alternatives.html">SSMs, Mamba &amp; linear attention</a>. Whichever way you go, the equation at the top of this page is the thing you are scaling, accelerating, or replacing.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Attention is differentiable soft retrieval.</strong> A query scores against every key (dot-product similarity), softmax turns scores into a probability distribution, and the output is the weighted average of the values — a smooth, differentiable relaxation of a hard <code>dict</code> lookup.</li>
+<li>The headline equation is <span class="arithmatex">\(\operatorname{Attention}(Q,K,V)=\operatorname{softmax}\!\big(\tfrac{QK^\top}{\sqrt{d_k}}\big)V\)</span>. <span class="arithmatex">\(Q,K,V\)</span> are learned linear projections of the input in self-attention; in cross-attention <span class="arithmatex">\(Q\)</span> comes from one sequence and <span class="arithmatex">\(K,V\)</span> from another.</li>
+<li><strong>Scale by <span class="arithmatex">\(\sqrt{d_k}\)</span> because <span class="arithmatex">\(\operatorname{Var}(q\cdot k)=d_k\)</span>.</strong> Without it, softmax saturates as <span class="arithmatex">\(d_k\)</span> grows, its Jacobian collapses, and query/key gradients vanish. Dividing by <span class="arithmatex">\(\sqrt{d_k}\)</span> fixes the score variance at 1, independent of head size.</li>
+<li><strong>The attention matrix <span class="arithmatex">\(A\)</span> is <span class="arithmatex">\(n \times n\)</span>.</strong> Row <span class="arithmatex">\(i\)</span> is query <span class="arithmatex">\(i\)</span>&rsquo;s distribution over keys; you must softmax along the <em>key</em> axis (<code>dim=-1</code>). It is inspectable but is <em>not</em> a faithful explanation of model behavior.</li>
+<li><strong>Masking is a single additive bias.</strong> A lower-triangular causal mask forbids attending to the future (enabling one-pass training and the KV cache); a padding mask ignores <code>&lt;pad&gt;</code> tokens. In low precision use a large finite negative number, not true <span class="arithmatex">\(-\infty\)</span>.</li>
+<li><strong>Cost is <span class="arithmatex">\(\mathcal{O}(n^2 d)\)</span> in compute and <span class="arithmatex">\(\mathcal{O}(n^2)\)</span> in memory</strong> for the score matrix — the quadratic bottleneck that motivates FlashAttention, long-context tricks, and sub-quadratic alternatives.</li>
+<li>The output is a convex combination of value vectors: it can interpolate among them but never extrapolate beyond their hull. Gradient to value <span class="arithmatex">\(v_j\)</span> is exactly its attention weight <span class="arithmatex">\(a_{ij}\)</span>.</li>
+<li>For real workloads use a fused kernel (<code>F.scaled_dot_product_attention</code>); use the from-scratch version to understand, debug, and modify the mechanism.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Scaled dot-product attention remains the dominant mechanism in frontier LLMs, but the field has moved aggressively on efficiency: IO-aware kernels (FlashAttention) have made the <span class="arithmatex">\(n^2\)</span> matrix tractable, GQA has cut KV-cache costs in nearly every production model, and differential attention variants are beginning to show quality gains at scale.</p>
+<p><strong>Foundational papers</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al., <em>Attention Is All You Need</em> (2017)</a> — introduced scaled dot-product and multi-head attention; the <span class="arithmatex">\(\sqrt{d_k}\)</span> scaling argument originates here.</li>
+<li><a href="https://arxiv.org/abs/2205.14135">Dao et al., <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022)</a> — showed that tiling attention across SRAM blocks avoids materializing the <span class="arithmatex">\(n\times n\)</span> matrix, enabling far longer contexts.</li>
+</ul>
+<p><strong>Pushing the frontier (2024–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2307.08691">Dao, <em>FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning</em> (2023)</a> — restructured parallelism to reach ~70% of H100 theoretical FLOPs.</li>
+<li><a href="https://arxiv.org/abs/2407.08608">Shah et al., <em>FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision</em> (2024)</a> — exploits Hopper GPU warp-specialization and FP8 to reach ~75% H100 utilization (up to 740 TFLOPs/s FP16).</li>
+<li><a href="https://arxiv.org/abs/2305.13245">Ainslie et al., <em>GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</em> (2023)</a> — grouped-query attention, now standard in Llama &#8532;, Mistral, and most production decoders.</li>
+<li><a href="https://arxiv.org/abs/2410.05258">Ye et al., <em>Differential Transformer</em> (2024)</a> — subtracts two softmax attention maps to cancel noise; ICLR 2025 oral, outperforms standard transformers on long-context and hallucination benchmarks.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/Dao-AILab/flash-attention">Dao-AILab/flash-attention</a> — the reference implementation of FlashAttention (all versions); supports CUDA, ROCm, and FP8.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://jalammar.github.io/illustrated-transformer/">Jay Alammar, <em>The Illustrated Transformer</em> (2018)</a> — the definitive visual walkthrough of Q/K/V and multi-head attention.</li>
+<li><a href="https://lilianweng.github.io/posts/2018-06-24-attention/">Lilian Weng, <em>Attention? Attention!</em> (2018)</a> — broader survey of attention variants, from additive (Bahdanau) through self-attention.</li>
+<li><a href="https://transformer-circuits.pub/2021/framework/index.html">Elhage et al., <em>A Mathematical Framework for Transformer Circuits</em> (2021)</a> — formalises attention as QK/OV circuits and introduces induction heads; foundational for mechanistic interpretability.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, Polosukhin — <em>Attention Is All You Need</em> (2017). The original Transformer paper; introduces scaled dot-product and multi-head attention and the <span class="arithmatex">\(\sqrt{d_k}\)</span> scaling.</li>
+<li>Bahdanau, Cho, Bengio — <em>Neural Machine Translation by Jointly Learning to Align and Translate</em> (2014). The additive-attention precursor that first framed attention as differentiable soft alignment.</li>
+<li>Dao, Fu, Ermon, Rudra, Ré — <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022). How to compute exactly this operation without materializing the <span class="arithmatex">\(n^2\)</span> matrix.</li>
+<li>Alammar — <em>The Illustrated Transformer</em> (blog). A widely used visual walkthrough of Q/K/V and the attention computation.</li>
+<li>Karpathy — <em>nanoGPT</em> (code repository) and <em>Let&rsquo;s build GPT</em> (video). A minimal, readable from-scratch implementation of causal self-attention inside a full GPT.</li>
+<li>Elhage et al. (Anthropic) — <em>A Mathematical Framework for Transformer Circuits</em> (2021). Reads attention as soft retrieval/information-movement and introduces QK and OV circuits and induction heads.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-embeddings-input.html"><span class="pn-label">← Previous</span><span class="pn-title">Embeddings &amp; The Input Pipeline</span></a>
+<a class="next" href="04-mha-gqa-mla.html"><span class="pn-label">Next →</span><span class="pn-title">Multi-Head Attention, MQA, GQA &amp; MLA</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#from-hard-retrieval-to-soft-retrieval">From Hard Retrieval to Soft Retrieval</a></li>
+<li class="toc-l2"><a href="#scaled-dot-product-attention-one-query-at-a-time">Scaled Dot-Product Attention, One Query at a Time</a></li>
+<li class="toc-l3"><a href="#batching-all-queries-at-once">Batching all queries at once</a></li>
+<li class="toc-l2"><a href="#why-divide-by-sqrtd_k-the-variance-argument">Why Divide by \(\sqrt{d_k}\)? The Variance Argument</a></li>
+<li class="toc-l2"><a href="#a-from-scratch-implementation-in-numpy">A From-Scratch Implementation in NumPy</a></li>
+<li class="toc-l2"><a href="#causal-padding-masks-same-machinery-different-information-flow">Causal &amp;amp; Padding Masks: Same Machinery, Different Information Flow</a></li>
+<li class="toc-l3"><a href="#the-causal-autoregressive-mask">The causal (autoregressive) mask</a></li>
+<li class="toc-l3"><a href="#the-padding-mask">The padding mask</a></li>
+<li class="toc-l3"><a href="#causal-attention-in-numpy">Causal attention in NumPy</a></li>
+<li class="toc-l2"><a href="#the-same-thing-in-pytorch-with-autograd-and-batching">The Same Thing in PyTorch, With Autograd and Batching</a></li>
+<li class="toc-l3"><a href="#a-complete-trainable-self-attention-module">A complete, trainable self-attention module</a></li>
+<li class="toc-l3"><a href="#validating-against-pytorchs-built-in-kernel">Validating against PyTorch&amp;rsquo;s built-in kernel</a></li>
+<li class="toc-l2"><a href="#cost-complexity-what-the-gradients-look-like">Cost, Complexity &amp;amp; What the Gradients Look Like</a></li>
+<li class="toc-l3"><a href="#the-quadratic-bottleneck">The quadratic bottleneck</a></li>
+<li class="toc-l3"><a href="#the-softmax-jacobian-and-why-values-get-clean-gradients">The softmax Jacobian and why values get clean gradients</a></li>
+<li class="toc-l2"><a href="#putting-it-all-together">Putting It All Together</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CUDA Programming Essentials for ML Engineers — The LLM Stack</title>
+<meta name="description" content="CUDA kernels, grid/block/thread, shared memory, coalescing, bank conflicts, warp primitives (shuffle), a tiled matmul in CUDA C++, comparison with Triton, when ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="active" href="05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IV — Kernels, Efficiency &amp; Quantization</div>
+<h1 id="45-cuda-programming-essentials-for-ml-engineers">4.5 CUDA Programming Essentials for ML Engineers<a class="headerlink" href="#45-cuda-programming-essentials-for-ml-engineers" title="Permanent link">¶</a></h1>
+<p>Modern deep learning lives or dies on the GPU. Yet most ML engineers treat the GPU as an opaque box: they call PyTorch, cuBLAS does something fast, and tokens appear. That abstraction breaks the moment you need a custom operation — a fused activation, a new attention variant, a quantized matmul — and there is no existing kernel that fits. At that point you must either drop to CUDA C++ or reach for Triton. Understanding CUDA is not optional for a serious ML engineer; it is the shared vocabulary of every high-performance LLM paper you will read.</p>
+<p>This chapter teaches you CUDA from the ground up, with enough depth to understand FlashAttention, write a tiled matrix multiplication, diagnose performance bottlenecks, and make principled decisions between CUDA, Triton, and PyTorch custom ops. We assume you have seen the GPU memory hierarchy — if you need a refresher, read <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a> first. For the broader performance model connecting compute, bandwidth, and the arithmetic intensity axis, see <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>.</p>
+<h2 id="the-cuda-execution-model">The CUDA Execution Model<a class="headerlink" href="#the-cuda-execution-model" title="Permanent link">¶</a></h2>
+<p>CUDA (Compute Unified Device Architecture) is NVIDIA&rsquo;s parallel programming framework. A CUDA program consists of <em>host code</em> running on the CPU and <em>device code</em> (kernels) running on the GPU. The central insight is that a GPU can schedule tens of thousands of lightweight threads simultaneously, hiding memory latency by switching to other threads while one stalls on a load.</p>
+<h3 id="grid-block-and-thread-hierarchy">Grid, Block, and Thread Hierarchy<a class="headerlink" href="#grid-block-and-thread-hierarchy" title="Permanent link">¶</a></h3>
+<p>Every kernel is launched with a <strong>grid</strong> of <strong>blocks</strong>, each block containing a fixed number of <strong>threads</strong>. This three-level hierarchy maps onto the physical GPU hierarchy.</p>
+<figure class="viz" id="fig-cuda-grid-block-thread-hierarchy">
+<svg viewBox="0 0 920 590" role="img" aria-label="CUDA three-level execution hierarchy: Grid contains Blocks, each Block contains Threads. Each block maps to one Streaming Multiprocessor (SM) on the physical GPU. Threads in different blocks communicate only via global memory (HBM/DRAM).">
+<defs>
+  <marker id="ch-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="ch-arr-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#6d675d)"/>
+  </marker>
+</defs>
+<style>
+  #fig-cuda-grid-block-thread-hierarchy text    { fill: var(--ink-soft,#45413a); }
+  #fig-cuda-grid-block-thread-hierarchy .ttl    { font: 700 13px var(--sans,sans-serif); }
+  #fig-cuda-grid-block-thread-hierarchy .lbl    { font: 600 12px var(--sans,sans-serif); }
+  #fig-cuda-grid-block-thread-hierarchy .sub    { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cuda-grid-block-thread-hierarchy .chip   { font: 500 10px var(--mono,monospace); }
+  #fig-cuda-grid-block-thread-hierarchy .ann    { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cuda-grid-block-thread-hierarchy .warp   { font: 600 10px var(--sans,sans-serif); fill: var(--accent2,#3b82f6); }
+  #fig-cuda-grid-block-thread-hierarchy .maplbl { font: 500 10px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-cuda-grid-block-thread-hierarchy .glb    { font: 600 11px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+</style>
+
+
+<rect x="14" y="14" width="598" height="440" rx="10"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1.8"
+      fill="var(--surface,#ffffff)" fill-opacity="0.45"/>
+<text x="28" y="36" class="ttl">Grid (entire kernel launch)</text>
+
+
+<rect x="28" y="46" width="216" height="284" rx="7"
+      stroke="var(--accent,#c15b39)" stroke-width="1.8"
+      fill="var(--surface,#ffffff)" fill-opacity="0.7"/>
+<text x="136" y="64" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Block (0,0)</text>
+
+
+<rect x="44" y="73" width="164" height="22" rx="5"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.18"
+      stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+<text x="126" y="88" text-anchor="middle" class="chip" fill="var(--accent2,#3b82f6)">Thread (0,0,0)</text>
+
+<rect x="44" y="101" width="164" height="22" rx="5"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.18"
+      stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+<text x="126" y="116" text-anchor="middle" class="chip" fill="var(--accent2,#3b82f6)">Thread (1,0,0)</text>
+
+<rect x="44" y="129" width="164" height="22" rx="5"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.18"
+      stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+<text x="126" y="144" text-anchor="middle" class="chip" fill="var(--accent2,#3b82f6)">Thread (2,0,0)</text>
+
+<text x="126" y="168" text-anchor="middle" class="ann">...</text>
+
+<rect x="44" y="176" width="164" height="22" rx="5"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.10"
+      stroke="var(--accent2,#3b82f6)" stroke-width="1" stroke-dasharray="4 2"/>
+<text x="126" y="191" text-anchor="middle" class="chip" fill="var(--muted,#6d675d)">Thread (31,0,0)</text>
+
+
+<text x="136" y="216" text-anchor="middle" class="warp">32 threads = 1 warp (SIMT)</text>
+
+
+<rect x="44" y="228" width="164" height="38" rx="5"
+      fill="var(--surface-3,#ece7da)" fill-opacity="0.8"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="4 2"/>
+<text x="126" y="243" text-anchor="middle" class="ann">shared memory (on-chip)</text>
+<text x="126" y="257" text-anchor="middle" class="ann">+ __syncthreads()</text>
+
+<text x="126" y="298" text-anchor="middle" class="ann">256 threads/block = 8 warps</text>
+
+
+<rect x="264" y="46" width="156" height="90" rx="7"
+      stroke="var(--accent,#c15b39)" stroke-width="1.5"
+      fill="var(--surface,#ffffff)" fill-opacity="0.5"/>
+<text x="342" y="89" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Block (1,0)</text>
+<text x="342" y="109" text-anchor="middle" class="ann">threads...</text>
+
+
+<rect x="434" y="46" width="156" height="90" rx="7"
+      stroke="var(--accent,#c15b39)" stroke-width="1.5"
+      fill="var(--surface,#ffffff)" fill-opacity="0.5"/>
+<text x="512" y="89" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Block (2,0)</text>
+<text x="512" y="109" text-anchor="middle" class="ann">threads...</text>
+
+
+<text x="608" y="95" text-anchor="end" class="ann" font-size="16">...</text>
+
+
+<rect x="264" y="158" width="156" height="90" rx="7"
+      stroke="var(--accent,#c15b39)" stroke-width="1.5"
+      fill="var(--surface,#ffffff)" fill-opacity="0.5"/>
+<text x="342" y="201" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Block (0,1)</text>
+<text x="342" y="221" text-anchor="middle" class="ann">threads...</text>
+
+<text x="342" y="280" text-anchor="middle" class="ann" font-size="16">...</text>
+<text x="512" y="201" text-anchor="middle" class="ann" font-size="16">...</text>
+
+<text x="344" y="430" text-anchor="middle" class="sub">Grid can be 1D, 2D, or 3D</text>
+<text x="344" y="444" text-anchor="middle" class="sub">Threads in different blocks cannot sync directly</text>
+
+
+<rect x="646" y="14" width="262" height="440" rx="10"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1.8"
+      fill="var(--surface,#ffffff)" fill-opacity="0.4"/>
+<text x="777" y="34" text-anchor="middle" class="ttl">GPU</text>
+<text x="777" y="50" text-anchor="middle" class="sub">A100: 108 SMs  |  H100: 132 SMs</text>
+
+
+<rect x="660" y="58" width="234" height="106" rx="7"
+      stroke="var(--accent,#c15b39)" stroke-width="1.5"
+      fill="var(--surface,#ffffff)" fill-opacity="0.6"/>
+<text x="777" y="76" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">SM 0</text>
+<rect x="666" y="84" width="100" height="24" rx="4"
+      fill="var(--surface-3,#ece7da)" fill-opacity="0.9"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="716" y="100" text-anchor="middle" class="ann">Warp scheduler</text>
+<rect x="774" y="84" width="112" height="24" rx="4"
+      fill="var(--surface-3,#ece7da)" fill-opacity="0.9"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="830" y="100" text-anchor="middle" class="ann">Shared mem</text>
+<text x="777" y="146" text-anchor="middle" class="ann">64 warps; latency hiding</text>
+
+
+<rect x="660" y="180" width="234" height="76" rx="7"
+      stroke="var(--accent,#c15b39)" stroke-width="1.5"
+      fill="var(--surface,#ffffff)" fill-opacity="0.5"/>
+<text x="777" y="215" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">SM 1</text>
+<text x="777" y="234" text-anchor="middle" class="ann">warp scheduler + shared mem</text>
+
+
+<rect x="660" y="272" width="234" height="76" rx="7"
+      stroke="var(--accent,#c15b39)" stroke-width="1.5"
+      fill="var(--surface,#ffffff)" fill-opacity="0.5"/>
+<text x="777" y="307" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">SM 2</text>
+<text x="777" y="326" text-anchor="middle" class="ann">warp scheduler + shared mem</text>
+
+<text x="777" y="384" text-anchor="middle" class="ann">... (108 SMs on A100)</text>
+<text x="777" y="398" text-anchor="middle" class="ann">... (132 SMs on H100)</text>
+
+
+<path d="M244,300 L629,300 L629,90 L660,90"
+      fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.8"
+      marker-end="url(#ch-arr-acc)"/>
+
+<text x="430" y="293" text-anchor="middle" class="maplbl">each block runs on one SM</text>
+
+
+<line x1="420" y1="201" x2="658" y2="218"
+      stroke="var(--accent,#c15b39)" stroke-width="1.4" stroke-dasharray="5 3"
+      marker-end="url(#ch-arr-acc)"/>
+
+
+<rect x="180" y="480" width="560" height="50" rx="8"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"
+      fill="var(--surface,#ffffff)" fill-opacity="0.9"/>
+<text x="460" y="501" text-anchor="middle" class="glb">Global memory (HBM / DRAM)</text>
+<text x="460" y="520" text-anchor="middle" class="ann">~80 GB on A100  |  ~2 TB/s  |  ~800 cycles latency</text>
+
+
+<line x1="300" y1="454" x2="330" y2="480"
+      stroke="var(--muted,#6d675d)" stroke-width="1.4" stroke-dasharray="4 3"
+      marker-end="url(#ch-arr-mut)"/>
+<text x="150" y="468" text-anchor="middle" class="ann">cross-block comm via global mem only</text>
+
+
+<line x1="700" y1="454" x2="660" y2="480"
+      stroke="var(--muted,#6d675d)" stroke-width="1.4" stroke-dasharray="4 3"
+      marker-end="url(#ch-arr-mut)"/>
+
+
+<text x="344" y="556" text-anchor="middle" class="sub">Logical hierarchy</text>
+<text x="777" y="556" text-anchor="middle" class="sub">Physical GPU hardware</text>
+
+</svg>
+<figcaption><b>CUDA's three-level logical hierarchy maps directly onto physical GPU hardware.</b> Each block is assigned to one SM; threads within a block share on-chip shared memory and can synchronize with <code>__syncthreads()</code>. Thirty-two consecutive threads form a <em>warp</em> that executes in lockstep (SIMT). Threads in different blocks cannot synchronize directly — inter-block communication must go through global memory (HBM/DRAM), which is roughly 800 cycles away.</figcaption>
+</figure>
+
+<p>Each block executes on a single <strong>Streaming Multiprocessor (SM)</strong>. An A100 has 108 SMs; an H100 has 132. Threads within a block can share on-chip <strong>shared memory</strong> and can synchronize with <code>__syncthreads()</code>. Threads in <em>different</em> blocks cannot directly communicate — they must go through global (DRAM) memory.</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// CUDA kernel: each thread computes one element of C = A + B</span>
+<span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">vector_add</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">B</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">C</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">N</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Thread&#39;s flat index in the 1D grid</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">blockDim</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">N</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">C</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">B</span><span class="p">[</span><span class="n">idx</span><span class="p">];</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="c1">// Host-side launch</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">N</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">24</span><span class="p">;</span><span class="w">  </span><span class="c1">// 16M elements</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">threads_per_block</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">256</span><span class="p">;</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">blocks</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">N</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threads_per_block</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">threads_per_block</span><span class="p">;</span>
+<span class="n">vector_add</span><span class="o">&lt;&lt;&lt;</span><span class="n">blocks</span><span class="p">,</span><span class="w"> </span><span class="n">threads_per_block</span><span class="o">&gt;&gt;&gt;</span><span class="p">(</span><span class="n">d_A</span><span class="p">,</span><span class="w"> </span><span class="n">d_B</span><span class="p">,</span><span class="w"> </span><span class="n">d_C</span><span class="p">,</span><span class="w"> </span><span class="n">N</span><span class="p">);</span>
+</code></pre></div>
+<p>Built-in variables available inside every kernel:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>threadIdx.{x,y,z}</code></td>
+<td>Thread index within its block</td>
+</tr>
+<tr>
+<td><code>blockIdx.{x,y,z}</code></td>
+<td>Block index within the grid</td>
+</tr>
+<tr>
+<td><code>blockDim.{x,y,z}</code></td>
+<td>Number of threads per block</td>
+</tr>
+<tr>
+<td><code>gridDim.{x,y,z}</code></td>
+<td>Number of blocks in the grid</td>
+</tr>
+</tbody>
+</table>
+<p>Dimensions can be 1D, 2D, or 3D; you choose the shape that maps naturally to your data (e.g., 2D blocks for matrix tiles).</p>
+<h3 id="warps-the-unit-of-execution">Warps: The Unit of Execution<a class="headerlink" href="#warps-the-unit-of-execution" title="Permanent link">¶</a></h3>
+<p>A <strong>warp</strong> is 32 threads that execute in lockstep on a single set of functional units (the SIMT — Single Instruction Multiple Threads — model). This is the most important micro-architectural fact for performance.</p>
+<ul>
+<li>A block is partitioned into warps: block of 256 threads → 8 warps.</li>
+<li>All threads in a warp execute the <em>same</em> instruction each cycle.</li>
+<li><strong>Warp divergence</strong>: when threads in the same warp take different branches (<code>if/else</code>), both paths are executed sequentially, with inactive threads masked. This halves throughput for a 50/50 split.</li>
+<li>The SM schedules many warps concurrently. On an A100, each SM can hold up to 64 warps. When one warp stalls on a memory load, the SM issues instructions for a ready warp with zero overhead — this is <em>latency hiding</em>.</li>
+</ul>
+<p><strong>Occupancy</strong> is the ratio of active warps per SM to the maximum. High occupancy is a proxy for effective latency hiding, though it is not the only factor — kernel-bound workloads may prefer fewer, more register-rich warps.</p>
+<h2 id="the-gpu-memory-hierarchy">The GPU Memory Hierarchy<a class="headerlink" href="#the-gpu-memory-hierarchy" title="Permanent link">¶</a></h2>
+<p>Getting memory access right is the single most important performance lever in CUDA. The full hierarchy for an A100, with approximate bandwidths and latencies:</p>
+<figure class="viz" id="fig-cuda-memory-hierarchy-bandwidth-latency">
+<svg viewBox="0 0 760 480" role="img" aria-label="A100 GPU memory hierarchy: six levels from fastest (Register file ~20 TB/s ~1 cycle per-thread) at top to slowest (NVLink/PCIe ~600 GB/s to host) at bottom, with a dashed line separating on-chip from off-chip levels.">
+<defs>
+  <marker id="mh-up" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="mh-dn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#6d675d)"/>
+  </marker>
+</defs>
+<style>
+  #fig-cuda-memory-hierarchy-bandwidth-latency text   { fill: var(--ink-soft,#45413a); }
+  #fig-cuda-memory-hierarchy-bandwidth-latency .name  { font: 700 12px var(--sans,sans-serif); }
+  #fig-cuda-memory-hierarchy-bandwidth-latency .bw    { font: 700 11px var(--mono,monospace); }
+  #fig-cuda-memory-hierarchy-bandwidth-latency .lat   { font: 500 10px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-cuda-memory-hierarchy-bandwidth-latency .axlbl { font: 600 11px var(--sans,sans-serif); }
+  #fig-cuda-memory-hierarchy-bandwidth-latency .cliff { font: 700 10px var(--sans,sans-serif); }
+  #fig-cuda-memory-hierarchy-bandwidth-latency .clfsub{ font: 400 9px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cuda-memory-hierarchy-bandwidth-latency .foot  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cuda-memory-hierarchy-bandwidth-latency .bdry  { font: 700 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+</style>
+
+
+<line x1="18" y1="365" x2="18" y2="22"
+      stroke="var(--accent,#c15b39)" stroke-width="2"
+      marker-end="url(#mh-up)"/>
+<text x="16" y="196" text-anchor="middle" class="axlbl" fill="var(--accent,#c15b39)"
+      transform="rotate(-90,16,196)">faster / smaller / more private</text>
+
+
+<line x1="742" y1="22" x2="742" y2="365"
+      stroke="var(--muted,#6d675d)" stroke-width="2"
+      marker-end="url(#mh-dn)"/>
+<text x="744" y="196" text-anchor="middle" class="axlbl" fill="var(--muted,#6d675d)"
+      transform="rotate(90,744,196)">slower / larger / more shared</text>
+
+
+
+
+<rect x="236" y="22" width="288" height="44" rx="6"
+      fill="var(--accent,#c15b39)" fill-opacity="0.22"
+      stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<rect x="240" y="30" width="66" height="18" rx="3"
+      fill="var(--accent,#c15b39)" fill-opacity="0.52"/>
+<text x="273" y="43" text-anchor="middle" class="bw" fill="var(--accent,#c15b39)">~20 TB/s</text>
+<text x="415" y="39" text-anchor="middle" class="name">Register file</text>
+<text x="415" y="53" text-anchor="middle" class="lat">~1 cycle  |  per thread, not addressable</text>
+
+
+<rect x="202" y="78" width="356" height="44" rx="6"
+      fill="var(--accent,#c15b39)" fill-opacity="0.14"
+      stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<rect x="206" y="86" width="66" height="18" rx="3"
+      fill="var(--accent,#c15b39)" fill-opacity="0.36"/>
+<text x="239" y="99" text-anchor="middle" class="bw" fill="var(--accent,#c15b39)">~19 TB/s</text>
+<text x="407" y="95" text-anchor="middle" class="name">Shared memory</text>
+<text x="407" y="110" text-anchor="middle" class="lat">~20 cycles  |  per block, programmer-managed</text>
+
+
+<rect x="168" y="134" width="424" height="44" rx="6"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.13"
+      stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+<rect x="172" y="142" width="66" height="18" rx="3"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.32"/>
+<text x="205" y="155" text-anchor="middle" class="bw" fill="var(--accent2,#3b82f6)">~19 TB/s</text>
+<text x="400" y="151" text-anchor="middle" class="name">L1 / Texture cache</text>
+<text x="400" y="165" text-anchor="middle" class="lat">~30 cycles  |  per SM, automatic</text>
+
+
+<line x1="108" y1="184" x2="652" y2="184"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1.3" stroke-dasharray="6 4"/>
+
+<rect x="318" y="178" width="124" height="14" rx="3"
+      fill="var(--surface,#f8fafc)" fill-opacity="0.95"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="380" y="189" text-anchor="middle" class="bdry">on-chip  |  off-chip</text>
+
+
+<rect x="130" y="188" width="500" height="44" rx="6"
+      fill="var(--surface-3,#ece7da)" fill-opacity="0.60"
+      stroke="var(--muted,#6d675d)" stroke-width="1.6"/>
+<rect x="134" y="196" width="62" height="18" rx="3"
+      fill="var(--muted,#6d675d)" fill-opacity="0.28"/>
+<text x="165" y="209" text-anchor="middle" class="bw" fill="var(--muted,#6d675d)">~4 TB/s</text>
+<text x="397" y="205" text-anchor="middle" class="name">L2 cache</text>
+<text x="397" y="220" text-anchor="middle" class="lat">~200 cycles  |  GPU-wide</text>
+
+
+<rect x="94" y="244" width="572" height="44" rx="6"
+      fill="var(--warn,#e0a106)" fill-opacity="0.12"
+      stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+<rect x="98" y="252" width="62" height="18" rx="3"
+      fill="var(--warn,#e0a106)" fill-opacity="0.38"/>
+<text x="129" y="265" text-anchor="middle" class="bw" fill="var(--warn,#e0a106)">~2 TB/s</text>
+<text x="397" y="261" text-anchor="middle" class="name">HBM (global memory)</text>
+<text x="397" y="276" text-anchor="middle" class="lat">~800 cycles  |  DRAM, ~80 GB on A100-80GB</text>
+
+
+<rect x="44" y="300" width="672" height="44" rx="6"
+      fill="var(--surface,#f8fafc)" fill-opacity="0.40"
+      stroke="var(--muted,#6d675d)" stroke-width="1.4" stroke-dasharray="5 3"/>
+<rect x="48" y="308" width="70" height="18" rx="3"
+      fill="var(--muted,#6d675d)" fill-opacity="0.20"/>
+<text x="83" y="321" text-anchor="middle" class="bw" fill="var(--muted,#6d675d)">~600 GB/s</text>
+<text x="397" y="317" text-anchor="middle" class="name">NVLink / PCIe</text>
+<text x="397" y="332" text-anchor="middle" class="lat">multi-us latency  |  to other GPUs / host CPU</text>
+
+
+<rect x="598" y="136" width="136" height="44" rx="5"
+      fill="var(--surface,#ffffff)" fill-opacity="0.94"
+      stroke="var(--warn,#e0a106)" stroke-width="1.2" stroke-dasharray="3 2"/>
+<text x="666" y="151" text-anchor="middle" class="cliff" fill="var(--warn,#e0a106)">~5x BW drop</text>
+<text x="666" y="163" text-anchor="middle" class="clfsub">19 TB/s to 4 TB/s</text>
+<text x="666" y="174" text-anchor="middle" class="clfsub">on-chip to off-chip</text>
+
+<line x1="598" y1="158" x2="592" y2="158"
+      stroke="var(--warn,#e0a106)" stroke-width="1" stroke-dasharray="3 2"/>
+
+
+<rect x="598" y="224" width="136" height="44" rx="5"
+      fill="var(--surface,#ffffff)" fill-opacity="0.94"
+      stroke="var(--warn,#e0a106)" stroke-width="1.2" stroke-dasharray="3 2"/>
+<text x="666" y="239" text-anchor="middle" class="cliff" fill="var(--warn,#e0a106)">~10x latency</text>
+<text x="666" y="251" text-anchor="middle" class="clfsub">200 cyc to 800 cyc</text>
+<text x="666" y="262" text-anchor="middle" class="clfsub">L2 to HBM</text>
+
+<line x1="598" y1="244" x2="666" y2="244"
+      stroke="var(--warn,#e0a106)" stroke-width="1" stroke-dasharray="3 2"/>
+
+
+<text x="380" y="368" text-anchor="middle" class="foot">A100 figures; order-of-magnitude estimates. On-chip (top 3) vs off-chip (bottom 3).</text>
+<text x="380" y="382" text-anchor="middle" class="foot">Key: maximise reuse in shared memory and registers to avoid costly HBM round-trips.</text>
+
+</svg>
+<figcaption><b>A100 GPU memory hierarchy: bandwidth, latency, and scope across six levels.</b> The pyramid narrows toward the top encoding speed and capacity simultaneously — registers are fast and tiny (per-thread), HBM is slow and large (GPU-wide, ~80 GB). The dashed line marks the on-chip/off-chip boundary where bandwidth drops ~5x and latency jumps ~10x. The key design principle is to maximise reuse in shared memory and registers before touching HBM.</figcaption>
+</figure>
+
+<p>Bandwidth numbers are order-of-magnitude illustrations; see NVIDIA&rsquo;s official architecture whitepapers for precise figures. The key message: HBM is 10× slower than L2, and L2 is 10× slower than shared memory.</p>
+<h3 id="global-memory-coalescing">Global Memory Coalescing<a class="headerlink" href="#global-memory-coalescing" title="Permanent link">¶</a></h3>
+<p>When threads in a warp access global memory, the hardware tries to <em>coalesce</em> the accesses into as few 128-byte cache-line transactions as possible. If warp lane <span class="arithmatex">\(i\)</span> reads address <span class="arithmatex">\(A + i\)</span>, one transaction serves all 32 threads — perfect coalescing. If lane <span class="arithmatex">\(i\)</span> reads address <span class="arithmatex">\(A + i \cdot 64\)</span>, you get 32 separate transactions — a 32× bandwidth penalty.</p>
+<p><strong>Pattern to prefer</strong>: threads in a warp should access consecutive (strided-by-1) memory addresses.</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// GOOD: coalesced — thread i reads row-major element (row, i)</span>
+<span class="kt">float</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A</span><span class="p">[</span><span class="n">row</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">N</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">];</span><span class="w">   </span><span class="c1">// threads 0..31 read consecutive floats</span>
+
+<span class="c1">// BAD: strided — thread i reads column-major element (i, col)</span>
+<span class="kt">float</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A</span><span class="p">[</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">N</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">col</span><span class="p">];</span><span class="w">   </span><span class="c1">// threads 0..31 are N floats apart</span>
+</code></pre></div>
+<h3 id="shared-memory-and-bank-conflicts">Shared Memory and Bank Conflicts<a class="headerlink" href="#shared-memory-and-bank-conflicts" title="Permanent link">¶</a></h3>
+<p>Shared memory is organized into 32 <strong>banks</strong> (on modern GPUs), each 4 bytes wide. Bank <span class="arithmatex">\(b\)</span> holds bytes <span class="arithmatex">\(4b, 4b+128, 4b+256, \ldots\)</span>. Accesses from the same warp to different addresses in the <em>same</em> bank are <strong>serialized</strong> — a bank conflict.</p>
+<p>The golden rule: if warp lane <span class="arithmatex">\(i\)</span> accesses shared memory address <span class="arithmatex">\(s_i\)</span>, there is no conflict if all <span class="arithmatex">\(s_i\)</span> map to distinct banks, i.e., <span class="arithmatex">\((s_i \bmod 32)\)</span> are all distinct.</p>
+<p>A common source of bank conflicts is the naive tiled matmul transpose: when you load a tile column-by-column into a <span class="arithmatex">\(32 \times 32\)</span> shared-memory array, all threads in a warp hit the same bank. The fix is to add a <strong>padding column</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Without padding: 32-way bank conflict when accessing column j</span>
+<span class="n">__shared__</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">tile</span><span class="p">[</span><span class="mi">32</span><span class="p">][</span><span class="mi">32</span><span class="p">];</span>
+
+<span class="c1">// With +1 padding: each row starts on a different bank offset</span>
+<span class="n">__shared__</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">tile</span><span class="p">[</span><span class="mi">32</span><span class="p">][</span><span class="mi">33</span><span class="p">];</span><span class="w">  </span><span class="c1">// 33 = 32 + 1 padding column</span>
+</code></pre></div>
+<p>The padding wastes 32 floats (128 bytes) per tile but eliminates the conflict entirely.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Shared Memory Bandwidth</p>
+<p>A kernel uses a <span class="arithmatex">\(32 \times 32\)</span> shared-memory tile. Each thread in a 32-thread warp reads one element per column from the tile.</p>
+<p>Without padding:
+- All 32 threads in the warp access column <span class="arithmatex">\(j\)</span>.
+- Element <span class="arithmatex">\((i, j)\)</span> lives at offset <span class="arithmatex">\(i \cdot 32 + j\)</span> bytes/4 = offset <span class="arithmatex">\(i \cdot 32 + j\)</span> in 4-byte words.
+- Bank for element <span class="arithmatex">\((i,j)\)</span> = <span class="arithmatex">\((i \cdot 32 + j) \bmod 32 = j \bmod 32\)</span>.
+- All 32 threads access bank <span class="arithmatex">\(j \bmod 32\)</span> — a 32-way conflict! Shared memory throughput drops from ~19 TB/s to ~0.6 TB/s.</p>
+<p>With padding (<code>tile[32][33]</code>):
+- Element <span class="arithmatex">\((i, j)\)</span> lives at offset <span class="arithmatex">\(i \cdot 33 + j\)</span> words.
+- Bank = <span class="arithmatex">\((i \cdot 33 + j) \bmod 32 = (i + j) \bmod 32\)</span>.
+- Thread <span class="arithmatex">\(i\)</span> in the warp accesses bank <span class="arithmatex">\((i + j) \bmod 32\)</span>, which cycles through all 32 banks — zero conflicts.</p>
+</div>
+<h2 id="warp-primitives-and-shuffle-instructions">Warp Primitives and Shuffle Instructions<a class="headerlink" href="#warp-primitives-and-shuffle-instructions" title="Permanent link">¶</a></h2>
+<p>CUDA exposes primitives for threads within a warp to communicate directly, without touching shared memory. These <strong>warp shuffle</strong> intrinsics are the building blocks of efficient reductions, prefix sums, and softmax.</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// __shfl_sync: broadcast lane src&#39;s value to all lanes in mask</span>
+<span class="kt">float</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__shfl_sync</span><span class="p">(</span><span class="mh">0xFFFFFFFF</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">src_lane</span><span class="p">);</span>
+
+<span class="c1">// __shfl_down_sync: lane i gets lane i+delta&#39;s value</span>
+<span class="kt">float</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__shfl_down_sync</span><span class="p">(</span><span class="mh">0xFFFFFFFF</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">delta</span><span class="p">);</span>
+
+<span class="c1">// __shfl_xor_sync: butterfly exchange for tree reductions</span>
+<span class="kt">float</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__shfl_xor_sync</span><span class="p">(</span><span class="mh">0xFFFFFFFF</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">mask</span><span class="p">);</span>
+</code></pre></div>
+<p>The first argument <code>0xFFFFFFFF</code> is the <em>active mask</em> — all 32 lanes participate. Here is a complete warp-level reduction that sums 32 values into lane 0:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Warp reduction: sum x across all 32 lanes, result in lane 0</span>
+<span class="n">__device__</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">warp_reduce_sum</span><span class="p">(</span><span class="kt">float</span><span class="w"> </span><span class="n">val</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Tree reduction: delta = 16, 8, 4, 2, 1</span>
+<span class="w">    </span><span class="c1">// Each step: lane i adds lane i+delta&#39;s value</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">delta</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">16</span><span class="p">;</span><span class="w"> </span><span class="n">delta</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">delta</span><span class="w"> </span><span class="o">&gt;&gt;=</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">val</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">__shfl_down_sync</span><span class="p">(</span><span class="mh">0xFFFFFFFF</span><span class="p">,</span><span class="w"> </span><span class="n">val</span><span class="p">,</span><span class="w"> </span><span class="n">delta</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">val</span><span class="p">;</span><span class="w">  </span><span class="c1">// Only lane 0 holds the correct sum</span>
+<span class="p">}</span>
+
+<span class="c1">// Block-level reduction using warp reductions + shared memory</span>
+<span class="n">__device__</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">block_reduce_sum</span><span class="p">(</span><span class="kt">float</span><span class="w"> </span><span class="n">val</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">__shared__</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">warp_sums</span><span class="p">[</span><span class="mi">32</span><span class="p">];</span><span class="w">  </span><span class="c1">// At most 32 warps per block</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">32</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">lane_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">32</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// Each warp reduces to its lane 0</span>
+<span class="w">    </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">warp_reduce_sum</span><span class="p">(</span><span class="n">val</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// Lane 0 of each warp writes to shared memory</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">lane_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="n">warp_sums</span><span class="p">[</span><span class="n">warp_id</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">val</span><span class="p">;</span>
+<span class="w">    </span><span class="n">__syncthreads</span><span class="p">();</span>
+
+<span class="w">    </span><span class="c1">// First warp reduces the per-warp sums</span>
+<span class="w">    </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">blockDim</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">warp_sums</span><span class="p">[</span><span class="n">lane_id</span><span class="p">]</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">warp_reduce_sum</span><span class="p">(</span><span class="n">val</span><span class="p">);</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">val</span><span class="p">;</span><span class="w">  </span><span class="c1">// Lane 0 of warp 0 holds the block sum</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Warp shuffles are significantly faster than shared memory reductions because they avoid <code>__syncthreads()</code> barriers and do not consume shared memory bandwidth. This pattern is used inside FlashAttention&rsquo;s online softmax — see <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a> for the full derivation.</p>
+<h2 id="tiled-matrix-multiplication-a-complete-kernel">Tiled Matrix Multiplication: A Complete Kernel<a class="headerlink" href="#tiled-matrix-multiplication-a-complete-kernel" title="Permanent link">¶</a></h2>
+<p>Matrix multiplication is the dominant operation in every LLM layer — it is the attention projection, the FFN weight multiply, the embedding lookup. A naive CUDA matmul reads each element of A and B <span class="arithmatex">\(N\)</span> times from global memory; a tiled matmul cuts that to <span class="arithmatex">\(N/T\)</span> reads (where <span class="arithmatex">\(T\)</span> is the tile size) by reusing data from shared memory. This is the single most important kernel to understand.</p>
+<h3 id="naive-matmul-baseline">Naive Matmul (Baseline)<a class="headerlink" href="#naive-matmul-baseline" title="Permanent link">¶</a></h3>
+<p>For <span class="arithmatex">\(C = A \cdot B\)</span> where <span class="arithmatex">\(A \in \mathbb{R}^{M \times K}\)</span> and <span class="arithmatex">\(B \in \mathbb{R}^{K \times N}\)</span>, the operation is:</p>
+<div class="arithmatex">\[
+C[i,j] = \sum_{k=0}^{K-1} A[i,k] \cdot B[k,j]
+\]</div>
+<p>Total FLOPs: <span class="arithmatex">\(2 \cdot M \cdot N \cdot K\)</span> (multiply + add per pair).</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Naive: each thread computes one output element by iterating over K</span>
+<span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">matmul_naive</span><span class="p">(</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">B</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">C</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">N</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">K</span>
+<span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">row</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">blockDim</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">y</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">col</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">blockDim</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">row</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">M</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">col</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">N</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">float</span><span class="w"> </span><span class="n">acc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">;</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">k</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">k</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">K</span><span class="p">;</span><span class="w"> </span><span class="n">k</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">acc</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">A</span><span class="p">[</span><span class="n">row</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">K</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">k</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">B</span><span class="p">[</span><span class="n">k</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">N</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">col</span><span class="p">];</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="n">C</span><span class="p">[</span><span class="n">row</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">N</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">col</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">acc</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The bottleneck: <code>A[row * K + k]</code> is the same for all threads in the column direction; <code>B[k * N + col]</code> is the same for all threads in the row direction. Both are re-read from global memory on every iteration — wasting bandwidth.</p>
+<h3 id="tiled-matmul-sgemm-quality">Tiled Matmul (SGEMM Quality)<a class="headerlink" href="#tiled-matmul-sgemm-quality" title="Permanent link">¶</a></h3>
+<p>The idea: divide A and B into <span class="arithmatex">\(T \times T\)</span> tiles. Each block cooperatively loads one tile of A and one tile of B into shared memory, computes the partial dot products, and advances to the next tile.</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Tiled matrix multiplication with shared memory</span>
+<span class="c1">// Tile size T must divide blockDim.x == blockDim.y (set T = BLOCK_SIZE)</span>
+<span class="cp">#define BLOCK_SIZE 32</span>
+
+<span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">matmul_tiled</span><span class="p">(</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">__restrict__</span><span class="w"> </span><span class="n">A</span><span class="p">,</span><span class="w">   </span><span class="c1">// [M, K], row-major</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">__restrict__</span><span class="w"> </span><span class="n">B</span><span class="p">,</span><span class="w">   </span><span class="c1">// [K, N], row-major</span>
+<span class="w">    </span><span class="kt">float</span><span class="o">*</span><span class="w">       </span><span class="n">__restrict__</span><span class="w"> </span><span class="n">C</span><span class="p">,</span><span class="w">   </span><span class="c1">// [M, N], row-major</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">N</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">K</span>
+<span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Identify this thread&#39;s output position</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">row</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">y</span><span class="p">;</span><span class="w">   </span><span class="c1">// global row in C</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">col</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span><span class="w">   </span><span class="c1">// global col in C</span>
+
+<span class="w">    </span><span class="c1">// Shared memory tiles — +1 padding to avoid bank conflicts on B&#39;s transpose</span>
+<span class="w">    </span><span class="n">__shared__</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">As</span><span class="p">[</span><span class="n">BLOCK_SIZE</span><span class="p">][</span><span class="n">BLOCK_SIZE</span><span class="p">];</span>
+<span class="w">    </span><span class="n">__shared__</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">Bs</span><span class="p">[</span><span class="n">BLOCK_SIZE</span><span class="p">][</span><span class="n">BLOCK_SIZE</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">];</span><span class="w">  </span><span class="c1">// +1 avoids bank conflicts</span>
+
+<span class="w">    </span><span class="kt">float</span><span class="w"> </span><span class="n">acc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">;</span><span class="w">  </span><span class="c1">// Accumulator lives in a register</span>
+
+<span class="w">    </span><span class="c1">// Loop over K-dimension in tiles of size BLOCK_SIZE</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">num_tiles</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">K</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_tiles</span><span class="p">;</span><span class="w"> </span><span class="n">t</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// ---- Cooperative load of tile t ----</span>
+<span class="w">        </span><span class="c1">// Each thread loads one element of A and one element of B</span>
+
+<span class="w">        </span><span class="kt">int</span><span class="w"> </span><span class="n">a_col</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span><span class="w">   </span><span class="c1">// column in A for this tile</span>
+<span class="w">        </span><span class="kt">int</span><span class="w"> </span><span class="n">b_row</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">y</span><span class="p">;</span><span class="w">   </span><span class="c1">// row in B for this tile</span>
+
+<span class="w">        </span><span class="c1">// Guard: handle matrices whose dimensions aren&#39;t multiples of BLOCK_SIZE</span>
+<span class="w">        </span><span class="n">As</span><span class="p">[</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">y</span><span class="p">][</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">]</span><span class="w"> </span><span class="o">=</span>
+<span class="w">            </span><span class="p">(</span><span class="n">row</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">M</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">a_col</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">K</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">A</span><span class="p">[</span><span class="n">row</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">K</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">a_col</span><span class="p">]</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">;</span>
+
+<span class="w">        </span><span class="n">Bs</span><span class="p">[</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">y</span><span class="p">][</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">]</span><span class="w"> </span><span class="o">=</span>
+<span class="w">            </span><span class="p">(</span><span class="n">b_row</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">K</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">col</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">N</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">B</span><span class="p">[</span><span class="n">b_row</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">N</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">col</span><span class="p">]</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1">// ---- Synchronize before compute ----</span>
+<span class="w">        </span><span class="c1">// All threads in the block must have written to shared memory</span>
+<span class="w">        </span><span class="n">__syncthreads</span><span class="p">();</span>
+
+<span class="w">        </span><span class="c1">// ---- Compute partial dot product for this tile ----</span>
+<span class="w">        </span><span class="c1">// Unroll hint: compiler may auto-unroll; explicit #pragma unroll helps</span>
+<span class="w">        </span><span class="cp">#pragma unroll</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">k</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">k</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="p">;</span><span class="w"> </span><span class="n">k</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">acc</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">As</span><span class="p">[</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">y</span><span class="p">][</span><span class="n">k</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">Bs</span><span class="p">[</span><span class="n">k</span><span class="p">][</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">];</span>
+<span class="w">        </span><span class="p">}</span>
+
+<span class="w">        </span><span class="c1">// ---- Synchronize before next load ----</span>
+<span class="w">        </span><span class="c1">// Ensure all threads are done reading before anyone overwrites the tile</span>
+<span class="w">        </span><span class="n">__syncthreads</span><span class="p">();</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// Write result</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">row</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">M</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">col</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">N</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">C</span><span class="p">[</span><span class="n">row</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">N</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">col</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">acc</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>Launch configuration:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Host-side: launch the kernel</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">launch_matmul_tiled</span><span class="p">(</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">B</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">C</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">N</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">K</span>
+<span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">dim3</span><span class="w"> </span><span class="n">block</span><span class="p">(</span><span class="n">BLOCK_SIZE</span><span class="p">,</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="p">);</span><span class="w">              </span><span class="c1">// 32×32 = 1024 threads/block</span>
+<span class="w">    </span><span class="n">dim3</span><span class="w"> </span><span class="n">grid</span><span class="p">(</span>
+<span class="w">        </span><span class="p">(</span><span class="n">N</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="p">,</span><span class="w">          </span><span class="c1">// ceil(N/32) blocks in x</span>
+<span class="w">        </span><span class="p">(</span><span class="n">M</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="w">           </span><span class="c1">// ceil(M/32) blocks in y</span>
+<span class="w">    </span><span class="p">);</span>
+<span class="w">    </span><span class="n">matmul_tiled</span><span class="o">&lt;&lt;&lt;</span><span class="n">grid</span><span class="p">,</span><span class="w"> </span><span class="n">block</span><span class="o">&gt;&gt;&gt;</span><span class="p">(</span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="n">B</span><span class="p">,</span><span class="w"> </span><span class="n">C</span><span class="p">,</span><span class="w"> </span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="n">N</span><span class="p">,</span><span class="w"> </span><span class="n">K</span><span class="p">);</span>
+<span class="w">    </span><span class="n">cudaDeviceSynchronize</span><span class="p">();</span><span class="w">  </span><span class="c1">// Wait and check for errors in development</span>
+<span class="p">}</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Memory Traffic Reduction</p>
+<p>Consider <span class="arithmatex">\(M = N = K = 4096\)</span> (a typical attention projection for a 7B model, hidden dimension 4096).</p>
+<p><strong>Naive kernel:</strong>
+- Each output element <span class="arithmatex">\(C[i,j]\)</span> requires reading the full row <span class="arithmatex">\(i\)</span> of <span class="arithmatex">\(A\)</span> (<span class="arithmatex">\(K = 4096\)</span> floats) and the full column <span class="arithmatex">\(j\)</span> of <span class="arithmatex">\(B\)</span> (<span class="arithmatex">\(K = 4096\)</span> floats) from global memory — every time, for every thread.
+- Total global memory reads: <span class="arithmatex">\(M \cdot N \cdot 2K\)</span> floats = <span class="arithmatex">\(4096 \times 4096 \times 8192 \approx 137 \times 10^9\)</span> floats = ~549 GB (at FP32).</p>
+<p><strong>Tiled kernel with <span class="arithmatex">\(T = 32\)</span>:</strong>
+- Each tile is loaded once and reused by 32 threads along the row/column.
+- Each element of <span class="arithmatex">\(A\)</span> is loaded <span class="arithmatex">\(N/T = 128\)</span> times (once per block covering that row).
+- Each element of <span class="arithmatex">\(B\)</span> is loaded <span class="arithmatex">\(M/T = 128\)</span> times.
+- Total reads: <span class="arithmatex">\((M \cdot K + K \cdot N) \times 1\)</span> (each element loaded once per tile pass) = <span class="arithmatex">\(2 \times K^2\)</span> floats for the square case.
+- That&rsquo;s <span class="arithmatex">\(2 \times 4096^2 \approx 33 \times 10^6\)</span> floats = ~134 MB — a ~4000× reduction in global memory traffic.
+- In practice the L2 cache captures some reuse even in the naive case, but shared memory provides a guaranteed, programmer-managed cache at much higher bandwidth.</p>
+<p><strong>Arithmetic intensity:</strong>
+- FLOPs: <span class="arithmatex">\(2 \times 4096^3 \approx 137 \times 10^9\)</span>
+- Bytes read (tiled): ~134 MB
+- Arithmetic intensity: <span class="arithmatex">\(137 \times 10^9 / (134 \times 10^6) \approx 1024\)</span> FLOP/byte
+- A100 peak: ~312 TFLOP/s FP32, HBM bandwidth ~2 TB/s → roofline crossover at ~156 FLOP/byte.
+- At 1024 FLOP/byte we are firmly compute-bound, meaning the kernel is bottlenecked by FMA throughput, not memory. That is the correct regime for a matmul.</p>
+</div>
+<h3 id="register-blocking-and-double-buffering">Register Blocking and Double Buffering<a class="headerlink" href="#register-blocking-and-double-buffering" title="Permanent link">¶</a></h3>
+<p>Production SGEMM kernels go further:</p>
+<ol>
+<li><strong>Register blocking</strong>: each thread accumulates a <span class="arithmatex">\(4 \times 4\)</span> or <span class="arithmatex">\(8 \times 8\)</span> sub-tile in registers instead of one element, increasing the ratio of compute to shared-memory loads.</li>
+<li><strong>Double buffering</strong>: while computing on tile <span class="arithmatex">\(t\)</span>, asynchronously prefetch tile <span class="arithmatex">\(t+1\)</span> into a second shared-memory buffer using <code>__pipeline_memcpy_async()</code> (CUDA 11+), hiding the global-memory load latency completely.</li>
+<li><strong>Tensor Core instructions</strong>: <code>wmma::mma_sync</code> or PTX <code>mma</code> instructions dispatch 4×8×16 mixed-precision fused operations directly to Tensor Cores, achieving peak TFLOP/s. cuBLAS and CUTLASS both use this path; you should too for any production matmul.</li>
+</ol>
+<p>Understanding these principles is what makes FlashAttention&rsquo;s tiled, IO-aware attention comprehensible — see <a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a> for how they push these ideas further with warp specialization and pipeline stages.</p>
+<h2 id="synchronization-and-atomic-operations">Synchronization and Atomic Operations<a class="headerlink" href="#synchronization-and-atomic-operations" title="Permanent link">¶</a></h2>
+<h3 id="__syncthreads"><code>__syncthreads()</code><a class="headerlink" href="#__syncthreads" title="Permanent link">¶</a></h3>
+<p><code>__syncthreads()</code> is a <strong>block-level barrier</strong>: execution of any thread in the block does not proceed past this point until <em>all</em> threads in the block have reached it. The canonical double-barrier pattern in tiled kernels (sync after load, sync after compute) prevents two hazards:</p>
+<ul>
+<li><strong>Read-after-write</strong>: a thread reading shared memory before another thread has finished writing.</li>
+<li><strong>Write-after-read</strong>: a thread overwriting shared memory for the next tile before another thread has finished reading the current tile.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Divergent __syncthreads() is Undefined Behavior</p>
+<p>Never call <code>__syncthreads()</code> inside a conditional branch where some threads in the block might not reach it. The GPU does not automatically wait for divergent threads; the hardware deadlocks or produces incorrect results. If you need conditional synchronization, use <code>__syncwarp()</code> (warp-level) or restructure so all threads reach the barrier.</p>
+</div>
+<h3 id="atomic-operations">Atomic Operations<a class="headerlink" href="#atomic-operations" title="Permanent link">¶</a></h3>
+<p>Atomic operations (<code>atomicAdd</code>, <code>atomicMax</code>, <code>atomicCAS</code>) provide thread-safe read-modify-write on global or shared memory. They are essential for histogram building, scatter-add operations (used in sparse attention), and lock-free algorithms.</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Parallel histogram: each thread atomically increments a bin</span>
+<span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">histogram</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">*</span><span class="w"> </span><span class="n">data</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="o">*</span><span class="w"> </span><span class="n">hist</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">N</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">num_bins</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">blockDim</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">N</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">int</span><span class="w"> </span><span class="n">bin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">data</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">num_bins</span><span class="p">;</span>
+<span class="w">        </span><span class="n">atomicAdd</span><span class="p">(</span><span class="o">&amp;</span><span class="n">hist</span><span class="p">[</span><span class="n">bin</span><span class="p">],</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span><span class="w">  </span><span class="c1">// Thread-safe increment</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="c1">// Optimization: first reduce into shared memory, then one atomic per block</span>
+<span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">histogram_shared</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">*</span><span class="w"> </span><span class="n">data</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="o">*</span><span class="w"> </span><span class="n">hist</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">N</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">num_bins</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">__shared__</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">local_hist</span><span class="p">[</span><span class="mi">256</span><span class="p">];</span><span class="w">  </span><span class="c1">// Assumes num_bins &lt;= 256</span>
+<span class="w">    </span><span class="c1">// Initialize shared histogram</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_bins</span><span class="p">;</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">blockDim</span><span class="p">.</span><span class="n">x</span><span class="p">)</span>
+<span class="w">        </span><span class="n">local_hist</span><span class="p">[</span><span class="n">b</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">    </span><span class="n">__syncthreads</span><span class="p">();</span>
+
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">blockDim</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">N</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">int</span><span class="w"> </span><span class="n">bin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">data</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">num_bins</span><span class="p">;</span>
+<span class="w">        </span><span class="n">atomicAdd</span><span class="p">(</span><span class="o">&amp;</span><span class="n">local_hist</span><span class="p">[</span><span class="n">bin</span><span class="p">],</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span><span class="w">   </span><span class="c1">// Fast: shared memory atomic</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="n">__syncthreads</span><span class="p">();</span>
+
+<span class="w">    </span><span class="c1">// One global atomic per bin per block</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">num_bins</span><span class="p">;</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">blockDim</span><span class="p">.</span><span class="n">x</span><span class="p">)</span>
+<span class="w">        </span><span class="n">atomicAdd</span><span class="p">(</span><span class="o">&amp;</span><span class="n">hist</span><span class="p">[</span><span class="n">b</span><span class="p">],</span><span class="w"> </span><span class="n">local_hist</span><span class="p">[</span><span class="n">b</span><span class="p">]);</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Global atomics on older hardware were slow; on A100+ they are heavily optimized and the shared-memory staging pattern is often unnecessary for sparsely contested bins.</p>
+<h2 id="calling-cuda-kernels-from-pytorch">Calling CUDA Kernels from PyTorch<a class="headerlink" href="#calling-cuda-kernels-from-pytorch" title="Permanent link">¶</a></h2>
+<p>For production use, you compile a CUDA kernel and expose it to Python via a PyTorch extension. This lets you call your kernel exactly like any PyTorch operation, with automatic gradient support if you register a <code>torch.autograd.Function</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// matmul_ext.cu — save as a .cu file</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;torch/extension.h&gt;</span><span class="c1">  // PyTorch C++ frontend</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;cuda_runtime.h&gt;</span>
+
+<span class="cp">#define BLOCK_SIZE 32</span>
+<span class="c1">// (matmul_tiled kernel definition from above goes here)</span>
+
+<span class="c1">// Wrapper called from Python via pybind11</span>
+<span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="nf">matmul_cuda</span><span class="p">(</span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="n">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">TORCH_CHECK</span><span class="p">(</span><span class="n">A</span><span class="p">.</span><span class="n">device</span><span class="p">().</span><span class="n">is_cuda</span><span class="p">(),</span><span class="w"> </span><span class="s">&quot;A must be a CUDA tensor&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">TORCH_CHECK</span><span class="p">(</span><span class="n">B</span><span class="p">.</span><span class="n">device</span><span class="p">().</span><span class="n">is_cuda</span><span class="p">(),</span><span class="w"> </span><span class="s">&quot;B must be a CUDA tensor&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">TORCH_CHECK</span><span class="p">(</span><span class="n">A</span><span class="p">.</span><span class="n">dim</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">B</span><span class="p">.</span><span class="n">dim</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;Inputs must be 2D&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">TORCH_CHECK</span><span class="p">(</span><span class="n">A</span><span class="p">.</span><span class="n">size</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">B</span><span class="p">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span><span class="w"> </span><span class="s">&quot;Inner dimensions must match&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">M</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A</span><span class="p">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span><span class="w"> </span><span class="n">K</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A</span><span class="p">.</span><span class="n">size</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span><span class="w"> </span><span class="n">N</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">B</span><span class="p">.</span><span class="n">size</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">C</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">zeros</span><span class="p">({</span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="n">N</span><span class="p">},</span><span class="w"> </span><span class="n">A</span><span class="p">.</span><span class="n">options</span><span class="p">());</span><span class="w">  </span><span class="c1">// Allocate output on GPU</span>
+
+<span class="w">    </span><span class="n">dim3</span><span class="w"> </span><span class="n">block</span><span class="p">(</span><span class="n">BLOCK_SIZE</span><span class="p">,</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="p">);</span>
+<span class="w">    </span><span class="n">dim3</span><span class="w"> </span><span class="n">grid</span><span class="p">((</span><span class="n">N</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="p">,</span>
+<span class="w">              </span><span class="p">(</span><span class="n">M</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">BLOCK_SIZE</span><span class="p">);</span>
+
+<span class="w">    </span><span class="n">matmul_tiled</span><span class="o">&lt;&lt;&lt;</span><span class="n">grid</span><span class="p">,</span><span class="w"> </span><span class="n">block</span><span class="o">&gt;&gt;&gt;</span><span class="p">(</span>
+<span class="w">        </span><span class="n">A</span><span class="p">.</span><span class="n">data_ptr</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="p">(),</span>
+<span class="w">        </span><span class="n">B</span><span class="p">.</span><span class="n">data_ptr</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="p">(),</span>
+<span class="w">        </span><span class="n">C</span><span class="p">.</span><span class="n">data_ptr</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="p">(),</span>
+<span class="w">        </span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="n">N</span><span class="p">,</span><span class="w"> </span><span class="n">K</span>
+<span class="w">    </span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">C</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1">// Expose to Python with PYBIND11_MODULE</span>
+<span class="n">PYBIND11_MODULE</span><span class="p">(</span><span class="n">TORCH_EXTENSION_NAME</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;matmul&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">matmul_cuda</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;Tiled CUDA matrix multiplication&quot;</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># setup.py — build and install the extension</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">setuptools</span><span class="w"> </span><span class="kn">import</span> <span class="n">setup</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.cpp_extension</span><span class="w"> </span><span class="kn">import</span> <span class="n">CUDAExtension</span><span class="p">,</span> <span class="n">BuildExtension</span>
+
+<span class="n">setup</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;matmul_ext&quot;</span><span class="p">,</span>
+    <span class="n">ext_modules</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">CUDAExtension</span><span class="p">(</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;matmul_ext&quot;</span><span class="p">,</span>
+            <span class="n">sources</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;matmul_ext.cu&quot;</span><span class="p">],</span>
+            <span class="n">extra_compile_args</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;nvcc&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;-O3&quot;</span><span class="p">,</span> <span class="s2">&quot;--use_fast_math&quot;</span><span class="p">]},</span>
+        <span class="p">)</span>
+    <span class="p">],</span>
+    <span class="n">cmdclass</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;build_ext&quot;</span><span class="p">:</span> <span class="n">BuildExtension</span><span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># Install and test</span>
+pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">import torch, matmul_ext</span>
+<span class="s2">A = torch.randn(1024, 1024, device=&#39;cuda&#39;)</span>
+<span class="s2">B = torch.randn(1024, 1024, device=&#39;cuda&#39;)</span>
+<span class="s2">C = matmul_ext.matmul(A, B)</span>
+<span class="s2">print(&#39;Max error vs torch.mm:&#39;, (C - torch.mm(A, B)).abs().max().item())</span>
+<span class="s2">&quot;</span>
+</code></pre></div>
+<p>Alternatively, <code>torch.utils.cpp_extension.load()</code> compiles and loads JIT at runtime — convenient for rapid iteration:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.cpp_extension</span><span class="w"> </span><span class="kn">import</span> <span class="n">load</span>
+
+<span class="n">matmul_ext</span> <span class="o">=</span> <span class="n">load</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;matmul_ext&quot;</span><span class="p">,</span>
+    <span class="n">sources</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;matmul_ext.cu&quot;</span><span class="p">],</span>
+    <span class="n">extra_cuda_cflags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;-O3&quot;</span><span class="p">,</span> <span class="s2">&quot;--use_fast_math&quot;</span><span class="p">],</span>
+    <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>For gradient support, wrap the function in <code>torch.autograd.Function</code> with a custom <code>backward</code> that calls the transpose matmuls.</p>
+<h2 id="cuda-vs-triton-when-to-use-each">CUDA vs Triton: When to Use Each<a class="headerlink" href="#cuda-vs-triton-when-to-use-each" title="Permanent link">¶</a></h2>
+<p><a href="../04-kernels-efficiency/04-triton-kernels.html">Writing GPU Kernels with Triton</a> covers Triton in depth, but it is worth putting both tools on the same axis so you can make the right choice.</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>CUDA C++</th>
+<th>Triton</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Abstraction level</strong></td>
+<td>Threads + warps (manual)</td>
+<td>Blocks of tiles (automatic)</td>
+</tr>
+<tr>
+<td><strong>Bank conflict handling</strong></td>
+<td>Manual padding required</td>
+<td>Compiler handles automatically</td>
+</tr>
+<tr>
+<td><strong>Warp scheduling</strong></td>
+<td>Full control</td>
+<td>Hidden (implicit warp tiling)</td>
+</tr>
+<tr>
+<td><strong>Tensor Core access</strong></td>
+<td>Via WMMA/CuTe/PTX</td>
+<td>Automatic for fp16/bf16 matmul</td>
+</tr>
+<tr>
+<td><strong>Register pressure</strong></td>
+<td>Manual (<code>#pragma unroll</code>)</td>
+<td>Managed by compiler</td>
+</tr>
+<tr>
+<td><strong>Python interop</strong></td>
+<td>pybind11 / CUDAExtension</td>
+<td>Native (kernel is Python)</td>
+</tr>
+<tr>
+<td><strong>Debugging</strong></td>
+<td><code>cuda-gdb</code>, <code>compute-sanitizer</code></td>
+<td>More accessible; Python errors</td>
+</tr>
+<tr>
+<td><strong>Portability</strong></td>
+<td>NVIDIA only</td>
+<td>NVIDIA + AMD (ROCm) + future</td>
+</tr>
+<tr>
+<td><strong>Peak performance</strong></td>
+<td>Highest possible (CUTLASS level)</td>
+<td>80–95% of expert CUDA</td>
+</tr>
+</tbody>
+</table>
+<p><strong>When to write CUDA:</strong></p>
+<ul>
+<li>You need Tensor Core access with custom memory layouts (e.g., FP8 mixed-precision not yet supported by Triton).</li>
+<li>The operation has irregular memory access patterns (e.g., ragged batches, variable-length sequences) where Triton&rsquo;s tiled model is awkward.</li>
+<li>You are writing a kernel that requires warp-level synchronization patterns not expressible in Triton (e.g., producer-consumer pipelines with warp specialization, as in FlashAttention 3).</li>
+<li>Maximum performance for a widely deployed operation (cuBLAS, CUTLASS-level GEMM).</li>
+<li>You need persistent kernels or grid-level synchronization.</li>
+</ul>
+<p><strong>When to use Triton:</strong></p>
+<ul>
+<li>You are writing a fused activation, layer norm, softmax, or custom attention variant — the productivity gain is enormous.</li>
+<li>You want portability across GPU vendors.</li>
+<li>The 5–10% performance gap compared to expert CUDA is acceptable (it usually is).</li>
+<li>You are prototyping quickly and may iterate on the algorithm; Triton&rsquo;s Python syntax shortens the iteration loop dramatically.</li>
+</ul>
+<p><strong>When to use neither (torch.compile + PyTorch):</strong></p>
+<ul>
+<li><code>torch.compile</code> with <code>inductor</code> backend will auto-generate Triton kernels for most PyTorch operations. For standard ops — matmul, LayerNorm, ReLU — this is often within 5% of hand-written Triton and requires no custom kernel code. See <a href="../04-kernels-efficiency/09-compilers-fusion.html">Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a> for how this works.</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner Tip: Start with Triton, Profile, then Descend to CUDA</p>
+<p>Begin with a Triton kernel or <code>torch.compile</code>. Profile with <code>nsys</code> (Nsight Systems) or <code>ncu</code> (Nsight Compute). If you are below ~80% of the theoretical roofline and the bottleneck is something Triton cannot fix (e.g., shared-memory padding, pipeline depth, warp scheduling), then write CUDA. This staged approach saves weeks of development time and keeps code maintainable.</p>
+</div>
+<h2 id="profiling-and-debugging-cuda-kernels">Profiling and Debugging CUDA Kernels<a class="headerlink" href="#profiling-and-debugging-cuda-kernels" title="Permanent link">¶</a></h2>
+<p>You cannot optimize what you cannot measure. NVIDIA&rsquo;s toolchain gives you two main profilers:</p>
+<p><strong>Nsight Systems (<code>nsys</code>)</strong> — timeline-level, low overhead:
+<div class="highlight"><pre><span></span><code><span class="c1"># Profile training step; view in nsys-ui</span>
+nsys<span class="w"> </span>profile<span class="w"> </span>--trace<span class="o">=</span>cuda,nvtx<span class="w"> </span>-o<span class="w"> </span>profile_output<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>python<span class="w"> </span>train.py<span class="w"> </span>--steps<span class="w"> </span><span class="m">100</span>
+</code></pre></div></p>
+<p><strong>Nsight Compute (<code>ncu</code>)</strong> — roofline analysis, instruction-level, high overhead:
+<div class="highlight"><pre><span></span><code><span class="c1"># Profile a specific kernel with full metrics</span>
+ncu<span class="w"> </span>--set<span class="w"> </span>full<span class="w"> </span>--kernel-name<span class="w"> </span>matmul_tiled<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--launch-count<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>python<span class="w"> </span>run_matmul.py
+</code></pre></div></p>
+<p>Key metrics to check in Nsight Compute:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>What it tells you</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sm__throughput.avg.pct_of_peak_sustained_elapsed</code></td>
+<td>Overall SM utilization</td>
+</tr>
+<tr>
+<td><code>l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum</code></td>
+<td>Global load bytes</td>
+</tr>
+<tr>
+<td><code>smsp__sass_thread_inst_executed_op_fadd_pred_on.sum</code></td>
+<td>FP32 add instructions</td>
+</tr>
+<tr>
+<td><code>l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_ld.sum</code></td>
+<td>Shared memory bank conflicts</td>
+</tr>
+<tr>
+<td><code>sm__warps_active.avg.pct_of_peak_sustained_active</code></td>
+<td>Achieved occupancy</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>cuda-memcheck</code> / <code>compute-sanitizer</code></strong> catches race conditions and out-of-bounds accesses at the cost of ~20× slowdown:
+<div class="highlight"><pre><span></span><code>compute-sanitizer<span class="w"> </span>--tool<span class="w"> </span>memcheck<span class="w"> </span>python<span class="w"> </span>my_kernel_test.py
+compute-sanitizer<span class="w"> </span>--tool<span class="w"> </span>racecheck<span class="w"> </span>python<span class="w"> </span>my_kernel_test.py
+</code></pre></div></p>
+<p>A fast development workflow: write the kernel, run correctness checks against PyTorch reference outputs, profile with <code>ncu</code>, iterate. The correctness check is trivial to automate:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">check_correctness</span><span class="p">(</span><span class="n">fn_cuda</span><span class="p">,</span> <span class="n">fn_ref</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compare CUDA kernel output against a reference implementation.&quot;&quot;&quot;</span>
+    <span class="n">out_cuda</span> <span class="o">=</span> <span class="n">fn_cuda</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">a</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">args</span><span class="p">])</span>
+    <span class="n">out_ref</span>  <span class="o">=</span> <span class="n">fn_ref</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">a</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">args</span><span class="p">])</span>
+    <span class="n">max_err</span>  <span class="o">=</span> <span class="p">(</span><span class="n">out_cuda</span> <span class="o">-</span> <span class="n">out_ref</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="n">rel_err</span>  <span class="o">=</span> <span class="p">(</span><span class="n">out_cuda</span> <span class="o">-</span> <span class="n">out_ref</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span> <span class="o">/</span> <span class="p">(</span><span class="n">out_ref</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Max absolute error: </span><span class="si">{</span><span class="n">max_err</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Max relative error: </span><span class="si">{</span><span class="n">rel_err</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">out_cuda</span><span class="p">,</span> <span class="n">out_ref</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=</span><span class="n">rtol</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="n">atol</span><span class="p">),</span> \
+        <span class="sa">f</span><span class="s2">&quot;MISMATCH: max error = </span><span class="si">{</span><span class="n">max_err</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;PASS&quot;</span><span class="p">)</span>
+
+<span class="c1"># Example usage</span>
+<span class="n">A</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">1024</span><span class="p">,</span> <span class="mi">1024</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="n">B</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">1024</span><span class="p">,</span> <span class="mi">1024</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="n">check_correctness</span><span class="p">(</span><span class="n">matmul_ext</span><span class="o">.</span><span class="n">matmul</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">mm</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="practical-patterns-fused-kernels-and-the-ml-workload">Practical Patterns: Fused Kernels and the ML Workload<a class="headerlink" href="#practical-patterns-fused-kernels-and-the-ml-workload" title="Permanent link">¶</a></h2>
+<p>The reason CUDA matters so much for LLMs is that naive PyTorch chains many small kernel launches, each reading and writing through HBM. A <em>fused kernel</em> combines multiple operations into one — loading data once, doing all operations in registers/shared memory, then writing back. This is the core idea behind FlashAttention.</p>
+<p>Here is a simple fused ReLU + bias + scale kernel that illustrates the principle:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Fused bias-add + ReLU + scale: C = max(0, A + bias) * scale</span>
+<span class="c1">// All in one pass — no intermediate materialization in HBM</span>
+<span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">fused_bias_relu_scale</span><span class="p">(</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">__restrict__</span><span class="w"> </span><span class="n">A</span><span class="p">,</span><span class="w">     </span><span class="c1">// [N]</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">__restrict__</span><span class="w"> </span><span class="n">bias</span><span class="p">,</span><span class="w">  </span><span class="c1">// [N]</span>
+<span class="w">    </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">__restrict__</span><span class="w"> </span><span class="n">C</span><span class="p">,</span><span class="w">           </span><span class="c1">// [N]</span>
+<span class="w">    </span><span class="kt">float</span><span class="w"> </span><span class="n">scale</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">N</span>
+<span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">blockDim</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">N</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">float</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">bias</span><span class="p">[</span><span class="n">idx</span><span class="p">];</span><span class="w">   </span><span class="c1">// bias-add</span>
+<span class="w">        </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mf">0.0f</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">;</span><span class="w">   </span><span class="c1">// ReLU (branch-free alternative: fmaxf)</span>
+<span class="w">        </span><span class="n">C</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">scale</span><span class="p">;</span><span class="w">             </span><span class="c1">// scale</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="c1">// Vectorized version: process 4 floats per thread using float4</span>
+<span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">fused_bias_relu_scale_vec4</span><span class="p">(</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">float4</span><span class="o">*</span><span class="w"> </span><span class="n">__restrict__</span><span class="w"> </span><span class="n">A</span><span class="p">,</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">float4</span><span class="o">*</span><span class="w"> </span><span class="n">__restrict__</span><span class="w"> </span><span class="n">bias</span><span class="p">,</span>
+<span class="w">    </span><span class="n">float4</span><span class="o">*</span><span class="w"> </span><span class="n">__restrict__</span><span class="w"> </span><span class="n">C</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">float</span><span class="w"> </span><span class="n">scale</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">N4</span><span class="w">  </span><span class="c1">// N / 4</span>
+<span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">blockDim</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">idx</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">N4</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">float4</span><span class="w"> </span><span class="n">a</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="n">A</span><span class="p">[</span><span class="n">idx</span><span class="p">];</span>
+<span class="w">        </span><span class="n">float4</span><span class="w"> </span><span class="n">b</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="n">bias</span><span class="p">[</span><span class="n">idx</span><span class="p">];</span>
+<span class="w">        </span><span class="n">float4</span><span class="w"> </span><span class="n">res</span><span class="p">;</span>
+<span class="w">        </span><span class="c1">// Process 4 elements per thread — increases memory throughput</span>
+<span class="w">        </span><span class="n">res</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fmaxf</span><span class="p">(</span><span class="n">a</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">.</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">scale</span><span class="p">;</span>
+<span class="w">        </span><span class="n">res</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fmaxf</span><span class="p">(</span><span class="n">a</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">.</span><span class="n">y</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">scale</span><span class="p">;</span>
+<span class="w">        </span><span class="n">res</span><span class="p">.</span><span class="n">z</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fmaxf</span><span class="p">(</span><span class="n">a</span><span class="p">.</span><span class="n">z</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">.</span><span class="n">z</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">scale</span><span class="p">;</span>
+<span class="w">        </span><span class="n">res</span><span class="p">.</span><span class="n">w</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fmaxf</span><span class="p">(</span><span class="n">a</span><span class="p">.</span><span class="n">w</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">.</span><span class="n">w</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">scale</span><span class="p">;</span>
+<span class="w">        </span><span class="n">C</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">res</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The <code>float4</code> version loads 16 bytes per thread per memory transaction rather than 4, improving the effective memory bandwidth utilization toward the hardware maximum. This vectorization pattern applies to any memory-bandwidth-bound (memory-roofline-limited) kernel.</p>
+<p>Connection to quantization: fused kernels are essential for INT8/FP8 inference because the dequantization, matmul, and requantization must happen in one pass to avoid materializing full-precision intermediates. See <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a> and <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a> for how quantized kernels are structured.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You write a CUDA kernel where each thread in a 32-thread warp accesses a different element of a float array stored in shared memory, but they are all in the same column of a 2D array with 32 columns. No thread accesses the same address. Why is this slow, and how do you fix it?</p>
+<p><strong>A:</strong> The shared memory is organized into 32 banks, each 4 bytes wide. In a 32-column float array, elements in the same column are separated by <code>32 * sizeof(float) = 128 bytes = 32 banks</code>. But since the array is 32 columns wide, column <span class="arithmatex">\(j\)</span> always maps to bank <span class="arithmatex">\(j \bmod 32 = j\)</span> for any row. So all 32 threads in the warp access the same bank (bank <span class="arithmatex">\(j\)</span>), causing a 32-way bank conflict. The hardware serializes all 32 accesses, dropping throughput by 32×. The fix is to add one padding element per row: declare the array as <code>float tile[HEIGHT][33]</code> instead of <code>[HEIGHT][32]</code>. This shifts each row&rsquo;s base address by one bank, so column <span class="arithmatex">\(j\)</span> in row <span class="arithmatex">\(i\)</span> now maps to bank <span class="arithmatex">\((i \cdot 33 + j) \bmod 32\)</span>, which varies across rows and eliminates conflicts.</p>
+</div>
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The GPU execution model is a three-level hierarchy: grid → blocks → threads. Warps (32 threads) execute in lockstep; the SM hides memory latency by switching between warps.</li>
+<li><strong>Memory coalescing</strong> is the single most impactful access pattern optimization: threads in a warp should read/write consecutive addresses to minimize HBM transactions.</li>
+<li><strong>Shared memory</strong> is programmer-managed L1 cache (~19 TB/s). Use it to reuse data loaded from HBM — the tiled matmul reduces global reads by a factor of <span class="arithmatex">\(T\)</span> (tile size), converting a bandwidth-bound kernel into a compute-bound one.</li>
+<li><strong>Bank conflicts</strong> occur when multiple threads in a warp access different addresses in the same shared-memory bank. Fix them by padding shared arrays by one element per row.</li>
+<li><strong>Warp shuffle intrinsics</strong> (<code>__shfl_sync</code>, <code>__shfl_down_sync</code>) enable intra-warp reductions and broadcasts faster than shared memory, without <code>__syncthreads()</code> overhead.</li>
+<li>A tiled 32×32 SGEMM at <span class="arithmatex">\(M=N=K=4096\)</span> achieves arithmetic intensity ~1024 FLOP/byte, firmly in the compute-bound regime — this is the goal for any large matmul kernel.</li>
+<li>Choose Triton for new fused operators (80–95% of CUDA peak, Python syntax, portable), CUDA for maximum performance or irregular access patterns, and <code>torch.compile</code> for standard PyTorch graphs.</li>
+<li>Always validate kernel outputs numerically against a PyTorch reference before profiling; use <code>ncu</code> for roofline analysis and bank-conflict detection.</li>
+<li>Fused kernels (bias+activation, online softmax, dequant+matmul) reduce HBM traffic by eliminating intermediate writes — this is the design philosophy behind FlashAttention and quantized inference.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>CUDA kernel development for ML has matured rapidly: hand-fused kernels written in CUDA C++ or Triton now underpin virtually every high-performance LLM serving stack, and NVIDIA&rsquo;s Hopper (H100) and Blackwell GPU architectures have pushed FP8 and asynchronous pipelining to the forefront of kernel design. The field is moving from per-operation tuning toward compiler-driven kernel generation (<code>torch.compile</code> / Inductor) while still requiring deep CUDA fluency for frontier work.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2205.14135">Dao et al., <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022)</a> — definitive example of IO-aware, tiled, fused CUDA kernel design applied to attention.</li>
+<li><a href="https://www.researchgate.net/publication/366963691_Triton_an_intermediate_language_and_compiler_for_tiled_neural_network_computations">Tillet et al., <em>Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations</em> (MAPL 2019)</a> — original Triton paper introducing tile-level IR as an alternative to raw CUDA for ML kernels.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2307.08691">Dao, <em>FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning</em> (2023)</a> — improved work partitioning across warps; 2× speedup over FA1; the implementation most production systems use.</li>
+<li><a href="https://arxiv.org/abs/2407.08608">Shah et al., <em>FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision</em> (2024)</a> — exploits H100 warp specialization and FP8 Tensor Cores; reaches ~740 TFLOP/s.</li>
+<li><a href="https://arxiv.org/abs/2410.10989">Hsu et al., <em>Liger Kernel: Efficient Triton Kernels for LLM Training</em> (2024)</a> — fused Triton kernels (RMSNorm, RoPE, SwiGLU, CrossEntropy) that cut LLM training memory by ~60% with minimal code changes.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/NVIDIA/cutlass">NVIDIA/cutlass</a> — production-quality CUDA C++ templates for GEMM, including Tensor Core paths, pipeline stages, and Blackwell FP4/FP8 support; the reference for expert-level matmul kernels.</li>
+<li><a href="https://github.com/linkedin/Liger-Kernel">linkedin/Liger-Kernel</a> — drop-in Triton kernel replacements for Hugging Face model components; shows the practical pattern for kernel-level LLM training optimization.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://docs.nvidia.com/cuda/cuda-programming-guide/index.html">NVIDIA CUDA Programming Guide (v13.3)</a> — authoritative reference for the execution model, memory hierarchy, warp primitives, and CUDA Tile C++ (new in CUDA 13).</li>
+<li><a href="https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/">NVIDIA CUDA C++ Best Practices Guide</a> — practical optimization checklist: coalescing, occupancy, profiling methodology, and memory transfer strategies.</li>
+<li><a href="https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/">NVIDIA Hopper Architecture In-Depth</a> — deep-dive on H100 SM design, fourth-generation Tensor Cores, FP8 Transformer Engine, and TMA async copy; required reading before writing H100-specific kernels.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>NVIDIA CUDA C++ Programming Guide</strong> — the definitive reference for the execution model, memory hierarchy, warp primitives, and synchronization.</li>
+<li><strong>CUTLASS</strong> (NVIDIA, GitHub) — production-quality CUDA templates for GEMM with register blocking, pipeline stages, and Tensor Core support; the best real-world CUDA code to study.</li>
+<li><strong>Dao et al., &ldquo;FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness&rdquo; (2022)</strong> — applies tiled, fused-kernel thinking to the attention computation; see <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a>.</li>
+<li><strong>Tillet et al., &ldquo;Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations&rdquo; (2019)</strong> — introduces Triton; see the companion chapter <a href="../04-kernels-efficiency/04-triton-kernels.html">Writing GPU Kernels with Triton</a>.</li>
+<li><strong>&ldquo;Programming Massively Parallel Processors&rdquo; by Kirk &amp; Hwu</strong> — a thorough textbook treatment of CUDA including shared memory, bank conflicts, and performance optimization.</li>
+<li><strong>Luo et al., &ldquo;A Survey of GPU Architectures and Optimization Techniques&rdquo;</strong> — for a historical perspective on how SM design has evolved across Volta, Ampere, and Hopper.</li>
+<li><strong>NVIDIA Nsight Compute Documentation</strong> — for the full list of hardware performance counters and roofline methodology used to diagnose kernel bottlenecks.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="04-triton-kernels.html"><span class="pn-label">← Previous</span><span class="pn-title">Writing GPU Kernels with Triton</span></a>
+<a class="next" href="06-paged-attention-kv.html"><span class="pn-label">Next →</span><span class="pn-title">PagedAttention &amp; KV-Cache Memory Management</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-cuda-execution-model">The CUDA Execution Model</a></li>
+<li class="toc-l3"><a href="#grid-block-and-thread-hierarchy">Grid, Block, and Thread Hierarchy</a></li>
+<li class="toc-l3"><a href="#warps-the-unit-of-execution">Warps: The Unit of Execution</a></li>
+<li class="toc-l2"><a href="#the-gpu-memory-hierarchy">The GPU Memory Hierarchy</a></li>
+<li class="toc-l3"><a href="#global-memory-coalescing">Global Memory Coalescing</a></li>
+<li class="toc-l3"><a href="#shared-memory-and-bank-conflicts">Shared Memory and Bank Conflicts</a></li>
+<li class="toc-l2"><a href="#warp-primitives-and-shuffle-instructions">Warp Primitives and Shuffle Instructions</a></li>
+<li class="toc-l2"><a href="#tiled-matrix-multiplication-a-complete-kernel">Tiled Matrix Multiplication: A Complete Kernel</a></li>
+<li class="toc-l3"><a href="#naive-matmul-baseline">Naive Matmul (Baseline)</a></li>
+<li class="toc-l3"><a href="#tiled-matmul-sgemm-quality">Tiled Matmul (SGEMM Quality)</a></li>
+<li class="toc-l3"><a href="#register-blocking-and-double-buffering">Register Blocking and Double Buffering</a></li>
+<li class="toc-l2"><a href="#synchronization-and-atomic-operations">Synchronization and Atomic Operations</a></li>
+<li class="toc-l3"><a href="#__syncthreads">__syncthreads()</a></li>
+<li class="toc-l3"><a href="#atomic-operations">Atomic Operations</a></li>
+<li class="toc-l2"><a href="#calling-cuda-kernels-from-pytorch">Calling CUDA Kernels from PyTorch</a></li>
+<li class="toc-l2"><a href="#cuda-vs-triton-when-to-use-each">CUDA vs Triton: When to Use Each</a></li>
+<li class="toc-l2"><a href="#profiling-and-debugging-cuda-kernels">Profiling and Debugging CUDA Kernels</a></li>
+<li class="toc-l2"><a href="#practical-patterns-fused-kernels-and-the-ml-workload">Practical Patterns: Fused Kernels and the ML Workload</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

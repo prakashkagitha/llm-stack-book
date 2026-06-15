@@ -1,0 +1,1518 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRL: HuggingFace&#x27;s RL Library — The LLM Stack</title>
+<meta name="description" content="TRL architecture: SFTTrainer, RewardTrainer, DPOTrainer, PPOTrainer, GRPOTrainer; how it integrates accelerate/PEFT/vLLM; config and a runnable GRPO/DPO example">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="active" href="03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VI — RL Infrastructure (Deep Dive)</div>
+<h1 id="63-trl-huggingfaces-rl-library">6.3 TRL: HuggingFace&rsquo;s RL Library<a class="headerlink" href="#63-trl-huggingfaces-rl-library" title="Permanent link">¶</a></h1>
+<p>TRL (Transformer Reinforcement Learning) is the most widely used open-source library for post-training large language models with reinforcement learning. Where frameworks like <a href="../06-rl-infra/04-verl.html">veRL</a> or <a href="../06-rl-infra/05-openrlhf-nemo-ray.html">OpenRLHF</a> target multi-node, throughput-optimized production runs, TRL occupies a different niche: it is the fastest path from a research idea to a working experiment, and the most accessible entry point for engineers who know the HuggingFace ecosystem.</p>
+<p>This chapter dissects TRL from the inside out: its component trainers, how they compose with <code>accelerate</code>, PEFT, and vLLM, and — critically — what happens at the code level when you fire off a GRPO or DPO run. We give you enough detail to debug failures, tune performance, and adapt the library to custom reward functions.</p>
+<h2 id="why-trl-exists">Why TRL Exists<a class="headerlink" href="#why-trl-exists" title="Permanent link">¶</a></h2>
+<p>Before TRL (released 2022 by Leandro von Werra and collaborators at HuggingFace), reproducing RLHF required stitching together a policy gradient loop, a KL penalty, reward model inference, reference model inference, and a PPO optimizer — all while handling variable-length sequences, packing, half-precision, and distributed training. The surface area for bugs was enormous.</p>
+<p>TRL packages each stage of the alignment pipeline as a standalone <code>Trainer</code> subclass that inherits from HuggingFace <code>transformers.Trainer</code>. This means:</p>
+<ul>
+<li>All the <code>transformers</code> tooling (dataset loading, tokenizers, logging, evaluation hooks) works out of the box.</li>
+<li>Distributed training is handled by <code>accelerate</code> — TRL trainers are unaware of whether they run on one GPU or 64.</li>
+<li>PEFT (LoRA, QLoRA) integrates transparently; the trainer detects an adapter-wrapped model and handles merging for reference-model inference automatically.</li>
+</ul>
+<p>The cost of this design is that TRL is not the fastest option for very large runs. The generation loop is colocated with training on the same GPUs (no disaggregated rollout workers), and throughput is limited by the sequential generate-then-train-step cycle. For the research and small-team use-case, this is exactly the right trade-off.</p>
+<h2 id="trls-trainer-landscape">TRL&rsquo;s Trainer Landscape<a class="headerlink" href="#trls-trainer-landscape" title="Permanent link">¶</a></h2>
+<p>TRL exposes five major trainers relevant to alignment work. They sit at different points in the alignment pipeline:</p>
+<figure class="viz" id="fig-trl-trainer-landscape-pipeline">
+<svg viewBox="0 0 800 620" role="img" aria-label="TRL's five trainers (SFTTrainer, RewardTrainer, PPOTrainer, DPOTrainer, GRPOTrainer) positioned at stages of the alignment pipeline, branching at Stage 3 into three alternative paths.">
+<defs>
+  <marker id="tlp-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="tlp-arr-rev" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M10,1 L1,5 L10,9 Z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="tlp-arr-acc2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent-2,#3b82f6)"/>
+  </marker>
+</defs>
+<style>
+  #fig-trl-trainer-landscape-pipeline text { fill: currentColor; }
+  #fig-trl-trainer-landscape-pipeline .lbl   { font: 600 13px var(--sans,sans-serif); }
+  #fig-trl-trainer-landscape-pipeline .cap   { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-trl-trainer-landscape-pipeline .stage { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-trl-trainer-landscape-pipeline .rm-lbl{ font: 600 12px var(--sans,sans-serif); }
+</style>
+
+
+<g data-anim="1">
+  <rect x="200" y="20" width="200" height="44" rx="8"
+        fill="var(--surface-3,#e2e8f0)" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+  <text x="300" y="47" text-anchor="middle" class="lbl">Raw Pretrained Model</text>
+</g>
+
+
+<line x1="300" y1="64" x2="300" y2="96" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#tlp-arr)" data-anim="1"/>
+
+
+<g data-anim="2">
+  <rect x="200" y="96" width="200" height="48" rx="8"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.12" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+  <text x="300" y="125" text-anchor="middle" class="lbl">SFTTrainer</text>
+</g>
+<text x="408" y="120" class="cap">Stage 1: supervised instruction following</text>
+
+
+<line x1="300" y1="144" x2="300" y2="176" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#tlp-arr)" data-anim="2"/>
+
+
+<g data-anim="3">
+  <rect x="190" y="176" width="220" height="48" rx="8"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.12" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+  <text x="300" y="205" text-anchor="middle" class="lbl">RewardTrainer</text>
+</g>
+<text x="422" y="200" class="cap">Stage 2: train a reward model on preference data</text>
+
+
+<line x1="300" y1="224" x2="300" y2="286" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#tlp-arr)" data-anim="3"/>
+
+
+<line x1="168" y1="224" x2="168" y2="392" stroke="var(--ink-soft,#64748b)" stroke-width="1.2"
+      stroke-dasharray="5,4" opacity="0.5" data-anim="3"/>
+
+<line x1="300" y1="230" x2="168" y2="230" stroke="var(--ink-soft,#64748b)" stroke-width="1.2"
+      stroke-dasharray="5,4" opacity="0.5" data-anim="3"/>
+
+<line x1="168" y1="392" x2="218" y2="392" stroke="var(--ink-soft,#64748b)" stroke-width="1.2"
+      stroke-dasharray="5,4" opacity="0.5" marker-end="url(#tlp-arr)" data-anim="3"/>
+
+<line x1="168" y1="395" x2="168" y2="478" stroke="var(--ink-soft,#64748b)" stroke-width="1.2"
+      stroke-dasharray="5,4" opacity="0.5" data-anim="3"/>
+<line x1="168" y1="478" x2="218" y2="478" stroke="var(--ink-soft,#64748b)" stroke-width="1.2"
+      stroke-dasharray="5,4" opacity="0.5" marker-end="url(#tlp-arr)" data-anim="3"/>
+
+
+<g data-anim="4">
+  <rect x="178" y="286" width="190" height="48" rx="8"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.12" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+  <text x="273" y="315" text-anchor="middle" class="lbl">PPOTrainer</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="448" y="290" width="150" height="40" rx="7"
+        fill="var(--accent-2,#3b82f6)" fill-opacity="0.12" stroke="var(--accent-2,#3b82f6)" stroke-width="1.8"/>
+  <text x="523" y="315" text-anchor="middle" class="rm-lbl">RewardModel</text>
+</g>
+
+<line x1="448" y1="310" x2="370" y2="310" stroke="var(--accent-2,#3b82f6)" stroke-width="1.5"
+      marker-end="url(#tlp-arr-acc2)" data-anim="4"/>
+<text x="409" y="305" text-anchor="middle" class="stage" style="fill:var(--accent-2,#3b82f6);font-size:9px">reward</text>
+
+<text x="412" y="300" class="cap" style="visibility:hidden">x</text>
+
+<text x="400" y="345" class="cap">Stage 3a: online RL with reward model</text>
+
+
+<g data-anim="4">
+  <rect x="178" y="368" width="190" height="48" rx="8"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.12" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+  <text x="273" y="397" text-anchor="middle" class="lbl">DPOTrainer</text>
+</g>
+<text x="380" y="397" class="cap">Stage 3b: offline RL from preference pairs (no RM)</text>
+
+
+<g data-anim="5">
+  <rect x="178" y="454" width="190" height="48" rx="8"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--accent,#f59e0b)" stroke-width="3"/>
+  <text x="273" y="483" text-anchor="middle" class="lbl">GRPOTrainer</text>
+</g>
+<text x="380" y="478" class="cap">Stage 3c: critic-free online RL (DeepSeek-R1 recipe)</text>
+
+
+<text x="80" y="350" text-anchor="middle" class="stage" transform="rotate(-90,80,350)">alternative Stage-3 paths</text>
+
+
+<text x="16" y="124" text-anchor="start" class="stage">Stage 1</text>
+<text x="16" y="204" text-anchor="start" class="stage">Stage 2</text>
+<text x="16" y="314" text-anchor="start" class="stage">Stage 3a</text>
+<text x="16" y="394" text-anchor="start" class="stage">Stage 3b</text>
+<text x="16" y="478" text-anchor="start" class="stage">Stage 3c</text>
+</svg>
+<figcaption><b>TRL's five trainers span the full alignment pipeline in three stages.</b> Stages 1 and 2 are sequential (SFT then reward model training); Stage 3 branches into three alternatives — PPO (uses the reward model), DPO (offline, no reward model), and GRPO (critic-free online RL). Dashed arrows indicate that DPO and GRPO are independent entry points that bypass the reward model, as in the DeepSeek-R1 recipe.</figcaption>
+</figure>
+
+<p>Each trainer is independently usable; you do not need to run them all in sequence. Many modern recipes (DeepSeek-R1, Qwen-2.5, etc.) skip the standalone reward model and go straight to GRPO with a verifiable reward function.</p>
+<h3 id="sfttrainer">SFTTrainer<a class="headerlink" href="#sfttrainer" title="Permanent link">¶</a></h3>
+<p><code>SFTTrainer</code> wraps <code>transformers.Trainer</code> with quality-of-life features for supervised fine-tuning:</p>
+<ul>
+<li><strong>Automatic sequence packing.</strong> It uses <code>ConstantLengthDataset</code> to concatenate examples into fixed-length chunks, eliminating padding waste. For a 2048-token context with typical 200-token instruction examples, packing can increase GPU utilization by 4–6x.</li>
+<li><strong>Chat template application.</strong> Pass a <code>formatting_func</code> or set <code>dataset_text_field</code> and TRL handles tokenization.</li>
+<li><strong>PEFT integration.</strong> Pass a <code>PeftConfig</code> (e.g., <code>LoraConfig</code>) and the trainer wraps the model automatically.</li>
+<li><strong>Loss masking.</strong> The trainer supports masking prompt tokens from the loss (only computing loss on the completion side) by setting <code>completion_only_trainer=True</code> or using <code>DataCollatorForCompletionOnlyLM</code>.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datasets</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dataset</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">peft</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoraConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">trl</span><span class="w"> </span><span class="kn">import</span> <span class="n">SFTConfig</span><span class="p">,</span> <span class="n">SFTTrainer</span>
+
+<span class="c1"># Load a model and tokenizer (e.g., Qwen-2.5-7B-Instruct)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="s2">&quot;Qwen/Qwen2.5-7B-Instruct&quot;</span><span class="p">,</span>
+    <span class="n">torch_dtype</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>          <span class="c1"># bfloat16 on Ampere+</span>
+    <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>           <span class="c1"># naive tensor parallel across GPUs</span>
+<span class="p">)</span>
+<span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;Qwen/Qwen2.5-7B-Instruct&quot;</span><span class="p">)</span>
+
+<span class="c1"># LoRA config: rank-16 adapters on q_proj and v_proj only</span>
+<span class="n">lora_config</span> <span class="o">=</span> <span class="n">LoraConfig</span><span class="p">(</span>
+    <span class="n">r</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+    <span class="n">lora_alpha</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+    <span class="n">target_modules</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;q_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;v_proj&quot;</span><span class="p">],</span>
+    <span class="n">lora_dropout</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+    <span class="n">bias</span><span class="o">=</span><span class="s2">&quot;none&quot;</span><span class="p">,</span>
+    <span class="n">task_type</span><span class="o">=</span><span class="s2">&quot;CAUSAL_LM&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># SFT config inherits from TrainingArguments — all standard HF args apply</span>
+<span class="n">sft_config</span> <span class="o">=</span> <span class="n">SFTConfig</span><span class="p">(</span>
+    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;./sft-output&quot;</span><span class="p">,</span>
+    <span class="n">num_train_epochs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">per_device_train_batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">gradient_accumulation_steps</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>   <span class="c1"># effective batch = 4 * 8 * num_gpus</span>
+    <span class="n">learning_rate</span><span class="o">=</span><span class="mf">2e-4</span><span class="p">,</span>
+    <span class="n">bf16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">logging_steps</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+    <span class="n">save_strategy</span><span class="o">=</span><span class="s2">&quot;epoch&quot;</span><span class="p">,</span>
+    <span class="n">max_seq_length</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span>              <span class="c1"># hard cap; packing fills to this</span>
+    <span class="n">packing</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>                     <span class="c1"># enable ConstantLengthDataset packing</span>
+    <span class="n">dataset_text_field</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>        <span class="c1"># column containing formatted text</span>
+<span class="p">)</span>
+
+<span class="n">dataset</span> <span class="o">=</span> <span class="n">load_dataset</span><span class="p">(</span><span class="s2">&quot;HuggingFaceH4/ultrachat_200k&quot;</span><span class="p">,</span> <span class="n">split</span><span class="o">=</span><span class="s2">&quot;train_sft&quot;</span><span class="p">)</span>
+
+<span class="n">trainer</span> <span class="o">=</span> <span class="n">SFTTrainer</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+    <span class="n">args</span><span class="o">=</span><span class="n">sft_config</span><span class="p">,</span>
+    <span class="n">train_dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span>
+    <span class="n">processing_class</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+    <span class="n">peft_config</span><span class="o">=</span><span class="n">lora_config</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">trainer</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+<span class="n">trainer</span><span class="o">.</span><span class="n">save_model</span><span class="p">()</span>          <span class="c1"># saves merged model or adapter, depending on config</span>
+</code></pre></div>
+<h3 id="rewardtrainer">RewardTrainer<a class="headerlink" href="#rewardtrainer" title="Permanent link">¶</a></h3>
+<p><code>RewardTrainer</code> trains a scalar reward model from comparison pairs <code>(chosen, rejected)</code>. It uses the Bradley-Terry objective:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{BT} = -\mathbb{E}_{(x, y_w, y_l)}\left[\log \sigma\!\left(r_\phi(x, y_w) - r_\phi(x, y_l)\right)\right]
+\]</div>
+<p>where <span class="arithmatex">\(r_\phi(x, y)\)</span> is the scalar reward head applied to the final token&rsquo;s hidden state. The underlying backbone is any causal or seq-to-seq model with a linear head added by TRL.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">trl</span><span class="w"> </span><span class="kn">import</span> <span class="n">RewardConfig</span><span class="p">,</span> <span class="n">RewardTrainer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datasets</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dataset</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForSequenceClassification</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+
+<span class="c1"># A reward model is a classifier backbone — AutoModelForSequenceClassification</span>
+<span class="c1"># adds a single linear head on top of the last hidden state.</span>
+<span class="n">reward_model</span> <span class="o">=</span> <span class="n">AutoModelForSequenceClassification</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="s2">&quot;Qwen/Qwen2.5-7B&quot;</span><span class="p">,</span>
+    <span class="n">num_labels</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>         <span class="c1"># single scalar output (the reward)</span>
+    <span class="n">torch_dtype</span><span class="o">=</span><span class="s2">&quot;bfloat16&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;Qwen/Qwen2.5-7B&quot;</span><span class="p">)</span>
+<span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">eos_token</span>
+
+<span class="n">reward_config</span> <span class="o">=</span> <span class="n">RewardConfig</span><span class="p">(</span>
+    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;./reward-model&quot;</span><span class="p">,</span>
+    <span class="n">per_device_train_batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">num_train_epochs</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">bf16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">max_length</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>
+    <span class="n">gradient_checkpointing</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># saves ~50% memory; moderate speed hit</span>
+<span class="p">)</span>
+
+<span class="c1"># Dataset must have columns: &quot;chosen&quot; and &quot;rejected&quot; (formatted strings)</span>
+<span class="n">dataset</span> <span class="o">=</span> <span class="n">load_dataset</span><span class="p">(</span><span class="s2">&quot;Anthropic/hh-rlhf&quot;</span><span class="p">,</span> <span class="n">split</span><span class="o">=</span><span class="s2">&quot;train&quot;</span><span class="p">)</span>
+
+<span class="n">trainer</span> <span class="o">=</span> <span class="n">RewardTrainer</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">reward_model</span><span class="p">,</span>
+    <span class="n">args</span><span class="o">=</span><span class="n">reward_config</span><span class="p">,</span>
+    <span class="n">processing_class</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+    <span class="n">train_dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">trainer</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+</code></pre></div>
+<h2 id="dpotrainer-direct-preference-optimization">DPOTrainer: Direct Preference Optimization<a class="headerlink" href="#dpotrainer-direct-preference-optimization" title="Permanent link">¶</a></h2>
+<p>DPO (Rafailov et al., 2023) sidesteps a separate reward model entirely. It reparameterizes the reward as the log-ratio between policy and reference model:</p>
+<div class="arithmatex">\[
+r(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_\text{ref}(y \mid x)} + \text{const}
+\]</div>
+<p>and substitutes this into the Bradley-Terry loss to yield the closed-form DPO objective:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{DPO} = -\mathbb{E}_{(x, y_w, y_l)}\!\left[\log \sigma\!\left(\beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_\text{ref}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_\text{ref}(y_l \mid x)}\right)\right]
+\]</div>
+<p>TRL&rsquo;s <code>DPOTrainer</code> handles the tricky plumbing of keeping a frozen reference model in memory simultaneously with the training model, computing per-token log-probabilities for both, and applying the loss. For the theory and variants (SimPO, IPO, KTO, cDPO), see <a href="../05-posttraining-alignment/07-dpo-and-variants.html">Direct Preference Optimization &amp; Its Variants</a>.</p>
+<h3 id="how-dpotrainer-manages-memory">How DPOTrainer manages memory<a class="headerlink" href="#how-dpotrainer-manages-memory" title="Permanent link">¶</a></h3>
+<p>When you pass a <code>model</code> to <code>DPOTrainer</code> without a <code>ref_model</code>, TRL clones the model&rsquo;s adapter weights (if PEFT) or does a deepcopy (if full fine-tuning) at trainer initialization and keeps it frozen. During forward, both passes can share the same GPU memory for the frozen backbone if LoRA is used — the base weights are identical; only the adapter delta changes.</p>
+<p>If the model is too large to hold two copies, pass <code>ref_model=None</code> and set <code>create_reference_model=False</code> together with <code>sync_ref_model=True</code> and <code>ref_model_sync_steps=N</code>: TRL will periodically snapshot the training model as the new reference (Exponential Moving Average–style).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">trl</span><span class="w"> </span><span class="kn">import</span> <span class="n">DPOConfig</span><span class="p">,</span> <span class="n">DPOTrainer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">peft</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoraConfig</span><span class="p">,</span> <span class="n">get_peft_model</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datasets</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dataset</span>
+
+<span class="c1"># Policy model wrapped with LoRA</span>
+<span class="n">base_model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="s2">&quot;Qwen/Qwen2.5-7B-Instruct&quot;</span><span class="p">,</span> <span class="n">torch_dtype</span><span class="o">=</span><span class="s2">&quot;bfloat16&quot;</span>
+<span class="p">)</span>
+<span class="n">lora_config</span> <span class="o">=</span> <span class="n">LoraConfig</span><span class="p">(</span><span class="n">r</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">lora_alpha</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">target_modules</span><span class="o">=</span><span class="s2">&quot;all-linear&quot;</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">get_peft_model</span><span class="p">(</span><span class="n">base_model</span><span class="p">,</span> <span class="n">lora_config</span><span class="p">)</span>
+
+<span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;Qwen/Qwen2.5-7B-Instruct&quot;</span><span class="p">)</span>
+
+<span class="n">dpo_config</span> <span class="o">=</span> <span class="n">DPOConfig</span><span class="p">(</span>
+    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;./dpo-output&quot;</span><span class="p">,</span>
+    <span class="n">beta</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span>                          <span class="c1"># KL regularization temperature</span>
+    <span class="n">loss_type</span><span class="o">=</span><span class="s2">&quot;sigmoid&quot;</span><span class="p">,</span>               <span class="c1"># standard DPO; alternatives: &quot;ipo&quot;, &quot;kto_pair&quot;</span>
+    <span class="n">per_device_train_batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">gradient_accumulation_steps</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+    <span class="n">num_train_epochs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">learning_rate</span><span class="o">=</span><span class="mf">5e-5</span><span class="p">,</span>
+    <span class="n">bf16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">max_length</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span>                   <span class="c1"># max total len (prompt + completion)</span>
+    <span class="n">max_prompt_length</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>
+    <span class="n">generate_during_eval</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>         <span class="c1"># sample from policy during eval for inspection</span>
+    <span class="c1"># Memory-saving: reuse base weights for reference model (LoRA only)</span>
+    <span class="c1"># ref_model=None means TRL auto-creates from base weights</span>
+<span class="p">)</span>
+
+<span class="c1"># Dataset with columns: prompt, chosen, rejected</span>
+<span class="n">dataset</span> <span class="o">=</span> <span class="n">load_dataset</span><span class="p">(</span><span class="s2">&quot;HuggingFaceH4/ultrafeedback_binarized&quot;</span><span class="p">,</span> <span class="n">split</span><span class="o">=</span><span class="s2">&quot;train_prefs&quot;</span><span class="p">)</span>
+
+<span class="n">trainer</span> <span class="o">=</span> <span class="n">DPOTrainer</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+    <span class="n">ref_model</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>      <span class="c1"># auto-derives reference from base (without LoRA adapters)</span>
+    <span class="n">args</span><span class="o">=</span><span class="n">dpo_config</span><span class="p">,</span>
+    <span class="n">train_dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span>
+    <span class="n">processing_class</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">trainer</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: DPO loss computation</p>
+<p>Suppose <span class="arithmatex">\(\beta = 0.1\)</span> and for a single (prompt, chosen, rejected) triple we compute the following per-sequence log-probabilities:</p>
+<table>
+<thead>
+<tr>
+<th>Quantity</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(\log \pi_\theta(y_w \mid x)\)</span></td>
+<td><span class="arithmatex">\(-12.4\)</span></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\log \pi_\text{ref}(y_w \mid x)\)</span></td>
+<td><span class="arithmatex">\(-14.1\)</span></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\log \pi_\theta(y_l \mid x)\)</span></td>
+<td><span class="arithmatex">\(-10.8\)</span></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\log \pi_\text{ref}(y_l \mid x)\)</span></td>
+<td><span class="arithmatex">\(-10.5\)</span></td>
+</tr>
+</tbody>
+</table>
+<p>The log-ratios are:</p>
+<div class="arithmatex">\[\log \frac{\pi_\theta(y_w)}{\pi_\text{ref}(y_w)} = -12.4 - (-14.1) = +1.7\]</div>
+<div class="arithmatex">\[\log \frac{\pi_\theta(y_l)}{\pi_\text{ref}(y_l)} = -10.8 - (-10.5) = -0.3\]</div>
+<p>The implicit reward margin:</p>
+<div class="arithmatex">\[\beta \cdot (1.7 - (-0.3)) = 0.1 \times 2.0 = 0.2\]</div>
+<p>The DPO loss for this example:</p>
+<div class="arithmatex">\[\mathcal{L} = -\log \sigma(0.2) = -\log(0.5498) \approx 0.598\]</div>
+<p>This is a fairly high loss — the policy barely prefers the chosen response. After sufficient training steps you would expect the margin to grow toward 2–4 and the loss to drop toward 0.1–0.2.</p>
+</div>
+<h2 id="ppotrainer-online-rl-with-a-reward-signal">PPOTrainer: Online RL with a Reward Signal<a class="headerlink" href="#ppotrainer-online-rl-with-a-reward-signal" title="Permanent link">¶</a></h2>
+<p>PPO (Schulman et al., Proximal Policy Optimization, 2017) is the classical RL algorithm used in InstructGPT and the original RLHF pipeline. TRL&rsquo;s <code>PPOTrainer</code> implements the actor-critic loop adapted to language model sequences. For the full theory of policy gradients and PPO clipping, see <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a> and <a href="../06-rl-infra/01-anatomy-rl-system.html">The Anatomy of an RL-for-LLM System</a>.</p>
+<p>The TRL PPO loop at each iteration:</p>
+<ol>
+<li><strong>Rollout.</strong> Sample a batch of prompts; call <code>model.generate()</code> to produce completions.</li>
+<li><strong>Reward scoring.</strong> Pass <code>(prompt, completion)</code> pairs through the reward model.</li>
+<li><strong>KL penalty.</strong> Compute per-token KL divergence between the policy and a frozen reference model; subtract it from the reward.</li>
+<li><strong>Advantage estimation.</strong> Run a value head (a separate linear layer on top of the policy backbone) through the rollout to compute GAE (Generalized Advantage Estimation) advantages.</li>
+<li><strong>PPO update.</strong> Run <span class="arithmatex">\(K\)</span> mini-batch gradient steps with the clipped surrogate objective.</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">trl</span><span class="w"> </span><span class="kn">import</span> <span class="n">PPOConfig</span><span class="p">,</span> <span class="n">PPOTrainer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span><span class="p">,</span> <span class="n">pipeline</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># The policy model also has a value head (AutoModelForCausalLMWithValueHead)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">trl</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLMWithValueHead</span>
+
+<span class="n">policy</span> <span class="o">=</span> <span class="n">AutoModelForCausalLMWithValueHead</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="s2">&quot;gpt2&quot;</span><span class="p">,</span>         <span class="c1"># small example; swap for Llama/Qwen in practice</span>
+    <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span>
+<span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">eos_token</span>
+
+<span class="n">ppo_config</span> <span class="o">=</span> <span class="n">PPOConfig</span><span class="p">(</span>
+    <span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;gpt2&quot;</span><span class="p">,</span>
+    <span class="n">learning_rate</span><span class="o">=</span><span class="mf">1.41e-5</span><span class="p">,</span>
+    <span class="n">batch_size</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>         <span class="c1"># total rollouts per update step</span>
+    <span class="n">mini_batch_size</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>     <span class="c1"># mini-batch size for gradient steps</span>
+    <span class="n">gradient_accumulation_steps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">ppo_epochs</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>           <span class="c1"># inner PPO mini-batch epochs</span>
+    <span class="n">max_grad_norm</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+    <span class="n">kl_penalty</span><span class="o">=</span><span class="s2">&quot;kl&quot;</span><span class="p">,</span>        <span class="c1"># per-token adaptive KL penalty</span>
+    <span class="n">init_kl_coef</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>       <span class="c1"># starting KL coefficient</span>
+    <span class="n">target_kl</span><span class="o">=</span><span class="mf">6.0</span><span class="p">,</span>          <span class="c1"># target KL for adaptive controller</span>
+    <span class="n">adap_kl_ctrl</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>      <span class="c1"># adaptive KL coefficient</span>
+    <span class="n">horizon</span><span class="o">=</span><span class="mi">10000</span><span class="p">,</span>          <span class="c1"># steps for adaptive controller</span>
+<span class="p">)</span>
+
+<span class="c1"># Reward pipeline (sentiment as a toy example)</span>
+<span class="n">sentiment_pipe</span> <span class="o">=</span> <span class="n">pipeline</span><span class="p">(</span>
+    <span class="s2">&quot;sentiment-analysis&quot;</span><span class="p">,</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;lvwerra/distilbert-imdb&quot;</span><span class="p">,</span>
+    <span class="n">device</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">trainer</span> <span class="o">=</span> <span class="n">PPOTrainer</span><span class="p">(</span>
+    <span class="n">config</span><span class="o">=</span><span class="n">ppo_config</span><span class="p">,</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">policy</span><span class="p">,</span>
+    <span class="n">ref_model</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>   <span class="c1"># auto-created from policy weights</span>
+    <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Training loop (simplified)</span>
+<span class="n">prompts</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;The movie was&quot;</span><span class="p">,</span> <span class="s2">&quot;I thought the film&quot;</span><span class="p">,</span> <span class="s2">&quot;Overall, this production&quot;</span><span class="p">]</span>
+<span class="k">for</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="c1"># --- Rollout phase ---</span>
+    <span class="n">query_tensors</span> <span class="o">=</span> <span class="p">[</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prompts</span><span class="p">]</span>
+
+    <span class="c1"># generate() returns a list of response tensors</span>
+    <span class="n">response_tensors</span> <span class="o">=</span> <span class="n">trainer</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
+        <span class="n">query_tensors</span><span class="p">,</span>
+        <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+        <span class="n">do_sample</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">top_k</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+        <span class="n">top_p</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Decode completions for reward scoring</span>
+    <span class="n">completions</span> <span class="o">=</span> <span class="p">[</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">response_tensors</span><span class="p">]</span>
+
+    <span class="c1"># --- Reward scoring ---</span>
+    <span class="n">pipe_outputs</span> <span class="o">=</span> <span class="n">sentiment_pipe</span><span class="p">(</span><span class="n">completions</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+    <span class="n">rewards</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span>
+            <span class="nb">next</span><span class="p">(</span><span class="n">d</span><span class="p">[</span><span class="s2">&quot;score&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">out</span> <span class="k">if</span> <span class="n">d</span><span class="p">[</span><span class="s2">&quot;label&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;POSITIVE&quot;</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float</span>
+        <span class="p">)</span>
+        <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">pipe_outputs</span>
+    <span class="p">]</span>
+
+    <span class="c1"># --- PPO update (handles advantages, value loss, policy loss internally) ---</span>
+    <span class="n">stats</span> <span class="o">=</span> <span class="n">trainer</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">query_tensors</span><span class="p">,</span> <span class="n">response_tensors</span><span class="p">,</span> <span class="n">rewards</span><span class="p">)</span>
+    <span class="n">trainer</span><span class="o">.</span><span class="n">log_stats</span><span class="p">(</span><span class="n">stats</span><span class="p">,</span> <span class="p">{},</span> <span class="n">rewards</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="ppotrainers-memory-footprint">PPOTrainer&rsquo;s memory footprint<a class="headerlink" href="#ppotrainers-memory-footprint" title="Permanent link">¶</a></h3>
+<p>PPO is expensive: at inference time you need the policy, the value head, and the frozen reference model, plus all their optimizer states during the update. For a 7B model in bf16:
+- Policy + optimizer states (Adam): roughly <span class="arithmatex">\(7 \times 10^9 \times 2 + 7 \times 10^9 \times 8 = 70\)</span> GB
+- Reference model (inference-only, bf16): ~14 GB
+- Activations and rollout buffer: varies</p>
+<p>Total can easily exceed 100 GB for a 7B model, requiring at least two A100-80GB cards. This cost motivated the GRPO and DPO approaches that eliminate the value head.</p>
+<h2 id="grpotrainer-the-deepseek-r1-recipe">GRPOTrainer: The DeepSeek-R1 Recipe<a class="headerlink" href="#grpotrainer-the-deepseek-r1-recipe" title="Permanent link">¶</a></h2>
+<p>GRPO (Group Relative Policy Optimization, Shao et al., 2024) eliminates the value function entirely. Instead of estimating the advantage for each response with a critic, it generates a group of <span class="arithmatex">\(G\)</span> responses to the same prompt and uses the group&rsquo;s mean reward as a baseline:</p>
+<div class="arithmatex">\[
+A_i = r_i - \frac{1}{G}\sum_{j=1}^{G} r_j
+\]</div>
+<p>The policy gradient objective is then:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{GRPO} = -\mathbb{E}\!\left[\sum_{i=1}^{G} \min\!\left(\rho_i A_i,\; \text{clip}(\rho_i, 1-\epsilon, 1+\epsilon) A_i\right) - \beta \mathbb{D}_\text{KL}[\pi_\theta \| \pi_\text{ref}]\right]
+\]</div>
+<p>where <span class="arithmatex">\(\rho_i = \pi_\theta(y_i \mid x) / \pi_{\text{old}}(y_i \mid x)\)</span> is the importance ratio for response <span class="arithmatex">\(i\)</span>. For the complete derivation and comparisons with RLOO, see <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>.</p>
+<h3 id="configuring-and-running-grpotrainer">Configuring and running GRPOTrainer<a class="headerlink" href="#configuring-and-running-grpotrainer" title="Permanent link">¶</a></h3>
+<p>TRL&rsquo;s <code>GRPOTrainer</code> is the most important trainer for reasoning-focused alignment. Here is a fully annotated, runnable example for a math reasoning task using a verifiable reward function.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">trl</span><span class="w"> </span><span class="kn">import</span> <span class="n">GRPOConfig</span><span class="p">,</span> <span class="n">GRPOTrainer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datasets</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dataset</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">peft</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoraConfig</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="c1"># 1. Load model and tokenizer</span>
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="n">model_name</span> <span class="o">=</span> <span class="s2">&quot;Qwen/Qwen2.5-7B-Instruct&quot;</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="n">model_name</span><span class="p">,</span>
+    <span class="n">torch_dtype</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>     <span class="c1"># bfloat16 on Ampere+</span>
+    <span class="n">attn_implementation</span><span class="o">=</span><span class="s2">&quot;flash_attention_2&quot;</span><span class="p">,</span>  <span class="c1"># requires flash-attn installed</span>
+<span class="p">)</span>
+<span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
+
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="c1"># 2. Reward function: verifiable math reward</span>
+<span class="c1">#    Returns a float for each (prompt, completion) pair.</span>
+<span class="c1">#    TRL calls this as: reward_fn(prompts, completions) -&gt; List[float]</span>
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_boxed_answer</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parse LaTeX \boxed{...} from model output.&quot;&quot;&quot;</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">boxed\{([^}]+)\}&quot;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">match</span> <span class="k">else</span> <span class="kc">None</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">math_reward_fn</span><span class="p">(</span><span class="n">prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">completions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Reward +1.0 if the boxed answer matches ground truth, else 0.0.</span>
+<span class="sd">    kwargs may contain extra dataset columns (e.g., &#39;answer&#39;).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ground_truths</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;answer&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">completions</span><span class="p">))</span>
+    <span class="n">rewards</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">completion</span><span class="p">,</span> <span class="n">gt</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">completions</span><span class="p">,</span> <span class="n">ground_truths</span><span class="p">):</span>
+        <span class="n">pred</span> <span class="o">=</span> <span class="n">extract_boxed_answer</span><span class="p">(</span><span class="n">completion</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">pred</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">pred</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="o">==</span> <span class="nb">str</span><span class="p">(</span><span class="n">gt</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">():</span>
+            <span class="n">rewards</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">rewards</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">rewards</span>
+
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="c1"># 3. Build a toy dataset (replace with GSM8K / MATH in practice)</span>
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="n">raw_data</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">{</span><span class="s2">&quot;prompt&quot;</span><span class="p">:</span> <span class="s2">&quot;What is 23 + 47?&quot;</span><span class="p">,</span> <span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="s2">&quot;70&quot;</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;prompt&quot;</span><span class="p">:</span> <span class="s2">&quot;What is 15 * 8?&quot;</span><span class="p">,</span>  <span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="s2">&quot;120&quot;</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;prompt&quot;</span><span class="p">:</span> <span class="s2">&quot;What is 144 / 12?&quot;</span><span class="p">,</span> <span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="s2">&quot;12&quot;</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;prompt&quot;</span><span class="p">:</span> <span class="s2">&quot;What is 2^10?&quot;</span><span class="p">,</span>    <span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="s2">&quot;1024&quot;</span><span class="p">},</span>
+<span class="p">]</span>
+<span class="c1"># TRL expects the dataset to have a &quot;prompt&quot; column at minimum.</span>
+<span class="c1"># Extra columns are forwarded to the reward function as kwargs.</span>
+<span class="n">dataset</span> <span class="o">=</span> <span class="n">Dataset</span><span class="o">.</span><span class="n">from_list</span><span class="p">(</span><span class="n">raw_data</span> <span class="o">*</span> <span class="mi">250</span><span class="p">)</span>   <span class="c1"># repeat to simulate real dataset</span>
+
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="c1"># 4. GRPO configuration</span>
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="n">grpo_config</span> <span class="o">=</span> <span class="n">GRPOConfig</span><span class="p">(</span>
+    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;./grpo-math&quot;</span><span class="p">,</span>
+    <span class="c1"># --- Group sampling ---</span>
+    <span class="n">num_generations</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>           <span class="c1"># G: responses per prompt (more = stabler baseline)</span>
+    <span class="c1"># --- Generation kwargs passed to model.generate() ---</span>
+    <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>          <span class="c1"># max completion length</span>
+    <span class="n">temperature</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span>             <span class="c1"># diversity in rollouts</span>
+    <span class="n">do_sample</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="c1"># --- Training ---</span>
+    <span class="n">per_device_train_batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>   <span class="c1"># prompts per device per step</span>
+    <span class="n">gradient_accumulation_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">num_train_epochs</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">learning_rate</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>              <span class="c1"># small LR is critical for stability</span>
+    <span class="n">bf16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="c1"># --- PPO/GRPO-specific ---</span>
+    <span class="n">epsilon</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>                 <span class="c1"># PPO clip ratio ε</span>
+    <span class="n">beta</span><span class="o">=</span><span class="mf">0.04</span><span class="p">,</span>                   <span class="c1"># KL penalty coefficient</span>
+    <span class="c1"># --- Logging ---</span>
+    <span class="n">logging_steps</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+    <span class="n">save_steps</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+    <span class="c1"># --- vLLM backend for faster generation (optional, see below) ---</span>
+    <span class="n">use_vllm</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>              <span class="c1"># set True if vllm installed; see §Integration</span>
+<span class="p">)</span>
+
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="c1"># 5. Optional: LoRA to reduce GPU memory</span>
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="n">lora_config</span> <span class="o">=</span> <span class="n">LoraConfig</span><span class="p">(</span>
+    <span class="n">r</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span>
+    <span class="n">lora_alpha</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span>
+    <span class="n">target_modules</span><span class="o">=</span><span class="s2">&quot;all-linear&quot;</span><span class="p">,</span>
+    <span class="n">lora_dropout</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">bias</span><span class="o">=</span><span class="s2">&quot;none&quot;</span><span class="p">,</span>
+    <span class="n">task_type</span><span class="o">=</span><span class="s2">&quot;CAUSAL_LM&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="c1"># 6. Train</span>
+<span class="c1"># ----------------------------------------------------------------</span>
+<span class="n">trainer</span> <span class="o">=</span> <span class="n">GRPOTrainer</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+    <span class="n">args</span><span class="o">=</span><span class="n">grpo_config</span><span class="p">,</span>
+    <span class="n">train_dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span>
+    <span class="n">reward_funcs</span><span class="o">=</span><span class="n">math_reward_fn</span><span class="p">,</span>    <span class="c1"># can also pass a list for composite rewards</span>
+    <span class="n">peft_config</span><span class="o">=</span><span class="n">lora_config</span><span class="p">,</span>
+    <span class="n">processing_class</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">trainer</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+<span class="n">trainer</span><span class="o">.</span><span class="n">save_model</span><span class="p">(</span><span class="s2">&quot;./grpo-math-final&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>Set <code>num_generations</code> to at least 8 for stable advantage estimates. With only 4 samples, the within-group variance is high enough to produce noisy gradients. The memory cost scales linearly with <code>num_generations</code>, so on memory-constrained hardware use GRPO with LoRA and reduce the generation batch via <code>per_device_train_batch_size=1</code> first.</p>
+</div>
+<h3 id="the-grpo-training-loop-internals">The GRPO training loop internals<a class="headerlink" href="#the-grpo-training-loop-internals" title="Permanent link">¶</a></h3>
+<p>When <code>trainer.train()</code> runs, TRL executes the following per-step logic:</p>
+<figure class="viz" id="fig-trl-grpo-train-loop-steps">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 770 800" role="img" aria-label="The 7-step GRPO per-batch training loop: Rollout, Reward, Advantage, Log Probs, KL, Loss, Backward plus Optimizer Step, with a loop-back arrow from step 7 to step 1.">
+<defs>
+  <marker id="gts-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="gts-arr-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#f59e0b)"/>
+  </marker>
+</defs>
+<style>
+  #fig-trl-grpo-train-loop-steps text { fill: currentColor; }
+  #fig-trl-grpo-train-loop-steps .hdr  { font: 700 13px var(--sans,sans-serif); }
+  #fig-trl-grpo-train-loop-steps .snum { font: 700 12px var(--sans,sans-serif); fill: var(--surface-3,#f1f5f9); }
+  #fig-trl-grpo-train-loop-steps .stitle{ font: 700 13px var(--sans,sans-serif); }
+  #fig-trl-grpo-train-loop-steps .stext{ font: 400 10.5px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-trl-grpo-train-loop-steps .elbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); font-style: italic; }
+  #fig-trl-grpo-train-loop-steps .btag { font: 500 9.5px var(--sans,sans-serif); fill: var(--warn,#e0a106); }
+  #fig-trl-grpo-train-loop-steps .looplbl { font: 500 10.5px var(--sans,sans-serif); fill: var(--accent,#f59e0b); }
+
+  /* Step highlight animation */
+  @keyframes gts-step1 {
+    0%,14%   { opacity:1; }
+    15%,100% { opacity:0; }
+  }
+  @keyframes gts-step2 {
+    0%,14%   { opacity:0; }
+    15%,28%  { opacity:1; }
+    29%,100% { opacity:0; }
+  }
+  @keyframes gts-step3 {
+    0%,28%   { opacity:0; }
+    29%,42%  { opacity:1; }
+    43%,100% { opacity:0; }
+  }
+  @keyframes gts-step4 {
+    0%,42%   { opacity:0; }
+    43%,56%  { opacity:1; }
+    57%,100% { opacity:0; }
+  }
+  @keyframes gts-step5 {
+    0%,56%   { opacity:0; }
+    57%,70%  { opacity:1; }
+    71%,100% { opacity:0; }
+  }
+  @keyframes gts-step6 {
+    0%,70%   { opacity:0; }
+    71%,84%  { opacity:1; }
+    85%,100% { opacity:0; }
+  }
+  @keyframes gts-step7 {
+    0%,84%   { opacity:0; }
+    85%,100% { opacity:1; }
+  }
+  @keyframes gts-loop-pulse {
+    0%,84%     { stroke-opacity:0.2; }
+    85%,94%    { stroke-opacity:1; }
+    95%,100%   { stroke-opacity:0.2; }
+  }
+
+  #fig-trl-grpo-train-loop-steps .hl-1 { animation: gts-step1 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-2 { animation: gts-step2 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-3 { animation: gts-step3 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-4 { animation: gts-step4 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-5 { animation: gts-step5 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-6 { animation: gts-step6 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-7 { animation: gts-step7 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .loop-anim { animation: gts-loop-pulse 7s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-trl-grpo-train-loop-steps .hl-1,
+    #fig-trl-grpo-train-loop-steps .hl-2,
+    #fig-trl-grpo-train-loop-steps .hl-3,
+    #fig-trl-grpo-train-loop-steps .hl-4,
+    #fig-trl-grpo-train-loop-steps .hl-5,
+    #fig-trl-grpo-train-loop-steps .hl-6,
+    #fig-trl-grpo-train-loop-steps .hl-7 { animation: none; opacity: 0; }
+    #fig-trl-grpo-train-loop-steps .loop-anim { animation: none; stroke-opacity:0.5; }
+  }
+</style>
+
+
+<rect x="60" y="18" width="500" height="36" rx="6"
+      fill="var(--surface-3,#e2e8f0)" stroke="var(--ink-soft,#64748b)" stroke-width="1.4"/>
+<text x="310" y="41" text-anchor="middle" class="hdr">For each batch of P prompts</text>
+<line x1="310" y1="54" x2="310" y2="76" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+
+
+<g>
+
+  <rect x="90" y="76" width="460" height="72" rx="7"
+        fill="var(--warn,#e0a106)" fill-opacity="0.10"
+        stroke="var(--warn,#e0a106)" stroke-width="2.5"/>
+
+  <rect class="hl-1" x="90" y="76" width="460" height="72" rx="7"
+        fill="var(--warn,#e0a106)" fill-opacity="0.25" pointer-events="none"/>
+
+  <circle cx="114" cy="112" r="13" fill="var(--warn,#e0a106)"/>
+  <text x="114" y="117" text-anchor="middle" class="snum">1</text>
+
+  <text x="134" y="96" class="stitle">ROLLOUT</text>
+  <text x="134" y="112" class="stext">model.generate() x G  ->  G completions per prompt</text>
+  <text x="134" y="126" class="stext">(total P x G sequences forward pass)</text>
+</g>
+
+<rect x="562" y="83" width="132" height="42" rx="5"
+      fill="var(--warn,#e0a106)" fill-opacity="0.15" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+<text x="628" y="100" text-anchor="middle" class="btag">bottleneck:</text>
+<text x="628" y="113" text-anchor="middle" class="btag">P x G generations</text>
+<text x="628" y="124" text-anchor="middle" style="font:400 9px var(--sans,sans-serif);fill:var(--muted,#94a3b8)">(vLLM addresses this)</text>
+
+
+<line x1="310" y1="148" x2="310" y2="167" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+<text x="316" y="161" class="elbl">P x G sequences</text>
+
+
+<g>
+  <rect x="90" y="167" width="460" height="62" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-2" x="90" y="167" width="460" height="62" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="198" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="203" text-anchor="middle" class="snum">2</text>
+  <text x="134" y="187" class="stitle">REWARD</text>
+  <text x="134" y="204" class="stext">reward_fn(prompts x G, completions)  ->  rewards</text>
+</g>
+<line x1="310" y1="229" x2="310" y2="248" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+<text x="316" y="243" class="elbl">rewards: shape [P x G]</text>
+
+
+<g>
+  <rect x="90" y="248" width="460" height="74" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-3" x="90" y="248" width="460" height="74" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="285" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="290" text-anchor="middle" class="snum">3</text>
+  <text x="134" y="267" class="stitle">ADVANTAGE</text>
+  <text x="134" y="283" class="stext">A_i = r_i - mean(r_1..r_G)  (per group; no critic needed)</text>
+  <text x="134" y="298" class="stext">Optionally normalize: A_i = (A_i - mean) / (std + eps)</text>
+</g>
+<line x1="310" y1="322" x2="310" y2="341" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+<text x="316" y="336" class="elbl">advantages: shape [P x G]</text>
+
+
+<g>
+  <rect x="90" y="341" width="460" height="74" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-4" x="90" y="341" width="460" height="74" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="378" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="383" text-anchor="middle" class="snum">4</text>
+  <text x="134" y="360" class="stitle">LOG PROBS</text>
+  <text x="134" y="377" class="stext">policy forward on all P x G  ->  log pi_theta(y|x)</text>
+  <text x="134" y="393" class="stext">reference forward on all P x G  ->  log pi_ref(y|x)</text>
+</g>
+<line x1="310" y1="415" x2="310" y2="434" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+<text x="316" y="429" class="elbl">log pi_theta, log pi_ref</text>
+
+
+<g>
+  <rect x="90" y="434" width="460" height="62" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-5" x="90" y="434" width="460" height="62" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="465" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="470" text-anchor="middle" class="snum">5</text>
+  <text x="134" y="454" class="stitle">KL</text>
+  <text x="134" y="471" class="stext">per_token_kl = log pi_theta - log pi_ref  (clipped from below at 0)</text>
+</g>
+<line x1="310" y1="496" x2="310" y2="515" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+<text x="316" y="510" class="elbl">per-token KL</text>
+
+
+<g>
+  <rect x="90" y="515" width="460" height="62" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-6" x="90" y="515" width="460" height="62" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="546" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="551" text-anchor="middle" class="snum">6</text>
+  <text x="134" y="535" class="stitle">LOSS</text>
+  <text x="134" y="552" class="stext">clipped surrogate + beta x KL  (averaged over tokens and sequences)</text>
+</g>
+<line x1="310" y1="577" x2="310" y2="596" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+
+
+<g>
+  <rect x="90" y="596" width="460" height="52" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-7" x="90" y="596" width="460" height="52" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="622" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="627" text-anchor="middle" class="snum">7</text>
+  <text x="134" y="627" class="stitle">BACKWARD + OPTIMIZER STEP</text>
+</g>
+
+
+<path d="M 550 648 C 740 648 740 56 560 56"
+      fill="none" stroke="var(--accent,#f59e0b)" stroke-width="2"
+      stroke-dasharray="6,4" marker-end="url(#gts-arr-loop)" class="loop-anim"/>
+<text x="746" y="360" text-anchor="middle" class="looplbl" transform="rotate(90,746,360)">repeat: next batch of P prompts</text>
+</svg>
+<figcaption><b>TRL's GRPO training loop executes seven ordered steps per batch.</b> Step 1 (ROLLOUT) is the throughput bottleneck — generating P x G completions on training GPUs; the vLLM backend offloads this to dedicated inference GPUs. Steps 3–6 compute group-relative advantages, log-probabilities, per-token KL, and the clipped surrogate loss entirely on-device before the optimizer step closes the loop.</figcaption>
+</figure>
+
+<p>The most expensive step is step 1: generating <span class="arithmatex">\(P \times G\)</span> completions sequentially on the same GPUs doing training. This is the core throughput bottleneck; the vLLM backend (§6) addresses it.</p>
+<h2 id="integration-with-accelerate-peft-and-vllm">Integration with Accelerate, PEFT, and vLLM<a class="headerlink" href="#integration-with-accelerate-peft-and-vllm" title="Permanent link">¶</a></h2>
+<h3 id="accelerate">Accelerate<a class="headerlink" href="#accelerate" title="Permanent link">¶</a></h3>
+<p>All TRL trainers run under <code>accelerate</code>&rsquo;s process group. You launch distributed runs as:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 4-GPU DDP training</span>
+accelerate<span class="w"> </span>launch<span class="w"> </span>--num_processes<span class="w"> </span><span class="m">4</span><span class="w"> </span>train_grpo.py
+
+<span class="c1"># With a config file (recommended for multi-node)</span>
+accelerate<span class="w"> </span>config<span class="w">   </span><span class="c1"># generates ~/.cache/huggingface/accelerate/default_config.yaml</span>
+accelerate<span class="w"> </span>launch<span class="w"> </span>--config_file<span class="w"> </span>my_accelerate.yaml<span class="w"> </span>train_grpo.py
+</code></pre></div>
+<p>A typical <code>accelerate</code> config for GRPO on 8 H100s:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># my_accelerate.yaml</span>
+<span class="nt">compute_environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">LOCAL_MACHINE</span>
+<span class="nt">distributed_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">FSDP</span><span class="w">           </span><span class="c1"># or DEEPSPEED</span>
+<span class="nt">num_processes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span>
+<span class="nt">mixed_precision</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bf16</span>
+<span class="nt">fsdp_config</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">fsdp_auto_wrap_policy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">TRANSFORMER_BASED_WRAP</span>
+<span class="w">  </span><span class="nt">fsdp_backward_prefetch</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">BACKWARD_PRE</span>
+<span class="w">  </span><span class="nt">fsdp_forward_prefetch</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">  </span><span class="nt">fsdp_offload_params</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<span class="w">  </span><span class="nt">fsdp_sharding_strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span><span class="w">       </span><span class="c1"># FULL_SHARD (ZeRO-3 equivalent)</span>
+<span class="w">  </span><span class="nt">fsdp_state_dict_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">FULL_STATE_DICT</span>
+</code></pre></div>
+<p>With FSDP, model shards are split across GPUs during the forward/backward pass and re-gathered as needed — see <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a> for the mechanics. TRL&rsquo;s trainers call <code>accelerate.prepare()</code> on the model, optimizer, and dataloader internally.</p>
+<h3 id="peft-lora">PEFT / LoRA<a class="headerlink" href="#peft-lora" title="Permanent link">¶</a></h3>
+<p>When a <code>peft_config</code> is passed to any TRL trainer:</p>
+<ol>
+<li>The trainer calls <code>get_peft_model(model, peft_config)</code> and trains only the adapter weights.</li>
+<li>For DPO and GRPO, the reference model is derived from the base model <strong>without</strong> the adapters: <code>model.disable_adapter_layers()</code>. This is memory-free because adapter and base weights share the same GPU tensors; only the adapter delta is excluded from the reference forward pass.</li>
+<li>At the end of training, <code>trainer.save_model()</code> saves only the adapter weights (a few hundred MB for rank-64 LoRA on a 7B model). Optionally merge with <code>model.merge_and_unload()</code>.</li>
+</ol>
+<p>For QLoRA (4-bit base + LoRA), pass a <code>BitsAndBytesConfig</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">BitsAndBytesConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">peft</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoraConfig</span><span class="p">,</span> <span class="n">prepare_model_for_kbit_training</span>
+
+<span class="n">bnb_config</span> <span class="o">=</span> <span class="n">BitsAndBytesConfig</span><span class="p">(</span>
+    <span class="n">load_in_4bit</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">bnb_4bit_compute_dtype</span><span class="o">=</span><span class="s2">&quot;bfloat16&quot;</span><span class="p">,</span>
+    <span class="n">bnb_4bit_use_double_quant</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># nested quantization; saves ~0.4 GB per 7B</span>
+    <span class="n">bnb_4bit_quant_type</span><span class="o">=</span><span class="s2">&quot;nf4&quot;</span><span class="p">,</span>        <span class="c1"># NormalFloat4 distribution</span>
+<span class="p">)</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="s2">&quot;Qwen/Qwen2.5-7B-Instruct&quot;</span><span class="p">,</span>
+    <span class="n">quantization_config</span><span class="o">=</span><span class="n">bnb_config</span><span class="p">,</span>
+    <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">prepare_model_for_kbit_training</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>  <span class="c1"># cast norms to fp32, enable grad ckpt</span>
+</code></pre></div>
+<p>See <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a> for the mathematical foundation of LoRA and the memory analysis of QLoRA.</p>
+<h3 id="vllm-backend-for-generation">vLLM backend for generation<a class="headerlink" href="#vllm-backend-for-generation" title="Permanent link">¶</a></h3>
+<p>The primary bottleneck in GRPO (and PPO) is <code>model.generate()</code>, which runs on the same GPUs as training. TRL 0.12+ integrates vLLM as an optional generation backend:</p>
+<div class="highlight"><pre><span></span><code><span class="n">grpo_config</span> <span class="o">=</span> <span class="n">GRPOConfig</span><span class="p">(</span>
+    <span class="n">use_vllm</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">vllm_server_host</span><span class="o">=</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span>    <span class="c1"># host running the vLLM inference server</span>
+    <span class="n">vllm_server_port</span><span class="o">=</span><span class="mi">8000</span><span class="p">,</span>
+    <span class="n">vllm_server_timeout</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span>         <span class="c1"># seconds to wait for server readiness</span>
+    <span class="c1"># vLLM generation kwargs</span>
+    <span class="n">temperature</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">top_p</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The workflow with vLLM:</p>
+<figure class="viz" id="fig-trl-vllm-colocate-rollout-flow">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 900 480" role="img" aria-label="TRL vLLM backend: Training Process (GPU 0-3) on the left exchanges weights and prompts with vLLM Server (GPU 4-7) on the right through four numbered steps, then loops back.">
+<defs>
+  <marker id="vcr-arr-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#f59e0b)"/>
+  </marker>
+  <marker id="vcr-arr-l" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent-2,#3b82f6)"/>
+  </marker>
+  <marker id="vcr-arr-s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+</defs>
+<style>
+  #fig-trl-vllm-colocate-rollout-flow text { fill: currentColor; }
+  #fig-trl-vllm-colocate-rollout-flow .panel-lbl { font: 700 13px var(--sans,sans-serif); }
+  #fig-trl-vllm-colocate-rollout-flow .box-lbl   { font: 600 12px var(--sans,sans-serif); }
+  #fig-trl-vllm-colocate-rollout-flow .step-lbl  { font: 500 11.5px var(--sans,sans-serif); }
+  #fig-trl-vllm-colocate-rollout-flow .snum      { font: 700 11px var(--sans,sans-serif); fill: var(--surface-3,#f1f5f9); }
+  #fig-trl-vllm-colocate-rollout-flow .arr-lbl   { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-trl-vllm-colocate-rollout-flow .callout   { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-trl-vllm-colocate-rollout-flow .self-lbl  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+
+  /* packet animation keyframes */
+  @keyframes vcr-pkt-a {
+    0%,5%    { opacity:0; transform: translateX(0); }
+    10%      { opacity:1; transform: translateX(0); }
+    28%      { opacity:1; transform: translateX(180px); }
+    32%,100% { opacity:0; transform: translateX(180px); }
+  }
+  @keyframes vcr-pkt-b {
+    0%,28%   { opacity:0; transform: translateX(0); }
+    33%      { opacity:1; transform: translateX(0); }
+    50%      { opacity:1; transform: translateX(180px); }
+    54%,100% { opacity:0; transform: translateX(180px); }
+  }
+  @keyframes vcr-pkt-c {
+    0%,50%   { opacity:0; transform: translateX(0); }
+    55%      { opacity:1; transform: translateX(0); }
+    72%      { opacity:1; transform: translateX(-180px); }
+    76%,100% { opacity:0; transform: translateX(-180px); }
+  }
+  @keyframes vcr-self-loop {
+    0%,72%   { opacity:0; }
+    75%,92%  { opacity:1; }
+    96%,100% { opacity:0; }
+  }
+  @keyframes vcr-vllm-pulse {
+    0%,28%   { opacity:0.3; }
+    33%,72%  { opacity:1; }
+    73%,100% { opacity:0.3; }
+  }
+  @keyframes vcr-train-back {
+    0%,72%   { opacity:0.3; }
+    76%,92%  { opacity:1; }
+    96%,100% { opacity:0.3; }
+  }
+
+  #fig-trl-vllm-colocate-rollout-flow .pkt-a { animation: vcr-pkt-a 6s ease-in-out infinite; }
+  #fig-trl-vllm-colocate-rollout-flow .pkt-b { animation: vcr-pkt-b 6s ease-in-out infinite; }
+  #fig-trl-vllm-colocate-rollout-flow .pkt-c { animation: vcr-pkt-c 6s ease-in-out infinite; }
+  #fig-trl-vllm-colocate-rollout-flow .self-pulse { animation: vcr-self-loop 6s ease-in-out infinite; }
+  #fig-trl-vllm-colocate-rollout-flow .vllm-active { animation: vcr-vllm-pulse 6s ease-in-out infinite; }
+  #fig-trl-vllm-colocate-rollout-flow .train-back  { animation: vcr-train-back 6s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-trl-vllm-colocate-rollout-flow .pkt-a,
+    #fig-trl-vllm-colocate-rollout-flow .pkt-b,
+    #fig-trl-vllm-colocate-rollout-flow .pkt-c  { animation: none; opacity: 0.8; }
+    #fig-trl-vllm-colocate-rollout-flow .self-pulse { animation: none; opacity: 0.8; }
+    #fig-trl-vllm-colocate-rollout-flow .vllm-active,
+    #fig-trl-vllm-colocate-rollout-flow .train-back { animation: none; opacity: 1; }
+  }
+</style>
+
+
+<rect x="22" y="30" width="420" height="400" rx="12"
+      fill="var(--surface-3,#e2e8f0)" fill-opacity="0.35"
+      stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+<text x="232" y="54" text-anchor="middle" class="panel-lbl">Training Process (GPU 0-3)</text>
+
+
+<rect x="44" y="66" width="376" height="340" rx="8"
+      fill="var(--accent,#f59e0b)" fill-opacity="0.08"
+      stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+<text x="232" y="88" text-anchor="middle" class="box-lbl">GRPOTrainer</text>
+
+
+
+<circle cx="72" cy="118" r="11" fill="var(--accent,#f59e0b)"/>
+<text x="72" y="122" text-anchor="middle" class="snum">1</text>
+<text x="92" y="122" class="step-lbl">push updated weights</text>
+
+<circle cx="72" cy="184" r="11" fill="var(--accent,#f59e0b)"/>
+<text x="72" y="188" text-anchor="middle" class="snum">2</text>
+<text x="92" y="188" class="step-lbl">send prompts</text>
+
+<circle cx="72" cy="260" r="11" fill="var(--accent,#f59e0b)"/>
+<text x="72" y="264" text-anchor="middle" class="snum">3</text>
+<text x="92" y="264" class="step-lbl">receive completions</text>
+
+<rect x="58" y="316" width="330" height="68" rx="6"
+      fill="var(--accent,#f59e0b)" fill-opacity="0.12"
+      stroke="var(--accent,#f59e0b)" stroke-width="1" class="train-back"/>
+<circle cx="72" cy="346" r="11" fill="var(--accent,#f59e0b)"/>
+<text x="72" y="350" text-anchor="middle" class="snum">4</text>
+<text x="92" y="342" class="step-lbl">compute reward, loss, update</text>
+<text x="92" y="358" class="self-lbl">(back-prop on training GPUs)</text>
+
+
+<path d="M 50 316 C 34 280 34 155 50 130"
+      fill="none" stroke="var(--accent,#f59e0b)" stroke-width="1.5"
+      stroke-dasharray="4,3" marker-end="url(#vcr-arr-r)" class="self-pulse"/>
+
+
+<rect x="570" y="30" width="308" height="400" rx="12"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.08"
+      stroke="var(--accent-2,#3b82f6)" stroke-width="2" class="vllm-active"/>
+<text x="724" y="54" text-anchor="middle" class="panel-lbl">vLLM Server (GPU 4-7)</text>
+
+
+<rect x="590" y="100" width="268" height="80" rx="7"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.14"
+      stroke="var(--accent-2,#3b82f6)" stroke-width="1.5"/>
+<text x="724" y="130" text-anchor="middle" class="box-lbl">AsyncLLMEngine</text>
+<text x="724" y="152" text-anchor="middle" class="callout">receives prompts, manages queue</text>
+<text x="724" y="166" text-anchor="middle" class="callout">serves updated model weights</text>
+
+
+<rect x="590" y="210" width="268" height="80" rx="7"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.14"
+      stroke="var(--accent-2,#3b82f6)" stroke-width="1.5"/>
+<text x="724" y="242" text-anchor="middle" class="box-lbl">PagedAttention rollout</text>
+<text x="724" y="264" text-anchor="middle" class="callout">KV-cache paged memory</text>
+<text x="724" y="278" text-anchor="middle" class="callout">generates completions in parallel</text>
+
+
+<rect x="590" y="328" width="268" height="72" rx="7"
+      fill="var(--good,#2f9e6e)" fill-opacity="0.10"
+      stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+<text x="724" y="350" text-anchor="middle" class="callout" style="fill:var(--good,#2f9e6e);font-weight:600;font-size:10px">OVERLAP</text>
+<text x="724" y="366" text-anchor="middle" class="callout">vLLM generates while training GPUs</text>
+<text x="724" y="380" text-anchor="middle" class="callout">run back-prop  ->  1.5-2x wall-clock</text>
+<text x="724" y="394" text-anchor="middle" class="callout">throughput improvement</text>
+
+
+
+
+<line x1="442" y1="120" x2="568" y2="128" stroke="var(--accent,#f59e0b)" stroke-width="2"
+      marker-end="url(#vcr-arr-r)"/>
+<text x="505" y="98" text-anchor="middle" class="arr-lbl" style="fill:var(--accent,#f59e0b)">push updated weights</text>
+<text x="505" y="109" text-anchor="middle" class="arr-lbl">(shared mem / RDMA)</text>
+
+
+<line x1="442" y1="186" x2="568" y2="168" stroke="var(--accent,#f59e0b)" stroke-width="2"
+      marker-end="url(#vcr-arr-r)"/>
+<text x="505" y="200" text-anchor="middle" class="arr-lbl" style="fill:var(--accent,#f59e0b)">prompts</text>
+
+
+<line x1="568" y1="252" x2="444" y2="262" stroke="var(--accent-2,#3b82f6)" stroke-width="2"
+      marker-end="url(#vcr-arr-l)"/>
+<text x="506" y="243" text-anchor="middle" class="arr-lbl" style="fill:var(--accent-2,#3b82f6)">completions</text>
+
+
+
+<rect class="pkt-a" x="446" y="113" width="44" height="16" rx="4"
+      fill="var(--accent,#f59e0b)" fill-opacity="0.95"/>
+<text class="pkt-a" x="468" y="125" text-anchor="middle"
+      style="font:600 9px var(--sans,sans-serif);fill:var(--surface-3,#f1f5f9)">weights</text>
+
+
+<rect class="pkt-b" x="446" y="179" width="44" height="16" rx="4"
+      fill="var(--accent,#f59e0b)" fill-opacity="0.95"/>
+<text class="pkt-b" x="468" y="191" text-anchor="middle"
+      style="font:600 9px var(--sans,sans-serif);fill:var(--surface-3,#f1f5f9)">prompts</text>
+
+
+<rect class="pkt-c" x="524" y="245" width="44" height="16" rx="4"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.95"/>
+<text class="pkt-c" x="546" y="257" text-anchor="middle"
+      style="font:600 9px var(--sans,sans-serif);fill:var(--surface-3,#f1f5f9)">output</text>
+</svg>
+<figcaption><b>TRL's vLLM backend decouples generation from gradient computation.</b> After each optimizer step, the trainer pushes updated weights to the vLLM server (step 1), sends a new prompt batch (step 2), and receives completions back (step 3) while the training GPUs simultaneously run back-propagation on the previous batch (step 4). This overlap of generation and training delivers a 1.5–2x wall-clock throughput improvement over the default colocated mode.</figcaption>
+</figure>
+
+<p>After each training step, TRL calls <code>vllm_client.update_model_weights(trainer.model)</code> to push the latest policy weights to the vLLM server via shared memory or RDMA. The vLLM server then generates the next batch of rollouts while the training GPUs continue back-propagation. This overlap of generation and gradient computation can improve wall-clock throughput by 1.5–2x on large enough models.</p>
+<p>For a deep dive on the PagedAttention mechanism powering vLLM&rsquo;s generation, see <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a>.</p>
+<h2 id="practical-configuration-reference">Practical Configuration Reference<a class="headerlink" href="#practical-configuration-reference" title="Permanent link">¶</a></h2>
+<p>The key numerical hyperparameters and their typical ranges:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>DPO</th>
+<th>GRPO</th>
+<th>PPO</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>beta</code> (KL coefficient)</td>
+<td>0.01–0.5</td>
+<td>0.01–0.1</td>
+<td>adaptive</td>
+<td>Higher = stay closer to reference</td>
+</tr>
+<tr>
+<td><code>learning_rate</code></td>
+<td>1e-5–5e-5</td>
+<td>5e-7–2e-6</td>
+<td>1e-5–3e-5</td>
+<td>GRPO needs very small LR</td>
+</tr>
+<tr>
+<td><code>num_generations</code> (G)</td>
+<td>—</td>
+<td>4–16</td>
+<td>—</td>
+<td>More = stable baseline, more memory</td>
+</tr>
+<tr>
+<td><code>epsilon</code> (PPO clip)</td>
+<td>—</td>
+<td>0.1–0.2</td>
+<td>0.1–0.2</td>
+<td>Standard PPO value</td>
+</tr>
+<tr>
+<td><code>max_new_tokens</code></td>
+<td>—</td>
+<td>256–2048</td>
+<td>128–512</td>
+<td>Task-dependent</td>
+</tr>
+<tr>
+<td><code>ppo_epochs</code></td>
+<td>—</td>
+<td>—</td>
+<td>1–4</td>
+<td>Reuse ratio; 1 is safer</td>
+</tr>
+<tr>
+<td>Effective batch size</td>
+<td>32–128</td>
+<td>64–512</td>
+<td>64–256</td>
+<td>prompts × G for GRPO</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall</p>
+<p>Setting <code>beta</code> too low (&lt; 0.01) during GRPO or DPO training leads to reward hacking — the model finds degenerate completions that score well on the reward function but have diverged catastrophically from the reference distribution. Monitor the KL divergence metric (logged as <code>kl</code> or <code>mean_kl</code>) and stop training if it exceeds ~20 nats for most tasks. See <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a> for detailed diagnostics.</p>
+</div>
+<h3 id="monitoring-training-health">Monitoring training health<a class="headerlink" href="#monitoring-training-health" title="Permanent link">¶</a></h3>
+<p>TRL logs a rich set of metrics to Weights &amp; Biases or TensorBoard:</p>
+<div class="highlight"><pre><span></span><code># DPO metrics
+train/rewards/chosen       # mean reward for chosen responses (proxy: log-ratio margin)
+train/rewards/rejected
+train/rewards/accuracies   # fraction of examples where chosen reward &gt; rejected reward
+train/logps/chosen         # mean log-probability of chosen completions
+train/kl                   # KL divergence from reference
+
+# GRPO metrics
+train/reward               # mean reward across all rollouts
+train/reward_std           # within-group reward variance
+train/kl                   # mean KL penalty
+train/clip_ratio           # fraction of tokens where PPO clip is active (target ~0.1–0.2)
+train/response_length      # mean completion length (watch for length exploitation)
+</code></pre></div>
+<p>A healthy GRPO run shows <code>train/reward</code> monotonically increasing, <code>train/kl</code> staying below 10–15, and <code>train/clip_ratio</code> around 0.1–0.2. If <code>train/response_length</code> explodes, the model is gaming a length-correlated reward — add an explicit length penalty to your reward function.</p>
+<h2 id="strengths-and-limits-of-trl">Strengths and Limits of TRL<a class="headerlink" href="#strengths-and-limits-of-trl" title="Permanent link">¶</a></h2>
+<h3 id="where-trl-excels">Where TRL excels<a class="headerlink" href="#where-trl-excels" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Ease of use.</strong> A working GRPO experiment requires fewer than 100 lines of Python. The HuggingFace ecosystem (datasets, tokenizers, model hub, PEFT) integrates without boilerplate.</li>
+<li><strong>Breadth.</strong> A single library covers the entire alignment pipeline: SFT → RM → PPO/DPO/GRPO. You can ablate algorithms quickly by swapping trainer classes.</li>
+<li><strong>PEFT integration.</strong> QLoRA + GRPO on a single A100-40GB is routine; the reference model is free.</li>
+<li><strong>Custom reward functions.</strong> Passing a Python callable means any verifiable reward — code execution, math verification, format checking — works without infrastructure overhead.</li>
+<li><strong>Community and maintenance.</strong> As part of the HuggingFace organization, TRL receives rapid fixes, new algorithms (SimPO, KTO, ORPO were all added within months of publication), and broad community support.</li>
+</ul>
+<h3 id="where-trl-hits-limits">Where TRL hits limits<a class="headerlink" href="#where-trl-hits-limits" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Single-node generation bottleneck.</strong> Without the vLLM backend, generation and training share GPUs. For a 70B model, rollout latency can dwarf training compute, making per-step wall-clock time impractical.</li>
+<li><strong>No disaggregated workers.</strong> TRL does not support a separate fleet of rollout workers consuming prompts from a queue, as <a href="../06-rl-infra/04-verl.html">veRL</a> or <a href="../06-rl-infra/05-openrlhf-nemo-ray.html">OpenRLHF</a> do. The single-process design limits throughput scaling.</li>
+<li><strong>Memory for PPO.</strong> The value head and reference model double the memory footprint. At 70B, PPO requires a large cluster even with FSDP; GRPO is much more practical.</li>
+<li><strong>No async rollouts.</strong> Each training step waits for all rollouts to complete before updating. For tasks with variable-length or slow reward evaluation (e.g., running code), this serialization wastes GPU time. <a href="../06-rl-infra/06-prime-rl-async.html">Prime-RL</a> addresses this with asynchronous rollout workers.</li>
+<li><strong>Sequence packing in RL.</strong> Packing works beautifully for SFT but is harder in GRPO/PPO because each rollout in a group must be associated with its prompt for advantage computation. TRL handles this but the implementation is more complex than SFT packing.</li>
+</ul>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A colleague proposes using TRL&rsquo;s <code>GRPOTrainer</code> with <code>num_generations=16</code> to train a 13B reasoning model on GSM8K. You have 4 × A100-80GB GPUs. What bottlenecks do you anticipate, and how would you address them?</p>
+<p><strong>A:</strong> Three main bottlenecks arise. First, <strong>memory</strong>: 13B in bf16 is ~26 GB; with LoRA adapters the model fits on one GPU, but GRPO must forward 16 completions per prompt through the policy and reference model. Use QLoRA (4-bit base) or enable <code>gradient_checkpointing=True</code> to halve activation memory. Second, <strong>generation throughput</strong>: generating 16 completions sequentially is the dominant wall-clock cost. Enable <code>use_vllm=True</code> and dedicate 1–2 GPUs to the vLLM server while 2–3 GPUs train. Third, <strong>batch size / advantage stability</strong>: with 4 GPUs and <code>per_device_train_batch_size=1</code>, each step processes 4 × 1 × 16 = 64 rollouts. The group baseline is computed per-prompt over 16 responses, which is adequate. Use <code>gradient_accumulation_steps=8</code> to increase the effective batch to 512 rollouts and stabilize gradients. Monitor <code>train/kl</code> (keep below 10) and <code>train/clip_ratio</code> (target 0.1–0.2).</p>
+</div>
+<h2 id="building-a-custom-reward-function-pipeline">Building a Custom Reward Function Pipeline<a class="headerlink" href="#building-a-custom-reward-function-pipeline" title="Permanent link">¶</a></h2>
+<p>One of TRL&rsquo;s most powerful features is that reward functions are plain Python. Here is a production-grade reward function that combines a format reward with a correctness reward, plus a length penalty:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">composite_reward</span><span class="p">(</span>
+    <span class="n">prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">completions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Composite reward for math reasoning:</span>
+<span class="sd">    - +0.5 if completion contains a &lt;think&gt;...&lt;/think&gt; block (format reward)</span>
+<span class="sd">    - +1.0 if the boxed answer matches the ground truth (correctness reward)</span>
+<span class="sd">    - -0.3 penalty if completion exceeds 800 tokens (length penalty)</span>
+
+<span class="sd">    This mirrors the structure used in DeepSeek-R1-Zero and Qwen-QwQ.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ground_truths</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;answer&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">completions</span><span class="p">))</span>
+    <span class="n">rewards</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">completion</span><span class="p">,</span> <span class="n">gt</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">completions</span><span class="p">,</span> <span class="n">ground_truths</span><span class="p">):</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+        <span class="c1"># --- Format reward ---</span>
+        <span class="n">has_think</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;&lt;think&gt;.*?&lt;/think&gt;&quot;</span><span class="p">,</span> <span class="n">completion</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">has_think</span><span class="p">:</span>
+            <span class="n">r</span> <span class="o">+=</span> <span class="mf">0.5</span>
+
+        <span class="c1"># --- Correctness reward ---</span>
+        <span class="n">pred</span> <span class="o">=</span> <span class="n">extract_boxed_answer</span><span class="p">(</span><span class="n">completion</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">pred</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">pred</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="o">==</span> <span class="nb">str</span><span class="p">(</span><span class="n">gt</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">():</span>
+            <span class="n">r</span> <span class="o">+=</span> <span class="mf">1.0</span>
+
+        <span class="c1"># --- Length penalty (rough token count via whitespace split) ---</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">completion</span><span class="o">.</span><span class="n">split</span><span class="p">())</span> <span class="o">&gt;</span> <span class="mi">800</span><span class="p">:</span>
+            <span class="n">r</span> <span class="o">-=</span> <span class="mf">0.3</span>
+
+        <span class="n">rewards</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">rewards</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_boxed_answer</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">boxed\{([^}]+)\}&quot;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">match</span> <span class="k">else</span> <span class="kc">None</span>
+</code></pre></div>
+<p>You can pass a list of reward functions to <code>GRPOTrainer</code>; TRL sums them with optional per-function weights:</p>
+<div class="highlight"><pre><span></span><code><span class="n">trainer</span> <span class="o">=</span> <span class="n">GRPOTrainer</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+    <span class="n">args</span><span class="o">=</span><span class="n">grpo_config</span><span class="p">,</span>
+    <span class="n">train_dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span>
+    <span class="c1"># List of reward functions — TRL sums their outputs</span>
+    <span class="n">reward_funcs</span><span class="o">=</span><span class="p">[</span><span class="n">composite_reward</span><span class="p">],</span>
+    <span class="n">processing_class</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+    <span class="n">peft_config</span><span class="o">=</span><span class="n">lora_config</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>For tasks requiring code execution or external API calls, the reward function runs in the same Python process as training. For sandboxed execution (preventing the model from writing malicious code that runs during training), use a subprocess or a containerized reward server — see <a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a> for safe execution patterns.</p>
+<h2 id="end-to-end-reproducing-a-deepseek-r1-style-run">End-to-End: Reproducing a DeepSeek-R1-Style Run<a class="headerlink" href="#end-to-end-reproducing-a-deepseek-r1-style-run" title="Permanent link">¶</a></h2>
+<p>The minimal recipe to reproduce the RLVR reasoning alignment approach from DeepSeek-R1-Zero with TRL:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Install dependencies</span>
+pip<span class="w"> </span>install<span class="w"> </span>trl<span class="o">[</span>vllm<span class="o">]</span><span class="w"> </span>transformers<span class="w"> </span>peft<span class="w"> </span>accelerate<span class="w"> </span>flash-attn<span class="w"> </span>bitsandbytes
+
+<span class="c1"># 2. Launch with accelerate (8 GPUs: 4 train + 4 vLLM)</span>
+accelerate<span class="w"> </span>launch<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--num_processes<span class="w"> </span><span class="m">4</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--mixed_precision<span class="w"> </span>bf16<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>train_grpo_math.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model_name<span class="w"> </span>Qwen/Qwen2.5-7B<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--dataset<span class="w"> </span>gsm8k<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--num_generations<span class="w"> </span><span class="m">8</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--beta<span class="w"> </span><span class="m">0</span>.04<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--learning_rate<span class="w"> </span>1e-6<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--num_train_epochs<span class="w"> </span><span class="m">3</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--use_vllm<span class="w"> </span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--vllm_server_host<span class="w"> </span>localhost<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--vllm_server_port<span class="w"> </span><span class="m">8000</span>
+</code></pre></div>
+<p>The script <code>train_grpo_math.py</code> is essentially the GRPOTrainer example from §4, with the dataset replaced by GSM8K and a proper verifiable reward function. The RLVR recipe and its relation to chain-of-thought emergence are covered in depth in <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a>.</p>
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>TRL provides <code>SFTTrainer</code>, <code>RewardTrainer</code>, <code>DPOTrainer</code>, <code>PPOTrainer</code>, and <code>GRPOTrainer</code> as modular, independently usable components covering the full alignment pipeline.</li>
+<li>All trainers inherit from <code>transformers.Trainer</code> and use <code>accelerate</code> for distribution — any <code>accelerate</code> backend (FSDP, DeepSpeed, DDP) works without trainer-level code changes.</li>
+<li>PEFT (LoRA, QLoRA) integrates transparently: the reference model shares the base backbone with the policy, making the reference model nearly memory-free for DPO and GRPO.</li>
+<li><code>GRPOTrainer</code> is the recommended entry point for reasoning alignment (replacing PPO): no value head, group-relative advantages, and verifiable reward functions as plain Python callables.</li>
+<li>The generation bottleneck is TRL&rsquo;s main throughput limitation; the vLLM integration (<code>use_vllm=True</code>) overlaps rollout generation with gradient computation for 1.5–2x wall-clock speedup.</li>
+<li>Monitor <code>train/kl</code>, <code>train/reward</code>, and <code>train/clip_ratio</code>; a KL spike above 20 or a clip ratio above 0.5 signals instability.</li>
+<li>TRL is the fastest path from research paper to running experiment; for production-scale multi-node runs (70B+), consider veRL or OpenRLHF which offer disaggregated rollout workers and higher throughput.</li>
+<li>Composite reward functions (format + correctness + length penalty) are straightforward to implement as Python callables — no infrastructure overhead required.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>TRL has matured into the standard entry point for LLM post-training, with v1.0 (March 2026) stabilising its CLI, config system, and trainer suite; <code>GRPOTrainer</code> with co-located vLLM is now the dominant single-node recipe for reasoning alignment, while disaggregated frameworks (veRL, OpenRLHF) handle the 70B+ regime.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1909.08593">Ziegler et al., <em>Fine-Tuning Language Models from Human Preferences</em> (2019)</a> — the original RLHF paper combining reward models and PPO for language, the conceptual root of TRL&rsquo;s pipeline.</li>
+<li><a href="https://arxiv.org/abs/1707.06347">Schulman et al., <em>Proximal Policy Optimization Algorithms</em> (2017)</a> — the clipped surrogate objective underlying TRL&rsquo;s <code>PPOTrainer</code> and GRPO&rsquo;s importance-ratio update.</li>
+<li><a href="https://arxiv.org/abs/2305.18290">Rafailov et al., <em>Direct Preference Optimization: Your Language Model is Secretly a Reward Model</em> (2023)</a> — derives the closed-form DPO loss that TRL&rsquo;s <code>DPOTrainer</code> implements, eliminating the need for a separate reward model.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2402.03300">Shao et al., <em>DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models</em> (2024)</a> — introduces GRPO (group-relative advantage, no critic), the algorithm behind TRL&rsquo;s <code>GRPOTrainer</code>.</li>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI, <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em> (2025)</a> — demonstrates RLVR with verifiable rewards using GRPO at scale; the defining blueprint for TRL&rsquo;s reasoning alignment use-case.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/huggingface/trl">huggingface/trl</a> — the TRL library itself: <code>SFTTrainer</code>, <code>DPOTrainer</code>, <code>GRPOTrainer</code>, <code>PPOTrainer</code>, <code>RewardTrainer</code>, and more, all built on Transformers + Accelerate.</li>
+<li><a href="https://github.com/huggingface/open-r1">huggingface/open-r1</a> — fully open reproduction of the DeepSeek-R1 training pipeline using TRL&rsquo;s GRPO, including datasets and training scripts.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/blog/trl-v1">TRL v1 blog post — <em>Post-Training Library Built to Move with the Field</em> (2026)</a> — covers the v1.0 redesign: unified CLI, config system, and the expanded trainer suite.</li>
+<li><a href="https://huggingface.co/blog/vllm-colocate">HuggingFace Blog, <em>No GPU Left Behind: Co-located vLLM in TRL</em> (2025)</a> — explains the <code>vllm_mode="colocate"</code> feature that embeds generation inside the training process for 1.3–1.7× wall-clock speedup.</li>
+<li><a href="https://huggingface.co/learn/cookbook/en/fine_tuning_llm_grpo_trl">HuggingFace Cookbook, <em>Post-training an LLM for Reasoning with GRPO in TRL</em></a> — end-to-end notebook for reasoning fine-tuning with verifiable math rewards, mirroring the DeepSeek-R1-Zero recipe.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Ziegler et al., &ldquo;Fine-Tuning Language Models from Human Preferences&rdquo; (2019)</strong> — the original RLHF paper using reward models and PPO with language models; foundational for understanding why the pipeline exists.</li>
+<li><strong>Schulman et al., &ldquo;Proximal Policy Optimization Algorithms&rdquo; (2017)</strong> — the PPO algorithm underlying TRL&rsquo;s <code>PPOTrainer</code>; essential reading for the clipped surrogate objective.</li>
+<li><strong>Rafailov et al., &ldquo;Direct Preference Optimization: Your Language Model is Secretly a Reward Model&rdquo; (NeurIPS 2023)</strong> — derives DPO and is required context for <code>DPOTrainer</code>.</li>
+<li><strong>Shao et al., &ldquo;DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models&rdquo; (2024)</strong> — introduces GRPO and the group-relative advantage estimation used in <code>GRPOTrainer</code>.</li>
+<li><strong>DeepSeek-AI, &ldquo;DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning&rdquo; (2025)</strong> — demonstrates the RLVR recipe with verifiable rewards; the most influential recent application of GRPO.</li>
+<li><strong>TRL GitHub repository (HuggingFace/trl)</strong> — source code, examples, and trainer documentation; the <code>examples/</code> directory contains complete training scripts for each trainer.</li>
+<li><strong>HuggingFace Accelerate documentation</strong> — for multi-GPU/multi-node launch configurations used with all TRL trainers.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-generation-training-loop.html"><span class="pn-label">← Previous</span><span class="pn-title">The Generation–Training Loop &amp; Rollout Engines</span></a>
+<a class="next" href="04-verl.html"><span class="pn-label">Next →</span><span class="pn-title">veRL: HybridFlow &amp; The Single-Controller Architecture</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-trl-exists">Why TRL Exists</a></li>
+<li class="toc-l2"><a href="#trls-trainer-landscape">TRL&amp;rsquo;s Trainer Landscape</a></li>
+<li class="toc-l3"><a href="#sfttrainer">SFTTrainer</a></li>
+<li class="toc-l3"><a href="#rewardtrainer">RewardTrainer</a></li>
+<li class="toc-l2"><a href="#dpotrainer-direct-preference-optimization">DPOTrainer: Direct Preference Optimization</a></li>
+<li class="toc-l3"><a href="#how-dpotrainer-manages-memory">How DPOTrainer manages memory</a></li>
+<li class="toc-l2"><a href="#ppotrainer-online-rl-with-a-reward-signal">PPOTrainer: Online RL with a Reward Signal</a></li>
+<li class="toc-l3"><a href="#ppotrainers-memory-footprint">PPOTrainer&amp;rsquo;s memory footprint</a></li>
+<li class="toc-l2"><a href="#grpotrainer-the-deepseek-r1-recipe">GRPOTrainer: The DeepSeek-R1 Recipe</a></li>
+<li class="toc-l3"><a href="#configuring-and-running-grpotrainer">Configuring and running GRPOTrainer</a></li>
+<li class="toc-l3"><a href="#the-grpo-training-loop-internals">The GRPO training loop internals</a></li>
+<li class="toc-l2"><a href="#integration-with-accelerate-peft-and-vllm">Integration with Accelerate, PEFT, and vLLM</a></li>
+<li class="toc-l3"><a href="#accelerate">Accelerate</a></li>
+<li class="toc-l3"><a href="#peft-lora">PEFT / LoRA</a></li>
+<li class="toc-l3"><a href="#vllm-backend-for-generation">vLLM backend for generation</a></li>
+<li class="toc-l2"><a href="#practical-configuration-reference">Practical Configuration Reference</a></li>
+<li class="toc-l3"><a href="#monitoring-training-health">Monitoring training health</a></li>
+<li class="toc-l2"><a href="#strengths-and-limits-of-trl">Strengths and Limits of TRL</a></li>
+<li class="toc-l3"><a href="#where-trl-excels">Where TRL excels</a></li>
+<li class="toc-l3"><a href="#where-trl-hits-limits">Where TRL hits limits</a></li>
+<li class="toc-l2"><a href="#building-a-custom-reward-function-pipeline">Building a Custom Reward Function Pipeline</a></li>
+<li class="toc-l2"><a href="#end-to-end-reproducing-a-deepseek-r1-style-run">End-to-End: Reproducing a DeepSeek-R1-Style Run</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vision-Language Models — The LLM Stack</title>
+<meta name="description" content="Connecting a vision encoder to an LLM: LLaVA (projector), Flamingo (cross-attn), Qwen-VL/InternVL, native-resolution/any-resolution, the visual-token explosion,">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="active" href="02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part X — Multimodal &amp; Generative Frontiers</div>
+<h1 id="102-vision-language-models">10.2 Vision-Language Models<a class="headerlink" href="#102-vision-language-models" title="Permanent link">¶</a></h1>
+<p>Vision-Language Models (VLMs) solve a deceptively simple problem: given a pixel grid, produce tokens that an LLM can reason about. That bridge — turning an image into something a language model understands — is where almost all the architectural creativity lives. Get it wrong and you get a model that can describe cats but cannot read a receipt. Get it right and you get a model that can answer questions about medical scans, extract tables from PDFs, navigate UIs by screenshot, or write code from a whiteboard photo.</p>
+<p>This chapter covers the full arc: the two dominant connection strategies (projectors and cross-attention), the token explosion problem, native-resolution processing, OCR/document understanding, training recipes, and the modern unified recipe that powers models like LLaVA-1.6, Qwen-VL, and InternVL. We assume you are comfortable with the Transformer architecture (see <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a>) and with Vision Transformers (covered in <a href="../10-multimodal-and-arch/01-vision-transformers.html">Vision Transformers &amp; Image Encoders</a>).</p>
+<h2 id="the-connection-problem">The Connection Problem<a class="headerlink" href="#the-connection-problem" title="Permanent link">¶</a></h2>
+<p>A language model speaks in tokens drawn from a vocabulary of 32,000–128,000 entries, each an integer index. A vision encoder speaks in patch embeddings: dense floating-point vectors, one per <span class="arithmatex">\(16 \times 16\)</span> pixel grid cell. These two representations live in completely different spaces. The &ldquo;connection problem&rdquo; is: how do you translate patch embeddings into something the LLM&rsquo;s residual stream can accept?</p>
+<p>There are three broad answers:</p>
+<ol>
+<li>
+<p><strong>Projector (LLaVA-style):</strong> Run the vision encoder, flatten its output sequence of visual tokens, pass them through a learned linear projection (or a small MLP), then prepend/interleave those projected vectors into the LLM&rsquo;s token embedding sequence as if they were text token embeddings.</p>
+</li>
+<li>
+<p><strong>Cross-attention (Flamingo-style):</strong> Freeze or lightly fine-tune the LLM, then insert new cross-attention layers that attend from LLM hidden states to the vision encoder&rsquo;s output. The LLM&rsquo;s causal self-attention layers are unchanged; the cross-attention layers are interleaved and learn to &ldquo;look at&rdquo; the image on demand.</p>
+</li>
+<li>
+<p><strong>Unified tokenizer (native multimodal):</strong> Quantize patches into discrete visual tokens from a codebook (VQ-VAE style), then feed image and text tokens as a single flat sequence to one model. GPT-4o and Chameleon use variants of this. We cover it more in <a href="../10-multimodal-and-arch/05-unified-any-to-any.html">Unified &amp; Any-to-Any Models</a>.</p>
+</li>
+</ol>
+<p>The projector approach (strategy 1) has become the dominant recipe because it is simple, cheap to train, and easy to compose with any pretrained LLM.</p>
+<figure class="viz" id="fig-vlm-projector-dataflow">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 1020 290" role="img" aria-label="LLaVA-style projector data flow: image enters Vision Encoder producing patch embeddings, Projector MLP maps them to D_llm, and projected visual tokens are prepended before the LLM text tokens.">
+  <defs>
+    <marker id="pd-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+    </marker>
+    <marker id="pd-arr-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6d675d)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-vlm-projector-dataflow .lbl { font:600 12px var(--sans,sans-serif); }
+    #fig-vlm-projector-dataflow .sub { font:400 10px var(--mono,monospace); fill:var(--muted,#6d675d); }
+    #fig-vlm-projector-dataflow .tok { font:600 9px var(--mono,monospace); }
+    #fig-vlm-projector-dataflow .cap { font:500 10px var(--sans,sans-serif); fill:var(--muted,#6d675d); }
+    #fig-vlm-projector-dataflow .ann { font:400 9px var(--mono,monospace); fill:var(--muted,#6d675d); }
+    #fig-vlm-projector-dataflow text { fill:var(--ink-soft,#45413a); }
+  </style>
+
+
+
+
+  <g data-anim="1">
+    <rect x="14" y="14" width="180" height="52" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+    <text x="104" y="35" text-anchor="middle" class="lbl">Image</text>
+    <text x="104" y="52" text-anchor="middle" class="sub">256 × 256 pixels</text>
+  </g>
+
+
+  <line x1="104" y1="68" x2="104" y2="100" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#pd-arr)"/>
+
+
+  <g data-anim="2">
+    <rect x="14" y="103" width="180" height="52" rx="8" fill="var(--surface-3,#ece7da)" class="v-accent-s" stroke-width="1.5"/>
+    <text x="104" y="125" text-anchor="middle" class="lbl">Vision Encoder</text>
+    <text x="104" y="142" text-anchor="middle" class="sub">(ViT-L/14)</text>
+  </g>
+
+
+  <line x1="104" y1="157" x2="104" y2="188" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#pd-arr)"/>
+
+  <text x="14" y="170" class="ann">patch embeds [N, D_v]</text>
+
+
+  <g data-anim="3">
+    <rect x="14" y="191" width="180" height="62" rx="8" fill="var(--accent,#c15b39)" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+    <text x="104" y="213" text-anchor="middle" class="lbl" fill="#fff">Projector</text>
+    <text x="104" y="228" text-anchor="middle" fill="#fff" style="font:400 10px var(--mono,monospace);">(MLP or linear)</text>
+    <text x="104" y="243" text-anchor="middle" fill="rgba(255,255,255,0.8)" style="font:400 9px var(--mono,monospace);">out: [N, D_llm]</text>
+  </g>
+
+
+  <g data-anim="4">
+    <path d="M 196 222 L 268 222 L 268 148 L 328 148"
+          fill="none" stroke="var(--accent,#c15b39)" stroke-width="2"
+          marker-end="url(#pd-arr)"/>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="330" y="52" width="676" height="212" rx="10" class="v-fill v-stroke" stroke-width="2"/>
+
+    <rect x="330" y="52" width="676" height="30" rx="10" fill="var(--surface-3,#ece7da)" stroke="none"/>
+    <rect x="330" y="68"  width="676" height="14"         fill="var(--surface-3,#ece7da)" stroke="none"/>
+    <line x1="330" y1="82" x2="1006" y2="82" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+    <text x="668" y="72" text-anchor="middle" class="lbl">LLM (frozen or fine-tuned)</text>
+  </g>
+
+
+  <g data-anim="4">
+    <text x="346" y="96" class="ann" fill="var(--accent,#c15b39)">projected visual tokens</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="346" y1="108" x2="614" y2="108" stroke="var(--muted,#6d675d)" stroke-width="0.7" stroke-dasharray="2 2" opacity="0.5"/>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="346" y="114" width="52" height="28" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+    <text x="372" y="133" text-anchor="middle" class="tok">&lt;img_1&gt;</text>
+
+    <rect x="404" y="114" width="52" height="28" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+    <text x="430" y="133" text-anchor="middle" class="tok">&lt;img_2&gt;</text>
+
+    <rect x="462" y="114" width="52" height="28" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+    <text x="488" y="133" text-anchor="middle" class="tok">&lt;img_3&gt;</text>
+
+    <rect x="520" y="114" width="26" height="28" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.10" stroke="var(--accent,#c15b39)" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="533" y="133" text-anchor="middle" class="tok">…</text>
+
+    <rect x="552" y="114" width="56" height="28" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+    <text x="580" y="133" text-anchor="middle" class="tok">&lt;img_N&gt;</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="618" y1="106" x2="618" y2="148" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5" stroke-dasharray="3 2"/>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="626" y="114" width="64" height="28" rx="5" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="658" y="133" text-anchor="middle" class="tok">"Describe"</text>
+
+    <rect x="696" y="114" width="26" height="28" rx="5" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="709" y="133" text-anchor="middle" class="tok">…</text>
+
+    <rect x="728" y="114" width="70" height="28" rx="5" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="763" y="133" text-anchor="middle" class="tok">"this image"</text>
+
+    <rect x="804" y="114" width="26" height="28" rx="5" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="817" y="133" text-anchor="middle" class="tok">…</text>
+
+    <rect x="836" y="114" width="152" height="28" rx="5" class="v-fill v-stroke" stroke-width="1" stroke-dasharray="2 2"/>
+    <text x="912" y="133" text-anchor="middle" class="tok">more text tokens</text>
+  </g>
+
+
+  <g data-anim="4">
+    <polygon points="372,150 366,158 378,158" fill="var(--accent,#c15b39)"/>
+    <line x1="372" y1="160" x2="372" y2="172" stroke="var(--accent,#c15b39)" stroke-width="1" stroke-dasharray="2 3" opacity="0.4"/>
+  </g>
+
+
+  <g data-anim="5">
+    <text x="466" y="188" text-anchor="middle" class="cap">visual tokens (from projector)</text>
+    <text x="780" y="188" text-anchor="middle" class="cap">text tokens</text>
+    <text x="630" y="238" text-anchor="middle" class="cap">autoregressive output</text>
+    <line x1="688" y1="234" x2="706" y2="234" stroke="var(--muted,#6d675d)" stroke-width="1.1" marker-end="url(#pd-arr-m)"/>
+    <text x="752" y="238" text-anchor="middle" class="cap">answer text</text>
+  </g>
+
+</svg>
+<figcaption><b>The LLaVA-style projector converts patch embeddings into LLM-compatible tokens.</b> The Vision Encoder (ViT-L/14) produces N patch embeddings; the Projector MLP maps each from D_vision to D_llm; those projected tokens are prepended before the text tokens in the LLM input. Only the projector is trained in stage 1 — the encoder and LLM remain frozen.</figcaption>
+</figure>
+
+<h2 id="llava-the-projector-paradigm">LLaVA: The Projector Paradigm<a class="headerlink" href="#llava-the-projector-paradigm" title="Permanent link">¶</a></h2>
+<p>LLaVA (Large Language and Vision Assistant, Liu et al., 2023) popularized the minimal projector design. The architecture has three components:</p>
+<ol>
+<li>A frozen CLIP ViT (typically ViT-L/14 @ 336px) that produces <span class="arithmatex">\(N\)</span> patch embeddings of dimension <span class="arithmatex">\(D_v = 1024\)</span>.</li>
+<li>A projector <span class="arithmatex">\(W\)</span> (originally a single linear layer, later a two-layer MLP with GELU) that maps <span class="arithmatex">\(D_v \to D_\text{llm}\)</span>.</li>
+<li>A causal LLM (Vicuna or LLaMA) that receives the projected visual tokens followed by the tokenized text prompt.</li>
+</ol>
+<p>The training recipe is staged:</p>
+<p><strong>Stage 1 — Feature Alignment.</strong> Only the projector is trained. The LLM and vision encoder are frozen. The model learns to map visual features into the LLM&rsquo;s embedding space using a large corpus of image–caption pairs (CC3M-scale). Loss: language modeling on the caption tokens only. This stage takes on the order of 1 GPU-day.</p>
+<p><strong>Stage 2 — Instruction Tuning.</strong> The projector and the LLM are both unfrozen (or the LLM is LoRA-tuned). The model is trained on multimodal instruction-following data: (image, question, answer) triples. Visual encoder weights may remain frozen to preserve CLIP&rsquo;s representation quality. This stage is where the model learns to follow instructions about images.</p>
+<p>The projector equation is clean:</p>
+<div class="arithmatex">\[
+\mathbf{H}_v = \text{Projector}(\mathbf{Z}_v) \in \mathbb{R}^{N \times D_\text{llm}}
+\]</div>
+<p>where <span class="arithmatex">\(\mathbf{Z}_v \in \mathbb{R}^{N \times D_v}\)</span> is the ViT&rsquo;s output (CLS token optionally removed, leaving only patch tokens). The LLM then processes the concatenated sequence:</p>
+<div class="arithmatex">\[
+[\mathbf{H}_v \| \mathbf{E}_\text{text}] \in \mathbb{R}^{(N + T) \times D_\text{llm}}
+\]</div>
+<p>where <span class="arithmatex">\(\mathbf{E}_\text{text}\)</span> are the standard token embeddings for the text prompt and <span class="arithmatex">\(T\)</span> is the number of text tokens.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">CLIPVisionModel</span><span class="p">,</span> <span class="n">CLIPImageProcessor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">LlamaForCausalLM</span><span class="p">,</span> <span class="n">LlamaTokenizer</span>
+
+<span class="c1"># Minimal LLaVA-style projector and forward pass</span>
+<span class="c1"># (Simplified for exposition; omit generation logic for brevity)</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TwoLayerMLP</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;LLaVA-1.5&#39;s MLP connector: Linear -&gt; GELU -&gt; Linear.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vision_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">llm_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">vision_dim</span><span class="p">,</span> <span class="n">llm_dim</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">GELU</span><span class="p">(),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">llm_dim</span><span class="p">,</span> <span class="n">llm_dim</span><span class="p">),</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># x: [batch, num_patches, vision_dim]</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># -&gt; [batch, num_patches, llm_dim]</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MiniLLaVA</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Minimal LLaVA-style VLM skeleton.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        vision_model: a CLIP ViT that returns last_hidden_state</span>
+<span class="sd">        projector:    TwoLayerMLP mapping vision_dim -&gt; llm_dim</span>
+<span class="sd">        llm:          causal decoder-only LLM</span>
+<span class="sd">        llm_dim:      hidden size of the LLM (e.g. 4096 for LLaMA-7B)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vision_model</span><span class="p">,</span> <span class="n">projector</span><span class="p">,</span> <span class="n">llm</span><span class="p">,</span> <span class="n">llm_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">vision_model</span> <span class="o">=</span> <span class="n">vision_model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">projector</span> <span class="o">=</span> <span class="n">projector</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">llm</span> <span class="o">=</span> <span class="n">llm</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">llm_dim</span> <span class="o">=</span> <span class="n">llm_dim</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">encode_image</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pixel_values</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        pixel_values: [B, 3, H, W] in CLIP&#39;s normalized space</span>
+<span class="sd">        Returns projected visual embeddings: [B, N_patches, llm_dim]</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>  <span class="c1"># Stage 1: vision encoder frozen</span>
+            <span class="n">vision_out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">vision_model</span><span class="p">(</span><span class="n">pixel_values</span><span class="o">=</span><span class="n">pixel_values</span><span class="p">)</span>
+        <span class="c1"># vision_out.last_hidden_state: [B, 1 + N_patches, vision_dim]</span>
+        <span class="c1"># Drop CLS token (index 0), keep only patch tokens</span>
+        <span class="n">patch_embeds</span> <span class="o">=</span> <span class="n">vision_out</span><span class="o">.</span><span class="n">last_hidden_state</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:,</span> <span class="p">:]</span>
+        <span class="c1"># Project into LLM space</span>
+        <span class="n">visual_tokens</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">projector</span><span class="p">(</span><span class="n">patch_embeds</span><span class="p">)</span>  <span class="c1"># [B, N_patches, llm_dim]</span>
+        <span class="k">return</span> <span class="n">visual_tokens</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">pixel_values</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>       <span class="c1"># [B, 3, H, W]</span>
+        <span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>          <span class="c1"># [B, T]   (text tokens)</span>
+        <span class="n">attention_mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>     <span class="c1"># [B, N_patches + T]</span>
+        <span class="n">labels</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>  <span class="c1"># [B, T]</span>
+    <span class="p">):</span>
+        <span class="c1"># 1. Encode visual tokens</span>
+        <span class="n">visual_tokens</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">encode_image</span><span class="p">(</span><span class="n">pixel_values</span><span class="p">)</span>  <span class="c1"># [B, N, D_llm]</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="n">visual_tokens</span><span class="o">.</span><span class="n">shape</span>
+
+        <span class="c1"># 2. Get text embeddings from LLM&#39;s word embedding table</span>
+        <span class="n">text_embeds</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">embed_tokens</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>  <span class="c1"># [B, T, D_llm]</span>
+
+        <span class="c1"># 3. Concatenate: [visual | text] along the sequence dimension</span>
+        <span class="n">inputs_embeds</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">visual_tokens</span><span class="p">,</span> <span class="n">text_embeds</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="c1"># inputs_embeds: [B, N + T, D_llm]</span>
+
+        <span class="c1"># 4. If labels are provided, mask loss over visual positions</span>
+        <span class="k">if</span> <span class="n">labels</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># Pad labels for the visual token positions with -100 (ignore index)</span>
+            <span class="n">visual_labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">(</span>
+                <span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">N</span><span class="p">),</span> <span class="n">fill_value</span><span class="o">=-</span><span class="mi">100</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">labels</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">labels</span><span class="o">.</span><span class="n">device</span>
+            <span class="p">)</span>
+            <span class="n">labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">visual_labels</span><span class="p">,</span> <span class="n">labels</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># 5. Forward pass through LLM using embeddings (not input_ids)</span>
+        <span class="n">outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">llm</span><span class="p">(</span>
+            <span class="n">inputs_embeds</span><span class="o">=</span><span class="n">inputs_embeds</span><span class="p">,</span>
+            <span class="n">attention_mask</span><span class="o">=</span><span class="n">attention_mask</span><span class="p">,</span>
+            <span class="n">labels</span><span class="o">=</span><span class="n">labels</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">outputs</span>
+
+
+<span class="c1"># --- Quick shape check (no weights needed) ---</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">336</span><span class="p">,</span> <span class="mi">336</span>  <span class="c1"># LLaVA uses 336x336</span>
+    <span class="n">CLIP_PATCH_SIZE</span> <span class="o">=</span> <span class="mi">14</span>
+    <span class="n">N_PATCHES</span> <span class="o">=</span> <span class="p">(</span><span class="n">H</span> <span class="o">//</span> <span class="n">CLIP_PATCH_SIZE</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>  <span class="c1"># 576 patches</span>
+    <span class="n">VISION_DIM</span> <span class="o">=</span> <span class="mi">1024</span>   <span class="c1"># CLIP ViT-L/14</span>
+    <span class="n">LLM_DIM</span>   <span class="o">=</span> <span class="mi">4096</span>   <span class="c1"># LLaMA-7B hidden size</span>
+
+    <span class="n">proj</span> <span class="o">=</span> <span class="n">TwoLayerMLP</span><span class="p">(</span><span class="n">VISION_DIM</span><span class="p">,</span> <span class="n">LLM_DIM</span><span class="p">)</span>
+    <span class="n">fake_patches</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">N_PATCHES</span><span class="p">,</span> <span class="n">VISION_DIM</span><span class="p">)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">proj</span><span class="p">(</span><span class="n">fake_patches</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Patches in:  </span><span class="si">{</span><span class="n">fake_patches</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># [2, 576, 1024]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Tokens out:  </span><span class="si">{</span><span class="n">out</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>            <span class="c1"># [2, 576, 4096]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Projector params: </span><span class="si">{</span><span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">proj</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># Approx 4096*1024*2 + 4096*4096*2 ≈ 42M params — tiny vs 7B LLM</span>
+</code></pre></div>
+<p>LLaVA-1.5 replaced the linear projector with this MLP connector, achieving significant gains on benchmarks like VQAv2 and MMBench. The lesson: the projector is a hyperparameter worth tuning.</p>
+<h2 id="flamingo-cross-attention-for-in-context-multimodal-learning">Flamingo: Cross-Attention for In-Context Multimodal Learning<a class="headerlink" href="#flamingo-cross-attention-for-in-context-multimodal-learning" title="Permanent link">¶</a></h2>
+<p>Flamingo (Alayrac et al., DeepMind 2022) took a different path. Rather than prepending visual tokens, it freezes a large pretrained LLM and inserts new <em>gated cross-attention</em> layers between every transformer block. Each cross-attention layer attends from LLM hidden states to vision encoder outputs.</p>
+<p>The gated cross-attention update for layer <span class="arithmatex">\(\ell\)</span> is:</p>
+<div class="arithmatex">\[
+\mathbf{h}^{(\ell)} \leftarrow \mathbf{h}^{(\ell)} + \tanh(\alpha) \cdot \text{CrossAttn}^{(\ell)}(\mathbf{h}^{(\ell)}, \mathbf{Z}_v)
+\]</div>
+<p>where <span class="arithmatex">\(\alpha\)</span> is a learnable scalar initialized to 0, so the gate starts closed and the LLM is barely perturbed at the beginning of training. This initialization lets Flamingo inherit all of the pretrained LLM&rsquo;s text capabilities while gradually integrating visual information.</p>
+<p>The key architectural difference from the projector approach:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>LLaVA-style projector</th>
+<th>Flamingo cross-attn</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Visual tokens in LLM stream</td>
+<td>Yes — they occupy sequence positions</td>
+<td>No — LLM residual stream unchanged</td>
+</tr>
+<tr>
+<td>New parameters</td>
+<td>Projector only (~40M)</td>
+<td>Cross-attn KV projections in every layer</td>
+</tr>
+<tr>
+<td>LLM context consumed by image</td>
+<td>Proportional to N_patches (e.g. 576)</td>
+<td>Zero — image stored externally</td>
+</tr>
+<tr>
+<td>Few-shot image interleaving</td>
+<td>Awkward — prepend all images</td>
+<td>Natural — interleaved in context</td>
+</tr>
+<tr>
+<td>Fine-tuning complexity</td>
+<td>Straightforward</td>
+<td>More complex; two parameter groups</td>
+</tr>
+</tbody>
+</table>
+<p>Flamingo&rsquo;s cross-attention design enables <em>interleaved</em> image–text few-shot inference natively: you can pass &ldquo;image1, caption1, image2, caption2, image3, ?&rdquo; as a single context. The cross-attention layers route each text token to the most recently preceding image (via a masking strategy in the attention). This is harder to achieve with projectors because all image tokens compete for context space.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">GatedCrossAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Flamingo-style gated cross-attention block.</span>
+
+<span class="sd">    The hidden states h query into visual features z_v.</span>
+<span class="sd">    The gate alpha (scalar) starts at 0 so the skip connection</span>
+<span class="sd">    initially passes h unchanged.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_vision</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span>  <span class="o">=</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_head</span>   <span class="o">=</span> <span class="n">d_model</span> <span class="o">//</span> <span class="n">n_heads</span>
+        <span class="c1"># Query comes from LLM hidden states</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">q_proj</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="c1"># Key/Value come from vision encoder output</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">k_proj</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_vision</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">v_proj</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_vision</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">out_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="c1"># Gating scalar, init to 0 =&gt; tanh(0) = 0 =&gt; no perturbation</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">alpha</span>    <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm_q</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm_kv</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_vision</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">h</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>    <span class="c1"># [B, T_text, d_model]  LLM hidden states</span>
+        <span class="n">z</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>    <span class="c1"># [B, N_vis,  d_vision] vision encoder output</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="n">h</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">z</span><span class="o">.</span><span class="n">shape</span>
+
+        <span class="c1"># Normalize inputs before attention (Flamingo uses a norm here)</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">q_proj</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">norm_q</span><span class="p">(</span><span class="n">h</span><span class="p">))</span>    <span class="c1"># [B, T, D]</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_proj</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">norm_kv</span><span class="p">(</span><span class="n">z</span><span class="p">))</span>   <span class="c1"># [B, N, D]</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">v_proj</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">norm_kv</span><span class="p">(</span><span class="n">z</span><span class="p">))</span>   <span class="c1"># [B, N, D]</span>
+
+        <span class="c1"># Reshape for multi-head attention</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">split_heads</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+            <span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+            <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">d_head</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+            <span class="c1"># -&gt; [B, n_heads, L, d_head]</span>
+
+        <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="n">split_heads</span><span class="p">(</span><span class="n">q</span><span class="p">),</span> <span class="n">split_heads</span><span class="p">(</span><span class="n">k</span><span class="p">),</span> <span class="n">split_heads</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+
+        <span class="c1"># Scaled dot-product attention (cross-attention: q from h, kv from z)</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">d_head</span> <span class="o">**</span> <span class="o">-</span><span class="mf">0.5</span>
+        <span class="n">attn</span>  <span class="o">=</span> <span class="p">(</span><span class="n">q</span> <span class="o">@</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">*</span> <span class="n">scale</span>  <span class="c1"># [B, n_heads, T, N]</span>
+        <span class="n">attn</span>  <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">attn</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">out</span>   <span class="o">=</span> <span class="n">attn</span> <span class="o">@</span> <span class="n">v</span>                            <span class="c1"># [B, n_heads, T, d_head]</span>
+
+        <span class="c1"># Merge heads</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">out_proj</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>                    <span class="c1"># [B, T, D]</span>
+
+        <span class="c1"># Gated residual: starts at 0, grows during training</span>
+        <span class="k">return</span> <span class="n">h</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">tanh</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">alpha</span><span class="p">)</span> <span class="o">*</span> <span class="n">out</span>
+
+
+<span class="c1"># Demo</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T_text</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">64</span>          <span class="c1"># batch, text tokens</span>
+    <span class="n">N_vis</span>     <span class="o">=</span> <span class="mi">64</span>             <span class="c1"># 8x8 visual tokens (pooled)</span>
+    <span class="n">d_model</span>   <span class="o">=</span> <span class="mi">2048</span>           <span class="c1"># LLM width (e.g. Chinchilla-style 7B)</span>
+    <span class="n">d_vision</span>  <span class="o">=</span> <span class="mi">1024</span>           <span class="c1"># CLIP ViT-L/14</span>
+
+    <span class="n">gca</span> <span class="o">=</span> <span class="n">GatedCrossAttention</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_vision</span><span class="p">,</span> <span class="n">n_heads</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>
+    <span class="n">h</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T_text</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+    <span class="n">z</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">N_vis</span><span class="p">,</span>  <span class="n">d_vision</span><span class="p">)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">gca</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">z</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Input shape:  </span><span class="si">{</span><span class="n">h</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>      <span class="c1"># [2, 64, 2048]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output shape: </span><span class="si">{</span><span class="n">out</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>    <span class="c1"># [2, 64, 2048]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Alpha (gate): </span><span class="si">{</span><span class="n">gca</span><span class="o">.</span><span class="n">alpha</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 0.0000 at init</span>
+</code></pre></div>
+<h2 id="the-visual-token-explosion">The Visual Token Explosion<a class="headerlink" href="#the-visual-token-explosion" title="Permanent link">¶</a></h2>
+<p>The most important practical concern in VLM engineering is the <strong>visual token explosion</strong>: the number of tokens consumed by one image scales as <span class="arithmatex">\((H/p)^2\)</span> where <span class="arithmatex">\(p\)</span> is the patch size. A <span class="arithmatex">\(336 \times 336\)</span> image with <span class="arithmatex">\(14 \times 14\)</span> patches gives <span class="arithmatex">\(576\)</span> tokens. Scale to <span class="arithmatex">\(672 \times 672\)</span> and you get <span class="arithmatex">\(2304\)</span> tokens. These tokens sit in the LLM&rsquo;s context and cost <span class="arithmatex">\(O(N^2)\)</span> attention in the prefill phase.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Token Count and Memory Cost</p>
+<p>Suppose we use LLaVA-1.6 with a 4K resolution tile strategy on a single <span class="arithmatex">\(1344 \times 336\)</span> image (panoramic scan).
+LLaVA-1.6 divides the image into tiles:
+- A <span class="arithmatex">\(1344 \times 336\)</span> image is split into <span class="arithmatex">\(4 \times 1 = 4\)</span> tiles of <span class="arithmatex">\(336 \times 336\)</span> each plus a low-resolution &ldquo;thumbnail&rdquo; tile.
+- Each <span class="arithmatex">\(336 \times 336\)</span> tile produces <span class="arithmatex">\(576\)</span> patch tokens through CLIP ViT-L/14.
+- 4 tiles + 1 thumbnail <span class="arithmatex">\(\times 576 = 2880\)</span> visual tokens.</p>
+<p>At LLaMA-2-7B with <span class="arithmatex">\(D_\text{llm} = 4096\)</span>, each token costs <span class="arithmatex">\(2 \times 4096 = 8192\)</span> bytes (bf16) in the KV cache per layer, across 32 layers:</p>
+<div class="arithmatex">\[
+\text{KV memory} = 2880 \times 32 \times 2 \times 4096 \times 2 \,\text{bytes} \approx 1.5\,\text{GB}
+\]</div>
+<p>just for the visual prefix of a single image in a batch of 1. For a batch of 8 with long text answers (say 256 text tokens), total KV cache grows to roughly 12 GB, saturating an A100-40GB at modest batch sizes. This is the core tension: more visual tokens = higher resolution fidelity, more context window consumed, more memory.</p>
+<p>For comparison, a pure text conversation with 1024 tokens at the same model uses <span class="arithmatex">\(1024 \times 32 \times 2 \times 4096 \times 2 \approx 536\,\text{MB}\)</span> — the image costs <span class="arithmatex">\(3\times\)</span> more KV memory than a long text prompt.</p>
+</div>
+<p>Several techniques reduce this cost:</p>
+<ul>
+<li>
+<p><strong>Visual token compression (Q-Former):</strong> BLIP-2 (Li et al., 2023) introduces a Querying Transformer (Q-Former) that extracts a fixed <span class="arithmatex">\(K=32\)</span> query vectors from the full <span class="arithmatex">\(N\)</span> visual tokens. The Q-Former&rsquo;s learned queries cross-attend to the vision encoder and output <span class="arithmatex">\(K\)</span> compressed representations regardless of image resolution.</p>
+</li>
+<li>
+<p><strong>Average pooling:</strong> Some models simply average-pool adjacent patches (e.g. <span class="arithmatex">\(2 \times 2\)</span> average, reducing by <span class="arithmatex">\(4\times\)</span>) before projecting.</p>
+</li>
+<li>
+<p><strong>Dynamic resolution with token merging:</strong> Retain high-res patches near salient regions and merge low-information patches using token merging algorithms like ToMe (Bolya et al., 2023).</p>
+</li>
+</ul>
+<p>See <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a> for infrastructure techniques that partially mitigate visual prefix costs at serving time.</p>
+<h2 id="native-resolution-and-any-resolution">Native Resolution and Any-Resolution<a class="headerlink" href="#native-resolution-and-any-resolution" title="Permanent link">¶</a></h2>
+<p>Early VLMs like LLaVA-1.0 resize all images to a fixed <span class="arithmatex">\(336 \times 336\)</span> before encoding. This is fine for simple visual QA but destroys the detail needed for:
+- OCR on dense documents (small text becomes illegible)
+- Chart and table reading
+- Counting objects in crowded scenes
+- Medical imaging</p>
+<p>The solution is <strong>any-resolution (AnyRes)</strong> processing, introduced in LLaVA-1.6 and independently in InternVL and Qwen-VL.</p>
+<p>The recipe:</p>
+<ol>
+<li>
+<p><strong>Tile the image.</strong> Given an image of arbitrary resolution, divide it into overlapping or non-overlapping tiles that each fit the fixed encoder resolution (<span class="arithmatex">\(336 \times 336\)</span>). Also encode a down-sampled global &ldquo;thumbnail&rdquo; to give the model spatial context.</p>
+</li>
+<li>
+<p><strong>Encode each tile independently</strong> through the same ViT. Each tile produces the same number of patch tokens.</p>
+</li>
+<li>
+<p><strong>Concatenate and project.</strong> All tile embeddings are concatenated (along the sequence dimension) and passed through the projector. A separator token is optionally inserted between tiles.</p>
+</li>
+<li>
+<p><strong>Positional cues.</strong> The model needs to know which tile came from which spatial position. Strategies include: (a) adding tile-position embeddings, (b) inserting special <code>&lt;row_start&gt;</code> / <code>&lt;col_end&gt;</code> tokens, &copy; encoding row/column as text like <code>"row 0, col 2:"</code>.</p>
+</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">tile_image</span><span class="p">(</span>
+    <span class="n">image</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">,</span>
+    <span class="n">tile_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">336</span><span class="p">,</span>
+    <span class="n">max_tiles</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">6</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Divide an image into tiles of `tile_size x tile_size`.</span>
+<span class="sd">    Always returns a thumbnail as the last tile.</span>
+<span class="sd">    Limits total tiles to max_tiles (excluding thumbnail).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">W</span><span class="p">,</span> <span class="n">H</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span>
+    <span class="c1"># Compute number of tiles in each dimension</span>
+    <span class="n">n_cols</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">W</span> <span class="o">/</span> <span class="n">tile_size</span><span class="p">))</span>
+    <span class="n">n_rows</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">H</span> <span class="o">/</span> <span class="n">tile_size</span><span class="p">))</span>
+    <span class="c1"># Clip to max_tiles (e.g. 6 for LLaVA-1.6)</span>
+    <span class="k">if</span> <span class="n">n_rows</span> <span class="o">*</span> <span class="n">n_cols</span> <span class="o">&gt;</span> <span class="n">max_tiles</span><span class="p">:</span>
+        <span class="c1"># Reduce proportionally — simplified version</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="p">(</span><span class="n">max_tiles</span> <span class="o">/</span> <span class="p">(</span><span class="n">n_rows</span> <span class="o">*</span> <span class="n">n_cols</span><span class="p">))</span> <span class="o">**</span> <span class="mf">0.5</span>
+        <span class="n">n_cols</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">n_cols</span> <span class="o">*</span> <span class="n">scale</span><span class="p">))</span>
+        <span class="n">n_rows</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">n_rows</span> <span class="o">*</span> <span class="n">scale</span><span class="p">))</span>
+
+    <span class="c1"># Resize image to exact grid dimensions</span>
+    <span class="n">resized</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">resize</span><span class="p">((</span><span class="n">n_cols</span> <span class="o">*</span> <span class="n">tile_size</span><span class="p">,</span> <span class="n">n_rows</span> <span class="o">*</span> <span class="n">tile_size</span><span class="p">),</span> <span class="n">Image</span><span class="o">.</span><span class="n">BICUBIC</span><span class="p">)</span>
+
+    <span class="n">tiles</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_rows</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_cols</span><span class="p">):</span>
+            <span class="n">left</span>   <span class="o">=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">tile_size</span>
+            <span class="n">upper</span>  <span class="o">=</span> <span class="n">r</span> <span class="o">*</span> <span class="n">tile_size</span>
+            <span class="n">right</span>  <span class="o">=</span> <span class="n">left</span> <span class="o">+</span> <span class="n">tile_size</span>
+            <span class="n">lower</span>  <span class="o">=</span> <span class="n">upper</span> <span class="o">+</span> <span class="n">tile_size</span>
+            <span class="n">tiles</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">resized</span><span class="o">.</span><span class="n">crop</span><span class="p">((</span><span class="n">left</span><span class="p">,</span> <span class="n">upper</span><span class="p">,</span> <span class="n">right</span><span class="p">,</span> <span class="n">lower</span><span class="p">)))</span>
+
+    <span class="c1"># Thumbnail: whole image squeezed into one tile</span>
+    <span class="n">thumbnail</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">resize</span><span class="p">((</span><span class="n">tile_size</span><span class="p">,</span> <span class="n">tile_size</span><span class="p">),</span> <span class="n">Image</span><span class="o">.</span><span class="n">BICUBIC</span><span class="p">)</span>
+    <span class="n">tiles</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">thumbnail</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">tiles</span>  <span class="c1"># length = n_rows * n_cols + 1</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">encode_tiles_to_visual_tokens</span><span class="p">(</span>
+    <span class="n">tiles</span><span class="p">:</span> <span class="nb">list</span><span class="p">,</span>
+    <span class="n">vision_encoder</span><span class="p">,</span>       <span class="c1"># returns [1, 1+N_patches, D_v]</span>
+    <span class="n">projector</span><span class="p">,</span>            <span class="c1"># maps [1, N_patches, D_v] -&gt; [1, N_patches, D_llm]</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Encode each tile through the vision encoder + projector.</span>
+<span class="sd">    Returns concatenated visual tokens: [1, K * N_patches, D_llm]</span>
+<span class="sd">    where K = len(tiles).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">all_tokens</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">tile_img</span> <span class="ow">in</span> <span class="n">tiles</span><span class="p">:</span>
+        <span class="c1"># Preprocess (CLIP normalization, to_tensor, add batch dim)</span>
+        <span class="n">pixel_values</span> <span class="o">=</span> <span class="n">preprocess</span><span class="p">(</span><span class="n">tile_img</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>  <span class="c1"># [1, 3, 336, 336]</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">enc</span> <span class="o">=</span> <span class="n">vision_encoder</span><span class="p">(</span><span class="n">pixel_values</span><span class="o">=</span><span class="n">pixel_values</span><span class="p">)</span>
+        <span class="c1"># Drop CLS token, project</span>
+        <span class="n">patch_embeds</span> <span class="o">=</span> <span class="n">enc</span><span class="o">.</span><span class="n">last_hidden_state</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:,</span> <span class="p">:]</span>  <span class="c1"># [1, 576, D_v]</span>
+        <span class="n">tokens</span> <span class="o">=</span> <span class="n">projector</span><span class="p">(</span><span class="n">patch_embeds</span><span class="p">)</span>                <span class="c1"># [1, 576, D_llm]</span>
+        <span class="n">all_tokens</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
+    <span class="c1"># Concatenate along sequence dimension</span>
+    <span class="n">visual_tokens</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">all_tokens</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>        <span class="c1"># [1, K*576, D_llm]</span>
+    <span class="k">return</span> <span class="n">visual_tokens</span>
+
+
+<span class="c1"># Example: 672x336 image -&gt; 2 tiles + 1 thumbnail = 3 * 576 = 1728 visual tokens</span>
+</code></pre></div>
+<p>InternVL 1.5 and 2.x push this further with <strong>dynamic high resolution</strong>: tiles are selected based on the image&rsquo;s aspect ratio and content type, and the model is trained with a curriculum that starts at low resolution and increases to <span class="arithmatex">\(4 \times 4\)</span> tiles (up to 2304 tokens excluding thumbnail). Qwen-VL uses a similar approach but introduces a <strong>position-aware visual attention</strong> mechanism so that patches from different tiles maintain correct 2-D relative positions when processed in the LLM.</p>
+<h2 id="qwen-vl-and-internvl-the-modern-recipe">Qwen-VL and InternVL: The Modern Recipe<a class="headerlink" href="#qwen-vl-and-internvl-the-modern-recipe" title="Permanent link">¶</a></h2>
+<p>Qwen-VL (Bai et al., Alibaba, 2023) and InternVL (Chen et al., Shanghai AI Lab, 2023–2024) represent the current state-of-practice. Both move beyond the minimal LLaVA recipe in two important ways:</p>
+<h3 id="larger-better-vision-encoders">Larger, Better Vision Encoders<a class="headerlink" href="#larger-better-vision-encoders" title="Permanent link">¶</a></h3>
+<p>LLaVA-1.5 uses CLIP ViT-L/14 (~307M params). InternVL uses InternViT-6B — a 6 billion parameter vision encoder trained with CLIP contrastive learning at high resolution. The larger encoder dramatically improves dense captioning, OCR, and chart understanding, at the cost of higher inference compute (see <a href="../10-multimodal-and-arch/01-vision-transformers.html">Vision Transformers &amp; Image Encoders</a> for details on ViT scaling).</p>
+<h3 id="interleaved-visualtext-pretraining">Interleaved Visual–Text Pretraining<a class="headerlink" href="#interleaved-visualtext-pretraining" title="Permanent link">¶</a></h3>
+<p>Rather than two isolated stages, modern models train on large corpora of documents where images and text are naturally interleaved — web pages, research papers, textbooks, e-commerce listings. This teaches the model to integrate images and text in context, not just answer single-image questions.</p>
+<h3 id="training-stages-internvl-2-recipe">Training Stages (InternVL 2 Recipe)<a class="headerlink" href="#training-stages-internvl-2-recipe" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-vlm-internvl2-training-stages">
+<svg viewBox="0 0 820 580" role="img" aria-label="InternVL 2 four-stage training recipe: Stage 0 pretrains the vision encoder with contrastive learning, Stage 1 trains only the projector MLP while encoder and LLM are frozen, Stage 2 unfreezes LLM and optionally the encoder for instruction tuning, Stage 3 is optional high-resolution fine-tuning with tiling.">
+  <style>
+    #fig-vlm-internvl2-training-stages .lbl  { font:700 12.5px var(--sans,sans-serif); }
+    #fig-vlm-internvl2-training-stages .body { font:400 10.5px var(--sans,sans-serif); }
+    #fig-vlm-internvl2-training-stages .pill { font:700 8px var(--sans,sans-serif); }
+    #fig-vlm-internvl2-training-stages .plbl { font:600 8px var(--sans,sans-serif); fill:var(--muted,#6d675d); }
+    #fig-vlm-internvl2-training-stages .snum { font:700 14px var(--sans,sans-serif); fill:#fff; }
+    #fig-vlm-internvl2-training-stages text  { fill:var(--ink-soft,#45413a); }
+    #fig-vlm-internvl2-training-stages .axis { font:500 9.5px var(--sans,sans-serif); fill:var(--muted,#6d675d); }
+  </style>
+
+
+  <text x="11" y="300" text-anchor="middle" transform="rotate(-90,11,300)" class="axis">training progression (top to bottom)</text>
+  <line x1="22" y1="56" x2="22" y2="556" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+
+  <rect x="30" y="8" width="778" height="38" rx="6" class="v-fill v-stroke" stroke-width="1"/>
+  <text x="44" y="32" class="plbl" font-size="9" font-weight="700">FREEZE-STATE KEY:</text>
+
+  <rect x="150" y="20" width="64" height="16" rx="3" fill="var(--accent,#c15b39)"/>
+  <text x="182" y="31" text-anchor="middle" class="pill" fill="#fff">TRAINING</text>
+
+  <rect x="226" y="20" width="56" height="16" rx="3" fill="var(--muted,#6d675d)" fill-opacity="0.35" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <text x="254" y="31" text-anchor="middle" class="pill" fill="var(--muted,#6d675d)">FROZEN</text>
+
+  <rect x="294" y="20" width="66" height="16" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--accent,#c15b39)" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="327" y="31" text-anchor="middle" class="pill" fill="var(--accent,#c15b39)">OPTIONAL</text>
+  <text x="368" y="32" class="plbl" font-size="9">= partial / lower-LR</text>
+
+  <rect x="500" y="20" width="40" height="16" rx="3" fill="var(--muted,#6d675d)" fill-opacity="0.18" stroke="var(--muted,#6d675d)" stroke-width="1" stroke-dasharray="2 2"/>
+  <text x="520" y="31" text-anchor="middle" class="pill" fill="var(--muted,#6d675d)">n/a</text>
+  <text x="546" y="32" class="plbl" font-size="9">= not used in this stage</text>
+
+
+
+
+
+
+  <rect x="30" y="56" width="778" height="106" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+  <rect x="30" y="56" width="12"  height="106" rx="4" fill="var(--accent,#c15b39)"/>
+  <circle cx="64" cy="109" r="14" fill="var(--accent,#c15b39)"/>
+  <text x="64" y="114" text-anchor="middle" class="snum">0</text>
+  <text x="86" y="78"  class="lbl">Stage 0 — Vision encoder pretraining</text>
+  <text x="86" y="96"  class="body">• Contrastive (CLIP-style) training on image-text pairs</text>
+  <text x="86" y="112" class="body">• Output: InternViT-6B with strong visual reps.</text>
+  <text x="86" y="128" class="body">• No projector or LLM involved in this stage</text>
+
+  <text x="555" y="116" text-anchor="middle" class="plbl">Vision Enc.</text>
+  <rect x="519" y="122" width="72" height="16" rx="3" fill="var(--accent,#c15b39)"/>
+  <text x="555" y="133" text-anchor="middle" class="pill" fill="#fff">TRAINING</text>
+  <text x="650" y="116" text-anchor="middle" class="plbl">Projector</text>
+  <rect x="622" y="122" width="56" height="16" rx="3" fill="var(--muted,#6d675d)" fill-opacity="0.18" stroke="var(--muted,#6d675d)" stroke-width="1" stroke-dasharray="2 2"/>
+  <text x="650" y="133" text-anchor="middle" class="pill" fill="var(--muted,#6d675d)">n/a</text>
+  <text x="745" y="116" text-anchor="middle" class="plbl">LLM</text>
+  <rect x="717" y="122" width="56" height="16" rx="3" fill="var(--muted,#6d675d)" fill-opacity="0.18" stroke="var(--muted,#6d675d)" stroke-width="1" stroke-dasharray="2 2"/>
+  <text x="745" y="133" text-anchor="middle" class="pill" fill="var(--muted,#6d675d)">n/a</text>
+
+
+  <line x1="416" y1="162" x2="416" y2="174" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+  <polygon points="408,172 416,182 424,172" fill="var(--accent,#c15b39)"/>
+
+
+  <rect x="30" y="184" width="778" height="106" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+  <rect x="30" y="184" width="12"  height="106" rx="4" fill="var(--accent,#c15b39)"/>
+  <circle cx="64" cy="237" r="14" fill="var(--accent,#c15b39)"/>
+  <text x="64" y="242" text-anchor="middle" class="snum">1</text>
+  <text x="86" y="206" class="lbl">Stage 1 — MLP warm-up (projector alignment)</text>
+  <text x="86" y="224" class="body">• Freeze vision encoder + LLM; train only the projector MLP</text>
+  <text x="86" y="240" class="body">• Data: image-caption pairs (LAION, CC12M, …)</text>
+  <text x="86" y="256" class="body">• ~1 GPU-day; aligns visual features to LLM space</text>
+
+  <text x="555" y="244" text-anchor="middle" class="plbl">Vision Enc.</text>
+  <rect x="519" y="250" width="72" height="16" rx="3" fill="var(--muted,#6d675d)" fill-opacity="0.35" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <text x="555" y="261" text-anchor="middle" class="pill" fill="var(--muted,#6d675d)">FROZEN</text>
+  <text x="650" y="244" text-anchor="middle" class="plbl">Projector</text>
+  <rect x="614" y="250" width="72" height="16" rx="3" fill="var(--accent,#c15b39)"/>
+  <text x="650" y="261" text-anchor="middle" class="pill" fill="#fff">TRAINING</text>
+  <text x="745" y="244" text-anchor="middle" class="plbl">LLM</text>
+  <rect x="709" y="250" width="72" height="16" rx="3" fill="var(--muted,#6d675d)" fill-opacity="0.35" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <text x="745" y="261" text-anchor="middle" class="pill" fill="var(--muted,#6d675d)">FROZEN</text>
+
+
+  <line x1="416" y1="290" x2="416" y2="302" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+  <polygon points="408,300 416,310 424,300" fill="var(--accent,#c15b39)"/>
+
+
+  <rect x="30" y="312" width="778" height="106" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+  <rect x="30" y="312" width="12"  height="106" rx="4" fill="var(--accent,#c15b39)"/>
+  <circle cx="64" cy="365" r="14" fill="var(--accent,#c15b39)"/>
+  <text x="64" y="370" text-anchor="middle" class="snum">2</text>
+  <text x="86" y="334" class="lbl">Stage 2 — Multimodal instruction tuning</text>
+  <text x="86" y="352" class="body">• Unfreeze LLM (full fine-tune or LoRA); projector at high LR (1e-4)</text>
+  <text x="86" y="368" class="body">• Optionally unfreeze vision encoder at low LR (2e-6)</text>
+  <text x="86" y="384" class="body">• Data: VQA, OCR, chart, doc, code, math (~3–7 d, 64 H100s)</text>
+
+  <text x="555" y="372" text-anchor="middle" class="plbl">Vision Enc.</text>
+  <rect x="519" y="378" width="72" height="16" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--accent,#c15b39)" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="555" y="389" text-anchor="middle" class="pill" fill="var(--accent,#c15b39)">OPTIONAL</text>
+  <text x="650" y="372" text-anchor="middle" class="plbl">Projector</text>
+  <rect x="614" y="378" width="72" height="16" rx="3" fill="var(--accent,#c15b39)"/>
+  <text x="650" y="389" text-anchor="middle" class="pill" fill="#fff">TRAINING</text>
+  <text x="745" y="372" text-anchor="middle" class="plbl">LLM</text>
+  <rect x="709" y="378" width="72" height="16" rx="3" fill="var(--accent,#c15b39)"/>
+  <text x="745" y="389" text-anchor="middle" class="pill" fill="#fff">TRAINING</text>
+
+
+  <line x1="416" y1="418" x2="416" y2="430" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+  <polygon points="408,428 416,438 424,428" fill="var(--accent,#c15b39)"/>
+
+
+  <rect x="30" y="440" width="778" height="110" rx="8" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5" stroke-dasharray="7 4"/>
+  <rect x="30" y="440" width="12"  height="110" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+  <circle cx="64" cy="495" r="14" fill="var(--accent,#c15b39)" fill-opacity="0.65"/>
+  <text x="64" y="500" text-anchor="middle" class="snum">3</text>
+  <text x="86" y="459" class="lbl">Stage 3 — High-resolution fine-tuning</text>
+
+  <rect x="685" y="448" width="96" height="16" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.15" stroke="var(--accent,#c15b39)" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="733" y="460" text-anchor="middle" class="pill" fill="var(--accent,#c15b39)">OPTIONAL STAGE</text>
+  <text x="86" y="480" class="body">• Enable any-resolution tiling; train with higher max tile counts</text>
+  <text x="86" y="496" class="body">• Data: OCR-heavy, document-heavy subsets</text>
+  <text x="86" y="512" class="body">• Model learns 4K-scale docs and dense text</text>
+
+  <text x="555" y="500" text-anchor="middle" class="plbl">Vision Enc.</text>
+  <rect x="519" y="506" width="72" height="16" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--accent,#c15b39)" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="555" y="517" text-anchor="middle" class="pill" fill="var(--accent,#c15b39)">OPTIONAL</text>
+  <text x="650" y="500" text-anchor="middle" class="plbl">Projector</text>
+  <rect x="614" y="506" width="72" height="16" rx="3" fill="var(--accent,#c15b39)"/>
+  <text x="650" y="517" text-anchor="middle" class="pill" fill="#fff">TRAINING</text>
+  <text x="745" y="500" text-anchor="middle" class="plbl">LLM</text>
+  <rect x="709" y="506" width="72" height="16" rx="3" fill="var(--accent,#c15b39)"/>
+  <text x="745" y="517" text-anchor="middle" class="pill" fill="#fff">TRAINING</text>
+  <text x="650" y="538" text-anchor="middle" class="plbl">+ any-resolution tiling enabled</text>
+
+
+  <text x="416" y="572" text-anchor="middle" class="axis">Scan a column top-to-bottom to trace each component's freeze / unfreeze evolution across stages.</text>
+
+</svg>
+<figcaption><b>InternVL 2's four-stage training recipe progresses from vision pretraining to high-resolution fine-tuning.</b> The freeze/unfreeze pattern is the key design decision: stage 1 trains only the projector bridge with everything else locked; stage 2 unlocks the LLM and optionally the vision encoder at 10× lower LR to prevent catastrophic forgetting; stage 3 adds tiled inputs for OCR-heavy use-cases.</figcaption>
+</figure>
+
+<p>The crucial engineering decision at stage 2 is whether to unfreeze the vision encoder. Freezing it is safer (less catastrophic forgetting of CLIP-style alignment) but limits the model&rsquo;s ability to adapt to domain-specific visual features. InternVL 2 unfreezes the encoder at stage 2 with a lower learning rate, which empirically helps on OCR and dense chart tasks.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.optim</span><span class="w"> </span><span class="kn">import</span> <span class="n">AdamW</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.optim.lr_scheduler</span><span class="w"> </span><span class="kn">import</span> <span class="n">CosineAnnealingLR</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_optimizer_stage2</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">lr_llm</span><span class="o">=</span><span class="mf">2e-5</span><span class="p">,</span> <span class="n">lr_vision</span><span class="o">=</span><span class="mf">2e-6</span><span class="p">,</span> <span class="n">lr_proj</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Stage 2 optimizer with different learning rates for each component.</span>
+<span class="sd">    Vision encoder gets 10x lower LR than LLM to prevent forgetting.</span>
+<span class="sd">    Projector gets highest LR since it is the newest and most undertrained part.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">param_groups</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">n</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">()</span>
+                       <span class="k">if</span> <span class="s2">&quot;vision_model&quot;</span> <span class="ow">in</span> <span class="n">n</span> <span class="ow">and</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">],</span>
+            <span class="s2">&quot;lr&quot;</span><span class="p">:</span> <span class="n">lr_vision</span><span class="p">,</span>
+            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;vision_encoder&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">n</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">()</span>
+                       <span class="k">if</span> <span class="s2">&quot;projector&quot;</span> <span class="ow">in</span> <span class="n">n</span> <span class="ow">and</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">],</span>
+            <span class="s2">&quot;lr&quot;</span><span class="p">:</span> <span class="n">lr_proj</span><span class="p">,</span>
+            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;projector&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">n</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">()</span>
+                       <span class="k">if</span> <span class="s2">&quot;llm&quot;</span> <span class="ow">in</span> <span class="n">n</span> <span class="ow">and</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">],</span>
+            <span class="s2">&quot;lr&quot;</span><span class="p">:</span> <span class="n">lr_llm</span><span class="p">,</span>
+            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;llm&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">]</span>
+    <span class="c1"># Filter out empty groups (e.g. if vision encoder is frozen)</span>
+    <span class="n">param_groups</span> <span class="o">=</span> <span class="p">[</span><span class="n">g</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">param_groups</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">g</span><span class="p">[</span><span class="s2">&quot;params&quot;</span><span class="p">])</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">optimizer</span> <span class="o">=</span> <span class="n">AdamW</span><span class="p">(</span><span class="n">param_groups</span><span class="p">,</span> <span class="n">weight_decay</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">optimizer</span>
+</code></pre></div>
+<h2 id="ocr-and-document-understanding">OCR and Document Understanding<a class="headerlink" href="#ocr-and-document-understanding" title="Permanent link">¶</a></h2>
+<p>One of the most commercially important capabilities of modern VLMs is reading text in images: receipts, invoices, PDFs, whiteboards, code screenshots. This task goes by many names — OCR-VQA, document understanding, visual text recognition — and it stresses VLMs in a specific way: the model must both <em>see</em> fine-grained character shapes and <em>understand</em> the semantic meaning of the text in context.</p>
+<h3 id="why-standard-vlms-struggle-with-ocr">Why Standard VLMs Struggle with OCR<a class="headerlink" href="#why-standard-vlms-struggle-with-ocr" title="Permanent link">¶</a></h3>
+<p>A <span class="arithmatex">\(336 \times 336\)</span> image contains ~100,000 pixels. A character at 12pt font in a standard document is roughly <span class="arithmatex">\(10 \times 10\)</span> pixels. At <span class="arithmatex">\(14 \times 14\)</span> patch size, a single patch covers 196 pixels — the model sees at most a few characters per patch, smeared together. Fine text recognition requires either:</p>
+<ol>
+<li><strong>Higher resolution:</strong> More pixels per patch, more patches per image.</li>
+<li><strong>Specialized pretraining data:</strong> The model needs to have &ldquo;read&rdquo; thousands of document images with ground-truth OCR labels during training.</li>
+<li><strong>Large visual encoder:</strong> Bigger encoders capture finer-grained spatial detail.</li>
+</ol>
+<p>InternVL 2 and Qwen-VL address all three. Both are trained on datasets like DocVQA, TextVQA, ChartQA, and DVQA. Qwen-VL additionally introduced a specialized visual grounding pretraining task: given an image and a text string, predict the bounding box <code>[x1, y1, x2, y2]</code> of the text region. This forces the model to localize text before reading it.</p>
+<h3 id="the-docowl-mplug-owl-pattern-for-documents">The DocOwl / mPLUG-Owl Pattern for Documents<a class="headerlink" href="#the-docowl-mplug-owl-pattern-for-documents" title="Permanent link">¶</a></h3>
+<p>For multi-page documents, the standard recipe is:</p>
+<ol>
+<li>Convert each page to an image (e.g. with <code>pdf2image</code>).</li>
+<li>Apply any-resolution tiling per page.</li>
+<li>Concatenate all page tokens with separator tokens: <code>&lt;page_1_tokens&gt; &lt;page_sep&gt; &lt;page_2_tokens&gt; ...</code></li>
+<li>Truncate to the LLM&rsquo;s max context if the document is very long.</li>
+</ol>
+<p>This runs into the context limit quickly. A 10-page document with 4 tiles/page = 40 tiles = <span class="arithmatex">\(40 \times 576 = 23{,}040\)</span> visual tokens. At LLaMA-3-8B&rsquo;s 8K context window, that fills the context entirely. Qwen-VL2 extends context to 32K tokens partly to handle longer documents.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">encode_document_pages</span><span class="p">(</span>
+    <span class="n">pages</span><span class="p">:</span> <span class="nb">list</span><span class="p">,</span>              <span class="c1"># list of PIL Images, one per page</span>
+    <span class="n">vision_encoder</span><span class="p">,</span>
+    <span class="n">projector</span><span class="p">,</span>
+    <span class="n">tokenizer</span><span class="p">,</span>
+    <span class="n">max_tiles_per_page</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+    <span class="n">page_sep_token</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&lt;page_sep&gt;&quot;</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Encode a multi-page document into a flat visual token sequence</span>
+<span class="sd">    with page separator tokens interspersed.</span>
+
+<span class="sd">    Returns a dict with:</span>
+<span class="sd">      - &#39;inputs_embeds&#39;: [1, total_tokens, D_llm]</span>
+<span class="sd">      - &#39;attention_mask&#39;: [1, total_tokens]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">page_sep_id</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">convert_tokens_to_ids</span><span class="p">(</span><span class="n">page_sep_token</span><span class="p">)</span>
+    <span class="n">sep_embed</span>   <span class="o">=</span> <span class="n">projector</span><span class="o">.</span><span class="n">proj</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">projector</span><span class="o">.</span><span class="n">proj</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">out_features</span><span class="p">)</span>
+    <span class="c1"># In practice, &lt;page_sep&gt; is a learned embedding from the LLM vocab</span>
+
+    <span class="n">all_embeds</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">page_img</span> <span class="ow">in</span> <span class="n">pages</span><span class="p">:</span>
+        <span class="n">tiles</span>  <span class="o">=</span> <span class="n">tile_image</span><span class="p">(</span><span class="n">page_img</span><span class="p">,</span> <span class="n">max_tiles</span><span class="o">=</span><span class="n">max_tiles_per_page</span><span class="p">)</span>
+        <span class="n">tokens</span> <span class="o">=</span> <span class="n">encode_tiles_to_visual_tokens</span><span class="p">(</span><span class="n">tiles</span><span class="p">,</span> <span class="n">vision_encoder</span><span class="p">,</span> <span class="n">projector</span><span class="p">)</span>
+        <span class="c1"># tokens: [1, K*576, D_llm]</span>
+        <span class="n">all_embeds</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
+        <span class="n">all_embeds</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sep_embed</span><span class="p">)</span>  <span class="c1"># separator between pages</span>
+
+    <span class="c1"># Concatenate all pages</span>
+    <span class="n">doc_embeds</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">all_embeds</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># [1, total_visual_tokens, D_llm]</span>
+    <span class="n">total_len</span>  <span class="o">=</span> <span class="n">doc_embeds</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">attn_mask</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">total_len</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;inputs_embeds&quot;</span><span class="p">:</span> <span class="n">doc_embeds</span><span class="p">,</span> <span class="s2">&quot;attention_mask&quot;</span><span class="p">:</span> <span class="n">attn_mask</span><span class="p">}</span>
+</code></pre></div>
+<h2 id="training-data-and-the-multimodal-data-mix">Training Data and the Multimodal Data Mix<a class="headerlink" href="#training-data-and-the-multimodal-data-mix" title="Permanent link">¶</a></h2>
+<p>The capability of a VLM is governed at least as much by its training data mix as by its architecture. The data pipeline typically combines:</p>
+<table>
+<thead>
+<tr>
+<th>Dataset type</th>
+<th>Examples</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Image–caption pairs</td>
+<td>LAION-400M, CC12M, COYO-700M</td>
+<td>Stage 1 alignment</td>
+</tr>
+<tr>
+<td>VQA datasets</td>
+<td>VQAv2, GQA, OK-VQA</td>
+<td>Basic visual question answering</td>
+</tr>
+<tr>
+<td>OCR/text reading</td>
+<td>TextVQA, OCR-VQA, DocVQA</td>
+<td>Text recognition capability</td>
+</tr>
+<tr>
+<td>Chart/plot QA</td>
+<td>ChartQA, DVQA, FigureQA</td>
+<td>Structured visual data reading</td>
+</tr>
+<tr>
+<td>Visual instruction tuning</td>
+<td>LLaVA-Instruct-150K, ShareGPT4V</td>
+<td>Instruction following</td>
+</tr>
+<tr>
+<td>Grounding</td>
+<td>RefCOCO, Flickr30K Entities</td>
+<td>Spatial localization</td>
+</tr>
+<tr>
+<td>Science/Math</td>
+<td>AI2D, MMMU, ScienceQA</td>
+<td>Domain knowledge with visuals</td>
+</tr>
+<tr>
+<td>Document understanding</td>
+<td>DocVQA, InfoVQA</td>
+<td>Multi-element document pages</td>
+</tr>
+<tr>
+<td>Interleaved web data</td>
+<td>MMC4, OBELISC</td>
+<td>Multi-image context</td>
+</tr>
+</tbody>
+</table>
+<p>Data quality matters more than quantity. LLaVA-1.5 uses only 665K instruction-tuning examples but outperforms models trained on millions of lower-quality samples. Techniques like ShareGPT4V (Zhang et al., 2023) use GPT-4V to generate higher-quality captions for existing images, bootstrapping quality at scale.</p>
+<p>The loss function is standard cross-entropy over text tokens only. Visual tokens are in the input but produce no loss signal:</p>
+<div class="arithmatex">\[
+\mathcal{L} = -\sum_{t \in \text{text positions}} \log p_\theta(x_t \mid \mathbf{H}_v, x_{&lt;t})
+\]</div>
+<p>This is the same next-token prediction loss used in <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a>, but with the visual tokens as context.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A candidate is designing a VLM that must read receipts, answer questions about charts, and describe natural scene images — all in one model. Walk through the key architectural choices and training decisions.</p>
+<p><strong>A:</strong> Start with the connection strategy. A projector (MLP connector) is simpler to train and works well; cross-attention (Flamingo-style) adds overhead but handles multi-image interleaving more naturally. For this use-case, a projector suffices.</p>
+<p>For the vision encoder, use a large ViT (ViT-L or larger) pretrained with CLIP — CLIP encoders generalize broadly across tasks. For OCR on receipts, enable any-resolution (AnyRes) tiling: split high-res images into 336×336 tiles, encode each independently, concatenate. This is essential for fine text at low font sizes.</p>
+<p>Training stages: (1) align the projector with frozen encoder + LLM on image-caption pairs, (2) fine-tune the projector and LLM jointly on diverse instruction-following data that includes OCR, VQA, chart, and captioning tasks. Use task-type-weighted sampling to balance the three capability areas.</p>
+<p>The key pitfall to watch: the visual token budget. A 4-tile receipt image produces 4×576 = 2304 visual tokens. In a chat loop with conversation history, context fills quickly. Consider token pooling (Q-Former or average pooling) to reduce visual tokens by 4–8× at the cost of some fine-grained detail.</p>
+<p>Also tune learning rates per component: lower LR for the vision encoder (2e-6), higher LR for the projector (1e-4), mid LR for the LLM (2e-5). This prevents catastrophic forgetting of the encoder&rsquo;s pretrained CLIP alignment.</p>
+</div>
+<h2 id="the-dominant-multimodal-recipe-20242025">The Dominant Multimodal Recipe (2024–2025)<a class="headerlink" href="#the-dominant-multimodal-recipe-20242025" title="Permanent link">¶</a></h2>
+<p>Across LLaVA-1.6, InternVL 2, Qwen-VL 2, and similar models, a clear consensus recipe has emerged. If you are building a new VLM today, this is the default starting point:</p>
+<p><figure class="viz" id="fig-vlm-dominant-recipe">
+<svg viewBox="0 0 900 560" role="img" aria-label="The dominant VLM recipe of 2024-2025 in six building blocks: a runtime pipeline of Vision Encoder, Any-Resolution Tiling, MLP Projector, and LLM Backbone, plus two meta blocks describing the training stages and the data mix.">
+  <defs>
+    <marker id="dr-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+    </marker>
+  </defs>
+<br />
+<style>
+    #fig-vlm-dominant-recipe .ttl  { font:700 16px var(--sans,sans-serif); fill:#fff; }
+    #fig-vlm-dominant-recipe .ctl  { font:700 12px var(--sans,sans-serif); }
+    #fig-vlm-dominant-recipe .spec { font:400 9.5px var(--mono,monospace); fill:var(--muted,#6d675d); }
+    #fig-vlm-dominant-recipe .bdg  { font:700 13px var(--sans,sans-serif); fill:#fff; }
+    #fig-vlm-dominant-recipe .div  { font:600 9.5px var(--sans,sans-serif); fill:var(--muted,#6d675d); }
+    #fig-vlm-dominant-recipe text  { fill:var(--ink-soft,#45413a); }
+  </style>
+</p>
+<p><rect x="12" y="12" width="876" height="536" rx="12" class="v-fill v-stroke" stroke-width="2"/></p>
+<p><rect x="12" y="12" width="876" height="40" rx="12" fill="var(--accent,#c15b39)"/>
+  <rect x="12" y="32" width="876" height="20" fill="var(--accent,#c15b39)"/>
+  <text x="450" y="39" text-anchor="middle" class="ttl">THE DOMINANT VLM RECIPE  ·  2024–2025</text></p>
+<p><text x="36" y="76" class="div">RUNTIME DATA PATH  (image to answer)</text></p>
+<p><rect x="36" y="84" width="196" height="130" rx="9" class="v-fill v-stroke" stroke-width="1.4"/>
+  <circle cx="62" cy="110" r="13" fill="var(--accent,#c15b39)"/>
+  <text x="62" y="115" text-anchor="middle" class="bdg">1</text>
+  <text x="84" y="115" class="ctl">VISION ENCODER</text>
+  <text x="50" y="140" class="spec">ViT-L/14 (CLIP) or</text>
+  <text x="50" y="154" class="spec">InternViT-6B</text>
+  <text x="50" y="172" class="spec">Input: 336×336 tile</text>
+  <text x="50" y="190" class="spec">Out: 576 patch embeds</text>
+  <text x="50" y="204" class="spec">@ D_v = 1024</text></p>
+<p><line x1="234" y1="149" x2="248" y2="149" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#dr-arr)"/></p>
+<p><rect x="250" y="84" width="196" height="130" rx="9" class="v-fill v-stroke" stroke-width="1.4"/>
+  <circle cx="276" cy="110" r="13" fill="var(--accent,#c15b39)"/>
+  <text x="276" y="115" text-anchor="middle" class="bdg">2</text>
+  <text x="298" y="115" class="ctl">ANY-RES TILING</text>
+  <text x="264" y="140" class="spec">Divide input into N</text>
+  <text x="264" y="154" class="spec">tiles (+ thumbnail)</text>
+  <text x="264" y="178" class="spec">N in {1, 2, 4, 6} by</text>
+  <text x="264" y="192" class="spec">aspect ratio / size</text></p>
+<p><line x1="448" y1="149" x2="462" y2="149" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#dr-arr)"/></p>
+<p><rect x="464" y="84" width="196" height="130" rx="9" fill="var(--accent,#c15b39)" fill-opacity="0.16" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <circle cx="490" cy="110" r="13" fill="var(--accent,#c15b39)"/>
+  <text x="490" y="115" text-anchor="middle" class="bdg">3</text>
+  <text x="512" y="115" class="ctl">MLP PROJECTOR</text>
+  <text x="478" y="140" class="spec">Linear(D_v, D_llm)</text>
+  <text x="478" y="154" class="spec">  then GELU then</text>
+  <text x="478" y="168" class="spec">Linear(D_llm, D_llm)</text>
+  <text x="478" y="192" class="spec">~40M params</text>
+  <text x="478" y="206" class="spec">@ D_llm = 4096</text></p>
+<p><text x="650" y="100" text-anchor="end" class="spec" fill="var(--accent,#c15b39)" font-weight="700">learned bridge</text></p>
+<p><line x1="662" y1="149" x2="676" y2="149" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#dr-arr)"/></p>
+<p><rect x="678" y="84" width="186" height="130" rx="9" class="v-fill v-stroke" stroke-width="1.4"/>
+  <circle cx="704" cy="110" r="13" fill="var(--accent,#c15b39)"/>
+  <text x="704" y="115" text-anchor="middle" class="bdg">4</text>
+  <text x="726" y="115" class="ctl">LLM BACKBONE</text>
+  <text x="692" y="140" class="spec">LLaMA-3 / Qwen-2.5 /</text>
+  <text x="692" y="154" class="spec">InternLM / Mistral</text>
+  <text x="692" y="168" class="spec">(7B – 72B)</text>
+  <text x="692" y="192" class="spec">Receives:</text>
+  <text x="692" y="206" class="spec">[visual || text tokens]</text></p>
+<p><line x1="36" y1="248" x2="380" y2="248" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="450" y="252" text-anchor="middle" class="div">HOW IT IS BUILT  (training &amp; data — not the runtime path)</text>
+  <line x1="520" y1="248" x2="864" y2="248" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="4 3"/></p>
+<p><rect x="36" y="268" width="408" height="248" rx="9" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.4"/>
+  <circle cx="64" cy="296" r="13" fill="var(--accent,#c15b39)"/>
+  <text x="64" y="301" text-anchor="middle" class="bdg">5</text>
+  <text x="86" y="301" class="ctl">TRAINING STAGES</text>
+  <text x="54" y="334" class="spec">S1  align projector</text>
+  <text x="78" y="348" class="spec">frozen encoder + LLM, ~1 day</text>
+  <text x="54" y="376" class="spec">S2  SFT all components</text>
+  <text x="78" y="390" class="spec">3–7 days on 64 H100s</text>
+  <text x="54" y="418" class="spec">S3  (optional) HR fine-tune</text>
+  <text x="78" y="432" class="spec">on document / OCR data</text>
+  <text x="54" y="466" class="spec">Differential LRs: encoder low,</text>
+  <text x="54" y="480" class="spec">LLM mid, projector high.</text></p>
+<p><rect x="456" y="268" width="408" height="248" rx="9" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.4"/>
+  <circle cx="484" cy="296" r="13" fill="var(--accent,#c15b39)"/>
+  <text x="484" y="301" text-anchor="middle" class="bdg">6</text>
+  <text x="506" y="301" class="ctl">DATA MIX</text>
+  <text x="474" y="334" class="spec">Captions  +  VQA  +  OCR</text>
+  <text x="474" y="352" class="spec">+  Charts  +  Grounding</text>
+  <text x="474" y="370" class="spec">+  Instruction-following</text>
+  <text x="474" y="404" class="spec">Weighted (task-type) sampling</text>
+  <text x="474" y="418" class="spec">to balance capability areas.</text>
+  <text x="474" y="456" class="spec" fill="var(--accent,#c15b39)" font-weight="700">Quality &gt; quantity.</text>
+  <text x="474" y="482" class="spec">Curated, deduplicated corpora</text>
+  <text x="474" y="496" class="spec">beat raw web-scale volume.</text></p>
+<p></svg></p>
+<figcaption><b>The dominant VLM recipe of 2024–2025, in six building blocks.</b> Blocks 1–4 form the runtime data path (image → tiles → projected visual tokens → LLM); the MLP projector (block 3, highlighted) is the small learned bridge between the frozen vision and language towers. Blocks 5–6 describe how the system is trained and fed. This is the default starting point for building a new VLM.</figcaption>
+</figure>
+<p>The remaining open questions the field is actively working on:</p>
+<ul>
+<li><strong>Video:</strong> Sampling frames from a video and treating them as a bag of tiles works but loses temporal structure. Models like Video-LLaMA and LLaVA-Video encode temporal position but still consume enormous context windows.</li>
+<li><strong>3D/depth:</strong> Encoding depth maps or point clouds alongside RGB images is non-trivial; see <a href="../10-multimodal-and-arch/05-unified-any-to-any.html">Unified &amp; Any-to-Any Models</a>.</li>
+<li><strong>Token compression at scale:</strong> 2304 visual tokens per image is manageable for single-image tasks but kills throughput in high-QPS serving environments. Token merging, Q-Former, and selective token dropping are active research areas. See <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a>.</li>
+<li><strong>Alignment with longer reasoning:</strong> Combining visual grounding with chain-of-thought (see <a href="../05-posttraining-alignment/10-reasoning-test-time-compute.html">Reasoning, Chain-of-Thought &amp; Test-Time Compute</a>) remains challenging; visual hallucinations increase with longer generation.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: Forgetting to mask visual token losses</p>
+<p>When computing the language modeling loss, you must set the label for every visual token position to -100 (the standard ignore index in PyTorch CrossEntropyLoss). If you forget this, the model will try to predict &ldquo;the next visual token&rdquo; from a text-only loss signal, which is nonsensical, leads to spurious gradient updates through the projector, and corrupts training. Always verify your loss computation by checking that the loss is computed only over text positions.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: ViT-L vs bigger encoders for production</p>
+<p>In production, ViT-L/14 (CLIP, 307M params) is often the right call even when bigger encoders are available. InternViT-6B improves benchmark scores but adds ~6B params to your serving cost — roughly doubling the model size for marginal gains on most tasks outside dense OCR. Unless your application specifically requires fine-grained text reading in 4K images, profile with ViT-L first.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>VLMs bridge a vision encoder and an LLM via two main strategies: <strong>projector (LLaVA-style)</strong> prepends projected visual tokens into the LLM&rsquo;s sequence; <strong>cross-attention (Flamingo-style)</strong> inserts new cross-attention layers that let LLM hidden states query visual features without consuming context positions.</li>
+<li>The <strong>projector approach</strong> dominates in 2024–2025 due to its simplicity: a two-layer MLP maps CLIP ViT patch embeddings into the LLM embedding space. Only ~40M new parameters are needed.</li>
+<li>The <strong>visual token explosion</strong> is the central engineering constraint: a 336px image generates 576 tokens, and any-resolution tiling multiplies this by the number of tiles. KV-cache memory and prefill FLOPS scale accordingly.</li>
+<li><strong>Any-resolution (AnyRes) tiling</strong> — dividing an image into multiple 336×336 tiles and encoding each independently — is the standard solution for high-resolution and OCR tasks. LLaVA-1.6, InternVL 2, and Qwen-VL all use this approach.</li>
+<li><strong>Training is staged:</strong> first align the projector with frozen encoder + LLM; then co-train the projector and LLM (and optionally the encoder at a lower LR) on diverse instruction-following data.</li>
+<li><strong>OCR and document understanding</strong> require high resolution (tiling), large encoders, and specialized training data (DocVQA, TextVQA, ChartQA). The model must localize then read text.</li>
+<li><strong>Data quality beats data quantity:</strong> 665K high-quality instruction examples (LLaVA-1.5) outperforms millions of noisy samples. GPT-4V-recaptioned data improves downstream quality significantly.</li>
+<li>Differential learning rates across components (low for vision encoder, mid for LLM, high for projector) prevent catastrophic forgetting and accelerate projector convergence.</li>
+<li><strong>Token compression</strong> (Q-Former, average pooling, token merging) trades resolution fidelity for context efficiency — essential in high-throughput serving scenarios.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Vision-language models have converged on a projector-based recipe (ViT encoder + MLP connector + LLM) as the dominant open-source paradigm, with InternVL 2.5, Qwen2-VL, and LLaVA-NeXT variants matching or exceeding GPT-4V on standard benchmarks. Active frontiers include native-resolution dynamic tokenization, video VLMs, and efficient token compression for high-throughput serving.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2304.08485">Liu et al., <em>Visual Instruction Tuning</em> (2023)</a> — The original LLaVA paper establishing the projector paradigm for VLMs (NeurIPS 2023 Oral).</li>
+<li><a href="https://arxiv.org/abs/2204.14198">Alayrac et al., <em>Flamingo: a Visual Language Model for Few-Shot Learning</em> (2022)</a> — Gated cross-attention design enabling interleaved image–text few-shot inference (NeurIPS 2022).</li>
+<li><a href="https://arxiv.org/abs/2301.12597">Li et al., <em>BLIP-2: Bootstrapping Language-Image Pre-Training with Frozen Image Encoders and Large Language Models</em> (2023)</a> — Q-Former token compression extracting fixed-size visual representations from any-resolution encoders.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2310.03744">Liu et al., <em>Improved Baselines with Visual Instruction Tuning</em> (2023)</a> — LLaVA-1.5: MLP connector replacing the linear projector, achieving state-of-the-art on 11 benchmarks with 1.2M training samples.</li>
+<li><a href="https://arxiv.org/abs/2308.12966">Bai et al., <em>Qwen-VL: A Versatile Vision-Language Model for Understanding, Localization, Text Reading, and Beyond</em> (2023)</a> — Adds visual grounding and OCR-specific pretraining tasks to the standard VLM recipe.</li>
+<li><a href="https://arxiv.org/abs/2312.14238">Chen et al., <em>InternVL: Scaling up Vision Foundation Models and Aligning for Generic Visual-Linguistic Tasks</em> (2023)</a> — Scales the vision encoder to 6B parameters (InternViT-6B), dramatically improving OCR and chart understanding (CVPR 2024 Oral).</li>
+<li><a href="https://arxiv.org/abs/2409.12191">Wang et al., <em>Qwen2-VL: Enhancing Vision-Language Model&rsquo;s Perception of the World at Any Resolution</em> (2024)</a> — Native dynamic resolution via M-RoPE positional encoding; 72B model matches GPT-4o on multimodal benchmarks.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/haotian-liu/LLaVA">haotian-liu/LLaVA</a> — Reference implementation of LLaVA through 1.6, including training scripts, LoRA fine-tuning, and SGLang serving integration.</li>
+<li><a href="https://github.com/OpenGVLab/InternVL">OpenGVLab/InternVL</a> — Full InternVL family (1B–240B), training code, and evaluation scripts; leading open-source alternative to GPT-4o on MMMU.</li>
+<li><a href="https://github.com/open-compass/VLMEvalKit">open-compass/VLMEvalKit</a> — One-command evaluation toolkit supporting 220+ VLMs across 80+ benchmarks (DocVQA, ChartQA, MMBench, etc.).</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://llava-vl.github.io/blog/2024-01-30-llava-next/">LLaVA-NeXT: Improved reasoning, OCR, and world knowledge</a> — Official blog post detailing the any-resolution tiling strategy and benchmark results for LLaVA-1.6.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>LLaVA</strong> — Liu et al., &ldquo;Visual Instruction Tuning,&rdquo; NeurIPS 2023. The minimal projector recipe.</li>
+<li><strong>LLaVA-1.5</strong> — Liu et al., &ldquo;Improved Baselines with Visual Instruction Tuning,&rdquo; CVPR 2024. MLP connector and better data.</li>
+<li><strong>LLaVA-1.6 (LLaVA-NeXT)</strong> — Liu et al., 2024. Any-resolution tiling, higher-res tiles.</li>
+<li><strong>Flamingo</strong> — Alayrac et al., &ldquo;Flamingo: a Visual Language Model for Few-Shot Learning,&rdquo; NeurIPS 2022. Gated cross-attention design.</li>
+<li><strong>BLIP-2</strong> — Li et al., &ldquo;BLIP-2: Bootstrapping Language-Image Pre-Training with Frozen Image Encoders and Large Language Models,&rdquo; ICML 2023. Q-Former token compression.</li>
+<li><strong>InternVL</strong> — Chen et al., &ldquo;InternVL: Scaling up Vision Foundation Models and Aligning for Generic Visual-Linguistic Tasks,&rdquo; CVPR 2024.</li>
+<li><strong>Qwen-VL</strong> — Bai et al., &ldquo;Qwen-VL: A Versatile Vision-Language Model&rsquo;s Large Language Model,&rdquo; arXiv 2023.</li>
+<li><strong>ShareGPT4V</strong> — Zhang et al., &ldquo;ShareGPT4V: Improving Large Multi-Modal Models with Better Captions,&rdquo; arXiv 2023.</li>
+<li><strong>DocOwl</strong> — Ye et al., &ldquo;mPLUG-DocOwl: Modularized Multimodal Large Language Model for Document Understanding,&rdquo; arXiv 2023.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="01-vision-transformers.html"><span class="pn-label">← Previous</span><span class="pn-title">Vision Transformers &amp; Image Encoders</span></a>
+<a class="next" href="03-audio-speech-multimodal.html"><span class="pn-label">Next →</span><span class="pn-title">Audio, Speech &amp; Multimodal Fusion</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-connection-problem">The Connection Problem</a></li>
+<li class="toc-l2"><a href="#llava-the-projector-paradigm">LLaVA: The Projector Paradigm</a></li>
+<li class="toc-l2"><a href="#flamingo-cross-attention-for-in-context-multimodal-learning">Flamingo: Cross-Attention for In-Context Multimodal Learning</a></li>
+<li class="toc-l2"><a href="#the-visual-token-explosion">The Visual Token Explosion</a></li>
+<li class="toc-l2"><a href="#native-resolution-and-any-resolution">Native Resolution and Any-Resolution</a></li>
+<li class="toc-l2"><a href="#qwen-vl-and-internvl-the-modern-recipe">Qwen-VL and InternVL: The Modern Recipe</a></li>
+<li class="toc-l3"><a href="#larger-better-vision-encoders">Larger, Better Vision Encoders</a></li>
+<li class="toc-l3"><a href="#interleaved-visualtext-pretraining">Interleaved Visual–Text Pretraining</a></li>
+<li class="toc-l3"><a href="#training-stages-internvl-2-recipe">Training Stages (InternVL 2 Recipe)</a></li>
+<li class="toc-l2"><a href="#ocr-and-document-understanding">OCR and Document Understanding</a></li>
+<li class="toc-l3"><a href="#why-standard-vlms-struggle-with-ocr">Why Standard VLMs Struggle with OCR</a></li>
+<li class="toc-l3"><a href="#the-docowl-mplug-owl-pattern-for-documents">The DocOwl / mPLUG-Owl Pattern for Documents</a></li>
+<li class="toc-l2"><a href="#training-data-and-the-multimodal-data-mix">Training Data and the Multimodal Data Mix</a></li>
+<li class="toc-l2"><a href="#the-dominant-multimodal-recipe-20242025">The Dominant Multimodal Recipe (2024–2025)</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

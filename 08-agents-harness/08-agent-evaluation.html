@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Evaluation &amp; Benchmarks — The LLM Stack</title>
+<meta name="description" content="Evaluating agents: SWE-bench/SWE-bench-Verified, WebArena, GAIA, tau-bench, terminal-bench; trajectory vs outcome scoring, pass@k, harness effects on scores, re">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="active" href="08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VIII — Agents &amp; Harness Engineering</div>
+<h1 id="88-agent-evaluation-benchmarks">8.8 Agent Evaluation &amp; Benchmarks<a class="headerlink" href="#88-agent-evaluation-benchmarks" title="Permanent link">¶</a></h1>
+<p>Evaluating a language model on a multiple-choice question is easy: you check whether the top-1 token matches the gold label. Evaluating an <em>agent</em> is structurally harder: the agent must execute a sequence of actions, possibly across dozens of tool calls, browser interactions, or shell commands, and the outcome depends on both what it does and <em>how</em> the harness around it behaves. A 3% improvement on SWE-bench might reflect a better model, a different scaffold, a looser time limit, or a lucky leak of test data into pretraining. Understanding which of these is true is the central challenge of agent evaluation.</p>
+<p>This chapter covers the major benchmarks — SWE-bench, SWE-bench Verified, WebArena, GAIA, tau-bench, terminal-bench, and others — and then digs into the measurement science: trajectory versus outcome scoring, pass@k estimators, harness effects, reproducibility, and contamination. We close with a worked example and practitioner guidance for building trustworthy evals in your own projects.</p>
+<h2 id="why-agent-evaluation-is-different">Why Agent Evaluation Is Different<a class="headerlink" href="#why-agent-evaluation-is-different" title="Permanent link">¶</a></h2>
+<p>Before cataloguing benchmarks, it&rsquo;s worth internalizing what makes agent eval fundamentally harder than standard LLM eval.</p>
+<p><strong>Long-horizon dependencies.</strong> A coding agent might write a fix in step 3, run tests in step 7, and interpret failure in step 11. An error at any point can cascade. You cannot meaningfully score a single step in isolation; the entire trajectory matters.</p>
+<p><strong>Non-determinism stacks up.</strong> Even with temperature 0, sampling LLMs are not truly deterministic across batches or hardware. A 50-step trajectory multiplies this: a different branch taken in step 4 yields a completely different state by step 30. This creates high variance in outcomes and demands more samples to get a reliable estimate.</p>
+<p><strong>The harness is part of the system.</strong> The scaffold that decides <em>when</em> to execute tool calls, <em>how</em> to format context, <em>how long</em> to let the agent run, and <em>whether</em> to retry on errors is not a neutral observer. Different harnesses running the same model on the same task routinely produce results 10–20 percentage points apart. See <a href="../08-agents-harness/03-harness-coding-agent.html">Harness Engineering: Building a Coding Agent</a> for how harness decisions compound.</p>
+<p><strong>Outcome vs. trajectory ambiguity.</strong> Two agents might both fail a task — but one explored a sensible plan and hit an environment bug, while the other hallucinated the entire approach. A binary pass/fail metric does not distinguish them.</p>
+<p><strong>Contamination is hard to detect.</strong> SWE-bench tasks are drawn from real GitHub issues. If a model has seen the merged PR in pretraining, the task is effectively leaked. Standard n-gram decontamination is not sufficient because the overlap may be semantic, not lexical.</p>
+<h2 id="the-major-benchmarks">The Major Benchmarks<a class="headerlink" href="#the-major-benchmarks" title="Permanent link">¶</a></h2>
+<h3 id="swe-bench-and-swe-bench-verified">SWE-bench and SWE-bench Verified<a class="headerlink" href="#swe-bench-and-swe-bench-verified" title="Permanent link">¶</a></h3>
+<p>SWE-bench (Jimenez et al., 2023) is the canonical benchmark for software-engineering agents. Each task is a real GitHub issue from a popular Python repository (Django, Flask, NumPy, Sympy, and others). The agent receives the issue text and the full repository, and must produce a <em>patch</em> — a <code>git diff</code> — that makes the failing test suite pass.</p>
+<p>The original SWE-bench has approximately 2,300 tasks (split into dev and test). <strong>SWE-bench Verified</strong> is a human-curated subset of about 500 tasks where annotators confirmed the task is well-specified, the reference solution is correct, and no annotation errors exist. Because the full set has a long tail of noisy tasks, Verified is now the preferred reporting target: scores are higher and more meaningful.</p>
+<p><strong>Evaluation protocol.</strong></p>
+<figure class="viz" id="fig-ageval-swebench-protocol">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 1140 355" role="img" aria-label="SWE-bench evaluation protocol: six sequential stages from checkout repo through run test suite to a decision diamond branching into PASS or FAIL, with an early-exit dashed arrow from the git-apply step directly to FAIL if the patch does not apply.">
+<defs>
+  <marker id="asb-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="asb-arr-dash" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#6d675d)"/>
+  </marker>
+  <marker id="asb-arr-pass" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#16a34a)"/>
+  </marker>
+  <marker id="asb-arr-fail" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="#dc2626"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-ageval-swebench-protocol .lbl        { font: 600 11.5px var(--sans,sans-serif); }
+  #fig-ageval-swebench-protocol .sub        { font: 400 9.5px var(--sans,sans-serif);  fill: var(--muted,#6d675d); }
+  #fig-ageval-swebench-protocol .note       { font: 400 9px var(--sans,sans-serif);    fill: var(--muted,#6d675d); }
+  #fig-ageval-swebench-protocol .badge-txt  { font: 700 10px var(--sans,sans-serif);   fill: #fff; }
+  #fig-ageval-swebench-protocol .header-txt { font: 600 13px var(--sans,sans-serif); }
+  #fig-ageval-swebench-protocol .term-lbl   { font: 700 15px var(--sans,sans-serif);   fill: #fff; }
+  #fig-ageval-swebench-protocol .term-sub   { font: 400 9px var(--sans,sans-serif);    fill: rgba(255,255,255,0.88); }
+  #fig-ageval-swebench-protocol .cap-txt    { font: 400 9.5px var(--sans,sans-serif);  fill: var(--muted,#6d675d); }
+  #fig-ageval-swebench-protocol text        { fill: var(--ink-soft,#45413a); }
+
+  /* Main token travels along pipeline then to PASS */
+  @keyframes asb-main {
+    0%   { cx: 74px;  cy: 98px; opacity: 0; }
+    2%   { opacity: 0.95; }
+    10%  { cx: 74px;  cy: 98px; opacity: 0.95; }
+    18%  { cx: 210px; cy: 98px; opacity: 0.95; }
+    26%  { cx: 346px; cy: 98px; opacity: 0.95; }
+    34%  { cx: 482px; cy: 98px; opacity: 0.95; }
+    42%  { cx: 618px; cy: 98px; opacity: 0.95; }
+    50%  { cx: 762px; cy: 98px; opacity: 0.95; }
+    58%  { cx: 1029px; cy: 98px; opacity: 0.95; }
+    65%  { cx: 1029px; cy: 98px; opacity: 0; }
+    100% { cx: 74px;  cy: 98px; opacity: 0; }
+  }
+  /* Alt token shows the early-exit dashed path from step4 to FAIL */
+  @keyframes asb-exit {
+    0%   { cx: 482px; cy: 138px; opacity: 0; }
+    65%  { cx: 482px; cy: 138px; opacity: 0; }
+    68%  { opacity: 0.7; }
+    74%  { cx: 482px; cy: 237px; opacity: 0.7; }
+    84%  { cx: 1029px; cy: 237px; opacity: 0.7; }
+    89%  { cx: 1029px; cy: 237px; opacity: 0; }
+    100% { cx: 482px; cy: 138px; opacity: 0; }
+  }
+  #fig-ageval-swebench-protocol .asb-pulse-main {
+    animation: asb-main 8s ease-in-out infinite;
+  }
+  #fig-ageval-swebench-protocol .asb-pulse-exit {
+    animation: asb-exit 8s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-ageval-swebench-protocol .asb-pulse-main,
+    #fig-ageval-swebench-protocol .asb-pulse-exit { animation: none; opacity: 0; }
+  }
+</style>
+
+
+<rect x="8" y="8" width="1124" height="28" rx="5" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="570" y="27" text-anchor="middle" class="header-txt">For each task</text>
+
+
+
+
+<g data-anim="1">
+  <rect x="14" y="58" width="120" height="80" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <circle cx="29" cy="72" r="9" fill="var(--accent,#c15b39)"/>
+  <text x="29" y="76" text-anchor="middle" class="badge-txt">1</text>
+  <text x="74" y="99" text-anchor="middle" class="lbl">Checkout repo</text>
+  <text x="74" y="114" text-anchor="middle" class="sub">at pre-patch</text>
+  <text x="74" y="126" text-anchor="middle" class="sub">commit</text>
+</g>
+
+<line x1="135" y1="98" x2="148" y2="98" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#asb-arr)"/>
+
+
+<g data-anim="2">
+  <rect x="150" y="58" width="120" height="80" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <circle cx="165" cy="72" r="9" fill="var(--accent,#c15b39)"/>
+  <text x="165" y="76" text-anchor="middle" class="badge-txt">2</text>
+  <text x="210" y="95" text-anchor="middle" class="lbl">Provide to agent</text>
+  <text x="210" y="110" text-anchor="middle" class="sub">issue text</text>
+  <text x="210" y="123" text-anchor="middle" class="sub">+ codebase</text>
+</g>
+
+<line x1="271" y1="98" x2="284" y2="98" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#asb-arr)"/>
+
+
+<g data-anim="3">
+  <rect x="286" y="58" width="120" height="80" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+  <circle cx="301" cy="72" r="9" fill="var(--accent,#c15b39)"/>
+  <text x="301" y="76" text-anchor="middle" class="badge-txt">3</text>
+  <text x="346" y="93" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Agent produces</text>
+  <text x="346" y="108" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">patch</text>
+  <text x="346" y="124" text-anchor="middle" class="sub">git diff (string/file)</text>
+</g>
+
+<line x1="407" y1="98" x2="420" y2="98" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#asb-arr)"/>
+
+
+<g data-anim="4">
+  <rect x="422" y="58" width="120" height="80" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <circle cx="437" cy="72" r="9" fill="var(--accent,#c15b39)"/>
+  <text x="437" y="76" text-anchor="middle" class="badge-txt">4</text>
+  <text x="482" y="97" text-anchor="middle" class="lbl">git apply</text>
+  <text x="482" y="112" text-anchor="middle" class="sub">apply patch</text>
+  <text x="482" y="125" text-anchor="middle" class="sub">to repo</text>
+</g>
+
+
+<line x1="482" y1="138" x2="482" y2="237" stroke="var(--muted,#6d675d)" stroke-width="1.3" stroke-dasharray="5 4"/>
+<line x1="482" y1="237" x2="972" y2="237" stroke="var(--muted,#6d675d)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#asb-arr-dash)"/>
+
+<text x="450" y="172" text-anchor="middle" class="note">patch fails</text>
+<text x="450" y="184" text-anchor="middle" class="note">to apply</text>
+
+
+<line x1="543" y1="98" x2="556" y2="98" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#asb-arr)"/>
+
+
+<g data-anim="5">
+  <rect x="558" y="58" width="120" height="80" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <circle cx="573" cy="72" r="9" fill="var(--accent,#c15b39)"/>
+  <text x="573" y="76" text-anchor="middle" class="badge-txt">5</text>
+  <text x="618" y="95" text-anchor="middle" class="lbl">Run test suite</text>
+  <text x="618" y="110" text-anchor="middle" class="sub">pytest,</text>
+  <text x="618" y="123" text-anchor="middle" class="sub">task-specific</text>
+</g>
+
+<line x1="679" y1="98" x2="700" y2="98" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#asb-arr)"/>
+
+
+<g data-anim="6">
+  <polygon points="762,58 824,98 762,138 700,98" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.8"/>
+  <circle cx="705" cy="68" r="9" fill="var(--accent,#c15b39)"/>
+  <text x="705" y="72" text-anchor="middle" class="badge-txt">6</text>
+  <text x="762" y="95" text-anchor="middle" class="lbl">All tests</text>
+  <text x="762" y="110" text-anchor="middle" class="lbl">pass?</text>
+</g>
+
+
+<line x1="825" y1="98" x2="972" y2="98" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#asb-arr-pass)"/>
+<text x="898" y="91" text-anchor="middle" class="note" style="fill:var(--good,#2f9e6e); font-weight:600">yes / returncode 0</text>
+
+
+<line x1="762" y1="138" x2="762" y2="208" stroke="#dc2626" stroke-width="1.8"/>
+<line x1="762" y1="208" x2="972" y2="208" stroke="#dc2626" stroke-width="1.8" marker-end="url(#asb-arr-fail)"/>
+<text x="867" y="202" text-anchor="middle" class="note" style="fill:#dc2626; font-weight:600">no</text>
+
+
+<g data-anim="6">
+  <rect x="974" y="76" width="110" height="44" rx="19" fill="var(--good,#16a34a)" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="1029" y="94" text-anchor="middle" class="term-lbl">PASS</text>
+  <text x="1029" y="108" text-anchor="middle" class="term-sub">all tests pass</text>
+</g>
+
+
+<g data-anim="6">
+  <rect x="974" y="195" width="110" height="44" rx="19" fill="#dc2626" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="1029" y="213" text-anchor="middle" class="term-lbl">FAIL</text>
+  <text x="1029" y="228" text-anchor="middle" class="term-sub">any test fails</text>
+</g>
+
+<text x="1029" y="246" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif); fill:var(--muted,#6d675d)">timeout / patch error</text>
+
+
+
+
+<circle class="asb-pulse-main" r="7" fill="var(--accent,#c15b39)" opacity="0" cx="74" cy="98"/>
+<circle class="asb-pulse-exit" r="6" fill="var(--muted,#978f83)" opacity="0" cx="482" cy="138"/>
+
+
+<rect x="8" y="265" width="1124" height="78" rx="5" class="v-fill" fill-opacity="0.45" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="570" y="284" text-anchor="middle" style="font:600 10.5px var(--sans,sans-serif); fill:var(--ink-soft,#45413a)">Score = resolve rate = fraction of tasks reaching PASS</text>
+<text x="570" y="300" text-anchor="middle" class="cap-txt">Binary: a patch fixing 9/10 failing tests = FAIL. Non-applying patch short-circuits to FAIL at step 4 (dashed path).</text>
+<text x="570" y="316" text-anchor="middle" class="cap-txt" style="fill:var(--accent,#c15b39)">Step 3 (accent-shaded) is the only agent-authored stage; all others are deterministic harness operations.</text>
+<text x="570" y="332" text-anchor="middle" class="cap-txt">Timeout during test execution also = FAIL.</text>
+</svg>
+<figcaption><b>SWE-bench per-task evaluation protocol: six steps ending in a binary PASS/FAIL verdict.</b> The only agent contribution is step 3 (patch generation, accent-shaded); the surrounding harness is fully deterministic. A patch that cannot be applied cleanly exits immediately to FAIL at step 4 (dashed path), bypassing test execution entirely. The resolve rate counts only full passes — fixing 9 of 10 failing tests still scores zero.</figcaption>
+</figure>
+
+<p>The score is <em>resolve rate</em> = fraction of tasks where all tests pass. Notice that this is a <em>binary outcome</em> metric — a patch that fixes 9 of 10 failing tests still scores 0.</p>
+<p><strong>The harness matters enormously.</strong> The original paper used a simple single-attempt scaffold. Community leaderboards (SWE-bench.com) allow any scaffold. Reported differences include:</p>
+<ul>
+<li><strong>Context window usage:</strong> How much of the codebase the agent sees (full repo, BM25-retrieved files, oracle file localization).</li>
+<li><strong>Iteration count:</strong> Number of edit-debug-retry loops allowed.</li>
+<li><strong>Execution feedback:</strong> Whether the agent can run tests mid-trajectory or only at submission.</li>
+<li><strong>Model calls:</strong> Some entries use multi-agent systems with a planner and executor.</li>
+</ul>
+<p>This means comparing two entries requires checking their scaffold, not just their model. See <a href="../06-rl-infra/10-agentic-multiturn-rl.html">Agentic &amp; Multi-Turn RL</a> for how this connects to multi-turn training.</p>
+<p><strong>Contamination.</strong> The SWE-bench test set was constructed from issues merged before mid-2023. Models trained on data scraped after that date may have seen the solution in GitHub history. SWE-bench Verified includes a temporal split, but no benchmark fully escapes this problem for frontier models.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Minimal SWE-bench task runner (illustrative, not the official harness)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span><span class="o">,</span><span class="w"> </span><span class="nn">tempfile</span><span class="o">,</span><span class="w"> </span><span class="nn">os</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_swebench_task</span><span class="p">(</span><span class="n">repo_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">patch</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">test_cmd</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Apply a patch to a repo clone and run the test suite.</span>
+<span class="sd">    Returns True if all tests pass.</span>
+
+<span class="sd">    repo_path: path to a fresh checkout at the pre-patch commit</span>
+<span class="sd">    patch:     git-diff-style string produced by the agent</span>
+<span class="sd">    test_cmd:  e.g. &quot;pytest tests/test_models.py -x -q&quot;</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">NamedTemporaryFile</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s1">&#39;w&#39;</span><span class="p">,</span> <span class="n">suffix</span><span class="o">=</span><span class="s1">&#39;.patch&#39;</span><span class="p">,</span> <span class="n">delete</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">patch</span><span class="p">)</span>
+        <span class="n">patch_file</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">name</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="c1"># Step 1: apply the patch</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+            <span class="p">[</span><span class="s2">&quot;git&quot;</span><span class="p">,</span> <span class="s2">&quot;apply&quot;</span><span class="p">,</span> <span class="s2">&quot;--check&quot;</span><span class="p">,</span> <span class="n">patch_file</span><span class="p">],</span>
+            <span class="n">cwd</span><span class="o">=</span><span class="n">repo_path</span><span class="p">,</span>
+            <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">returncode</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="c1"># patch doesn&#39;t apply cleanly → immediate FAIL</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+        <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">&quot;git&quot;</span><span class="p">,</span> <span class="s2">&quot;apply&quot;</span><span class="p">,</span> <span class="n">patch_file</span><span class="p">],</span> <span class="n">cwd</span><span class="o">=</span><span class="n">repo_path</span><span class="p">,</span> <span class="n">check</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="c1"># Step 2: run the test suite</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+            <span class="n">test_cmd</span><span class="o">.</span><span class="n">split</span><span class="p">(),</span>
+            <span class="n">cwd</span><span class="o">=</span><span class="n">repo_path</span><span class="p">,</span>
+            <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">timeout</span><span class="o">=</span><span class="mi">120</span>  <span class="c1"># hard wall-clock limit per task</span>
+        <span class="p">)</span>
+        <span class="c1"># pytest returns 0 only when all tests pass</span>
+        <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">0</span>
+
+    <span class="k">except</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">TimeoutExpired</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">unlink</span><span class="p">(</span><span class="n">patch_file</span><span class="p">)</span>
+        <span class="c1"># Reset the repo for the next task</span>
+        <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">&quot;git&quot;</span><span class="p">,</span> <span class="s2">&quot;checkout&quot;</span><span class="p">,</span> <span class="s2">&quot;--&quot;</span><span class="p">,</span> <span class="s2">&quot;.&quot;</span><span class="p">],</span> <span class="n">cwd</span><span class="o">=</span><span class="n">repo_path</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="webarena">WebArena<a class="headerlink" href="#webarena" title="Permanent link">¶</a></h3>
+<p>WebArena (Zhou et al., 2023) measures whether an agent can complete realistic web tasks — booking travel, searching an e-commerce site, navigating a codebase on GitLab, managing a Reddit-like forum, and similar. Tasks are expressed as natural-language instructions, and the agent interacts with live web environments via a browser API.</p>
+<p><strong>Key design decisions:</strong></p>
+<ul>
+<li><em>Sandboxed instances.</em> WebArena spins up isolated copies of real open-source web apps (GitLab, shopping, Reddit clones) so that agents cannot accidentally interact with the real internet and results are reproducible.</li>
+<li><em>Functional evaluation.</em> Unlike pixel-based web tests, WebArena verifies the <em>state</em> of the application after task completion (e.g., &ldquo;does a new issue exist with title X?&rdquo;) rather than checking button clicks.</li>
+<li><em>Task diversity.</em> About 800 tasks spanning single-site and multi-site scenarios. Many require multi-step navigation with backtracking.</li>
+</ul>
+<p><strong>Scoring.</strong> Each task is binary (success/failure). The success criterion is verified by an automated checker that queries application state. Success rate across all tasks is the primary metric.</p>
+<p>WebArena scores for frontier models have grown substantially as agents learned to reason about HTML structure and leverage screenshots. It tests a different capability than SWE-bench: navigation and form-filling under real UI constraints rather than code editing.</p>
+<h3 id="gaia">GAIA<a class="headerlink" href="#gaia" title="Permanent link">¶</a></h3>
+<p>GAIA (Mialon et al., 2023) — the General AI Assistants benchmark — poses questions that require a combination of reasoning, web search, file parsing, and multi-step tool use, with exact-match graded answers. Tasks span three difficulty levels:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Description</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Simple tool use, 1–3 steps</td>
+<td>&ldquo;What is the capital of the country where X was born?&rdquo;</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Multi-hop, 4–8 steps</td>
+<td>Parsing a PDF, looking up a value, doing arithmetic</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Complex chained reasoning, 8+ steps</td>
+<td>Cross-referencing multiple documents, code execution</td>
+</tr>
+</tbody>
+</table>
+<p>GAIA is deliberately designed so that the answers are short and verifiable (a number, a name, a date), reducing ambiguity in grading. Level 3 tasks remain very hard even for frontier models.</p>
+<p><strong>What GAIA measures.</strong> Unlike SWE-bench, GAIA is a general-purpose assistant benchmark. Succeeding requires knowing <em>when</em> to use which tool, correct tool invocation, and accurate synthesis of returned results. It does not test specialized coding ability.</p>
+<h3 id="tau-bench">tau-bench<a class="headerlink" href="#tau-bench" title="Permanent link">¶</a></h3>
+<p>tau-bench (Yao et al., 2024) evaluates tool-augmented agents in <em>realistic customer service</em> settings. An agent must interact with a user (simulated by a model) and a database of tools to fulfill requests like modifying orders, refunding purchases, or looking up account status.</p>
+<p><strong>Design novelties:</strong></p>
+<ul>
+<li><em>Simulated user.</em> The &ldquo;customer&rdquo; is another LLM instructed to behave realistically, including asking follow-up questions and providing information in pieces. This tests turn-level conversation management.</li>
+<li><em>Policy compliance.</em> Many tasks have explicit policy rules (e.g., &ldquo;refunds are only allowed within 30 days&rdquo;). The agent must follow policy while still satisfying the user, creating a tension that tests instruction-following under constraint.</li>
+<li><em>Multi-turn scoring.</em> tau-bench records whether the agent correctly resolves the issue AND whether it violates any policy, producing a two-dimensional score.</li>
+</ul>
+<p>tau-bench is particularly relevant for production deployments of service agents. Its simulated-user design avoids the need for human annotators during evaluation while keeping the dynamics realistic.</p>
+<h3 id="terminal-bench">terminal-bench<a class="headerlink" href="#terminal-bench" title="Permanent link">¶</a></h3>
+<p>terminal-bench evaluates agents in a raw terminal environment without web or GUI scaffolding. Tasks are given as natural-language instructions inside a bash session; the agent must run commands, interpret output, install packages, write scripts, and navigate the filesystem. Inspired by earlier work on computer-using agents, it focuses on the low-level &ldquo;can it actually operate a Unix system?&rdquo; question.</p>
+<p><strong>Key features:</strong></p>
+<ul>
+<li>Tasks run inside Docker containers for isolation and reproducibility.</li>
+<li>Time and command-count limits prevent pathological behavior.</li>
+<li>Scoring is automated: a checker script verifies the final system state (e.g., &ldquo;does file X exist with content Y?&rdquo;).</li>
+</ul>
+<p>terminal-bench is newer and smaller than SWE-bench or WebArena, but it isolates a distinct capability: raw terminal proficiency that is a prerequisite for coding agents.</p>
+<h3 id="other-notable-benchmarks">Other Notable Benchmarks<a class="headerlink" href="#other-notable-benchmarks" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Benchmark</th>
+<th>Domain</th>
+<th>Key Feature</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AgentBench (Liu et al., 2023)</td>
+<td>Multi-domain</td>
+<td>8 environments: OS, DB, code, web</td>
+</tr>
+<tr>
+<td>OSWorld</td>
+<td>Desktop GUI</td>
+<td>Screenshot-based computer use</td>
+</tr>
+<tr>
+<td>InterCode</td>
+<td>Bash/SQL</td>
+<td>Interactive code execution</td>
+</tr>
+<tr>
+<td>AppAgent / ScreenAgent</td>
+<td>Mobile/Desktop</td>
+<td>Vision-based GUI interaction</td>
+</tr>
+<tr>
+<td>HumanEval-X</td>
+<td>Code (pass@k)</td>
+<td>Multilingual code generation</td>
+</tr>
+<tr>
+<td>SciCode</td>
+<td>Scientific coding</td>
+<td>Domain knowledge + coding</td>
+</tr>
+</tbody>
+</table>
+<h2 id="trajectory-vs-outcome-scoring">Trajectory vs. Outcome Scoring<a class="headerlink" href="#trajectory-vs-outcome-scoring" title="Permanent link">¶</a></h2>
+<p>The choice between trajectory-level and outcome-level metrics is not just a technical detail — it fundamentally shapes what you are optimizing for.</p>
+<p><strong>Outcome scoring</strong> (used by SWE-bench, WebArena, GAIA) measures only the final state. Did the agent succeed? This is maximally objective and easy to compute. The downside is low signal: a model that consistently makes the same wrong first move on 50% of tasks and then never recovers will have the same score as one that sometimes finds a clever workaround — even though they represent very different capability profiles.</p>
+<p><strong>Trajectory scoring</strong> measures the quality of intermediate steps. Approaches include:</p>
+<ul>
+<li><em>Step accuracy:</em> Fraction of actions that match a reference trajectory (human demonstration or oracle solution).</li>
+<li><em>Subtask completion:</em> Credit for correctly completing each step in a decomposed task.</li>
+<li><em>Process reward modeling:</em> A trained model scores each reasoning step for correctness (see <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>).</li>
+<li><em>Efficiency metrics:</em> Number of steps taken, tokens consumed, wall-clock time.</li>
+</ul>
+<p>The tension between them is real. Training a model with outcome rewards (e.g., RL on pass/fail signals) can lead to &ldquo;hacking&rdquo; the outcome metric via trajectories that are semantically bizarre but happen to produce the right file diff. Trajectory rewards add supervision signal but require annotated demonstrations, which are expensive.</p>
+<p>In practice, most published agent benchmarks report outcome scores because they scale better. But for diagnosing failures — e.g., &ldquo;our agent correctly localizes the bug but then applies the wrong fix&rdquo; — trajectory-level analysis is indispensable.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">TrajectoryStep</span><span class="p">:</span>
+    <span class="n">action</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># e.g. &quot;read_file&quot;, &quot;edit_file&quot;, &quot;run_tests&quot;</span>
+    <span class="n">action_input</span><span class="p">:</span> <span class="nb">dict</span>
+    <span class="n">observation</span><span class="p">:</span> <span class="nb">str</span>     <span class="c1"># what the environment returned</span>
+    <span class="n">reward</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># step-level reward if using process reward model</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Trajectory</span><span class="p">:</span>
+    <span class="n">task_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">steps</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">TrajectoryStep</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">final_outcome</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>   <span class="c1"># did the task succeed?</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_outcome_score</span><span class="p">(</span><span class="n">trajectories</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Trajectory</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Binary pass rate — the standard SWE-bench metric.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">final_outcome</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">trajectories</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">trajectories</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_trajectory_efficiency</span><span class="p">(</span><span class="n">traj</span><span class="p">:</span> <span class="n">Trajectory</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute trajectory-level metrics beyond binary pass/fail.</span>
+<span class="sd">    Returns a dict with step count, token estimate, and action diversity.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">step_count</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">traj</span><span class="o">.</span><span class="n">steps</span><span class="p">)</span>
+
+    <span class="c1"># Rough token estimate: action_input + observation for each step</span>
+    <span class="n">total_chars</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span>
+        <span class="nb">len</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">action_input</span><span class="p">))</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">observation</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">traj</span><span class="o">.</span><span class="n">steps</span>
+    <span class="p">)</span>
+    <span class="n">token_estimate</span> <span class="o">=</span> <span class="n">total_chars</span> <span class="o">//</span> <span class="mi">4</span>  <span class="c1"># ~4 chars/token as approximation</span>
+
+    <span class="c1"># How many distinct action types were used?</span>
+    <span class="n">action_types</span> <span class="o">=</span> <span class="p">{</span><span class="n">s</span><span class="o">.</span><span class="n">action</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">traj</span><span class="o">.</span><span class="n">steps</span><span class="p">}</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;task_id&quot;</span><span class="p">:</span> <span class="n">traj</span><span class="o">.</span><span class="n">task_id</span><span class="p">,</span>
+        <span class="s2">&quot;success&quot;</span><span class="p">:</span> <span class="n">traj</span><span class="o">.</span><span class="n">final_outcome</span><span class="p">,</span>
+        <span class="s2">&quot;step_count&quot;</span><span class="p">:</span> <span class="n">step_count</span><span class="p">,</span>
+        <span class="s2">&quot;token_estimate&quot;</span><span class="p">:</span> <span class="n">token_estimate</span><span class="p">,</span>
+        <span class="s2">&quot;distinct_actions&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">action_types</span><span class="p">),</span>
+        <span class="s2">&quot;tokens_per_step&quot;</span><span class="p">:</span> <span class="n">token_estimate</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">step_count</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+    <span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compare_trajectories</span><span class="p">(</span>
+    <span class="n">model_a</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Trajectory</span><span class="p">],</span>
+    <span class="n">model_b</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Trajectory</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compare two sets of agent trajectories on both outcome and efficiency.</span>
+<span class="sd">    Assumes matching task order between model_a and model_b.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">outcome_a</span> <span class="o">=</span> <span class="n">compute_outcome_score</span><span class="p">(</span><span class="n">model_a</span><span class="p">)</span>
+    <span class="n">outcome_b</span> <span class="o">=</span> <span class="n">compute_outcome_score</span><span class="p">(</span><span class="n">model_b</span><span class="p">)</span>
+
+    <span class="c1"># Only compare trajectories where outcomes differ (diagnostic cases)</span>
+    <span class="n">a_pass_b_fail</span> <span class="o">=</span> <span class="p">[(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">model_a</span><span class="p">,</span> <span class="n">model_b</span><span class="p">)</span>
+                     <span class="k">if</span> <span class="n">a</span><span class="o">.</span><span class="n">final_outcome</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">b</span><span class="o">.</span><span class="n">final_outcome</span><span class="p">]</span>
+    <span class="n">b_pass_a_fail</span> <span class="o">=</span> <span class="p">[(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">model_a</span><span class="p">,</span> <span class="n">model_b</span><span class="p">)</span>
+                     <span class="k">if</span> <span class="ow">not</span> <span class="n">a</span><span class="o">.</span><span class="n">final_outcome</span> <span class="ow">and</span> <span class="n">b</span><span class="o">.</span><span class="n">final_outcome</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;outcome_A&quot;</span><span class="p">:</span> <span class="n">outcome_a</span><span class="p">,</span>
+        <span class="s2">&quot;outcome_B&quot;</span><span class="p">:</span> <span class="n">outcome_b</span><span class="p">,</span>
+        <span class="s2">&quot;delta&quot;</span><span class="p">:</span> <span class="n">outcome_a</span> <span class="o">-</span> <span class="n">outcome_b</span><span class="p">,</span>
+        <span class="s2">&quot;A_wins&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">a_pass_b_fail</span><span class="p">),</span>
+        <span class="s2">&quot;B_wins&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">b_pass_a_fail</span><span class="p">),</span>
+        <span class="s2">&quot;n_tasks&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">model_a</span><span class="p">),</span>
+    <span class="p">}</span>
+</code></pre></div>
+<h2 id="the-passk-estimator">The pass@k Estimator<a class="headerlink" href="#the-passk-estimator" title="Permanent link">¶</a></h2>
+<p>For stochastic agents, running a single sample per task produces an unreliable estimate. The <strong>pass@k</strong> metric, originally introduced for code generation in the Codex paper (Chen et al., 2021), addresses this by measuring whether <em>at least one</em> of <span class="arithmatex">\(k\)</span> independent samples solves the task.</p>
+<h3 id="definition">Definition<a class="headerlink" href="#definition" title="Permanent link">¶</a></h3>
+<p>Given <span class="arithmatex">\(n\)</span> samples per task of which <span class="arithmatex">\(c\)</span> are correct, the probability that at least one of <span class="arithmatex">\(k\)</span> randomly chosen samples is correct is:</p>
+<div class="arithmatex">\[
+\text{pass@}k = 1 - \frac{\binom{n-c}{k}}{\binom{n}{k}}
+\]</div>
+<p>This is an unbiased estimator when <span class="arithmatex">\(n \geq k\)</span>. You run <span class="arithmatex">\(n\)</span> samples, check which are correct, then compute the combinatorial probability. You never need to enumerate all <span class="arithmatex">\(\binom{n}{k}\)</span> subsets.</p>
+<h3 id="why-not-just-report-the-best-of-k-score">Why Not Just Report the Best-of-k Score?<a class="headerlink" href="#why-not-just-report-the-best-of-k-score" title="Permanent link">¶</a></h3>
+<p>Reporting &ldquo;we ran 10 samples and took the best&rdquo; is problematic for two reasons:</p>
+<ol>
+<li><strong>Selection requires a verifier.</strong> You can only pick the best if you know which is correct, which requires running the test suite for all <span class="arithmatex">\(k\)</span> samples. In open-ended domains without a ground-truth checker, you cannot do this at test time.</li>
+<li><strong>Overestimates agent utility.</strong> Real deployments usually cannot afford <span class="arithmatex">\(k = 10\)</span> full runs. pass@1 is what users experience; pass@10 describes what is possible with a strong verifier.</li>
+</ol>
+<p>The clean way to report agentic capability is to show pass@1 (agent performance in single-shot settings) and pass@k for larger <span class="arithmatex">\(k\)</span> (upper bound with oracle selection, useful for measuring the benefit of sampling diversity).</p>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Estimating pass@k</p>
+<p>Suppose we run <span class="arithmatex">\(n = 8\)</span> independent agent trajectories on a SWE-bench task and <span class="arithmatex">\(c = 2\)</span> of them produce a passing patch. We want to estimate pass@1, pass@2, pass@4.</p>
+<p>Using the unbiased estimator:</p>
+<div class="arithmatex">\[
+\text{pass@}k = 1 - \frac{\binom{n-c}{k}}{\binom{n}{k}} = 1 - \frac{\binom{6}{k}}{\binom{8}{k}}
+\]</div>
+<p>For <span class="arithmatex">\(k=1\)</span>:</p>
+<div class="arithmatex">\[
+\text{pass@1} = 1 - \frac{\binom{6}{1}}{\binom{8}{1}} = 1 - \frac{6}{8} = 0.25
+\]</div>
+<p>For <span class="arithmatex">\(k=2\)</span>:</p>
+<div class="arithmatex">\[
+\text{pass@2} = 1 - \frac{\binom{6}{2}}{\binom{8}{2}} = 1 - \frac{15}{28} \approx 0.464
+\]</div>
+<p>For <span class="arithmatex">\(k=4\)</span>:</p>
+<div class="arithmatex">\[
+\text{pass@4} = 1 - \frac{\binom{6}{4}}{\binom{8}{4}} = 1 - \frac{15}{70} \approx 0.786
+\]</div>
+<p>Interpretation: if we run 4 independent samples and pick the correct one (assuming we have a verifier), we&rsquo;d succeed about 79% of the time on this task, compared to 25% for a single sample. This is a strong argument for investing in fast test execution that enables multi-sample selection.</p>
+</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sequence</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">pass_at_k</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">c</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Unbiased estimator of pass@k.</span>
+
+<span class="sd">    n: total samples drawn per task</span>
+<span class="sd">    c: number of correct samples among n</span>
+<span class="sd">    k: number of samples to select (k &lt;= n)</span>
+
+<span class="sd">    Returns probability that at least one of k samples is correct.</span>
+<span class="sd">    Uses the combinatorial formula from the Codex paper (Chen et al. 2021).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">n</span> <span class="o">&lt;</span> <span class="n">k</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cannot compute pass@</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2"> with only </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2"> samples&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">c</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="k">if</span> <span class="n">c</span> <span class="o">==</span> <span class="n">n</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">1.0</span>
+    <span class="c1"># 1 - P(all k selected are wrong) = 1 - C(n-c, k) / C(n, k)</span>
+    <span class="c1"># Compute in log space for numerical stability with large n</span>
+    <span class="n">log_num</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">n</span> <span class="o">-</span> <span class="n">c</span> <span class="o">-</span> <span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k</span><span class="p">))</span>
+    <span class="n">log_den</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">n</span> <span class="o">-</span> <span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k</span><span class="p">))</span>
+    <span class="k">return</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">math</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">log_num</span> <span class="o">-</span> <span class="n">log_den</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">aggregate_pass_at_k</span><span class="p">(</span>
+    <span class="n">results</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]],</span>  <span class="c1"># list of (n, c) per task</span>
+    <span class="n">k</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Aggregate pass@k over multiple tasks (unweighted mean).</span>
+<span class="sd">    results: list of (n_samples, n_correct) per task.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="p">[</span><span class="n">pass_at_k</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">c</span><span class="p">,</span> <span class="n">k</span><span class="p">)</span> <span class="k">for</span> <span class="n">n</span><span class="p">,</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">results</span><span class="p">]</span>
+    <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+
+<span class="c1"># Example: 500 tasks, each run 8 times</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+<span class="n">task_results</span> <span class="o">=</span> <span class="p">[(</span><span class="mi">8</span><span class="p">,</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">500</span><span class="p">)]</span>
+
+<span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">]:</span>
+    <span class="n">score</span> <span class="o">=</span> <span class="n">aggregate_pass_at_k</span><span class="p">(</span><span class="n">task_results</span><span class="p">,</span> <span class="n">k</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;pass@</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">score</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># Example output (will vary by random seed):</span>
+<span class="c1"># pass@1: 0.188</span>
+<span class="c1"># pass@2: 0.340</span>
+<span class="c1"># pass@4: 0.560</span>
+<span class="c1"># pass@8: 0.737</span>
+</code></pre></div>
+<h2 id="harness-effects-on-scores">Harness Effects on Scores<a class="headerlink" href="#harness-effects-on-scores" title="Permanent link">¶</a></h2>
+<p>The harness — the scaffolding around the model — is not a neutral measurement instrument. It is a design choice that can swing scores dramatically. This section catalogs the main harness dimensions and their approximate effects.</p>
+<h3 id="file-localization">File Localization<a class="headerlink" href="#file-localization" title="Permanent link">¶</a></h3>
+<p>SWE-bench tasks involve large codebases (often hundreds of files). How the agent identifies which files to edit affects performance:</p>
+<ul>
+<li><strong>Oracle localization:</strong> Tell the agent exactly which files need editing (upper bound on localization). Typically lifts scores by 10–20 percentage points on SWE-bench.</li>
+<li><strong>BM25 retrieval:</strong> Rank files by keyword similarity to the issue, pass top-N. Cheaper but noisy.</li>
+<li><strong>Agent self-localization:</strong> Let the agent explore the repo (via <code>find</code>, <code>grep</code>, code search) to identify relevant files. Most realistic but most expensive.</li>
+</ul>
+<h3 id="iteration-budget">Iteration Budget<a class="headerlink" href="#iteration-budget" title="Permanent link">¶</a></h3>
+<p>Most agents improve when allowed to observe test failures and retry. Giving an agent 3 edit-run-test loops instead of 1 typically improves SWE-bench resolve rate by several percentage points. The diminishing returns curve matters: going from 1 to 3 iterations helps; going from 10 to 30 iterations rarely does.</p>
+<h3 id="tool-suite">Tool Suite<a class="headerlink" href="#tool-suite" title="Permanent link">¶</a></h3>
+<p>The set of available tools shapes what strategies are even possible. An agent with only <code>read_file</code> + <code>edit_file</code> cannot run tests mid-trajectory; it must produce a correct patch in one shot. Adding <code>run_command</code> (bash execution) enables iterative debugging but also increases trajectory length and cost.</p>
+<h3 id="context-truncation-policy">Context Truncation Policy<a class="headerlink" href="#context-truncation-policy" title="Permanent link">¶</a></h3>
+<p>Long codebases don&rsquo;t fit in context. The policy for truncating — keep first N lines, summarize, or chunk and retrieve — interacts with the model&rsquo;s positional bias. See <a href="../08-agents-harness/04-context-engineering.html">Context Engineering &amp; Management</a> for the mechanics.</p>
+<h3 id="system-prompt-engineering">System Prompt Engineering<a class="headerlink" href="#system-prompt-engineering" title="Permanent link">¶</a></h3>
+<p>Instruction format affects whether the model produces valid <code>git diff</code> output, uses tools correctly, or stalls in thought loops. Prompting choices that add or remove a single sentence about output format have caused observed score shifts of 2–5 percentage points.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: reporting scores without harness disclosure</p>
+<p>A leaderboard entry that says &ldquo;Model X achieves 35% on SWE-bench Verified&rdquo; is nearly uninterpretable without knowing the harness. Always report: (1) oracle vs. retrieved file localization, (2) maximum iterations, (3) tools available, (4) scaffold name and version. Without these, comparison across entries is meaningless.</p>
+</div>
+<h2 id="reproducibility-and-variance">Reproducibility and Variance<a class="headerlink" href="#reproducibility-and-variance" title="Permanent link">¶</a></h2>
+<p>Agent benchmarks have notoriously high variance. The main sources are:</p>
+<p><strong>Sampling stochasticity.</strong> Even at temperature 0, results may differ across runs due to non-deterministic CUDA kernels, API load balancing, or batch-size-dependent numerics. For small task sets, a ±2% difference can be noise.</p>
+<p><strong>Environment instability.</strong> Web environments spin up Docker containers; container startup time, network latency, and website version differences all introduce variance. WebArena&rsquo;s sandboxed design reduces this, but not entirely.</p>
+<p><strong>Test suite fragility.</strong> Some SWE-bench test suites are flaky — tests that pass and fail non-deterministically regardless of the patch. The Verified subset was curated to reduce this, but it persists in the full set.</p>
+<h3 id="confidence-intervals-for-agent-scores">Confidence Intervals for Agent Scores<a class="headerlink" href="#confidence-intervals-for-agent-scores" title="Permanent link">¶</a></h3>
+<p>For a binary outcome metric on <span class="arithmatex">\(N\)</span> tasks, the standard error of the proportion is:</p>
+<div class="arithmatex">\[
+\text{SE} = \sqrt{\frac{p(1-p)}{N}}
+\]</div>
+<p>where <span class="arithmatex">\(p\)</span> is the observed resolve rate. A 95% confidence interval is approximately <span class="arithmatex">\(p \pm 1.96 \cdot \text{SE}\)</span>.</p>
+<p>For <span class="arithmatex">\(N = 500\)</span> (SWE-bench Verified size) and <span class="arithmatex">\(p = 0.30\)</span>:</p>
+<div class="arithmatex">\[
+\text{SE} = \sqrt{\frac{0.30 \times 0.70}{500}} = \sqrt{0.00042} \approx 0.020
+\]</div>
+<p>So the 95% CI is roughly <span class="arithmatex">\([0.26, 0.34]\)</span>. A reported improvement from 30% to 33% is statistically indistinguishable from noise at this sample size. This is alarming for a field that regularly claims &ldquo;state-of-the-art&rdquo; improvements of 1–3 percentage points.</p>
+<p>The correct response is to run multiple seeds, report CIs, and use paired tests (McNemar&rsquo;s test for the same task set) rather than comparing raw percentages.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy</span><span class="w"> </span><span class="kn">import</span> <span class="n">stats</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">agent_benchmark_ci</span><span class="p">(</span><span class="n">n_tasks</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_correct</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">confidence</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.95</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Wilson score interval for a binary agent benchmark.</span>
+<span class="sd">    More accurate than normal approximation at extreme proportions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">p_hat</span> <span class="o">=</span> <span class="n">n_correct</span> <span class="o">/</span> <span class="n">n_tasks</span>
+    <span class="n">alpha</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">confidence</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">norm</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">alpha</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>  <span class="c1"># e.g. 1.96 for 95% CI</span>
+
+    <span class="c1"># Wilson score interval</span>
+    <span class="n">denom</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">z</span><span class="o">**</span><span class="mi">2</span> <span class="o">/</span> <span class="n">n_tasks</span>
+    <span class="n">center</span> <span class="o">=</span> <span class="p">(</span><span class="n">p_hat</span> <span class="o">+</span> <span class="n">z</span><span class="o">**</span><span class="mi">2</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">n_tasks</span><span class="p">))</span> <span class="o">/</span> <span class="n">denom</span>
+    <span class="n">margin</span> <span class="o">=</span> <span class="p">(</span><span class="n">z</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">p_hat</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p_hat</span><span class="p">)</span> <span class="o">/</span> <span class="n">n_tasks</span> <span class="o">+</span> <span class="n">z</span><span class="o">**</span><span class="mi">2</span> <span class="o">/</span> <span class="p">(</span><span class="mi">4</span> <span class="o">*</span> <span class="n">n_tasks</span><span class="o">**</span><span class="mi">2</span><span class="p">)))</span> <span class="o">/</span> <span class="n">denom</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;estimate&quot;</span><span class="p">:</span> <span class="n">p_hat</span><span class="p">,</span>
+        <span class="s2">&quot;ci_lower&quot;</span><span class="p">:</span> <span class="nb">max</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">center</span> <span class="o">-</span> <span class="n">margin</span><span class="p">),</span>
+        <span class="s2">&quot;ci_upper&quot;</span><span class="p">:</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">center</span> <span class="o">+</span> <span class="n">margin</span><span class="p">),</span>
+        <span class="s2">&quot;n&quot;</span><span class="p">:</span> <span class="n">n_tasks</span><span class="p">,</span>
+        <span class="s2">&quot;n_correct&quot;</span><span class="p">:</span> <span class="n">n_correct</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">mcnemar_test</span><span class="p">(</span><span class="n">outcomes_a</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">bool</span><span class="p">],</span> <span class="n">outcomes_b</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">bool</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    McNemar&#39;s test for paired binary outcomes.</span>
+<span class="sd">    Tests whether model A and model B have significantly different success rates</span>
+<span class="sd">    on the SAME task set (the right comparison, vs. unpaired z-test).</span>
+
+<span class="sd">    outcomes_a[i], outcomes_b[i]: True/False for task i under model A/B.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">outcomes_a</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">outcomes_b</span><span class="p">)</span>
+    <span class="c1"># Count concordant and discordant pairs</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">a</span><span class="p">,</span> <span class="n">bb</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">outcomes_a</span><span class="p">,</span> <span class="n">outcomes_b</span><span class="p">)</span> <span class="k">if</span> <span class="n">a</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">bb</span><span class="p">)</span>   <span class="c1"># A passes, B fails</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">a</span><span class="p">,</span> <span class="n">bb</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">outcomes_a</span><span class="p">,</span> <span class="n">outcomes_b</span><span class="p">)</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">a</span> <span class="ow">and</span> <span class="n">bb</span><span class="p">)</span>   <span class="c1"># B passes, A fails</span>
+
+    <span class="c1"># McNemar&#39;s statistic (with continuity correction)</span>
+    <span class="n">chi2</span> <span class="o">=</span> <span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">b</span> <span class="o">-</span> <span class="n">c</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span> <span class="o">/</span> <span class="p">(</span><span class="n">b</span> <span class="o">+</span> <span class="n">c</span><span class="p">)</span> <span class="k">if</span> <span class="p">(</span><span class="n">b</span> <span class="o">+</span> <span class="n">c</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+    <span class="n">p_value</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">stats</span><span class="o">.</span><span class="n">chi2</span><span class="o">.</span><span class="n">cdf</span><span class="p">(</span><span class="n">chi2</span><span class="p">,</span> <span class="n">df</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;A_only&quot;</span><span class="p">:</span> <span class="n">b</span><span class="p">,</span>    <span class="c1"># tasks only A solves</span>
+        <span class="s2">&quot;B_only&quot;</span><span class="p">:</span> <span class="n">c</span><span class="p">,</span>    <span class="c1"># tasks only B solves</span>
+        <span class="s2">&quot;chi2&quot;</span><span class="p">:</span> <span class="n">chi2</span><span class="p">,</span>
+        <span class="s2">&quot;p_value&quot;</span><span class="p">:</span> <span class="n">p_value</span><span class="p">,</span>
+        <span class="s2">&quot;significant_at_05&quot;</span><span class="p">:</span> <span class="n">p_value</span> <span class="o">&lt;</span> <span class="mf">0.05</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="c1"># Example: 500 tasks, model A gets 160 right, model B gets 175 right</span>
+<span class="c1"># but 30 are tasks A solves that B doesn&#39;t, and 45 are tasks B solves that A doesn&#39;t</span>
+<span class="n">outcomes_a</span> <span class="o">=</span> <span class="p">[</span><span class="kc">True</span><span class="p">]</span> <span class="o">*</span> <span class="mi">130</span> <span class="o">+</span> <span class="p">[</span><span class="kc">True</span><span class="p">]</span> <span class="o">*</span> <span class="mi">30</span> <span class="o">+</span> <span class="p">[</span><span class="kc">False</span><span class="p">]</span> <span class="o">*</span> <span class="mi">45</span> <span class="o">+</span> <span class="p">[</span><span class="kc">False</span><span class="p">]</span> <span class="o">*</span> <span class="mi">295</span>
+<span class="n">outcomes_b</span> <span class="o">=</span> <span class="p">[</span><span class="kc">True</span><span class="p">]</span> <span class="o">*</span> <span class="mi">130</span> <span class="o">+</span> <span class="p">[</span><span class="kc">False</span><span class="p">]</span> <span class="o">*</span> <span class="mi">30</span> <span class="o">+</span> <span class="p">[</span><span class="kc">True</span><span class="p">]</span> <span class="o">*</span> <span class="mi">45</span> <span class="o">+</span> <span class="p">[</span><span class="kc">False</span><span class="p">]</span> <span class="o">*</span> <span class="mi">295</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">mcnemar_test</span><span class="p">(</span><span class="n">outcomes_a</span><span class="p">,</span> <span class="n">outcomes_b</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+<span class="c1"># {&quot;A_only&quot;: 30, &quot;B_only&quot;: 45, &quot;chi2&quot;: ..., &quot;p_value&quot;: ..., &quot;significant_at_05&quot;: ...}</span>
+</code></pre></div>
+<h2 id="contamination-in-agent-benchmarks">Contamination in Agent Benchmarks<a class="headerlink" href="#contamination-in-agent-benchmarks" title="Permanent link">¶</a></h2>
+<p>Data contamination — the presence of benchmark tasks or solutions in pretraining data — is a documented problem for LLM benchmarks and is <em>worse</em> for agent benchmarks for several reasons.</p>
+<p><strong>SWE-bench and GitHub overlap.</strong> SWE-bench tasks are real GitHub issues and PRs. The merged patch is public on GitHub, often in the training crawl of every major model. Even if the issue text isn&rsquo;t in training, the diff is. The question is whether the model is <em>using</em> that memory or solving the problem fresh.</p>
+<p><strong>Detection methods and their limits.</strong></p>
+<ol>
+<li><em>N-gram overlap detection</em> (Membership Inference, Min-K% Prob): Check whether the test instances appear verbatim in training. Works for exact matches, fails for paraphrased or semantically equivalent content.</li>
+<li><em>Temporal splits</em>: Only use issues filed and resolved after a model&rsquo;s training cutoff. SWE-bench Verified includes recency filtering, but models may still have seen the PR through commit history.</li>
+<li><em>Differential perturbation</em>: Create modified versions of the task (rename variables, change error message) and check if the model&rsquo;s solve rate drops. A large drop suggests memorization; robustness suggests generalization.</li>
+<li><em>Canary insertion</em>: Insert synthetic &ldquo;planted&rdquo; tasks into the benchmark and check if any model exhibits disproportionately high solve rates on them.</li>
+</ol>
+<p><strong>Practical guidance.</strong> For any claimed state-of-the-art result on an agent benchmark:
+- Check the model&rsquo;s knowledge cutoff against the benchmark&rsquo;s task date range.
+- Prefer benchmarks that release task IDs but not task content publicly (held-out test sets).
+- Request solve-rate stratified by task creation date: if the model does disproportionately better on older tasks, contamination is likely.</p>
+<div class="admonition note">
+<p class="admonition-title">SWE-bench Verified&rsquo;s approach to contamination</p>
+<p>The Verified split was annotated in mid-2024. Some providers filter out SWE-bench task IDs from training. However, since the filter operates on identifiers (not semantic content), and since many tasks appear in model-training web crawls through Stack Overflow answers, blog posts, and pull request discussions, contamination is difficult to fully eliminate.</p>
+</div>
+<h2 id="measuring-agentic-progress-what-the-numbers-actually-say">Measuring Agentic Progress: What the Numbers Actually Say<a class="headerlink" href="#measuring-agentic-progress-what-the-numbers-actually-say" title="Permanent link">¶</a></h2>
+<p>Stepping back, what does the trajectory of agent benchmark scores tell us about real progress?</p>
+<p><strong>SWE-bench as a case study.</strong> In mid-2023, the best published resolve rates on SWE-bench were around 3–5% (a single model without retrieval). By early 2025, leaderboard-leading entries using multi-agent scaffolds and oracle file localization were reporting rates on the order of 40–50% on SWE-bench Verified. That is a genuine capability jump — the tasks are real software engineering problems and the evaluation is objective.</p>
+<p>But much of the improvement came from scaffolding, not just the base model. The signal is real, but it is a <em>system</em> signal: (model + harness + compute budget) rather than model-in-isolation.</p>
+<p><strong>Metrics that capture system capability honestly</strong> should include:</p>
+<ul>
+<li><strong>Solve rate at fixed compute budget</strong> (e.g., 2 × 10^6 tokens per task): forces apples-to-apples comparison.</li>
+<li><strong>Solve rate with and without oracle localization</strong>: isolates code-generation ability from retrieval ability.</li>
+<li><strong>Cost per solved task</strong> (inference API cost): increasingly important for production deployment.</li>
+</ul>
+<p><strong>The floor and ceiling problem.</strong> Benchmarks saturate. When any single benchmark approaches 70–80% solve rates, the remaining tasks are either pathologically hard, noisy, or require capabilities genuinely absent from current models. The field regularly needs new, harder benchmarks. terminal-bench and SciCode are recent examples of raising the difficulty ceiling.</p>
+<p>See <a href="../11-evaluation/04-reasoning-coding-agentic-evals.html">Reasoning, Coding &amp; Agentic Evals</a> for broader context on how agent benchmarks fit into the full evaluation landscape, and <a href="../11-evaluation/01-eval-landscape.html">The Evaluation Problem &amp; Benchmark Landscape</a> for the meta-question of what benchmarks are actually measuring.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> SWE-bench Verified shows Model A achieves 40% and Model B achieves 37%. A colleague says Model A is strictly better. What would you push back on?</p>
+<p><strong>A:</strong> Several important caveats: First, with 500 tasks and the observed proportion near 0.40, the 95% confidence interval is roughly ±4 points, so the difference may not be statistically significant. Use McNemar&rsquo;s test on paired task outcomes (same task set) rather than comparing raw percentages. Second, the scores are harness-dependent: ask whether both models used the same scaffold, the same file localization strategy, the same iteration budget, and the same tools. A difference in oracle-vs-retrieved localization alone can explain a 3-point gap. Third, check for contamination: if Model A&rsquo;s training cutoff is closer to the SWE-bench task dates, it may have seen more of the benchmark data. Fourth, consider stratified performance: maybe Model A is much better on Django tasks and worse on everything else. A single aggregate number obscures capability profiles. None of this means A isn&rsquo;t better — it might well be — but the claim requires more evidence than a 3-point gap on a single number.</p>
+</div>
+<h2 id="building-trustworthy-agent-evals-in-practice">Building Trustworthy Agent Evals in Practice<a class="headerlink" href="#building-trustworthy-agent-evals-in-practice" title="Permanent link">¶</a></h2>
+<p>If you are building an agent system and need reliable internal evaluation, the public benchmarks are a starting point but not a complete answer. Here is a practitioner checklist:</p>
+<p><strong>Define the right unit of measurement.</strong> What matters to your users: per-task success rate, multi-turn session completion rate, time to resolution, or user satisfaction? Pick the metric before you look at any results.</p>
+<p><strong>Use a held-out task set.</strong> Once your team has seen the tasks during development, those tasks are contaminated for evaluation purposes. Create a locked-down holdout set that no one on the team inspects until the final evaluation.</p>
+<p><strong>Run multiple seeds.</strong> Even at temperature 0, environmental non-determinism exists. Run at least 3–5 independent seeds per task for your primary metric, and report the mean and standard deviation.</p>
+<p><strong>Ablate your harness.</strong> Run your model with and without each harness feature (retrieval, iteration, tools). This tells you what the model contributes versus the scaffold.</p>
+<p><strong>Track cost alongside quality.</strong> A system that costs $50 per solved task and one that costs $5 per solved task are not equivalent even if they have the same solve rate. Cost-normalized solve rate (tasks solved per dollar) is a legitimate production metric.</p>
+<p><strong>Automate the evaluator.</strong> Human evaluation is gold-standard but does not scale. The gold standard for agentic eval is automated state-checking (does the final system state match the goal?), not model-based judging. Reserve LLM-as-a-judge (see <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a>) for tasks where no automated checker exists.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Minimal reproducible eval harness with seeding and logging</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">hashlib</span><span class="o">,</span><span class="w"> </span><span class="nn">datetime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">asdict</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Any</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">EvalConfig</span><span class="p">:</span>
+    <span class="n">benchmark</span><span class="p">:</span> <span class="nb">str</span>         <span class="c1"># e.g. &quot;swe-bench-verified&quot;</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span>             <span class="c1"># e.g. &quot;gpt-4o-2024-08-06&quot;</span>
+    <span class="n">scaffold</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># e.g. &quot;acr-v2.1&quot;</span>
+    <span class="n">n_seeds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>
+    <span class="n">max_iterations</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span>
+    <span class="n">file_localization</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;bm25-top10&quot;</span>  <span class="c1"># or &quot;oracle&quot;, &quot;agent-only&quot;</span>
+    <span class="n">timestamp</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">timestamp</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">timestamp</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">utcnow</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fingerprint</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Stable hash of this config for deduplication.&quot;&quot;&quot;</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">asdict</span><span class="p">(</span><span class="bp">self</span><span class="p">),</span> <span class="n">sort_keys</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()[:</span><span class="mi">12</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_eval</span><span class="p">(</span>
+    <span class="n">config</span><span class="p">:</span> <span class="n">EvalConfig</span><span class="p">,</span>
+    <span class="n">tasks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+    <span class="n">agent_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">dict</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="nb">bool</span><span class="p">],</span>  <span class="c1"># (task, seed) -&gt; success</span>
+    <span class="n">output_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run an agent eval with multiple seeds, log results, and compute statistics.</span>
+
+<span class="sd">    agent_fn: your agent callable. Takes a task dict and a random seed int,</span>
+<span class="sd">              returns True if the task was resolved.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">output_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">fp</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">fingerprint</span><span class="p">()</span>
+    <span class="n">results_path</span> <span class="o">=</span> <span class="n">output_dir</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;eval_</span><span class="si">{</span><span class="n">fp</span><span class="si">}</span><span class="s2">.jsonl&quot;</span>
+
+    <span class="n">all_per_task</span> <span class="o">=</span> <span class="p">[]</span>  <span class="c1"># list of (n_correct, n_total) per task</span>
+
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">results_path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">out_f</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="n">tasks</span><span class="p">:</span>
+            <span class="n">task_results</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">seed</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">n_seeds</span><span class="p">):</span>
+                <span class="n">success</span> <span class="o">=</span> <span class="n">agent_fn</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">seed</span><span class="p">)</span>
+                <span class="n">record</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="s2">&quot;task_id&quot;</span><span class="p">:</span> <span class="n">task</span><span class="p">[</span><span class="s2">&quot;id&quot;</span><span class="p">],</span>
+                    <span class="s2">&quot;seed&quot;</span><span class="p">:</span> <span class="n">seed</span><span class="p">,</span>
+                    <span class="s2">&quot;success&quot;</span><span class="p">:</span> <span class="n">success</span><span class="p">,</span>
+                    <span class="s2">&quot;config_fingerprint&quot;</span><span class="p">:</span> <span class="n">fp</span><span class="p">,</span>
+                <span class="p">}</span>
+                <span class="n">out_f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">record</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="n">task_results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">success</span><span class="p">)</span>
+
+            <span class="n">n_correct</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">task_results</span><span class="p">)</span>
+            <span class="n">all_per_task</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">config</span><span class="o">.</span><span class="n">n_seeds</span><span class="p">,</span> <span class="n">n_correct</span><span class="p">))</span>
+
+    <span class="c1"># Aggregate</span>
+    <span class="n">pass1</span> <span class="o">=</span> <span class="n">aggregate_pass_at_k</span><span class="p">(</span><span class="n">all_per_task</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">passN</span> <span class="o">=</span> <span class="n">aggregate_pass_at_k</span><span class="p">(</span><span class="n">all_per_task</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">n_seeds</span><span class="p">)</span>
+    <span class="n">ci</span> <span class="o">=</span> <span class="n">agent_benchmark_ci</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">tasks</span><span class="p">),</span> <span class="nb">int</span><span class="p">(</span><span class="n">pass1</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">tasks</span><span class="p">)))</span>
+
+    <span class="n">summary</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;config&quot;</span><span class="p">:</span> <span class="n">asdict</span><span class="p">(</span><span class="n">config</span><span class="p">),</span>
+        <span class="s2">&quot;n_tasks&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">tasks</span><span class="p">),</span>
+        <span class="s2">&quot;pass_at_1&quot;</span><span class="p">:</span> <span class="n">pass1</span><span class="p">,</span>
+        <span class="sa">f</span><span class="s2">&quot;pass_at_</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">n_seeds</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">:</span> <span class="n">passN</span><span class="p">,</span>
+        <span class="s2">&quot;ci_95_lower&quot;</span><span class="p">:</span> <span class="n">ci</span><span class="p">[</span><span class="s2">&quot;ci_lower&quot;</span><span class="p">],</span>
+        <span class="s2">&quot;ci_95_upper&quot;</span><span class="p">:</span> <span class="n">ci</span><span class="p">[</span><span class="s2">&quot;ci_upper&quot;</span><span class="p">],</span>
+        <span class="s2">&quot;results_file&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">results_path</span><span class="p">),</span>
+    <span class="p">}</span>
+
+    <span class="n">summary_path</span> <span class="o">=</span> <span class="n">output_dir</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;summary_</span><span class="si">{</span><span class="n">fp</span><span class="si">}</span><span class="s2">.json&quot;</span>
+    <span class="n">summary_path</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">summary</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">summary</span>
+</code></pre></div>
+<h2 id="summary-the-benchmark-landscape-at-a-glance">Summary: The Benchmark Landscape at a Glance<a class="headerlink" href="#summary-the-benchmark-landscape-at-a-glance" title="Permanent link">¶</a></h2>
+<div class="highlight"><pre><span></span><code>┌────────────────┬──────────────┬──────────────────┬─────────────────────────┐
+│  Benchmark     │  Domain      │  Metric          │  Key Design Feature     │
+├────────────────┼──────────────┼──────────────────┼─────────────────────────┤
+│ SWE-bench      │ Code/GitHub  │ resolve rate     │ Real issues, unit tests │
+│ SWE-bench      │ Code/GitHub  │ resolve rate     │ Human-verified subset   │
+│   Verified     │              │                  │ (≈500 tasks)            │
+│ WebArena       │ Web browsing │ success rate     │ Sandboxed web apps      │
+│ GAIA           │ General AI   │ exact-match acc  │ 3 difficulty levels     │
+│ tau-bench      │ Customer svc │ resolve + policy │ Simulated user partner  │
+│ terminal-bench │ Bash/Linux   │ success rate     │ Docker-isolated shell   │
+│ AgentBench     │ Multi-domain │ mean success     │ 8 environments          │
+│ OSWorld        │ Desktop GUI  │ success rate     │ Screenshot-based        │
+└────────────────┴──────────────┴──────────────────┴─────────────────────────┘
+</code></pre></div>
+<p>Progress on these benchmarks reflects real capability improvements in the underlying models and scaffolds, but interpreting that progress requires understanding harness effects, statistical uncertainty, and contamination risk. The tools in this chapter — pass@k estimators, confidence intervals, McNemar&rsquo;s test, harness ablations — are not academic exercises; they are the difference between knowing whether your agent actually got better and just hoping it did.</p>
+<p>For how these evaluations connect to training, see <a href="../06-rl-infra/10-agentic-multiturn-rl.html">Agentic &amp; Multi-Turn RL</a>. For tool-calling fundamentals that underpin all agentic benchmarks, see <a href="../08-agents-harness/01-tool-use-function-calling.html">Tool Use &amp; Function Calling</a>. For the full eval framework that governs how these benchmarks fit into broader LLM evaluation, see <a href="../11-evaluation/03-eval-harnesses.html">Building Eval Harnesses</a>.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>SWE-bench (especially the Verified subset) is the standard for coding agent evaluation: agents produce git patches graded by whether the task test suite passes.</li>
+<li>WebArena tests web navigation, GAIA tests general multi-tool reasoning, tau-bench tests conversational service agents, and terminal-bench tests raw shell proficiency — each isolating a different capability.</li>
+<li>Outcome scoring (binary pass/fail) is the norm; trajectory scoring provides richer diagnostics but requires annotated demonstrations or process reward models.</li>
+<li>pass@k is the correct estimator when you run multiple samples: <span class="arithmatex">\(\text{pass@}k = 1 - \binom{n-c}{k}/\binom{n}{k}\)</span>, unbiased and numerically stable.</li>
+<li>Harness choices — file localization, iteration budget, tools available, context truncation — routinely shift SWE-bench scores by 10–20 percentage points, making harness disclosure mandatory for fair comparison.</li>
+<li>With 500 tasks and ~30% solve rate, a 95% CI spans about ±4 points; a 3-point improvement may be noise. Use McNemar&rsquo;s paired test and report CIs, not just point estimates.</li>
+<li>Contamination is a structural risk: SWE-bench tasks live on GitHub and may appear in training crawls; prefer recency-filtered splits and stratify results by task creation date.</li>
+<li>In production, augment pass@k with cost-normalized metrics (tasks solved per dollar) and ablation studies that separate model contribution from scaffold contribution.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Agent evaluation has matured rapidly: SWE-bench Verified scores rose from under 2% in late 2023 to over 75% by 2026, driven by both stronger base models and scaffold engineering. The field is now converging on richer metrics — cost-normalized solve rates, harness-ablated comparisons, and multi-domain benchmarks — to separate genuine capability gains from scaffolding and contamination effects.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2310.06770">Jimenez et al., <em>SWE-bench: Can Language Models Resolve Real-World GitHub Issues?</em> (2023)</a> — the canonical coding-agent benchmark; each task is a real GitHub issue graded by whether the agent&rsquo;s patch passes the test suite.</li>
+<li><a href="https://arxiv.org/abs/2107.03374">Chen et al., <em>Evaluating Large Language Models Trained on Code</em> (Codex, 2021)</a> — introduced the unbiased pass@k estimator used by virtually every subsequent agent benchmark.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2307.13854">Zhou et al., <em>WebArena: A Realistic Web Environment for Building Autonomous Agents</em> (2023)</a> — sandboxed web benchmark across e-commerce, GitLab, and forum tasks; state-based functional evaluation.</li>
+<li><a href="https://arxiv.org/abs/2311.12983">Mialon et al., <em>GAIA: a benchmark for General AI Assistants</em> (2023)</a> — three-level benchmark requiring multi-hop tool use with exact-match grading; humans score 92% vs. ~15% for GPT-4 with plugins.</li>
+<li><a href="https://arxiv.org/abs/2406.12045">Yao et al., <em>τ-bench: Tool-Agent-User Interaction in Real-World Domains</em> (2024)</a> — simulated customer-service benchmark with policy-compliance scoring and a multi-turn pass^k metric.</li>
+<li><a href="https://arxiv.org/abs/2404.07972">Xie et al., <em>OSWorld: Benchmarking Multimodal Agents in Real Computer Environments</em> (2024)</a> — 369 tasks spanning Ubuntu, Windows, and macOS; best model achieves ~12% vs. 72% human performance.</li>
+<li><a href="https://arxiv.org/abs/2503.16416">Yehudai et al., <em>Survey on Evaluation of LLM-based Agents</em> (2025)</a> — comprehensive survey across five evaluation dimensions: core capabilities, application benchmarks, generalist agents, benchmark analysis, and evaluation frameworks.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/SWE-bench/SWE-bench">SWE-bench/SWE-bench</a> — official Docker-based evaluation harness for SWE-bench and SWE-bench Verified; includes dataset, inference scripts, and the sb-cli cloud runner.</li>
+<li><a href="https://github.com/web-arena-x/webarena">web-arena-x/webarena</a> — self-hostable web environment with 812 tasks across sandboxed web apps; Playwright-based browser automation.</li>
+<li><a href="https://github.com/THUDM/AgentBench">THUDM/AgentBench</a> — multi-environment evaluation suite covering OS, database, knowledge-graph, web shopping, and household tasks (ICLR 2024).</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.swebench.com/">SWE-bench Official Leaderboard</a> — live rankings across Verified, Lite, Multilingual, and Multimodal splits with harness and model filters.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Jimenez et al., &ldquo;SWE-bench: Can Language Models Resolve Real-World GitHub Issues?&rdquo; (2023) — original SWE-bench paper.</li>
+<li>Chowdhury et al., &ldquo;SWE-bench Verified&rdquo; (2024) — the human-verified subset methodology.</li>
+<li>Zhou et al., &ldquo;WebArena: A Realistic Web Environment for Building Autonomous Agents&rdquo; (2023).</li>
+<li>Mialon et al., &ldquo;GAIA: A Benchmark for General AI Assistants&rdquo; (2023).</li>
+<li>Yao et al., &ldquo;tau-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains&rdquo; (2024).</li>
+<li>Chen et al., &ldquo;Evaluating Large Language Models Trained on Code&rdquo; (Codex, 2021) — introduced the pass@k estimator.</li>
+<li>Liu et al., &ldquo;AgentBench: Evaluating LLMs as Agents&rdquo; (2023) — multi-environment benchmark.</li>
+<li>Xie et al., &ldquo;OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments&rdquo; (2024).</li>
+<li>SWE-bench leaderboard and harness code: github.com/princeton-nlp/SWE-bench</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="07-multi-agent-systems.html"><span class="pn-label">← Previous</span><span class="pn-title">Multi-Agent Systems &amp; Orchestration</span></a>
+<a class="next" href="09-prompt-engineering.html"><span class="pn-label">Next →</span><span class="pn-title">Prompt Engineering as Engineering</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-agent-evaluation-is-different">Why Agent Evaluation Is Different</a></li>
+<li class="toc-l2"><a href="#the-major-benchmarks">The Major Benchmarks</a></li>
+<li class="toc-l3"><a href="#swe-bench-and-swe-bench-verified">SWE-bench and SWE-bench Verified</a></li>
+<li class="toc-l3"><a href="#webarena">WebArena</a></li>
+<li class="toc-l3"><a href="#gaia">GAIA</a></li>
+<li class="toc-l3"><a href="#tau-bench">tau-bench</a></li>
+<li class="toc-l3"><a href="#terminal-bench">terminal-bench</a></li>
+<li class="toc-l3"><a href="#other-notable-benchmarks">Other Notable Benchmarks</a></li>
+<li class="toc-l2"><a href="#trajectory-vs-outcome-scoring">Trajectory vs. Outcome Scoring</a></li>
+<li class="toc-l2"><a href="#the-passk-estimator">The pass@k Estimator</a></li>
+<li class="toc-l3"><a href="#definition">Definition</a></li>
+<li class="toc-l3"><a href="#why-not-just-report-the-best-of-k-score">Why Not Just Report the Best-of-k Score?</a></li>
+<li class="toc-l2"><a href="#harness-effects-on-scores">Harness Effects on Scores</a></li>
+<li class="toc-l3"><a href="#file-localization">File Localization</a></li>
+<li class="toc-l3"><a href="#iteration-budget">Iteration Budget</a></li>
+<li class="toc-l3"><a href="#tool-suite">Tool Suite</a></li>
+<li class="toc-l3"><a href="#context-truncation-policy">Context Truncation Policy</a></li>
+<li class="toc-l3"><a href="#system-prompt-engineering">System Prompt Engineering</a></li>
+<li class="toc-l2"><a href="#reproducibility-and-variance">Reproducibility and Variance</a></li>
+<li class="toc-l3"><a href="#confidence-intervals-for-agent-scores">Confidence Intervals for Agent Scores</a></li>
+<li class="toc-l2"><a href="#contamination-in-agent-benchmarks">Contamination in Agent Benchmarks</a></li>
+<li class="toc-l2"><a href="#measuring-agentic-progress-what-the-numbers-actually-say">Measuring Agentic Progress: What the Numbers Actually Say</a></li>
+<li class="toc-l2"><a href="#building-trustworthy-agent-evals-in-practice">Building Trustworthy Agent Evals in Practice</a></li>
+<li class="toc-l2"><a href="#summary-the-benchmark-landscape-at-a-glance">Summary: The Benchmark Landscape at a Glance</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

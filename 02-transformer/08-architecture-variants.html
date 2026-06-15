@@ -1,0 +1,1487 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM — The LLM Stack</title>
+<meta name="description" content="BERT (encoder), T5 (encoder-decoder), GPT (decoder-only), prefix-LM; masking patterns; bidirectional vs causal; when each is used; the decoder-only convergence.">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="active" href="08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part II — The Transformer Architecture</div>
+<h1 id="28-architecture-variants-encoder-decoder-decoder-only-prefix-lm">2.8 Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM<a class="headerlink" href="#28-architecture-variants-encoder-decoder-decoder-only-prefix-lm" title="Permanent link">¶</a></h1>
+<p>The transformer block — layer norm, multi-head attention, feed-forward, residual — is a fixed recipe. What varies enormously across model families is the <em>way those blocks are wired together</em> and, most critically, <em>which tokens can attend to which other tokens</em>. Three distinct wiring patterns dominate the field: the <strong>encoder-only</strong> model (BERT), the <strong>encoder-decoder</strong> model (T5, BART), and the <strong>decoder-only</strong> model (GPT). A fourth pattern, the <strong>prefix language model</strong> (PrefixLM), sits between encoder-decoder and decoder-only and is worth understanding in its own right.</p>
+<p>This chapter builds each family from the masking pattern outward — because the mask is the thing that determines what information flows where, and getting that wrong at initialization or fine-tuning time is one of the most common, silent bugs in applied LLM work. We will also trace the industry&rsquo;s convergence on decoder-only for frontier models, explain why that happened, and give you the vocabulary and intuitions to answer interview questions cold.</p>
+<p>For the mechanics of the individual block, see <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a>. For the concrete GPT implementation, see <a href="../02-transformer/07-build-gpt-from-scratch.html">Building a GPT From Scratch (nanoGPT-style)</a>. For the attention mechanism itself, see <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a>.</p>
+<hr />
+<h2 id="attention-masks-the-lingua-franca-of-architecture">Attention Masks: The Lingua Franca of Architecture<a class="headerlink" href="#attention-masks-the-lingua-franca-of-architecture" title="Permanent link">¶</a></h2>
+<p>Before we look at families, we need a precise vocabulary for attention masks.</p>
+<p>In any transformer layer the attention logit matrix is:</p>
+<div class="arithmatex">\[
+L_{ij} = \frac{q_i \cdot k_j}{\sqrt{d_k}}
+\]</div>
+<p>where <span class="arithmatex">\(i\)</span> is the query position and <span class="arithmatex">\(j\)</span> is the key position. A <strong>mask</strong> is a boolean matrix <span class="arithmatex">\(M \in \{0,1\}^{T \times T}\)</span> (or equivalently a <span class="arithmatex">\(\{0, -\infty\}\)</span> additive mask) where <span class="arithmatex">\(M_{ij} = 1\)</span> means &ldquo;position <span class="arithmatex">\(i\)</span> is allowed to attend to position <span class="arithmatex">\(j\)</span>.&rdquo; After adding the mask, we apply softmax:</p>
+<div class="arithmatex">\[
+A_{ij} = \operatorname{softmax}_j\!\left(L_{ij} + \underbrace{(1 - M_{ij}) \cdot (-\infty)}_{\text{mask out forbidden positions}}\right)
+\]</div>
+<p>Positions masked to <span class="arithmatex">\(-\infty\)</span> receive zero weight after softmax, so the value vector at that position contributes nothing to the output.</p>
+<p>Three canonical mask shapes cover the entire design space:</p>
+<figure class="viz" id="fig-archvar-mask-shapes">
+<svg viewBox="0 0 900 380" role="img" aria-label="Three canonical attention mask shapes: fully bidirectional (all cells filled), causal lower-triangular (only lower triangle filled), and prefix-LM (top-left 2x2 fully filled, rest causal lower-triangular).">
+<defs>
+  <marker id="ams-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#ea580c)"/>
+  </marker>
+</defs>
+<style>
+  #fig-archvar-mask-shapes text { font: 400 12px var(--mono,monospace); fill: var(--ink-soft,#334155); }
+  #fig-archvar-mask-shapes .title { font: 700 13px var(--sans,sans-serif); fill: var(--ink-soft,#0f172a); }
+  #fig-archvar-mask-shapes .axis-lbl { font: 400 10px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-archvar-mask-shapes .legend-lbl { font: 400 11px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+</style>
+
+
+<g transform="translate(20,10)">
+  <text x="130" y="22" text-anchor="middle" class="title">Fully Bidirectional (Encoder)</text>
+
+
+  <text x="54" y="48" text-anchor="middle" class="axis-lbl">j=</text>
+  <text x="78" y="48" text-anchor="middle" class="axis-lbl">0</text>
+  <text x="114" y="48" text-anchor="middle" class="axis-lbl">1</text>
+  <text x="150" y="48" text-anchor="middle" class="axis-lbl">2</text>
+  <text x="186" y="48" text-anchor="middle" class="axis-lbl">3</text>
+  <text x="222" y="48" text-anchor="middle" class="axis-lbl">4</text>
+
+
+
+  <text x="48" y="76" text-anchor="end" class="axis-lbl">i=0</text>
+  <text x="48" y="112" text-anchor="end" class="axis-lbl">i=1</text>
+  <text x="48" y="148" text-anchor="end" class="axis-lbl">i=2</text>
+  <text x="48" y="184" text-anchor="end" class="axis-lbl">i=3</text>
+  <text x="48" y="220" text-anchor="end" class="axis-lbl">i=4</text>
+
+
+  <rect x="60"  y="56" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="56" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="56" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="56" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="56" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+  <rect x="60"  y="92" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="92" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="92" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="92" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="92" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+  <rect x="60"  y="128" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="128" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="128" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="128" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="128" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+  <rect x="60"  y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+  <rect x="60"  y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+  <text x="130" y="256" text-anchor="middle" class="legend-lbl">Every i attends every j</text>
+</g>
+
+
+<g transform="translate(315,10)">
+  <text x="130" y="22" text-anchor="middle" class="title">Causal / Lower-Triangular (Decoder)</text>
+
+  <text x="54" y="48" text-anchor="middle" class="axis-lbl">j=</text>
+  <text x="78" y="48" text-anchor="middle" class="axis-lbl">0</text>
+  <text x="114" y="48" text-anchor="middle" class="axis-lbl">1</text>
+  <text x="150" y="48" text-anchor="middle" class="axis-lbl">2</text>
+  <text x="186" y="48" text-anchor="middle" class="axis-lbl">3</text>
+  <text x="222" y="48" text-anchor="middle" class="axis-lbl">4</text>
+
+  <text x="48" y="76" text-anchor="end" class="axis-lbl">i=0</text>
+  <text x="48" y="112" text-anchor="end" class="axis-lbl">i=1</text>
+  <text x="48" y="148" text-anchor="end" class="axis-lbl">i=2</text>
+  <text x="48" y="184" text-anchor="end" class="axis-lbl">i=3</text>
+  <text x="48" y="220" text-anchor="end" class="axis-lbl">i=4</text>
+
+
+  <rect x="60"  y="56" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="56" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="56" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="56" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="56" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+
+  <rect x="60"  y="92" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="92" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="92" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="92" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="92" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+
+  <rect x="60"  y="128" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="128" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="128" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="128" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="128" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+
+  <rect x="60"  y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="164" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+
+  <rect x="60"  y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+  <text x="130" y="256" text-anchor="middle" class="legend-lbl">Token i sees only j &lt;= i</text>
+</g>
+
+
+<g transform="translate(615,10)">
+  <text x="130" y="22" text-anchor="middle" class="title">Prefix-LM (prefix_len=2)</text>
+
+  <text x="54" y="48" text-anchor="middle" class="axis-lbl">j=</text>
+  <text x="78" y="48" text-anchor="middle" class="axis-lbl">0</text>
+  <text x="114" y="48" text-anchor="middle" class="axis-lbl">1</text>
+  <text x="150" y="48" text-anchor="middle" class="axis-lbl">2</text>
+  <text x="186" y="48" text-anchor="middle" class="axis-lbl">3</text>
+  <text x="222" y="48" text-anchor="middle" class="axis-lbl">4</text>
+
+  <text x="48" y="76" text-anchor="end" class="axis-lbl">i=0</text>
+  <text x="48" y="112" text-anchor="end" class="axis-lbl">i=1</text>
+  <text x="48" y="148" text-anchor="end" class="axis-lbl">i=2</text>
+  <text x="48" y="184" text-anchor="end" class="axis-lbl">i=3</text>
+  <text x="48" y="220" text-anchor="end" class="axis-lbl">i=4</text>
+
+
+  <rect x="60"  y="56" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="56" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="56" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="56" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="56" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+
+  <rect x="60"  y="92" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="92" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="92" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="92" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="92" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+
+  <rect x="60"  y="128" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="128" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="128" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="128" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="128" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+
+  <rect x="60"  y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="164" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="164" width="36" height="36" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+
+  <rect x="60"  y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="96"  y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="132" y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="168" y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <rect x="204" y="200" width="36" height="36" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+
+
+  <rect x="59" y="55" width="74" height="74" fill="none" stroke="var(--accent-2,#ea580c)" stroke-width="2.5" rx="2"/>
+
+
+  <line x1="134" y1="92" x2="170" y2="80" stroke="var(--accent-2,#ea580c)" stroke-width="1.5" marker-end="url(#ams-arrow)"/>
+  <text x="130" y="266" text-anchor="middle" style="font:500 10px var(--sans,sans-serif); fill:var(--accent-2,#ea580c);">prefix: bidirectional</text>
+
+  <text x="185" y="165" text-anchor="middle" style="font:500 9.5px var(--sans,sans-serif); fill:var(--muted,#64748b);">causal</text>
+</g>
+
+
+<g transform="translate(20,290)">
+  <rect x="0" y="0" width="18" height="18" fill="var(--accent,#4f46e5)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <text x="24" y="13" class="legend-lbl">attend (1)</text>
+
+  <rect x="110" y="0" width="18" height="18" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+  <text x="134" y="13" class="legend-lbl">blocked (-inf)</text>
+
+  <rect x="255" y="0" width="18" height="18" fill="none" stroke="var(--accent-2,#ea580c)" stroke-width="2"/>
+  <text x="279" y="13" class="legend-lbl">prefix block</text>
+</g>
+
+</svg>
+<figcaption><b>Three canonical T x T attention mask shapes define every architecture family.</b> Panel A (encoder/BERT): all cells filled — every token attends every other token. Panel B (decoder/GPT): lower-triangular — token i sees only positions 0..i, blocking the future. Panel C (prefix-LM): a hybrid where the top-left prefix block (orange border) is fully bidirectional while the generated positions below follow the causal constraint.</figcaption>
+</figure>
+
+<p>The prefix-LM mask is the union: prefix tokens attend to all other prefix tokens (full block in the top-left), and all tokens attend to earlier tokens causally. This lets the model build rich representations of the prompt before generating.</p>
+<hr />
+<h2 id="encoder-only-models-bert-and-kin">Encoder-Only Models (BERT and kin)<a class="headerlink" href="#encoder-only-models-bert-and-kin" title="Permanent link">¶</a></h2>
+<h3 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">¶</a></h3>
+<p>An encoder-only model is a stack of <span class="arithmatex">\(N\)</span> transformer blocks where every block uses <strong>fully bidirectional attention</strong> — no causal masking at all. Every token can directly attend to every other token in the sequence. The original BERT (Devlin et al., <em>BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding</em>, 2019) stacked 12 (BERT-base) or 24 (BERT-large) such blocks.</p>
+<figure class="viz" id="fig-archvar-encoder-only-stack">
+<svg viewBox="0 0 560 620" role="img" aria-label="Encoder-only BERT architecture: input tokens at bottom flow through token+positional embeddings, then N bidirectional encoder blocks, to output hidden states at top where h_0 (the CLS token) feeds a classification head.">
+<defs>
+  <marker id="eos-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#334155)"/>
+  </marker>
+  <marker id="eos-arrow-accent2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#ea580c)"/>
+  </marker>
+</defs>
+<style>
+  #fig-archvar-encoder-only-stack text { fill: var(--ink-soft,#334155); }
+  #fig-archvar-encoder-only-stack .title { font: 700 14px var(--sans,sans-serif); }
+  #fig-archvar-encoder-only-stack .box-label { font: 600 12px var(--sans,sans-serif); }
+  #fig-archvar-encoder-only-stack .sub-label { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-archvar-encoder-only-stack .token { font: 500 10px var(--mono,monospace); }
+  #fig-archvar-encoder-only-stack .callout { font: 500 11px var(--sans,sans-serif); fill: var(--accent-2,#ea580c); }
+  #fig-archvar-encoder-only-stack .bidir { font: 700 11px var(--mono,monospace); fill: var(--accent,#4f46e5); }
+</style>
+
+
+<text x="280" y="22" text-anchor="middle" class="title">Encoder-Only (BERT): Bidirectional Stack</text>
+
+
+
+<text x="30" y="68" text-anchor="start" class="sub-label">Output hidden states</text>
+
+
+<rect x="30" y="76" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--accent-2,#ea580c)" stroke-width="2"/>
+<text x="54" y="94" text-anchor="middle" class="token" style="fill:var(--accent-2,#ea580c);">h_0</text>
+
+
+<rect x="84"  y="76" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="108" y="94" text-anchor="middle" class="token">h_1</text>
+
+<rect x="138" y="76" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="162" y="94" text-anchor="middle" class="token">h_2</text>
+
+<rect x="192" y="76" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="216" y="94" text-anchor="middle" class="token">h_3</text>
+
+<rect x="246" y="76" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="270" y="94" text-anchor="middle" class="token">h_4</text>
+
+<rect x="300" y="76" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="324" y="94" text-anchor="middle" class="token">h_5</text>
+
+<rect x="354" y="76" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="378" y="94" text-anchor="middle" class="token">h_6</text>
+
+<rect x="408" y="76" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="432" y="94" text-anchor="middle" class="token">h_7</text>
+
+
+<path d="M78 90 L490 90 L490 90" fill="none" stroke="var(--accent-2,#ea580c)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#eos-arrow-accent2)"/>
+<rect x="497" y="76" width="52" height="28" rx="10" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.5"/>
+<text x="523" y="88" text-anchor="middle" class="callout" style="font:600 9px var(--sans,sans-serif);">CLS</text>
+<text x="523" y="100" text-anchor="middle" class="callout" style="font:500 8.5px var(--sans,sans-serif);">head</text>
+
+
+<line x1="230" y1="116" x2="230" y2="140" stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#eos-arrow)"/>
+
+
+<rect x="30" y="140" width="440" height="56" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.12" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+<text x="230" y="163" text-anchor="middle" class="box-label">Encoder Block N  (bidirectional)</text>
+
+<text x="110" y="185" text-anchor="start" class="bidir">o&lt;-&gt;o&lt;-&gt;o&lt;-&gt;o</text>
+<text x="310" y="185" text-anchor="start" class="sub-label">every token &lt;-&gt; every token</text>
+
+
+<text x="230" y="218" text-anchor="middle" style="font:700 18px var(--sans,sans-serif); fill:var(--muted,#64748b);">...</text>
+
+
+<line x1="230" y1="234" x2="230" y2="254" stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#eos-arrow)"/>
+
+
+<rect x="30" y="254" width="440" height="56" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.12" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+<text x="230" y="277" text-anchor="middle" class="box-label">Encoder Block 2  (bidirectional)</text>
+<text x="110" y="299" text-anchor="start" class="bidir">o&lt;-&gt;o&lt;-&gt;o&lt;-&gt;o</text>
+<text x="310" y="299" text-anchor="start" class="sub-label">every token &lt;-&gt; every token</text>
+
+
+<line x1="230" y1="322" x2="230" y2="342" stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#eos-arrow)"/>
+
+
+<rect x="30" y="342" width="440" height="56" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.12" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+<text x="230" y="365" text-anchor="middle" class="box-label">Encoder Block 1  (bidirectional)</text>
+<text x="110" y="387" text-anchor="start" class="bidir">o&lt;-&gt;o&lt;-&gt;o&lt;-&gt;o</text>
+<text x="310" y="387" text-anchor="start" class="sub-label">every token &lt;-&gt; every token</text>
+
+
+<line x1="230" y1="410" x2="230" y2="430" stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#eos-arrow)"/>
+
+
+<rect x="30" y="430" width="440" height="38" rx="8" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+<text x="230" y="454" text-anchor="middle" class="box-label">Token + Positional Embeddings</text>
+
+
+<line x1="230" y1="478" x2="230" y2="500" stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#eos-arrow)"/>
+
+
+<text x="30" y="518" text-anchor="start" class="sub-label">Input tokens</text>
+
+
+<rect x="30" y="524" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--accent-2,#ea580c)" stroke-width="2"/>
+<text x="54" y="542" text-anchor="middle" class="token" style="fill:var(--accent-2,#ea580c);">[CLS]</text>
+
+
+<rect x="84"  y="524" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="108" y="542" text-anchor="middle" class="token">the</text>
+
+
+<rect x="138" y="524" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="162" y="542" text-anchor="middle" class="token">cat</text>
+
+
+<rect x="192" y="524" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="216" y="542" text-anchor="middle" class="token">sat</text>
+
+
+<rect x="246" y="524" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="270" y="542" text-anchor="middle" class="token">on</text>
+
+
+<rect x="300" y="524" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="324" y="542" text-anchor="middle" class="token">the</text>
+
+
+<rect x="354" y="524" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="378" y="542" text-anchor="middle" class="token">mat</text>
+
+
+<rect x="408" y="524" width="48" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="432" y="542" text-anchor="middle" class="token">[SEP]</text>
+
+
+<text x="280" y="586" text-anchor="middle" style="font:500 10.5px var(--sans,sans-serif); fill:var(--accent-2,#ea580c);">h_0 = [CLS] representation -> classification head</text>
+
+</svg>
+<figcaption><b>Encoder-only (BERT) processes the full sequence bidirectionally in every block.</b> Each encoder block uses fully bidirectional attention — every token attends to every other token simultaneously (shown by the double-headed motif). The special [CLS] token (orange) accumulates global sequence meaning; its final hidden state h_0 is fed to a task-specific classification head, while all other positions produce contextual token representations.</figcaption>
+</figure>
+
+<p>Because every token sees every other token, the final hidden state at each position encodes <strong>contextual meaning of that token within the full sequence</strong>. This makes encoder representations excellent for tasks where you need to understand input meaning: classification, named entity recognition, question answering (extract the answer span), and natural language inference.</p>
+<h3 id="masked-language-model-mlm-pre-training-objective">Masked Language Model (MLM) Pre-training Objective<a class="headerlink" href="#masked-language-model-mlm-pre-training-objective" title="Permanent link">¶</a></h3>
+<p>BERT is pre-trained with a <strong>masked language model</strong> objective. During training, 15% of input tokens are selected at random; of those, 80% are replaced with a <code>[MASK]</code> token, 10% with a random token, and 10% are left unchanged. The model must predict the original token at each masked position using the full surrounding context.</p>
+<p>The loss is cross-entropy over the masked positions only:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{MLM}} = -\frac{1}{|M|}\sum_{i \in M} \log p_\theta(x_i \mid \tilde{x})
+\]</div>
+<p>where <span class="arithmatex">\(\tilde{x}\)</span> is the corrupted sequence and <span class="arithmatex">\(M\)</span> is the set of masked positions.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_mlm_mask</span><span class="p">(</span><span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+                   <span class="n">vocab_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                   <span class="n">mask_token_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                   <span class="n">mask_prob</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.15</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Apply BERT-style MLM masking to a batch of token ids.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        input_ids: shape (B, T)</span>
+<span class="sd">        vocab_size: size of vocabulary</span>
+<span class="sd">        mask_token_id: id of the [MASK] token</span>
+<span class="sd">        mask_prob: fraction of tokens to select for masking</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        masked_input: (B, T) — input with some tokens replaced</span>
+<span class="sd">        labels:       (B, T) — original ids at masked positions, -100 elsewhere</span>
+<span class="sd">                               (-100 is ignored by F.cross_entropy)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span> <span class="o">=</span> <span class="n">input_ids</span><span class="o">.</span><span class="n">shape</span>
+    <span class="c1"># Draw a Bernoulli mask: which positions are selected (15%)</span>
+    <span class="n">selected</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">mask_prob</span>          <span class="c1"># (B, T) bool</span>
+
+    <span class="c1"># Of the selected positions:</span>
+    <span class="c1">#   80% → [MASK]</span>
+    <span class="c1">#   10% → random token</span>
+    <span class="c1">#   10% → unchanged (but still included in loss)</span>
+    <span class="n">rand_roll</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span>
+    <span class="n">replace_with_mask</span>   <span class="o">=</span> <span class="n">selected</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">rand_roll</span> <span class="o">&lt;</span> <span class="mf">0.80</span><span class="p">)</span>
+    <span class="n">replace_with_random</span> <span class="o">=</span> <span class="n">selected</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">rand_roll</span> <span class="o">&gt;=</span> <span class="mf">0.80</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">rand_roll</span> <span class="o">&lt;</span> <span class="mf">0.90</span><span class="p">)</span>
+    <span class="c1"># The rest (0.90–1.0) remain as original — no action needed</span>
+
+    <span class="n">masked_input</span> <span class="o">=</span> <span class="n">input_ids</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+    <span class="n">masked_input</span><span class="p">[</span><span class="n">replace_with_mask</span><span class="p">]</span>   <span class="o">=</span> <span class="n">mask_token_id</span>
+    <span class="n">masked_input</span><span class="p">[</span><span class="n">replace_with_random</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span>
+        <span class="mi">0</span><span class="p">,</span> <span class="n">vocab_size</span><span class="p">,</span> <span class="n">replace_with_random</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Labels: original token at selected positions, -100 elsewhere</span>
+    <span class="n">labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full_like</span><span class="p">(</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">fill_value</span><span class="o">=-</span><span class="mi">100</span><span class="p">)</span>
+    <span class="n">labels</span><span class="p">[</span><span class="n">selected</span><span class="p">]</span> <span class="o">=</span> <span class="n">input_ids</span><span class="p">[</span><span class="n">selected</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">masked_input</span><span class="p">,</span> <span class="n">labels</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">mlm_loss</span><span class="p">(</span><span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">labels</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    logits: (B, T, V) — raw logits over vocab</span>
+<span class="sd">    labels: (B, T)    — original token ids at masked positions, -100 elsewhere</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">shape</span>
+    <span class="c1"># F.cross_entropy ignores positions where label == -100</span>
+    <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span><span class="n">logits</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">),</span> <span class="n">labels</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">))</span>
+</code></pre></div>
+<p>The 80/10/10 split is deliberate: training the model to recover tokens it has <em>not</em> seen as <code>[MASK]</code> (the 10% unchanged and 10% random) prevents the representation from being artificially conditioned on the <code>[MASK]</code> token at inference time, when no masking occurs.</p>
+<h3 id="what-encoder-only-is-good-for-and-what-it-cannot-do">What Encoder-Only Is Good For (and What It Cannot Do)<a class="headerlink" href="#what-encoder-only-is-good-for-and-what-it-cannot-do" title="Permanent link">¶</a></h3>
+<p>The bidirectional nature makes it powerful for understanding, but it makes <strong>autoregressive generation</strong> impossible. To generate the <span class="arithmatex">\((t+1)\)</span>-th token you would need to compute attention over a sequence that includes the <span class="arithmatex">\((t+1)\)</span>-th position, which you haven&rsquo;t generated yet — circular. Encoder-only models are therefore not language models in the generative sense; they are representation models. For tasks like:</p>
+<ul>
+<li>Text classification (use <code>[CLS]</code> head)</li>
+<li>Named entity recognition (use per-token heads)</li>
+<li>Semantic similarity / embedding (mean-pool or <code>[CLS]</code>)</li>
+<li>Extractive QA (span prediction)</li>
+</ul>
+<p>encoder-only models remain highly competitive, especially when data is limited and pre-trained encoders can be fine-tuned on small supervised sets.</p>
+<hr />
+<h2 id="encoder-decoder-models-t5-bart">Encoder-Decoder Models (T5, BART)<a class="headerlink" href="#encoder-decoder-models-t5-bart" title="Permanent link">¶</a></h2>
+<h3 id="architecture_1">Architecture<a class="headerlink" href="#architecture_1" title="Permanent link">¶</a></h3>
+<p>An encoder-decoder model (Vaswani et al., <em>Attention Is All You Need</em>, 2017) pairs a fully bidirectional <strong>encoder</strong> stack with an autoregressive <strong>decoder</strong> stack. The encoder processes the full input sequence once. The decoder generates output tokens one at a time, attending to (a) its own previously generated tokens via <strong>causal self-attention</strong> and (b) the encoder&rsquo;s output via <strong>cross-attention</strong>.</p>
+<figure class="viz" id="fig-archvar-encoder-decoder-crossattn">
+<svg viewBox="0 0 840 350" role="img" aria-label="Encoder-decoder architecture showing a bidirectional encoder on the left processing source text into encoder hidden states H_enc, then cross-attention arrows feeding those states to a causal decoder on the right that produces output tokens.">
+<defs>
+  <marker id="edc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#334155)"/>
+  </marker>
+  <marker id="edc-arrow-accent2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#ea580c)"/>
+  </marker>
+</defs>
+<style>
+  #fig-archvar-encoder-decoder-crossattn text { fill: var(--ink-soft,#334155); }
+  #fig-archvar-encoder-decoder-crossattn .title { font: 700 13px var(--sans,sans-serif); }
+  #fig-archvar-encoder-decoder-crossattn .box-lbl { font: 600 11px var(--sans,sans-serif); }
+  #fig-archvar-encoder-decoder-crossattn .sub { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-archvar-encoder-decoder-crossattn .tok { font: 500 9px var(--mono,monospace); }
+  #fig-archvar-encoder-decoder-crossattn .bidir { font: 700 10px var(--mono,monospace); fill: var(--accent,#4f46e5); }
+  #fig-archvar-encoder-decoder-crossattn .cross { font: 600 9.5px var(--sans,sans-serif); fill: var(--accent-2,#ea580c); }
+</style>
+
+
+<text x="420" y="20" text-anchor="middle" class="title">Encoder-Decoder (T5/BART): Cross-Attention Data Flow</text>
+
+
+
+
+<text x="14" y="44" class="sub">Input (source)</text>
+<rect x="14" y="48" width="270" height="28" rx="6" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1.2"/>
+<text x="149" y="66" text-anchor="middle" class="tok" style="font-size:8px;">Translate EN-&gt;FR: The cat sat on the mat</text>
+
+
+<line x1="149" y1="76" x2="149" y2="97" stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#edc-arrow)"/>
+
+
+<rect x="14" y="97" width="270" height="72" rx="7" fill="var(--accent,#4f46e5)" fill-opacity="0.12" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+<text x="149" y="118" text-anchor="middle" class="box-lbl">Encoder  (bidirectional)</text>
+<text x="30" y="140" text-anchor="start" class="bidir">o&lt;-&gt;o&lt;-&gt;o&lt;-&gt;o&lt;-&gt;o</text>
+<text x="30" y="157" text-anchor="start" class="sub">every token attends every token</text>
+
+
+<line x1="149" y1="169" x2="149" y2="190" stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#edc-arrow)"/>
+
+
+<rect x="14" y="190" width="270" height="44" rx="6" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+<text x="149" y="208" text-anchor="middle" class="box-lbl">Encoder hidden states H_enc</text>
+<text x="149" y="225" text-anchor="middle" class="sub">keys &amp; values for cross-attention</text>
+
+
+<text x="149" y="260" text-anchor="middle" style="font:600 10px var(--sans,sans-serif); fill:var(--accent,#4f46e5);">ENCODER SIDE</text>
+
+
+
+<line x1="285" y1="205" x2="424" y2="145" stroke="var(--accent-2,#ea580c)" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#edc-arrow-accent2)"/>
+<line x1="285" y1="212" x2="424" y2="158" stroke="var(--accent-2,#ea580c)" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#edc-arrow-accent2)" opacity="0.65"/>
+<line x1="285" y1="220" x2="424" y2="172" stroke="var(--accent-2,#ea580c)" stroke-width="1.1" stroke-dasharray="5 3" marker-end="url(#edc-arrow-accent2)" opacity="0.4"/>
+
+
+<text x="354" y="248" text-anchor="middle" class="cross">cross-attn: Q from decoder</text>
+<text x="354" y="260" text-anchor="middle" class="cross">K/V from H_enc</text>
+
+
+<line x1="297" y1="36" x2="297" y2="320" stroke="var(--border-2,#334155)" stroke-width="0.7" stroke-dasharray="5 3" opacity="0.35"/>
+
+
+
+
+<text x="425" y="44" class="sub">Decoder input (shifted target)</text>
+
+<rect x="425" y="48" width="40" height="24" rx="3" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="445" y="64" text-anchor="middle" class="tok">[BOS]</text>
+<rect x="469" y="48" width="40" height="24" rx="3" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="489" y="64" text-anchor="middle" class="tok">Le</text>
+<rect x="513" y="48" width="40" height="24" rx="3" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="533" y="64" text-anchor="middle" class="tok">chat</text>
+<rect x="557" y="48" width="40" height="24" rx="3" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="577" y="64" text-anchor="middle" class="tok">s'est</text>
+<rect x="601" y="48" width="40" height="24" rx="3" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="621" y="64" text-anchor="middle" class="tok">assis</text>
+<rect x="645" y="48" width="40" height="24" rx="3" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="665" y="64" text-anchor="middle" class="tok">sur</text>
+<rect x="689" y="48" width="40" height="24" rx="3" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="709" y="64" text-anchor="middle" class="tok">tapis</text>
+
+
+<line x1="445" y1="72" x2="445" y2="96" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="489" y1="72" x2="489" y2="96" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="533" y1="72" x2="533" y2="96" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="577" y1="72" x2="577" y2="96" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="621" y1="72" x2="621" y2="96" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="665" y1="72" x2="665" y2="96" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="709" y1="72" x2="709" y2="96" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+
+
+<rect x="425" y="96" width="400" height="86" rx="7" fill="var(--accent-2,#ea580c)" fill-opacity="0.10" stroke="var(--accent-2,#ea580c)" stroke-width="1.8"/>
+<text x="625" y="116" text-anchor="middle" class="box-lbl">Decoder (causal self-attn + cross-attn to H_enc)</text>
+
+<text x="440" y="140" text-anchor="start" style="font:700 10px var(--mono,monospace); fill:var(--accent-2,#ea580c);">o->o->o->o->o->o</text>
+<text x="440" y="155" text-anchor="start" class="sub">causal: token i attends only j &lt;= i</text>
+<text x="440" y="168" text-anchor="start" class="sub">+ cross-attn Q=decoder, K/V=H_enc at every block</text>
+
+
+<line x1="445" y1="182" x2="445" y2="206" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="489" y1="182" x2="489" y2="206" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="533" y1="182" x2="533" y2="206" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="577" y1="182" x2="577" y2="206" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="621" y1="182" x2="621" y2="206" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="665" y1="182" x2="665" y2="206" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+<line x1="709" y1="182" x2="709" y2="206" stroke="var(--ink-soft,#334155)" stroke-width="1.1" marker-end="url(#edc-arrow)"/>
+
+
+<text x="420" y="224" text-anchor="end" class="sub">Decoder output</text>
+
+<rect x="425" y="208" width="40" height="24" rx="3" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.2"/>
+<text x="445" y="224" text-anchor="middle" class="tok">Le</text>
+<rect x="469" y="208" width="40" height="24" rx="3" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.2"/>
+<text x="489" y="224" text-anchor="middle" class="tok">chat</text>
+<rect x="513" y="208" width="40" height="24" rx="3" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.2"/>
+<text x="533" y="224" text-anchor="middle" class="tok">s'est</text>
+<rect x="557" y="208" width="40" height="24" rx="3" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.2"/>
+<text x="577" y="224" text-anchor="middle" class="tok">assis</text>
+<rect x="601" y="208" width="40" height="24" rx="3" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.2"/>
+<text x="621" y="224" text-anchor="middle" class="tok">sur</text>
+<rect x="645" y="208" width="40" height="24" rx="3" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.2"/>
+<text x="665" y="224" text-anchor="middle" class="tok">tapis</text>
+<rect x="689" y="208" width="40" height="24" rx="3" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.2"/>
+<text x="709" y="224" text-anchor="middle" class="tok">[EOS]</text>
+
+
+<text x="625" y="260" text-anchor="middle" style="font:600 10px var(--sans,sans-serif); fill:var(--accent-2,#ea580c);">DECODER SIDE</text>
+
+</svg>
+<figcaption><b>Encoder-decoder architecture (T5/BART): bidirectional source understanding feeds autoregressive generation via cross-attention.</b> The encoder processes the full source sequence bidirectionally (blue, left), producing H_enc. Each decoder block uses causal self-attention over previous output tokens and then attends to H_enc via cross-attention (dashed orange arrows) — giving queries from the decoder full access to source keys and values.</figcaption>
+</figure>
+
+<p>The cross-attention in each decoder block has:
+- <strong>Queries</strong> from the decoder&rsquo;s own hidden state at the current step
+- <strong>Keys and Values</strong> from the encoder&rsquo;s output <span class="arithmatex">\(H_\text{enc}\)</span></p>
+<p>This means each decoder position can attend fully (bidirectionally) to the entire source sequence. The causal mask in the decoder self-attention ensures the decoder cannot look ahead at future <em>output</em> tokens.</p>
+<h3 id="t5-text-to-text-transfer-transformer">T5: Text-to-Text Transfer Transformer<a class="headerlink" href="#t5-text-to-text-transfer-transformer" title="Permanent link">¶</a></h3>
+<p>Raffel et al. (<em>Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer</em>, 2020) pre-trained T5 with a <strong>span corruption</strong> objective: random contiguous spans of input are masked with sentinel tokens (e.g., <code>&lt;extra_id_0&gt;</code>), and the model must reconstruct those spans autoregressively in the decoder.</p>
+<div class="highlight"><pre><span></span><code>Input (encoder):  &quot;The &lt;extra_id_0&gt; sat on the &lt;extra_id_1&gt; mat.&quot;
+Target (decoder): &quot;&lt;extra_id_0&gt; cat &lt;extra_id_1&gt; brown&quot;
+</code></pre></div>
+<p>This framing is more efficient than BERT&rsquo;s MLM because the decoder only generates masked spans (typically 15% of tokens), not the full sequence. T5&rsquo;s key insight is to reframe <em>all</em> NLP tasks as text-to-text: translation, summarization, classification, QA — every task feeds a textual prompt and expects a textual output. This makes fine-tuning uniform.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">CrossAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Encoder-decoder cross-attention: queries come from decoder,</span>
+<span class="sd">    keys/values come from encoder hidden states.</span>
+<span class="sd">    Fully standard attention — no causal mask on the encoder side.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">d_model</span> <span class="o">%</span> <span class="n">n_heads</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_k</span> <span class="o">=</span> <span class="n">d_model</span> <span class="o">//</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span> <span class="o">=</span> <span class="n">n_heads</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_q</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>  <span class="c1"># from decoder</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_k</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>  <span class="c1"># from encoder</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_v</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>  <span class="c1"># from encoder</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span>
+                <span class="n">decoder_hidden</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># (B, T_dec, D)</span>
+                <span class="n">encoder_hidden</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># (B, T_enc, D)</span>
+                <span class="n">encoder_mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># (B, T_enc) bool</span>
+                <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T_dec</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="n">decoder_hidden</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">T_enc</span> <span class="o">=</span> <span class="n">encoder_hidden</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">H</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span>
+
+        <span class="c1"># Project, then reshape to (B, H, T, d_k)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">split_heads</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">T</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">d_k</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+
+        <span class="n">Q</span> <span class="o">=</span> <span class="n">split_heads</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W_q</span><span class="p">(</span><span class="n">decoder_hidden</span><span class="p">),</span> <span class="n">T_dec</span><span class="p">)</span>   <span class="c1"># (B, H, T_dec, d_k)</span>
+        <span class="n">K</span> <span class="o">=</span> <span class="n">split_heads</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W_k</span><span class="p">(</span><span class="n">encoder_hidden</span><span class="p">),</span> <span class="n">T_enc</span><span class="p">)</span>   <span class="c1"># (B, H, T_enc, d_k)</span>
+        <span class="n">V</span> <span class="o">=</span> <span class="n">split_heads</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W_v</span><span class="p">(</span><span class="n">encoder_hidden</span><span class="p">),</span> <span class="n">T_enc</span><span class="p">)</span>   <span class="c1"># (B, H, T_enc, d_k)</span>
+
+        <span class="c1"># Scaled dot-product attention</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">Q</span> <span class="o">@</span> <span class="n">K</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">d_k</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>  <span class="c1"># (B, H, T_dec, T_enc)</span>
+
+        <span class="k">if</span> <span class="n">encoder_mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># encoder_mask: (B, T_enc) — True where token is PAD</span>
+            <span class="n">pad_mask</span> <span class="o">=</span> <span class="n">encoder_mask</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:]</span>    <span class="c1"># broadcast over H, T_dec</span>
+            <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">pad_mask</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>
+
+        <span class="n">attn</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>             <span class="c1"># (B, H, T_dec, T_enc)</span>
+        <span class="n">out</span>  <span class="o">=</span> <span class="n">attn</span> <span class="o">@</span> <span class="n">V</span>                                   <span class="c1"># (B, H, T_dec, d_k)</span>
+
+        <span class="c1"># Merge heads</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T_dec</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="bart-denoising-pre-training">BART: Denoising Pre-training<a class="headerlink" href="#bart-denoising-pre-training" title="Permanent link">¶</a></h3>
+<p>BART (Lewis et al., <em>BART: Denoising Sequence-to-Sequence Pre-training for Natural Language Generation, Translation, and Comprehension</em>, 2019) uses a more general corruption scheme: token masking, deletion, text infilling, sentence permutation, and document rotation. The encoder-decoder architecture is the same as T5; BART excels at summarization and generation tasks where the output is a compressed or stylistically altered version of the input.</p>
+<h3 id="memory-footprint-of-encoder-decoder">Memory Footprint of Encoder-Decoder<a class="headerlink" href="#memory-footprint-of-encoder-decoder" title="Permanent link">¶</a></h3>
+<p>A significant practical consideration: encoder-decoder models carry <em>two</em> full transformer stacks. T5-large has around 770M parameters split roughly evenly. During generation, the decoder must re-run cross-attention at every step and either recompute or cache the encoder hidden states. If the encoder output is cached, the memory cost scales as <span class="arithmatex">\(B \times T_\text{enc} \times d_\text{model} \times N_\text{dec}\)</span> bytes. For a T5-3B model with a 1 024-token source:</p>
+<div class="arithmatex">\[
+\text{encoder KV cache} \approx 1024 \times 1024 \times 2 \times 24 \times 2\text{ bytes (fp16)} \approx 96\text{ MB per batch element}
+\]</div>
+<p>At batch size 32 that is roughly 3 GB just for cross-attention keys and values — comparable to the KV cache budget in a mid-sized decoder-only model.</p>
+<hr />
+<h2 id="decoder-only-models-gpt-family">Decoder-Only Models (GPT family)<a class="headerlink" href="#decoder-only-models-gpt-family" title="Permanent link">¶</a></h2>
+<h3 id="architecture_2">Architecture<a class="headerlink" href="#architecture_2" title="Permanent link">¶</a></h3>
+<p>A decoder-only model is a stack of blocks that use only <strong>causal (lower-triangular) self-attention</strong>. There is no encoder, no cross-attention, no separate source sequence. The model receives a sequence of tokens and predicts each token from the tokens before it:</p>
+<div class="arithmatex">\[
+p(x_1, x_2, \ldots, x_T) = \prod_{t=1}^{T} p(x_t \mid x_1, \ldots, x_{t-1})
+\]</div>
+<p>This is exactly the <strong>autoregressive language model</strong> factorization. The training objective is <strong>causal language modeling</strong> (CLM), also called next-token prediction:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{CLM}} = -\frac{1}{T}\sum_{t=1}^{T}\log p_\theta(x_t \mid x_{&lt;t})
+\]</div>
+<p><figure class="viz" id="fig-archvar-decoder-only-causal">
+<svg viewBox="0 0 720 465" role="img" aria-label="Decoder-only GPT architecture: six input tokens flow down through token+positional embeddings into a causal self-attention block where each token only attends to previous tokens, producing next-token predictions shifted by one position.">
+<defs>
+  <marker id="doc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#334155)"/>
+  </marker>
+</defs></p>
+<style>
+  #fig-archvar-decoder-only-causal text { fill: var(--ink-soft,#334155); }
+  #fig-archvar-decoder-only-causal .title { font: 700 14px var(--sans,sans-serif); }
+  #fig-archvar-decoder-only-causal .box-lbl { font: 600 12px var(--sans,sans-serif); }
+  #fig-archvar-decoder-only-causal .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-archvar-decoder-only-causal .tok { font: 500 10px var(--mono,monospace); }
+  #fig-archvar-decoder-only-causal .emb { font: 500 9px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-archvar-decoder-only-causal .causal-motif { font: 700 11px var(--mono,monospace); fill: var(--accent,#4f46e5); }
+  #fig-archvar-decoder-only-causal .pred-tok { font: 500 10px var(--mono,monospace); fill: var(--accent-2,#ea580c); }
+</style>
+
+<p><text x="360" y="22" text-anchor="middle" class="title">Decoder-Only (GPT): Causal Next-Token Prediction</text></p>
+<p><text x="14" y="44" class="sub">Input</text></p>
+<p><rect x="25"  y="48" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1.2"/>
+<text x="65"  y="66" text-anchor="middle" class="tok">The</text></p>
+<p><rect x="130" y="48" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1.2"/>
+<text x="170" y="66" text-anchor="middle" class="tok">cat</text></p>
+<p><rect x="235" y="48" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1.2"/>
+<text x="275" y="66" text-anchor="middle" class="tok">sat</text></p>
+<p><rect x="340" y="48" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1.2"/>
+<text x="380" y="66" text-anchor="middle" class="tok">on</text></p>
+<p><rect x="445" y="48" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1.2"/>
+<text x="485" y="66" text-anchor="middle" class="tok">the</text></p>
+<p><rect x="550" y="48" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1.2"/>
+<text x="590" y="66" text-anchor="middle" class="tok">mat</text></p>
+<p><line x1="65"  y1="76" x2="65"  y2="100" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="170" y1="76" x2="170" y2="100" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="275" y1="76" x2="275" y2="100" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="380" y1="76" x2="380" y2="100" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="485" y1="76" x2="485" y2="100" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="590" y1="76" x2="590" y2="100" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/></p>
+<p><text x="14" y="98" class="sub">Token + pos. embeddings</text></p>
+<p><rect x="25"  y="102" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="65"  y="120" text-anchor="middle" class="emb">Emb</text></p>
+<p><rect x="130" y="102" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="170" y="120" text-anchor="middle" class="emb">Emb</text></p>
+<p><rect x="235" y="102" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="275" y="120" text-anchor="middle" class="emb">Emb</text></p>
+<p><rect x="340" y="102" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="380" y="120" text-anchor="middle" class="emb">Emb</text></p>
+<p><rect x="445" y="102" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="485" y="120" text-anchor="middle" class="emb">Emb</text></p>
+<p><rect x="550" y="102" width="80" height="28" rx="4" fill="var(--surface,#f1f5f9)" stroke="var(--border-2,#334155)" stroke-width="1"/>
+<text x="590" y="120" text-anchor="middle" class="emb">Emb</text></p>
+<p><line x1="65"  y1="130" x2="65"  y2="155" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="170" y1="130" x2="170" y2="155" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="275" y1="130" x2="275" y2="155" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="380" y1="130" x2="380" y2="155" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="485" y1="130" x2="485" y2="155" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="590" y1="130" x2="590" y2="155" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/></p>
+<p><rect x="14" y="155" width="692" height="130" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.12" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+<text x="360" y="178" text-anchor="middle" class="box-lbl">Causal Self-Attention:  token i attends only to tokens 0..i</text></p>
+<p><circle cx="65"  cy="215" r="8" fill="var(--accent,#4f46e5)" fill-opacity="0.6"/>
+<circle cx="170" cy="215" r="8" fill="var(--accent,#4f46e5)" fill-opacity="0.6"/>
+<circle cx="275" cy="215" r="8" fill="var(--accent,#4f46e5)" fill-opacity="0.6"/>
+<circle cx="380" cy="215" r="8" fill="var(--accent,#4f46e5)" fill-opacity="0.6"/>
+<circle cx="485" cy="215" r="8" fill="var(--accent,#4f46e5)" fill-opacity="0.6"/>
+<circle cx="590" cy="215" r="8" fill="var(--accent,#4f46e5)" fill-opacity="0.6"/></p>
+<p><text x="65"  y="238" text-anchor="middle" class="emb" style="fill:var(--accent,#4f46e5);">The</text>
+<text x="170" y="238" text-anchor="middle" class="emb" style="fill:var(--accent,#4f46e5);">cat</text>
+<text x="275" y="238" text-anchor="middle" class="emb" style="fill:var(--accent,#4f46e5);">sat</text>
+<text x="380" y="238" text-anchor="middle" class="emb" style="fill:var(--accent,#4f46e5);">on</text>
+<text x="485" y="238" text-anchor="middle" class="emb" style="fill:var(--accent,#4f46e5);">the</text>
+<text x="590" y="238" text-anchor="middle" class="emb" style="fill:var(--accent,#4f46e5);">mat</text></p>
+<p><path d="M161 211 L79 211" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="1.5" marker-end="url(#doc-arrow)"/></p>
+<p><path d="M266 208 L79 208" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="1.5" marker-end="url(#doc-arrow)"/></p>
+<p><path d="M371 215 L79 215" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="1.5" marker-end="url(#doc-arrow)"/></p>
+<p><path d="M476 219 L79 219" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="1.5" marker-end="url(#doc-arrow)"/></p>
+<p><path d="M581 223 L79 223" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="1.5" marker-end="url(#doc-arrow)"/></p>
+<p><text x="360" y="264" text-anchor="middle" class="sub">each token attends only backward (no future peeking)</text></p>
+<p><line x1="65"  y1="285" x2="65"  y2="310" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="170" y1="285" x2="170" y2="310" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="275" y1="285" x2="275" y2="310" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="380" y1="285" x2="380" y2="310" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="485" y1="285" x2="485" y2="310" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/>
+<line x1="590" y1="285" x2="590" y2="310" stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#doc-arrow)"/></p>
+<p><text x="14" y="308" class="sub">Predicted next tokens (shifted by one)</text></p>
+<p><rect x="25"  y="312" width="80" height="28" rx="4" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.5"/>
+<text x="65"  y="330" text-anchor="middle" class="pred-tok">cat</text></p>
+<p><rect x="130" y="312" width="80" height="28" rx="4" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.5"/>
+<text x="170" y="330" text-anchor="middle" class="pred-tok">sat</text></p>
+<p><rect x="235" y="312" width="80" height="28" rx="4" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.5"/>
+<text x="275" y="330" text-anchor="middle" class="pred-tok">on</text></p>
+<p><rect x="340" y="312" width="80" height="28" rx="4" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.5"/>
+<text x="380" y="330" text-anchor="middle" class="pred-tok">the</text></p>
+<p><rect x="445" y="312" width="80" height="28" rx="4" fill="var(--accent-2,#ea580c)" fill-opacity="0.12" stroke="var(--accent-2,#ea580c)" stroke-width="1.5"/>
+<text x="485" y="330" text-anchor="middle" class="pred-tok">mat</text></p>
+<p><rect x="550" y="312" width="80" height="28" rx="4" fill="var(--accent-2,#ea580c)" fill-opacity="0.70" stroke="var(--accent-2,#ea580c)" stroke-width="1.5"/>
+<text x="590" y="330" text-anchor="middle" class="pred-tok" style="fill:white;">[EOS]</text></p>
+<p><line x1="65"  y1="46" x2="170" y2="310" stroke="var(--muted,#64748b)" stroke-width="0.6" stroke-dasharray="3 4" opacity="0.4"/>
+<line x1="170" y1="46" x2="275" y2="310" stroke="var(--muted,#64748b)" stroke-width="0.6" stroke-dasharray="3 4" opacity="0.4"/>
+<line x1="275" y1="46" x2="380" y2="310" stroke="var(--muted,#64748b)" stroke-width="0.6" stroke-dasharray="3 4" opacity="0.4"/>
+<line x1="380" y1="46" x2="485" y2="310" stroke="var(--muted,#64748b)" stroke-width="0.6" stroke-dasharray="3 4" opacity="0.4"/>
+<line x1="485" y1="46" x2="590" y2="310" stroke="var(--muted,#64748b)" stroke-width="0.6" stroke-dasharray="3 4" opacity="0.4"/></p>
+<p><text x="360" y="368" text-anchor="middle" style="font:500 10.5px var(--sans,sans-serif); fill:var(--muted,#64748b);">All positions predicted in parallel during training (CLM loss on every token)</text></p>
+<p><text x="360" y="390" text-anchor="middle" style="font:500 10px var(--sans,sans-serif); fill:var(--accent-2,#ea580c);">input col k predicts output col k (= input col k+1); [EOS] is the final target</text></p>
+<p><text x="360" y="455" text-anchor="middle" style="font:500 10px var(--sans,sans-serif); fill:var(--accent,#4f46e5);">Causal mask: lower-triangular — token i cannot attend to any j &gt; i</text></p>
+<p></svg></p>
+<figcaption><b>Decoder-only (GPT) predicts every next token in parallel at training time, constrained by the causal mask.</b> Each token embedding enters a stack of causal self-attention blocks where token i can only attend to positions 0..i (leftward arrows in the motif). The output at each position predicts the next token (shifted by one), so input "The" predicts "cat", "cat" predicts "sat", and so on. Despite being causal, all positions are computed simultaneously under the lower-triangular mask during training.</figcaption>
+</figure>
+<p>At inference time you feed a <strong>prompt</strong> (called the <em>prefix</em> or <em>context</em>), run the forward pass, sample or argmax the next token from the final logit, append it, and repeat. This is the KV-cache decode loop covered in detail in <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>.</p>
+<h3 id="from-scratch-minimal-decoder-only-transformer">From-Scratch Minimal Decoder-Only Transformer<a class="headerlink" href="#from-scratch-minimal-decoder-only-transformer" title="Permanent link">¶</a></h3>
+<p>The following is a self-contained, heavily commented decoder-only transformer that you can run. It intentionally omits optimizations (FlashAttention, fused kernels) to be readable.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">CausalSelfAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Multi-head causal (masked) self-attention.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">max_seq_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2048</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">d_model</span> <span class="o">%</span> <span class="n">n_heads</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;d_model must be divisible by n_heads&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_k</span>    <span class="o">=</span> <span class="n">d_model</span> <span class="o">//</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span> <span class="o">=</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_model</span> <span class="o">=</span> <span class="n">d_model</span>
+
+        <span class="c1"># Fused QKV projection for efficiency</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">qkv</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">out</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="c1"># Register causal mask as a buffer (not a parameter)</span>
+        <span class="c1"># Lower-triangular: M[i,j]=1 iff j &lt;= i</span>
+        <span class="n">causal_mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">max_seq_len</span><span class="p">,</span> <span class="n">max_seq_len</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">)</span><span class="o">.</span><span class="n">tril</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">&quot;causal_mask&quot;</span><span class="p">,</span> <span class="n">causal_mask</span><span class="p">)</span>  <span class="c1"># (T_max, T_max)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        x: (B, T, D)</span>
+<span class="sd">        returns: (B, T, D)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">H</span><span class="p">,</span> <span class="n">d_k</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">d_k</span>
+
+        <span class="c1"># Compute Q, K, V via fused projection, then split</span>
+        <span class="n">qkv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">qkv</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                       <span class="c1"># (B, T, 3D)</span>
+        <span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="n">qkv</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>          <span class="c1"># each (B, T, D)</span>
+
+        <span class="c1"># Reshape to (B, H, T, d_k) for multi-head attention</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">reshape</span><span class="p">(</span><span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">t</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">d_k</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+
+        <span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="nb">map</span><span class="p">(</span><span class="n">reshape</span><span class="p">,</span> <span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">))</span>
+
+        <span class="c1"># Scaled dot-product attention with causal mask</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">Q</span> <span class="o">@</span> <span class="n">K</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">d_k</span> <span class="o">**</span> <span class="o">-</span><span class="mf">0.5</span><span class="p">)</span>   <span class="c1"># (B, H, T, T)</span>
+
+        <span class="c1"># Apply causal mask: positions where mask==False get -inf</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">causal_mask</span><span class="p">[:</span><span class="n">T</span><span class="p">,</span> <span class="p">:</span><span class="n">T</span><span class="p">]</span>          <span class="c1"># (T, T)</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="o">~</span><span class="n">mask</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>
+
+        <span class="n">attn</span>  <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>        <span class="c1"># (B, H, T, T)</span>
+        <span class="n">out</span>   <span class="o">=</span> <span class="n">attn</span> <span class="o">@</span> <span class="n">V</span>                          <span class="c1"># (B, H, T, d_k)</span>
+
+        <span class="c1"># Merge heads: (B, H, T, d_k) → (B, T, D)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">out</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TransformerBlock</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Pre-norm transformer block (decoder-only, no cross-attention).&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">max_seq_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2048</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm1</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attn</span>   <span class="o">=</span> <span class="n">CausalSelfAttention</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">max_seq_len</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm2</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+        <span class="c1"># Feed-forward: expand to 4x, then contract</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ff</span>     <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">GELU</span><span class="p">(),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_ff</span><span class="p">,</span> <span class="n">d_model</span><span class="p">),</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Pre-norm: normalize before the sub-layer, add residual after</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">norm1</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">ff</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">norm2</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">x</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">DecoderOnlyTransformer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Minimal GPT-style decoder-only language model.</span>
+<span class="sd">    Uses learned absolute positional embeddings (GPT-2 style).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span>
+                 <span class="n">vocab_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                 <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span>   <span class="o">=</span> <span class="mi">256</span><span class="p">,</span>
+                 <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span>   <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+                 <span class="n">n_layers</span><span class="p">:</span> <span class="nb">int</span>  <span class="o">=</span> <span class="mi">6</span><span class="p">,</span>
+                 <span class="n">max_seq_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tok_emb</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">vocab_size</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pos_emb</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">max_seq_len</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>  <span class="c1"># learned pos emb</span>
+
+        <span class="n">d_ff</span> <span class="o">=</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">d_model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">([</span>
+            <span class="n">TransformerBlock</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">,</span> <span class="n">max_seq_len</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_layers</span><span class="p">)</span>
+        <span class="p">])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm_f</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>             <span class="c1"># final norm</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lm_head</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">vocab_size</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="c1"># Weight tying: embedding and LM head share weights (saves params + improves quality)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lm_head</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tok_emb</span><span class="o">.</span><span class="n">weight</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_init_weights</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_init_weights</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;GPT-2 style initialization.&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">module</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">modules</span><span class="p">():</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">,</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">)):</span>
+                <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="n">module</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">mean</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">)</span> <span class="ow">and</span> <span class="n">module</span><span class="o">.</span><span class="n">bias</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">zeros_</span><span class="p">(</span><span class="n">module</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        idx: (B, T) — token ids</span>
+<span class="sd">        returns logits: (B, T, vocab_size)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span> <span class="o">=</span> <span class="n">idx</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">idx</span><span class="o">.</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># (1, T)</span>
+
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tok_emb</span><span class="p">(</span><span class="n">idx</span><span class="p">)</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">pos_emb</span><span class="p">(</span><span class="n">positions</span><span class="p">)</span>    <span class="c1"># (B, T, D)</span>
+
+        <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">block</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm_f</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">lm_head</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                              <span class="c1"># (B, T, vocab_size)</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prompt</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">max_new_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">64</span><span class="p">,</span>
+                 <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Greedy/temperature sampling. Prompt: (1, T_prompt).&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_new_tokens</span><span class="p">):</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">prompt</span><span class="p">)[:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span>         <span class="c1"># (1, vocab_size)</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="n">logits</span> <span class="o">/</span> <span class="n">temperature</span>
+            <span class="n">next_tok</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">multinomial</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">),</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="n">prompt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">prompt</span><span class="p">,</span> <span class="n">next_tok</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">prompt</span>
+
+
+<span class="c1"># --- Quick sanity check ---</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">DecoderOnlyTransformer</span><span class="p">(</span><span class="n">vocab_size</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">d_model</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">n_heads</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">n_layers</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1000</span><span class="p">,</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">32</span><span class="p">))</span>   <span class="c1"># batch=2, seq_len=32</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output shape: </span><span class="si">{</span><span class="n">logits</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># should be (2, 32, 1000)</span>
+
+    <span class="n">n_params</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Parameters: </span><span class="si">{</span><span class="n">n_params</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="prefix-language-models">Prefix Language Models<a class="headerlink" href="#prefix-language-models" title="Permanent link">¶</a></h2>
+<h3 id="what-is-a-prefix-lm">What Is a Prefix-LM?<a class="headerlink" href="#what-is-a-prefix-lm" title="Permanent link">¶</a></h3>
+<p>A <strong>prefix language model</strong> (prefix-LM) is a decoder-only model with a modified attention mask: the tokens belonging to the <em>input prompt</em> (the &ldquo;prefix&rdquo;) attend to each other <strong>bidirectionally</strong>, while the tokens being <em>generated</em> attend causally. The mask is the block-diagonal hybrid we showed earlier.</p>
+<p>This was the design used in models like <strong>ULMFiT</strong>-adjacent work and, more prominently, <strong>PaLM</strong> (Chowdhery et al., <em>PaLM: Scaling Language Modeling with Pathways</em>, 2022) in its fine-tuning phase, and was described explicitly in Raffel et al.&rsquo;s T5 paper as a baseline worth studying. Google&rsquo;s <strong>Gemini</strong> architecture is also described as prefix-LM.</p>
+<h3 id="constructing-the-prefix-lm-mask">Constructing the Prefix-LM Mask<a class="headerlink" href="#constructing-the-prefix-lm-mask" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">make_prefix_lm_mask</span><span class="p">(</span><span class="n">prefix_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">total_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns additive mask for prefix-LM.</span>
+<span class="sd">    Shape: (total_len, total_len)</span>
+<span class="sd">    Value: 0 where attention is allowed, -inf where it is blocked.</span>
+
+<span class="sd">    The prefix portion (positions 0..prefix_len-1) is fully bidirectional.</span>
+<span class="sd">    Positions &gt;= prefix_len are causal.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="n">total_len</span>
+    <span class="c1"># Start with a full causal mask</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tril</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">))</span>  <span class="c1"># lower triangular</span>
+
+    <span class="c1"># For the prefix block: all prefix positions can see all other prefix positions</span>
+    <span class="c1"># (i.e., set the top-left sub-matrix to True)</span>
+    <span class="n">mask</span><span class="p">[:</span><span class="n">prefix_len</span><span class="p">,</span> <span class="p">:</span><span class="n">prefix_len</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="c1"># Convert bool mask to additive float mask: True→0, False→-inf</span>
+    <span class="n">additive_mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">additive_mask</span><span class="p">[</span><span class="o">~</span><span class="n">mask</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">additive_mask</span>
+
+
+<span class="c1"># Visualise for prefix_len=3, total_len=6</span>
+<span class="n">mask</span> <span class="o">=</span> <span class="n">make_prefix_lm_mask</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">6</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">mask</span><span class="o">.</span><span class="n">tolist</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;  0&quot;</span> <span class="k">if</span> <span class="n">v</span> <span class="o">==</span> <span class="mf">0.0</span> <span class="k">else</span> <span class="s2">&quot;-∞&quot;</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">row</span><span class="p">))</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>  0   0   0 -∞ -∞ -∞
+  0   0   0 -∞ -∞ -∞
+  0   0   0 -∞ -∞ -∞
+  0   0   0   0 -∞ -∞
+  0   0   0   0   0 -∞
+  0   0   0   0   0   0
+</code></pre></div>
+<p>Prefix tokens (rows 0–2) can see all other prefix tokens but cannot see future generated tokens (the right-side −∞ values). Generated tokens (rows 3–5) can see the full prefix bidirectionally and all previously generated tokens, but not future generated tokens.</p>
+<h3 id="why-bother-the-tradeoff">Why Bother? The Tradeoff<a class="headerlink" href="#why-bother-the-tradeoff" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Decoder-only (causal)</th>
+<th>Prefix-LM</th>
+<th>Encoder-Decoder</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Prefix representation</td>
+<td>Causal (sees only earlier prefix tokens)</td>
+<td>Bidirectional</td>
+<td>Fully bidirectional</td>
+</tr>
+<tr>
+<td>Can generate autoregressively</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes (decoder side)</td>
+</tr>
+<tr>
+<td>Single model, no cross-attention overhead</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>No — two stacks</td>
+</tr>
+<tr>
+<td>Fine-tuning simplicity</td>
+<td>Simple</td>
+<td>Simple</td>
+<td>Moderate</td>
+</tr>
+<tr>
+<td>Representation quality for encoding</td>
+<td>Lower</td>
+<td>Higher</td>
+<td>Highest</td>
+</tr>
+</tbody>
+</table>
+<p>The key benefit of prefix-LM over pure causal: the model builds a richer contextual representation of the prompt before generating. The key benefit over encoder-decoder: there is only one model with shared weights, no cross-attention, and you can continue generating past the prefix boundary seamlessly.</p>
+<p>The key limitation: during pre-training on pure text data, you must decide the prefix boundary. If you pre-train only with causal masking (standard), switching to prefix-LM masking at fine-tuning time creates a distribution mismatch: the model has never seen bidirectional attention during training, so the first few fine-tuning steps are spent adapting. Some models pre-train with randomly sampled prefix lengths to avoid this.</p>
+<hr />
+<h2 id="masking-patterns-a-worked-numerical-example">Masking Patterns: A Worked Numerical Example<a class="headerlink" href="#masking-patterns-a-worked-numerical-example" title="Permanent link">¶</a></h2>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Attention Scores Under Different Masks</p>
+<p>Consider a tiny sequence of length <span class="arithmatex">\(T=4\)</span> with <span class="arithmatex">\(d_k = 4\)</span>. Suppose after the QK projection we have (for a single head):</p>
+<div class="arithmatex">\[
+L = \begin{bmatrix} 1.0 &amp; 0.5 &amp; 0.8 &amp; 0.3 \\ 0.4 &amp; 1.2 &amp; 0.6 &amp; 0.9 \\ 0.7 &amp; 0.3 &amp; 1.1 &amp; 0.5 \\ 0.2 &amp; 0.8 &amp; 0.4 &amp; 1.3 \end{bmatrix}
+\]</div>
+<p><strong>Bidirectional (encoder):</strong> No masking. Softmax of each row. Row 0:
+$<span class="arithmatex">\(\text{softmax}([1.0, 0.5, 0.8, 0.3]) = [0.38, 0.23, 0.31, 0.18]\)</span>$
+Token 0&rsquo;s representation is a blend of all four value vectors.</p>
+<p><strong>Causal (decoder):</strong> Apply lower-triangular mask. For row 0 (query = position 0), only position 0 is visible:
+$<span class="arithmatex">\(L'_{0,:} = [1.0, -\infty, -\infty, -\infty] \xrightarrow{\text{softmax}} [1.0, 0, 0, 0]\)</span>$
+Position 0&rsquo;s output is exactly its own value vector — it cannot see the future. For row 3:
+$<span class="arithmatex">\(\text{softmax}([0.2, 0.8, 0.4, 1.3]) = [0.14, 0.27, 0.17, 0.42]\)</span>$
+Position 3 blends all four — it benefits from full left-context.</p>
+<p><strong>Prefix-LM with prefix length 2:</strong> Rows 0 and 1 can see all other prefix positions (columns 0–1) bidirectionally:
+- Row 0: <span class="arithmatex">\(\text{softmax}([1.0, 0.5, -\infty, -\infty]) = [0.62, 0.38, 0, 0]\)</span>
+- Row 2 (generation starts): causal from here, <span class="arithmatex">\(\text{softmax}([0.7, 0.3, 1.1, -\infty]) = [0.26, 0.18, 0.56, 0]\)</span></p>
+<p>Notice: prefix-LM gives prefix tokens <em>better</em> representations than pure causal (they mix with each other fully), while generation tokens remain strictly causal.</p>
+</div>
+<hr />
+<h2 id="the-decoder-only-convergence">The Decoder-Only Convergence<a class="headerlink" href="#the-decoder-only-convergence" title="Permanent link">¶</a></h2>
+<h3 id="why-the-field-moved-to-decoder-only">Why the Field Moved to Decoder-Only<a class="headerlink" href="#why-the-field-moved-to-decoder-only" title="Permanent link">¶</a></h3>
+<p>By 2022–2023, essentially all frontier models (GPT-3, PaLM, LLaMA, Mistral, Gemma, Claude, Gemini) converged on decoder-only architectures. This was not obvious a priori — encoder-decoder models like T5 showed strong results on many benchmarks, and encoder-only models like BERT dominated NLP for years. What drove the shift?</p>
+<p><strong>1. Unified training objective.</strong> Causal language modeling on raw text is simple, abundant, and self-supervised at planetary scale. There is no need to decide what to mask, how to construct pairs, or how to label anything. The training data is just the internet.</p>
+<p><strong>2. In-context learning emerges naturally.</strong> Because the prompt and the completion are treated identically as a sequence, the decoder naturally learns to condition its completions on the prompt. Few-shot learning (Brown et al., <em>Language Models are Few-Shot Learners</em>, 2020) arises as a capability from scale. Encoder-decoder models can do this too, but the mechanism is less seamless.</p>
+<p><strong>3. Scalability.</strong> As the context window grows (8K → 128K → 1M tokens), having a single attention stack is simpler than coordinating encoder length vs. decoder length. Cross-attention becomes more expensive as source length grows.</p>
+<p><strong>4. RLHF / instruction tuning / preference optimization.</strong> Post-training pipelines (see <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a> and <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>) are straightforward to set up with a causal decoder: format inputs and outputs as a single sequence and compute the causal LM loss only on the output portion.</p>
+<p><strong>5. KV cache simplicity.</strong> The KV cache for inference (see <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>) is a single cache for a single stack. Encoder-decoder models require a separate cross-attention KV cache per decoder layer.</p>
+<p><strong>What encoder-only is still good for.</strong> Representation tasks with tight latency budgets: search re-ranking, embedding retrieval, token classification. A 110M-parameter BERT encoder produces high-quality contextual embeddings orders of magnitude cheaper than running a 70B decoder-only model.</p>
+<p><strong>What encoder-decoder is still good for.</strong> Constrained generation tasks where the output vocabulary is small relative to the input (document summarization with a known schema, structured extraction, code generation conditioned on long specs). The encoder-decoder can build a much richer representation of the source, which can matter when the source is long and the generation is short.</p>
+<hr />
+<h2 id="comparing-the-pre-training-objectives">Comparing the Pre-training Objectives<a class="headerlink" href="#comparing-the-pre-training-objectives" title="Permanent link">¶</a></h2>
+<p>The pre-training objective is not just a loss function — it determines what the model learns to represent. Let us compare the three main objectives concretely.</p>
+<table>
+<thead>
+<tr>
+<th>Objective</th>
+<th>Task</th>
+<th>Input to model</th>
+<th>Loss computed over</th>
+<th>Model type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Masked LM (MLM)</td>
+<td>Predict masked tokens</td>
+<td>Corrupted full sequence</td>
+<td>Masked positions only</td>
+<td>Encoder-only</td>
+</tr>
+<tr>
+<td>Span corruption</td>
+<td>Reconstruct masked spans</td>
+<td>Corrupted encoder input</td>
+<td>Full decoder output</td>
+<td>Encoder-decoder</td>
+</tr>
+<tr>
+<td>Causal LM (CLM)</td>
+<td>Predict next token</td>
+<td>All preceding tokens</td>
+<td>All positions</td>
+<td>Decoder-only</td>
+</tr>
+</tbody>
+</table>
+<p>A key efficiency point: CLM trains on <strong>every position</strong> in every sequence, while MLM trains only on the ~15% masked positions. This means that for a given sequence of <span class="arithmatex">\(T\)</span> tokens, CLM extracts <span class="arithmatex">\(T\)</span> gradient signals while MLM extracts only <span class="arithmatex">\(\approx 0.15T\)</span>. Over a fixed compute budget, CLM sees more learning signal per FLOP on raw generation ability. MLM produces better per-token representations for discrimination tasks, but that advantage diminishes with scale.</p>
+<div class="admonition note">
+<p class="admonition-title">The ELECTRA Alternative</p>
+<p>Clark et al. (<em>ELECTRA: Pre-training Text Encoders as Discriminators Rather Than Generators</em>, 2020) observed that MLM wastes compute on easy-to-predict unmasked tokens. ELECTRA uses a small generator to fill in masks, then trains a large discriminator to detect which tokens are &ldquo;replaced.&rdquo; The discriminator trains on <em>all</em> tokens, achieving BERT-level performance at substantially lower compute. This is still encoder-only but with a more efficient objective.</p>
+</div>
+<hr />
+<h2 id="masking-in-practice-implementation-gotchas">Masking in Practice: Implementation Gotchas<a class="headerlink" href="#masking-in-practice-implementation-gotchas" title="Permanent link">¶</a></h2>
+<p>Getting the mask right in code is where many practitioners make silent mistakes. Here is a consolidated reference for the four patterns you will encounter.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">causal_mask</span><span class="p">(</span><span class="n">T</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Standard lower-triangular causal mask. Returns (T, T) bool mask.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">tril</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bidirectional_mask</span><span class="p">(</span><span class="n">T</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;All-ones mask — every position attends to every position.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">prefix_lm_mask</span><span class="p">(</span><span class="n">prefix_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">total_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                   <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Prefix-LM mask: bidirectional within prefix, causal for generation.&quot;&quot;&quot;</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">causal_mask</span><span class="p">(</span><span class="n">total_len</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+    <span class="n">mask</span><span class="p">[:</span><span class="n">prefix_len</span><span class="p">,</span> <span class="p">:</span><span class="n">prefix_len</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>   <span class="c1"># full bidirectional for prefix block</span>
+    <span class="k">return</span> <span class="n">mask</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">encoder_decoder_mask</span><span class="p">(</span><span class="n">T_dec</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">T_enc</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                          <span class="n">pad_mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                          <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns the two masks needed for an encoder-decoder model:</span>
+<span class="sd">      - &#39;self&#39;:  causal mask for decoder self-attention  (T_dec, T_dec)</span>
+<span class="sd">      - &#39;cross&#39;: encoder padding mask for cross-attention (T_enc,) bool: True=PAD</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">self_mask</span>  <span class="o">=</span> <span class="n">causal_mask</span><span class="p">(</span><span class="n">T_dec</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+    <span class="n">cross_mask</span> <span class="o">=</span> <span class="n">pad_mask</span> <span class="k">if</span> <span class="n">pad_mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">T_enc</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;self&quot;</span><span class="p">:</span> <span class="n">self_mask</span><span class="p">,</span> <span class="s2">&quot;cross&quot;</span><span class="p">:</span> <span class="n">cross_mask</span><span class="p">}</span>
+
+
+<span class="c1"># --- Common gotcha: using the wrong dtype ---</span>
+<span class="c1"># torch.where and masked_fill expect a *bool* mask, not float.</span>
+<span class="c1"># torch.nn.functional.scaled_dot_product_attention (PyTorch 2.0+) expects</span>
+<span class="c1"># an *additive* attn_mask (float, 0 or -inf), NOT a bool mask.</span>
+<span class="c1"># Always double-check which convention your attention function uses.</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_causal_mask_sdpa</span><span class="p">(</span><span class="n">q</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>
+                           <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    PyTorch 2.0+ scaled_dot_product_attention with causal mask.</span>
+<span class="sd">    The is_causal=True flag efficiently generates the causal mask internally,</span>
+<span class="sd">    avoiding the O(T^2) mask tensor allocation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">scaled_dot_product_attention</span><span class="p">(</span>
+        <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span>
+        <span class="n">attn_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">is_causal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>    <span class="c1"># ← most efficient way to do causal masking in PyTorch 2+</span>
+        <span class="n">dropout_p</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="p">)</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Mask Convention Mismatch</p>
+<p>PyTorch&rsquo;s <code>nn.MultiheadAttention</code> uses a <code>key_padding_mask</code> where <code>True</code> means <em>ignore</em> (the opposite of &ldquo;allowed&rdquo;), while its <code>attn_mask</code> is an <em>additive</em> mask where <span class="arithmatex">\(-\infty\)</span> means blocked. <code>F.scaled_dot_product_attention</code> (PyTorch 2.0+) also uses an additive <code>attn_mask</code> and has <code>is_causal</code> as a shortcut. HuggingFace Transformers internally converts bool &ldquo;attention masks&rdquo; (1=attend, 0=ignore) into additive masks. Mixing these conventions is the most common source of silent accuracy bugs when implementing custom attention modules.</p>
+</div>
+<hr />
+<h2 id="interview-corner">Interview Corner<a class="headerlink" href="#interview-corner" title="Permanent link">¶</a></h2>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> What is the fundamental difference between BERT and GPT architectures, and when would you choose one over the other in a production system?</p>
+<p><strong>A:</strong> The core difference is the attention mask. BERT uses a <strong>fully bidirectional</strong> mask — every token attends to every other token — making it optimal for <em>understanding</em> tasks where you have the complete input available. GPT uses a <strong>causal (lower-triangular)</strong> mask so that token <span class="arithmatex">\(t\)</span> only attends to tokens <span class="arithmatex">\(0, \ldots, t-1\)</span>, enabling <strong>autoregressive generation</strong>: you can extend the sequence one token at a time.</p>
+<p>Choose BERT-style when you need high-quality representations of fixed-length inputs: text classification, named entity recognition, extractive QA, semantic search embeddings. These tasks benefit from the richer per-token context from both directions. Choose GPT-style when you need to <strong>generate</strong> text — summarization, dialogue, code completion, instruction following — or when you want a single unified model that can handle both understanding and generation via prompting. For production deployment, decoder-only models also have a simpler KV-cache story: one cache, one stack, no cross-attention overhead.</p>
+<p>A nuance: both architectures can do retrieval if you pool the hidden states. But a fine-tuned BERT encoder at 110M parameters will produce better embeddings at lower latency than a 7B decoder-only model for the same compute budget, which is why bi-encoder retrieval systems still frequently use BERT-family models.</p>
+<p><strong>Follow-up:</strong> Why can&rsquo;t you use BERT for generation? Because to predict token <span class="arithmatex">\(t\)</span>, BERT&rsquo;s bidirectional attention would need to attend to token <span class="arithmatex">\(t\)</span> itself (it is in the input), which leaks the answer. You could run BERT autoregressively by masking future tokens, but then you are re-running the full encoder at every step, which is expensive, and you lose the bidirectional context benefit that justified using an encoder in the first place.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The <strong>attention mask</strong> is the defining characteristic of each architecture family. Encoder-only = fully bidirectional; decoder-only = lower-triangular causal; encoder-decoder = bidirectional encoder + causal decoder + cross-attention; prefix-LM = hybrid.</li>
+<li><strong>BERT (encoder-only)</strong> trains with masked language modeling, gives the best per-token representations for fixed-length inputs, but cannot generate autoregressively.</li>
+<li><strong>T5/BART (encoder-decoder)</strong> trains with span corruption or denoising; excels at sequence-to-sequence tasks; carries the cost of two stacks and cross-attention KV caches.</li>
+<li><strong>GPT (decoder-only)</strong> trains with causal LM on every position, making it compute-efficient at scale; naturally handles both conditioning and generation via the context window.</li>
+<li><strong>Prefix-LM</strong> is a middle ground: bidirectional attention over the prompt, causal attention over the generation. It improves prompt representation at the cost of a distribution mismatch if the model was pre-trained purely causally.</li>
+<li>The field converged on <strong>decoder-only</strong> for frontier models because: (1) CLM trains on all positions (more signal per FLOP), (2) in-context learning arises naturally from the sequence-continuation framing, (3) post-training pipelines (SFT, RLHF) are simpler, and (4) a single KV cache is operationally cleaner at inference.</li>
+<li>Encoder-only models remain competitive for <strong>embedding and classification</strong> workloads where latency and cost matter more than generation capability.</li>
+<li>A silent bug when implementing custom attention: mask conventions differ between PyTorch&rsquo;s <code>MultiheadAttention</code>, <code>F.scaled_dot_product_attention</code>, and HuggingFace — always verify whether <code>True</code> means &ldquo;attend&rdquo; or &ldquo;ignore.&rdquo;</li>
+<li>At large scale the distinction between architectures blurs: a decoder-only model with a very long context window and prompt caching behaves similarly to an encoder-decoder in many retrieval-augmented workloads.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Decoder-only transformers dominate frontier LLMs (GPT-4, Claude, Llama, Mistral, Gemini), while encoder-only models remain the backbone of fast retrieval and classification systems; encoder-decoder architectures are seeing a resurgence for parameter-efficient small models and structured generation tasks.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1810.04805">Devlin et al., <em>BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding</em> (2018)</a> — defined the encoder-only paradigm and bidirectional masked language modeling.</li>
+<li><a href="https://arxiv.org/abs/1910.10683">Raffel et al., <em>Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer</em> (2020)</a> — T5 unified all NLP as text-to-text via span corruption and encoder-decoder design.</li>
+<li><a href="https://arxiv.org/abs/1910.13461">Lewis et al., <em>BART: Denoising Sequence-to-Sequence Pre-training</em> (2019)</a> — generalized corruption objectives for the encoder-decoder family; excel at summarization.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2310.06825">Jiang et al., <em>Mistral 7B</em> (2023)</a> — compact decoder-only model introducing grouped-query attention and sliding window attention; a reference design for efficient causal LMs.</li>
+<li><a href="https://arxiv.org/abs/2412.13663">Warner et al., <em>ModernBERT: Smarter, Better, Faster, Longer</em> (2024)</a> — modernized encoder-only model with RoPE, FlashAttention, and 8 192-token context; the current state of the art for bidirectional encoders.</li>
+<li><a href="https://arxiv.org/abs/2501.16273">Weller et al., <em>Return of the Encoder: Maximizing Parameter Efficiency for SLMs</em> (2025)</a> — shows encoder-decoder architectures achieve 47 % lower first-token latency and 4.7× higher throughput than decoder-only models at small parameter budgets.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/karpathy/nanoGPT">karpathy/nanoGPT</a> — minimal (~300-line) decoder-only GPT implementation; the canonical readable reference for the causal transformer.</li>
+<li><a href="https://github.com/huggingface/transformers">huggingface/transformers</a> — hosts production implementations of BERT, T5, BART, GPT-2, Llama, Mistral, and more; the standard starting point for all three architecture families.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/blog/encoder-decoder">von Platen, <em>Transformer-based Encoder-Decoder Models</em> (Hugging Face Blog, 2020)</a> — thorough walkthrough of encoder, decoder, and cross-attention mechanics with code.</li>
+<li><a href="https://arxiv.org/abs/2407.21783">Grattafiori et al., <em>The Llama 3 Herd of Models</em> (2024)</a> — detailed account of a production-scale decoder-only architecture, covering tokenization, attention, and scaling from 8 B to 405 B parameters.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Devlin, Chang, Lee, Toutanova. <em>BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding</em>. NAACL 2019.</li>
+<li>Raffel, Shazeer, Roberts, et al. <em>Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer (T5)</em>. JMLR 2020.</li>
+<li>Lewis, Liu, Goyal, et al. <em>BART: Denoising Sequence-to-Sequence Pre-training for Natural Language Generation, Translation, and Comprehension</em>. ACL 2020.</li>
+<li>Brown, Mann, Ryder, et al. <em>Language Models are Few-Shot Learners (GPT-3)</em>. NeurIPS 2020.</li>
+<li>Clark, Luong, Le, Manning. <em>ELECTRA: Pre-training Text Encoders as Discriminators Rather Than Generators</em>. ICLR 2020.</li>
+<li>Chowdhery, Narang, Devlin, et al. <em>PaLM: Scaling Language Modeling with Pathways</em>. JMLR 2023.</li>
+<li>Vaswani, Shazeer, Parmar, et al. <em>Attention Is All You Need</em>. NeurIPS 2017.</li>
+<li>Touvron, Lavril, Izacard, et al. <em>LLaMA: Open and Efficient Foundation Language Models</em>. arXiv 2023. (Exemplary decoder-only design at scale.)</li>
+<li>Andrej Karpathy. <em>nanoGPT</em> (GitHub). Reference implementation of a minimal decoder-only transformer.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="07-build-gpt-from-scratch.html"><span class="pn-label">← Previous</span><span class="pn-title">Building a GPT From Scratch (nanoGPT-style)</span></a>
+<a class="next" href="09-mixture-of-experts.html"><span class="pn-label">Next →</span><span class="pn-title">Mixture-of-Experts (MoE) Architectures</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#attention-masks-the-lingua-franca-of-architecture">Attention Masks: The Lingua Franca of Architecture</a></li>
+<li class="toc-l2"><a href="#encoder-only-models-bert-and-kin">Encoder-Only Models (BERT and kin)</a></li>
+<li class="toc-l3"><a href="#architecture">Architecture</a></li>
+<li class="toc-l3"><a href="#masked-language-model-mlm-pre-training-objective">Masked Language Model (MLM) Pre-training Objective</a></li>
+<li class="toc-l3"><a href="#what-encoder-only-is-good-for-and-what-it-cannot-do">What Encoder-Only Is Good For (and What It Cannot Do)</a></li>
+<li class="toc-l2"><a href="#encoder-decoder-models-t5-bart">Encoder-Decoder Models (T5, BART)</a></li>
+<li class="toc-l3"><a href="#architecture_1">Architecture</a></li>
+<li class="toc-l3"><a href="#t5-text-to-text-transfer-transformer">T5: Text-to-Text Transfer Transformer</a></li>
+<li class="toc-l3"><a href="#bart-denoising-pre-training">BART: Denoising Pre-training</a></li>
+<li class="toc-l3"><a href="#memory-footprint-of-encoder-decoder">Memory Footprint of Encoder-Decoder</a></li>
+<li class="toc-l2"><a href="#decoder-only-models-gpt-family">Decoder-Only Models (GPT family)</a></li>
+<li class="toc-l3"><a href="#architecture_2">Architecture</a></li>
+<li class="toc-l3"><a href="#from-scratch-minimal-decoder-only-transformer">From-Scratch Minimal Decoder-Only Transformer</a></li>
+<li class="toc-l2"><a href="#prefix-language-models">Prefix Language Models</a></li>
+<li class="toc-l3"><a href="#what-is-a-prefix-lm">What Is a Prefix-LM?</a></li>
+<li class="toc-l3"><a href="#constructing-the-prefix-lm-mask">Constructing the Prefix-LM Mask</a></li>
+<li class="toc-l3"><a href="#why-bother-the-tradeoff">Why Bother? The Tradeoff</a></li>
+<li class="toc-l2"><a href="#masking-patterns-a-worked-numerical-example">Masking Patterns: A Worked Numerical Example</a></li>
+<li class="toc-l2"><a href="#the-decoder-only-convergence">The Decoder-Only Convergence</a></li>
+<li class="toc-l3"><a href="#why-the-field-moved-to-decoder-only">Why the Field Moved to Decoder-Only</a></li>
+<li class="toc-l2"><a href="#comparing-the-pre-training-objectives">Comparing the Pre-training Objectives</a></li>
+<li class="toc-l2"><a href="#masking-in-practice-implementation-gotchas">Masking in Practice: Implementation Gotchas</a></li>
+<li class="toc-l2"><a href="#interview-corner">Interview Corner</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

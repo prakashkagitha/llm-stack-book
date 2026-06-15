@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Pretraining Objective &amp; Loss — The LLM Stack</title>
+<meta name="description" content="Next-token prediction, teacher forcing, the cross-entropy/NLL loss, shifting labels, loss masking, document packing, the causal mask; bits-per-byte; UL2/span co">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="active" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="33-the-pretraining-objective-loss">3.3 The Pretraining Objective &amp; Loss<a class="headerlink" href="#33-the-pretraining-objective-loss" title="Permanent link">¶</a></h1>
+<p>Before a language model can answer questions, write code, or follow instructions, it must first acquire a dense statistical model of language. That foundation is laid during pretraining, and the entire multi-trillion-token, multi-thousand-GPU campaign is guided by a single scalar number: the <strong>cross-entropy loss</strong> on the next-token prediction task. Understanding that loss — what it measures, why it is chosen, how it is computed in practice, and what its values mean — is arguably the most important prerequisite for every topic in the rest of this book.</p>
+<p>This chapter dissects the pretraining objective from first principles. We cover the probabilistic framing, the exact mechanics of teacher forcing, the engineering of causal masking and label shifting, loss masking strategies for packing and multi-document batches, the bits-per-byte normalization, and the UL2 family of span-corruption alternatives. Throughout, we ground everything in concrete code you can run today.</p>
+<hr />
+<h2 id="why-next-token-prediction">Why Next-Token Prediction?<a class="headerlink" href="#why-next-token-prediction" title="Permanent link">¶</a></h2>
+<p>A language model assigns probabilities to sequences. Given a vocabulary <span class="arithmatex">\(\mathcal{V}\)</span> of size <span class="arithmatex">\(V\)</span>, we want to model the probability of a sequence <span class="arithmatex">\(x = (x_1, x_2, \ldots, x_T)\)</span>. By the chain rule of probability this factorizes exactly:</p>
+<div class="arithmatex">\[
+P(x_1, x_2, \ldots, x_T) = \prod_{t=1}^{T} P(x_t \mid x_1, \ldots, x_{t-1})
+\]</div>
+<p>There is no approximation here — this is a theorem. It says that modeling a joint distribution over sequences is equivalent to modeling a sequence of conditional distributions, each predicting the <em>next</em> token given all previous tokens. A decoder-only transformer with a causal mask does exactly this.</p>
+<p>Why this objective rather than, say, a reconstruction autoencoder or a contrastive loss?</p>
+<ol>
+<li><strong>Every token in a long sequence contributes signal.</strong> A 2048-token sequence yields 2047 gradient-carrying predictions per example, making pretraining extraordinarily data-efficient compared to objectives that emit one signal per sequence.</li>
+<li><strong>It is a proper scoring rule.</strong> Maximizing log-likelihood under the true data distribution is provably equivalent to minimizing the KL divergence from the model distribution to the data distribution. The model is incentivized to be calibrated, not just accurate on a held-out label.</li>
+<li><strong>Scalability.</strong> The computation is embarrassingly parallelizable across the time dimension during training (unlike autoregressive inference). The forward and backward passes can be batched over all positions simultaneously.</li>
+<li><strong>Generality.</strong> Nothing about this objective is task-specific. A model that can predict the next token of code, math, natural language, and structured data simultaneously acquires cross-domain representations that transfer well.</li>
+</ol>
+<p>The connection to tokenization and vocabulary is covered in <a href="../02-transformer/01-tokenization.html">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a>. Scaling behavior of this loss is analyzed in <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>.</p>
+<hr />
+<h2 id="the-cross-entropy-loss-and-negative-log-likelihood">The Cross-Entropy Loss and Negative Log-Likelihood<a class="headerlink" href="#the-cross-entropy-loss-and-negative-log-likelihood" title="Permanent link">¶</a></h2>
+<h3 id="formal-definition">Formal Definition<a class="headerlink" href="#formal-definition" title="Permanent link">¶</a></h3>
+<p>Let <span class="arithmatex">\(f_\theta : \mathcal{V}^{&lt;t} \to \mathbb{R}^V\)</span> be the transformer that maps a prefix to logits over the vocabulary. The model&rsquo;s predicted probability at position <span class="arithmatex">\(t\)</span> is:</p>
+<div class="arithmatex">\[
+\hat{p}(x_t \mid x_{&lt;t}) = \operatorname{softmax}(f_\theta(x_{&lt;t}))_{x_t}
+\]</div>
+<p>The <strong>negative log-likelihood (NLL)</strong> loss for a single sequence of length <span class="arithmatex">\(T\)</span> is:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{NLL}} = -\frac{1}{T} \sum_{t=1}^{T} \log \hat{p}(x_t \mid x_{&lt;t})
+\]</div>
+<p>This is numerically identical to the categorical <strong>cross-entropy</strong> between the one-hot target distribution and the predicted softmax distribution:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{CE}} = -\frac{1}{T} \sum_{t=1}^{T} \sum_{v \in \mathcal{V}} \mathbb{1}[x_t = v] \cdot \log \hat{p}(v \mid x_{&lt;t})
+\]</div>
+<p>The inner sum collapses because all probability mass in the one-hot target is on the true token <span class="arithmatex">\(x_t\)</span>.</p>
+<h3 id="the-information-theoretic-viewpoint">The Information-Theoretic Viewpoint<a class="headerlink" href="#the-information-theoretic-viewpoint" title="Permanent link">¶</a></h3>
+<p>The per-token loss equals the <strong>cross-entropy</strong> <span class="arithmatex">\(H(p_\text{data}, p_\theta)\)</span>. By decomposition:</p>
+<div class="arithmatex">\[
+H(p_\text{data}, p_\theta) = H(p_\text{data}) + D_{\text{KL}}(p_\text{data} \| p_\theta)
+\]</div>
+<p>The entropy <span class="arithmatex">\(H(p_\text{data})\)</span> of the true data distribution is a constant. So minimizing cross-entropy is the same as minimizing the KL divergence from the model to the data. The irreducible entropy of natural language — roughly 1–1.5 bits per character or on the order of 2–4 nats per token for English — sets a hard lower bound the model can never beat.</p>
+<p><strong>Perplexity</strong> (PPL) is the exponentiated average loss:</p>
+<div class="arithmatex">\[
+\text{PPL} = \exp\!\left(\mathcal{L}_{\text{NLL}}\right)
+\]</div>
+<p>Perplexity has the intuitive interpretation of the effective branching factor: a perplexity of 10 means the model is on average as uncertain as a uniform distribution over 10 equiprobable tokens. Well-pretrained 70B-class models reach perplexities on the order of 3–8 on standard benchmarks such as WikiText-103, depending on tokenizer and evaluation setup. (Always compare perplexity numbers only within the same tokenizer, as vocabulary size strongly affects the value.)</p>
+<hr />
+<h2 id="teacher-forcing-and-the-causal-mask">Teacher Forcing and the Causal Mask<a class="headerlink" href="#teacher-forcing-and-the-causal-mask" title="Permanent link">¶</a></h2>
+<h3 id="what-is-teacher-forcing">What is Teacher Forcing?<a class="headerlink" href="#what-is-teacher-forcing" title="Permanent link">¶</a></h3>
+<p>During training we use <strong>teacher forcing</strong>: at every position <span class="arithmatex">\(t\)</span> we feed the <em>ground-truth</em> token <span class="arithmatex">\(x_{t-1}\)</span> as input, not the model&rsquo;s own prediction <span class="arithmatex">\(\hat{x}_{t-1}\)</span>. This is what makes the training forward pass efficient — all positions can be computed simultaneously rather than sequentially.</p>
+<p>Without teacher forcing (scheduled sampling or curriculum approaches), each prediction at time <span class="arithmatex">\(t\)</span> depends on potentially erroneous earlier predictions, causing gradient signal to be noisy and training to be slow. Teacher forcing decouples positions and allows a single GPU kernel to produce all <span class="arithmatex">\(T\)</span> predictions in one shot.</p>
+<h3 id="the-causal-mask">The Causal Mask<a class="headerlink" href="#the-causal-mask" title="Permanent link">¶</a></h3>
+<p>The quid pro quo for teacher forcing is that position <span class="arithmatex">\(t\)</span> must not be allowed to see tokens <span class="arithmatex">\(x_{t+1}, \ldots, x_T\)</span> — otherwise the model would trivially predict the next token by looking at it. This is enforced by the <strong>causal (lower-triangular) attention mask</strong>:</p>
+<div class="arithmatex">\[
+M_{ij} = \begin{cases} 0 &amp; \text{if } j \le i \\ -\infty &amp; \text{if } j &gt; i \end{cases}
+\]</div>
+<p>Applied before the softmax in each attention layer, entries with <span class="arithmatex">\(-\infty\)</span> vanish after exponentiation, making the attention weight exactly zero. Position <span class="arithmatex">\(i\)</span> can only attend to positions <span class="arithmatex">\(\le i\)</span> (including itself).</p>
+<p>The causal mask is discussed in detail with implementation in <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a> and <a href="../02-transformer/07-build-gpt-from-scratch.html">Building a GPT From Scratch (nanoGPT-style)</a>.</p>
+<div class="highlight"><pre><span></span><code>Input sequence:  [BOS] T h e   c a t   s a t
+Positions:         0   1 2 3 4 5 6 7 8 9 10 11
+
+Teacher-forced input  (i-th logit predicts token i+1):
+ input:  [BOS] T h e   c a t   s a
+ target:  T   h e     c a t   s a t
+
+Causal mask (T=6 shown, ✓=attend, ✗=masked):
+         pos0 pos1 pos2 pos3 pos4 pos5
+  pos0:    ✓    ✗    ✗    ✗    ✗    ✗
+  pos1:    ✓    ✓    ✗    ✗    ✗    ✗
+  pos2:    ✓    ✓    ✓    ✗    ✗    ✗
+  pos3:    ✓    ✓    ✓    ✓    ✗    ✗
+  pos4:    ✓    ✓    ✓    ✓    ✓    ✗
+  pos5:    ✓    ✓    ✓    ✓    ✓    ✓
+</code></pre></div>
+<h3 id="shifting-labels">Shifting Labels<a class="headerlink" href="#shifting-labels" title="Permanent link">¶</a></h3>
+<p>In PyTorch, the cross-entropy loss requires aligned <code>(logits, targets)</code> tensors. For a sequence of length <span class="arithmatex">\(T\)</span>, the model produces <span class="arithmatex">\(T\)</span> logit vectors (one per input position), but the <em>first useful prediction</em> is at position 0 (predicting position 1). The standard idiom is:</p>
+<ul>
+<li><strong>Input to the model</strong>: tokens <span class="arithmatex">\([x_0, x_1, \ldots, x_{T-1}]\)</span></li>
+<li><strong>Targets</strong>: tokens <span class="arithmatex">\([x_1, x_2, \ldots, x_T]\)</span> — shifted by 1</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="c1"># Suppose tokens is shape (B, T+1): batch of sequences with one extra token</span>
+<span class="c1"># e.g., tokens = tokenizer.encode(text) + [EOS]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_lm_loss</span><span class="p">(</span><span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">tokens</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    logits : (B, T, V)   — model output for each of T input positions</span>
+<span class="sd">    tokens : (B, T+1)    — the full sequence including the token AFTER the last input</span>
+
+<span class="sd">    We align by:</span>
+<span class="sd">      inputs  = tokens[:, :-1]   shape (B, T)  — fed to the model</span>
+<span class="sd">      targets = tokens[:, 1:]    shape (B, T)  — what each position should predict</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># targets are the tokens one step ahead of each input position</span>
+    <span class="n">targets</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>          <span class="c1"># (B, T)</span>
+
+    <span class="c1"># logits come from running the model on tokens[:, :-1]</span>
+    <span class="c1"># Reshape for F.cross_entropy: expects (N, C) or (N, C, ...) </span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span>
+        <span class="n">logits</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">),</span>    <span class="c1"># (B*T, V)</span>
+        <span class="n">targets</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">),</span>      <span class="c1"># (B*T,)</span>
+        <span class="n">reduction</span><span class="o">=</span><span class="s1">&#39;mean&#39;</span>             <span class="c1"># average over all non-masked positions</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">loss</span>
+</code></pre></div>
+<p>This is the entirety of the loss function for standard causal language modeling. Everything else — masking, packing, weighting — is an elaboration of this core.</p>
+<hr />
+<h2 id="loss-masking">Loss Masking<a class="headerlink" href="#loss-masking" title="Permanent link">¶</a></h2>
+<h3 id="why-mask">Why Mask?<a class="headerlink" href="#why-mask" title="Permanent link">¶</a></h3>
+<p>Not all token positions carry equal pedagogical value. There are three major situations where we want to zero out (mask) certain positions in the loss:</p>
+<ol>
+<li><strong>Padding tokens.</strong> Sequences in a batch are padded to the same length. Padding positions have no linguistic content and including them would dilute the gradient.</li>
+<li><strong>Prompt tokens in supervised fine-tuning.</strong> During SFT or instruction tuning, we typically want the model to learn the response, not regurgitate the system prompt. (Covered in <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a>.)</li>
+<li><strong>Document boundary tokens in packed sequences.</strong> When multiple documents are concatenated into a single long sequence (see §Packing below), we must prevent cross-document loss bleed.</li>
+</ol>
+<h3 id="implementation">Implementation<a class="headerlink" href="#implementation" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_lm_loss_masked</span><span class="p">(</span>
+    <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>     <span class="c1"># (B, T, V)</span>
+    <span class="n">tokens</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>     <span class="c1"># (B, T+1) — full sequences</span>
+    <span class="n">mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>       <span class="c1"># (B, T)   — 1 for positions to train on, 0 to skip</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Masked causal language modeling loss.</span>
+
+<span class="sd">    mask=0 at padding tokens, prompt tokens, or cross-document positions.</span>
+<span class="sd">    We use ignore_index=-100 (PyTorch convention) to exclude masked positions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">targets</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>  <span class="c1"># (B, T) — shift targets</span>
+
+    <span class="c1"># Replace masked positions with ignore_index so they contribute 0 to the loss</span>
+    <span class="n">targets</span><span class="p">[</span><span class="n">mask</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="o">-</span><span class="mi">100</span>        <span class="c1"># -100 is the default ignore_index in F.cross_entropy</span>
+
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span>
+        <span class="n">logits</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">),</span>
+        <span class="n">targets</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">),</span>
+        <span class="n">ignore_index</span><span class="o">=-</span><span class="mi">100</span><span class="p">,</span>
+        <span class="n">reduction</span><span class="o">=</span><span class="s1">&#39;mean&#39;</span><span class="p">,</span>    <span class="c1"># averages only over non-ignored positions</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">loss</span>
+
+
+<span class="c1"># Quick sanity check -------------------------------------------------------</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+<span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">32000</span>
+<span class="n">logits</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+<span class="n">tokens</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span>
+<span class="n">mask</span>    <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)</span>
+<span class="n">mask</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">6</span><span class="p">:]</span> <span class="o">=</span> <span class="mi">0</span>   <span class="c1"># mask last 2 positions of first example (padding)</span>
+<span class="n">mask</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>   <span class="c1"># mask first 3 positions of second example (prompt)</span>
+
+<span class="n">loss</span> <span class="o">=</span> <span class="n">compute_lm_loss_masked</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">tokens</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Masked loss: </span><span class="si">{</span><span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># a finite float; masked positions don&#39;t contribute</span>
+</code></pre></div>
+<p>A subtle point: when using <code>reduction='mean'</code>, PyTorch averages over <em>non-ignored</em> positions only. If you use <code>reduction='sum'</code> and divide manually, be careful to count only active tokens — dividing by the full sequence length (including masked positions) will produce a number that is systematically too small and will silently hurt training.</p>
+<div class="admonition warning">
+<p class="admonition-title">Mean vs. sum reduction pitfall</p>
+<p>If you accumulate a sum loss across micro-batches for gradient accumulation, you must normalize by the total number of <em>active</em> (non-masked) tokens across all micro-batches, not the total sequence length. Many training bugs are caused by accidentally dividing by the wrong denominator, producing an effective learning rate that varies with the mask density.</p>
+</div>
+<hr />
+<h2 id="document-packing">Document Packing<a class="headerlink" href="#document-packing" title="Permanent link">¶</a></h2>
+<h3 id="the-efficiency-problem">The Efficiency Problem<a class="headerlink" href="#the-efficiency-problem" title="Permanent link">¶</a></h3>
+<p>Real pretraining datasets contain documents of wildly varying lengths — a sentence here, a book chapter there. Padding every example to the longest sequence in a batch wastes enormous amounts of compute on meaningless tokens. For a mixed-length corpus, naive padding can waste 30–60% of tokens.</p>
+<p><strong>Document packing</strong> (also called <em>sequence packing</em> or <em>bin packing</em>) solves this by concatenating multiple short documents end-to-end until the combined sequence reaches the target context length <span class="arithmatex">\(L\)</span>. The concatenation uses a special separator token (e.g., <code>&lt;|endoftext|&gt;</code> in GPT-style models).</p>
+<div class="highlight"><pre><span></span><code>Context window = 1024 tokens
+
+Unpacked (padded):
+  [Doc A: 300 tokens | PAD x 724]       — 71% waste
+  [Doc B: 512 tokens | PAD x 512]       — 50% waste
+  [Doc C: 128 tokens | PAD x 896]       — 88% waste
+
+Packed:
+  [Doc A: 300 | SEP | Doc B: 512 | SEP | Doc C: 128 | PAD x 83]
+  — only 8% waste
+</code></pre></div>
+<h3 id="the-cross-document-contamination-problem">The Cross-Document Contamination Problem<a class="headerlink" href="#the-cross-document-contamination-problem" title="Permanent link">¶</a></h3>
+<p>Naive packing causes a subtle loss contamination issue: the model&rsquo;s prediction of the first token of document B is conditioned on the final tokens of document A, which is semantically meaningless. This inflates the loss on document-boundary tokens and, more insidiously, teaches the model to expect arbitrary tokens as context — potentially hurting coherence of long-form generation.</p>
+<p>There are two ways to handle this:</p>
+<p><strong>Option 1: Loss masking at boundaries.</strong> Zero out the loss for the first token of each document in a packed sequence (its prediction is &ldquo;poisoned&rdquo; by the previous unrelated document). This is the most common approach.</p>
+<p><strong>Option 2: Intra-document causal masking.</strong> Use a block-diagonal attention mask so that each document only attends to itself. This is more expensive (cannot use standard FlashAttention without modification) but eliminates the contamination entirely. This is what some modern models use during fine-tuning (see <a href="../05-posttraining-alignment/02-chat-templates-packing.html">Chat Templates, Data Formatting &amp; Sequence Packing</a>).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_packed_loss_mask</span><span class="p">(</span>
+    <span class="n">doc_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, T) — integer doc ID for each token position</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns a loss mask (B, T) where position t is 1 (active) unless it is</span>
+<span class="sd">    the first token of a new document (in which case its loss is contaminated</span>
+<span class="sd">    by the previous document&#39;s context and should be excluded).</span>
+
+<span class="sd">    doc_ids example for one sequence:</span>
+<span class="sd">       [0, 0, 0, 1, 1, 1, 1, 2, 2]</span>
+<span class="sd">    First positions of docs 1 and 2 (indices 3 and 7) get mask=0.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span> <span class="o">=</span> <span class="n">doc_ids</span><span class="o">.</span><span class="n">shape</span>
+    <span class="c1"># A position starts a new document when its doc_id differs from the previous one</span>
+    <span class="c1"># Position 0 is also the start of a document, but it has no &quot;poisoned&quot; context</span>
+    <span class="c1"># so we keep it active (its input is just the BOS or the context start).</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">doc_ids</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="c1"># Detect document boundaries: where doc_id[t] != doc_id[t-1]</span>
+    <span class="c1"># doc_ids[:, 1:] != doc_ids[:, :-1] gives True at boundary positions (t &gt;= 1)</span>
+    <span class="n">boundary</span> <span class="o">=</span> <span class="p">(</span><span class="n">doc_ids</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span> <span class="o">!=</span> <span class="n">doc_ids</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>  <span class="c1"># (B, T-1)</span>
+
+    <span class="c1"># The first token AFTER a boundary (i.e., position t where boundary[t-1] is True)</span>
+    <span class="c1"># has its loss masked out. In the targets tensor (which is shifted by 1),</span>
+    <span class="c1"># we mask the target at position t-1 when boundary[t-1] is True.</span>
+    <span class="c1"># Equivalently: in the loss over targets[:, t], mask when doc changes at t.</span>
+    <span class="c1"># Targets are tokens[:, 1:], so target[t] corresponds to predicting token t+1</span>
+    <span class="c1"># from prefix up to token t. If token t+1 starts a new doc, mask it.</span>
+    <span class="n">new_doc_at_next</span> <span class="o">=</span> <span class="n">doc_ids</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span> <span class="o">!=</span> <span class="n">doc_ids</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># (B, T-1): True when t+1 starts new doc</span>
+    <span class="n">mask</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">new_doc_at_next</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>  <span class="c1"># mask positions t where next token is a new doc</span>
+
+    <span class="k">return</span> <span class="n">mask</span>   <span class="c1"># (B, T): 1 = train on this position, 0 = ignore</span>
+</code></pre></div>
+<hr />
+<h2 id="a-complete-annotated-loss-computation">A Complete, Annotated Loss Computation<a class="headerlink" href="#a-complete-annotated-loss-computation" title="Permanent link">¶</a></h2>
+<p>The following is a self-contained, runnable example that ties together all the pieces: packing, masking, and loss computation.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Minimal pretraining loss pipeline.</span>
+
+<span class="sd">Demonstrates:</span>
+<span class="sd">  - document packing with SEP tokens</span>
+<span class="sd">  - loss mask construction (exclude cross-doc boundaries and padding)</span>
+<span class="sd">  - causal LM loss computation</span>
+
+<span class="sd">Runnable with: python -c &quot;exec(open(&#39;this_file.py&#39;).read())&quot;</span>
+<span class="sd">Requires: torch &gt;= 2.0</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span>
+
+
+<span class="n">SEP_TOKEN_ID</span> <span class="o">=</span> <span class="mi">2</span>   <span class="c1"># &lt;|endoftext|&gt; or equivalent separator</span>
+<span class="n">PAD_TOKEN_ID</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="n">VOCAB_SIZE</span>    <span class="o">=</span> <span class="mi">256</span>  <span class="c1"># tiny vocab for illustration</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">pack_documents</span><span class="p">(</span>
+    <span class="n">documents</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]],</span>
+    <span class="n">context_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">sep_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">SEP_TOKEN_ID</span><span class="p">,</span>
+    <span class="n">pad_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">PAD_TOKEN_ID</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Pack a list of token-ID lists into a single sequence of length context_len.</span>
+<span class="sd">    Returns:</span>
+<span class="sd">      tokens  : (context_len,)  padded token sequence</span>
+<span class="sd">      doc_ids : (context_len,)  document ID per position (-1 for padding)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">tokens</span>  <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">doc_ids</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">doc_idx</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">for</span> <span class="n">doc</span> <span class="ow">in</span> <span class="n">documents</span><span class="p">:</span>
+        <span class="c1"># Add SEP before each document (except the very first)</span>
+        <span class="k">if</span> <span class="n">tokens</span><span class="p">:</span>
+            <span class="n">tokens</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sep_id</span><span class="p">)</span>
+            <span class="n">doc_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">doc_idx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>  <span class="c1"># SEP belongs to the preceding doc</span>
+        <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">doc</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">context_len</span><span class="p">:</span>
+                <span class="k">break</span>
+            <span class="n">tokens</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tok</span><span class="p">)</span>
+            <span class="n">doc_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">doc_idx</span><span class="p">)</span>
+        <span class="n">doc_idx</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">context_len</span><span class="p">:</span>
+            <span class="k">break</span>
+
+    <span class="c1"># Pad to context_len</span>
+    <span class="n">pad_len</span> <span class="o">=</span> <span class="n">context_len</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
+    <span class="n">tokens</span>  <span class="o">=</span> <span class="n">tokens</span>  <span class="o">+</span> <span class="p">[</span><span class="n">pad_id</span><span class="p">]</span> <span class="o">*</span> <span class="n">pad_len</span>
+    <span class="n">doc_ids</span> <span class="o">=</span> <span class="n">doc_ids</span> <span class="o">+</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>     <span class="o">*</span> <span class="n">pad_len</span>   <span class="c1"># -1 marks padding</span>
+
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">tokens</span><span class="p">,</span>  <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">),</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">doc_ids</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">loss_mask_from_doc_ids</span><span class="p">(</span>
+    <span class="n">doc_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># (T,)  — -1 for padding</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Build loss mask of shape (T,).</span>
+<span class="sd">    Active (1) unless:</span>
+<span class="sd">      - padding position (doc_id == -1)</span>
+<span class="sd">      - first token of a new document that follows a different document</span>
+<span class="sd">        (cross-doc context contamination)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="n">doc_ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="p">(</span><span class="n">doc_ids</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">long</span><span class="p">()</span>   <span class="c1"># 0 at padding, 1 elsewhere</span>
+
+    <span class="c1"># Also zero out the target positions where the *next* token starts a new doc.</span>
+    <span class="c1"># Target at position t is tokens[t+1]; if tokens[t+1] belongs to a new doc,</span>
+    <span class="c1"># the model&#39;s context (tokens[:t+1]) is from the wrong doc, so mask it.</span>
+    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">T</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">doc_ids</span><span class="p">[</span><span class="n">t</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">doc_ids</span><span class="p">[</span><span class="n">t</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">doc_ids</span><span class="p">[</span><span class="n">t</span><span class="p">]</span> <span class="o">!=</span> <span class="n">doc_ids</span><span class="p">[</span><span class="n">t</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]:</span>
+            <span class="n">mask</span><span class="p">[</span><span class="n">t</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>   <span class="c1"># predicting the first token of doc[t+1] from doc[t] context</span>
+    <span class="k">return</span> <span class="n">mask</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TinyTransformerLM</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A minimal decoder-only LM for illustration (not optimized for performance).&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vocab_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">64</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span> <span class="n">n_layers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="n">max_seq_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">128</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">embed</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">vocab_size</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pos_emb</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">max_seq_len</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+        <span class="n">encoder_layer</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">TransformerEncoderLayer</span><span class="p">(</span>
+            <span class="n">d_model</span><span class="o">=</span><span class="n">d_model</span><span class="p">,</span> <span class="n">nhead</span><span class="o">=</span><span class="n">n_heads</span><span class="p">,</span> <span class="n">dim_feedforward</span><span class="o">=</span><span class="n">d_model</span> <span class="o">*</span> <span class="mi">4</span><span class="p">,</span>
+            <span class="n">batch_first</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dropout</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">TransformerEncoder</span><span class="p">(</span><span class="n">encoder_layer</span><span class="p">,</span> <span class="n">num_layers</span><span class="o">=</span><span class="n">n_layers</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">vocab_size</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_model</span> <span class="o">=</span> <span class="n">d_model</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;x: (B, T) → logits: (B, T, V)&quot;&quot;&quot;</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>   <span class="c1"># (1, T)</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">embed</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">pos_emb</span><span class="p">(</span><span class="n">positions</span><span class="p">)</span>                 <span class="c1"># (B, T, d_model)</span>
+
+        <span class="c1"># Causal mask: upper-triangular with -inf (additive mask for PyTorch)</span>
+        <span class="n">causal_mask</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Transformer</span><span class="o">.</span><span class="n">generate_square_subsequent_mask</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">mask</span><span class="o">=</span><span class="n">causal_mask</span><span class="p">,</span> <span class="n">is_causal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># (B, T, d_model)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>                                           <span class="c1"># (B, T, V)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_causal_lm_loss</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span>  <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span>
+    <span class="n">tokens</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># (B, T+1)</span>
+    <span class="n">masks</span><span class="p">:</span>  <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># (B, T)</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+    <span class="n">inputs</span>  <span class="o">=</span> <span class="n">tokens</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>    <span class="c1"># (B, T) — model input</span>
+    <span class="n">targets</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>   <span class="c1"># (B, T) — what to predict</span>
+
+    <span class="c1"># Mask out undesired positions</span>
+    <span class="n">targets</span><span class="p">[</span><span class="n">masks</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="o">-</span><span class="mi">100</span>  <span class="c1"># PyTorch&#39;s ignore_index convention</span>
+
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">inputs</span><span class="p">)</span>      <span class="c1"># (B, T, V)</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">shape</span>
+
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span>
+        <span class="n">logits</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">),</span>
+        <span class="n">targets</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">),</span>
+        <span class="n">ignore_index</span><span class="o">=-</span><span class="mi">100</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">loss</span>
+
+
+<span class="c1"># ---- Demo run ---------------------------------------------------------------</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">CONTEXT</span> <span class="o">=</span> <span class="mi">64</span>
+
+    <span class="c1"># Simulate two documents with different lengths</span>
+    <span class="n">doc_a</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">30</span><span class="p">))</span>     <span class="c1"># 20 tokens</span>
+    <span class="n">doc_b</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">50</span><span class="p">,</span> <span class="mi">90</span><span class="p">))</span>     <span class="c1"># 40 tokens</span>
+
+    <span class="n">tokens_1d</span><span class="p">,</span> <span class="n">doc_ids_1d</span> <span class="o">=</span> <span class="n">pack_documents</span><span class="p">([</span><span class="n">doc_a</span><span class="p">,</span> <span class="n">doc_b</span><span class="p">],</span> <span class="n">context_len</span><span class="o">=</span><span class="n">CONTEXT</span><span class="p">)</span>
+    <span class="n">mask_1d</span> <span class="o">=</span> <span class="n">loss_mask_from_doc_ids</span><span class="p">(</span><span class="n">doc_ids_1d</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Tokens shape: </span><span class="si">{</span><span class="n">tokens_1d</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Active positions: </span><span class="si">{</span><span class="n">mask_1d</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">}</span><span class="s2"> / </span><span class="si">{</span><span class="n">CONTEXT</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Doc boundaries masked: </span><span class="si">{</span><span class="p">(</span><span class="n">mask_1d</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">}</span><span class="s2"> positions&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Batch of 2 sequences (in real training, batch of hundreds)</span>
+    <span class="n">tokens_batch</span>   <span class="o">=</span> <span class="n">tokens_1d</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>   <span class="c1"># (2, 64)</span>
+    <span class="n">mask_batch</span>     <span class="o">=</span> <span class="n">mask_1d</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>     <span class="c1"># (2, 64)</span>
+
+    <span class="c1"># tokens_batch has T+1=64 tokens; model sees first T=63, predicts last T=63</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">TinyTransformerLM</span><span class="p">(</span><span class="n">vocab_size</span><span class="o">=</span><span class="n">VOCAB_SIZE</span><span class="p">,</span> <span class="n">max_seq_len</span><span class="o">=</span><span class="n">CONTEXT</span><span class="p">)</span>
+    <span class="n">loss</span>  <span class="o">=</span> <span class="n">compute_causal_lm_loss</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">tokens_batch</span><span class="p">,</span> <span class="n">mask_batch</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loss:       </span><span class="si">{</span><span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> nats/token&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Perplexity: </span><span class="si">{</span><span class="n">loss</span><span class="o">.</span><span class="n">exp</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># Expected: loss ≈ log(256) ≈ 5.55 for a random initialized model over 256-token vocab</span>
+</code></pre></div>
+<hr />
+<h2 id="bits-per-byte-a-tokenizer-agnostic-metric">Bits-per-Byte: A Tokenizer-Agnostic Metric<a class="headerlink" href="#bits-per-byte-a-tokenizer-agnostic-metric" title="Permanent link">¶</a></h2>
+<p>Perplexity as defined above is tokenizer-dependent. A model trained on a byte-pair encoding (BPE) tokenizer with vocabulary size 50 000 will report different perplexity from one with a 100 000-token vocabulary, even if they have identical predictive power over raw text. This makes cross-model comparisons treacherous.</p>
+<p><strong>Bits-per-byte (BPB)</strong> normalizes by the number of <em>bytes</em> (or characters) each token represents, yielding a tokenizer-independent measure.</p>
+<div class="arithmatex">\[
+\text{BPB} = \frac{\mathcal{L}_{\text{NLL}} \cdot \log_2 e}{\bar{r}}
+\]</div>
+<p>where <span class="arithmatex">\(\mathcal{L}_{\text{NLL}}\)</span> is the mean per-token NLL loss in nats, <span class="arithmatex">\(\log_2 e \approx 1.4427\)</span> converts nats to bits, and <span class="arithmatex">\(\bar{r}\)</span> is the average number of UTF-8 bytes per token for the tokenizer. Equivalently:</p>
+<div class="arithmatex">\[
+\text{BPB} = -\frac{1}{N_\text{bytes}} \sum_{t} \log_2 \hat{p}(x_t \mid x_{&lt;t})
+\]</div>
+<p>where the sum runs over all tokens and <span class="arithmatex">\(N_\text{bytes}\)</span> is the total byte count of the text.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Converting Loss to BPB</p>
+<p>Suppose a model trained on GPT-2&rsquo;s 50 257-token BPE vocabulary achieves a test-set NLL of <strong>2.85 nats/token</strong> on a English Wikipedia excerpt.</p>
+<p>The GPT-2 tokenizer has an average token length of approximately <strong>4.0 bytes</strong> for English text (empirically measured; varies by domain).</p>
+<p><strong>Converting to bits/token:</strong>
+$$
+\text{bits/token} = 2.85 \times \log_2 e = 2.85 \times 1.4427 \approx 4.11 \text{ bits/token}
+$$</p>
+<p><strong>Converting to bits/byte (BPB):</strong>
+$$
+\text{BPB} = \frac{4.11 \text{ bits/token}}{4.0 \text{ bytes/token}} \approx 1.03 \text{ bits/byte}
+$$</p>
+<p>A BPB below 1.0 on English Wikipedia is considered strong. Shannon estimated the entropy of English to be approximately 0.6–1.3 bits/character.</p>
+<p>Now compare with a model using a 100k vocabulary that achieves 3.20 nats/token but where each token averages 5.5 bytes. Its BPB would be:
+$$
+\text{BPB} = \frac{3.20 \times 1.4427}{5.5} \approx \frac{4.62}{5.5} \approx 0.84 \text{ bits/byte}
+$$</p>
+<p>Despite higher per-token loss, this model is <strong>better</strong> in a tokenizer-normalized sense. The comparison would be meaningless without BPB normalization.</p>
+</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">nats_per_token_to_bpb</span><span class="p">(</span>
+    <span class="n">loss_nats</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>        <span class="c1"># average NLL in nats per token</span>
+    <span class="n">avg_bytes_per_token</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>   <span class="c1"># tokenizer-specific compression ratio</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert per-token NLL (nats) to bits-per-byte.&quot;&quot;&quot;</span>
+    <span class="n">bits_per_token</span> <span class="o">=</span> <span class="n">loss_nats</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">e</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">bits_per_token</span> <span class="o">/</span> <span class="n">avg_bytes_per_token</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_avg_bytes_per_token</span><span class="p">(</span><span class="n">tokenizer</span><span class="p">,</span> <span class="n">sample_texts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Estimate the average bytes-per-token ratio for a given tokenizer.&quot;&quot;&quot;</span>
+    <span class="n">total_bytes</span>  <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">total_tokens</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">sample_texts</span><span class="p">:</span>
+        <span class="n">total_bytes</span>  <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">))</span>
+        <span class="n">total_tokens</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">text</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">total_bytes</span> <span class="o">/</span> <span class="n">total_tokens</span>
+
+
+<span class="c1"># Illustrative usage (requires `transformers` installed):</span>
+<span class="c1"># from transformers import AutoTokenizer</span>
+<span class="c1"># tok = AutoTokenizer.from_pretrained(&quot;gpt2&quot;)</span>
+<span class="c1"># r = compute_avg_bytes_per_token(tok, [&quot;Hello world.&quot;, &quot;The cat sat on the mat.&quot;])</span>
+<span class="c1"># bpb = nats_per_token_to_bpb(loss_nats=2.85, avg_bytes_per_token=r)</span>
+
+<span class="c1"># Manual example matching the worked example above:</span>
+<span class="n">bpb</span> <span class="o">=</span> <span class="n">nats_per_token_to_bpb</span><span class="p">(</span><span class="mf">2.85</span><span class="p">,</span> <span class="mf">4.0</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;BPB: </span><span class="si">{</span><span class="n">bpb</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># → 1.028</span>
+</code></pre></div>
+<hr />
+<h2 id="ul2-and-span-corruption-alternatives">UL2 and Span Corruption Alternatives<a class="headerlink" href="#ul2-and-span-corruption-alternatives" title="Permanent link">¶</a></h2>
+<h3 id="beyond-causal-lm">Beyond Causal LM<a class="headerlink" href="#beyond-causal-lm" title="Permanent link">¶</a></h3>
+<p>The causal language modeling objective is the dominant pretraining strategy for decoder-only models, but it is not the only option. Encoder-decoder models (T5, mT5) were pretrained on <strong>masked span corruption</strong> (also called <strong>masked language modeling with contiguous spans</strong>), popularized by Raffel et al. in the T5 paper (2020).</p>
+<p>In span corruption, a fraction of token spans in the input is replaced with sentinel tokens (e.g., <code>&lt;extra_id_0&gt;</code>), and the model must reconstruct the original spans:</p>
+<div class="highlight"><pre><span></span><code>Input:  &quot;The quick &lt;extra_id_0&gt; over the &lt;extra_id_1&gt; dog.&quot;
+Target: &quot;&lt;extra_id_0&gt; brown fox jumps &lt;extra_id_1&gt; lazy &lt;eos&gt;&quot;
+</code></pre></div>
+<p>This is more efficient than causal LM in one sense: only the masked-out tokens (typically 15% of the sequence) contribute to the loss, but each contributes a larger gradient signal because they require understanding the surrounding context.</p>
+<h3 id="the-ul2-family">The UL2 Family<a class="headerlink" href="#the-ul2-family" title="Permanent link">¶</a></h3>
+<p><strong>UL2</strong> (Tay et al., 2022, &ldquo;Unifying Language Learning Paradigms&rdquo;) showed that a single model pretrained on a <strong>mixture</strong> of different denoising objectives can match or outperform models trained on any single objective, while gaining versatility.</p>
+<p>UL2 defines three classes of denoising modes, labeled with special tokens:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Sentinel</th>
+<th>Description</th>
+<th>Use case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>R-denoising</strong> (Regular)</td>
+<td><code>[S2S]</code></td>
+<td>Short contiguous spans masked (~15%), low corruption</td>
+<td>Recall-heavy tasks</td>
+</tr>
+<tr>
+<td><strong>X-denoising</strong> (Extreme)</td>
+<td><code>[S2S]</code></td>
+<td>Long spans masked (50–70%), high corruption</td>
+<td>Strong generation</td>
+</tr>
+<tr>
+<td><strong>S-denoising</strong> (Sequential)</td>
+<td><code>[NLG]</code></td>
+<td>Causal prefix LM: attend to prefix, predict suffix</td>
+<td>Causal/generative tasks</td>
+</tr>
+</tbody>
+</table>
+<p>During pretraining, the model sees all three modes with different sampling probabilities. At inference, users prefix their input with the appropriate sentinel to select the mode. <strong>UL2 20B</strong> (2022) achieved state-of-the-art on zero-shot generation benchmarks while retaining strong performance on classification, outperforming both T5 (span corruption only) and GPT-3 (causal LM only) at similar parameter counts.</p>
+<p><strong>Flan-UL2</strong> (2023) further instruction-tuned the UL2 checkpoint and was released publicly.</p>
+<h3 id="prefix-language-modeling">Prefix Language Modeling<a class="headerlink" href="#prefix-language-modeling" title="Permanent link">¶</a></h3>
+<p>A middle ground between masked LM and causal LM is the <strong>prefix LM</strong> (or <strong>non-causal prefix</strong> model): the input portion attends bidirectionally (full attention), while the output portion attends causally. This is the architecture of GLM (General Language Model, Du et al.) and PaLM&rsquo;s initial pretraining variant. The loss is computed only on the output (continuation) portion.</p>
+<p>Architecture variants and their relationship to these objectives are covered in depth in <a href="../02-transformer/08-architecture-variants.html">Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a>.</p>
+<hr />
+<h2 id="practical-loss-engineering-what-practitioners-actually-do">Practical Loss Engineering: What Practitioners Actually Do<a class="headerlink" href="#practical-loss-engineering-what-practitioners-actually-do" title="Permanent link">¶</a></h2>
+<h3 id="loss-normalization-across-heterogeneous-batches">Loss Normalization Across Heterogeneous Batches<a class="headerlink" href="#loss-normalization-across-heterogeneous-batches" title="Permanent link">¶</a></h3>
+<p>In large-scale distributed training (see <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a>), each GPU holds a micro-batch. Two normalization choices are common:</p>
+<p><strong>Token-normalized loss (recommended):</strong>
+$$
+\mathcal{L} = \frac{\sum_{b,t} \mathbb{1}[\text{active}<em b_t="b,t">{b,t}] \cdot \ell</em>
+$$}}{\sum_{b,t} \mathbb{1}[\text{active}_{b,t}]</p>
+<p>This divides by the count of active (unmasked) tokens and is independent of batch construction.</p>
+<p><strong>Sequence-normalized loss (legacy):</strong>
+$$
+\mathcal{L} = \frac{1}{B} \sum_{b} \frac{1}{T_b} \sum_{t} \ell_{b,t}
+$$</p>
+<p>This averages per-sequence first, then averages sequences. It implicitly weights short sequences more heavily — usually undesired.</p>
+<h3 id="label-smoothing">Label Smoothing<a class="headerlink" href="#label-smoothing" title="Permanent link">¶</a></h3>
+<p><strong>Label smoothing</strong> replaces the one-hot target with a softer distribution: instead of probability 1 on the true token, the true token gets <span class="arithmatex">\(1 - \epsilon\)</span> and each other token gets <span class="arithmatex">\(\epsilon / (V-1)\)</span>:</p>
+<div class="arithmatex">\[
+\tilde{p}(v) = (1 - \epsilon) \cdot \mathbb{1}[v = x_t] + \frac{\epsilon}{V}
+\]</div>
+<p>With <span class="arithmatex">\(\epsilon = 0.1\)</span>, this has been shown to improve calibration and slightly regularize training. PyTorch&rsquo;s <code>F.cross_entropy</code> supports it directly via the <code>label_smoothing</code> argument. Many large LM runs skip label smoothing or use very small <span class="arithmatex">\(\epsilon \le 0.05\)</span>, since at scale the training signal is already rich enough.</p>
+<h3 id="z-loss-for-softmax-stability">Z-Loss for Softmax Stability<a class="headerlink" href="#z-loss-for-softmax-stability" title="Permanent link">¶</a></h3>
+<p>At scale, the logits fed to the softmax can grow very large, causing numerical instability (the softmax exponentials overflow in float16). One solution is <strong>z-loss</strong> (Chowdhery et al., PaLM, 2022), which adds a regularizer to penalize large logit norms:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{z} = \alpha \cdot \log^2\!\left(\sum_{v} e^{z_v}\right)
+\]</div>
+<p>where <span class="arithmatex">\(z_v\)</span> are the pre-softmax logits. With a small coefficient <span class="arithmatex">\(\alpha\)</span> (e.g., <span class="arithmatex">\(10^{-4}\)</span>), this penalizes large log-partition values without significantly affecting the primary loss. It dramatically reduces loss spikes during training, as documented in the PaLM technical report.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">z_loss</span><span class="p">(</span><span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-4</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Z-loss regularizer for softmax stability (PaLM / Chowdhery et al. 2022).</span>
+
+<span class="sd">    logits : (*, V) — pre-softmax logit tensor</span>
+<span class="sd">    alpha  : coefficient; typical value 1e-4 to 1e-5</span>
+
+<span class="sd">    Returns a scalar to be added to the primary cross-entropy loss.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># log(sum_v exp(z_v)) = log-sum-exp, numerically stable via torch.logsumexp</span>
+    <span class="n">log_z</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">logsumexp</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># (*)  — one value per token</span>
+    <span class="k">return</span> <span class="n">alpha</span> <span class="o">*</span> <span class="p">(</span><span class="n">log_z</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+
+<span class="c1"># Integrate with main loss:</span>
+<span class="c1"># total_loss = ce_loss + z_loss(logits)</span>
+</code></pre></div>
+<p>Training stability issues and how loss diagnostics help debug them are covered in <a href="../03-pretraining/11-training-stability.html">Training Stability, Loss Spikes &amp; Debugging Large Runs</a>.</p>
+<hr />
+<h2 id="interview-corner">Interview Corner<a class="headerlink" href="#interview-corner" title="Permanent link">¶</a></h2>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> An interviewer asks: &ldquo;What exactly does an LLM optimize during pretraining, and why is that sufficient to produce a model that can answer questions?&rdquo;</p>
+<p><strong>A:</strong> During pretraining a decoder-only LLM minimizes <strong>cross-entropy (negative log-likelihood) on next-token prediction</strong>: at each position <span class="arithmatex">\(t\)</span>, the model predicts a probability distribution over the vocabulary given all preceding tokens, and the loss is <span class="arithmatex">\(-\log \hat{p}(x_t \mid x_{&lt;t})\)</span>, averaged over all tokens in the dataset. </p>
+<p>This is the same as minimizing the KL divergence from the model distribution to the empirical data distribution. Crucially, we use <strong>teacher forcing</strong> — the true tokens are fed as input, not the model&rsquo;s own predictions — so all sequence positions are trained in parallel in a single forward pass with a causal attention mask.</p>
+<p>This objective is sufficient for downstream capability because: (1) language is a proxy for understanding — to predict the next token of a physics paper, a Python snippet, or a news article, the model must build an internal model of physics, programming semantics, and current events respectively; (2) question-answer pairs, reasoning chains, and instructions all appear in the pretraining corpus, so the model implicitly learns these patterns; (3) the data scale (trillions of tokens) and model scale (billions of parameters) ensure these patterns are compressed into the weights rather than memorized. Fine-tuning (SFT/RLHF) then shapes the <em>style</em> of output, not the underlying knowledge.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The pretraining objective is <strong>next-token prediction</strong>: minimize <span class="arithmatex">\(-\log \hat{p}(x_t \mid x_{&lt;t})\)</span> averaged over all tokens. This is exactly cross-entropy / NLL, and minimizing it is equivalent to minimizing KL divergence from the model to the data distribution.</li>
+<li><strong>Teacher forcing</strong> feeds ground-truth tokens as input, enabling fully parallel training across all sequence positions via the <strong>causal (lower-triangular) attention mask</strong>.</li>
+<li>The label vector is the <strong>input sequence shifted left by one</strong>: inputs <span class="arithmatex">\(= x_{0:T-1}\)</span>, targets <span class="arithmatex">\(= x_{1:T}\)</span>.</li>
+<li><strong>Loss masking</strong> (setting targets to ignore_index=-100) is essential for padding, prompt regions (SFT), and cross-document boundaries in packed sequences. Always normalize by active token count, not total sequence length.</li>
+<li><strong>Document packing</strong> concatenates short documents end-to-end to maximize compute utilization, but requires boundary masking to avoid cross-document contamination.</li>
+<li><strong>Bits-per-byte (BPB)</strong> normalizes the loss by the bytes represented per token, making it a tokenizer-agnostic quality metric; use it for fair cross-model comparisons.</li>
+<li><strong>UL2</strong> showed that mixing causal (S-denoising), span-corruption (R- and X-denoising) objectives in a single model is both feasible and beneficial; the dominant architecture is still causal LM, but mixture objectives remain relevant for encoder-decoder systems.</li>
+<li><strong>Z-loss</strong> (<span class="arithmatex">\(\alpha \cdot \log^2 Z\)</span>) is a practical add-on to penalize large logit norms and reduce loss spikes during large-scale training.</li>
+<li>The pretraining loss is the single most important health metric for a training run: stable descent, predictable scaling with compute, and alignment between train and validation loss are the primary diagnostic signals.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Next-token prediction via cross-entropy remains the universal pretraining objective for all major decoder-only LLMs (GPT-4, Llama 3, Gemini, Claude). Active research is refining <em>how</em> the loss is computed (memory-efficient kernels, mixed-objective pretraining) and <em>what it should measure</em> (tokenizer-agnostic metrics like bits-per-byte), but the core mathematical framework from the 2010s is stable and foundational.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1910.10683">Raffel et al., <em>Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer</em> (T5, 2020)</a> — systematic comparison of pretraining objectives (causal LM vs. span corruption) across architectures; defines the span-corruption baseline used by T5 and derivatives.</li>
+<li><a href="https://arxiv.org/abs/2005.14165">Brown et al., <em>Language Models are Few-Shot Learners</em> (GPT-3, 2020)</a> — establishes that scaling causal next-token prediction alone yields powerful few-shot models, cementing NTP as the dominant objective.</li>
+<li><a href="https://archive.org/details/bstj27-3-379">Shannon, <em>A Mathematical Theory of Communication</em> (1948)</a> — original derivation of entropy as a lower bound on compression; foundational for understanding what cross-entropy loss measures and why bits-per-byte matters.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2205.05131">Tay et al., <em>UL2: Unifying Language Learning Paradigms</em> (2022)</a> — shows a mixture of causal (S-denoising), short-span (R-denoising), and aggressive (X-denoising) objectives in a single model matches or beats specialist objectives across tasks.</li>
+<li><a href="https://arxiv.org/abs/2204.05832">Wang et al., <em>What Language Model Architecture and Pretraining Objective Work Best for Zero-Shot Generalization?</em> (2022)</a> — large-scale empirical comparison of causal vs. masked objectives across decoder-only and encoder-decoder architectures; key reference for practitioners choosing an objective.</li>
+<li><a href="https://arxiv.org/abs/2407.21783">Grattafiori et al., <em>The Llama 3 Herd of Models</em> (Meta, 2024)</a> — details how a state-of-the-art open model is pretrained with standard next-token prediction at scale (15T tokens, 405B params), including packing and BPB evaluation.</li>
+<li><a href="https://arxiv.org/abs/2411.09009">Wijmans et al., <em>Cut Your Losses in Large-Vocabulary Language Models</em> (2024)</a> — proposes Cut Cross-Entropy (CCE), a fused kernel that computes cross-entropy without materializing the full logit matrix, reducing loss-layer memory from 24 GB to 1 MB for a 2B model.</li>
+<li><a href="https://arxiv.org/abs/2204.02311">Chowdhery et al., <em>PaLM: Scaling Language Modeling with Pathways</em> (2022)</a> — documents z-loss and other engineering stabilizations for cross-entropy at 540B-parameter scale.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/karpathy/nanoGPT">karpathy/nanoGPT</a> — ~300-line clean implementation of causal LM pretraining loss, teacher forcing, and the full training loop; the clearest code companion to this chapter.</li>
+<li><a href="https://arxiv.org/abs/2203.15556">Hoffmann et al., <em>Training Compute-Optimal Large Language Models</em> (Chinchilla, 2022)</a> — uses per-token cross-entropy as the primary dependent variable to derive compute-optimal scaling laws; essential companion to the loss-as-health-metric theme.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.youtube.com/watch?v=kCc8FmEb1nY">Karpathy, <em>Let&rsquo;s build GPT: from scratch, in code, spelled out</em> (2023)</a> — 2-hour video walkthrough building the causal LM loss, causal mask, and teacher forcing from scratch in PyTorch; pairs directly with this chapter&rsquo;s code.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Raffel et al., &ldquo;Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer&rdquo; (T5), JMLR 2020.</strong> Introduces span-corruption pretraining and systematically compares objectives, architectures, and data scales.</li>
+<li><strong>Tay et al., &ldquo;Unifying Language Learning Paradigms&rdquo; (UL2), ICLR 2023.</strong> Defines the R/X/S-denoising taxonomy and shows that a single model benefits from a mixture of objectives.</li>
+<li><strong>Brown et al., &ldquo;Language Models are Few-Shot Learners&rdquo; (GPT-3), NeurIPS 2020.</strong> Demonstrates that scale of causal LM pretraining alone produces powerful few-shot models, establishing the primacy of next-token prediction for general-purpose LLMs.</li>
+<li><strong>Chowdhery et al., &ldquo;PaLM: Scaling Language Modeling with Pathways,&rdquo; JMLR 2023.</strong> Documents z-loss and other engineering choices that stabilize cross-entropy at large scale.</li>
+<li><strong>Hoffmann et al., &ldquo;Training Compute-Optimal Large Language Models&rdquo; (Chinchilla), NeurIPS 2022.</strong> Uses the cross-entropy loss as the primary dependent variable to derive scaling laws; directly connected to <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>.</li>
+<li><strong>Karpathy, &ldquo;nanoGPT&rdquo; (GitHub, 2022–present).</strong> A ~300-line clean implementation of the full pretraining loop including the loss computation; the best codebase to read alongside this chapter.</li>
+<li><strong>Shannon, &ldquo;A Mathematical Theory of Communication,&rdquo; Bell System Technical Journal, 1948.</strong> The original derivation of entropy as a lower bound on compression, foundational to understanding what cross-entropy loss measures.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-data-cleaning-dedup.html"><span class="pn-label">← Previous</span><span class="pn-title">Data Cleaning, Deduplication &amp; Quality Filtering</span></a>
+<a class="next" href="04-scaling-laws.html"><span class="pn-label">Next →</span><span class="pn-title">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-next-token-prediction">Why Next-Token Prediction?</a></li>
+<li class="toc-l2"><a href="#the-cross-entropy-loss-and-negative-log-likelihood">The Cross-Entropy Loss and Negative Log-Likelihood</a></li>
+<li class="toc-l3"><a href="#formal-definition">Formal Definition</a></li>
+<li class="toc-l3"><a href="#the-information-theoretic-viewpoint">The Information-Theoretic Viewpoint</a></li>
+<li class="toc-l2"><a href="#teacher-forcing-and-the-causal-mask">Teacher Forcing and the Causal Mask</a></li>
+<li class="toc-l3"><a href="#what-is-teacher-forcing">What is Teacher Forcing?</a></li>
+<li class="toc-l3"><a href="#the-causal-mask">The Causal Mask</a></li>
+<li class="toc-l3"><a href="#shifting-labels">Shifting Labels</a></li>
+<li class="toc-l2"><a href="#loss-masking">Loss Masking</a></li>
+<li class="toc-l3"><a href="#why-mask">Why Mask?</a></li>
+<li class="toc-l3"><a href="#implementation">Implementation</a></li>
+<li class="toc-l2"><a href="#document-packing">Document Packing</a></li>
+<li class="toc-l3"><a href="#the-efficiency-problem">The Efficiency Problem</a></li>
+<li class="toc-l3"><a href="#the-cross-document-contamination-problem">The Cross-Document Contamination Problem</a></li>
+<li class="toc-l2"><a href="#a-complete-annotated-loss-computation">A Complete, Annotated Loss Computation</a></li>
+<li class="toc-l2"><a href="#bits-per-byte-a-tokenizer-agnostic-metric">Bits-per-Byte: A Tokenizer-Agnostic Metric</a></li>
+<li class="toc-l2"><a href="#ul2-and-span-corruption-alternatives">UL2 and Span Corruption Alternatives</a></li>
+<li class="toc-l3"><a href="#beyond-causal-lm">Beyond Causal LM</a></li>
+<li class="toc-l3"><a href="#the-ul2-family">The UL2 Family</a></li>
+<li class="toc-l3"><a href="#prefix-language-modeling">Prefix Language Modeling</a></li>
+<li class="toc-l2"><a href="#practical-loss-engineering-what-practitioners-actually-do">Practical Loss Engineering: What Practitioners Actually Do</a></li>
+<li class="toc-l3"><a href="#loss-normalization-across-heterogeneous-batches">Loss Normalization Across Heterogeneous Batches</a></li>
+<li class="toc-l3"><a href="#label-smoothing">Label Smoothing</a></li>
+<li class="toc-l3"><a href="#z-loss-for-softmax-stability">Z-Loss for Softmax Stability</a></li>
+<li class="toc-l2"><a href="#interview-corner">Interview Corner</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

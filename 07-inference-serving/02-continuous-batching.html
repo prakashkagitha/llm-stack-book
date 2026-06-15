@@ -1,0 +1,1345 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Continuous Batching &amp; Request Scheduling — The LLM Stack</title>
+<meta name="description" content="Static vs dynamic vs continuous (iteration-level) batching, Orca&#x27;s insight, the scheduler, prefill/decode interleaving, priority and fairness, preemption; how c">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="active" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="72-continuous-batching-request-scheduling">7.2 Continuous Batching &amp; Request Scheduling<a class="headerlink" href="#72-continuous-batching-request-scheduling" title="Permanent link">¶</a></h1>
+<p>In <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference</a> we saw that a single decode step is wildly memory-bound: you stream gigabytes of weights through the GPU&rsquo;s compute units just to produce <strong>one</strong> token for <strong>one</strong> request. The arithmetic intensity of a decode step is on the order of a handful of FLOPs per byte loaded, while a modern GPU wants hundreds. The fix is batching — run many requests through the same weight load so the cost is amortized. But naive batching, the kind you&rsquo;d write in a tutorial, leaves most of that throughput on the floor.</p>
+<p>This chapter is about the scheduling discipline that real serving systems (vLLM, TGI, TensorRT-LLM, SGLang) use to keep the GPU saturated: <strong>continuous batching</strong>, also called <strong>iteration-level scheduling</strong> or <strong>in-flight batching</strong>. We will build the idea up from static batching, see exactly where it bleeds, introduce Orca&rsquo;s key insight, and then write a toy scheduler from scratch that you could extend into something real. By the end you should be able to draw the scheduler loop on a whiteboard, reason about head-of-line blocking and preemption, and estimate the throughput multiplier continuous batching buys you.</p>
+<h2 id="why-naive-batching-wastes-the-gpu">Why naive batching wastes the GPU<a class="headerlink" href="#why-naive-batching-wastes-the-gpu" title="Permanent link">¶</a></h2>
+<p>Let us be precise about what we are batching. An autoregressive decode generates tokens one step at a time. For a batch of <span class="arithmatex">\(B\)</span> requests, step <span class="arithmatex">\(t\)</span> of generation does a forward pass that, per layer, multiplies a <span class="arithmatex">\(B \times d\)</span> activation matrix by the weight matrices, attends over each request&rsquo;s KV cache, and emits one new token per request. The weights are loaded from high-bandwidth memory (HBM) <strong>once per step regardless of <span class="arithmatex">\(B\)</span></strong>. So the marginal cost of adding a request to a decode step is nearly free in memory traffic — it adds a row to a GEMM that was bandwidth-bound anyway. That is the whole economic case for batching: throughput scales close to linearly with <span class="arithmatex">\(B\)</span> until you saturate compute or run out of KV-cache memory.</p>
+<h3 id="static-batching-and-its-three-leaks">Static batching and its three leaks<a class="headerlink" href="#static-batching-and-its-three-leaks" title="Permanent link">¶</a></h3>
+<p>The simplest scheme is <strong>static batching</strong> (sometimes &ldquo;request-level batching&rdquo;): collect <span class="arithmatex">\(B\)</span> requests, run prefill on all of them, then loop decode steps until <strong>every</strong> request in the batch has finished, then return all results and start the next batch. It is easy to implement and it is what a plain <code>model.generate()</code> call over a padded batch gives you. It also leaks throughput in three distinct ways.</p>
+<p><strong>Leak 1 — Variable sequence lengths cause tail idling.</strong> Requests in a batch finish at different times. One request emits an end-of-sequence (EOS) token after 12 tokens; another generates 800. In static batching the short request&rsquo;s <em>slot</em> sits in the batch, occupying memory and compute, doing nothing useful, until the longest request finishes. If output lengths are heavy-tailed (they usually are — chat, code, and reasoning traces vary enormously), the effective utilization of the batch is the <em>mean</em> length divided by the <em>max</em> length, which can be well under 50%.</p>
+<figure class="viz" id="fig-contbatch-static-tail-idling">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 760 310" role="img" aria-label="Static batching timeline showing 4 requests over 12 decode steps: short requests waste idle slots (shown hatched) until the longest request finishes at step 12, yielding 58% utilization.">
+  <defs>
+    <pattern id="hatch-idle" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="6" stroke="var(--muted,#d1d5db)" stroke-width="2.5"/>
+    </pattern>
+    <style>
+      #fig-contbatch-static-tail-idling .col-lbl   { font: 500 10px var(--mono,monospace); }
+      #fig-contbatch-static-tail-idling .row-lbl   { font: 600 10px var(--sans,sans-serif); }
+      #fig-contbatch-static-tail-idling .cell-E    { font: 700 11px var(--sans,sans-serif); }
+      #fig-contbatch-static-tail-idling .cell-x    { font: 500 9px var(--sans,sans-serif); }
+      #fig-contbatch-static-tail-idling .cap-lbl   { font: 500 10px var(--sans,sans-serif); }
+      #fig-contbatch-static-tail-idling .counter-l { font: 700 11px var(--mono,monospace); }
+      #fig-contbatch-static-tail-idling text { fill: var(--ink-soft,#374151); }
+    </style>
+  </defs>
+
+
+  <text x="378" y="16" text-anchor="middle" style="font:700 11px var(--sans,sans-serif); fill:var(--accent,#6366f1)">Static batching: one batch, membership frozen until the LONGEST request finishes</text>
+
+
+
+
+  <text x="100" y="47" text-anchor="middle" class="col-lbl" fill="var(--muted,#9ca3af)">step -&gt;</text>
+  <text x="172" y="47" text-anchor="middle" class="col-lbl">1</text>
+  <text x="220" y="47" text-anchor="middle" class="col-lbl">2</text>
+  <text x="268" y="47" text-anchor="middle" class="col-lbl">3</text>
+  <text x="316" y="47" text-anchor="middle" class="col-lbl">4</text>
+  <text x="364" y="47" text-anchor="middle" class="col-lbl">5</text>
+  <text x="412" y="47" text-anchor="middle" class="col-lbl">6</text>
+  <text x="460" y="47" text-anchor="middle" class="col-lbl">7</text>
+  <text x="508" y="47" text-anchor="middle" class="col-lbl">8</text>
+  <text x="556" y="47" text-anchor="middle" class="col-lbl">9</text>
+  <text x="604" y="47" text-anchor="middle" class="col-lbl">10</text>
+  <text x="652" y="47" text-anchor="middle" class="col-lbl">11</text>
+  <text x="700" y="47" text-anchor="middle" class="col-lbl">12</text>
+
+
+
+
+
+  <text x="148" y="73" text-anchor="end" class="row-lbl">req A (len 3)</text>
+
+  <rect x="151" y="54" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="199" y="54" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+
+  <rect x="247" y="54" width="42" height="28" rx="3" fill="var(--accent,#6366f1)"/>
+  <text x="268" y="73" text-anchor="middle" class="cell-E" fill="white">E</text>
+
+  <rect x="295" y="54" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="316" y="73" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="343" y="54" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="364" y="73" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="391" y="54" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="412" y="73" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="439" y="54" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="460" y="73" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="487" y="54" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="508" y="73" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="535" y="54" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="556" y="73" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="583" y="54" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="604" y="73" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="631" y="54" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="652" y="73" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="679" y="54" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="700" y="73" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+
+
+  <text x="148" y="115" text-anchor="end" class="row-lbl">req B (len 12)</text>
+
+  <rect x="151" y="96" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="199" y="96" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="247" y="96" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="295" y="96" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="343" y="96" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="391" y="96" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="439" y="96" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="487" y="96" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="535" y="96" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="583" y="96" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="631" y="96" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+
+  <rect x="679" y="96" width="42" height="28" rx="3" fill="var(--accent,#6366f1)"/>
+  <text x="700" y="115" text-anchor="middle" class="cell-E" fill="white">E</text>
+
+
+  <text x="148" y="157" text-anchor="end" class="row-lbl">req C (len 5)</text>
+
+  <rect x="151" y="138" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="199" y="138" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="247" y="138" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="295" y="138" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+
+  <rect x="343" y="138" width="42" height="28" rx="3" fill="var(--accent,#6366f1)"/>
+  <text x="364" y="157" text-anchor="middle" class="cell-E" fill="white">E</text>
+
+  <rect x="391" y="138" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="412" y="157" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="439" y="138" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="460" y="157" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="487" y="138" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="508" y="157" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="535" y="138" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="556" y="157" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="583" y="138" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="604" y="157" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="631" y="138" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="652" y="157" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="679" y="138" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="700" y="157" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+
+
+  <text x="148" y="199" text-anchor="end" class="row-lbl">req D (len 8)</text>
+
+  <rect x="151" y="180" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="199" y="180" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="247" y="180" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="295" y="180" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="343" y="180" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="391" y="180" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+  <rect x="439" y="180" width="42" height="28" rx="3" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+
+  <rect x="487" y="180" width="42" height="28" rx="3" fill="var(--accent,#6366f1)"/>
+  <text x="508" y="199" text-anchor="middle" class="cell-E" fill="white">E</text>
+
+  <rect x="535" y="180" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="556" y="199" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="583" y="180" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="604" y="199" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="631" y="180" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="652" y="199" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+  <rect x="679" y="180" width="42" height="28" rx="3" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="700" y="199" text-anchor="middle" class="cell-x" fill="var(--muted,#9ca3af)">x</text>
+
+
+  <line x1="721" y1="40" x2="721" y2="240" stroke="var(--ink-soft,#6b7280)" stroke-width="1.5" stroke-dasharray="5 3"/>
+
+
+  <text x="736" y="155" text-anchor="middle" transform="rotate(90,736,155)"
+    style="font:500 8px var(--sans,sans-serif); fill:var(--ink-soft,#6b7280)">nothing new starts until step 12</text>
+
+
+  <text id="cb-live" x="60" y="225" text-anchor="middle" class="counter-l" fill="var(--accent,#6366f1)">live: 4</text>
+
+
+
+  <rect id="cb-cursor" x="151" y="46" width="42" height="172" rx="0"
+    fill="var(--warn,#e0a106)" fill-opacity="0"
+    stroke="var(--warn,#e0a106)" stroke-width="1.5" stroke-opacity="0">
+    <animate attributeName="x"
+      values="111;151;199;247;295;343;391;439;487;535;583;631;679;679"
+      keyTimes="0;0.04;0.12;0.20;0.28;0.36;0.44;0.52;0.60;0.68;0.76;0.84;0.92;1"
+      dur="7s" begin="0s" repeatCount="indefinite" calcMode="discrete"/>
+    <animate attributeName="stroke-opacity"
+      values="0;0.7;0.7;0.7;0.7;0.7;0.7;0.7;0.7;0.7;0.7;0.7;0.7;0"
+      keyTimes="0;0.04;0.12;0.20;0.28;0.36;0.44;0.52;0.60;0.68;0.76;0.84;0.92;1"
+      dur="7s" begin="0s" repeatCount="indefinite" calcMode="discrete"/>
+    <animate attributeName="fill-opacity"
+      values="0;0.10;0.10;0.10;0.10;0.10;0.10;0.10;0.10;0.10;0.10;0.10;0.10;0"
+      keyTimes="0;0.04;0.12;0.20;0.28;0.36;0.44;0.52;0.60;0.68;0.76;0.84;0.92;1"
+      dur="7s" begin="0s" repeatCount="indefinite" calcMode="discrete"/>
+  </rect>
+
+
+  <animate href="#cb-live" attributeName="textContent"
+    values="live: 4;live: 4;live: 4;live: 3;live: 3;live: 2;live: 2;live: 2;live: 1;live: 1;live: 1;live: 1;live: 1 (B only);live: 4"
+    keyTimes="0;0.04;0.12;0.20;0.28;0.36;0.44;0.52;0.60;0.68;0.76;0.84;0.92;1"
+    dur="7s" begin="0s" repeatCount="indefinite" calcMode="discrete"/>
+
+
+
+  <text x="190" y="252" text-anchor="start" class="cap-lbl" fill="var(--ink-soft,#374151)">Useful tokens: 3+12+5+8 =</text>
+  <text x="389" y="252" text-anchor="start" class="cap-lbl" fill="var(--accent,#6366f1)" font-weight="700">28</text>
+
+  <text x="416" y="252" text-anchor="middle" class="cap-lbl" fill="var(--muted,#9ca3af)">|</text>
+
+  <text x="433" y="252" text-anchor="start" class="cap-lbl" fill="var(--ink-soft,#374151)">Slot-steps: 4&#xd7;12 =</text>
+  <text x="588" y="252" text-anchor="start" class="cap-lbl" fill="var(--accent,#6366f1)" font-weight="700">48</text>
+
+  <text x="214" y="269" text-anchor="start" class="cap-lbl" fill="var(--ink-soft,#374151)">Utilization =</text>
+  <text x="288" y="269" text-anchor="start" class="cap-lbl" fill="var(--accent,#6366f1)" font-weight="700">28 / 48 ~ 58%</text>
+  <text x="392" y="269" text-anchor="start" class="cap-lbl" fill="var(--ink-soft,#374151)">(the mean / max length penalty)</text>
+
+
+  <rect x="50"  y="282" width="14" height="12" rx="2" fill="var(--surface-3,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="68"  y="293" style="font:500 9px var(--sans,sans-serif);" fill="var(--ink-soft,#374151)">useful decode</text>
+  <rect x="160" y="282" width="14" height="12" rx="2" fill="var(--accent,#6366f1)"/>
+  <text x="178" y="293" style="font:500 9px var(--sans,sans-serif);" fill="var(--ink-soft,#374151)">EOS (finish)</text>
+  <rect x="260" y="282" width="14" height="12" rx="2" fill="url(#hatch-idle)" stroke="var(--muted,#d1d5db)" stroke-width="0.8"/>
+  <text x="278" y="293" style="font:500 9px var(--sans,sans-serif);" fill="var(--muted,#9ca3af)">wasted idle slot</text>
+
+  <style>
+    @media (prefers-reduced-motion: reduce) {
+      #cb-cursor { display: none; }
+    }
+  </style>
+</svg>
+<figcaption><b>Static batching wastes slots on tail idling.</b> Each row is a request; each cell is one decode step. Blue cells are useful work; hatched cells are wasted slot-steps where a finished request's slot sits idle until the straggler (req B) finishes at step 12. The animated cursor sweeps left to right and the live-request counter drops from 4 to 1 — showing how the effective batch drains to a single straggler. With 28 useful tokens out of 48 slot-steps, utilization is only 58%.</figcaption>
+</figure>
+
+<p><strong>Leak 2 — Head-of-line (HOL) blocking at admission.</strong> A request that arrives at step 1, just after a batch was formed, must wait for the <em>entire</em> batch to drain before it is even admitted. Under static batching, time-to-first-token (TTFT) for a freshly arrived request is bounded below by the remaining decode length of whatever batch is currently running. With long generations that can be seconds. This is a latency disaster for interactive serving.</p>
+<p><strong>Leak 3 — Padding waste in prefill.</strong> To run prefill as one tensor, static batching pads all prompts to the longest prompt in the batch. If prompts are 50, 60, and 2000 tokens, the two short ones are padded to 2000 and you compute (and often attend over) a pile of pad tokens. (Real systems avoid this with ragged/packed prefill — see <a href="../05-posttraining-alignment/02-chat-templates-packing.html">Chat Templates, Data Formatting &amp; Sequence Packing</a> — but the naive version pays it.)</p>
+<h3 id="dynamic-batching-better-still-request-level">Dynamic batching: better, still request-level<a class="headerlink" href="#dynamic-batching-better-still-request-level" title="Permanent link">¶</a></h3>
+<p>A first improvement, common in pre-LLM serving (Triton&rsquo;s dynamic batcher, TF-Serving), is <strong>dynamic batching</strong>: wait up to a small window (say 5–50 ms) to accumulate arriving requests, then dispatch them as one batch. This raises <span class="arithmatex">\(B\)</span> and amortizes weights better, and it bounds the queueing delay by the window. But it is still <strong>request-level</strong>: once a batch is dispatched, its membership is frozen until completion. Leaks 1 and 2 remain — you have only changed <em>when</em> batches form, not the fact that a slot is locked for the whole generation. Dynamic batching is the right tool for fixed-shape models (a ResNet classifier, an embedding model with one forward pass). It is the wrong tool for autoregressive generation, where each request runs a <em>different number of forward passes</em>.</p>
+<p>The fundamental mismatch is this: generation is <strong>iterative and variable-length</strong>, but request-level batching makes a scheduling decision <strong>once per request</strong>. We want to make a scheduling decision <strong>once per iteration</strong>.</p>
+<h2 id="the-key-insight-iteration-level-scheduling">The key insight: iteration-level scheduling<a class="headerlink" href="#the-key-insight-iteration-level-scheduling" title="Permanent link">¶</a></h2>
+<p>The pivotal idea comes from <strong>Orca</strong> (Yu et al., <em>Orca: A Distributed Serving System for Transformer-Based Generative Models</em>, OSDI 2022). Orca&rsquo;s contribution is <strong>iteration-level scheduling</strong> (also called continuous batching or in-flight batching): instead of scheduling a batch and running it to completion, the scheduler runs <strong>one decode iteration at a time</strong>, and <em>after every iteration</em> it is free to remove finished requests and admit new ones.</p>
+<p>Reframe the server&rsquo;s main loop. Instead of:</p>
+<div class="highlight"><pre><span></span><code>WHILE requests remain:
+    batch = pick B requests
+    prefill(batch)
+    WHILE any request in batch unfinished:
+        decode_step(batch)          # membership frozen
+    emit results for batch
+</code></pre></div>
+<p>we run:</p>
+<div class="highlight"><pre><span></span><code>WHILE server is up:
+    batch = scheduler.pick_running_set()    # chosen FRESH each iteration
+    outputs = model.step(batch)             # exactly ONE forward pass
+    for req in batch:
+        req.append(outputs[req])
+        if req.is_finished():
+            scheduler.retire(req)            # frees its slot + KV pages NOW
+    scheduler.admit_new_if_room()            # backfill the freed slots
+</code></pre></div>
+<p>The batch is re-derived every single forward pass. The moment request A emits EOS, its slot and its KV-cache pages are released and a waiting request can take its place <strong>on the very next iteration</strong> — no waiting for B, C, and D to finish. This directly plugs Leak 1 (no tail idling: a finished slot is immediately reused) and Leak 2 (no HOL blocking at admission: a new request is admitted as soon as there is room, typically within one iteration ≈ tens of milliseconds).</p>
+<h3 id="selective-batching-the-subtlety-orca-had-to-solve">Selective batching: the subtlety Orca had to solve<a class="headerlink" href="#selective-batching-the-subtlety-orca-had-to-solve" title="Permanent link">¶</a></h3>
+<p>There is a wrinkle that makes iteration-level batching non-trivial. If you want a single batched forward pass to contain requests at <em>different points</em> in their generation — some doing their first forward pass (prefill, with many input tokens), others doing a decode step (one token) — the tensor shapes do not line up. A decode request contributes one query position; a prefill request contributes hundreds. You cannot simply stack them into one rectangular <code>[B, seq, d]</code> tensor without padding back to the very waste we are trying to avoid.</p>
+<p>Orca&rsquo;s answer is <strong>selective batching</strong>: batch the operations that <em>can</em> be batched across heterogeneous requests (the big token-wise GEMMs — QKV projection, the MLP, the output projection — which act independently per token and just need all tokens flattened into one long <code>[total_tokens, d]</code> matrix), and run <strong>attention</strong> per-request (or per-group), because attention needs each token to attend only over its own request&rsquo;s KV cache. Concretely:</p>
+<ul>
+<li><strong>Linear/MLP layers</strong> are <em>position-independent</em>: token <span class="arithmatex">\(i\)</span>&rsquo;s output depends only on token <span class="arithmatex">\(i\)</span>&rsquo;s input. So flatten every token from every request — prefill tokens and decode tokens alike — into one tall matrix and do one big GEMM. Maximum batching, no padding.</li>
+<li><strong>Attention</strong> is <em>position-dependent and per-sequence</em>: token <span class="arithmatex">\(i\)</span> of request A must attend over A&rsquo;s keys/values, not B&rsquo;s. So split back out by request, run attention for each (modern kernels like FlashAttention with a <code>varlen</code>/<code>cu_seqlens</code> interface do exactly this in one launch using cumulative sequence-length offsets — see <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a>).</li>
+</ul>
+<p>This &ldquo;flatten for GEMMs, split for attention&rdquo; pattern is what makes it possible to mix prefill and decode in one iteration at all, and it is the conceptual ancestor of <strong>chunked prefill</strong> (covered in <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>). Ragged attention via cumulative sequence lengths is the standard way every serving stack implements it today.</p>
+<figure class="viz" id="fig-contbatch-selective-batching-flatten">
+<svg viewBox="0 0 820 465" role="img" aria-label="Selective batching data-flow diagram: four heterogeneous requests (reqA prefill 3 tokens, reqB decode 1, reqC decode 1, reqD prefill 5) are flattened into one tall matrix for QKV/MLP GEMMs, then split back per-request for attention using cu_seqlens offsets.">
+  <defs>
+    <marker id="sb2-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#6b7280)"/>
+    </marker>
+    <marker id="sb2-arrow-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-contbatch-selective-batching-flatten text { fill: var(--ink-soft,#374151); }
+    #fig-contbatch-selective-batching-flatten .tier-lbl { font: 700 11px var(--sans,sans-serif); }
+    #fig-contbatch-selective-batching-flatten .req-lbl  { font: 700 10px var(--sans,sans-serif); }
+    #fig-contbatch-selective-batching-flatten .box-hdr  { font: 700 9px var(--sans,sans-serif); letter-spacing: -0.2px; }
+    #fig-contbatch-selective-batching-flatten .chip-lbl { font: 600 9px var(--mono,monospace); }
+    #fig-contbatch-selective-batching-flatten .arrow-lbl { font: 600 10px var(--sans,sans-serif); }
+    #fig-contbatch-selective-batching-flatten .gemm-lbl  { font: 700 11px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+    #fig-contbatch-selective-batching-flatten .mono-lbl  { font: 600 11px var(--mono,monospace); fill: var(--accent,#6366f1); }
+    #fig-contbatch-selective-batching-flatten .attn-lbl  { font: 500 9px var(--sans,sans-serif); fill: var(--accent2,#3b82f6); }
+    #fig-contbatch-selective-batching-flatten .cap-lbl   { font: 500 10px var(--sans,sans-serif); }
+    #fig-contbatch-selective-batching-flatten .muted-t   { fill: var(--muted,#9ca3af); }
+    #fig-contbatch-selective-batching-flatten .head-prefix { font: 700 9px var(--sans,sans-serif); }
+  </style>
+
+
+  <text x="410" y="16" text-anchor="middle" class="tier-lbl">Heterogeneous requests in one iteration (mix prefill + decode)</text>
+
+
+  <rect x="20" y="26" width="170" height="72" rx="5" fill="var(--surface-3,#ede9fe)" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <rect x="20" y="26" width="170" height="18" rx="5" fill="var(--accent,#6366f1)"/>
+  <rect x="20" y="36" width="170" height="8" rx="0" fill="var(--accent,#6366f1)"/>
+  <text x="105" y="39" text-anchor="middle" class="box-hdr" fill="white">reqA: PREFILL 3 toks</text>
+
+  <rect x="30" y="52" width="38" height="20" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="49" y="66" text-anchor="middle" class="chip-lbl" fill="white">a0</text>
+  <rect x="76" y="52" width="38" height="20" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="95" y="66" text-anchor="middle" class="chip-lbl" fill="white">a1</text>
+  <rect x="122" y="52" width="38" height="20" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="141" y="66" text-anchor="middle" class="chip-lbl" fill="white">a2</text>
+
+
+  <rect x="200" y="26" width="140" height="72" rx="5" fill="#ccfbf1" stroke="#14b8a6" stroke-width="1.8"/>
+  <rect x="200" y="26" width="140" height="18" rx="5" fill="#14b8a6"/>
+  <rect x="200" y="36" width="140" height="8" rx="0" fill="#14b8a6"/>
+  <text x="270" y="39" text-anchor="middle" class="box-hdr" fill="white">reqB: DECODE 1</text>
+  <rect x="240" y="52" width="60" height="20" rx="3" fill="#14b8a6" fill-opacity="0.85"/>
+  <text x="270" y="66" text-anchor="middle" class="chip-lbl" fill="white">b0</text>
+
+
+  <rect x="350" y="26" width="130" height="72" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.16" stroke="#f59e0b" stroke-width="1.8"/>
+  <rect x="350" y="26" width="130" height="18" rx="5" fill="#f59e0b"/>
+  <rect x="350" y="36" width="130" height="8" rx="0" fill="#f59e0b"/>
+  <text x="415" y="39" text-anchor="middle" class="box-hdr" fill="white">reqC: DECODE 1</text>
+  <rect x="380" y="52" width="60" height="20" rx="3" fill="#f59e0b" fill-opacity="0.85"/>
+  <text x="410" y="66" text-anchor="middle" class="chip-lbl" fill="white">c0</text>
+
+
+  <rect x="490" y="26" width="230" height="72" rx="5" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.8"/>
+  <rect x="490" y="26" width="230" height="18" rx="5" fill="#8b5cf6"/>
+  <rect x="490" y="36" width="230" height="8" rx="0" fill="#8b5cf6"/>
+  <text x="605" y="39" text-anchor="middle" class="box-hdr" fill="white">reqD: PREFILL 5 toks</text>
+  <rect x="498" y="52" width="36" height="20" rx="3" fill="#8b5cf6" fill-opacity="0.85"/>
+  <text x="516" y="66" text-anchor="middle" class="chip-lbl" fill="white">d0</text>
+  <rect x="540" y="52" width="36" height="20" rx="3" fill="#8b5cf6" fill-opacity="0.85"/>
+  <text x="558" y="66" text-anchor="middle" class="chip-lbl" fill="white">d1</text>
+  <rect x="582" y="52" width="36" height="20" rx="3" fill="#8b5cf6" fill-opacity="0.85"/>
+  <text x="600" y="66" text-anchor="middle" class="chip-lbl" fill="white">d2</text>
+  <rect x="624" y="52" width="36" height="20" rx="3" fill="#8b5cf6" fill-opacity="0.85"/>
+  <text x="642" y="66" text-anchor="middle" class="chip-lbl" fill="white">d3</text>
+  <rect x="666" y="52" width="36" height="20" rx="3" fill="#8b5cf6" fill-opacity="0.85"/>
+  <text x="684" y="66" text-anchor="middle" class="chip-lbl" fill="white">d4</text>
+
+
+
+  <text x="118" y="113" text-anchor="middle" class="arrow-lbl" fill="var(--ink-soft,#6b7280)">flatten -&gt; concat</text>
+
+  <line x1="105" y1="98" x2="105" y2="128" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="270" y1="98" x2="270" y2="128" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="410" y1="98" x2="410" y2="128" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="605" y1="98" x2="605" y2="128" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+
+
+
+
+
+
+
+
+
+
+
+  <path d="M28,128 L28,122 L712,122 L712,128" fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="370" y="119" text-anchor="middle" class="arrow-lbl" fill="var(--accent,#6366f1)">one tall [total_tokens=10, d] matrix</text>
+
+
+  <rect x="30"  y="132" width="60" height="30" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.8"/>
+  <text x="60"  y="151" text-anchor="middle" class="chip-lbl" fill="white">a0</text>
+  <rect x="92"  y="132" width="60" height="30" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.8"/>
+  <text x="122" y="151" text-anchor="middle" class="chip-lbl" fill="white">a1</text>
+  <rect x="154" y="132" width="60" height="30" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.8"/>
+  <text x="184" y="151" text-anchor="middle" class="chip-lbl" fill="white">a2</text>
+
+  <line x1="216" y1="128" x2="216" y2="164" stroke="var(--ink-soft,#6b7280)" stroke-width="1" stroke-dasharray="2 2"/>
+
+  <rect x="218" y="132" width="60" height="30" rx="3" fill="#14b8a6" fill-opacity="0.8"/>
+  <text x="248" y="151" text-anchor="middle" class="chip-lbl" fill="white">b0</text>
+
+  <line x1="280" y1="128" x2="280" y2="164" stroke="var(--ink-soft,#6b7280)" stroke-width="1" stroke-dasharray="2 2"/>
+
+  <rect x="282" y="132" width="60" height="30" rx="3" fill="#f59e0b" fill-opacity="0.8"/>
+  <text x="312" y="151" text-anchor="middle" class="chip-lbl" fill="white">c0</text>
+
+  <line x1="344" y1="128" x2="344" y2="164" stroke="var(--ink-soft,#6b7280)" stroke-width="1" stroke-dasharray="2 2"/>
+
+  <rect x="346" y="132" width="60" height="30" rx="3" fill="#8b5cf6" fill-opacity="0.8"/>
+  <text x="376" y="151" text-anchor="middle" class="chip-lbl" fill="white">d0</text>
+  <rect x="408" y="132" width="60" height="30" rx="3" fill="#8b5cf6" fill-opacity="0.8"/>
+  <text x="438" y="151" text-anchor="middle" class="chip-lbl" fill="white">d1</text>
+  <rect x="470" y="132" width="60" height="30" rx="3" fill="#8b5cf6" fill-opacity="0.8"/>
+  <text x="500" y="151" text-anchor="middle" class="chip-lbl" fill="white">d2</text>
+  <rect x="532" y="132" width="60" height="30" rx="3" fill="#8b5cf6" fill-opacity="0.8"/>
+  <text x="562" y="151" text-anchor="middle" class="chip-lbl" fill="white">d3</text>
+  <rect x="594" y="132" width="60" height="30" rx="3" fill="#8b5cf6" fill-opacity="0.8"/>
+  <text x="624" y="151" text-anchor="middle" class="chip-lbl" fill="white">d4</text>
+
+
+  <text x="370" y="178" text-anchor="middle" class="gemm-lbl">QKV projection + MLP + output projection: ONE big GEMM (no padding)</text>
+
+
+  <text x="370" y="196" text-anchor="middle" class="mono-lbl" style="font-size:10px">cu_seqlens = [0, 3, 4, 5, 10]</text>
+
+
+  <line x1="30"  y1="200" x2="214" y2="200" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <line x1="30"  y1="196" x2="30"  y2="204" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <line x1="214" y1="196" x2="214" y2="204" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="122" y="212" text-anchor="middle" class="chip-lbl" fill="var(--accent,#6366f1)">A [0,3)</text>
+  <line x1="218" y1="200" x2="278" y2="200" stroke="#14b8a6" stroke-width="1"/>
+  <line x1="218" y1="196" x2="218" y2="204" stroke="#14b8a6" stroke-width="1"/>
+  <line x1="278" y1="196" x2="278" y2="204" stroke="#14b8a6" stroke-width="1"/>
+  <text x="248" y="212" text-anchor="middle" class="chip-lbl" fill="#14b8a6">B[3,4)</text>
+  <line x1="282" y1="200" x2="342" y2="200" stroke="#f59e0b" stroke-width="1"/>
+  <line x1="282" y1="196" x2="282" y2="204" stroke="#f59e0b" stroke-width="1"/>
+  <line x1="342" y1="196" x2="342" y2="204" stroke="#f59e0b" stroke-width="1"/>
+  <text x="312" y="212" text-anchor="middle" class="chip-lbl" fill="#f59e0b">C[4,5)</text>
+  <line x1="346" y1="200" x2="654" y2="200" stroke="#8b5cf6" stroke-width="1"/>
+  <line x1="346" y1="196" x2="346" y2="204" stroke="#8b5cf6" stroke-width="1"/>
+  <line x1="654" y1="196" x2="654" y2="204" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="500" y="212" text-anchor="middle" class="chip-lbl" fill="#8b5cf6">D [5,10)</text>
+
+
+  <text x="370" y="236" text-anchor="middle" class="arrow-lbl" fill="var(--ink-soft,#6b7280)">split by request (cu_seqlens)</text>
+  <line x1="122" y1="222" x2="122" y2="288" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="248" y1="222" x2="248" y2="288" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="370" y1="222" x2="370" y2="288" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="530" y1="222" x2="530" y2="288" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+
+
+
+
+
+
+  <rect x="20" y="290" width="180" height="56" rx="5" fill="var(--surface-3,#ede9fe)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <rect x="20" y="290" width="180" height="16" rx="5" fill="var(--accent,#6366f1)"/>
+  <rect x="20" y="298" width="180" height="8" rx="0" fill="var(--accent,#6366f1)"/>
+  <text x="110" y="302" text-anchor="middle" class="req-lbl" fill="white">attn(A)</text>
+  <text x="110" y="318" text-anchor="middle" class="attn-lbl">a-tokens attend</text>
+  <text x="110" y="330" text-anchor="middle" class="attn-lbl">over A's KV</text>
+  <text x="110" y="342" text-anchor="middle" class="attn-lbl">[FlashAttn varlen]</text>
+
+
+  <rect x="210" y="290" width="130" height="56" rx="5" fill="#ccfbf1" stroke="#14b8a6" stroke-width="1.5"/>
+  <rect x="210" y="290" width="130" height="16" rx="5" fill="#14b8a6"/>
+  <rect x="210" y="298" width="130" height="8" rx="0" fill="#14b8a6"/>
+  <text x="275" y="302" text-anchor="middle" class="req-lbl" fill="white">attn(B)</text>
+  <text x="275" y="318" text-anchor="middle" class="attn-lbl">b0 attends</text>
+  <text x="275" y="330" text-anchor="middle" class="attn-lbl">over B's KV</text>
+
+
+  <rect x="352" y="290" width="130" height="56" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.16" stroke="#f59e0b" stroke-width="1.5"/>
+  <rect x="352" y="290" width="130" height="16" rx="5" fill="#f59e0b"/>
+  <rect x="352" y="298" width="130" height="8" rx="0" fill="#f59e0b"/>
+  <text x="417" y="302" text-anchor="middle" class="req-lbl" fill="white">attn(C)</text>
+  <text x="417" y="318" text-anchor="middle" class="attn-lbl">c0 attends</text>
+  <text x="417" y="330" text-anchor="middle" class="attn-lbl">over C's KV</text>
+
+
+  <rect x="494" y="290" width="226" height="56" rx="5" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.5"/>
+  <rect x="494" y="290" width="226" height="16" rx="5" fill="#8b5cf6"/>
+  <rect x="494" y="298" width="226" height="8" rx="0" fill="#8b5cf6"/>
+  <text x="607" y="302" text-anchor="middle" class="req-lbl" fill="white">attn(D)</text>
+  <text x="607" y="318" text-anchor="middle" class="attn-lbl">d-tokens attend over D's KV</text>
+  <text x="607" y="330" text-anchor="middle" class="attn-lbl">[FlashAttention varlen]</text>
+
+
+  <path d="M20,348 L20,354 L720,354 L720,348" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="370" y="367" text-anchor="middle" class="attn-lbl" style="font-size:9.5px; fill:var(--accent2,#3b82f6)">Attention is position-dependent &amp; per-sequence -&gt; FlashAttention varlen, one kernel launch via cu_seqlens offsets</text>
+
+
+  <text x="410" y="392" text-anchor="middle" class="cap-lbl" fill="var(--ink-soft,#374151)">Flatten for GEMMs, split for attention: the trick that lets prefill and decode share one fused forward pass</text>
+  <text x="410" y="408" text-anchor="middle" class="cap-lbl" fill="var(--muted,#9ca3af)">(ancestor of chunked prefill)</text>
+</svg>
+<figcaption><b>Selective batching: flatten for GEMMs, split for attention.</b> All tokens from all requests — whether prefill or decode — are concatenated into a single tall matrix for the position-independent linear layers (QKV projection, MLP), giving one large GEMM with no padding. The <code>cu_seqlens</code> offsets then slice the result back by request so attention runs separately for each sequence's KV cache, using FlashAttention's varlen interface. Matching colors trace each request's tokens across all three tiers.</figcaption>
+</figure>
+
+<h2 id="the-scheduler-state-decisions-and-constraints">The scheduler: state, decisions, and constraints<a class="headerlink" href="#the-scheduler-state-decisions-and-constraints" title="Permanent link">¶</a></h2>
+<p>Now we get concrete about the component that decides the running set each iteration. A continuous-batching scheduler maintains three logical pools and makes one decision per loop.</p>
+<figure class="viz" id="fig-contbatch-scheduler-state-machine">
+<svg viewBox="0 0 780 390" role="img" aria-label="Continuous-batching scheduler state machine: WAITING queued pool admits to RUNNING (active forward pass) when KV-cache and token budget allow; RUNNING preempts back to WAITING under memory pressure; RUNNING retires to FINISHED on EOS.">
+  <defs>
+    <marker id="sm-ai" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#6b7280)"/>
+    </marker>
+    <marker id="sm-aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+    <marker id="sm-aw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--warn,#e0a106)"/>
+    </marker>
+    <marker id="sm-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-contbatch-scheduler-state-machine text  { fill: var(--ink-soft,#374151); }
+    #fig-contbatch-scheduler-state-machine .ttl  { font: 800 14px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .bod  { font: 400 9px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .elbl { font: 700 10px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .esub { font: 400 8.5px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .note { font: 500 8.5px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .cap  { font: 500 9px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .mu   { fill: var(--muted,#9ca3af); }
+    #fig-contbatch-scheduler-state-machine .ac   { fill: var(--accent,#6366f1); }
+    #fig-contbatch-scheduler-state-machine .wa   { fill: var(--warn,#e0a106); }
+    #fig-contbatch-scheduler-state-machine .go   { fill: var(--good,#2f9e6e); }
+  </style>
+
+
+
+
+  <text x="113" y="14" text-anchor="middle" style="font:700 11px var(--sans,sans-serif)">arrivals</text>
+  <path d="M89,18 L137,18 L127,30 L99,30 Z" fill="var(--surface-3,#e0e7ff)" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3"/>
+  <line x1="113" y1="30" x2="113" y2="56" stroke="var(--ink-soft,#6b7280)" stroke-width="1.5" marker-end="url(#sm-ai)"/>
+
+
+  <path d="M195,58 L195,26 L461,26 L461,58"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="2.2" marker-end="url(#sm-aa)"/>
+  <text x="328" y="18" text-anchor="middle" class="elbl ac">admit  (KV-cache room + token budget)</text>
+
+
+  <path d="M450,58 L450,44 L208,44 L208,58"
+        fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8" stroke-dasharray="6 3" marker-end="url(#sm-aw)"/>
+  <text x="328" y="40" text-anchor="middle" class="elbl wa">preempt / swap-out  (memory pressure)</text>
+
+
+  <rect x="8"   y="58" width="210" height="174" rx="8" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#c7d2fe)" stroke-width="2"/>
+  <rect x="8"   y="58" width="210" height="32"  rx="8" fill="var(--surface-3,#e0e7ff)"/>
+  <rect x="8"   y="78" width="210" height="12"  rx="0" fill="var(--surface-3,#e0e7ff)"/>
+  <text x="113" y="80" text-anchor="middle" class="ttl">WAITING</text>
+  <text x="113" y="105" text-anchor="middle" class="bod">queued; no KV pages yet</text>
+  <text x="113" y="119" text-anchor="middle" class="bod">ordered by scheduling policy</text>
+  <text x="113" y="132" text-anchor="middle" class="bod">(FCFS / priority / deadline)</text>
+  <line x1="24" y1="141" x2="210" y2="141" stroke="var(--border-2,#e5e7eb)" stroke-width="0.8"/>
+  <text x="113" y="156" text-anchor="middle" class="bod mu">admits when:</text>
+  <text x="113" y="170" text-anchor="middle" class="bod ac">(1) KV-cache blocks free</text>
+  <text x="113" y="184" text-anchor="middle" class="bod ac">(2) token budget available</text>
+  <text x="113" y="198" text-anchor="middle" class="bod mu">(max_num_batched_tokens)</text>
+  <text x="113" y="212" text-anchor="middle" class="bod mu">&amp; max_num_seqs cap</text>
+
+
+  <rect x="436" y="58"  width="258" height="174" rx="8" fill="var(--surface,#f9fafb)" stroke="var(--accent,#6366f1)" stroke-width="2.5"/>
+  <rect x="436" y="58"  width="258" height="32"  rx="8" fill="var(--accent,#6366f1)"/>
+  <rect x="436" y="78"  width="258" height="12"  rx="0" fill="var(--accent,#6366f1)"/>
+  <text x="565" y="80"  text-anchor="middle" class="ttl" fill="white">RUNNING</text>
+  <text x="565" y="106" text-anchor="middle" class="bod">in the current forward pass</text>
+  <text x="565" y="120" text-anchor="middle" class="bod">owns KV-cache pages for all</text>
+  <text x="565" y="133" text-anchor="middle" class="bod">tokens generated so far</text>
+  <line x1="454" y1="142" x2="686" y2="142" stroke="var(--border-2,#c7d2fe)" stroke-width="0.8"/>
+  <text x="565" y="157" text-anchor="middle" class="bod mu">(GPU work happens here)</text>
+  <rect x="448" y="169" width="234" height="38" rx="4" fill="var(--surface-3,#ede9fe)" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="565" y="184" text-anchor="middle" class="note ac" font-weight="700">running set RE-DERIVED every iteration</text>
+  <text x="565" y="198" text-anchor="middle" class="note ac">-&gt; finished slots backfilled within ~1 step</text>
+
+
+  <rect x="436" y="256" width="258" height="82" rx="8" fill="var(--surface,#f9fafb)" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <rect x="436" y="256" width="258" height="30" rx="8" fill="var(--good,#2f9e6e)"/>
+  <rect x="436" y="274" width="258" height="12" rx="0" fill="var(--good,#2f9e6e)"/>
+  <text x="565" y="276" text-anchor="middle" class="ttl" fill="white">FINISHED -&gt; client</text>
+  <text x="565" y="303" text-anchor="middle" class="bod">EOS or max_tokens hit</text>
+  <text x="565" y="317" text-anchor="middle" class="bod">result streamed; KV pages freed immediately</text>
+
+
+  <line x1="565" y1="233" x2="565" y2="254" stroke="var(--good,#2f9e6e)" stroke-width="2.2" marker-end="url(#sm-ag)"/>
+  <text x="565" y="248" text-anchor="middle" class="elbl go">retire on EOS / max_len  (frees slot + KV NOW)</text>
+
+
+  <rect x="24" y="244" width="210" height="34" rx="4" fill="var(--surface-3,#fef3c7)" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+  <text x="129" y="258" text-anchor="middle" class="note wa">free or swap KV blocks;</text>
+  <text x="129" y="271" text-anchor="middle" class="note wa" style="font-size:8px">return to front of WAITING to resume</text>
+  <line x1="80" y1="233" x2="80" y2="243" stroke="var(--warn,#e0a106)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+
+  <text x="390" y="362" text-anchor="middle" class="cap mu">Each iteration: retire finished reqs (frees KV now) -&gt; admit waiting (if room) -&gt; run one fused forward pass</text>
+</svg>
+<figcaption><b>Continuous-batching scheduler: three pools, three transitions.</b> Every forward pass the scheduler retires finished requests (freeing KV-cache pages immediately), admits waiting requests when KV-block and token-budget constraints allow, and may preempt a running request back to WAITING under memory pressure. Because the running set is re-derived from scratch each iteration, freed slots are backfilled within a single step — eliminating both tail idling and head-of-line blocking at admission.</figcaption>
+</figure>
+
+<ul>
+<li><strong>WAITING</strong> — requests that have arrived but hold no KV-cache pages yet. Ordered by the scheduling policy (FCFS, priority, deadline, …).</li>
+<li><strong>RUNNING</strong> — requests in the batch for the upcoming forward pass; each owns KV-cache pages for its tokens so far.</li>
+<li><strong>FINISHED</strong> — emitted EOS or hit <code>max_tokens</code>; results streamed back, resources freed.</li>
+</ul>
+<p>Each iteration, the scheduler answers: <em>which requests run this step, and do I need to evict anyone to make room?</em> The two binding constraints are:</p>
+<ol>
+<li>
+<p><strong>KV-cache memory.</strong> Every running request&rsquo;s keys and values occupy memory that grows with its sequence length. The KV cache, not raw FLOPs, is almost always the limiting resource. With <strong>PagedAttention</strong> (<a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>) the cache is allocated in fixed-size <em>blocks</em> (e.g. 16 tokens each), so admitting a request means reserving enough free blocks for its current length, and a request growing by one token may need to grab one more block. The scheduler must track the free-block count and refuse to admit (or must preempt) when blocks run out.</p>
+</li>
+<li>
+<p><strong>Per-iteration token budget.</strong> To bound iteration latency you cap the number of tokens processed per step, <code>max_num_batched_tokens</code> (and often a separate <code>max_num_seqs</code>, a cap on the number of concurrent requests). Prefill tokens are the expensive ones; a 4000-token prompt arriving in one shot would blow a latency target, which is exactly why chunked prefill exists — it splits that prefill across several iterations so each step stays under budget. The scheduler decides how much prefill work to admit per iteration against this budget.</p>
+</li>
+</ol>
+<h3 id="a-throughput-model-for-the-scheduler">A throughput model for the scheduler<a class="headerlink" href="#a-throughput-model-for-the-scheduler" title="Permanent link">¶</a></h3>
+<p>It helps to have a back-of-envelope model. Let the GPU sustain a decode step of <span class="arithmatex">\(B\)</span> requests in time <span class="arithmatex">\(\tau_{\text{dec}}(B)\)</span>. Because decode is memory-bound, <span class="arithmatex">\(\tau_{\text{dec}}(B) \approx \tau_0 + \beta B\)</span> where <span class="arithmatex">\(\tau_0\)</span> (the fixed cost of streaming weights once) dominates and <span class="arithmatex">\(\beta\)</span> (the small marginal per-request cost) is tiny until you approach compute saturation. Token throughput is</p>
+<div class="arithmatex">\[
+\text{tokens/sec} = \frac{B}{\tau_{\text{dec}}(B)} = \frac{B}{\tau_0 + \beta B} \xrightarrow[B \to \infty]{} \frac{1}{\beta}.
+\]</div>
+<p>The curve rises steeply with <span class="arithmatex">\(B\)</span> at first (you are amortizing the fixed <span class="arithmatex">\(\tau_0\)</span> over more requests) and then flattens toward the compute roofline <span class="arithmatex">\(1/\beta\)</span> (see <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>). The scheduler&rsquo;s job is to keep <span class="arithmatex">\(B\)</span> as large as the KV-cache budget allows, so you operate on the flat, high-throughput part of the curve rather than the starved low-<span class="arithmatex">\(B\)</span> part. Static batching keeps <span class="arithmatex">\(B\)</span> <em>high on average but low at the tail</em> (the batch drains down to one straggler running at <span class="arithmatex">\(B=1\)</span>); continuous batching keeps <span class="arithmatex">\(B\)</span> pinned near the maximum continuously by backfilling. That gap is where the throughput multiplier comes from.</p>
+<h2 id="a-toy-continuous-batching-scheduler-from-scratch">A toy continuous-batching scheduler, from scratch<a class="headerlink" href="#a-toy-continuous-batching-scheduler-from-scratch" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-continuous-batching">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 470" role="img" aria-label="Two timelines on a grid of four batch slots by twelve decode iterations: static batching leaves finished slots idle until the longest request ends, wasting 42 percent of slot-steps; continuous batching evicts finished requests and backfills new ones immediately, keeping every slot busy.">
+  <defs>
+    <pattern id="cb-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="7" height="7" fill="var(--warn,#e0a106)" fill-opacity="0.10"/>
+      <line x1="0" y1="0" x2="0" y2="7" stroke="var(--warn,#e0a106)" stroke-width="1.4" stroke-opacity="0.5"/>
+    </pattern>
+    <marker id="cb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-continuous-batching text{ fill:var(--ink-soft); }
+    #fig-continuous-batching .ttl{ font:600 13.5px var(--sans,sans-serif); }
+    #fig-continuous-batching .axis{ font:600 11px var(--mono,monospace); fill:var(--muted); }
+    #fig-continuous-batching .cell{ font:600 10px var(--mono,monospace); }
+    #fig-continuous-batching .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-continuous-batching .util{ font:600 12px var(--mono,monospace); }
+  </style>
+
+
+
+
+  <g data-anim="1">
+    <text x="22" y="26" class="ttl">Static batching <tspan class="sm">— membership frozen until the whole batch finishes</tspan></text>
+
+
+    <text x="56" y="58"  text-anchor="end" class="axis">A</text>
+    <text x="56" y="84"  text-anchor="end" class="axis">B</text>
+    <text x="56" y="110" text-anchor="end" class="axis">C</text>
+    <text x="56" y="136" text-anchor="end" class="axis">D</text>
+
+
+    <rect x="64" y="42"  width="624" height="22" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="64" y="68"  width="624" height="22" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="64" y="94"  width="624" height="22" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="64" y="120" width="624" height="22" rx="2" class="v-fill v-grid" stroke-width="1"/>
+
+    <g class="v-grid" stroke-width="0.7" opacity="0.6">
+      <line x1="116" y1="42" x2="116" y2="142"/><line x1="168" y1="42" x2="168" y2="142"/>
+      <line x1="220" y1="42" x2="220" y2="142"/><line x1="272" y1="42" x2="272" y2="142"/>
+      <line x1="324" y1="42" x2="324" y2="142"/><line x1="376" y1="42" x2="376" y2="142"/>
+      <line x1="428" y1="42" x2="428" y2="142"/><line x1="480" y1="42" x2="480" y2="142"/>
+      <line x1="532" y1="42" x2="532" y2="142"/><line x1="584" y1="42" x2="584" y2="142"/>
+      <line x1="636" y1="42" x2="636" y2="142"/>
+    </g>
+  </g>
+
+
+  <g data-anim="2">
+
+    <rect x="220" y="44"  width="468" height="18" fill="url(#cb-hatch)"/>
+
+    <rect x="324" y="96"  width="364" height="18" fill="url(#cb-hatch)"/>
+
+    <rect x="480" y="122" width="208" height="18" fill="url(#cb-hatch)"/>
+  </g>
+
+
+  <g data-anim="2" class="v-accent" fill="var(--accent)">
+
+    <rect x="66"  y="44" width="48" height="18" rx="2" fill-opacity="0.85"/>
+    <rect x="118" y="44" width="48" height="18" rx="2" fill-opacity="0.85"/>
+    <rect x="170" y="44" width="48" height="18" rx="2" fill-opacity="0.85"/>
+
+    <rect x="66"  y="70" width="620" height="18" rx="2" fill-opacity="0.85"/>
+
+    <rect x="66"  y="96" width="256" height="18" rx="2" fill-opacity="0.85"/>
+
+    <rect x="66"  y="122" width="412" height="18" rx="2" fill-opacity="0.85"/>
+  </g>
+
+  <g data-anim="2" class="cell">
+    <text x="194" y="57"  text-anchor="middle" fill="#fff">E</text>
+    <text x="296" y="109" text-anchor="middle" fill="#fff">E</text>
+    <text x="452" y="135" text-anchor="middle" fill="#fff">E</text>
+    <text x="662" y="83"  text-anchor="middle" fill="#fff">E</text>
+  </g>
+
+  <g data-anim="2">
+    <rect x="64" y="150" width="624" height="0" />
+    <text x="64" y="162" class="util" fill="var(--warn,#e0a106)">utilization = 28 useful / 48 slot-steps &#8776; 58%</text>
+    <text x="688" y="162" text-anchor="end" class="sm">hatched = idle slot, locked until B ends</text>
+  </g>
+
+
+  <g data-anim="3">
+    <text x="22" y="226" class="ttl">Continuous batching <tspan class="sm">— retire finished, backfill waiting requests every iteration</tspan></text>
+
+    <text x="56" y="258" text-anchor="end" class="axis">0</text>
+    <text x="56" y="284" text-anchor="end" class="axis">1</text>
+    <text x="56" y="310" text-anchor="end" class="axis">2</text>
+    <text x="56" y="336" text-anchor="end" class="axis">3</text>
+
+    <rect x="64" y="242" width="624" height="22" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="64" y="268" width="624" height="22" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="64" y="294" width="624" height="22" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="64" y="320" width="624" height="22" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <g class="v-grid" stroke-width="0.7" opacity="0.6">
+      <line x1="116" y1="242" x2="116" y2="342"/><line x1="168" y1="242" x2="168" y2="342"/>
+      <line x1="220" y1="242" x2="220" y2="342"/><line x1="272" y1="242" x2="272" y2="342"/>
+      <line x1="324" y1="242" x2="324" y2="342"/><line x1="376" y1="242" x2="376" y2="342"/>
+      <line x1="428" y1="242" x2="428" y2="342"/><line x1="480" y1="242" x2="480" y2="342"/>
+      <line x1="532" y1="242" x2="532" y2="342"/><line x1="584" y1="242" x2="584" y2="342"/>
+      <line x1="636" y1="242" x2="636" y2="342"/>
+    </g>
+  </g>
+
+
+  <g data-anim="4" class="v-accent" fill="var(--accent)">
+
+    <rect x="66"  y="244" width="152" height="18" rx="2" fill-opacity="0.85"/>
+
+    <rect x="66"  y="270" width="620" height="18" rx="2" fill-opacity="0.85"/>
+
+    <rect x="66"  y="296" width="256" height="18" rx="2" fill-opacity="0.85"/>
+
+    <rect x="66"  y="322" width="412" height="18" rx="2" fill-opacity="0.85"/>
+  </g>
+
+  <g data-anim="5" fill="var(--good,#2f9e6e)">
+
+    <rect x="220" y="244" width="468" height="18" rx="2" fill-opacity="0.82"/>
+
+    <rect x="324" y="296" width="364" height="18" rx="2" fill-opacity="0.82"/>
+
+    <rect x="480" y="322" width="208" height="18" rx="2" fill-opacity="0.82"/>
+  </g>
+
+  <g data-anim="4" class="cell">
+    <text x="142" y="257" text-anchor="middle" fill="#fff">A</text>
+    <text x="376" y="283" text-anchor="middle" fill="#fff">B</text>
+    <text x="194" y="309" text-anchor="middle" fill="#fff">C</text>
+    <text x="272" y="335" text-anchor="middle" fill="#fff">D</text>
+  </g>
+  <g data-anim="5" class="cell">
+    <text x="454" y="257" text-anchor="middle" fill="#fff">E (new)</text>
+    <text x="506" y="309" text-anchor="middle" fill="#fff">F (new)</text>
+    <text x="584" y="335" text-anchor="middle" fill="#fff">G (new)</text>
+  </g>
+
+  <g data-anim="5">
+    <line x1="219" y1="253" x2="221" y2="253" />
+    <path d="M210 235 q9 9 9 18" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.3" marker-end="url(#cb-arrow)" opacity="0.9"/>
+    <path d="M314 287 q9 9 9 18" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.3" marker-end="url(#cb-arrow)" opacity="0.9"/>
+    <path d="M470 313 q9 9 9 18" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.3" marker-end="url(#cb-arrow)" opacity="0.9"/>
+  </g>
+
+  <g data-anim="5">
+    <text x="64" y="362" class="util" fill="var(--good,#2f9e6e)">utilization = 48 useful / 48 slot-steps = 100%</text>
+    <text x="688" y="362" text-anchor="end" class="sm">freed slot reused on the very next iteration</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="64" y1="380" x2="700" y2="380" class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#cb-arrow)"/>
+    <text x="380" y="397" text-anchor="middle" class="sm">decode iteration  &#8594;</text>
+
+    <g>
+      <rect x="120" y="420" width="16" height="13" rx="2" fill="var(--accent)" fill-opacity="0.85"/>
+      <text x="142" y="431" class="sm">original requests A&#8211;D</text>
+      <rect x="288" y="420" width="16" height="13" rx="2" fill="var(--good,#2f9e6e)" fill-opacity="0.82"/>
+      <text x="310" y="431" class="sm">backfilled requests E&#8211;G</text>
+      <rect x="464" y="420" width="16" height="13" rx="2" fill="url(#cb-hatch)" stroke="var(--warn,#e0a106)" stroke-width="0.8"/>
+      <text x="486" y="431" class="sm">wasted idle slot-step</text>
+    </g>
+  </g>
+</svg>
+<figcaption><b>Continuous batching keeps every slot busy by backfilling the moment one frees.</b> Both timelines run the same four requests (lengths 3, 12, 5, 8) across four batch slots. Under <b>static batching</b> a slot sits idle (hatched) from the instant its request emits EOS until the longest request <b>B</b> finishes at step 12 — only 58% of slot-steps do useful work. Under <b>continuous batching</b> the scheduler retires the finished request and admits a waiting one on the very next iteration, pinning the batch near its maximum and pushing utilization to 100%.</figcaption>
+</figure>
+
+<p>Let us build a runnable simulator that captures the real mechanics: a token budget, a KV-block budget, iteration-level admission and retirement, prefill/decode interleaving, FCFS scheduling, and preemption. We mock the model with a deterministic per-request output length so the scheduling logic is the star. The structure mirrors vLLM&rsquo;s scheduler closely enough to be a useful mental model.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;toy_scheduler.py — a from-scratch continuous-batching (iteration-level) scheduler.</span>
+
+<span class="sd">We simulate the *control flow* of an LLM server. The &quot;model&quot; is mocked: each request</span>
+<span class="sd">has a known prompt length and a known number of output tokens, and one decode iteration</span>
+<span class="sd">produces exactly one token per running request. The interesting part is the SCHEDULER.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">deque</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">enum</span><span class="w"> </span><span class="kn">import</span> <span class="n">Enum</span><span class="p">,</span> <span class="n">auto</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">itertools</span>
+
+<span class="n">BLOCK_SIZE</span> <span class="o">=</span> <span class="mi">16</span>          <span class="c1"># KV-cache tokens per page/block (PagedAttention-style)</span>
+<span class="n">TOTAL_BLOCKS</span> <span class="o">=</span> <span class="mi">400</span>       <span class="c1"># total KV blocks on the device -&gt; the hard memory budget</span>
+<span class="n">MAX_BATCHED_TOKENS</span> <span class="o">=</span> <span class="mi">512</span> <span class="c1"># per-iteration token budget (caps prefill cost / latency)</span>
+<span class="n">MAX_NUM_SEQS</span> <span class="o">=</span> <span class="mi">64</span>        <span class="c1"># cap on concurrent running requests</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Status</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
+    <span class="n">WAITING</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>     <span class="c1"># arrived, no KV allocated yet</span>
+    <span class="n">RUNNING</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>     <span class="c1"># in the current running set, owns KV blocks</span>
+    <span class="n">FINISHED</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Request</span><span class="p">:</span>
+    <span class="n">rid</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">arrival</span><span class="p">:</span> <span class="nb">int</span>                 <span class="c1"># iteration index at which it arrived</span>
+    <span class="n">prompt_len</span><span class="p">:</span> <span class="nb">int</span>              <span class="c1"># number of prompt tokens (prefill work)</span>
+    <span class="n">output_len</span><span class="p">:</span> <span class="nb">int</span>              <span class="c1"># how many tokens it will generate (mock)</span>
+    <span class="n">priority</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>            <span class="c1"># lower = more important (for the priority policy)</span>
+    <span class="n">status</span><span class="p">:</span> <span class="n">Status</span> <span class="o">=</span> <span class="n">Status</span><span class="o">.</span><span class="n">WAITING</span>
+    <span class="n">prefilled</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>      <span class="c1"># has its prompt been processed yet?</span>
+    <span class="n">generated</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>           <span class="c1"># output tokens produced so far</span>
+    <span class="n">blocks</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>              <span class="c1"># KV blocks currently held</span>
+    <span class="c1"># bookkeeping for metrics</span>
+    <span class="n">first_token_iter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">finish_iter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">cur_len</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="c1"># tokens currently materialized in the KV cache</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">prompt_len</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">generated</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">blocks_needed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">extra_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="c1"># ceil division: how many blocks to hold cur_len + extra_tokens</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cur_len</span> <span class="o">+</span> <span class="n">extra_tokens</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">total</span> <span class="o">+</span> <span class="n">BLOCK_SIZE</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="n">BLOCK_SIZE</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">done</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">prefilled</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">generated</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">output_len</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Scheduler</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">policy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;fcfs&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">policy</span> <span class="o">=</span> <span class="n">policy</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="p">:</span> <span class="n">deque</span><span class="p">[</span><span class="n">Request</span><span class="p">]</span> <span class="o">=</span> <span class="n">deque</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Request</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">finished</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Request</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">free_blocks</span> <span class="o">=</span> <span class="n">TOTAL_BLOCKS</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">iter</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="c1"># metrics</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">iter_log</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="c1"># ---- block accounting -------------------------------------------------</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_alloc</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">req</span><span class="p">:</span> <span class="n">Request</span><span class="p">,</span> <span class="n">want</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Try to give `req` enough blocks to hold `want` total. Returns success.&quot;&quot;&quot;</span>
+        <span class="n">need</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">want</span> <span class="o">-</span> <span class="n">req</span><span class="o">.</span><span class="n">blocks</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">need</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">free_blocks</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">free_blocks</span> <span class="o">-=</span> <span class="n">need</span>
+        <span class="n">req</span><span class="o">.</span><span class="n">blocks</span> <span class="o">+=</span> <span class="n">need</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_free</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">req</span><span class="p">:</span> <span class="n">Request</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">free_blocks</span> <span class="o">+=</span> <span class="n">req</span><span class="o">.</span><span class="n">blocks</span>
+        <span class="n">req</span><span class="o">.</span><span class="n">blocks</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="c1"># ---- policy ordering of the waiting queue -----------------------------</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_waiting_order</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Request</span><span class="p">]:</span>
+        <span class="n">reqs</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">policy</span> <span class="o">==</span> <span class="s2">&quot;fcfs&quot;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">reqs</span>                                  <span class="c1"># already arrival-ordered</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">policy</span> <span class="o">==</span> <span class="s2">&quot;priority&quot;</span><span class="p">:</span>
+            <span class="c1"># priority first, ties broken by arrival (no starvation within a prio band</span>
+            <span class="c1"># because arrival is the tiebreaker)</span>
+            <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">reqs</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">priority</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">arrival</span><span class="p">))</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">policy</span> <span class="o">==</span> <span class="s2">&quot;shortest&quot;</span><span class="p">:</span>
+            <span class="c1"># shortest-remaining-output first: great for mean latency, risks starvation</span>
+            <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">reqs</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">output_len</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">policy</span><span class="p">)</span>
+
+    <span class="c1"># ---- preemption -------------------------------------------------------</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_preempt_one</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Evict the lowest-priority / newest running request back to WAITING.</span>
+<span class="sd">        Returns True if something was preempted (and its blocks freed).&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="c1"># victim selection: in FCFS we recompute (LIFO — preempt the most-recently</span>
+        <span class="c1"># admitted, i.e. largest arrival). In priority, preempt the worst priority.</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">policy</span> <span class="o">==</span> <span class="s2">&quot;priority&quot;</span><span class="p">:</span>
+            <span class="n">victim</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">priority</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">arrival</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">victim</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">arrival</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">victim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_free</span><span class="p">(</span><span class="n">victim</span><span class="p">)</span>                  <span class="c1"># recompute KV on resume (recomputation)</span>
+        <span class="n">victim</span><span class="o">.</span><span class="n">status</span> <span class="o">=</span> <span class="n">Status</span><span class="o">.</span><span class="n">WAITING</span>
+        <span class="n">victim</span><span class="o">.</span><span class="n">prefilled</span> <span class="o">=</span> <span class="kc">False</span>            <span class="c1"># we dropped its KV -&gt; must re-prefill</span>
+        <span class="n">victim</span><span class="o">.</span><span class="n">generated</span> <span class="o">=</span> <span class="n">victim</span><span class="o">.</span><span class="n">generated</span> <span class="c1"># keep count of progress for the mock</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="o">.</span><span class="n">appendleft</span><span class="p">(</span><span class="n">victim</span><span class="p">)</span>     <span class="c1"># resume soon</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="c1"># ---- the heart: one scheduling decision -------------------------------</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">schedule</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Request</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Decide the running set for this iteration and how many tokens each runs.&quot;&quot;&quot;</span>
+        <span class="n">token_budget</span> <span class="o">=</span> <span class="n">MAX_BATCHED_TOKENS</span>
+
+        <span class="c1"># (1) Every already-RUNNING request needs to grow by one decode token.</span>
+        <span class="c1">#     Ensure each can hold one more token; if a request needs a NEW block</span>
+        <span class="c1">#     and we are out of memory, preempt to make room (or it stalls).</span>
+        <span class="n">survivors</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">req</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">:</span>
+            <span class="n">want</span> <span class="o">=</span> <span class="n">req</span><span class="o">.</span><span class="n">blocks_needed</span><span class="p">(</span><span class="n">extra_tokens</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+            <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_alloc</span><span class="p">(</span><span class="n">req</span><span class="p">,</span> <span class="n">want</span><span class="p">):</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_preempt_one</span><span class="p">():</span>
+                    <span class="k">break</span>                    <span class="c1"># nothing left to evict; this req stalls</span>
+                <span class="c1"># after a preemption, free_blocks grew — retry the alloc</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">survivors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+                <span class="n">token_budget</span> <span class="o">-=</span> <span class="mi">1</span>            <span class="c1"># one decode token</span>
+                <span class="k">continue</span>
+            <span class="c1"># alloc still failed even after preemptions: drop req back to waiting</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_free</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+            <span class="n">req</span><span class="o">.</span><span class="n">status</span> <span class="o">=</span> <span class="n">Status</span><span class="o">.</span><span class="n">WAITING</span>
+            <span class="n">req</span><span class="o">.</span><span class="n">prefilled</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="o">.</span><span class="n">appendleft</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">running</span> <span class="o">=</span> <span class="n">survivors</span>
+
+        <span class="c1"># (2) Admit WAITING requests (prefill) while budget + memory + slot allow.</span>
+        <span class="k">for</span> <span class="n">req</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_waiting_order</span><span class="p">():</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">MAX_NUM_SEQS</span><span class="p">:</span>
+                <span class="k">break</span>
+            <span class="c1"># Chunked prefill: run up to `chunk` prompt tokens this iteration.</span>
+            <span class="n">remaining_prompt</span> <span class="o">=</span> <span class="n">req</span><span class="o">.</span><span class="n">prompt_len</span>  <span class="c1"># (mock: prefill prompt in one shot if it fits)</span>
+            <span class="n">chunk</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">remaining_prompt</span><span class="p">,</span> <span class="n">token_budget</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">chunk</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">break</span>
+            <span class="n">want</span> <span class="o">=</span> <span class="n">req</span><span class="o">.</span><span class="n">blocks_needed</span><span class="p">(</span><span class="n">extra_tokens</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>   <span class="c1"># blocks for the prompt</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_alloc</span><span class="p">(</span><span class="n">req</span><span class="p">,</span> <span class="n">want</span><span class="p">):</span>
+                <span class="c1"># not enough KV memory to even start this request; stop admitting</span>
+                <span class="c1"># (could also try preemption, but FCFS usually just waits)</span>
+                <span class="k">continue</span>
+            <span class="n">req</span><span class="o">.</span><span class="n">status</span> <span class="o">=</span> <span class="n">Status</span><span class="o">.</span><span class="n">RUNNING</span>
+            <span class="n">req</span><span class="o">.</span><span class="n">prefilled</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+            <span class="n">token_budget</span> <span class="o">-=</span> <span class="n">chunk</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">running</span>
+
+    <span class="c1"># ---- mock model step + retirement -------------------------------------</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">step</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">batch</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">schedule</span><span class="p">()</span>
+        <span class="c1"># MOCK MODEL: every running request emits exactly one token this iteration.</span>
+        <span class="k">for</span> <span class="n">req</span> <span class="ow">in</span> <span class="n">batch</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">req</span><span class="o">.</span><span class="n">first_token_iter</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">req</span><span class="o">.</span><span class="n">first_token_iter</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">iter</span>
+            <span class="n">req</span><span class="o">.</span><span class="n">generated</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="c1"># Retire finished requests immediately (frees their slot + KV NOW).</span>
+        <span class="n">still_running</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">req</span> <span class="ow">in</span> <span class="n">batch</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">req</span><span class="o">.</span><span class="n">done</span><span class="p">:</span>
+                <span class="n">req</span><span class="o">.</span><span class="n">status</span> <span class="o">=</span> <span class="n">Status</span><span class="o">.</span><span class="n">FINISHED</span>
+                <span class="n">req</span><span class="o">.</span><span class="n">finish_iter</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">iter</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_free</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">finished</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">still_running</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">running</span> <span class="o">=</span> <span class="n">still_running</span>
+        <span class="c1"># log batch size + memory occupancy for throughput analysis</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">iter_log</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+            <span class="s2">&quot;iter&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">iter</span><span class="p">,</span>
+            <span class="s2">&quot;batch&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">batch</span><span class="p">),</span>
+            <span class="s2">&quot;free_blocks&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">free_blocks</span><span class="p">,</span>
+            <span class="s2">&quot;waiting&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="p">),</span>
+        <span class="p">})</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">iter</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">req</span><span class="p">:</span> <span class="n">Request</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+</code></pre></div>
+<p>A driver that feeds requests in over time and reports utilization:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run_sim</span><span class="p">(</span><span class="n">requests</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Request</span><span class="p">],</span> <span class="n">policy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;fcfs&quot;</span><span class="p">,</span> <span class="n">max_iters</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10_000</span><span class="p">):</span>
+    <span class="n">sched</span> <span class="o">=</span> <span class="n">Scheduler</span><span class="p">(</span><span class="n">policy</span><span class="o">=</span><span class="n">policy</span><span class="p">)</span>
+    <span class="n">pending</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">requests</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">arrival</span><span class="p">)</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="n">sched</span><span class="o">.</span><span class="n">iter</span> <span class="o">&lt;</span> <span class="n">max_iters</span><span class="p">:</span>
+        <span class="c1"># release all requests whose arrival time has come</span>
+        <span class="k">while</span> <span class="n">pending</span> <span class="ow">and</span> <span class="n">pending</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">arrival</span> <span class="o">&lt;=</span> <span class="n">sched</span><span class="o">.</span><span class="n">iter</span><span class="p">:</span>
+            <span class="n">sched</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">pending</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">sched</span><span class="o">.</span><span class="n">waiting</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">sched</span><span class="o">.</span><span class="n">running</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">pending</span><span class="p">:</span>
+            <span class="k">break</span>
+        <span class="n">sched</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">sched</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+    <span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="c1"># 200 requests, Poisson-ish arrivals, heavy-tailed output lengths.</span>
+    <span class="n">reqs</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">200</span><span class="p">):</span>
+        <span class="n">t</span> <span class="o">+=</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>                     <span class="c1"># interarrival 0..2 iters</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">([</span><span class="mi">20</span><span class="p">,</span> <span class="mi">40</span><span class="p">,</span> <span class="mi">80</span><span class="p">,</span> <span class="mi">600</span><span class="p">])</span>     <span class="c1"># mix of short &amp; long prompts</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">([</span><span class="mi">8</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">])</span>    <span class="c1"># heavy tail on outputs</span>
+        <span class="n">reqs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Request</span><span class="p">(</span><span class="n">rid</span><span class="o">=</span><span class="n">k</span><span class="p">,</span> <span class="n">arrival</span><span class="o">=</span><span class="n">t</span><span class="p">,</span> <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">output_len</span><span class="o">=</span><span class="n">out</span><span class="p">))</span>
+
+    <span class="n">s</span> <span class="o">=</span> <span class="n">run_sim</span><span class="p">([</span><span class="n">Request</span><span class="p">(</span><span class="o">**</span><span class="nb">vars</span><span class="p">(</span><span class="n">r</span><span class="p">))</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">reqs</span><span class="p">],</span> <span class="n">policy</span><span class="o">=</span><span class="s2">&quot;fcfs&quot;</span><span class="p">)</span>
+    <span class="n">total_tokens</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">output_len</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">s</span><span class="o">.</span><span class="n">finished</span><span class="p">)</span>
+    <span class="n">iters</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">iter</span>
+    <span class="n">mean_batch</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">e</span><span class="p">[</span><span class="s2">&quot;batch&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">s</span><span class="o">.</span><span class="n">iter_log</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">iter_log</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;finished=</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">finished</span><span class="p">)</span><span class="si">}</span><span class="s2"> iters=</span><span class="si">{</span><span class="n">iters</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;total output tokens=</span><span class="si">{</span><span class="n">total_tokens</span><span class="si">}</span><span class="s2">  tokens/iter=</span><span class="si">{</span><span class="n">total_tokens</span><span class="o">/</span><span class="n">iters</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;mean running batch size=</span><span class="si">{</span><span class="n">mean_batch</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">ttfts</span> <span class="o">=</span> <span class="p">[</span><span class="n">r</span><span class="o">.</span><span class="n">first_token_iter</span> <span class="o">-</span> <span class="n">r</span><span class="o">.</span><span class="n">arrival</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">s</span><span class="o">.</span><span class="n">finished</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;mean TTFT (iters)=</span><span class="si">{</span><span class="nb">sum</span><span class="p">(</span><span class="n">ttfts</span><span class="p">)</span><span class="o">/</span><span class="nb">len</span><span class="p">(</span><span class="n">ttfts</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">  max TTFT=</span><span class="si">{</span><span class="nb">max</span><span class="p">(</span><span class="n">ttfts</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The two things to study in this code are (a) <code>schedule()</code> re-deriving the running set <em>every call</em> — that is iteration-level scheduling in one method — and (b) the preempt-then-retry loop in step (1), which is how a server survives running out of KV memory without crashing. Swap <code>policy="fcfs"</code> for <code>"priority"</code> or <code>"shortest"</code> and watch mean TTFT and tail TTFT trade off.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: recomputation vs. swapping on preemption</p>
+<p>Our toy preempts by <em>dropping</em> the victim&rsquo;s KV cache and re-prefilling it on resume (recomputation). Real systems offer a choice: <strong>recompute</strong> (cheap memory, costs a redundant prefill) or <strong>swap</strong> the KV blocks out to CPU/host memory and copy them back on resume (no recompute, costs PCIe bandwidth and host RAM). vLLM supports both. Recomputation usually wins when prompts are short or prefill is cheap relative to the swap copy; swapping wins for very long contexts where re-prefilling is expensive.</p>
+</div>
+<h2 id="prefilldecode-interleaving-and-its-scheduling-tension">Prefill/decode interleaving and its scheduling tension<a class="headerlink" href="#prefilldecode-interleaving-and-its-scheduling-tension" title="Permanent link">¶</a></h2>
+<p>Prefill and decode are different beasts. <strong>Prefill</strong> processes the whole prompt in parallel — it is <em>compute-bound</em> and short-lived (one big iteration). <strong>Decode</strong> processes one token per request — it is <em>memory-bound</em> and long-lived (many small iterations). Mixing them in one continuous-batching loop creates a real tension.</p>
+<p>Consider a steady state of many requests happily decoding at batch size 48, throughput humming along the flat part of the curve. Now a request with a 4000-token prompt arrives. If the scheduler admits the whole prefill in the next iteration, that iteration must process 4000 prefill tokens — a heavy, compute-bound step that takes many times longer than a normal decode step. Every decoding request is <em>stalled</em> behind it; their inter-token latency (ITL) spikes. Users perceive this as the stream &ldquo;stuttering.&rdquo; This is <strong>prefill-induced latency interference</strong>.</p>
+<p>Two scheduling philosophies address it:</p>
+<ul>
+<li>
+<p><strong>Prefill-prioritizing (decode-blocking), Orca-style / classic vLLM default.</strong> When a prompt is ready, run its prefill as a dedicated iteration (or admit it ahead of decodes). Maximizes prefill throughput and minimizes TTFT, but causes the decode stutter above.</p>
+</li>
+<li>
+<p><strong>Chunked prefill / &ldquo;piggybacking.&rdquo;</strong> Split the long prefill into chunks of, say, 512 tokens and spread them across several iterations, <em>co-scheduling</em> each chunk alongside the ongoing decodes (the selective-batching flatten trick makes this one fused forward pass). Each iteration stays under the token budget, so decode ITL stays smooth and the prefill still completes in a few steps. This is the modern default in vLLM and SGLang and is covered in depth in <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>.</p>
+</li>
+</ul>
+<p>In our toy, <code>MAX_BATCHED_TOKENS</code> is exactly the knob that would enforce chunking — extend the admission loop so a request whose <code>remaining_prompt &gt; token_budget</code> runs a <em>chunk</em> this iteration and keeps the rest for next time (track <code>prefilled_tokens</code> per request instead of a boolean). The decode tokens of running requests are admitted first (step 1), so they always get their slice of the budget; prefill chunks backfill the remainder. That ordering — decodes first, then prefill chunks — is what keeps ITL smooth.</p>
+<p>The deepest version of this idea is <strong>disaggregation</strong>: run prefill on one pool of GPUs and decode on another, connected by a KV-cache transfer, so the two workloads never interfere at all. That, too, is in the disaggregation chapter; here the point is just that the <em>scheduler</em> is where prefill and decode meet, and how you interleave them is the single biggest lever on the latency/throughput trade-off.</p>
+<h2 id="priority-fairness-and-preemption">Priority, fairness, and preemption<a class="headerlink" href="#priority-fairness-and-preemption" title="Permanent link">¶</a></h2>
+<p>FCFS (first-come-first-served) is the default and it is fine when all requests are equal. Production servers rarely have that luxury. Three concerns recur.</p>
+<p><strong>Priority / multi-tenancy.</strong> You may serve a paying &ldquo;interactive&rdquo; tier that needs low latency and a &ldquo;batch&rdquo; tier that only needs throughput. A priority scheduler orders the WAITING queue by tier and, crucially, can <strong>preempt</strong> a low-priority running request to admit a high-priority arrival when KV memory is full. Preemption is the teeth behind priority — without it, a queue full of low-priority long-runners can hold all the KV blocks and a high-priority request waits indefinitely. The cost is the recompute-or-swap on the victim (the aside above).</p>
+<p><strong>Fairness and starvation.</strong> Pure shortest-job-first minimizes mean latency but can starve a long request forever if short ones keep arriving. Pure priority can starve a low-priority tenant. The standard mitigations are (1) <strong>aging</strong> — bump a waiting request&rsquo;s effective priority the longer it waits, so it eventually wins; (2) <strong>per-tenant quotas / weighted fair queueing</strong> — guarantee each tenant a share of the running batch slots; and (3) bounding preemption — never preempt a request that has already been preempted <span class="arithmatex">\(N\)</span> times. Our <code>priority</code> policy avoids <em>intra-band</em> starvation by breaking ties on arrival, but does nothing for <em>inter-band</em> starvation; aging is the fix.</p>
+<p><strong>Continuous-batching preemption mechanics.</strong> Because the running set is re-derived every iteration, preemption is naturally cheap to <em>decide</em> (just don&rsquo;t include the victim next iteration) — the cost is purely in what you do with its KV cache. The scheduler must:</p>
+<ol>
+<li>choose a victim (lowest priority, or most-recently-admitted for LIFO recompute-friendliness);</li>
+<li>free or swap-out its KV blocks;</li>
+<li>return it to WAITING (ideally at the front, so it resumes soon);</li>
+<li>on resume, either recompute its prefill or swap its KV back in, then continue decoding.</li>
+</ol>
+<p>A subtle but important rule: prefer to preempt the request whose progress you&rsquo;ll waste <em>least</em> and whose blocks you&rsquo;ll recover <em>most</em>. LIFO (preempt newest) tends to satisfy both for recomputation, which is why vLLM&rsquo;s default recompute preemption is LIFO-ish.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: thrashing under memory pressure</p>
+<p>If the scheduler admits aggressively right up to the last KV block, the very next decode step (every running request wants one more token) can immediately force a preemption — which frees blocks, which tempts the scheduler to re-admit, which fills memory again, which forces another preemption. The system <em>thrashes</em>, spending its time swapping/recomputing instead of generating. Defenses: keep a small <strong>headroom</strong> of free blocks (admit only up to, say, 90% occupancy), use a <strong>watermark</strong> so you stop admitting before memory is full, and add <strong>hysteresis</strong> so you don&rsquo;t re-admit a just-preempted request until enough blocks are free to make real progress. This is the inference analogue of OS page-fault thrashing.</p>
+</div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: the continuous-batching throughput multiplier</p>
+<p>Take a decode-bound workload on one GPU. Suppose the device can hold a maximum running batch of <span class="arithmatex">\(B_{\max} = 64\)</span> requests within its KV-cache budget, a decode step takes <span class="arithmatex">\(\tau_0 = 20\)</span> ms of fixed weight-streaming cost plus a marginal <span class="arithmatex">\(\beta = 0.2\)</span> ms per request, and output lengths are heavy-tailed with mean 100 and max 1000 tokens.</p>
+<p><strong>Static batching.</strong> Form a batch of 64, run until the last finishes. The batch occupies its slots for <span class="arithmatex">\(\max = 1000\)</span> steps, but the <em>useful</em> work is <span class="arithmatex">\(64 \times \overline{\text{len}} = 64 \times 100 = 6400\)</span> tokens. Average batch size over the run is roughly <span class="arithmatex">\(\overline{\text{len}}/\max \times 64 \approx 0.1 \times 64 \approx 6.4\)</span> (slots drain as short requests finish). Effective throughput sits at the <em>low</em> end of the curve much of the time, and a new request can wait up to 1000 decode steps to be admitted — TTFT on the order of <span class="arithmatex">\(1000 \times \tau_{\text{dec}} \approx 1000 \times 21\,\text{ms} \approx 21\)</span> s in the worst case.</p>
+<p><strong>Continuous batching.</strong> Finished slots are backfilled every iteration, so the running batch stays pinned near <span class="arithmatex">\(B_{\max} = 64\)</span>. Step time <span class="arithmatex">\(\tau_{\text{dec}}(64) = 20 + 0.2 \times 64 = 32.8\)</span> ms, giving</p>
+<div class="arithmatex">\[
+\text{throughput} = \frac{64}{32.8\ \text{ms}} \approx 1951\ \text{tokens/sec},
+\]</div>
+<p>versus static batching effectively operating near <span class="arithmatex">\(B \approx 6.4\)</span>:</p>
+<div class="arithmatex">\[
+\frac{6.4}{20 + 0.2 \times 6.4\ \text{ms}} = \frac{6.4}{21.3\ \text{ms}} \approx 300\ \text{tokens/sec}.
+\]</div>
+<p>That is a <strong>~6–7× throughput improvement</strong> purely from scheduling — no kernel changes, no quantization. And a newly arrived request is admitted within ~1 iteration once a slot frees, so TTFT drops from seconds to tens of milliseconds. The exact multiplier depends on how heavy-tailed your output lengths are: the longer the tail (the bigger <span class="arithmatex">\(\max/\text{mean}\)</span>), the worse static batching&rsquo;s tail idling, and the larger the win. Published reports of &ldquo;up to 23×&rdquo; come from workloads with extreme length variance; treat the <em>mechanism</em> (pinning <span class="arithmatex">\(B\)</span> near <span class="arithmatex">\(B_{\max}\)</span> continuously) as the durable truth and the exact number as workload-dependent.</p>
+</div>
+<h2 id="how-the-real-systems-do-it">How the real systems do it<a class="headerlink" href="#how-the-real-systems-do-it" title="Permanent link">¶</a></h2>
+<p>Every production engine is a continuous-batching scheduler with different emphases:</p>
+<ul>
+<li><strong>Orca</strong> introduced iteration-level scheduling and selective batching — the blueprint.</li>
+<li><strong>vLLM</strong> pairs continuous batching with <strong>PagedAttention</strong> so the KV cache is non-contiguous blocks, making admission/eviction a block-allocation problem and enabling near-zero memory fragmentation; its scheduler does FCFS with preemption (recompute or swap) and now defaults to chunked prefill. See <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a>.</li>
+<li><strong>TGI</strong> (HuggingFace Text Generation Inference) calls it <em>continuous batching</em> and exposes a <code>waiting_served_ratio</code> and token-budget knobs.</li>
+<li><strong>TensorRT-LLM</strong> calls it <strong>in-flight batching</strong> and fuses it with NVIDIA&rsquo;s optimized kernels.</li>
+<li><strong>SGLang</strong> adds <strong>RadixAttention</strong> for prefix-cache reuse on top of continuous batching, so shared prompt prefixes don&rsquo;t re-prefill — see <a href="../07-inference-serving/04-sglang-radixattention.html">SGLang: RadixAttention &amp; Structured Programs</a>.</li>
+</ul>
+<p>The common skeleton is identical to our toy: a per-iteration <code>schedule()</code> that (1) reserves a decode token + block for each running request (preempting under pressure), (2) admits/chunks prefill into the remaining token budget, (3) runs one fused forward pass with ragged attention, and (4) retires finished requests immediately. Master the toy and you understand all of them. The end-to-end serving design that wraps this scheduler — admission control, autoscaling, routing — is the subject of <a href="../12-production-mlops/01-serving-system-design.html">Designing an LLM Serving System</a>, and the latency/throughput/cost trade-offs it implies are quantified in <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a>.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A teammate says &ldquo;we already use dynamic batching, so we get continuous batching&rsquo;s benefits.&rdquo; Are they right? Explain the difference and where dynamic batching still leaves throughput on the table for an autoregressive LLM.</p>
+<p><strong>A:</strong> No — they&rsquo;re conflating two different things. <em>Dynamic batching</em> waits a short window to gather arriving requests, then dispatches them as one batch whose membership is <strong>frozen for the whole generation</strong>. That helps amortize weight loads at <em>admission</em> time, and it&rsquo;s the right tool for fixed-shape models (one forward pass each). But LLM generation is iterative and variable-length: each request runs a <em>different number of forward passes</em>. So dynamic batching still suffers two leaks. First, <strong>tail idling</strong>: short requests finish early but their slots stay locked until the longest request in the batch completes, dragging the effective batch size — and thus throughput — way down at the tail. Second, <strong>head-of-line blocking at admission</strong>: a request arriving just after a batch forms must wait for the entire batch to drain before it&rsquo;s even admitted, spiking TTFT to seconds under long generations. <em>Continuous (iteration-level) batching</em>, from Orca, re-derives the running set <strong>every forward pass</strong>: it retires finished requests and backfills new ones each iteration, pinning the batch near its memory-limited maximum continuously and admitting newcomers within ~one iteration. The mechanism that makes mixing prefill and decode in one step possible is <em>selective batching</em> — flatten all tokens for the position-independent GEMMs (QKV/MLP) and run attention per-request via ragged/<code>cu_seqlens</code> kernels. Net effect: typically several-fold higher throughput and an order-of-magnitude lower TTFT versus dynamic batching, with the multiplier growing as output-length variance grows.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Decode is memory-bound; batching amortizes the weight load.</strong> Throughput rises with batch size <span class="arithmatex">\(B\)</span> as <span class="arithmatex">\(B/(\tau_0 + \beta B)\)</span> and flattens toward the compute roofline <span class="arithmatex">\(1/\beta\)</span>. The scheduler&rsquo;s job is to keep <span class="arithmatex">\(B\)</span> pinned near its memory-limited maximum.</li>
+<li><strong>Static and dynamic (request-level) batching freeze batch membership for the whole generation</strong>, leaking throughput to tail idling (short requests&rsquo; slots locked until the longest finishes) and leaking latency to head-of-line blocking at admission.</li>
+<li><strong>Continuous batching = iteration-level scheduling (Orca).</strong> Re-derive the running set every forward pass: retire finished requests and backfill waiting ones immediately. This removes both leaks and is the basis of vLLM, TGI, TensorRT-LLM, and SGLang.</li>
+<li><strong>Selective batching makes heterogeneous batches possible:</strong> flatten all tokens for position-independent GEMMs (QKV, MLP), and run attention per-request via ragged/<code>cu_seqlens</code> kernels. This is also what enables chunked prefill.</li>
+<li><strong>The two binding constraints are KV-cache memory (track free blocks; PagedAttention makes it block allocation) and the per-iteration token budget</strong> (<code>max_num_batched_tokens</code>) that bounds latency.</li>
+<li><strong>Prefill and decode interfere at the scheduler.</strong> A big prefill stalls ongoing decodes; chunked prefill (and ultimately disaggregation) smooths inter-token latency by spreading prefill across iterations under the token budget — schedule decodes first, then backfill prefill chunks.</li>
+<li><strong>Preemption is the teeth behind priority and the safety valve under memory pressure</strong> — evict a victim&rsquo;s KV (recompute or swap-out), return it to WAITING, resume later. Guard against thrashing with watermarks, headroom, and hysteresis; guard against starvation with aging or per-tenant quotas.</li>
+<li><strong>The throughput multiplier is workload-dependent:</strong> the heavier the output-length tail, the worse static batching&rsquo;s idling and the larger continuous batching&rsquo;s win (commonly several-fold, more under extreme variance).</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Continuous batching (iteration-level scheduling) is now standard in every major LLM serving engine. Research has moved on to chunked prefill, disaggregated prefill/decode, and KV-cache-aware scheduling as the frontiers for squeezing the last latency and throughput from inference infrastructure.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://www.usenix.org/conference/osdi22/presentation/yu">Yu et al., <em>Orca: A Distributed Serving System for Transformer-Based Generative Models</em> (OSDI 2022)</a> — the paper that named iteration-level scheduling and selective batching; everything since builds on this blueprint.</li>
+<li><a href="https://arxiv.org/abs/2309.06180">Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (SOSP 2023)</a> — vLLM; pairs continuous batching with OS-paging-inspired KV-cache management for 2–4× further throughput gains.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2308.16369">Agrawal et al., <em>SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills</em> (2023)</a> — original chunked-prefill proposal; shows that splitting prefill across iterations eliminates decode stalls.</li>
+<li><a href="https://arxiv.org/abs/2403.02310">Agrawal et al., <em>Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve</em> (OSDI 2024)</a> — full system integrating stall-free scheduling + chunked prefill; up to 6.9× throughput improvement over vLLM on large models.</li>
+<li><a href="https://arxiv.org/abs/2401.09670">Zhong et al., <em>DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving</em> (2024)</a> — assigns prefill and decode to separate GPU pools, eliminating interference entirely; the production direction adopted by Meta, NVIDIA Dynamo, and others.</li>
+<li><a href="https://arxiv.org/abs/2312.07104">Zheng et al., <em>SGLang: Efficient Execution of Structured Language Model Programs</em> (NeurIPS 2024)</a> — adds RadixAttention (prefix-cache reuse via radix tree) on top of continuous batching, cutting redundant prefill for shared-prefix workloads.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm</a> — the reference continuous-batching serving engine; PagedAttention, chunked prefill, and preemption all in one codebase; read the <code>Scheduler</code> class directly.</li>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — SGLang&rsquo;s high-performance runtime with RadixAttention prefix caching; strong performance on multi-turn and structured-output workloads.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.anyscale.com/blog/continuous-batching-llm-inference">Anyscale, <em>How continuous batching enables 23× throughput in LLM inference</em> (2023)</a> — concise engineering explainer with benchmarks; the widely-cited piece that brought the idea to a broad ML audience.</li>
+<li><a href="https://www.lmsys.org/blog/2024-01-17-sglang/">LMSYS, <em>Fast and Expressive LLM Inference with RadixAttention and SGLang</em> (2024)</a> — visual walkthrough of how a radix tree accelerates KV-cache reuse in a continuous-batching server.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Yu, Jeong, Kim, Kim, Chun, <em>Orca: A Distributed Serving System for Transformer-Based Generative Models</em> (OSDI 2022) — the paper that introduced iteration-level scheduling and selective batching.</li>
+<li>Kwon, Li, Zhuang, et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (SOSP 2023) — vLLM; continuous batching plus paged KV-cache.</li>
+<li>Agrawal et al., <em>SARATHI</em> / <em>Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve</em> — chunked prefill and stall-free batching.</li>
+<li>Anyscale, <em>How Continuous Batching Enables 23× Throughput in LLM Inference</em> — a widely cited engineering write-up of the mechanism and its measured impact.</li>
+<li>The vLLM and Hugging Face Text Generation Inference (TGI) repositories — read the <code>Scheduler</code> / batching code directly; it mirrors the toy in this chapter.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="01-anatomy-inference.html"><span class="pn-label">← Previous</span><span class="pn-title">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</span></a>
+<a class="next" href="03-vllm-internals.html"><span class="pn-label">Next →</span><span class="pn-title">vLLM: Architecture, PagedAttention &amp; Internals</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-naive-batching-wastes-the-gpu">Why naive batching wastes the GPU</a></li>
+<li class="toc-l3"><a href="#static-batching-and-its-three-leaks">Static batching and its three leaks</a></li>
+<li class="toc-l3"><a href="#dynamic-batching-better-still-request-level">Dynamic batching: better, still request-level</a></li>
+<li class="toc-l2"><a href="#the-key-insight-iteration-level-scheduling">The key insight: iteration-level scheduling</a></li>
+<li class="toc-l3"><a href="#selective-batching-the-subtlety-orca-had-to-solve">Selective batching: the subtlety Orca had to solve</a></li>
+<li class="toc-l2"><a href="#the-scheduler-state-decisions-and-constraints">The scheduler: state, decisions, and constraints</a></li>
+<li class="toc-l3"><a href="#a-throughput-model-for-the-scheduler">A throughput model for the scheduler</a></li>
+<li class="toc-l2"><a href="#a-toy-continuous-batching-scheduler-from-scratch">A toy continuous-batching scheduler, from scratch</a></li>
+<li class="toc-l2"><a href="#prefilldecode-interleaving-and-its-scheduling-tension">Prefill/decode interleaving and its scheduling tension</a></li>
+<li class="toc-l2"><a href="#priority-fairness-and-preemption">Priority, fairness, and preemption</a></li>
+<li class="toc-l2"><a href="#how-the-real-systems-do-it">How the real systems do it</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

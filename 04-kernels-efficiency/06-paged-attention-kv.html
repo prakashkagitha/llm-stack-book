@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PagedAttention &amp; KV-Cache Memory Management — The LLM Stack</title>
+<meta name="description" content="KV cache size math, fragmentation, the OS-paging analogy, block tables, copy-on-write for shared prefixes, the PagedAttention kernel; how this unlocks high-thro">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="active" href="06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IV — Kernels, Efficiency &amp; Quantization</div>
+<h1 id="46-pagedattention-kv-cache-memory-management">4.6 PagedAttention &amp; KV-Cache Memory Management<a class="headerlink" href="#46-pagedattention-kv-cache-memory-management" title="Permanent link">¶</a></h1>
+<p>A trained transformer is only half the story. The other half is <em>serving</em> it: turning a static set of weights into a system that answers thousands of concurrent users with low latency and high throughput. The single largest obstacle to that goal is not compute — modern GPUs have FLOPs to spare during decoding — it is <strong>memory</strong>, specifically the memory consumed by the <strong>key–value cache (KV cache)</strong>.</p>
+<p>This chapter is about how that memory is managed. We start from the arithmetic of how large the KV cache actually is, watch a naive serving system bleed throughput through <strong>fragmentation</strong>, and then develop the central idea of this chapter: borrowing <strong>virtual memory and paging</strong> from operating systems and applying it to attention. The result, <strong>PagedAttention</strong> — introduced by Kwon et al. in the vLLM paper (<em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em>, SOSP 2023) — is the mechanism that turned LLM serving from &ldquo;fit one request comfortably&rdquo; into &ldquo;pack the GPU to the rafters.&rdquo; It is the bridge between the kernel-level material of <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a> and the systems-level material in <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a>.</p>
+<p>By the end you should be able to: compute KV-cache memory exactly; explain why contiguous allocation wastes 60–80% of it; describe block tables, copy-on-write, and the paged kernel; and reason about the throughput consequences.</p>
+<h2 id="why-the-kv-cache-exists-and-how-big-it-gets">Why the KV Cache Exists, and How Big It Gets<a class="headerlink" href="#why-the-kv-cache-exists-and-how-big-it-gets" title="Permanent link">¶</a></h2>
+<p>Autoregressive generation produces one token at a time. To generate token <span class="arithmatex">\(t\)</span>, a decoder-only transformer must attend over all previous tokens <span class="arithmatex">\(1 \dots t-1\)</span>. Attention needs the <strong>keys</strong> and <strong>values</strong> of those tokens at every layer. If we recomputed them from scratch each step, generating a sequence of length <span class="arithmatex">\(n\)</span> would cost <span class="arithmatex">\(O(n^2)\)</span> work <em>per new token</em> — quadratically wasteful.</p>
+<p>The KV cache is the standard fix: after a token is processed, we store its per-layer key and value vectors and reuse them forever. Generation then splits into two phases (covered in depth in <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>):</p>
+<ul>
+<li><strong>Prefill</strong>: process the whole prompt in one batched forward pass, producing K/V for every prompt token. Compute-bound.</li>
+<li><strong>Decode</strong>: generate one token at a time, each step appending exactly one K and one V vector per layer to the cache. Memory-bandwidth-bound.</li>
+</ul>
+<h3 id="the-size-formula">The size formula<a class="headerlink" href="#the-size-formula" title="Permanent link">¶</a></h3>
+<p>Let:</p>
+<ul>
+<li><span class="arithmatex">\(L\)</span> = number of transformer layers</li>
+<li><span class="arithmatex">\(H_{kv}\)</span> = number of <strong>key/value</strong> heads (with <a href="../02-transformer/04-mha-gqa-mla.html">GQA/MQA</a> this is smaller than the number of query heads)</li>
+<li><span class="arithmatex">\(d_h\)</span> = dimension per head</li>
+<li><span class="arithmatex">\(s\)</span> = sequence length (prompt + generated tokens)</li>
+<li><span class="arithmatex">\(b\)</span> = bytes per element (2 for fp16/bf16, 1 for fp8)</li>
+</ul>
+<p>For a single sequence, the KV cache stores both K and V, across all layers, for all heads and positions:</p>
+<div class="arithmatex">\[
+\text{Bytes}_{\text{KV}} = 2 \cdot L \cdot H_{kv} \cdot d_h \cdot s \cdot b
+\]</div>
+<p>The leading <span class="arithmatex">\(2\)</span> is &ldquo;K and V.&rdquo; Note what is <em>not</em> here: the batch dimension (that just multiplies through) and the number of <em>query</em> heads (the cache scales with KV heads only — this is the entire point of GQA/MQA for serving).</p>
+<p>Define the <strong>per-token KV footprint</strong> <span class="arithmatex">\(\beta = 2 \cdot L \cdot H_{kv} \cdot d_h \cdot b\)</span> bytes/token. Then the cache for a sequence of length <span class="arithmatex">\(s\)</span> is simply <span class="arithmatex">\(\beta s\)</span>, and for a batch of <span class="arithmatex">\(B\)</span> sequences it is <span class="arithmatex">\(\beta \sum_{i} s_i\)</span>. This linear-in-tokens structure is what makes paging natural: tokens are the unit of allocation.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: KV cache for Llama-2-13B and a 70B GQA model</p>
+<p><strong>Llama-2-13B</strong> (multi-head, no GQA): <span class="arithmatex">\(L=40\)</span>, <span class="arithmatex">\(H_{kv}=40\)</span> heads, <span class="arithmatex">\(d_h=128\)</span>, fp16 (<span class="arithmatex">\(b=2\)</span>).</p>
+<div class="arithmatex">\[
+\beta = 2 \cdot 40 \cdot 40 \cdot 128 \cdot 2 = 819{,}200 \text{ bytes/token} \approx 0.78\ \text{MiB/token}.
+\]</div>
+<p>A single 2048-token sequence costs <span class="arithmatex">\(0.78 \times 2048 \approx 1.6\)</span> GiB. On an 80 GiB A100 holding the ~26 GiB of fp16 weights, you have ~54 GiB for cache — about <strong>34</strong> such sequences. The model has tens of thousands of FLOPs of headroom per step, but you run out of <em>memory</em> at a few dozen sequences. That ceiling is the throughput ceiling.</p>
+<p><strong>Llama-2-70B with GQA</strong> (<span class="arithmatex">\(H_{kv}=8\)</span>): <span class="arithmatex">\(L=80\)</span>, <span class="arithmatex">\(d_h=128\)</span>, fp16.</p>
+<div class="arithmatex">\[
+\beta = 2 \cdot 80 \cdot 8 \cdot 128 \cdot 2 = 327{,}680 \text{ bytes/token} \approx 0.3125\ \text{MiB/token}.
+\]</div>
+<p>Despite being a far larger model, GQA shrinks per-token KV by collapsing 64 query heads onto 8 KV heads. A 4096-token sequence is only <span class="arithmatex">\(0.3125 \times 4096 = 1.25\)</span> GiB. GQA is a <em>serving</em> decision as much as a quality one.</p>
+</div>
+<p>A useful way to internalize this: the KV cache for a long conversation can rival or exceed the <em>weights themselves</em>. A 4M-token context at <span class="arithmatex">\(\beta \approx 0.3\)</span> MiB/token would need ~1.2 TiB — impossible on one GPU. KV memory, not parameters, is the binding constraint on context length and concurrency.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">kv_cache_bytes</span><span class="p">(</span><span class="n">num_layers</span><span class="p">,</span> <span class="n">num_kv_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span>
+                   <span class="n">bytes_per_elem</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Exact KV-cache size in bytes. The leading 2 covers K and V.&quot;&quot;&quot;</span>
+    <span class="n">per_token</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">num_layers</span> <span class="o">*</span> <span class="n">num_kv_heads</span> <span class="o">*</span> <span class="n">head_dim</span> <span class="o">*</span> <span class="n">bytes_per_elem</span>
+    <span class="k">return</span> <span class="n">per_token</span> <span class="o">*</span> <span class="n">seq_len</span> <span class="o">*</span> <span class="n">batch</span>
+
+<span class="c1"># Llama-2-13B, one 2048-token request</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">kv_cache_bytes</span><span class="p">(</span><span class="mi">40</span><span class="p">,</span> <span class="mi">40</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">2048</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">b</span><span class="o">/</span><span class="mi">2</span><span class="o">**</span><span class="mi">30</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GiB&quot;</span><span class="p">)</span>           <span class="c1"># ~1.56 GiB</span>
+
+<span class="c1"># Per-token footprint (the constant beta)</span>
+<span class="n">beta</span> <span class="o">=</span> <span class="n">kv_cache_bytes</span><span class="p">(</span><span class="mi">40</span><span class="p">,</span> <span class="mi">40</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">beta</span><span class="o">/</span><span class="mi">2</span><span class="o">**</span><span class="mi">20</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> MiB/token&quot;</span><span class="p">)</span>  <span class="c1"># ~0.781 MiB/token</span>
+</code></pre></div>
+<h2 id="the-fragmentation-problem">The Fragmentation Problem<a class="headerlink" href="#the-fragmentation-problem" title="Permanent link">¶</a></h2>
+<p>The naive serving system allocates one <strong>contiguous</strong> chunk of GPU memory per request, sized for the maximum sequence length the request could reach. This is how early systems (and a straightforward HuggingFace <code>generate</code> loop) work. It is also catastrophically wasteful, in three distinct ways. The vLLM authors named them precisely.</p>
+<h3 id="internal-fragmentation-reserving-for-the-worst-case">Internal fragmentation: reserving for the worst case<a class="headerlink" href="#internal-fragmentation-reserving-for-the-worst-case" title="Permanent link">¶</a></h3>
+<p>You do not know in advance how long a generation will be. So you reserve <code>max_seq_len</code> slots up front. If a request finishes after 30 tokens but you reserved 2048, the other 2018 slots are allocated, untouched, and unavailable to anyone else for the request&rsquo;s lifetime. That is <strong>internal fragmentation</strong> — wasted space <em>inside</em> an allocation.</p>
+<figure class="viz" id="fig-paged-kv-internal-frag-bar">
+<svg viewBox="0 0 760 230" role="img" aria-label="Internal fragmentation diagram showing Request A with max_len=2048 but only 30 tokens used, leaving 2018 slots reserved-but-empty and unavailable to any other request.">
+  <defs>
+    <pattern id="ifb-hatch" x="0" y="0" width="8" height="8" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="8" x2="8" y2="0" stroke="var(--border-2,#94a3b8)" stroke-width="1" opacity="0.5"/>
+    </pattern>
+    <marker id="ifb-caret" viewBox="0 0 10 10" refX="5" refY="10" markerWidth="8" markerHeight="8" orient="auto">
+      <polygon points="0,10 5,0 10,10" fill="var(--ink-soft,#64748b)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-paged-kv-internal-frag-bar .title-lbl { font: 600 13px var(--sans,sans-serif); }
+    #fig-paged-kv-internal-frag-bar .seg-lbl   { font: 600 11px var(--sans,sans-serif); }
+    #fig-paged-kv-internal-frag-bar .annot-lbl { font: italic 11px var(--sans,sans-serif); }
+    #fig-paged-kv-internal-frag-bar .dim-lbl   { font: 400 10px var(--mono,monospace); }
+    #fig-paged-kv-internal-frag-bar text        { fill: var(--ink-soft,#374151); }
+  </style>
+
+
+  <text x="380" y="22" text-anchor="middle" class="title-lbl" fill="var(--ink-soft,#374151)">Request A: max_len = 2048 reserved, only 30 tokens actually used</text>
+
+
+  <line x1="40" y1="54" x2="720" y2="54" stroke="var(--ink-soft,#64748b)" stroke-width="1" opacity="0.5"/>
+  <line x1="40" y1="50" x2="40" y2="58" stroke="var(--ink-soft,#64748b)" stroke-width="1" opacity="0.5"/>
+  <line x1="720" y1="50" x2="720" y2="58" stroke="var(--ink-soft,#64748b)" stroke-width="1" opacity="0.5"/>
+  <text x="380" y="50" text-anchor="middle" class="dim-lbl" fill="var(--muted,#94a3b8)">contiguous max_seq_len allocation (2048 slots)</text>
+
+
+  <rect x="40" y="68" width="680" height="70" rx="6" fill="none" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+
+
+  <rect x="40" y="68" width="62" height="70" rx="0" fill="var(--accent,#4f7cff)" stroke="none"/>
+  <rect x="40" y="68" width="6" height="70" rx="6" fill="var(--accent,#4f7cff)" stroke="none"/>
+
+
+  <rect x="102" y="68" width="618" height="70" rx="0" fill="url(#ifb-hatch)" stroke="none"/>
+  <rect x="714" y="68" width="6" height="70" rx="6" fill="url(#ifb-hatch)" stroke="none"/>
+
+
+  <line x1="102" y1="68" x2="102" y2="138" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+
+
+  <text x="71" y="99" text-anchor="middle" class="seg-lbl" fill="#ffffff">used</text>
+  <text x="71" y="113" text-anchor="middle" class="seg-lbl" fill="#ffffff">(30 tok)</text>
+
+
+  <rect x="198" y="80" width="426" height="22" rx="3" fill="var(--surface,#ffffff)" fill-opacity="0.6"/>
+  <text x="411" y="97" text-anchor="middle" class="seg-lbl" fill="var(--ink-soft,#374151)">reserved-but-empty (2018 tokens) — WASTED</text>
+
+
+  <line x1="411" y1="148" x2="411" y2="158" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#ifb-caret)"/>
+  <text x="411" y="176" text-anchor="middle" class="annot-lbl" fill="var(--muted,#94a3b8)">No other request may touch this region for the request's entire lifetime</text>
+
+
+  <text x="380" y="210" text-anchor="middle" class="dim-lbl" fill="var(--muted,#94a3b8)">2048 - 30 = 2018 slots stranded -- only ~1.5% of the reservation is useful</text>
+</svg>
+<figcaption><b>Internal fragmentation: worst-case reservation strands the vast majority of a contiguous allocation.</b> Request A reserves a 2048-slot contiguous slab but uses only 30 tokens; the remaining 2018 slots are allocated, untouched, and unavailable to any other request until the sequence completes. In real workloads with short, variable outputs this pattern repeats across every active request, consuming the bulk of the KV budget on empty space.</figcaption>
+</figure>
+
+<p>In real workloads outputs are short and highly variable, so internal fragmentation routinely consumes the majority of reserved cache.</p>
+<h3 id="external-fragmentation-holes-between-allocations">External fragmentation: holes between allocations<a class="headerlink" href="#external-fragmentation-holes-between-allocations" title="Permanent link">¶</a></h3>
+<p>Different requests reserve different-sized contiguous blocks. As requests of varying <code>max_len</code> arrive and complete, the free memory shatters into a patchwork of gaps. A new request needing a contiguous 1.5 GiB block may be rejected even though 4 GiB is free in total — because no single <em>contiguous</em> hole is large enough. This is <strong>external fragmentation</strong>, the classic curse of any contiguous allocator (think <code>malloc</code> without compaction).</p>
+<h3 id="reservation-waste-and-the-inability-to-share">Reservation waste and the inability to share<a class="headerlink" href="#reservation-waste-and-the-inability-to-share" title="Permanent link">¶</a></h3>
+<p>Because each request owns a private contiguous region, two requests with an <em>identical prompt prefix</em> — a shared system prompt, a few-shot template, a forked beam — each store their own complete copy of that prefix&rsquo;s KV. There is no mechanism to share it. For agentic and batch workloads with long fixed preambles, this duplicates gigabytes.</p>
+<p>The vLLM paper measured that under contiguous allocation, only <strong>20–40%</strong> of KV memory held actual token state; the rest was lost to these three effects. Recovering that memory is, to first order, a <span class="arithmatex">\(2\text{--}4\times\)</span> throughput win — because throughput in the memory-bound decode regime is set by <em>how many sequences you can hold concurrently</em>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Throughput is gated by batch size, which is gated by memory</p>
+<p>During decode, each step reads the <em>entire</em> KV cache and all weights from HBM but does very little arithmetic per token — it is bandwidth-bound (see <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>). The fix for bandwidth-bound work is <strong>bigger batches</strong>: process more sequences per memory sweep so the fixed weight-read cost is amortized. But batch size is capped by how many KV caches fit in memory. Therefore <em>wasted KV memory directly throttles throughput.</em> This causal chain — fragmentation → small batch → low throughput — is the whole motivation for paging.</p>
+</div>
+<h2 id="the-os-paging-analogy">The OS-Paging Analogy<a class="headerlink" href="#the-os-paging-analogy" title="Permanent link">¶</a></h2>
+<p>Operating systems solved exactly this problem decades ago. A process believes it owns a single contiguous <strong>virtual address space</strong>, but physically its memory is scattered across fixed-size <strong>page frames</strong> in RAM, with a <strong>page table</strong> mapping virtual page numbers to physical frame numbers. Benefits: no external fragmentation (any free frame works for any page), internal fragmentation bounded by at most one page per allocation, and trivial sharing (two page tables can point at the same physical frame).</p>
+<p>PagedAttention transplants this idea wholesale:</p>
+<table>
+<thead>
+<tr>
+<th>Operating system</th>
+<th>PagedAttention</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Process</td>
+<td>Request / sequence</td>
+</tr>
+<tr>
+<td>Virtual address space</td>
+<td>The logical token sequence (positions <span class="arithmatex">\(0,1,2,\dots\)</span>)</td>
+</tr>
+<tr>
+<td>Page</td>
+<td><strong>KV block</strong> (fixed number of tokens, e.g. 16)</td>
+</tr>
+<tr>
+<td>Physical page frame</td>
+<td>A physical KV block in GPU HBM</td>
+</tr>
+<tr>
+<td>Page table</td>
+<td><strong>Block table</strong> (per-sequence: logical block → physical block)</td>
+</tr>
+<tr>
+<td>Page fault → allocate frame</td>
+<td>Sequence grows → allocate a new physical block</td>
+</tr>
+<tr>
+<td>Shared read-only pages</td>
+<td>Shared prompt prefix blocks</td>
+</tr>
+<tr>
+<td>Copy-on-write</td>
+<td>Copy-on-write when a shared block must diverge</td>
+</tr>
+</tbody>
+</table>
+<p>The key reframing: the KV cache of a sequence need <strong>not be contiguous in physical memory</strong>. We chop it into fixed-size blocks of <span class="arithmatex">\(B\)</span> tokens (typical <span class="arithmatex">\(B = 16\)</span>), store the blocks anywhere in a global pool, and keep a small per-sequence <strong>block table</strong> recording where each logical block physically lives. Logical contiguity (token positions in order) is decoupled from physical contiguity (where bytes sit in HBM).</p>
+<figure class="viz" id="fig-paged-kv">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 800 392" role="img" aria-label="PagedAttention as OS paging: a sequence's logically contiguous KV blocks are mapped through a per-sequence block table to non-contiguous physical KV blocks scattered across the GPU memory pool, interleaved with another sequence's blocks.">
+  <defs>
+    <marker id="pk-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-paged-kv text{ fill:var(--ink-soft); }
+    #fig-paged-kv .head{ font:700 13.5px var(--sans,sans-serif); }
+    #fig-paged-kv .sub{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-paged-kv .blk{ font:600 11px var(--mono,monospace); }
+    #fig-paged-kv .tok{ font:500 9px var(--mono,monospace); fill:var(--muted); }
+    #fig-paged-kv .bt{ font:700 12px var(--mono,monospace); }
+    #fig-paged-kv .pid{ font:700 11px var(--mono,monospace); fill:var(--muted); }
+    #fig-paged-kv .free{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-paged-kv .note{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+  </style>
+
+
+  <g data-anim="1">
+    <text x="128" y="26" text-anchor="middle" class="head">Logical KV (sequence A)</text>
+    <text x="128" y="42" text-anchor="middle" class="sub">contiguous token positions 0…40</text>
+
+    <text x="392" y="26" text-anchor="middle" class="head">Block table[A]</text>
+    <text x="392" y="42" text-anchor="middle" class="sub">logical block maps to physical block</text>
+
+    <text x="672" y="26" text-anchor="middle" class="head">Physical KV pool (HBM)</text>
+    <text x="672" y="42" text-anchor="middle" class="sub">fixed-size blocks, any order</text>
+  </g>
+
+
+  <g data-anim="2">
+
+    <rect x="34" y="78" width="168" height="40" rx="6" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <text x="60" y="103" text-anchor="middle" class="blk v-accent" fill="var(--accent)">lb0</text>
+    <text x="135" y="95" text-anchor="middle" class="tok">tokens</text>
+    <text x="135" y="107" text-anchor="middle" class="tok">0–15</text>
+
+
+    <rect x="34" y="124" width="168" height="40" rx="6" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <text x="60" y="149" text-anchor="middle" class="blk v-accent" fill="var(--accent)">lb1</text>
+    <text x="135" y="141" text-anchor="middle" class="tok">tokens</text>
+    <text x="135" y="153" text-anchor="middle" class="tok">16–31</text>
+
+
+    <rect x="34" y="170" width="168" height="40" rx="6" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <text x="60" y="195" text-anchor="middle" class="blk v-accent" fill="var(--accent)">lb2</text>
+    <text x="135" y="187" text-anchor="middle" class="tok">tokens</text>
+    <text x="135" y="199" text-anchor="middle" class="tok">32–40</text>
+
+    <rect x="158" y="171" width="43" height="38" rx="5" class="v-grid" fill="var(--surface-3)" fill-opacity="0.55"/>
+    <text x="179" y="245" text-anchor="middle" class="note">last block</text>
+    <text x="179" y="258" text-anchor="middle" class="note">partly filled</text>
+    <line x1="179" y1="214" x2="179" y2="232" class="v-stroke" stroke="currentColor" stroke-width="1" stroke-dasharray="2 2" opacity="0.6"/>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="330" y="78" width="124" height="132" rx="8" class="v-fill v-grid" stroke-width="1.3"/>
+    <line x1="392" y1="78" x2="392" y2="210" class="v-grid" stroke-width="1"/>
+    <line x1="330" y1="122" x2="454" y2="122" class="v-grid" stroke-width="1"/>
+    <line x1="330" y1="166" x2="454" y2="166" class="v-grid" stroke-width="1"/>
+
+
+    <text x="361" y="105" text-anchor="middle" class="bt v-accent" fill="var(--accent)">lb0</text>
+    <text x="423" y="105" text-anchor="middle" class="bt">7</text>
+    <text x="361" y="149" text-anchor="middle" class="bt v-accent" fill="var(--accent)">lb1</text>
+    <text x="423" y="149" text-anchor="middle" class="bt">1</text>
+    <text x="361" y="193" text-anchor="middle" class="bt v-accent" fill="var(--accent)">lb2</text>
+    <text x="423" y="193" text-anchor="middle" class="bt">4</text>
+
+    <text x="392" y="228" text-anchor="middle" class="sub">block_table[A] = [7, 1, 4]</text>
+  </g>
+
+
+  <g data-anim="3" class="v-muted" fill="currentColor" stroke="currentColor" stroke-width="1.3" marker-end="url(#pk-arrow)" opacity="0.85">
+    <line x1="204" y1="98"  x2="326" y2="98"/>
+    <line x1="204" y1="144" x2="326" y2="144"/>
+    <line x1="204" y1="190" x2="326" y2="190"/>
+  </g>
+
+
+
+  <g data-anim="4">
+    <rect x="566" y="64" width="212" height="290" rx="10" class="v-fill v-grid" stroke-width="1.3" fill-opacity="0.35"/>
+  </g>
+
+
+
+  <g data-anim="4">
+    <rect x="580" y="72"  width="184" height="28" rx="5" class="v-fill v-stroke" stroke-width="1.2" stroke-dasharray="4 3" fill-opacity="0.25"/>
+    <text x="556" y="90" text-anchor="end" class="pid">0</text>
+    <text x="672" y="91" text-anchor="middle" class="free">free</text>
+  </g>
+
+  <g data-anim="4">
+    <rect x="580" y="107" width="184" height="28" rx="5" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <text x="556" y="125" text-anchor="end" class="pid">1</text>
+    <text x="672" y="125" text-anchor="middle" class="blk v-accent" fill="var(--accent)">A · lb1</text>
+  </g>
+
+  <g data-anim="4">
+    <rect x="580" y="142" width="184" height="28" rx="5" class="v-fill v-stroke" stroke-width="1.2" stroke-dasharray="4 3" fill-opacity="0.25"/>
+    <text x="556" y="160" text-anchor="end" class="pid">2</text>
+    <text x="672" y="161" text-anchor="middle" class="free">free</text>
+  </g>
+
+  <g data-anim="4">
+    <rect x="580" y="177" width="184" height="28" rx="5" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+    <text x="556" y="195" text-anchor="end" class="pid">3</text>
+    <text x="672" y="195" text-anchor="middle" class="blk" fill="var(--good,#2f9e6e)">B · lb0</text>
+  </g>
+
+  <g data-anim="4">
+    <rect x="580" y="212" width="184" height="28" rx="5" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <text x="556" y="230" text-anchor="end" class="pid">4</text>
+    <text x="672" y="230" text-anchor="middle" class="blk v-accent" fill="var(--accent)">A · lb2</text>
+  </g>
+
+  <g data-anim="4">
+    <rect x="580" y="247" width="184" height="28" rx="5" class="v-fill v-stroke" stroke-width="1.2" stroke-dasharray="4 3" fill-opacity="0.25"/>
+    <text x="556" y="265" text-anchor="end" class="pid">5</text>
+    <text x="672" y="266" text-anchor="middle" class="free">free</text>
+  </g>
+
+  <g data-anim="4">
+    <rect x="580" y="282" width="184" height="28" rx="5" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+    <text x="556" y="300" text-anchor="end" class="pid">6</text>
+    <text x="672" y="300" text-anchor="middle" class="blk" fill="var(--good,#2f9e6e)">B · lb1</text>
+  </g>
+
+  <g data-anim="4">
+    <rect x="580" y="317" width="184" height="28" rx="5" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <text x="556" y="335" text-anchor="end" class="pid">7</text>
+    <text x="672" y="335" text-anchor="middle" class="blk v-accent" fill="var(--accent)">A · lb0</text>
+  </g>
+
+
+
+  <g data-anim="5" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#pk-arrow)" opacity="0.9">
+
+    <path class="viz-draw" style="--len:330" d="M454 98 C 510 98, 512 331, 574 331"/>
+
+    <path class="viz-draw" style="--len:160" d="M454 144 C 510 144, 512 121, 574 121"/>
+
+    <path class="viz-draw" style="--len:160" d="M454 190 C 510 190, 512 226, 574 226"/>
+  </g>
+
+
+  <g data-anim="5">
+    <text x="128" y="300" text-anchor="middle" class="note">logical order</text>
+    <text x="128" y="313" text-anchor="middle" class="note">stays contiguous</text>
+    <text x="128" y="350" text-anchor="middle" class="sub">no external fragmentation;</text>
+    <text x="128" y="365" text-anchor="middle" class="sub">scattered blocks, packed pool</text>
+  </g>
+</svg>
+<figcaption><b>The block table decouples logical order from physical placement.</b> Sequence A's three logically-contiguous KV blocks (lb0, lb1, lb2) live in physical blocks 7, 1, 4 — scattered, out of order, and interleaved with sequence B's blocks. Attention follows the per-sequence block table to gather from the right physical block, so fixed-size pages can be packed anywhere in the pool, eliminating external fragmentation.</figcaption>
+</figure>
+
+<figure class="viz" id="fig-paged-kv-logical-physical-mapping">
+<svg viewBox="0 0 940 490" role="img" aria-label="PagedAttention logical-to-physical mapping: sequence A's three contiguous logical KV blocks map via block_table[A]=[7,1,4] to scattered physical blocks 7, 1, 4 in HBM; sequence B's two blocks map via block_table[B]=[3,6] to physical blocks 3 and 6; free blocks 0, 2, 5 are interleaved throughout the pool.">
+
+<defs>
+  <marker id="pkm-arr-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <marker id="pkm-arr-b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#0ea5e9)"/>
+  </marker>
+
+
+  <pattern id="pkm-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    <line x1="0" y1="0" x2="0" y2="6" stroke="var(--border-2,#d1d5db)" stroke-width="1.5" opacity="0.5"/>
+  </pattern>
+</defs>
+
+<style>
+  #fig-paged-kv-logical-physical-mapping text {
+    fill: var(--ink-soft,#374151);
+    font-family: var(--sans,sans-serif);
+  }
+  #fig-paged-kv-logical-physical-mapping .zone-title {
+    font: 600 11px var(--sans,sans-serif);
+    fill: var(--muted,#9ca3af);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  #fig-paged-kv-logical-physical-mapping .seq-caption {
+    font: 400 10px var(--sans,sans-serif);
+    fill: var(--muted,#9ca3af);
+  }
+  #fig-paged-kv-logical-physical-mapping .block-lbl {
+    font: 700 12px var(--mono,monospace);
+    fill: var(--ink-soft,#374151);
+  }
+  #fig-paged-kv-logical-physical-mapping .block-range {
+    font: 400 10px var(--mono,monospace);
+    fill: var(--muted,#9ca3af);
+  }
+  #fig-paged-kv-logical-physical-mapping .btable {
+    font: 400 11px var(--mono,monospace);
+    fill: var(--ink-soft,#374151);
+  }
+  #fig-paged-kv-logical-physical-mapping .btable-num-a {
+    font: 700 11px var(--mono,monospace);
+    fill: var(--accent,#6366f1);
+  }
+  #fig-paged-kv-logical-physical-mapping .btable-num-b {
+    font: 700 11px var(--mono,monospace);
+    fill: var(--accent-2,#0ea5e9);
+  }
+  #fig-paged-kv-logical-physical-mapping .phys-row-lbl {
+    font: 400 10px var(--mono,monospace);
+    fill: var(--muted,#9ca3af);
+  }
+  #fig-paged-kv-logical-physical-mapping .phys-row-content {
+    font: 500 10px var(--mono,monospace);
+  }
+  #fig-paged-kv-logical-physical-mapping .phys-row-free {
+    font: 400 10px var(--mono,monospace);
+    fill: var(--muted,#9ca3af);
+    font-style: italic;
+  }
+  #fig-paged-kv-logical-physical-mapping .maps-to {
+    font: 400 10px var(--sans,sans-serif);
+    fill: var(--muted,#9ca3af);
+  }
+  #fig-paged-kv-logical-physical-mapping .caption-strip {
+    font: 400 9.5px var(--sans,sans-serif);
+    fill: var(--muted,#9ca3af);
+  }
+</style>
+
+
+
+
+<text x="30" y="26" class="zone-title">Logical view — what attention sees</text>
+
+
+<text x="30" y="54" class="seq-caption">sequence A, tokens 0..40</text>
+
+
+<rect x="30" y="62" width="90" height="56" rx="4"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+<text x="75" y="85" text-anchor="middle" class="block-lbl">lb0</text>
+<text x="75" y="101" text-anchor="middle" class="block-range">0-15</text>
+
+
+<rect x="122" y="62" width="90" height="56" rx="4"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+<text x="167" y="85" text-anchor="middle" class="block-lbl">lb1</text>
+<text x="167" y="101" text-anchor="middle" class="block-range">16-31</text>
+
+
+<rect x="214" y="62" width="90" height="56" rx="4"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+
+<clipPath id="pkm-lb2-clip">
+  <rect x="248" y="62" width="56" height="56" rx="4"/>
+</clipPath>
+<rect x="214" y="62" width="90" height="56" rx="4" fill="url(#pkm-hatch)" opacity="0.6" clip-path="url(#pkm-lb2-clip)"/>
+<text x="259" y="85" text-anchor="middle" class="block-lbl">lb2</text>
+<text x="259" y="101" text-anchor="middle" class="block-range">32-40</text>
+
+
+<line x1="120" y1="62" x2="122" y2="62" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+<line x1="120" y1="118" x2="122" y2="118" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+<line x1="212" y1="62" x2="214" y2="62" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+<line x1="212" y1="118" x2="214" y2="118" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+
+
+<text x="30" y="147" class="btable">block_table[A] = [</text>
+<text x="178" y="147" class="btable-num-a">7</text>
+<text x="188" y="147" class="btable">, </text>
+<text x="201" y="147" class="btable-num-a">1</text>
+<text x="211" y="147" class="btable">, </text>
+<text x="224" y="147" class="btable-num-a">4</text>
+<text x="234" y="147" class="btable">]</text>
+
+
+<text x="30" y="296" class="seq-caption">sequence B, tokens 0..20</text>
+
+
+<rect x="30" y="304" width="90" height="56" rx="4"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent-2,#0ea5e9)" stroke-width="1.8"/>
+<text x="75" y="327" text-anchor="middle" class="block-lbl">lb0</text>
+<text x="75" y="343" text-anchor="middle" class="block-range">0-15</text>
+
+
+<rect x="122" y="304" width="90" height="56" rx="4"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent-2,#0ea5e9)" stroke-width="1.8"/>
+
+<clipPath id="pkm-blb1-clip">
+  <rect x="168" y="304" width="44" height="56" rx="4"/>
+</clipPath>
+<rect x="122" y="304" width="90" height="56" rx="4" fill="url(#pkm-hatch)" opacity="0.6" clip-path="url(#pkm-blb1-clip)"/>
+<text x="167" y="327" text-anchor="middle" class="block-lbl">lb1</text>
+<text x="167" y="343" text-anchor="middle" class="block-range">16-20</text>
+
+<line x1="120" y1="304" x2="122" y2="304" stroke="var(--accent-2,#0ea5e9)" stroke-width="1.8"/>
+<line x1="120" y1="360" x2="122" y2="360" stroke="var(--accent-2,#0ea5e9)" stroke-width="1.8"/>
+
+
+<text x="30" y="385" class="btable">block_table[B] = [</text>
+<text x="178" y="385" class="btable-num-b">3</text>
+<text x="188" y="385" class="btable">, </text>
+<text x="201" y="385" class="btable-num-b">6</text>
+<text x="211" y="385" class="btable">]</text>
+
+
+<text x="360" y="198" text-anchor="middle" class="maps-to">maps to</text>
+<line x1="345" y1="204" x2="310" y2="215"
+      stroke="var(--muted,#9ca3af)" stroke-width="0.8" stroke-dasharray="2 2"/>
+
+
+<text x="700" y="26" text-anchor="middle" class="zone-title">Physical KV pool (HBM)</text>
+
+
+
+<text x="443" y="69" class="phys-row-lbl">block 0</text>
+<rect x="505" y="42" width="390" height="44" rx="4"
+      fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2" opacity="0.6"/>
+<text x="520" y="69" class="phys-row-free">(free)</text>
+
+
+<text x="443" y="116" class="phys-row-lbl">block 1</text>
+<rect x="505" y="89" width="390" height="44" rx="4"
+      fill="var(--accent,#6366f1)" fill-opacity="0.18" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="520" y="116" class="phys-row-content" fill="var(--accent,#6366f1)">A logical #1</text>
+
+
+<text x="443" y="163" class="phys-row-lbl">block 2</text>
+<rect x="505" y="136" width="390" height="44" rx="4"
+      fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2" opacity="0.6"/>
+<text x="520" y="163" class="phys-row-free">(free)</text>
+
+
+<text x="443" y="210" class="phys-row-lbl">block 3</text>
+<rect x="505" y="183" width="390" height="44" rx="4"
+      fill="var(--accent-2,#0ea5e9)" fill-opacity="0.18" stroke="var(--accent-2,#0ea5e9)" stroke-width="1.5"/>
+<text x="520" y="210" class="phys-row-content" fill="var(--accent-2,#0ea5e9)">B logical #0</text>
+
+
+<text x="443" y="257" class="phys-row-lbl">block 4</text>
+<rect x="505" y="230" width="390" height="44" rx="4"
+      fill="var(--accent,#6366f1)" fill-opacity="0.18" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="520" y="257" class="phys-row-content" fill="var(--accent,#6366f1)">A logical #2</text>
+
+
+<text x="443" y="304" class="phys-row-lbl">block 5</text>
+<rect x="505" y="277" width="390" height="44" rx="4"
+      fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2" opacity="0.6"/>
+<text x="520" y="304" class="phys-row-free">(free)</text>
+
+
+<text x="443" y="351" class="phys-row-lbl">block 6</text>
+<rect x="505" y="324" width="390" height="44" rx="4"
+      fill="var(--accent-2,#0ea5e9)" fill-opacity="0.18" stroke="var(--accent-2,#0ea5e9)" stroke-width="1.5"/>
+<text x="520" y="351" class="phys-row-content" fill="var(--accent-2,#0ea5e9)">B logical #1</text>
+
+
+<text x="443" y="398" class="phys-row-lbl">block 7</text>
+<rect x="505" y="371" width="390" height="44" rx="4"
+      fill="var(--accent,#6366f1)" fill-opacity="0.18" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="520" y="398" class="phys-row-content" fill="var(--accent,#6366f1)">A logical #0</text>
+
+
+
+<path d="M 120 90 Q 120 170 230 210 Q 340 250 350 393 Q 360 415 505 393"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.6"
+      marker-end="url(#pkm-arr-a)" opacity="0.85"/>
+
+
+<path d="M 212 90 C 360 85 420 105 505 111"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.6"
+      marker-end="url(#pkm-arr-a)" opacity="0.85"/>
+
+
+<path d="M 304 90 C 410 90 420 220 505 252"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.6"
+      marker-end="url(#pkm-arr-a)" opacity="0.85"/>
+
+
+
+<path d="M 120 332 C 320 332 320 205 505 205"
+      fill="none" stroke="var(--accent-2,#0ea5e9)" stroke-width="1.6"
+      marker-end="url(#pkm-arr-b)" opacity="0.85"/>
+
+
+<path d="M 212 332 C 370 332 370 346 505 346"
+      fill="none" stroke="var(--accent-2,#0ea5e9)" stroke-width="1.6"
+      marker-end="url(#pkm-arr-b)" opacity="0.85"/>
+
+
+<text x="470" y="454" text-anchor="middle" class="caption-strip">Logical contiguity (token order) is decoupled from physical contiguity (where bytes sit in HBM);</text>
+<text x="470" y="468" text-anchor="middle" class="caption-strip">the block table is the only indirection the kernel needs.</text>
+
+</svg>
+<figcaption><b>Logical KV blocks map to scattered physical blocks via per-sequence block tables.</b> Sequence A's three contiguous logical blocks (tokens 0-40) live in physical blocks 7, 1, and 4 — scattered and out of order. The deliberate crossing of arrows makes the scattering visible. Sequence B's blocks land in 3 and 6, interleaved with A's. Free blocks (0, 2, 5) can be assigned to any future sequence, eliminating external fragmentation entirely.</figcaption>
+</figure>
+
+<p>Sequence A&rsquo;s three logical blocks live in physical blocks 7, 1, 4 — scattered, out of order, interleaved with B&rsquo;s blocks. Attention does not care, because the block table tells the kernel exactly where to gather from.</p>
+<h2 id="block-tables-the-allocator-copy-on-write">Block Tables, the Allocator &amp; Copy-on-Write<a class="headerlink" href="#block-tables-the-allocator-copy-on-write" title="Permanent link">¶</a></h2>
+<p>Let us build the bookkeeping concretely. The system maintains a global pool of physical KV blocks and a free list. Allocation is per-block, on demand, as sequences grow.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">BlockManager</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Minimal model of vLLM&#39;s paged KV allocator.</span>
+
+<span class="sd">    The physical KV tensors themselves live in two big preallocated</span>
+<span class="sd">    GPU pools (one for K, one for V) shaped roughly</span>
+<span class="sd">        [num_blocks, block_size, num_kv_heads, head_dim].</span>
+<span class="sd">    Here we only track *which* physical block each logical block uses,</span>
+<span class="sd">    plus reference counts to enable copy-on-write sharing.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num_blocks</span><span class="p">,</span> <span class="n">block_size</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span> <span class="o">=</span> <span class="n">block_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">free</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">num_blocks</span><span class="p">))</span>        <span class="c1"># free physical block ids</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>          <span class="c1"># phys_block -&gt; #sequences using it</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">block_tables</span> <span class="o">=</span> <span class="p">{}</span>                     <span class="c1"># seq_id -&gt; [phys_block, ...]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_alloc_block</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">free</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">MemoryError</span><span class="p">(</span><span class="s2">&quot;KV pool exhausted — must preempt a sequence&quot;</span><span class="p">)</span>
+        <span class="n">blk</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">free</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">blk</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">blk</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">allocate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">seq_id</span><span class="p">,</span> <span class="n">num_tokens</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Allocate enough blocks to hold `num_tokens` (e.g. after prefill).&quot;&quot;&quot;</span>
+        <span class="n">n_blocks</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_tokens</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">block_tables</span><span class="p">[</span><span class="n">seq_id</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_alloc_block</span><span class="p">()</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_blocks</span><span class="p">)]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">append_token</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">seq_id</span><span class="p">,</span> <span class="n">cur_len</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Called once per decode step. Allocate a new block only when the</span>
+<span class="sd">        current last block is exactly full — this is the ONLY moment a paged</span>
+<span class="sd">        system touches the allocator during decode.&quot;&quot;&quot;</span>
+        <span class="n">table</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_tables</span><span class="p">[</span><span class="n">seq_id</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">cur_len</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>         <span class="c1"># boundary crossed → new page</span>
+            <span class="n">table</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_alloc_block</span><span class="p">())</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">slot_index</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">seq_id</span><span class="p">,</span> <span class="n">token_pos</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Translate a logical token position to a flat physical slot id,</span>
+<span class="sd">        exactly what the kernel needs to write/read the K,V for that token.&quot;&quot;&quot;</span>
+        <span class="n">table</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_tables</span><span class="p">[</span><span class="n">seq_id</span><span class="p">]</span>
+        <span class="n">phys_block</span> <span class="o">=</span> <span class="n">table</span><span class="p">[</span><span class="n">token_pos</span> <span class="o">//</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span><span class="p">]</span>
+        <span class="n">offset</span> <span class="o">=</span> <span class="n">token_pos</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span>
+        <span class="k">return</span> <span class="n">phys_block</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span> <span class="o">+</span> <span class="n">offset</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">free_seq</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">seq_id</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">blk</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_tables</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">seq_id</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">blk</span><span class="p">]</span> <span class="o">-=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">blk</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>           <span class="c1"># last user → reclaim</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">free</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">blk</span><span class="p">)</span>
+</code></pre></div>
+<p>Three properties fall out immediately:</p>
+<ol>
+<li><strong>No external fragmentation.</strong> Every physical block is identical in size, so any free block satisfies any request. The free list never gets &ldquo;stuck.&rdquo;</li>
+<li><strong>Bounded internal fragmentation.</strong> A sequence wastes at most <span class="arithmatex">\(B-1\)</span> token-slots in its final, partially filled block. With <span class="arithmatex">\(B=16\)</span> and sequences of hundreds of tokens, that is well under a few percent — versus the 60–80% of contiguous allocation.</li>
+<li><strong>On-demand growth.</strong> Blocks are allocated only as the sequence actually reaches them. A request that stops after 30 tokens used 2 blocks, not 128.</li>
+</ol>
+<h3 id="choosing-the-block-size-b">Choosing the block size <span class="arithmatex">\(B\)</span><a class="headerlink" href="#choosing-the-block-size-b" title="Permanent link">¶</a></h3>
+<p><span class="arithmatex">\(B\)</span> trades two things off. <strong>Small <span class="arithmatex">\(B\)</span></strong> (e.g. 1) minimizes internal fragmentation but bloats the block table, adds per-block gather overhead in the kernel, and increases pointer-chasing. <strong>Large <span class="arithmatex">\(B\)</span></strong> (e.g. 128) amortizes kernel overhead and shrinks the table but reintroduces internal fragmentation (up to <span class="arithmatex">\(B-1\)</span> wasted slots) and coarsens sharing granularity. vLLM defaults to <span class="arithmatex">\(B=16\)</span> as a sweet spot for typical head dims; it is a tunable knob, not a law.</p>
+<h3 id="copy-on-write-for-shared-prefixes">Copy-on-write for shared prefixes<a class="headerlink" href="#copy-on-write-for-shared-prefixes" title="Permanent link">¶</a></h3>
+<p>Now the payoff that contiguous allocation simply cannot offer. Suppose many requests share a long system prompt, or you run <strong>parallel sampling</strong> (one prompt, <span class="arithmatex">\(k\)</span> output samples) or <strong>beam search</strong>. The shared prefix&rsquo;s KV is <em>identical</em> across all of them and is <em>read-only</em> once computed. So store it once and have every sequence&rsquo;s block table point at the same physical blocks, bumping the reference count.</p>
+<div class="highlight"><pre><span></span><code>    <span class="k">def</span><span class="w"> </span><span class="nf">fork</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parent_id</span><span class="p">,</span> <span class="n">child_id</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Share ALL of parent&#39;s blocks with a new child (e.g. a new beam</span>
+<span class="sd">        or sample). O(#blocks) pointer copies, zero KV data copied.&quot;&quot;&quot;</span>
+        <span class="n">parent</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_tables</span><span class="p">[</span><span class="n">parent_id</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">block_tables</span><span class="p">[</span><span class="n">child_id</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>   <span class="c1"># copy the table, not the KV</span>
+        <span class="k">for</span> <span class="n">blk</span> <span class="ow">in</span> <span class="n">parent</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">blk</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>                  <span class="c1"># now shared</span>
+</code></pre></div>
+<p>Sharing works perfectly until a shared sequence needs to <strong>write</strong> into a block that someone else also references — i.e. two samples diverge and the next token must be appended to a block whose <code>ref_count &gt; 1</code>. We cannot mutate a block another sequence depends on. The classic OS answer applies: <strong>copy-on-write (COW)</strong>. Copy the contested block to a fresh physical block, redirect <em>this</em> sequence&rsquo;s table entry, decrement the original&rsquo;s ref count, then write.</p>
+<div class="highlight"><pre><span></span><code>    <span class="k">def</span><span class="w"> </span><span class="nf">cow_append</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">seq_id</span><span class="p">,</span> <span class="n">logical_block_idx</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Ensure seq_id privately owns the given logical block before writing.</span>
+<span class="sd">        Returns (src_phys, dst_phys): if they differ, the kernel must copy</span>
+<span class="sd">        block contents src→dst before the new token&#39;s K,V is written.&quot;&quot;&quot;</span>
+        <span class="n">table</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_tables</span><span class="p">[</span><span class="n">seq_id</span><span class="p">]</span>
+        <span class="n">phys</span> <span class="o">=</span> <span class="n">table</span><span class="p">[</span><span class="n">logical_block_idx</span><span class="p">]</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">phys</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">phys</span><span class="p">,</span> <span class="n">phys</span>                         <span class="c1"># privately owned: write in place</span>
+        <span class="c1"># shared → copy on write</span>
+        <span class="n">new_phys</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_alloc_block</span><span class="p">()</span>                <span class="c1"># ref_count[new_phys] = 1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">phys</span><span class="p">]</span> <span class="o">-=</span> <span class="mi">1</span>                      <span class="c1"># we leave the shared block</span>
+        <span class="n">table</span><span class="p">[</span><span class="n">logical_block_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">new_phys</span>
+        <span class="k">return</span> <span class="n">phys</span><span class="p">,</span> <span class="n">new_phys</span>                          <span class="c1"># kernel copies src→dst, then writes</span>
+</code></pre></div>
+<p>Crucially, COW happens <strong>per block, not per sequence</strong>. Two diverging beam-search candidates that shared 200 prefix blocks copy only the <em>one</em> block where they first differ; the other 199 stay shared. For wide beams or large <span class="arithmatex">\(k\)</span>-sampling over long prompts, this is the difference between <span class="arithmatex">\(O(k \cdot s)\)</span> and <span class="arithmatex">\(O(s + k \cdot B)\)</span> memory. This same machinery generalizes to cross-request <strong>prefix caching</strong>, the subject of <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>; SGLang pushes it further with a radix tree in <a href="../07-inference-serving/04-sglang-radixattention.html">SGLang: RadixAttention &amp; Structured Programs</a>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: parallel sampling savings</p>
+<p>Prompt = 1000 tokens, generate <span class="arithmatex">\(k=8\)</span> samples of 200 tokens each, Llama-2-70B GQA (<span class="arithmatex">\(\beta \approx 0.3125\)</span> MiB/token), block size 16.</p>
+<p><strong>Contiguous (no sharing):</strong> each sample stores prompt + output = 1200 tokens.
+Total <span class="arithmatex">\(= 8 \times 1200 \times 0.3125 = 3000\)</span> MiB <span class="arithmatex">\(\approx 2.93\)</span> GiB.</p>
+<p><strong>Paged + COW:</strong> the 1000-token prompt is stored <em>once</em> (<span class="arithmatex">\(\lceil 1000/16\rceil = 63\)</span> blocks), shared by all 8 samples. Each sample privately stores its 200 output tokens (<span class="arithmatex">\(\lceil 200/16\rceil = 13\)</span> blocks). Total blocks <span class="arithmatex">\(= 63 + 8\times 13 = 167\)</span> blocks <span class="arithmatex">\(\times 16 \times 0.3125 = 835\)</span> MiB <span class="arithmatex">\(\approx 0.82\)</span> GiB.</p>
+<p>A <strong>3.6× reduction</strong>, from sharing the prompt KV. That freed memory becomes more concurrent requests — i.e. more throughput.</p>
+</div>
+<h2 id="the-pagedattention-kernel">The PagedAttention Kernel<a class="headerlink" href="#the-pagedattention-kernel" title="Permanent link">¶</a></h2>
+<p>The bookkeeping is only useful if the attention kernel can <em>read</em> a logically-contiguous sequence whose K/V physically lives in scattered blocks. A standard attention kernel — including <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention</a> — assumes K and V are contiguous tensors it can stride through linearly. PagedAttention modifies the kernel to consult the <strong>block table</strong> and gather block-by-block.</p>
+<p>The decode-time attention for one query token against a length-<span class="arithmatex">\(s\)</span> cache is, conceptually:</p>
+<div class="arithmatex">\[
+\mathbf{o} = \sum_{j=1}^{s} \frac{\exp\!\big(\mathbf{q}^\top \mathbf{k}_j / \sqrt{d_h}\big)}{\sum_{j'} \exp\!\big(\mathbf{q}^\top \mathbf{k}_{j'}/\sqrt{d_h}\big)}\, \mathbf{v}_j
+\]</div>
+<p>The kernel computes this in a numerically stable <strong>online softmax</strong> (running max + running denominator, exactly the FlashAttention trick from <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I</a>), but instead of one contiguous K/V tensor, it iterates over the sequence&rsquo;s <em>physical</em> blocks. For each logical block it reads the physical block id from the block table, loads that block&rsquo;s <span class="arithmatex">\(B\)</span> keys and values from the global pool, and accumulates. The block table is the indirection layer; the math is unchanged.</p>
+<p>Here is a faithful, from-scratch reference implementation in PyTorch. It is <em>slow</em> (a real kernel is a fused CUDA/Triton kernel — see <a href="../04-kernels-efficiency/04-triton-kernels.html">Writing GPU Kernels with Triton</a> and <a href="../04-kernels-efficiency/05-cuda-essentials.html">CUDA Programming Essentials for ML Engineers</a>) but it is exact and shows precisely where the block table enters.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">paged_attention_decode</span><span class="p">(</span><span class="n">query</span><span class="p">,</span>            <span class="c1"># [num_heads, head_dim]  (one new token)</span>
+                           <span class="n">k_pool</span><span class="p">,</span> <span class="n">v_pool</span><span class="p">,</span>    <span class="c1"># [num_blocks, block_size, num_kv_heads, head_dim]</span>
+                           <span class="n">block_table</span><span class="p">,</span>       <span class="c1"># list[int]: logical -&gt; physical block id</span>
+                           <span class="n">context_len</span><span class="p">,</span>       <span class="c1"># number of valid cached tokens</span>
+                           <span class="n">block_size</span><span class="p">,</span>
+                           <span class="n">num_queries_per_kv</span><span class="p">):</span>  <span class="c1"># GQA group size (query heads per kv head)</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single-query paged attention with online (streaming) softmax.</span>
+
+<span class="sd">    Demonstrates the ONE structural difference from a normal attention kernel:</span>
+<span class="sd">    K and V are fetched block-by-block via `block_table` instead of being</span>
+<span class="sd">    read from a single contiguous tensor. Everything else — the scaled</span>
+<span class="sd">    dot-product, the numerically-stable streaming softmax — is standard.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">num_heads</span><span class="p">,</span> <span class="n">head_dim</span> <span class="o">=</span> <span class="n">query</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">head_dim</span><span class="p">)</span>
+
+    <span class="n">out</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>                          <span class="c1"># [H, d]</span>
+    <span class="n">m</span>    <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">num_heads</span><span class="p">,),</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">))</span>          <span class="c1"># running max of logits</span>
+    <span class="n">l</span>    <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_heads</span><span class="p">)</span>                           <span class="c1"># running softmax denominator</span>
+
+    <span class="n">num_logical_blocks</span> <span class="o">=</span> <span class="p">(</span><span class="n">context_len</span> <span class="o">+</span> <span class="n">block_size</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="n">block_size</span>
+    <span class="k">for</span> <span class="n">lb</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_logical_blocks</span><span class="p">):</span>
+        <span class="n">phys</span> <span class="o">=</span> <span class="n">block_table</span><span class="p">[</span><span class="n">lb</span><span class="p">]</span>                              <span class="c1"># &lt;-- INDIRECTION</span>
+        <span class="c1"># how many tokens of this block are valid (last block may be partial)</span>
+        <span class="n">start</span> <span class="o">=</span> <span class="n">lb</span> <span class="o">*</span> <span class="n">block_size</span>
+        <span class="n">valid</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">block_size</span><span class="p">,</span> <span class="n">context_len</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span>
+
+        <span class="c1"># gather this physical block&#39;s K,V; map GQA query head -&gt; its kv head</span>
+        <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">valid</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_heads</span><span class="p">):</span>
+                <span class="n">kv_h</span> <span class="o">=</span> <span class="n">h</span> <span class="o">//</span> <span class="n">num_queries_per_kv</span>              <span class="c1"># GQA head mapping</span>
+                <span class="n">k</span> <span class="o">=</span> <span class="n">k_pool</span><span class="p">[</span><span class="n">phys</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">kv_h</span><span class="p">]</span>                   <span class="c1"># [d]</span>
+                <span class="n">v</span> <span class="o">=</span> <span class="n">v_pool</span><span class="p">[</span><span class="n">phys</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">kv_h</span><span class="p">]</span>                   <span class="c1"># [d]</span>
+                <span class="n">logit</span> <span class="o">=</span> <span class="n">scale</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">query</span><span class="p">[</span><span class="n">h</span><span class="p">],</span> <span class="n">k</span><span class="p">)</span>      <span class="c1"># scalar</span>
+
+                <span class="c1"># --- online softmax update (FlashAttention-style) ---</span>
+                <span class="n">m_new</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">m</span><span class="p">[</span><span class="n">h</span><span class="p">],</span> <span class="n">logit</span><span class="p">)</span>
+                <span class="c1"># rescale the existing accumulator to the new max</span>
+                <span class="n">alpha</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">m</span><span class="p">[</span><span class="n">h</span><span class="p">]</span> <span class="o">-</span> <span class="n">m_new</span><span class="p">)</span>
+                <span class="n">p</span>     <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">logit</span> <span class="o">-</span> <span class="n">m_new</span><span class="p">)</span>
+                <span class="n">l</span><span class="p">[</span><span class="n">h</span><span class="p">]</span>  <span class="o">=</span> <span class="n">l</span><span class="p">[</span><span class="n">h</span><span class="p">]</span> <span class="o">*</span> <span class="n">alpha</span> <span class="o">+</span> <span class="n">p</span>
+                <span class="n">out</span><span class="p">[</span><span class="n">h</span><span class="p">]</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="n">h</span><span class="p">]</span> <span class="o">*</span> <span class="n">alpha</span> <span class="o">+</span> <span class="n">p</span> <span class="o">*</span> <span class="n">v</span>
+                <span class="n">m</span><span class="p">[</span><span class="n">h</span><span class="p">]</span>  <span class="o">=</span> <span class="n">m_new</span>
+
+    <span class="k">return</span> <span class="n">out</span> <span class="o">/</span> <span class="n">l</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>                            <span class="c1"># normalize by denominator</span>
+</code></pre></div>
+<p>The inner triple loop is purely illustrative; a production kernel assigns one thread block (CUDA cooperative thread array) per (sequence, KV-head), loads each physical KV block into shared memory / registers, does the dot products with vectorized loads, and reduces with warp shuffles. But the <em>only</em> algorithmic novelty over FlashAttention is the line <code>phys = block_table[lb]</code>: a gather through the page table before each block load.</p>
+<h3 id="performance-considerations">Performance considerations<a class="headerlink" href="#performance-considerations" title="Permanent link">¶</a></h3>
+<p>The indirection is not free, but it is cheap:</p>
+<ul>
+<li><strong>Extra memory traffic</strong> is one small block-table read per block — negligible against loading the block&rsquo;s <span class="arithmatex">\(B \times H_{kv} \times d_h\)</span> KV elements.</li>
+<li><strong>Non-contiguous reads</strong> are the real cost: scattered physical blocks defeat large coalesced loads and prefetchers. PagedAttention mitigates this by keeping a <em>whole block</em> contiguous (so within a block, loads are coalesced) and by choosing <span class="arithmatex">\(B\)</span> large enough (16+) to amortize the per-block setup.</li>
+<li>The vLLM authors report the paged kernel runs within a small percentage of a perfectly-contiguous FlashAttention kernel — a tiny per-step tax that is <em>overwhelmingly</em> repaid by the larger batch sizes the freed memory enables.</li>
+</ul>
+<p>A further refinement, <strong>PagedAttention v2</strong> (in vLLM) and related work, splits very long sequences across multiple thread blocks (a &ldquo;split-K&rdquo;-style reduction over the sequence dimension) so a single long request does not serialize on one streaming multiprocessor — important when concurrency is low but contexts are long.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: gpu_memory_utilization and preemption</p>
+<p>In vLLM, <code>gpu_memory_utilization</code> (default ~0.9) sets the fraction of HBM carved out for the <em>combined</em> weights + KV pool. The number of physical KV blocks is computed from whatever is left after weights and activation scratch. Set it too low and you starve the batch (low throughput); too high and you risk OOM from activation spikes during prefill. When the pool is exhausted mid-decode, vLLM <strong>preempts</strong> a running sequence — either <em>recomputing</em> its KV later (cheap if short) or <em>swapping</em> its blocks to CPU RAM (cheap if long) — and resumes it when blocks free up. Preemption is the paged analogue of OS swapping; watch for it in logs as a signal you are memory-bound and should lower concurrency or shorten <code>max_model_len</code>.</p>
+</div>
+<h2 id="how-paging-unlocks-high-throughput-serving">How Paging Unlocks High-Throughput Serving<a class="headerlink" href="#how-paging-unlocks-high-throughput-serving" title="Permanent link">¶</a></h2>
+<p>Paging is not just a memory optimization in isolation; it is the substrate that makes the rest of modern serving work.</p>
+<p><strong>It enables large, dynamic batches.</strong> Because each sequence grows block-by-block and reclaims blocks on completion, the system can pack many sequences into the freed space. This is the storage layer beneath <strong>continuous batching</strong> (also called in-flight batching), where finished sequences are evicted from the running batch and new ones admitted every step rather than waiting for the whole batch to finish — see <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>. Continuous batching needs to add and remove sequences at <em>token</em> granularity; only a block allocator can give back a finished sequence&rsquo;s memory cheaply enough for that to pay off.</p>
+<p><strong>It enables prefix sharing at scale.</strong> COW blocks let a fixed system prompt, a RAG context, or a few-shot template be stored once and reused across thousands of requests, slashing both memory and prefill compute (the shared prefix need not be recomputed). This is the foundation of <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>.</p>
+<p><strong>It raises effective throughput several-fold.</strong> The vLLM paper reports <span class="arithmatex">\(2\text{--}4\times\)</span> higher throughput than prior contiguous-allocation systems at the same latency, precisely because the recovered memory becomes more concurrent sequences in the memory-bound decode regime.</p>
+<figure class="viz" id="fig-paged-kv-hbm-contiguous-vs-paged">
+<svg viewBox="0 0 860 520" role="img" aria-label="Side-by-side HBM memory occupancy comparison: contiguous allocation on the left with internal fragmentation tails and an external fragmentation hole yielding roughly 20-40% useful KV; PagedAttention on the right with a dense grid of uniform blocks from many interleaved sequences yielding over 90% useful KV and a bigger batch.">
+  <defs>
+    <pattern id="hbm-hatch" x="0" y="0" width="8" height="8" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="8" x2="8" y2="0" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" opacity="0.55"/>
+    </pattern>
+    <marker id="hbm-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#64748b)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-paged-kv-hbm-contiguous-vs-paged .col-hdr  { font: 700 14px var(--sans,sans-serif); }
+    #fig-paged-kv-hbm-contiguous-vs-paged .band-lbl { font: 600 11px var(--sans,sans-serif); }
+    #fig-paged-kv-hbm-contiguous-vs-paged .sm-lbl   { font: 400 10px var(--sans,sans-serif); }
+    #fig-paged-kv-hbm-contiguous-vs-paged .block-lbl{ font: 700 10px var(--sans,sans-serif); }
+    #fig-paged-kv-hbm-contiguous-vs-paged .foot-lbl { font: 700 12px var(--sans,sans-serif); }
+    #fig-paged-kv-hbm-contiguous-vs-paged .leg-lbl  { font: 400 10px var(--sans,sans-serif); }
+    #fig-paged-kv-hbm-contiguous-vs-paged text      { fill: var(--ink-soft,#374151); }
+  </style>
+
+
+  <text x="215" y="28" text-anchor="middle" class="col-hdr">Contiguous Allocation</text>
+  <text x="645" y="28" text-anchor="middle" class="col-hdr">PagedAttention</text>
+
+
+  <rect x="45" y="38" width="340" height="377" rx="8" fill="none" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="55" y="53" class="sm-lbl" fill="var(--muted,#94a3b8)">HBM</text>
+
+
+  <rect x="45" y="38" width="340" height="75" rx="8" fill="var(--surface-3,#e2e8f0)" stroke="none"/>
+  <rect x="45" y="86" width="340" height="27" fill="var(--surface-3,#e2e8f0)" stroke="none"/>
+  <text x="215" y="82" text-anchor="middle" class="band-lbl">weights</text>
+  <line x1="45" y1="113" x2="385" y2="113" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+
+
+  <rect x="45"  y="113" width="187" height="46" fill="var(--accent,#4f7cff)" stroke="none"/>
+  <rect x="232" y="113" width="153" height="46" fill="url(#hbm-hatch)" stroke="none"/>
+  <text x="125" y="140" text-anchor="middle" class="band-lbl" fill="#ffffff">seq A used</text>
+  <text x="308" y="140" text-anchor="middle" class="sm-lbl">reserved</text>
+
+
+  <rect x="45"  y="159" width="153" height="46" fill="var(--accent,#4f7cff)" stroke="none" fill-opacity="0.85"/>
+  <rect x="198" y="159" width="187" height="46" fill="url(#hbm-hatch)" stroke="none"/>
+  <text x="121" y="186" text-anchor="middle" class="band-lbl" fill="#ffffff">seq B used</text>
+  <text x="291" y="186" text-anchor="middle" class="sm-lbl">reserved</text>
+
+
+  <rect x="45" y="205" width="340" height="48" fill="var(--warn,#e0a106)" fill-opacity="0.28" stroke="none"/>
+  <text x="215" y="225" text-anchor="middle" class="sm-lbl">external frag hole</text>
+  <text x="215" y="239" text-anchor="middle" class="sm-lbl">(free but unusable: no contiguous fit)</text>
+
+
+  <rect x="45"  y="253" width="136" height="46" fill="var(--accent,#4f7cff)" stroke="none" fill-opacity="0.75"/>
+  <rect x="181" y="253" width="204" height="46" fill="url(#hbm-hatch)" stroke="none"/>
+  <text x="113" y="280" text-anchor="middle" class="band-lbl" fill="#ffffff">seq C used</text>
+  <text x="283" y="280" text-anchor="middle" class="sm-lbl">reserved</text>
+
+
+  <rect x="45" y="299" width="340" height="116" fill="url(#hbm-hatch)" fill-opacity="0.6" stroke="none"/>
+  <text x="215" y="362" text-anchor="middle" class="sm-lbl" fill="var(--muted,#94a3b8)">reserved / holes</text>
+
+
+  <text x="215" y="440" text-anchor="middle" class="foot-lbl" fill="var(--muted,#94a3b8)">~20-40% useful KV</text>
+
+
+  <line x1="400" y1="228" x2="456" y2="228" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#hbm-arrow)"/>
+  <text x="428" y="218" text-anchor="middle" class="sm-lbl" fill="var(--muted,#94a3b8)">paging</text>
+
+
+  <rect x="475" y="38" width="340" height="377" rx="8" fill="none" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="485" y="53" class="sm-lbl" fill="var(--muted,#94a3b8)">HBM</text>
+
+
+  <rect x="475" y="38" width="340" height="75" rx="8" fill="var(--surface-3,#e2e8f0)" stroke="none"/>
+  <rect x="475" y="86" width="340" height="27" fill="var(--surface-3,#e2e8f0)" stroke="none"/>
+  <text x="645" y="82" text-anchor="middle" class="band-lbl">weights</text>
+  <line x1="475" y1="113" x2="815" y2="113" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+
+
+
+
+
+  <rect x="480" y="117" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="498" y="134" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="520" y="117" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="538" y="134" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="560" y="117" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="578" y="134" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="600" y="117" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="618" y="134" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="640" y="117" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="658" y="134" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="680" y="117" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="698" y="134" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="720" y="117" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="738" y="134" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="760" y="117" width="36" height="26" rx="3" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+  <text x="778" y="134" text-anchor="middle" class="block-lbl" fill="var(--muted,#94a3b8)">free</text>
+
+
+  <rect x="480" y="147" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="498" y="164" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="520" y="147" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="538" y="164" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="560" y="147" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="578" y="164" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="600" y="147" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="618" y="164" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="640" y="147" width="36" height="26" rx="3" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+  <text x="658" y="164" text-anchor="middle" class="block-lbl" fill="var(--muted,#94a3b8)">free</text>
+  <rect x="680" y="147" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="698" y="164" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="720" y="147" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="738" y="164" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="760" y="147" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="778" y="164" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+
+
+  <rect x="480" y="177" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="498" y="194" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="520" y="177" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="538" y="194" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="560" y="177" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="578" y="194" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="600" y="177" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="618" y="194" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="640" y="177" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="658" y="194" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="680" y="177" width="36" height="26" rx="3" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+  <text x="698" y="194" text-anchor="middle" class="block-lbl" fill="var(--muted,#94a3b8)">free</text>
+  <rect x="720" y="177" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="738" y="194" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="760" y="177" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="778" y="194" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+
+
+  <rect x="480" y="207" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="498" y="224" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="520" y="207" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="538" y="224" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="560" y="207" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="578" y="224" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="600" y="207" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="618" y="224" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="640" y="207" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="658" y="224" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="680" y="207" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="698" y="224" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="720" y="207" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="738" y="224" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="760" y="207" width="36" height="26" rx="3" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+  <text x="778" y="224" text-anchor="middle" class="block-lbl" fill="var(--muted,#94a3b8)">free</text>
+
+
+  <rect x="480" y="237" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="498" y="254" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="520" y="237" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="538" y="254" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="560" y="237" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="578" y="254" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="600" y="237" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="618" y="254" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="640" y="237" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="658" y="254" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="680" y="237" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="698" y="254" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="720" y="237" width="36" height="26" rx="3" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+  <text x="738" y="254" text-anchor="middle" class="block-lbl" fill="var(--muted,#94a3b8)">free</text>
+  <rect x="760" y="237" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="778" y="254" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+
+
+  <rect x="480" y="267" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="498" y="284" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="520" y="267" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="538" y="284" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="560" y="267" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="578" y="284" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="600" y="267" width="36" height="26" rx="3" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+  <text x="618" y="284" text-anchor="middle" class="block-lbl" fill="var(--muted,#94a3b8)">free</text>
+  <rect x="640" y="267" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="658" y="284" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="680" y="267" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="698" y="284" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="720" y="267" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="738" y="284" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="760" y="267" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="778" y="284" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+
+
+  <rect x="480" y="297" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="498" y="314" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="520" y="297" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="538" y="314" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="560" y="297" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="578" y="314" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="600" y="297" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="618" y="314" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="640" y="297" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="658" y="314" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="680" y="297" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="698" y="314" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="720" y="297" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="738" y="314" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="760" y="297" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="778" y="314" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+
+
+  <rect x="480" y="327" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="498" y="344" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="520" y="327" width="36" height="26" rx="3" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+  <text x="538" y="344" text-anchor="middle" class="block-lbl" fill="var(--muted,#94a3b8)">free</text>
+  <rect x="560" y="327" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="578" y="344" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="600" y="327" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="618" y="344" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="640" y="327" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="658" y="344" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="680" y="327" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="698" y="344" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="720" y="327" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="738" y="344" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="760" y="327" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="778" y="344" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+
+
+  <rect x="480" y="357" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="498" y="374" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="520" y="357" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="538" y="374" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="560" y="357" width="36" height="26" rx="3" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+  <text x="578" y="374" text-anchor="middle" class="block-lbl" fill="var(--muted,#94a3b8)">free</text>
+  <rect x="600" y="357" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="618" y="374" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+  <rect x="640" y="357" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.65"/>
+  <text x="658" y="374" text-anchor="middle" class="block-lbl" fill="#ffffff">C</text>
+  <rect x="680" y="357" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.55"/>
+  <text x="698" y="374" text-anchor="middle" class="block-lbl" fill="#ffffff">D</text>
+  <rect x="720" y="357" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="1.0"/>
+  <text x="738" y="374" text-anchor="middle" class="block-lbl" fill="#ffffff">A</text>
+  <rect x="760" y="357" width="36" height="26" rx="3" fill="var(--accent,#4f7cff)" fill-opacity="0.8"/>
+  <text x="778" y="374" text-anchor="middle" class="block-lbl" fill="#ffffff">B</text>
+
+
+  <text x="645" y="422" text-anchor="middle" class="sm-lbl" fill="var(--muted,#94a3b8)" font-style="italic">any free block reusable by any sequence</text>
+
+
+  <text x="215" y="442" text-anchor="middle" class="foot-lbl" fill="var(--muted,#94a3b8)">~20-40% useful KV</text>
+  <text x="645" y="442" text-anchor="middle" class="foot-lbl" fill="var(--accent,#4f7cff)">&gt;90% useful KV - bigger batch</text>
+
+
+  <g transform="translate(28,470)">
+    <rect x="0"   y="0" width="13" height="12" rx="2" fill="var(--accent,#4f7cff)"/>
+    <text x="18"  y="11" class="leg-lbl">useful KV (token state)</text>
+    <rect x="178" y="0" width="13" height="12" rx="2" fill="url(#hbm-hatch)" stroke="var(--border-2,#94a3b8)" stroke-width="0.8"/>
+    <text x="196" y="11" class="leg-lbl">reserved-but-empty (internal frag)</text>
+    <rect x="432" y="0" width="13" height="12" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.35" stroke="var(--border-2,#94a3b8)" stroke-width="0.8"/>
+    <text x="450" y="11" class="leg-lbl">external frag hole</text>
+    <rect x="602" y="0" width="13" height="12" rx="2" fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="0.8"/>
+    <text x="620" y="11" class="leg-lbl">free block</text>
+  </g>
+</svg>
+<figcaption><b>PagedAttention reclaims 60-80% of wasted KV memory by replacing contiguous per-request slabs with a shared pool of fixed-size blocks.</b> The left column shows how contiguous allocation loses memory three ways: internal fragmentation (reserved-but-empty tails on each sequence), an external fragmentation hole (free space too scattered for any contiguous request), and the inability to share data. The right column shows PagedAttention packing many interleaved sequences into uniform blocks -- any free block is immediately reusable by any sequence -- raising useful KV from 20-40% to over 90% and enabling proportionally larger batches and higher throughput.</figcaption>
+</figure>
+
+<p>The lesson generalizes well beyond vLLM: <strong>TensorRT-LLM</strong>, <strong>TGI</strong>, and <strong>SGLang</strong> all adopted paged KV management (see <a href="../07-inference-serving/05-trtllm-tgi-stacks.html">TensorRT-LLM, TGI &amp; Other Serving Stacks</a>). It composes with <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">quantizing the KV cache</a> to fp8/int8 (halving <span class="arithmatex">\(b\)</span> in the size formula, doubling block capacity), with <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">chunked prefill</a>, and with <a href="../07-inference-serving/11-multi-gpu-inference.html">multi-GPU inference</a> where each tensor-parallel rank pages its shard of the KV cache independently.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A teammate says &ldquo;FlashAttention already made attention memory-efficient, so why does vLLM need PagedAttention?&rdquo; How do you respond?</p>
+<p><strong>A:</strong> They solve different problems at different layers. FlashAttention is a <em>compute-kernel</em> optimization: it avoids materializing the <span class="arithmatex">\(s \times s\)</span> attention score matrix in HBM by tiling and using an online softmax, reducing the memory <em>of a single attention computation</em> from <span class="arithmatex">\(O(s^2)\)</span> to <span class="arithmatex">\(O(s)\)</span> and cutting HBM traffic. PagedAttention is a <em>memory-allocator</em> optimization for the <em>KV cache that persists across decode steps</em>. FlashAttention does nothing about the fact that a naive server reserves a contiguous <code>max_len</code> slab per request and so wastes 60–80% of KV memory to internal/external fragmentation and cannot share prefixes. PagedAttention stores the KV cache in fixed-size, non-contiguous blocks with a per-sequence block table — eliminating external fragmentation, bounding internal fragmentation to under one block, and enabling copy-on-write prefix sharing. The two are complementary: vLLM&rsquo;s kernel uses FlashAttention-style online softmax <em>and</em> paged block gathering. The win is throughput: recovered KV memory means larger decode batches, which is what matters because decode is memory-bandwidth-bound.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Aside: why blocks and not a slab-allocated free list of arbitrary sizes?</p>
+<p>One could imagine a general <code>malloc</code>-style allocator with arbitrary-size KV regions and compaction. Fixed-size blocks are deliberately simpler: uniform size makes allocation <span class="arithmatex">\(O(1)\)</span> (pop the free list), makes any free block fungible (no best-fit search, no compaction passes), makes the kernel&rsquo;s address arithmetic trivial (<code>block * B + offset</code>), and makes reference counting / COW clean at a single granularity. It is the same reason OSes use fixed page frames rather than variable-size segments. Uniformity buys simplicity and predictable performance.</p>
+</div>
+<h2 id="putting-it-together-a-minimal-paged-serving-loop">Putting It Together: A Minimal Paged Serving Loop<a class="headerlink" href="#putting-it-together-a-minimal-paged-serving-loop" title="Permanent link">¶</a></h2>
+<p>To cement the mechanics, here is a skeletal decode loop that ties the allocator, the slot mapping, and the kernel together for a small batch — the shape of what a paged engine does every step.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">serve_step</span><span class="p">(</span><span class="n">seqs</span><span class="p">,</span> <span class="n">block_mgr</span><span class="p">,</span> <span class="n">k_pool</span><span class="p">,</span> <span class="n">v_pool</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">block_size</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One decode step over a dynamic batch of sequences.</span>
+
+<span class="sd">    `seqs`: dict seq_id -&gt; {&quot;tokens&quot;: [...], &quot;len&quot;: int}</span>
+<span class="sd">    Each step: (1) run the model to get this token&#39;s q,k,v per layer,</span>
+<span class="sd">    (2) write k,v into the paged pool at the right slot,</span>
+<span class="sd">    (3) attend over the sequence&#39;s blocks, (4) sample next token,</span>
+<span class="sd">    (5) grow the block table if we crossed a block boundary.</span>
+<span class="sd">    Sequences that emit EOS are freed, returning their blocks to the pool.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">finished</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">seq_id</span><span class="p">,</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">seqs</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">cur_len</span> <span class="o">=</span> <span class="n">s</span><span class="p">[</span><span class="s2">&quot;len&quot;</span><span class="p">]</span>
+
+        <span class="c1"># --- 1 &amp; 2: compute and write this token&#39;s K,V into its physical slot</span>
+        <span class="c1"># (in a real engine, q/k/v come from the model forward; mocked here)</span>
+        <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">qkv</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="s2">&quot;tokens&quot;</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>            <span class="c1"># per-layer tensors elided</span>
+        <span class="n">slot</span> <span class="o">=</span> <span class="n">block_mgr</span><span class="o">.</span><span class="n">slot_index</span><span class="p">(</span><span class="n">seq_id</span><span class="p">,</span> <span class="n">cur_len</span><span class="p">)</span>    <span class="c1"># logical pos -&gt; physical slot</span>
+        <span class="n">phys_block</span><span class="p">,</span> <span class="n">off</span> <span class="o">=</span> <span class="nb">divmod</span><span class="p">(</span><span class="n">slot</span><span class="p">,</span> <span class="n">block_size</span><span class="p">)</span>
+        <span class="n">k_pool</span><span class="p">[</span><span class="n">phys_block</span><span class="p">,</span> <span class="n">off</span><span class="p">]</span> <span class="o">=</span> <span class="n">k</span>
+        <span class="n">v_pool</span><span class="p">[</span><span class="n">phys_block</span><span class="p">,</span> <span class="n">off</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span>
+
+        <span class="c1"># --- 3: paged attention over all cached tokens (uses the block table)</span>
+        <span class="n">table</span> <span class="o">=</span> <span class="n">block_mgr</span><span class="o">.</span><span class="n">block_tables</span><span class="p">[</span><span class="n">seq_id</span><span class="p">]</span>
+        <span class="n">attn_out</span> <span class="o">=</span> <span class="n">paged_attention_decode</span><span class="p">(</span>
+            <span class="n">q</span><span class="p">,</span> <span class="n">k_pool</span><span class="p">,</span> <span class="n">v_pool</span><span class="p">,</span> <span class="n">table</span><span class="p">,</span> <span class="n">cur_len</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>
+            <span class="n">block_size</span><span class="p">,</span> <span class="n">num_queries_per_kv</span><span class="o">=</span><span class="n">model</span><span class="o">.</span><span class="n">gqa_group</span><span class="p">)</span>
+
+        <span class="c1"># --- 4: project + sample the next token</span>
+        <span class="n">next_tok</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">attn_out</span><span class="p">)</span>
+        <span class="n">s</span><span class="p">[</span><span class="s2">&quot;tokens&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">next_tok</span><span class="p">)</span>
+        <span class="n">s</span><span class="p">[</span><span class="s2">&quot;len&quot;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+        <span class="c1"># --- 5: grow KV blocks on demand iff we just filled the last block</span>
+        <span class="n">block_mgr</span><span class="o">.</span><span class="n">append_token</span><span class="p">(</span><span class="n">seq_id</span><span class="p">,</span> <span class="n">s</span><span class="p">[</span><span class="s2">&quot;len&quot;</span><span class="p">])</span>
+
+        <span class="k">if</span> <span class="n">next_tok</span> <span class="o">==</span> <span class="n">model</span><span class="o">.</span><span class="n">eos_id</span><span class="p">:</span>
+            <span class="n">finished</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">seq_id</span><span class="p">)</span>
+
+    <span class="c1"># reclaim memory immediately so admitted requests can reuse it THIS step</span>
+    <span class="k">for</span> <span class="n">seq_id</span> <span class="ow">in</span> <span class="n">finished</span><span class="p">:</span>
+        <span class="n">block_mgr</span><span class="o">.</span><span class="n">free_seq</span><span class="p">(</span><span class="n">seq_id</span><span class="p">)</span>                       <span class="c1"># blocks return to free list</span>
+        <span class="k">del</span> <span class="n">seqs</span><span class="p">[</span><span class="n">seq_id</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">finished</span>
+</code></pre></div>
+<p>Notice the rhythm: the allocator is touched at most once per sequence per step (and usually <em>not at all</em> — only on a <span class="arithmatex">\(B\)</span>-token boundary), the kernel always reads through the block table, and freed sequences return blocks to the pool instantly. That instant reclamation is what lets a scheduler admit a fresh request into the gap the same step a sequence finishes — the union of paging and continuous batching that defines modern high-throughput serving.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The <strong>KV cache</strong> stores per-layer keys and values to avoid <span class="arithmatex">\(O(n^2)\)</span> recomputation; its size is <span class="arithmatex">\(2 \cdot L \cdot H_{kv} \cdot d_h \cdot s \cdot b\)</span> bytes — linear in tokens, and it often rivals the model weights. KV memory, not FLOPs, is the binding constraint on concurrency and context length during decode.</li>
+<li><strong>GQA/MQA</strong> shrink the KV cache by reducing <span class="arithmatex">\(H_{kv}\)</span>; this is a serving decision as much as a modeling one.</li>
+<li>Naive <strong>contiguous, max-length</strong> allocation wastes 60–80% of KV memory through internal fragmentation (worst-case reservation), external fragmentation (holes between allocations), and the inability to share identical prefixes.</li>
+<li><strong>PagedAttention</strong> applies OS virtual-memory paging: split the KV cache into fixed-size <strong>blocks</strong> (<span class="arithmatex">\(B \approx 16\)</span> tokens), store them anywhere in a pool, and map logical → physical via a per-sequence <strong>block table</strong>. This eliminates external fragmentation and bounds internal fragmentation to under one block.</li>
+<li><strong>Copy-on-write</strong> block sharing lets requests share identical prompt prefixes (system prompts, few-shot, beams, parallel samples), copying only the one block where they diverge — large memory and prefill-compute savings.</li>
+<li>The <strong>paged kernel</strong> is FlashAttention-style online softmax plus one indirection: read the physical block id from the block table, gather that block&rsquo;s K/V, accumulate. The tax is a small per-block gather; the payoff is far larger batches.</li>
+<li>Paging is the substrate for <strong>continuous batching</strong> and <strong>prefix caching</strong>, delivering roughly <span class="arithmatex">\(2\text{--}4\times\)</span> throughput in the memory-bound decode regime. When the pool is exhausted, the engine <strong>preempts</strong> sequences (recompute or swap), the paged analogue of OS swapping.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>PagedAttention (2023) is now the universal baseline for production LLM serving: virtually every major framework — vLLM, SGLang, TensorRT-LLM, TGI — adopted paged KV management, and the frontier of active research has moved to KV-cache quantization (fp8/int4), prefix-caching at radix-tree scale, and alternatives like virtual-memory-backed contiguous KV that avoid the scattered-block overhead.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2309.06180">Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (2023)</a> — the SOSP 2023 paper that introduced block tables, copy-on-write prefix sharing, and the 2–4× throughput wins; read it alongside the vLLM source.</li>
+<li><a href="https://arxiv.org/abs/2305.13245">Ainslie et al., <em>GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</em> (2023)</a> — explains why reducing KV heads with GQA/MQA halves or quarters the per-token KV footprint, the key lever on the size formula.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2312.07104">Zheng et al., <em>SGLang: Efficient Execution of Structured Language Model Programs</em> (2024)</a> — introduces RadixAttention, a radix-tree KV-cache index that generalises COW prefix sharing to arbitrary program structures, achieving up to 5× inference speedup.</li>
+<li><a href="https://arxiv.org/abs/2405.04437">Prabhu et al., <em>vAttention: Dynamic Memory Management for Serving LLMs without PagedAttention</em> (2024)</a> — leverages OS demand-paging to keep KV cache virtually contiguous, avoiding custom paged kernels while matching or beating PagedAttention throughput; accepted ASPLOS 2025.</li>
+<li><a href="https://arxiv.org/abs/2401.18079">Hooper et al., <em>KVQuant: Towards 10 Million Context Length LLM Inference with KV Cache Quantization</em> (2024)</a> — per-channel + non-uniform 4-bit/3-bit KV quantization enabling 10M-token contexts on a single A100; NeurIPS 2024.</li>
+<li><a href="https://arxiv.org/abs/2501.01005">Ye et al., <em>FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving</em> (2025)</a> — composable attention kernels (paged, ragged, sparse) adopted by vLLM, SGLang, and TRT-LLM; MLSys 2025.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm</a> — the canonical production implementation of PagedAttention; the scheduler, block manager, and paged-attention CUDA kernels are the reference for everything in this chapter.</li>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — high-performance serving framework with RadixAttention prefix caching, powering 400k+ GPUs in production.</li>
+<li><a href="https://github.com/flashinfer-ai/flashinfer">flashinfer-ai/flashinfer</a> — modular attention kernel library (paged, ragged, FP8) used as the attention backend inside vLLM and SGLang.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://vllm.ai/blog/2023-06-20-vllm">vLLM: Easy, Fast, and Cheap LLM Serving with PagedAttention</a> — the original Berkeley blog post explaining the motivation and benchmarks; accessible first read before tackling the paper.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Kwon, Li, Zhuang, Sheng, Zheng, Yu, Gonzalez, Zhang, Stoica — <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (vLLM), SOSP 2023. The paper that introduced PagedAttention; read it alongside the vLLM source.</li>
+<li>Dao, Fu, Ermon, Rudra, Ré — <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em>, 2022; and Dao — <em>FlashAttention-2</em>. The online-softmax, IO-aware kernel that PagedAttention&rsquo;s gather sits on top of.</li>
+<li>Ainslie, Lee-Thorp, de Jong, Zemlyanskiy, Lebrón, Sanghai — <em>GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</em>, 2023. Why <span class="arithmatex">\(H_{kv}\)</span> shrinks.</li>
+<li>Shoeybi, Patwary, Puri, et al. — <em>Megatron-LM</em> — for the tensor-parallel context in which each rank pages its KV shard.</li>
+<li>The <strong>vLLM</strong> and <strong>SGLang</strong> repositories — the canonical production implementations of paged KV management and (in SGLang) radix-tree prefix sharing.</li>
+<li>Operating-systems texts (e.g. Silberschatz, <em>Operating System Concepts</em>) on paging, page tables, and copy-on-write — the prior art PagedAttention borrows from.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="05-cuda-essentials.html"><span class="pn-label">← Previous</span><span class="pn-title">CUDA Programming Essentials for ML Engineers</span></a>
+<a class="next" href="07-quantization-ptq.html"><span class="pn-label">Next →</span><span class="pn-title">Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-the-kv-cache-exists-and-how-big-it-gets">Why the KV Cache Exists, and How Big It Gets</a></li>
+<li class="toc-l3"><a href="#the-size-formula">The size formula</a></li>
+<li class="toc-l2"><a href="#the-fragmentation-problem">The Fragmentation Problem</a></li>
+<li class="toc-l3"><a href="#internal-fragmentation-reserving-for-the-worst-case">Internal fragmentation: reserving for the worst case</a></li>
+<li class="toc-l3"><a href="#external-fragmentation-holes-between-allocations">External fragmentation: holes between allocations</a></li>
+<li class="toc-l3"><a href="#reservation-waste-and-the-inability-to-share">Reservation waste and the inability to share</a></li>
+<li class="toc-l2"><a href="#the-os-paging-analogy">The OS-Paging Analogy</a></li>
+<li class="toc-l2"><a href="#block-tables-the-allocator-copy-on-write">Block Tables, the Allocator &amp;amp; Copy-on-Write</a></li>
+<li class="toc-l3"><a href="#choosing-the-block-size-b">Choosing the block size \(B\)</a></li>
+<li class="toc-l3"><a href="#copy-on-write-for-shared-prefixes">Copy-on-write for shared prefixes</a></li>
+<li class="toc-l2"><a href="#the-pagedattention-kernel">The PagedAttention Kernel</a></li>
+<li class="toc-l3"><a href="#performance-considerations">Performance considerations</a></li>
+<li class="toc-l2"><a href="#how-paging-unlocks-high-throughput-serving">How Paging Unlocks High-Throughput Serving</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-minimal-paged-serving-loop">Putting It Together: A Minimal Paged Serving Loop</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

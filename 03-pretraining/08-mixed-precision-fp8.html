@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mixed Precision, bf16 &amp; FP8 Training — The LLM Stack</title>
+<meta name="description" content="AMP, loss scaling (static/dynamic), master weights, why bf16 needs no loss scaling; FP8 training (E4M3/E5M2, per-tensor/blockwise scaling, Transformer Engine, D">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="active" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="38-mixed-precision-bf16-fp8-training">3.8 Mixed Precision, bf16 &amp; FP8 Training<a class="headerlink" href="#38-mixed-precision-bf16-fp8-training" title="Permanent link">¶</a></h1>
+<p>Every frontier model you have heard of was trained in low precision. Not because anyone wanted to throw away bits, but because the alternative — full FP32 — is roughly twice the memory, half the arithmetic throughput, and double the network traffic. Modern accelerators are built around low-precision matrix engines: an NVIDIA H100 delivers on the order of ~1,000 TFLOP/s of bf16 tensor-core throughput and roughly twice that in FP8, while FP32 on the CUDA cores is an order of magnitude slower. If you train in FP32 you are using a fraction of the chip you paid for.</p>
+<p>But you cannot just cast everything to 16 or 8 bits and press go. Floating-point numbers have <em>finite range</em> and <em>finite precision</em>, and the gradients, activations, and weight updates of a deep network span many orders of magnitude. Cast naively and you get <code>NaN</code> within a hundred steps, or — more insidiously — a model that trains but silently converges to a worse loss because small gradient contributions vanished into zero.</p>
+<p>This chapter is about the discipline of <strong>mixed precision</strong>: keeping the bits that matter in a wide format and pushing everything else into a narrow one. We will build the theory from the floating-point representation up, write a correct AMP training loop from scratch, and then go all the way to <strong>FP8</strong> — the 8-bit regime that GPT-class models now use in production. We assume you have read <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a>; we lean on it heavily but re-derive the parts that matter here.</p>
+<h2 id="the-floating-point-formats-fp32-fp16-bf16-fp8">The floating-point formats: fp32, fp16, bf16, fp8<a class="headerlink" href="#the-floating-point-formats-fp32-fp16-bf16-fp8" title="Permanent link">¶</a></h2>
+<p>A floating-point number is <code>sign × mantissa × 2^exponent</code>. The split between exponent bits (which set the <em>dynamic range</em> — how big and how small a number can be) and mantissa bits (which set the <em>relative precision</em> — how finely you can distinguish nearby numbers) is the entire story of mixed precision. Here are the four formats that matter, with their IEEE-style <code>(exponent, mantissa)</code> bit budgets:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Bits</th>
+<th>Exp / Mant</th>
+<th>Max finite</th>
+<th>Smallest normal</th>
+<th>Rel. precision (ulp)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FP32</td>
+<td>32</td>
+<td>8 / 23</td>
+<td>~3.4e38</td>
+<td>~1.2e-38</td>
+<td>~1.2e-7</td>
+</tr>
+<tr>
+<td>FP16 (IEEE half)</td>
+<td>16</td>
+<td>5 / 10</td>
+<td>65504</td>
+<td>~6.1e-5</td>
+<td>~9.8e-4</td>
+</tr>
+<tr>
+<td>BF16 (bfloat16)</td>
+<td>16</td>
+<td>8 / 7</td>
+<td>~3.4e38</td>
+<td>~1.2e-38</td>
+<td>~7.8e-3</td>
+</tr>
+<tr>
+<td>FP8 E4M3</td>
+<td>8</td>
+<td>4 / 3</td>
+<td>448</td>
+<td>~1.5e-2 (subnormal smaller)</td>
+<td>~0.125</td>
+</tr>
+<tr>
+<td>FP8 E5M2</td>
+<td>8</td>
+<td>5 / 2</td>
+<td>57344</td>
+<td>~6.1e-5</td>
+<td>~0.25</td>
+</tr>
+</tbody>
+</table>
+<p>Read this table as the key to everything that follows. The two 16-bit formats have the <em>same size</em> but make opposite trades:</p>
+<ul>
+<li><strong>FP16</strong> keeps 10 mantissa bits (good precision) but only 5 exponent bits, so its maximum value is <strong>65504</strong> and its smallest normal is ~6e-5. Gradients in a transformer routinely live below 6e-5, so they <strong>underflow to zero in fp16</strong>. This is why fp16 <em>requires loss scaling</em> (we cover it below).</li>
+<li><strong>BF16</strong> is simply &ldquo;FP32 with the bottom 16 mantissa bits chopped off.&rdquo; It keeps all 8 exponent bits, so it has the <strong>same dynamic range as fp32</strong> — it will never overflow or underflow where fp32 wouldn&rsquo;t. The price is only 7 mantissa bits, i.e. ~2-3 decimal digits of precision. For training, <em>range matters more than precision</em>, which is why bf16 has become the default and <strong>bf16 needs no loss scaling.</strong></li>
+</ul>
+<p>The conversion between bf16 and fp32 is so simple it is worth seeing explicitly — it is just a truncation (or round-to-nearest) of the low 16 bits:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">struct</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fp32_to_bf16_bits</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Show that bf16 is literally the top 16 bits of fp32.</span>
+<span class="sd">    Round-to-nearest-even on the 16 discarded mantissa bits.&quot;&quot;&quot;</span>
+    <span class="p">[</span><span class="n">bits</span><span class="p">]</span> <span class="o">=</span> <span class="n">struct</span><span class="o">.</span><span class="n">unpack</span><span class="p">(</span><span class="s2">&quot;&lt;I&quot;</span><span class="p">,</span> <span class="n">struct</span><span class="o">.</span><span class="n">pack</span><span class="p">(</span><span class="s2">&quot;&lt;f&quot;</span><span class="p">,</span> <span class="n">x</span><span class="p">))</span>   <span class="c1"># 32-bit pattern</span>
+    <span class="c1"># round to nearest even: add the rounding bias before truncating</span>
+    <span class="n">rounding_bias</span> <span class="o">=</span> <span class="mh">0x7FFF</span> <span class="o">+</span> <span class="p">((</span><span class="n">bits</span> <span class="o">&gt;&gt;</span> <span class="mi">16</span><span class="p">)</span> <span class="o">&amp;</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">bits</span> <span class="o">=</span> <span class="p">(</span><span class="n">bits</span> <span class="o">+</span> <span class="n">rounding_bias</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="mi">16</span>
+    <span class="k">return</span> <span class="n">bits</span> <span class="o">&amp;</span> <span class="mh">0xFFFF</span>
+
+<span class="n">x</span> <span class="o">=</span> <span class="mf">3.1415927</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;fp32 </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">  -&gt;  bf16 bits 0x</span><span class="si">{</span><span class="n">fp32_to_bf16_bits</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="si">:</span><span class="s2">04x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># Compare against PyTorch&#39;s own conversion:</span>
+<span class="n">t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;torch bf16:&quot;</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>   <span class="c1"># ~3.140625  (7-bit mantissa)</span>
+</code></pre></div>
+<p>Notice the bf16 value <code>3.140625</code> differs from π in the third decimal — that is the 7-bit mantissa biting. For activations and weights this rounding error is noise the optimizer happily absorbs; for the <em>accumulation</em> inside a matmul it would be catastrophic, which is the next idea.</p>
+<h3 id="tensor-cores-accumulate-in-fp32">Tensor cores accumulate in fp32<a class="headerlink" href="#tensor-cores-accumulate-in-fp32" title="Permanent link">¶</a></h3>
+<p>A critical, often-missed detail: when a tensor core multiplies two bf16 (or fp16, or fp8) matrices, it does <strong>not</strong> accumulate the dot product in the input precision. It multiplies pairs in low precision and <strong>accumulates the partial sums in fp32</strong> inside the hardware. So a <code>[4096 × 4096] @ [4096 × 4096]</code> bf16 matmul sums 4096 products in fp32 and only rounds the final result back to bf16. This is why low-precision matmul is numerically tolerable at all: the long error-accumulating reduction happens in 32 bits. Keep this picture — <em>narrow inputs, wide accumulator</em> — in mind; it is the same trick FP8 uses, just more aggressively.</p>
+<figure class="viz" id="fig-fp8mp-tensorcore-accumulate">
+<button class="viz-replay" type="button">&#8635; replay</button>
+
+<svg viewBox="0 0 940 310" role="img"
+     aria-label="Tensor core pipeline: bf16 A and B inputs feed a bf16 multiply stage; the partial products stream into a tall fp32 accumulator box; one round node casts back to bf16 C.">
+<defs>
+  <marker id="tca" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1L9 5L0 9z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <style>
+    #fig-fp8mp-tensorcore-accumulate text { fill:var(--ink-soft,#334155); }
+    #fig-fp8mp-tensorcore-accumulate .H  { font:700 13px var(--sans,sans-serif); }
+    #fig-fp8mp-tensorcore-accumulate .S  { font:400 9px var(--mono,monospace); fill:var(--muted,#94a3b8); }
+    #fig-fp8mp-tensorcore-accumulate .C  { font:500 8.5px var(--sans,sans-serif); fill:var(--muted,#94a3b8); }
+    #fig-fp8mp-tensorcore-accumulate .EL { font:400 8px var(--sans,sans-serif); fill:var(--muted,#94a3b8); }
+    #fig-fp8mp-tensorcore-accumulate .RL { font:700 8px var(--sans,sans-serif); letter-spacing:.05em; }
+    @keyframes tca-in  { from{opacity:0}to{opacity:1} }
+    @keyframes tca-acc { 0%{fill-opacity:.08}100%{fill-opacity:1} }
+    @keyframes tca-tok {
+      0%  {transform:translateX(0);   opacity:0}
+      10% {opacity:.9}
+      80% {opacity:.9}
+      100%{transform:translateX(200px);opacity:0}
+    }
+    @media(prefers-reduced-motion:reduce){
+      #fig-fp8mp-tensorcore-accumulate [data-anim]{opacity:1!important;animation:none!important}
+      #fig-fp8mp-tensorcore-accumulate .tok{display:none}
+    }
+    #fig-fp8mp-tensorcore-accumulate [data-anim="1"]{opacity:0;animation:tca-in .4s .1s  both}
+    #fig-fp8mp-tensorcore-accumulate [data-anim="2"]{opacity:0;animation:tca-in .4s .65s both}
+    #fig-fp8mp-tensorcore-accumulate [data-anim="3"]{opacity:0;animation:tca-in .4s 1.2s both}
+    #fig-fp8mp-tensorcore-accumulate [data-anim="4"]{opacity:0;animation:tca-in .4s 2.6s both}
+    #fig-fp8mp-tensorcore-accumulate [data-anim="5"]{opacity:0;animation:tca-in .4s 3.1s both}
+    #fig-fp8mp-tensorcore-accumulate .acc-bg{
+      fill:var(--accent,#6366f1);fill-opacity:.08;
+      animation:tca-acc 1.1s 1.25s both}
+    #fig-fp8mp-tensorcore-accumulate .tok{fill:var(--accent,#6366f1);opacity:0}
+    #fig-fp8mp-tensorcore-accumulate .t1{animation:tca-tok .55s 1.25s both}
+    #fig-fp8mp-tensorcore-accumulate .t2{animation:tca-tok .55s 1.52s both}
+    #fig-fp8mp-tensorcore-accumulate .t3{animation:tca-tok .55s 1.79s both}
+    #fig-fp8mp-tensorcore-accumulate .t4{animation:tca-tok .55s 2.06s both}
+    #fig-fp8mp-tensorcore-accumulate .t5{animation:tca-tok .55s 2.33s both}
+  </style>
+</defs>
+
+
+<rect x="14"  y="272" width="132" height="12" rx="3" fill="var(--surface-3,#f1f5f9)" opacity=".9"/>
+<text x="80"  y="281" text-anchor="middle" class="RL" fill="var(--muted,#94a3b8)">16-bit</text>
+
+<rect x="194" y="272" width="172" height="12" rx="3" fill="var(--surface-3,#f1f5f9)" opacity=".9"/>
+<text x="280" y="281" text-anchor="middle" class="RL" fill="var(--muted,#94a3b8)">16-bit</text>
+
+<rect x="410" y="272" width="240" height="12" rx="3" fill="var(--accent,#6366f1)" fill-opacity=".12"/>
+<text x="530" y="281" text-anchor="middle" class="RL" fill="var(--accent,#6366f1)">32-bit wide accumulator</text>
+
+<rect x="814" y="272" width="98" height="12" rx="3" fill="var(--surface-3,#f1f5f9)" opacity=".9"/>
+<text x="863" y="281" text-anchor="middle" class="RL" fill="var(--muted,#94a3b8)">16-bit</text>
+
+
+<g data-anim="1">
+
+  <rect x="14" y="40" width="132" height="64" rx="7"
+        fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="80" y="65" text-anchor="middle" class="H" fill="var(--accent,#6366f1)">bf16 A</text>
+  <text x="80" y="81" text-anchor="middle" class="S">[4096 x 4096]</text>
+  <text x="80" y="96" text-anchor="middle" class="C">narrow (16-bit)</text>
+
+  <rect x="14" y="178" width="132" height="64" rx="7"
+        fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="80" y="203" text-anchor="middle" class="H" fill="var(--accent,#6366f1)">bf16 B</text>
+  <text x="80" y="219" text-anchor="middle" class="S">[4096 x 4096]</text>
+  <text x="80" y="234" text-anchor="middle" class="C">narrow (16-bit)</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="146" y1="72"  x2="192" y2="148" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#tca)"/>
+  <line x1="146" y1="210" x2="192" y2="162" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#tca)"/>
+</g>
+
+
+<g data-anim="2">
+  <rect x="194" y="124" width="172" height="62" rx="8"
+        fill="var(--accent2,#3b82f6)" fill-opacity=".10"
+        stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="280" y="149" text-anchor="middle" class="H" font-size="12">multiply in bf16</text>
+  <text x="280" y="165" text-anchor="middle" class="S">a_ik x b_kj  (per pair)</text>
+  <text x="280" y="179" text-anchor="middle" class="C">many products</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="368" y1="155" x2="408" y2="155"
+        stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#tca)"/>
+</g>
+
+<circle class="tok t1" cx="375" cy="155" r="3.5"/>
+<circle class="tok t2" cx="375" cy="155" r="3.5"/>
+<circle class="tok t3" cx="375" cy="155" r="3.5"/>
+<circle class="tok t4" cx="375" cy="155" r="3.5"/>
+<circle class="tok t5" cx="375" cy="155" r="3.5"/>
+
+
+<g data-anim="3">
+  <rect x="410" y="72" width="240" height="164" rx="10"
+        class="acc-bg" stroke="var(--accent,#6366f1)" stroke-width="2.5"/>
+  <text x="530" y="113" text-anchor="middle" font-size="13" font-weight="700" fill="white">accumulate in FP32</text>
+  <text x="530" y="131" text-anchor="middle" class="S" fill="white" fill-opacity=".85" font-size="9">sum of 4096 partial products</text>
+  <line x1="530" y1="192" x2="530" y2="208"
+        stroke="white" stroke-opacity=".55" stroke-width="1.1" marker-end="url(#tca)"/>
+  <text x="530" y="222" text-anchor="middle" class="EL" fill="white" fill-opacity=".65" font-size="8">4096 products summed here</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="652" y1="154" x2="694" y2="154"
+        stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#tca)"/>
+  <text x="673" y="142" text-anchor="middle" class="EL">fp32</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="696" y="128" width="72" height="52" rx="26"
+        fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="732" y="150" text-anchor="middle" class="H" font-size="11">round</text>
+  <text x="732" y="167" text-anchor="middle" class="S" font-size="8">fp32-&gt;bf16</text>
+</g>
+
+
+<g data-anim="5">
+  <line x1="770" y1="154" x2="812" y2="154"
+        stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#tca)"/>
+  <text x="791" y="143" text-anchor="middle" class="EL">cast</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="814" y="112" width="98" height="84" rx="7"
+        fill="var(--surface,#fff)" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+  <text x="863" y="142" text-anchor="middle" class="H" font-size="14" fill="var(--good,#2f9e6e)">bf16 C</text>
+  <text x="863" y="157" text-anchor="middle" class="S">result tile</text>
+  <text x="863" y="172" text-anchor="middle" class="C">narrow (16-bit)</text>
+  <text x="863" y="188" text-anchor="middle" class="C" fill="var(--good,#2f9e6e)" font-size="7.5" font-style="italic">rounded once</text>
+</g>
+</svg>
+<figcaption><b>Tensor cores: narrow inputs, wide fp32 accumulator.</b> Both bf16 input matrices multiply pair-by-pair in bf16, but all 4096 partial products accumulate in fp32 inside the hardware. Only one rounding step happens at the very end when the fp32 sum is cast back to bf16 — this single late rounding is why low-precision matmul remains numerically tolerable.</figcaption>
+</figure>
+
+<h2 id="why-naive-fp16-breaks-range-underflow-and-the-update-problem">Why naive fp16 breaks: range, underflow, and the update problem<a class="headerlink" href="#why-naive-fp16-breaks-range-underflow-and-the-update-problem" title="Permanent link">¶</a></h2>
+<p>Let&rsquo;s make the failure concrete. Consider a single weight <span class="arithmatex">\(w = 1.0\)</span> and a tiny gradient times learning rate, <span class="arithmatex">\(\eta g = 2 \times 10^{-4}\)</span>. We want <span class="arithmatex">\(w \leftarrow w - \eta g = 0.9998\)</span>.</p>
+<p>In fp16, the representable numbers near <span class="arithmatex">\(1.0\)</span> are spaced <span class="arithmatex">\(2^{-10} \approx 9.77 \times 10^{-4}\)</span> apart (that is the ulp — unit in the last place). Our desired update <span class="arithmatex">\(2 \times 10^{-4}\)</span> is <strong>smaller than half an ulp</strong>, so when we round <span class="arithmatex">\(1.0 - 0.0002\)</span> to the nearest fp16 value we get&hellip; exactly <span class="arithmatex">\(1.0\)</span>. <strong>The update is silently lost.</strong> Worse, this happens at <em>every</em> step late in training when gradients shrink, so the model stops learning even though loss looks vaguely fine.</p>
+<p>This is the <strong>swamping</strong> or <strong>stagnation</strong> problem, and it has nothing to do with overflow — it is pure precision loss when you add a small number to a large one in the same low-precision format. There are two complementary fixes, and you need both for fp16:</p>
+<ol>
+<li><strong>Master weights in fp32.</strong> Keep the <em>authoritative</em> copy of every weight in fp32. Do the matmuls and activations in fp16 (fast), but apply the optimizer update to the fp32 master copy (precise), then cast a fresh fp16 copy for the next forward. Now <span class="arithmatex">\(1.0 - 0.0002 = 0.9998\)</span> is representable, the update sticks, and the tiny updates accumulate over many steps.</li>
+<li><strong>Loss scaling</strong> to fight <em>underflow</em> of the gradients themselves before they ever reach the optimizer (next section).</li>
+</ol>
+<p>The second problem is <strong>range</strong>. The fp16 max is 65504. Attention logits, the output of a large matmul, or a loss spike can exceed that and produce <code>inf</code>, which propagates to <code>NaN</code> through the backward pass. bf16, with its fp32-sized exponent, essentially never hits this.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: this is the same idea as Kahan summation</p>
+<p>Master weights are a form of compensated summation. You are keeping the running total (the weight) at higher precision than the increments (the scaled gradients) so that many small increments are not swamped by one large running value. The connection to the classic Kahan summation algorithm from <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a> is exact in spirit: protect the accumulator.</p>
+</div>
+<h2 id="automatic-mixed-precision-amp-and-loss-scaling">Automatic Mixed Precision (AMP) and loss scaling<a class="headerlink" href="#automatic-mixed-precision-amp-and-loss-scaling" title="Permanent link">¶</a></h2>
+<p><strong>Automatic Mixed Precision (AMP)</strong> is the framework that automates &ldquo;wide where it matters, narrow where it&rsquo;s safe.&rdquo; In PyTorch it has two halves:</p>
+<ul>
+<li><code>torch.autocast</code>: a context manager that, for ops inside it, automatically chooses a precision. Matmuls, convolutions, and linear layers run in the low precision (bf16/fp16); reductions that need range — softmax, layer norm, loss, <code>exp</code>, <code>sum</code> — are kept in fp32. It maintains an internal <strong>op allow/deny list</strong> so you don&rsquo;t have to annotate every layer.</li>
+<li><code>torch.cuda.amp.GradScaler</code> (or <code>torch.amp.GradScaler</code>): implements <strong>loss scaling</strong>, needed only for fp16.</li>
+</ul>
+<h3 id="the-loss-scaling-trick">The loss-scaling trick<a class="headerlink" href="#the-loss-scaling-trick" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-loss-scaling">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 402" role="img" aria-label="A magnitude number line for fp16: small gradients underflow into the denormal-or-zero zone; multiplying the loss by a scale S shifts the whole gradient distribution up into the representable range, then it is unscaled before the optimizer step.">
+  <defs>
+    <marker id="ls-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+    </marker>
+    <marker id="ls-arrow-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-loss-scaling text{ fill:var(--ink-soft); }
+    #fig-loss-scaling .lbl{ font:600 13px var(--sans,sans-serif); }
+    #fig-loss-scaling .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-loss-scaling .tick{ font:500 10px var(--mono,monospace); fill:var(--muted); }
+    #fig-loss-scaling .mono{ font:600 12px var(--mono,monospace); }
+    #fig-loss-scaling .zone{ font:600 11px var(--sans,sans-serif); }
+  </style>
+
+
+
+  <g data-anim="1">
+
+    <rect x="120" y="54" width="120" height="162" rx="6" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+    <text x="180" y="42" text-anchor="middle" class="zone" fill="var(--good,#2f9e6e)">fp16 representable</text>
+    <text x="180" y="73" text-anchor="middle" class="tick">max 65504</text>
+
+
+    <rect x="120" y="216" width="120" height="100" rx="6" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.4" stroke-dasharray="5 3"/>
+    <text x="180" y="336" text-anchor="middle" class="zone" fill="var(--warn,#e0a106)">underflow to 0</text>
+
+
+    <line x1="112" y1="216" x2="240" y2="216" class="v-stroke" stroke-width="1.4"/>
+
+
+    <line x1="112" y1="54" x2="112" y2="316" class="v-grid" stroke-width="1.2"/>
+    <text x="108" y="58" text-anchor="end" class="tick">2¹⁶</text>
+    <text x="108" y="146" text-anchor="end" class="tick">2⁰</text>
+    <text x="108" y="220" text-anchor="end" class="tick">6e-5</text>
+    <text x="108" y="312" text-anchor="end" class="tick">2⁻²⁴</text>
+    <text x="40" y="180" text-anchor="middle" class="sm" transform="rotate(-90 40 180)">gradient magnitude (log scale)</text>
+  </g>
+
+
+  <g data-anim="2">
+    <path d="M132 304 Q150 244 168 268 Q180 284 192 272 Q204 260 228 300 Z"
+          fill="var(--warn,#e0a106)" fill-opacity="0.28" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="180" y="294" text-anchor="middle" class="mono" fill="var(--warn,#e0a106)">dL/dw</text>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="266" y1="280" x2="266" y2="158" stroke="var(--accent)" stroke-width="2.4" marker-end="url(#ls-arrow)" class="viz-draw" style="--len:122"/>
+    <rect x="276" y="206" width="92" height="40" rx="8" class="v-fill" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="322" y="224" text-anchor="middle" class="mono" fill="var(--accent)">× S</text>
+    <text x="322" y="239" text-anchor="middle" class="sm">S = 2¹⁶</text>
+  </g>
+
+
+  <g data-anim="4">
+    <path d="M132 204 Q150 144 168 168 Q180 184 192 172 Q204 160 228 200 Z"
+          fill="var(--accent)" fill-opacity="0.30" stroke="var(--accent)" stroke-width="1.4" class="viz-pulse"/>
+    <text x="180" y="194" text-anchor="middle" class="mono" fill="var(--accent)">S·dL/dw</text>
+  </g>
+
+
+  <g data-anim="4">
+    <text x="276" y="150" class="sm">scaled grads land</text>
+    <text x="276" y="164" class="sm">in the safe band</text>
+    <line x1="272" y1="160" x2="234" y2="174" class="v-accent-s" stroke="var(--accent)" stroke-width="1" stroke-dasharray="3 3"/>
+  </g>
+  <g data-anim="2">
+    <text x="276" y="290" class="sm">raw grads fall</text>
+    <text x="276" y="304" class="sm">below 6e-5, to 0</text>
+    <line x1="272" y1="294" x2="232" y2="288" class="v-muted" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+  </g>
+
+
+  <g data-anim="5">
+    <text x="418" y="42" class="lbl" fill="var(--accent)">loss-scaling pipeline</text>
+
+    <g class="lbl">
+      <rect x="418" y="58" width="88" height="34" rx="7" class="v-fill v-accent-s" stroke-width="1.4"/>
+      <text x="462" y="79" text-anchor="middle" class="mono" fill="var(--accent)">L × S</text>
+
+      <rect x="418" y="106" width="88" height="34" rx="7" class="v-fill v-grid" stroke-width="1.4"/>
+      <text x="462" y="127" text-anchor="middle" class="mono">backward</text>
+
+      <rect x="524" y="106" width="74" height="34" rx="7" class="v-fill v-grid" stroke-width="1.4"/>
+      <text x="561" y="127" text-anchor="middle" class="mono">grads ×S</text>
+
+      <rect x="616" y="106" width="92" height="34" rx="7" class="v-fill v-accent-s" stroke-width="1.4"/>
+      <text x="662" y="127" text-anchor="middle" class="mono" fill="var(--accent)">÷ S unscale</text>
+
+      <rect x="616" y="58" width="92" height="34" rx="7" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+      <text x="662" y="79" text-anchor="middle" class="mono" fill="var(--good,#2f9e6e)">step fp32</text>
+    </g>
+
+
+    <line x1="462" y1="92" x2="462" y2="106" class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#ls-arrow-m)"/>
+    <line x1="506" y1="123" x2="524" y2="123" class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#ls-arrow-m)"/>
+    <line x1="598" y1="123" x2="616" y2="123" class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#ls-arrow-m)"/>
+    <line x1="662" y1="106" x2="662" y2="92" class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#ls-arrow-m)"/>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="276" y1="328" x2="700" y2="328" class="v-grid" stroke-width="1"/>
+    <text x="284" y="350" class="sm">The rescaling is a <tspan font-family="var(--mono,monospace)" fill="var(--accent)">no-op</tspan> on the final update — it</text>
+    <text x="284" y="365" class="sm">only buys representable precision during backprop.</text>
+  </g>
+</svg>
+<figcaption><b>Loss scaling lifts gradients out of the fp16 underflow zone.</b> A transformer's gradients routinely fall below fp16's smallest normal (~6e-5), where they round to zero. Multiplying the loss by a scale <b>S = 2¹⁶</b> multiplies every gradient by S (chain rule), shifting the whole distribution up into the representable band; the gradients are then <b>unscaled (÷S)</b> before the fp32 optimizer step, so the rescaling is mathematically a no-op.</figcaption>
+</figure>
+
+<p>The fix for gradient underflow is beautifully simple. Gradients are too small to represent in fp16, so before the backward pass we multiply the loss by a large constant <span class="arithmatex">\(S\)</span> (the <strong>loss scale</strong>, e.g. <span class="arithmatex">\(S = 2^{16} = 65536\)</span>). By the chain rule, <em>every</em> gradient in the network is then multiplied by <span class="arithmatex">\(S\)</span> too:</p>
+<div class="arithmatex">\[
+\frac{\partial (S \cdot \mathcal{L})}{\partial w} = S \cdot \frac{\partial \mathcal{L}}{\partial w}
+\]</div>
+<p>This shifts the whole gradient distribution up by <span class="arithmatex">\(S\)</span>, out of the fp16 underflow zone and into the representable range. Then, <em>after</em> the backward pass but <em>before</em> the optimizer step, we divide the gradients by <span class="arithmatex">\(S\)</span> (&ldquo;unscale&rdquo;) to recover the true gradient, and update the fp32 master weights. The scaling is mathematically a no-op on the final update; it only buys representable precision during backprop.</p>
+<div class="highlight"><pre><span></span><code>loss ──×S──► backward ──► grads (×S, now representable) ──÷S──► unscaled grads ──► clip ──► optimizer.step()  (fp32 master)
+</code></pre></div>
+<h3 id="static-vs-dynamic-loss-scaling">Static vs dynamic loss scaling<a class="headerlink" href="#static-vs-dynamic-loss-scaling" title="Permanent link">¶</a></h3>
+<p>What value of <span class="arithmatex">\(S\)</span>? Too small and gradients still underflow; too large and the <em>scaled</em> gradients overflow to <code>inf</code>. The sweet spot drifts during training as gradient magnitudes change. Two strategies:</p>
+<ul>
+<li><strong>Static loss scaling:</strong> pick one constant (say <span class="arithmatex">\(2^{15}\)</span>) and hope. Simple, but fragile — wrong choice wastes range or causes overflow.</li>
+<li><strong>Dynamic loss scaling</strong> (what <code>GradScaler</code> does): start high (e.g. <span class="arithmatex">\(2^{16}\)</span>), and adapt. After each backward, <strong>check the gradients for <code>inf</code>/<code>NaN</code></strong>. If any are found, the scale was too big: <strong>skip the optimizer step</strong> (don&rsquo;t corrupt the weights with garbage) and <strong>halve</strong> <span class="arithmatex">\(S\)</span>. If many steps pass with no overflow (e.g. 2000 steps), the scale may be too conservative: <strong>double</strong> <span class="arithmatex">\(S\)</span> to claw back precision. This is an AIMD (additive-increase / multiplicative-decrease)-style controller that automatically tracks the gradient distribution.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Conceptual core of a dynamic GradScaler (PyTorch implements this in C++).</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">DynamicLossScaler</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">init_scale</span><span class="o">=</span><span class="mf">2.0</span><span class="o">**</span><span class="mi">16</span><span class="p">,</span> <span class="n">growth_factor</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span>
+                 <span class="n">backoff_factor</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">growth_interval</span><span class="o">=</span><span class="mi">2000</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">=</span> <span class="n">init_scale</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">growth_factor</span> <span class="o">=</span> <span class="n">growth_factor</span>      <span class="c1"># multiply by this on success</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">backoff_factor</span> <span class="o">=</span> <span class="n">backoff_factor</span>    <span class="c1"># multiply by this on overflow</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">growth_interval</span> <span class="o">=</span> <span class="n">growth_interval</span>  <span class="c1"># steps of success before growing</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_good_steps</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">scale_loss</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">loss</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">loss</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">update</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">found_inf</span><span class="p">:</span> <span class="nb">bool</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Call after inspecting unscaled grads for inf/nan.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">found_inf</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">*=</span> <span class="bp">self</span><span class="o">.</span><span class="n">backoff_factor</span>   <span class="c1"># too big -&gt; back off, skip step</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_good_steps</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_good_steps</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_good_steps</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">growth_interval</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">*=</span> <span class="bp">self</span><span class="o">.</span><span class="n">growth_factor</span>  <span class="c1"># been safe a while -&gt; grow</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_good_steps</span> <span class="o">=</span> <span class="mi">0</span>
+</code></pre></div>
+<h3 id="bf16-needs-no-loss-scaling-here-is-exactly-why">bf16 needs no loss scaling — here is exactly why<a class="headerlink" href="#bf16-needs-no-loss-scaling-here-is-exactly-why" title="Permanent link">¶</a></h3>
+<p>This is a favorite interview question, so be precise. Loss scaling exists to combat gradient <strong>underflow</strong>, which is a <em>range</em> problem: fp16&rsquo;s smallest normal is ~6e-5, and gradients live below that. bf16 has the <strong>same exponent width as fp32</strong>, so its smallest normal is ~1.2e-38 — gradients simply never underflow there. There is nothing to rescue, so loss scaling adds complexity for zero benefit. You drop the <code>GradScaler</code> entirely. (You still keep fp32 master weights inside the optimizer if you want the most precise updates, though with bf16 + a state-fp32 optimizer like Adam this is often handled implicitly — see below.) The trade you accept is bf16&rsquo;s coarser 7-bit mantissa, but the network tolerates that rounding noise.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: using a GradScaler with bf16</p>
+<p>If you wrap a bf16 run in a <code>GradScaler</code>, at best it is a no-op that wastes a little time, and at worst the inf-checking logic interacts badly and skips steps it shouldn&rsquo;t. Rule: <strong>fp16 ⇒ GradScaler; bf16 ⇒ no GradScaler.</strong> In <code>torch.autocast(dtype=torch.bfloat16)</code> you should not scale.</p>
+</div>
+<h2 id="a-correct-amp-training-loop-from-scratch">A correct AMP training loop, from scratch<a class="headerlink" href="#a-correct-amp-training-loop-from-scratch" title="Permanent link">¶</a></h2>
+<p>Here is a complete, heavily commented training step that works for both regimes. It shows master weights, autocast, scaling, unscaling-before-clipping (the order matters!), and skipped steps. This is the loop you would actually ship.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="c1"># --- choose your regime ----------------------------------------------------</span>
+<span class="n">USE_BF16</span> <span class="o">=</span> <span class="kc">True</span>                       <span class="c1"># bf16: no scaler. fp16: needs scaler.</span>
+<span class="n">amp_dtype</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span> <span class="k">if</span> <span class="n">USE_BF16</span> <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">float16</span>
+<span class="n">device</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">build_transformer</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>            <span class="c1"># weights in fp32 (the masters)</span>
+<span class="n">optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">3e-4</span><span class="p">)</span>
+
+<span class="c1"># GradScaler is a no-op when disabled, so this one line handles both regimes.</span>
+<span class="n">scaler</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">amp</span><span class="o">.</span><span class="n">GradScaler</span><span class="p">(</span><span class="n">device</span><span class="p">,</span> <span class="n">enabled</span><span class="o">=</span><span class="ow">not</span> <span class="n">USE_BF16</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">train_step</span><span class="p">(</span><span class="n">batch</span><span class="p">):</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">(</span><span class="n">set_to_none</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># 1) FORWARD under autocast: matmuls run in amp_dtype on tensor cores,</span>
+    <span class="c1">#    softmax / layernorm / loss are auto-kept in fp32 by the op allow-list.</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">autocast</span><span class="p">(</span><span class="n">device_type</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">amp_dtype</span><span class="p">):</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">batch</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">])</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span>
+            <span class="n">logits</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">logits</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span>   <span class="c1"># cast logits to fp32 for the loss</span>
+            <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;labels&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span>
+        <span class="p">)</span>
+
+    <span class="c1"># 2) BACKWARD on the *scaled* loss. With bf16 the scale is 1.0 (no-op).</span>
+    <span class="c1">#    With fp16 this lifts grads out of the underflow zone.</span>
+    <span class="n">scaler</span><span class="o">.</span><span class="n">scale</span><span class="p">(</span><span class="n">loss</span><span class="p">)</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+    <span class="c1"># 3) UNSCALE the grads in-place so we can clip on TRUE gradient magnitudes.</span>
+    <span class="c1">#    (Clipping a *scaled* grad would clip to the wrong threshold!)</span>
+    <span class="n">scaler</span><span class="o">.</span><span class="n">unscale_</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">max_norm</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+
+    <span class="c1"># 4) STEP. scaler.step() internally checks for inf/nan: if found, it SKIPS</span>
+    <span class="c1">#    the optimizer.step() (so garbage never touches the fp32 masters).</span>
+    <span class="n">scaler</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+
+    <span class="c1"># 5) UPDATE the dynamic loss scale for next iteration (no-op in bf16).</span>
+    <span class="n">scaler</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+</code></pre></div>
+<p>The five non-obvious correctness points, in order:</p>
+<ol>
+<li><strong>Cast logits to fp32 before cross-entropy.</strong> The log-softmax over a 50k-vocab needs the fp32 range/precision; doing it in fp16 risks <code>inf</code> from <code>exp</code> of a large logit.</li>
+<li><strong>Backward on the scaled loss</strong>, not the raw loss.</li>
+<li><strong>Unscale before clipping.</strong> <code>clip_grad_norm_</code> compares the gradient norm to <code>max_norm=1.0</code>. If the grads are still scaled by <span class="arithmatex">\(2^{16}\)</span>, every batch looks like it has a norm of ~65,000 and you clip everything to noise. Unscale first.</li>
+<li><strong><code>scaler.step</code> does the inf check and the skip.</strong> You never call <code>optimizer.step()</code> directly in fp16 AMP.</li>
+<li><strong><code>scaler.update()</code></strong> runs the AIMD controller.</li>
+</ol>
+<h3 id="where-do-master-weights-live">Where do master weights live?<a class="headerlink" href="#where-do-master-weights-live" title="Permanent link">¶</a></h3>
+<p>In the loop above the model&rsquo;s own <code>nn.Parameter</code>s are fp32 — they <em>are</em> the master copy. <code>autocast</code> casts them to bf16/fp16 <em>on the fly</em> for each matmul and discards the cast; the fp32 originals are what AdamW updates. This is the standard PyTorch AMP pattern and the simplest mental model: <strong>parameters fp32, compute low-precision, optimizer touches fp32.</strong></p>
+<p>A second pattern, common in large-scale frameworks (DeepSpeed, Megatron, FSDP with <code>MixedPrecision</code>), stores the <em>parameters themselves</em> in bf16 to halve parameter memory and communication, and keeps a <strong>separate fp32 master copy plus fp32 optimizer state</strong> (momentum, variance). The optimizer steps in fp32, then copies the result back into the bf16 parameter. This is what people mean by the canonical &ldquo;mixed precision&rdquo; recipe from Micikevicius et al.&rsquo;s <em>Mixed Precision Training</em> (2017). The memory accounting (per parameter): 2 bytes bf16 weight + 4 bytes fp32 master + 4 + 4 bytes Adam states = <strong>14 bytes/param</strong>, versus 16 bytes for the all-fp32 recipe — and crucially the <em>communication</em> (all-reduce of gradients, all-gather of weights) moves in 2-byte bf16, halving network traffic. See <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a> for how ZeRO shards exactly these fp32 states.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: memory and the cost of master weights</p>
+<p>Take a 7B-parameter model trained with bf16 weights + fp32 master + AdamW (fp32 momentum and variance). Per parameter we store:</p>
+<ul>
+<li>bf16 weight: 2 bytes</li>
+<li>fp32 master weight: 4 bytes</li>
+<li>fp32 Adam first moment <span class="arithmatex">\(m\)</span>: 4 bytes</li>
+<li>fp32 Adam second moment <span class="arithmatex">\(v\)</span>: 4 bytes</li>
+</ul>
+<p>Total = <strong>14 bytes/param</strong>. For 7e9 params: <span class="arithmatex">\(7\times10^9 \times 14 = 9.8\times10^{10}\)</span> bytes <span class="arithmatex">\(\approx\)</span> <strong>98 GB</strong> just for the optimizer + weights, before activations and gradients. Gradients add another 2 bytes/param (bf16) = 14 GB. This is why a &ldquo;small&rdquo; 7B model does not fit the optimizer state on a single 80 GB H100 and you reach for ZeRO/FSDP sharding. Notice the master weights (4 bytes) are the second-biggest line item — people sometimes ask &ldquo;can we drop them?&rdquo; The answer is the stagnation problem above: without fp32 masters, small bf16 updates get swamped and late-training progress stalls.</p>
+</div>
+<h2 id="fp8-training-pushing-the-matmuls-to-8-bits">FP8 training: pushing the matmuls to 8 bits<a class="headerlink" href="#fp8-training-pushing-the-matmuls-to-8-bits" title="Permanent link">¶</a></h2>
+<p>bf16 is now table stakes. The 2024-2026 frontier is <strong>FP8 training</strong>, where the heavy matmuls run with 8-bit inputs, doubling tensor-core throughput again and halving the bytes moved through the matmul. NVIDIA&rsquo;s Hopper (H100) and Blackwell GPUs have native FP8 tensor cores; DeepSeek-V3 famously trained a 671B-parameter MoE largely in FP8 and documented the recipe.</p>
+<p>But 8 bits is <em>brutally</em> few. Recall the two FP8 formats and their jobs:</p>
+<ul>
+<li><strong>E4M3</strong> (4 exponent, 3 mantissa): more mantissa, less range. Max ~448. Used for the <strong>forward pass</strong> tensors — weights and activations — where we want a bit more precision and the magnitudes are bounded.</li>
+<li><strong>E5M2</strong> (5 exponent, 2 mantissa): more range, less precision. Max ~57344. Used for <strong>gradients</strong> in the backward pass, which span a wider dynamic range and benefit from the extra exponent bit (this echoes the bf16-vs-fp16 logic, one level down).</li>
+</ul>
+<p>With only 3 mantissa bits, the relative spacing of E4M3 numbers is ~12.5% — <em>one part in eight</em>. You cannot just cast a tensor whose values span four orders of magnitude into E4M3 and keep any signal. The entire art of FP8 training is <strong>scaling</strong>: choosing a per-tensor (or finer) multiplier that maps each tensor&rsquo;s actual distribution into the narrow E4M3/E5M2 representable window, just like loss scaling but applied tensor-by-tensor, continuously.</p>
+<h3 id="per-tensor-scaling-and-the-delayed-scaling-recipe">Per-tensor scaling and the delayed-scaling recipe<a class="headerlink" href="#per-tensor-scaling-and-the-delayed-scaling-recipe" title="Permanent link">¶</a></h3>
+<p>For each FP8 matmul operand <span class="arithmatex">\(X\)</span> (an activation, weight, or gradient) we keep a scale factor <span class="arithmatex">\(s_X\)</span>. We store <span class="arithmatex">\(X_{\text{fp8}} = \operatorname{cast}_{\text{fp8}}(s_X \cdot X)\)</span> and remember <span class="arithmatex">\(s_X\)</span>. To use it, the matmul computes in FP8 and the result is de-scaled by <span class="arithmatex">\(1/s_X\)</span>. The scale is chosen so that the <strong>maximum absolute value</strong> (the <em>amax</em>) of the tensor lands near the top of the FP8 range without overflowing:</p>
+<div class="arithmatex">\[
+s_X = \frac{\text{fp8\_max}}{\operatorname{amax}(X)} \cdot \alpha, \qquad \alpha \lesssim 1 \text{ (safety margin)}
+\]</div>
+<p>Computing <code>amax(X)</code> requires a full pass over the tensor <em>before</em> you can cast it — an extra reduction on the critical path. The clever production trick, used by NVIDIA&rsquo;s <strong>Transformer Engine</strong>, is <strong>delayed scaling</strong>: keep a short rolling history (e.g. the last 16 steps) of each tensor&rsquo;s amax, and use the <strong>max over that history</strong> to pick this step&rsquo;s scale. Then casting and the matmul can be fused — you don&rsquo;t stall waiting for the current amax; you compute it <em>while</em> you cast and stash it in the history buffer for next time. It is a small bet that the amax does not jump wildly between consecutive steps, which holds in practice once training is stable.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Sketch of FP8 per-tensor cast with delayed scaling (the Transformer Engine idea).</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="n">FP8_E4M3_MAX</span> <span class="o">=</span> <span class="mf">448.0</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">DelayedScale</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">history_len</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">margin</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">amax_history</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">history_len</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ptr</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">margin</span> <span class="o">=</span> <span class="n">margin</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">compute_scale</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">amax</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">amax_history</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mf">1e-12</span><span class="p">)</span>   <span class="c1"># max over recent history</span>
+        <span class="c1"># scale maps amax -&gt; FP8 max, with a safety margin &lt; 1</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">FP8_E4M3_MAX</span> <span class="o">/</span> <span class="n">amax</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">margin</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">cast_to_fp8</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">compute_scale</span><span class="p">()</span>                 <span class="c1"># uses PAST amax (delayed)</span>
+        <span class="n">x_scaled</span> <span class="o">=</span> <span class="n">x</span> <span class="o">*</span> <span class="n">scale</span>
+        <span class="n">x_fp8</span> <span class="o">=</span> <span class="n">x_scaled</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float8_e4m3fn</span><span class="p">)</span>     <span class="c1"># native FP8 dtype</span>
+        <span class="c1"># record THIS tensor&#39;s amax for future steps (off the critical path)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">amax_history</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">ptr</span><span class="p">]</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">amax</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ptr</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ptr</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">amax_history</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span>
+        <span class="c1"># return both: the matmul de-scales its output by 1/scale</span>
+        <span class="k">return</span> <span class="n">x_fp8</span><span class="p">,</span> <span class="n">scale</span>
+</code></pre></div>
+<p>A full FP8 linear layer then does: cast <code>X</code> and <code>W</code> to E4M3 with their scales <span class="arithmatex">\(s_X, s_W\)</span>; run the FP8 tensor-core matmul (which accumulates in fp32 internally); and de-scale the fp32 output by <span class="arithmatex">\(1/(s_X s_W)\)</span>. Three matmuls per linear layer get FP8&rsquo;d — the forward (<span class="arithmatex">\(Y = XW\)</span>), and the two backward matmuls (<span class="arithmatex">\(\nabla X = \nabla Y\, W^\top\)</span> and <span class="arithmatex">\(\nabla W = X^\top \nabla Y\)</span>), the latter two using E5M2 for the gradient operand.</p>
+<h3 id="blockwise-fine-grained-scaling-the-deepseek-refinement">Blockwise / fine-grained scaling: the DeepSeek refinement<a class="headerlink" href="#blockwise-fine-grained-scaling-the-deepseek-refinement" title="Permanent link">¶</a></h3>
+<p>Per-tensor scaling has a weakness: a single <strong>outlier</strong> value blows up the amax, forcing a small scale that crushes all the <em>normal</em> values into the bottom few FP8 codes, where the 3-bit mantissa quantizes them coarsely. Transformers are notorious for activation outliers in specific channels (the same phenomenon that motivates SmoothQuant in <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a>).</p>
+<p>The fix is <strong>finer-grained scaling</strong>: instead of one scale per tensor, use one scale per <strong>block</strong>. DeepSeek-V3&rsquo;s recipe uses <strong>per-token-group (1×128) tile scaling for activations and 128×128 block scaling for weights</strong>. Each block gets its own amax and scale, so an outlier in one block no longer poisons the quantization of every other block. The cost is bookkeeping — you carry many small scale factors and must apply them correctly through the matmul — but the numerical robustness is what made full-FP8 training of a 671B model feasible. DeepSeek also kept certain sensitive components (embeddings, the output head, normalization, and the attention softmax) in higher precision (bf16/fp32), and crucially <strong>accumulated the FP8 matmul partial sums into fp32 with periodic promotion</strong> rather than trusting the tensor core&rsquo;s native accumulation alone, because at FP8 input scale even the accumulator precision starts to matter.</p>
+<figure class="viz" id="fig-fp8mp-pertensor-vs-blockwise-scaling">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 920 440" role="img" aria-label="Side-by-side comparison: per-tensor FP8 scaling (one outlier poisons all cells) versus blockwise 128x128 FP8 scaling (outlier in tile s11 is contained; other 15 tiles keep full resolution).">
+<defs>
+  <marker id="pbs-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--accent,#d9480f)"/>
+  </marker>
+  <marker id="pbs-arrow-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="pbs-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" class="v-muted" fill="currentColor"/>
+  </marker>
+</defs>
+<style>
+  #fig-fp8mp-pertensor-vs-blockwise-scaling text { fill: var(--ink-soft); }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .ttl  { font: 700 13px var(--sans,sans-serif); }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .lbl  { font: 600 11px var(--sans,sans-serif); }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .mono { font: 600 10px var(--mono,monospace); }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .cap  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .dim  { fill: var(--muted,#888); }
+
+  /* Shockwave animation for left panel */
+  @keyframes pbs-pulse-outlier {
+    0%,100% { opacity:0.8; r:7; }
+    50%      { opacity:1;   r:11; }
+  }
+  @keyframes pbs-shockwave {
+    0%   { r:8;  opacity:0.9; }
+    100% { r:145; opacity:0; }
+  }
+  @keyframes pbs-crush {
+    0%,30%  { transform: translateY(0); opacity:0.7; }
+    100%    { transform: translateY(var(--crush-y,40px)); opacity:0.9; }
+  }
+  @keyframes pbs-wall-flash {
+    0%,100% { opacity:0; }
+    55%,75% { opacity:1; }
+  }
+  @keyframes pbs-contain-crush {
+    0%,30%  { transform: translateY(0); opacity:0.7; }
+    100%    { transform: translateY(30px); opacity:0.9; }
+  }
+
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .outlier-dot {
+    animation: pbs-pulse-outlier 1.2s ease-in-out 0s infinite;
+  }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .left-shock {
+    animation: pbs-shockwave 1.2s ease-out 1.2s 1 forwards;
+    opacity: 0;
+  }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .crush-dot {
+    animation: pbs-crush 1.2s ease-in 1.2s 1 forwards;
+  }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .wall-flash {
+    animation: pbs-wall-flash 1.2s ease-in-out 1.2s 1 forwards;
+  }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .contain-crush {
+    animation: pbs-contain-crush 1.2s ease-in 1.2s 1 forwards;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .outlier-dot,
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .left-shock,
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .crush-dot,
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .wall-flash,
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .contain-crush {
+      animation: none;
+    }
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .crush-dot { transform: translateY(40px); opacity:0.9; }
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .contain-crush { transform: translateY(30px); opacity:0.9; }
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .wall-flash { opacity:1; }
+  }
+</style>
+
+
+<line x1="460" y1="20" x2="460" y2="420" class="v-stroke" stroke-width="1" opacity="0.25"/>
+
+
+
+<text x="225" y="28" text-anchor="middle" class="ttl v-accent" fill="var(--accent,#d9480f)">PER-TENSOR SCALING</text>
+
+
+<rect x="42" y="42" width="326" height="234" rx="6" class="v-fill v-stroke" stroke-width="1.8" fill-opacity="0.5"/>
+
+
+<g class="v-grid" stroke-width="0.8" opacity="0.55">
+  <line x1="123" y1="42" x2="123" y2="276"/>
+  <line x1="204" y1="42" x2="204" y2="276"/>
+  <line x1="285" y1="42" x2="285" y2="276"/>
+  <line x1="42"  y1="100" x2="368" y2="100"/>
+  <line x1="42"  y1="159" x2="368" y2="159"/>
+  <line x1="42"  y1="218" x2="368" y2="218"/>
+</g>
+
+
+<text x="205" y="68" text-anchor="middle" class="lbl">one amax  -&gt;  one scale  s</text>
+<rect x="70" y="55" width="270" height="22" rx="4" class="v-stroke" stroke-width="0.8" fill="none" opacity="0.5"/>
+
+
+
+<g class="v-label" opacity="0.55">
+
+  <circle cx="72"  cy="74"  r="3"/>
+  <circle cx="90"  cy="62"  r="3"/>
+  <circle cx="108" cy="84"  r="3"/>
+  <circle cx="152" cy="70"  r="3"/>
+  <circle cx="170" cy="58"  r="3"/>
+  <circle cx="188" cy="86"  r="3"/>
+  <circle cx="230" cy="68"  r="3"/>
+  <circle cx="252" cy="80"  r="3"/>
+  <circle cx="270" cy="56"  r="3"/>
+  <circle cx="315" cy="72"  r="3"/>
+  <circle cx="335" cy="86"  r="3"/>
+  <circle cx="352" cy="60"  r="3"/>
+
+  <circle cx="72"  cy="128" r="3"/>
+  <circle cx="90"  cy="116" r="3"/>
+  <circle cx="108" cy="140" r="3"/>
+
+  <circle cx="230" cy="122" r="3"/>
+  <circle cx="252" cy="138" r="3"/>
+  <circle cx="270" cy="114" r="3"/>
+  <circle cx="315" cy="126" r="3"/>
+  <circle cx="335" cy="142" r="3"/>
+  <circle cx="352" cy="110" r="3"/>
+
+  <circle cx="72"  cy="186" r="3"/>
+  <circle cx="90"  cy="174" r="3"/>
+  <circle cx="108" cy="196" r="3"/>
+  <circle cx="152" cy="180" r="3"/>
+  <circle cx="170" cy="168" r="3"/>
+  <circle cx="188" cy="196" r="3"/>
+  <circle cx="230" cy="178" r="3"/>
+  <circle cx="252" cy="192" r="3"/>
+  <circle cx="270" cy="170" r="3"/>
+  <circle cx="315" cy="182" r="3"/>
+  <circle cx="335" cy="196" r="3"/>
+  <circle cx="352" cy="168" r="3"/>
+
+  <circle cx="72"  cy="244" r="3"/>
+  <circle cx="90"  cy="232" r="3"/>
+  <circle cx="108" cy="252" r="3"/>
+  <circle cx="152" cy="238" r="3"/>
+  <circle cx="170" cy="226" r="3"/>
+  <circle cx="188" cy="258" r="3"/>
+  <circle cx="230" cy="236" r="3"/>
+  <circle cx="252" cy="250" r="3"/>
+  <circle cx="270" cy="228" r="3"/>
+  <circle cx="315" cy="240" r="3"/>
+  <circle cx="335" cy="254" r="3"/>
+  <circle cx="352" cy="226" r="3"/>
+</g>
+
+
+<g fill="var(--accent,#d9480f)" opacity="0">
+
+  <circle class="crush-dot" cx="72"  cy="226" r="2.5" style="--crush-y:42px"/>
+  <circle class="crush-dot" cx="90"  cy="226" r="2.5" style="--crush-y:32px"/>
+  <circle class="crush-dot" cx="108" cy="226" r="2.5" style="--crush-y:52px"/>
+  <circle class="crush-dot" cx="152" cy="238" r="2.5" style="--crush-y:28px"/>
+  <circle class="crush-dot" cx="170" cy="238" r="2.5" style="--crush-y:35px"/>
+  <circle class="crush-dot" cx="188" cy="238" r="2.5" style="--crush-y:22px"/>
+  <circle class="crush-dot" cx="230" cy="228" r="2.5" style="--crush-y:45px"/>
+  <circle class="crush-dot" cx="252" cy="228" r="2.5" style="--crush-y:30px"/>
+  <circle class="crush-dot" cx="270" cy="228" r="2.5" style="--crush-y:38px"/>
+  <circle class="crush-dot" cx="315" cy="232" r="2.5" style="--crush-y:48px"/>
+  <circle class="crush-dot" cx="335" cy="232" r="2.5" style="--crush-y:33px"/>
+  <circle class="crush-dot" cx="352" cy="232" r="2.5" style="--crush-y:25px"/>
+</g>
+
+
+<rect x="124" y="101" width="79" height="57" rx="2" fill="var(--accent,#d9480f)" fill-opacity="0.82"/>
+<text x="163" y="124" text-anchor="middle" class="lbl" fill="white">outlier</text>
+<text x="163" y="140" text-anchor="middle" class="mono" fill="white">large val</text>
+
+
+<circle class="outlier-dot" cx="163" cy="130" r="7" fill="var(--accent,#d9480f)" fill-opacity="0" stroke="var(--accent,#d9480f)" stroke-width="2"/>
+
+
+<circle class="left-shock" cx="163" cy="130" r="8" fill="none" stroke="var(--accent,#d9480f)" stroke-width="2.5" opacity="0"/>
+
+
+<g>
+
+  <line x1="400" y1="48" x2="400" y2="270" class="v-stroke" stroke-width="2"/>
+
+  <g class="v-stroke" stroke-width="1.5">
+    <line x1="394" y1="48"  x2="406" y2="48"/>
+    <line x1="394" y1="80"  x2="406" y2="80"/>
+    <line x1="394" y1="111" x2="406" y2="111"/>
+    <line x1="394" y1="143" x2="406" y2="143"/>
+    <line x1="394" y1="175" x2="406" y2="175"/>
+    <line x1="394" y1="207" x2="406" y2="207"/>
+    <line x1="394" y1="238" x2="406" y2="238"/>
+    <line x1="394" y1="270" x2="406" y2="270"/>
+  </g>
+  <text x="400" y="42" text-anchor="middle" class="cap" font-size="8">max</text>
+  <text x="400" y="282" text-anchor="middle" class="cap" font-size="8">0</text>
+
+  <circle cx="400" cy="262" r="3" fill="var(--accent,#d9480f)" opacity="0.9"/>
+  <circle cx="400" cy="258" r="3" fill="var(--accent,#d9480f)" opacity="0.7"/>
+  <circle cx="400" cy="266" r="2.5" fill="var(--accent,#d9480f)" opacity="0.8"/>
+  <circle cx="396" cy="262" r="2" fill="var(--accent,#d9480f)" opacity="0.6"/>
+  <circle cx="404" cy="258" r="2" fill="var(--accent,#d9480f)" opacity="0.5"/>
+  <circle cx="400" cy="238" r="2.5" fill="var(--accent,#d9480f)" opacity="0.35"/>
+
+  <line x1="430" y1="262" x2="408" y2="262" stroke="var(--accent,#d9480f)" stroke-width="1.2" marker-end="url(#pbs-arrow)"/>
+  <text x="436" y="258" class="cap" font-size="8">all values</text>
+  <text x="436" y="268" class="cap" font-size="8">crushed here</text>
+  <text x="400" y="296" text-anchor="middle" class="cap" font-size="8">FP8 codes</text>
+</g>
+
+
+<text x="225" y="300" text-anchor="middle" class="cap" font-size="9">One outlier blows up amax</text>
+<text x="225" y="311" text-anchor="middle" class="cap" font-size="9">-&gt; tiny scale s = fp8_max / amax</text>
+<text x="225" y="322" text-anchor="middle" class="cap" font-size="9">-&gt; all normal values crushed into bottom codes.</text>
+
+
+
+
+<text x="690" y="28" text-anchor="middle" class="ttl" fill="var(--good,#2f9e6e)">BLOCKWISE (128×128) SCALING</text>
+
+
+
+
+
+
+<g>
+
+  <rect x="491" y="43"  width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="583" y="43"  width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="675" y="43"  width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="767" y="43"  width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+
+  <rect x="491" y="101" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+
+
+  <rect x="675" y="101" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+
+  <rect x="767" y="101" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+
+  <rect x="491" y="159" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="583" y="159" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="675" y="159" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="767" y="159" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+
+  <rect x="491" y="217" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="583" y="217" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="675" y="217" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="767" y="217" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+</g>
+
+
+<g class="mono dim">
+
+  <text x="536" y="64"  text-anchor="middle">s₀₀</text>
+  <text x="628" y="64"  text-anchor="middle">s₀₁</text>
+  <text x="720" y="64"  text-anchor="middle">s₀₂</text>
+  <text x="812" y="64"  text-anchor="middle">s₀₃</text>
+
+  <text x="536" y="122" text-anchor="middle">s₁₀</text>
+
+  <text x="720" y="122" text-anchor="middle">s₁₂</text>
+  <text x="812" y="122" text-anchor="middle">s₁₃</text>
+
+  <text x="536" y="180" text-anchor="middle">s₂₀</text>
+  <text x="628" y="180" text-anchor="middle">s₂₁</text>
+  <text x="720" y="180" text-anchor="middle">s₂₂</text>
+  <text x="812" y="180" text-anchor="middle">s₂₃</text>
+
+  <text x="536" y="238" text-anchor="middle">s₃₀</text>
+  <text x="628" y="238" text-anchor="middle">s₃₁</text>
+  <text x="720" y="238" text-anchor="middle">s₃₂</text>
+  <text x="812" y="238" text-anchor="middle">s₃₃</text>
+</g>
+
+
+<g fill="var(--good,#2f9e6e)" opacity="0.6">
+
+  <circle cx="505" cy="56" r="2.5"/><circle cx="520" cy="72" r="2.5"/><circle cx="540" cy="60" r="2.5"/><circle cx="558" cy="78" r="2.5"/><circle cx="572" cy="50" r="2.5"/>
+
+  <circle cx="597" cy="58" r="2.5"/><circle cx="612" cy="74" r="2.5"/><circle cx="632" cy="56" r="2.5"/><circle cx="650" cy="70" r="2.5"/><circle cx="664" cy="48" r="2.5"/>
+
+  <circle cx="689" cy="60" r="2.5"/><circle cx="704" cy="76" r="2.5"/><circle cx="724" cy="54" r="2.5"/><circle cx="742" cy="68" r="2.5"/><circle cx="756" cy="50" r="2.5"/>
+
+  <circle cx="781" cy="56" r="2.5"/><circle cx="796" cy="72" r="2.5"/><circle cx="816" cy="58" r="2.5"/><circle cx="834" cy="74" r="2.5"/><circle cx="848" cy="46" r="2.5"/>
+
+  <circle cx="505" cy="114" r="2.5"/><circle cx="520" cy="130" r="2.5"/><circle cx="540" cy="118" r="2.5"/><circle cx="558" cy="136" r="2.5"/><circle cx="572" cy="108" r="2.5"/>
+
+  <circle cx="689" cy="116" r="2.5"/><circle cx="704" cy="132" r="2.5"/><circle cx="724" cy="112" r="2.5"/><circle cx="742" cy="126" r="2.5"/><circle cx="756" cy="108" r="2.5"/>
+
+  <circle cx="781" cy="114" r="2.5"/><circle cx="796" cy="130" r="2.5"/><circle cx="816" cy="116" r="2.5"/><circle cx="834" cy="132" r="2.5"/><circle cx="848" cy="104" r="2.5"/>
+
+  <circle cx="505" cy="172" r="2.5"/><circle cx="520" cy="188" r="2.5"/><circle cx="540" cy="176" r="2.5"/><circle cx="558" cy="192" r="2.5"/><circle cx="572" cy="166" r="2.5"/>
+  <circle cx="597" cy="174" r="2.5"/><circle cx="612" cy="190" r="2.5"/><circle cx="632" cy="172" r="2.5"/><circle cx="650" cy="186" r="2.5"/><circle cx="664" cy="164" r="2.5"/>
+  <circle cx="689" cy="170" r="2.5"/><circle cx="704" cy="186" r="2.5"/><circle cx="724" cy="174" r="2.5"/><circle cx="742" cy="190" r="2.5"/><circle cx="756" cy="162" r="2.5"/>
+  <circle cx="781" cy="172" r="2.5"/><circle cx="796" cy="188" r="2.5"/><circle cx="816" cy="174" r="2.5"/><circle cx="834" cy="190" r="2.5"/><circle cx="848" cy="160" r="2.5"/>
+
+  <circle cx="505" cy="230" r="2.5"/><circle cx="520" cy="246" r="2.5"/><circle cx="540" cy="234" r="2.5"/><circle cx="558" cy="250" r="2.5"/><circle cx="572" cy="224" r="2.5"/>
+  <circle cx="597" cy="232" r="2.5"/><circle cx="612" cy="248" r="2.5"/><circle cx="632" cy="230" r="2.5"/><circle cx="650" cy="244" r="2.5"/><circle cx="664" cy="222" r="2.5"/>
+  <circle cx="689" cy="228" r="2.5"/><circle cx="704" cy="244" r="2.5"/><circle cx="724" cy="232" r="2.5"/><circle cx="742" cy="248" r="2.5"/><circle cx="756" cy="220" r="2.5"/>
+  <circle cx="781" cy="230" r="2.5"/><circle cx="796" cy="246" r="2.5"/><circle cx="816" cy="234" r="2.5"/><circle cx="834" cy="250" r="2.5"/><circle cx="848" cy="218" r="2.5"/>
+</g>
+
+
+<rect x="584" y="102" width="88" height="54" rx="3" fill="var(--accent,#d9480f)" fill-opacity="0.85"/>
+<text x="628" y="122" text-anchor="middle" class="lbl" fill="white">outlier</text>
+<text x="628" y="137" text-anchor="middle" class="mono" fill="white">s₁₁</text>
+
+
+<circle class="outlier-dot" cx="628" cy="129" r="7" fill="none" stroke="white" stroke-width="2" opacity="0.8"/>
+
+
+<rect class="wall-flash" x="582" y="100" width="92" height="58" rx="4" fill="none" stroke="var(--warn,#e0a106)" stroke-width="3" opacity="0"/>
+
+
+<g fill="var(--accent,#d9480f)">
+  <circle class="contain-crush" cx="600" cy="118" r="2.5" opacity="0"/>
+  <circle class="contain-crush" cx="614" cy="118" r="2.5" opacity="0" style="animation-delay:1.25s"/>
+  <circle class="contain-crush" cx="628" cy="118" r="2.5" opacity="0" style="animation-delay:1.3s"/>
+</g>
+
+
+
+
+
+<text x="685" y="300" text-anchor="middle" class="cap" font-size="9">Each tile has its own amax+scale.</text>
+<text x="685" y="311" text-anchor="middle" class="cap" font-size="9">Outlier in s11 only degrades s11;</text>
+<text x="685" y="322" text-anchor="middle" class="cap" font-size="9">other 15 tiles keep full FP8 resolution.</text>
+
+
+<g class="dim" font-size="9" font-family="var(--mono,monospace)">
+
+  <text x="536" y="38" text-anchor="middle" fill="var(--muted,#888)">col 0</text>
+  <text x="628" y="38" text-anchor="middle" fill="var(--muted,#888)">col 1</text>
+  <text x="720" y="38" text-anchor="middle" fill="var(--muted,#888)">col 2</text>
+  <text x="812" y="38" text-anchor="middle" fill="var(--muted,#888)">col 3</text>
+</g>
+
+
+<rect x="20" y="335" width="430" height="50" rx="5" fill="var(--accent,#d9480f)" fill-opacity="0.08" class="v-stroke" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="235" y="356" text-anchor="middle" class="lbl" fill="var(--accent,#d9480f)">All 16 tiles degraded</text>
+<text x="235" y="374" text-anchor="middle" class="cap">Global precision loss from a single outlier</text>
+
+<rect x="490" y="335" width="418" height="50" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.08" stroke="var(--good,#2f9e6e)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="699" y="356" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Only s11 degraded (1 of 16)</text>
+<text x="699" y="374" text-anchor="middle" class="cap">Outlier contained within its tile boundary</text>
+
+
+<text x="205" y="415" text-anchor="middle" class="cap" font-style="italic">one scale for the whole tensor</text>
+<text x="685" y="415" text-anchor="middle" class="cap" font-style="italic">one scale per 128x128 tile (DeepSeek-V3 weight recipe)</text>
+
+</svg>
+<figcaption><b>Per-tensor vs. blockwise FP8 scaling: outlier containment.</b> Under per-tensor scaling (left), a single large value forces a tiny global scale that collapses all 16 tiles' values into the bottom two FP8 codes. Under DeepSeek-V3's 128×128 blockwise scaling (right), the same outlier is confined to tile s₁₁; the remaining 15 tiles retain their own amax and scale, preserving full FP8 resolution—the key reason fine-grained scaling made full-FP8 training of a 671B-parameter model feasible.</figcaption>
+</figure>
+
+<h3 id="using-fp8-in-practice-transformer-engine">Using FP8 in practice: Transformer Engine<a class="headerlink" href="#using-fp8-in-practice-transformer-engine" title="Permanent link">¶</a></h3>
+<p>You rarely hand-roll the casts. NVIDIA&rsquo;s <strong>Transformer Engine (TE)</strong> provides FP8-aware layers and an <code>fp8_autocast</code> context that manages scales, history, and the E4M3/E5M2 split for you.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">transformer_engine.pytorch</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">te</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformer_engine.common.recipe</span><span class="w"> </span><span class="kn">import</span> <span class="n">DelayedScaling</span><span class="p">,</span> <span class="n">Format</span>
+
+<span class="c1"># A TE Linear behaves like nn.Linear but can run its matmul in FP8.</span>
+<span class="n">layer</span> <span class="o">=</span> <span class="n">te</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">4096</span><span class="p">,</span> <span class="mi">4096</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># HYBRID = E4M3 for forward tensors, E5M2 for the gradient (backward) tensors.</span>
+<span class="n">fp8_recipe</span> <span class="o">=</span> <span class="n">DelayedScaling</span><span class="p">(</span>
+    <span class="n">fp8_format</span><span class="o">=</span><span class="n">Format</span><span class="o">.</span><span class="n">HYBRID</span><span class="p">,</span>
+    <span class="n">amax_history_len</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>        <span class="c1"># rolling window for delayed scaling</span>
+    <span class="n">amax_compute_algo</span><span class="o">=</span><span class="s2">&quot;max&quot;</span><span class="p">,</span>    <span class="c1"># use the max over the window</span>
+<span class="p">)</span>
+
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">4096</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+<span class="k">with</span> <span class="n">te</span><span class="o">.</span><span class="n">fp8_autocast</span><span class="p">(</span><span class="n">enabled</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fp8_recipe</span><span class="o">=</span><span class="n">fp8_recipe</span><span class="p">):</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">layer</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>         <span class="c1"># the GEMM runs in FP8; accumulation is fp32</span>
+<span class="c1"># Everything outside the context (norms, residual adds, softmax) stays bf16/fp32.</span>
+</code></pre></div>
+<p>The mental model: <strong>FP8 is for the GEMMs only.</strong> The element-wise glue of a transformer — residual adds, the nonlinearity inside softmax and the RMSNorm/LayerNorm statistics — stays in bf16 or fp32. You FP8 the three big matmuls per linear layer (forward + two backward) and per attention projection, because that is where &gt;90% of the FLOPs and a large share of the bytes are. See <a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a> for FP8 <em>inside</em> the attention kernel itself, which is a harder problem because the softmax sits between two matmuls.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: keep the head and embeddings out of FP8</p>
+<p>Empirically the input embedding, the final LM head (the big <span class="arithmatex">\(d_\text{model} \times \text{vocab}\)</span> projection), the LayerNorm/RMSNorm, and the attention softmax are the most precision-sensitive parts of a transformer. Almost every successful FP8 recipe (DeepSeek-V3, NVIDIA&rsquo;s) keeps these in bf16/fp32 and FP8s only the bulk feed-forward and projection GEMMs. The throughput you give up is small; the stability you buy is large. Start conservative, then expand the FP8 surface as you confirm the loss curve matches a bf16 baseline.</p>
+</div>
+<h2 id="numerics-stability-and-debugging-low-precision-runs">Numerics, stability, and debugging low-precision runs<a class="headerlink" href="#numerics-stability-and-debugging-low-precision-runs" title="Permanent link">¶</a></h2>
+<p>Low precision interacts with everything else in the training stack. A few mechanisms worth internalizing:</p>
+<p><strong>Stochastic rounding.</strong> When you repeatedly add small bf16 increments to a bf16 value, round-to-nearest can systematically lose every increment smaller than half an ulp (the stagnation problem). <strong>Stochastic rounding</strong> rounds up or down <em>with probability proportional to the distance</em> to each neighbor, so in expectation the increments are preserved even when each individual one is below the ulp. This is why some bf16-only optimizers (and the bf16 master-weight-free recipes) use stochastic rounding on the weight update — it lets you skip the fp32 master copy and still make progress. It is an <em>unbiased</em> rounding scheme; round-to-nearest is biased toward zero for sub-ulp updates.</p>
+<div class="arithmatex">\[
+\operatorname{SR}(x) = \begin{cases} \lceil x \rceil &amp; \text{with prob. } (x - \lfloor x \rfloor) \\ \lfloor x \rfloor &amp; \text{with prob. } (\lceil x \rceil - x) \end{cases}
+\qquad \mathbb{E}[\operatorname{SR}(x)] = x
+\]</div>
+<p><strong>Loss spikes and precision.</strong> Many large-run loss spikes (<a href="../03-pretraining/11-training-stability.html">Training Stability, Loss Spikes &amp; Debugging Large Runs</a>) are precision-mediated: an activation overflows fp16 → <code>inf</code> → <code>NaN</code> gradient → corrupted weights → divergence. bf16 removes most of these by construction. In FP8, spikes can come from a sudden amax jump that the delayed-scaling history hadn&rsquo;t anticipated, momentarily overflowing E4M3; a per-block scaling scheme with a conservative margin mitigates it.</p>
+<p><strong>What to keep in fp32, always.</strong> A reliable checklist of &ldquo;never FP8, often not even bf16&rdquo; components: the softmax normalization, LayerNorm/RMSNorm running statistics, the loss and its log-softmax, the optimizer state and the master weights, and any <code>1/x</code>, <code>exp</code>, <code>log</code>, or large reduction. The unifying principle: <strong>anything that involves a large-range reduction or a division by a small number wants fp32.</strong></p>
+<p><strong>Debugging checklist when a low-precision run misbehaves:</strong></p>
+<div class="highlight"><pre><span></span><code>Symptom                         Likely cause                         Fix
+─────────────────────────────   ──────────────────────────────────   ─────────────────────────────
+NaN within ~100 steps (fp16)    loss-scale too high -&gt; grad inf       lower init scale / trust GradScaler
+loss flat after early progress  update swamping (no fp32 master)      add fp32 master / stochastic round
+loss matches bf16 then diverges FP8 amax spike overflows E4M3         shorter history / bigger margin / blockwise
+slightly worse final loss vs    head/embeddings/softmax in FP8        exclude sensitive layers from FP8
+   bf16 baseline                                                      
+grad norm ~65000 every step     clipping a *scaled* gradient          unscale_ before clip_grad_norm_
+</code></pre></div>
+<p><strong>A note on determinism.</strong> Low-precision tensor-core matmuls are not bit-for-bit deterministic across runs unless you force it, because fp32 accumulation order can vary with the kernel&rsquo;s tiling. This rarely matters for training quality but matters for debugging &ldquo;did my change move the loss?&rdquo; — pin seeds and accept small nondeterminism, or use deterministic kernels for an A/B and pay the speed cost.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Your colleague switches a training run from bf16 to fp16 to &ldquo;get more precision&rdquo; and it starts producing <code>NaN</code>s after a few hundred steps. What&rsquo;s going on, and what would you change?</p>
+<p><strong>A:</strong> fp16 has <em>more mantissa</em> (10 vs 7 bits) but <em>much less dynamic range</em> — only 5 exponent bits, max value 65504, smallest normal ~6e-5. Two failures follow. (1) <strong>Overflow:</strong> an activation or attention logit exceeds 65504 → <code>inf</code> → <code>NaN</code>. (2) <strong>Gradient underflow:</strong> small gradients fall below ~6e-5 and round to zero. The <code>NaN</code>s are usually the overflow path. The fix is <em>not</em> to add precision but to manage range: enable a <strong>dynamic GradScaler</strong> so the loss (and hence all gradients) is multiplied up out of the underflow zone, with inf-checking that skips corrupted steps and backs off the scale; and ensure <strong>fp32 master weights</strong> so the recovered updates actually stick. But the cleaner answer is: on any Ampere/Hopper GPU, <strong>just use bf16</strong> — same 16 bits, fp32-equal range, no loss scaling, no overflow, marginally coarser mantissa that the optimizer absorbs. fp16 is essentially legacy for pre-Ampere hardware. The &ldquo;more precision&rdquo; intuition is a trap: for training, <em>range beats precision</em>.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Range vs precision is the whole game.</strong> Exponent bits set range; mantissa bits set precision. bf16 trades fp16&rsquo;s precision for fp32&rsquo;s range — and for training, range wins.</li>
+<li><strong>bf16 needs no loss scaling</strong> because its exponent matches fp32, so gradients never underflow. fp16 needs a (dynamic) <strong>GradScaler</strong> to lift gradients out of the underflow zone and inf-checking to skip corrupted steps.</li>
+<li><strong>Master weights in fp32</strong> solve the update-swamping (stagnation) problem: small low-precision updates are otherwise lost when added to a large weight. The optimizer steps in fp32; compute runs low-precision.</li>
+<li>Tensor cores take <strong>narrow inputs but accumulate in fp32</strong> — this is what makes any low-precision matmul numerically survivable.</li>
+<li><strong>AMP loop order matters:</strong> scale the loss → backward → <strong>unscale before clipping</strong> → step (with inf-skip) → update scale. Cast logits to fp32 before cross-entropy.</li>
+<li><strong>FP8 doubles throughput again</strong> using E4M3 (forward) and E5M2 (gradients), but its 3-bit mantissa demands <strong>per-tensor or blockwise scaling</strong> to map each tensor into the tiny representable window; Transformer Engine&rsquo;s <strong>delayed scaling</strong> hides the amax reduction.</li>
+<li><strong>DeepSeek-V3-style fine-grained (128×128) blockwise scaling</strong> tames activation outliers that would wreck per-tensor scaling, and keeps embeddings/head/softmax/norms out of FP8.</li>
+<li>Keep <strong>softmax, norms, loss, and optimizer state in fp32</strong>; the rule of thumb is &ldquo;any large-range reduction or division by a small number wants fp32.&rdquo;</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Mixed-precision training is now standard practice for all large-scale LLM runs: bf16 with fp32 optimizer states is the default baseline, and FP8 (E4M3/E5M2 with per-tensor or blockwise delayed scaling) is the production frontier on Hopper and Blackwell GPUs. The key open challenges are extending fine-grained FP8 scaling to attention and MoE routing layers while preserving training stability at multi-trillion-token scale.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1710.03740">Micikevicius et al., <em>Mixed Precision Training</em> (2018)</a> — introduced fp16 + loss scaling + fp32 master weights, the template every AMP library follows.</li>
+<li><a href="https://arxiv.org/abs/1905.12322">Kalamkar et al., <em>A Study of BFLOAT16 for Deep Learning Training</em> (2019)</a> — first comprehensive study showing bf16 matches fp32 accuracy across domains with no loss scaling needed.</li>
+<li><a href="https://arxiv.org/abs/2209.05433">Micikevicius et al., <em>FP8 Formats for Deep Learning</em> (2022)</a> — defines the E4M3/E5M2 split and rationale; the specification all hardware vendors implemented.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2310.18313">Peng et al., <em>FP8-LM: Training FP8 Large Language Models</em> (2023)</a> — extends FP8 to gradients and optimizer states, achieving 75% faster training and 39% memory reduction vs. BF16 on GPT-175B.</li>
+<li><a href="https://arxiv.org/abs/2412.19437">DeepSeek-AI, <em>DeepSeek-V3 Technical Report</em> (2024)</a> — first public account of fine-grained (per-token-group and 128×128 tile) FP8 training at 671B scale; details which components stay in bf16/fp32.</li>
+<li><a href="https://arxiv.org/abs/2410.19313">Xi et al., <em>COAT: Compressing Optimizer States and Activation for Memory-Efficient FP8 Training</em> (2024)</a> — ICLR 2025; reduces end-to-end training memory 1.54× vs. BF16 by quantizing optimizer states and activations into FP8.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/NVIDIA/TransformerEngine">NVIDIA/TransformerEngine</a> — the reference library for FP8-aware layers, <code>fp8_autocast</code>, delayed scaling, and the E4M3/E5M2 HYBRID recipe on Hopper/Ada/Blackwell.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://docs.pytorch.org/tutorials/recipes/recipes/amp_recipe.html">PyTorch AMP Tutorial</a> — official step-by-step guide to <code>torch.autocast</code> and <code>GradScaler</code> with timing benchmarks.</li>
+<li><a href="https://developer.nvidia.com/blog/floating-point-8-an-introduction-to-efficient-lower-precision-ai-training/">NVIDIA Developer Blog, <em>Floating-Point 8: An Introduction to Efficient, Lower-Precision AI Training</em></a> — accessible explainer of E4M3/E5M2, scaling strategies, and throughput gains on H100.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Micikevicius et al., <em>Mixed Precision Training</em> (2017) — the original fp16 + loss-scaling + master-weights recipe.</li>
+<li>Kalamkar et al., <em>A Study of BFLOAT16 for Deep Learning Training</em> (2019) — why bf16&rsquo;s range removes the need for loss scaling.</li>
+<li>Micikevicius et al., <em>FP8 Formats for Deep Learning</em> (2022) — the E4M3 / E5M2 definitions and rationale.</li>
+<li>NVIDIA, <em>Transformer Engine</em> documentation and repository — delayed scaling, <code>fp8_autocast</code>, and the HYBRID recipe.</li>
+<li>DeepSeek-AI, <em>DeepSeek-V3 Technical Report</em> (2024) — fine-grained (tile/block) FP8 scaling at 671B scale, with the components kept in higher precision.</li>
+<li>PyTorch AMP documentation (<code>torch.autocast</code>, <code>torch.amp.GradScaler</code>) — the canonical reference for the loop in this chapter.</li>
+<li>Wang et al., <em>Training Deep Neural Networks with 8-bit Floating Point Numbers</em> (2018) — early FP8 training with chunk-based accumulation and stochastic rounding.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="07-megatron-deepspeed.html"><span class="pn-label">← Previous</span><span class="pn-title">Megatron-LM, DeepSpeed &amp; Parallelism in Practice</span></a>
+<a class="next" href="09-optimizers.html"><span class="pn-label">Next →</span><span class="pn-title">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-floating-point-formats-fp32-fp16-bf16-fp8">The floating-point formats: fp32, fp16, bf16, fp8</a></li>
+<li class="toc-l3"><a href="#tensor-cores-accumulate-in-fp32">Tensor cores accumulate in fp32</a></li>
+<li class="toc-l2"><a href="#why-naive-fp16-breaks-range-underflow-and-the-update-problem">Why naive fp16 breaks: range, underflow, and the update problem</a></li>
+<li class="toc-l2"><a href="#automatic-mixed-precision-amp-and-loss-scaling">Automatic Mixed Precision (AMP) and loss scaling</a></li>
+<li class="toc-l3"><a href="#the-loss-scaling-trick">The loss-scaling trick</a></li>
+<li class="toc-l3"><a href="#static-vs-dynamic-loss-scaling">Static vs dynamic loss scaling</a></li>
+<li class="toc-l3"><a href="#bf16-needs-no-loss-scaling-here-is-exactly-why">bf16 needs no loss scaling — here is exactly why</a></li>
+<li class="toc-l2"><a href="#a-correct-amp-training-loop-from-scratch">A correct AMP training loop, from scratch</a></li>
+<li class="toc-l3"><a href="#where-do-master-weights-live">Where do master weights live?</a></li>
+<li class="toc-l2"><a href="#fp8-training-pushing-the-matmuls-to-8-bits">FP8 training: pushing the matmuls to 8 bits</a></li>
+<li class="toc-l3"><a href="#per-tensor-scaling-and-the-delayed-scaling-recipe">Per-tensor scaling and the delayed-scaling recipe</a></li>
+<li class="toc-l3"><a href="#blockwise-fine-grained-scaling-the-deepseek-refinement">Blockwise / fine-grained scaling: the DeepSeek refinement</a></li>
+<li class="toc-l3"><a href="#using-fp8-in-practice-transformer-engine">Using FP8 in practice: Transformer Engine</a></li>
+<li class="toc-l2"><a href="#numerics-stability-and-debugging-low-precision-runs">Numerics, stability, and debugging low-precision runs</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

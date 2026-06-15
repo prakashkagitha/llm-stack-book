@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ML Breadth: Rapid-Fire Concepts &amp; Model Answers — ML/LLM Interview Companion</title>
+<meta name="description" content="A curated bank of breadth Q&amp;A: bias-variance, regularization, overfitting, optimization, batchnorm/dropout, transformers, attention, embeddings, evaluation metr">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../interview/index.html"><span class="logo">Λ</span><span class="brand-text">ML/LLM Interview Companion<small>Prep for Top-Tier ML &amp; LLM Engineering Interviews</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="interview-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<a class="sidebar-parent" href="../index.html">← The LLM Stack</a>
+<div class="nav-part" data-part="13-interview-prep">
+<div class="nav-part-title"><span>The ML/LLM Interview — Companion Prep</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-google-ml-interview-format.html"><span class="nav-num">1.1</span>The ML Engineer Interview: Formats &amp; What&#x27;s Tested</a></li>
+<li><a class="active" href="02-ml-breadth-rapidfire.html"><span class="nav-num">1.2</span>ML Breadth: Rapid-Fire Concepts &amp; Model Answers</a></li>
+<li><a class="" href="03-ml-system-design-framework.html"><span class="nav-num">1.3</span>ML System Design: A Framework</a></li>
+<li><a class="" href="04-ml-system-design-cases.html"><span class="nav-num">1.4</span>ML System Design: Worked Cases</a></li>
+<li><a class="" href="05-coding-for-ml-interviews.html"><span class="nav-num">1.5</span>Coding for ML Interviews</a></li>
+<li><a class="" href="06-llm-deepdive-questions.html"><span class="nav-num">1.6</span>LLM-Specific Deep-Dive Questions</a></li>
+<li><a class="" href="07-behavioral-googleyness.html"><span class="nav-num">1.7</span>Behavioral, Leadership &amp; Project Deep-Dive</a></li>
+<li><a class="" href="08-ten-day-study-plan.html"><span class="nav-num">1.8</span>The 10-Day Study Plan &amp; Final Checklist</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">The ML/LLM Interview — Companion Prep</div>
+<h1 id="132-ml-breadth-rapid-fire-concepts-model-answers">13.2 ML Breadth: Rapid-Fire Concepts &amp; Model Answers<a class="headerlink" href="#132-ml-breadth-rapid-fire-concepts-model-answers" title="Permanent link">¶</a></h1>
+<p>The Google ML &ldquo;breadth&rdquo; round is not a quiz about whether you memorized definitions. It is a probe of whether you <em>understand mechanisms</em> well enough to reason about them under pressure — to say not just &ldquo;dropout prevents overfitting&rdquo; but <em>why</em>, <em>how much</em>, <em>what it costs at inference</em>, and <em>when it actively hurts</em>. The format strategy is covered in <a href="01-google-ml-interview-format.html">The Google ML Domain Interview: Format &amp; Strategy</a>; this chapter is the dense reference you drill the night before.</p>
+<p>The structure is deliberate. Each concept gets a <strong>crisp model answer</strong> — the two-to-four sentences you would actually say out loud — followed by enough mechanism, math, and runnable code that the answer is <em>yours</em> and not a recited card. Treat the model answers as the floor, not the ceiling: a great candidate hits the model answer and then volunteers the trade-off the interviewer was about to ask for.</p>
+<p>A unifying lens runs through everything below. Almost every &ldquo;ML breadth&rdquo; question is secretly about one of three tensions: <strong>bias vs. variance</strong> (capacity and generalization), <strong>signal vs. noise</strong> (optimization and regularization), or <strong>what you actually measure vs. what you care about</strong> (evaluation). Keep those three axes in mind and the forty-odd sub-topics collapse into a handful of ideas applied repeatedly.</p>
+<h2 id="generalization-bias-variance-overfitting-regularization">Generalization: Bias, Variance, Overfitting &amp; Regularization<a class="headerlink" href="#generalization-bias-variance-overfitting-regularization" title="Permanent link">¶</a></h2>
+<h3 id="the-biasvariance-decomposition">The bias–variance decomposition<a class="headerlink" href="#the-biasvariance-decomposition" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> For squared-error loss, expected test error at a point decomposes into bias², variance, and irreducible noise. Bias is error from wrong assumptions (too simple a model — <em>underfitting</em>); variance is sensitivity to the particular training sample (too flexible a model — <em>overfitting</em>); noise is the Bayes-error floor you cannot beat. Increasing capacity trades bias for variance; regularization, more data, and ensembling trade variance for a little bias.</p>
+<p>Formally, for a target <span class="arithmatex">\(y = f(x) + \varepsilon\)</span> with <span class="arithmatex">\(\mathbb{E}[\varepsilon]=0\)</span>, <span class="arithmatex">\(\operatorname{Var}(\varepsilon)=\sigma^2\)</span>, and an estimator <span class="arithmatex">\(\hat f\)</span> trained on a random dataset <span class="arithmatex">\(D\)</span>:</p>
+<div class="arithmatex">\[
+\mathbb{E}_{D}\big[(y - \hat f(x))^2\big] = \underbrace{\big(f(x) - \mathbb{E}_D[\hat f(x)]\big)^2}_{\text{bias}^2} + \underbrace{\mathbb{E}_D\big[(\hat f(x) - \mathbb{E}_D[\hat f(x)])^2\big]}_{\text{variance}} + \underbrace{\sigma^2}_{\text{noise}}
+\]</div>
+<p>The decomposition is <em>exact</em> for squared error; for cross-entropy and 0–1 loss there are analogous but messier decompositions, so in interviews quote the squared-error version and say the <em>intuition</em> carries over.</p>
+<p>Let us see it empirically. We fit polynomials of increasing degree to a noisy sine and measure how bias and variance trade off across resampled training sets.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">true_f</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">x</span><span class="p">)</span>          <span class="c1"># the function we wish we knew</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">make_dataset</span><span class="p">(</span><span class="n">n</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">noise</span><span class="o">=</span><span class="mf">0.25</span><span class="p">):</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">true_f</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">+</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">noise</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>  <span class="c1"># irreducible noise sigma=0.25</span>
+    <span class="k">return</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span>
+
+<span class="c1"># Fixed grid of test points where we measure bias/variance.</span>
+<span class="n">x_test</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
+<span class="n">f_test</span> <span class="o">=</span> <span class="n">true_f</span><span class="p">(</span><span class="n">x_test</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">degree</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">9</span><span class="p">]:</span>
+    <span class="n">preds</span> <span class="o">=</span> <span class="p">[]</span>                            <span class="c1"># predictions across many resampled datasets</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">200</span><span class="p">):</span>                  <span class="c1"># 200 independent training sets</span>
+        <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="n">make_dataset</span><span class="p">()</span>
+        <span class="n">coeffs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">polyfit</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">degree</span><span class="p">)</span>  <span class="c1"># least-squares polynomial fit</span>
+        <span class="n">preds</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">polyval</span><span class="p">(</span><span class="n">coeffs</span><span class="p">,</span> <span class="n">x_test</span><span class="p">))</span>
+    <span class="n">preds</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">preds</span><span class="p">)</span>               <span class="c1"># shape (200, 100)</span>
+
+    <span class="n">mean_pred</span> <span class="o">=</span> <span class="n">preds</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>        <span class="c1"># E_D[ f_hat(x) ]</span>
+    <span class="n">bias2</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">mean_pred</span> <span class="o">-</span> <span class="n">f_test</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">variance</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">preds</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;degree=</span><span class="si">{</span><span class="n">degree</span><span class="si">:</span><span class="s2">&gt;2</span><span class="si">}</span><span class="s2">  bias^2=</span><span class="si">{</span><span class="n">bias2</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">  variance=</span><span class="si">{</span><span class="n">variance</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">  &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;sum=</span><span class="si">{</span><span class="n">bias2</span><span class="o">+</span><span class="n">variance</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Running this prints something like <code>degree= 1  bias^2=0.21  variance=0.01</code>, <code>degree= 3  bias^2=0.00  variance=0.02</code>, <code>degree= 9  bias^2=0.00  variance=0.30</code>. The degree-1 line is too stiff (high bias); the degree-9 polynomial wiggles wildly to chase noise (high variance); degree-3 is the sweet spot. <strong>This U-shaped total-error curve is the single most important picture in the breadth round</strong> — the interviewer wants to see you draw it and name the axes.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: double descent and why the classic U-curve isn&rsquo;t the whole story</p>
+<p>The classic bias–variance U-curve predicts catastrophe as you overparameterize. Yet modern networks with far more parameters than data points generalize <em>well</em>. The resolution is <strong>double descent</strong>: test error rises to a peak at the <em>interpolation threshold</em> (model just barely fits the training data), then <em>descends again</em> as you keep adding capacity. The over-parameterized regime is governed by implicit regularization from SGD, which among the infinitely many zero-training-loss solutions tends to find low-norm, smooth ones. In an interview, mention double descent as the &ldquo;modern footnote&rdquo; to bias–variance — it signals you read past the textbook.</p>
+</div>
+<h3 id="diagnosing-overfitting-vs-underfitting">Diagnosing overfitting vs. underfitting<a class="headerlink" href="#diagnosing-overfitting-vs-underfitting" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> Plot training and validation loss together. <em>Underfitting:</em> both are high and close — the model lacks capacity or hasn&rsquo;t trained long enough. <em>Overfitting:</em> training loss keeps dropping while validation loss flattens then rises — the gap between the two curves <em>is</em> the variance. The fix differs: underfitting wants more capacity / less regularization / longer training; overfitting wants more data, more regularization, or early stopping.</p>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Train loss</th>
+<th>Val loss</th>
+<th>Train–val gap</th>
+<th>Likely cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Underfitting</td>
+<td>high</td>
+<td>high</td>
+<td>small</td>
+<td>too little capacity / too much reg</td>
+<td>bigger model, train longer, lower <span class="arithmatex">\(\lambda\)</span></td>
+</tr>
+<tr>
+<td>Good fit</td>
+<td>low</td>
+<td>low</td>
+<td>small</td>
+<td>—</td>
+<td>ship it</td>
+</tr>
+<tr>
+<td>Overfitting</td>
+<td>low</td>
+<td>high</td>
+<td>large</td>
+<td>too much capacity / too little data</td>
+<td>more data, augmentation, reg, early stop</td>
+</tr>
+<tr>
+<td>Distribution shift</td>
+<td>low</td>
+<td>high</td>
+<td>large but val <em>flat from start</em></td>
+<td>train ≠ test distribution</td>
+<td>fix data, domain adaptation</td>
+</tr>
+</tbody>
+</table>
+<p>The last row is the subtle one and a favorite trap: a large train–val gap is <em>not</em> always overfitting. If validation loss is high from the very first epoch and never tracked training, you likely have a <strong>distribution mismatch or a leak</strong>, not a variance problem, and throwing regularization at it won&rsquo;t help.</p>
+<h3 id="regularization-the-full-toolbox">Regularization: the full toolbox<a class="headerlink" href="#regularization-the-full-toolbox" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> Regularization is anything that reduces variance at the cost of some bias — it constrains the hypothesis space toward simpler functions. The big families are: (1) <em>norm penalties</em> — L2/weight decay shrinks weights toward zero, L1 induces sparsity; (2) <em>stochastic</em> — dropout, DropConnect, stochastic depth, data augmentation; (3) <em>early stopping</em>, which limits the effective number of optimization steps; (4) <em>normalization</em> (batch/layer norm) and <em>architectural</em> priors (convolutions, attention); and (5) <em>ensembling</em>, which averages away variance directly.</p>
+<p>The L2-penalized objective and its gradient make the &ldquo;shrinkage&rdquo; literal:</p>
+<div class="arithmatex">\[
+\tilde{\mathcal{L}}(\theta) = \mathcal{L}(\theta) + \frac{\lambda}{2}\|\theta\|_2^2
+\quad\Longrightarrow\quad
+\nabla\tilde{\mathcal{L}} = \nabla\mathcal{L} + \lambda\theta
+\quad\Longrightarrow\quad
+\theta \leftarrow (1 - \eta\lambda)\,\theta - \eta\nabla\mathcal{L}
+\]</div>
+<p>Every step <em>multiplicatively decays</em> the weights by <span class="arithmatex">\((1 - \eta\lambda)\)</span> before applying the data gradient — hence &ldquo;weight decay.&rdquo; For plain SGD, the L2 penalty and weight decay are identical. <strong>For Adam they are not</strong>, because Adam divides the gradient by a per-parameter running RMS, which also rescales the penalty&rsquo;s contribution. <em>AdamW</em> fixes this by applying decay <em>directly to the weights</em>, decoupled from the adaptive moment estimate — this is why AdamW is the default for transformers and why &ldquo;decoupled weight decay&rdquo; is a sharp thing to mention. More on optimizers in <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a>.</p>
+<p>L1 vs. L2 geometry is worth one crisp sentence: the L1 ball has corners on the axes, so the loss contour first touches it at a vertex where some coordinates are exactly zero — that is <em>why</em> L1 gives sparse solutions while L2 only shrinks.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="c1"># Why L1 zeros things out and L2 only shrinks: the proximal operators.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">prox_l1</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="n">t</span><span class="p">):</span>           <span class="c1"># soft-thresholding: solution of min 0.5(x-w)^2 + t|x|</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">sign</span><span class="p">(</span><span class="n">w</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">w</span><span class="p">)</span> <span class="o">-</span> <span class="n">t</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">prox_l2</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="n">t</span><span class="p">):</span>           <span class="c1"># shrinkage: solution of min 0.5(x-w)^2 + 0.5 t x^2</span>
+    <span class="k">return</span> <span class="n">w</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">t</span><span class="p">)</span>
+
+<span class="n">w</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.05</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.02</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">])</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;L1 (t=0.1):&quot;</span><span class="p">,</span> <span class="n">prox_l1</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">))</span>   <span class="c1"># -&gt; [ 0.  0.4 -0.2  0.  1.9] small coords killed</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;L2 (t=0.1):&quot;</span><span class="p">,</span> <span class="n">prox_l2</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">))</span>   <span class="c1"># -&gt; [0.045 0.455 ...]        all shrunk, none zero</span>
+</code></pre></div>
+<p>L1 sends the two near-zero coordinates <em>exactly</em> to 0; L2 shrinks everyone proportionally but never zeroes anyone. That difference — feature selection vs. smooth shrinkage — is the entire L1-vs-L2 answer.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: regularizing the wrong things</p>
+<p>Do <strong>not</strong> apply weight decay to bias terms, LayerNorm scale/shift parameters, or embeddings indiscriminately — decaying a LayerNorm gain toward zero fights the normalization it is supposed to enable, and decaying biases just adds noise with no generalization benefit. Production training scripts (nanoGPT, Megatron) build <em>two parameter groups</em>: one with weight decay for the matmul weights, one with <code>weight_decay=0</code> for norms and biases. If you claim &ldquo;we use weight decay&rdquo; in an interview, be ready to say <em>which</em> parameters.</p>
+</div>
+<h2 id="optimization-gradient-descent-adam-gradient-pathologies">Optimization: Gradient Descent, Adam &amp; Gradient Pathologies<a class="headerlink" href="#optimization-gradient-descent-adam-gradient-pathologies" title="Permanent link">¶</a></h2>
+<h3 id="from-sgd-to-adam-in-one-mental-model">From SGD to Adam in one mental model<a class="headerlink" href="#from-sgd-to-adam-in-one-mental-model" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> SGD follows the noisy negative gradient; the noise from minibatching is a feature, not a bug — it helps escape sharp minima. Momentum adds a velocity term that accumulates consistent gradient directions and damps oscillation across narrow ravines. RMSProp divides each coordinate&rsquo;s step by a running root-mean-square of its gradients, giving every parameter its own adaptive learning rate. Adam is <em>momentum + RMSProp with bias correction</em>. AdamW additionally decouples weight decay.</p>
+<p>The Adam update, with bias correction, is worth being able to write from memory:</p>
+<div class="arithmatex">\[
+\begin{aligned}
+m_t &amp;= \beta_1 m_{t-1} + (1-\beta_1)\, g_t, &amp; \hat m_t &amp;= \frac{m_t}{1-\beta_1^t} \\
+v_t &amp;= \beta_2 v_{t-1} + (1-\beta_2)\, g_t^2, &amp; \hat v_t &amp;= \frac{v_t}{1-\beta_2^t} \\
+\theta_t &amp;= \theta_{t-1} - \eta\, \frac{\hat m_t}{\sqrt{\hat v_t} + \epsilon} &amp; &amp;
+\end{aligned}
+\]</div>
+<p>The bias correction matters most in the first few hundred steps: because <span class="arithmatex">\(m_0 = v_0 = 0\)</span>, the raw moments are biased toward zero, and dividing by <span class="arithmatex">\((1-\beta_1^t)\)</span> and <span class="arithmatex">\((1-\beta_2^t)\)</span> un-biases them. Here is Adam from scratch — 12 lines that you should be able to reproduce on a whiteboard:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">adam_step</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="n">grads</span><span class="p">,</span> <span class="n">state</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">,</span> <span class="n">b1</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span> <span class="n">b2</span><span class="o">=</span><span class="mf">0.999</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One AdamW-style step. `state` holds m, v, and the step count t.&quot;&quot;&quot;</span>
+    <span class="n">state</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;t&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;t&quot;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;t&quot;</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">params</span><span class="p">:</span>
+        <span class="n">g</span> <span class="o">=</span> <span class="n">grads</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;m_</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">g</span><span class="p">))</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;v_</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">g</span><span class="p">))</span>
+        <span class="n">m</span><span class="p">[:]</span> <span class="o">=</span> <span class="n">b1</span> <span class="o">*</span> <span class="n">m</span> <span class="o">+</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">b1</span><span class="p">)</span> <span class="o">*</span> <span class="n">g</span>            <span class="c1"># first moment (momentum)</span>
+        <span class="n">v</span><span class="p">[:]</span> <span class="o">=</span> <span class="n">b2</span> <span class="o">*</span> <span class="n">v</span> <span class="o">+</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">b2</span><span class="p">)</span> <span class="o">*</span> <span class="n">g</span> <span class="o">*</span> <span class="n">g</span>        <span class="c1"># second moment (uncentered variance)</span>
+        <span class="n">m_hat</span> <span class="o">=</span> <span class="n">m</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">b1</span> <span class="o">**</span> <span class="n">t</span><span class="p">)</span>               <span class="c1"># bias-corrected</span>
+        <span class="n">v_hat</span> <span class="o">=</span> <span class="n">v</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">b2</span> <span class="o">**</span> <span class="n">t</span><span class="p">)</span>
+        <span class="n">params</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">-=</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">m_hat</span> <span class="o">/</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">v_hat</span><span class="p">)</span> <span class="o">+</span> <span class="n">eps</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">params</span>
+</code></pre></div>
+<p>Why does Adam dominate transformer training while SGD+momentum dominates ResNets? Transformer gradients are <em>heavy-tailed and wildly different in scale across parameters</em> (embeddings vs. attention vs. LayerNorm), and the per-coordinate adaptive scaling is essential for stability. The deep dive is in <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a>.</p>
+<h3 id="learning-rate-the-single-most-important-hyperparameter">Learning rate: the single most important hyperparameter<a class="headerlink" href="#learning-rate-the-single-most-important-hyperparameter" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> Too high and you diverge or oscillate; too low and you crawl and may stall in a bad region. The standard transformer recipe is <em>linear warmup</em> (ramp from 0 over a few hundred to a few thousand steps, because early Adam moment estimates are unreliable and large embeddings are untrained) followed by <em>cosine decay</em> to a small floor. Tune it first, on a log scale, and tune it before anything else.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">lr_schedule</span><span class="p">(</span><span class="n">step</span><span class="p">,</span> <span class="n">base_lr</span><span class="o">=</span><span class="mf">3e-4</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="mi">2000</span><span class="p">,</span> <span class="n">total</span><span class="o">=</span><span class="mi">100_000</span><span class="p">,</span> <span class="n">min_ratio</span><span class="o">=</span><span class="mf">0.1</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">step</span> <span class="o">&lt;</span> <span class="n">warmup</span><span class="p">:</span>                           <span class="c1"># linear warmup</span>
+        <span class="k">return</span> <span class="n">base_lr</span> <span class="o">*</span> <span class="n">step</span> <span class="o">/</span> <span class="n">warmup</span>
+    <span class="n">progress</span> <span class="o">=</span> <span class="p">(</span><span class="n">step</span> <span class="o">-</span> <span class="n">warmup</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">total</span> <span class="o">-</span> <span class="n">warmup</span><span class="p">)</span>
+    <span class="n">cosine</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">progress</span><span class="p">))</span>   <span class="c1"># 1 -&gt; 0</span>
+    <span class="k">return</span> <span class="n">base_lr</span> <span class="o">*</span> <span class="p">(</span><span class="n">min_ratio</span> <span class="o">+</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">min_ratio</span><span class="p">)</span> <span class="o">*</span> <span class="n">cosine</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1000</span><span class="p">,</span> <span class="mi">2000</span><span class="p">,</span> <span class="mi">50_000</span><span class="p">,</span> <span class="mi">100_000</span><span class="p">]:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;step </span><span class="si">{</span><span class="n">s</span><span class="si">:</span><span class="s2">&gt;7</span><span class="si">}</span><span class="s2">: lr = </span><span class="si">{</span><span class="n">lr_schedule</span><span class="p">(</span><span class="n">s</span><span class="p">)</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Schedules, warmup, and the batch-size / learning-rate coupling (the linear and square-root scaling rules) are in <a href="../03-pretraining/10-lr-schedules-hparams.html">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a>.</p>
+<h3 id="vanishing-and-exploding-gradients">Vanishing and exploding gradients<a class="headerlink" href="#vanishing-and-exploding-gradients" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> In a deep network the gradient is a long product of Jacobians (chain rule). If the typical singular values of those Jacobians are below 1, the product shrinks exponentially with depth — <em>vanishing gradients</em>, so early layers barely learn. If above 1, it grows exponentially — <em>exploding gradients</em>, so updates blow up and loss goes to NaN. The fixes are structural: residual connections (so gradients have a &ldquo;highway&rdquo; of identity paths), normalization (keeps activations and thus Jacobians well-scaled), careful initialization, non-saturating activations, and — for explosions — gradient clipping.</p>
+<p>The math, for a network <span class="arithmatex">\(h_t = \phi(W h_{t-1})\)</span>:</p>
+<div class="arithmatex">\[
+\frac{\partial \mathcal{L}}{\partial h_0} = \frac{\partial \mathcal{L}}{\partial h_L}\prod_{t=1}^{L} \frac{\partial h_t}{\partial h_{t-1}}, \qquad \left\|\prod_t J_t\right\| \sim \rho^{L}
+\]</div>
+<p>where <span class="arithmatex">\(\rho\)</span> is the typical spectral radius of the layer Jacobians. The exponential in <span class="arithmatex">\(L\)</span> is the whole problem. Three concrete mitigations:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="c1"># 1) WHY init matters: variance of activations through 50 linear layers.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">forward_chain</span><span class="p">(</span><span class="n">scale</span><span class="p">,</span> <span class="n">depth</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">width</span><span class="o">=</span><span class="mi">512</span><span class="p">):</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">width</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">depth</span><span class="p">):</span>
+        <span class="n">W</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="n">width</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">W</span> <span class="o">@</span> <span class="n">x</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>               <span class="c1"># ReLU</span>
+    <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">std</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;naive  std≈&quot;</span><span class="p">,</span> <span class="n">forward_chain</span><span class="p">(</span><span class="mf">0.05</span><span class="p">))</span>      <span class="c1"># collapses toward 0 (vanishing)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;He init std≈&quot;</span><span class="p">,</span> <span class="n">forward_chain</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mi">2</span><span class="o">/</span><span class="mi">512</span><span class="p">)))</span>  <span class="c1"># stays O(1): Var=2/fan_in for ReLU</span>
+
+<span class="c1"># 2) gradient clipping by global norm — the standard explosion guard.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">clip_grad_norm</span><span class="p">(</span><span class="n">grads</span><span class="p">,</span> <span class="n">max_norm</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="nb">sum</span><span class="p">((</span><span class="n">g</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">grads</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">total</span> <span class="o">&gt;</span> <span class="n">max_norm</span><span class="p">:</span>
+        <span class="n">grads</span> <span class="o">=</span> <span class="p">[</span><span class="n">g</span> <span class="o">*</span> <span class="p">(</span><span class="n">max_norm</span> <span class="o">/</span> <span class="p">(</span><span class="n">total</span> <span class="o">+</span> <span class="mf">1e-6</span><span class="p">))</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">grads</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">grads</span>
+</code></pre></div>
+<p><strong>He/Kaiming initialization</strong> (<span class="arithmatex">\(\operatorname{Var}(W) = 2/\text{fan\_in}\)</span> for ReLU) keeps activation variance roughly constant through depth; <strong>Xavier/Glorot</strong> (<span class="arithmatex">\(2/(\text{fan\_in}+\text{fan\_out})\)</span>) targets the same for symmetric activations. The residual connection — the reason transformers can be hundreds of layers deep — gives <span class="arithmatex">\(\partial h_t/\partial h_{t-1} = I + \partial F/\partial h_{t-1}\)</span>, so the identity term keeps the gradient from vanishing no matter how small <span class="arithmatex">\(F\)</span>&rsquo;s Jacobian gets. This is the single most important architectural trick for trainability; see <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a>. Loss spikes and large-run debugging are covered in <a href="../03-pretraining/11-training-stability.html">Training Stability, Loss Spikes &amp; Debugging Large Runs</a>.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Your transformer&rsquo;s training loss is decreasing nicely, then suddenly spikes to a huge value and the run NaNs out. Walk me through how you debug it.</p>
+<p><strong>A:</strong> First I check the gradient norm logs around the spike: a spike in grad-norm before the loss spike points to an exploding-gradient event, often from a single bad batch (e.g. a very long or degenerate sequence) or numerical overflow in attention. Immediate guards: global gradient clipping (norm ≤ 1.0), lowering the learning rate or extending warmup, and checking for fp16 overflow — switching attention/softmax and the loss to fp32 or moving to bf16, whose wider exponent range rarely overflows. I&rsquo;d also inspect whether a specific data shard correlates with spikes, and confirm the LR schedule isn&rsquo;t ramping too aggressively. Structurally, I&rsquo;d verify residuals and normalization are correctly placed (pre-norm is more stable than post-norm at depth) and that no LayerNorm gain has drifted huge. The systematic version of this checklist is the &ldquo;training stability&rdquo; playbook: clip, warm up, bf16, pre-norm, inspect data, lower LR.</p>
+</div>
+<h2 id="normalization-dropout-activations">Normalization, Dropout &amp; Activations<a class="headerlink" href="#normalization-dropout-activations" title="Permanent link">¶</a></h2>
+<h3 id="batchnorm-vs-layernorm-and-why-transformers-use-layernorm">BatchNorm vs. LayerNorm — and why transformers use LayerNorm<a class="headerlink" href="#batchnorm-vs-layernorm-and-why-transformers-use-layernorm" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> Both normalize activations to roughly zero-mean/unit-variance then apply a learnable scale and shift, which smooths the loss landscape and lets you use higher learning rates. <em>BatchNorm normalizes across the batch dimension per feature</em> — so its statistics depend on other examples in the batch, which breaks for small/variable batches, for sequence models where the &ldquo;batch&rdquo; of tokens is ragged, and at inference (it needs running averages). <em>LayerNorm normalizes across the feature dimension per example</em> — independent of batch size, identical at train and test, and naturally suited to variable-length sequences. That is why transformers use LayerNorm (and RMSNorm).</p>
+<div class="arithmatex">\[
+\text{BN: } \hat x_{i} = \frac{x_i - \mu_{\mathcal{B}}}{\sqrt{\sigma_{\mathcal{B}}^2 + \epsilon}} \quad(\mu,\sigma \text{ over the batch}) \qquad
+\text{LN: } \hat x_{i} = \frac{x_i - \mu_{\text{feat}}}{\sqrt{\sigma_{\text{feat}}^2 + \epsilon}} \quad(\mu,\sigma \text{ over features})
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">16</span><span class="p">)</span>   <span class="c1"># (batch=4, seq=8, features=16)</span>
+
+<span class="c1"># LayerNorm: stats over the LAST dim (features), per (batch, position).</span>
+<span class="n">mu</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">var</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">unbiased</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">ln</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">-</span> <span class="n">mu</span><span class="p">)</span> <span class="o">/</span> <span class="n">torch</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">var</span> <span class="o">+</span> <span class="mf">1e-5</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">ln</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">)</span>  <span class="c1"># each token normalized</span>
+
+<span class="c1"># RMSNorm (used in LLaMA/PaLM): no mean-subtraction, just divide by RMS. Cheaper.</span>
+<span class="n">rms</span> <span class="o">=</span> <span class="n">x</span> <span class="o">/</span> <span class="n">torch</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-5</span><span class="p">)</span>
+</code></pre></div>
+<p>Three sharp follow-ups to volunteer: (1) <strong>RMSNorm</strong> drops the mean-centering entirely — empirically the re-centering contributes little, so modern LLMs save the compute. (2) <strong>Pre-norm vs. post-norm</strong>: putting the norm <em>inside</em> the residual branch (pre-norm, <span class="arithmatex">\(x + F(\text{LN}(x))\)</span>) keeps a clean identity path and is far more stable at depth than the original post-norm transformer. (3) BatchNorm&rsquo;s batch-dependence is a <em>correctness</em> problem in RL and contrastive setups where examples within a batch are correlated. Details in <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a>.</p>
+<h3 id="dropout-train-time-noise-test-time-scaling">Dropout — train-time noise, test-time scaling<a class="headerlink" href="#dropout-train-time-noise-test-time-scaling" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> Dropout randomly zeros each activation with probability <span class="arithmatex">\(p\)</span> during training, forcing the network not to rely on any single feature — it approximates training an exponential ensemble of sub-networks and sharing their weights. At test time you use all units but must rescale so the expected activation matches; the standard <em>inverted dropout</em> divides by <span class="arithmatex">\((1-p)\)</span> at train time so test-time is a plain forward pass.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">inverted_dropout</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">p</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">training</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">training</span> <span class="ow">or</span> <span class="n">p</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">x</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">rand_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">p</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>   <span class="c1"># keep with prob (1-p)</span>
+    <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="n">mask</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p</span><span class="p">)</span>                  <span class="c1"># rescale so E[output] == E[input]</span>
+
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">100_000</span><span class="p">)</span>
+<span class="n">out</span> <span class="o">=</span> <span class="n">inverted_dropout</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">p</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">training</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>   <span class="c1"># ≈ 1.0 — expectation preserved despite 30% zeroed</span>
+</code></pre></div>
+<p>The expectation argument is exact: each unit survives with probability <span class="arithmatex">\((1-p)\)</span> and is then divided by <span class="arithmatex">\((1-p)\)</span>, so <span class="arithmatex">\(\mathbb{E}[\text{out}] = (1-p)\cdot \frac{x}{1-p} = x\)</span>. <strong>In modern LLM pretraining, dropout is often set to 0</strong> — with web-scale data the model is data-bound, not variance-bound, so the regularization just slows learning. Dropout reappears during <em>fine-tuning</em> on small datasets where overfitting is real. Knowing when <em>not</em> to use a technique is a strong signal.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: forgetting eval mode</p>
+<p><code>model.eval()</code> in PyTorch does two things at once: it switches dropout <em>off</em> and switches BatchNorm to its <em>running statistics</em> instead of batch statistics. Forgetting it at inference is a classic bug — your outputs become nondeterministic (dropout) and batch-size-dependent (BN), and metrics silently degrade. Conversely, forgetting <code>model.train()</code> after an eval loop means you accidentally train with dropout disabled. Always pair them.</p>
+</div>
+<h3 id="activation-functions">Activation functions<a class="headerlink" href="#activation-functions" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> Activations inject nonlinearity (without one, a deep net collapses to a single linear map). ReLU (<span class="arithmatex">\(\max(0,x)\)</span>) is cheap and non-saturating for positive inputs, which fixes vanishing gradients for deep nets, but can &ldquo;die&rdquo; (a unit stuck at zero gradient forever). GELU and SiLU/Swish are smooth approximations that are now standard in transformers; gated variants like <strong>SwiGLU</strong> (used in LLaMA/PaLM) split the MLP into a gate and a value branch and consistently improve quality per parameter.</p>
+<table>
+<thead>
+<tr>
+<th>Activation</th>
+<th>Formula</th>
+<th>Property</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sigmoid</td>
+<td><span class="arithmatex">\(1/(1+e^{-x})\)</span></td>
+<td>saturates both ends → vanishing gradients; avoid in hidden layers</td>
+</tr>
+<tr>
+<td>Tanh</td>
+<td><span class="arithmatex">\(\tanh(x)\)</span></td>
+<td>zero-centered but still saturates</td>
+</tr>
+<tr>
+<td>ReLU</td>
+<td><span class="arithmatex">\(\max(0,x)\)</span></td>
+<td>cheap, non-saturating; risk of dead units</td>
+</tr>
+<tr>
+<td>LeakyReLU</td>
+<td><span class="arithmatex">\(\max(\alpha x, x)\)</span></td>
+<td>small negative slope <span class="arithmatex">\(\alpha\)</span> avoids dead units</td>
+</tr>
+<tr>
+<td>GELU</td>
+<td><span class="arithmatex">\(x\,\Phi(x)\)</span></td>
+<td>smooth; transformer default</td>
+</tr>
+<tr>
+<td>SiLU/Swish</td>
+<td><span class="arithmatex">\(x\,\sigma(x)\)</span></td>
+<td>smooth, self-gated</td>
+</tr>
+<tr>
+<td>SwiGLU</td>
+<td><span class="arithmatex">\((\text{Swish}(xW_1)\odot xW_3)W_2\)</span></td>
+<td>gated MLP; best quality/param in LLMs</td>
+</tr>
+</tbody>
+</table>
+<p>The &ldquo;dying ReLU&rdquo; mechanism is worth one sentence: if a large gradient pushes a unit&rsquo;s pre-activation permanently negative, its output is 0, its gradient is 0, and it never recovers — LeakyReLU/GELU avoid this by keeping a nonzero gradient for negative inputs.</p>
+<h2 id="transformers-attention-embeddings">Transformers, Attention &amp; Embeddings<a class="headerlink" href="#transformers-attention-embeddings" title="Permanent link">¶</a></h2>
+<p>This section compresses Part II into interview-sized answers. For the full from-scratch builds, see <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a>, <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>, and <a href="../02-transformer/07-build-gpt-from-scratch.html">Building a GPT From Scratch (nanoGPT-style)</a>.</p>
+<h3 id="self-attention-in-one-breath">Self-attention in one breath<a class="headerlink" href="#self-attention-in-one-breath" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> Each token emits a query, a key, and a value (linear projections of its embedding). Attention computes, for every query, a softmax-weighted average of all values, weighted by query–key similarity (scaled dot product). So each token&rsquo;s output is a content-based, learned mixture of every other token&rsquo;s value — the mechanism that lets the model route information across arbitrary distances in one layer. It is <span class="arithmatex">\(O(n^2)\)</span> in sequence length because every token attends to every other.</p>
+<div class="arithmatex">\[
+\text{Attention}(Q,K,V) = \operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V
+\]</div>
+<p>Two sub-questions interviewers love. <strong>Why divide by <span class="arithmatex">\(\sqrt{d_k}\)</span>?</strong> The dot product of two independent <span class="arithmatex">\(d_k\)</span>-dimensional vectors with unit-variance entries has variance <span class="arithmatex">\(d_k\)</span>; without scaling, the logits grow with dimension, push softmax into a saturated regime where one weight is ≈1 and the rest ≈0, and the gradient through softmax nearly vanishes. Dividing by <span class="arithmatex">\(\sqrt{d_k}\)</span> restores unit-variance logits. <strong>Why softmax?</strong> It produces a valid probability distribution (non-negative, sums to 1) so the output is a convex combination of values, and it is differentiable.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">attention</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">mask</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="c1"># q,k,v: (batch, heads, seq, d_k)</span>
+    <span class="n">d_k</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">q</span> <span class="o">@</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">d_k</span> <span class="o">**</span> <span class="mf">0.5</span>      <span class="c1"># (b, h, seq, seq)</span>
+    <span class="k">if</span> <span class="n">mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">mask</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">))</span>  <span class="c1"># causal mask</span>
+    <span class="n">weights</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>                <span class="c1"># rows sum to 1</span>
+    <span class="k">return</span> <span class="n">weights</span> <span class="o">@</span> <span class="n">v</span>                                  <span class="c1"># weighted sum of values</span>
+
+<span class="c1"># Causal mask: position i may attend only to positions &lt;= i (lower triangular).</span>
+<span class="n">seq</span> <span class="o">=</span> <span class="mi">5</span>
+<span class="n">causal</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tril</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">seq</span><span class="p">,</span> <span class="n">seq</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">causal</span><span class="p">)</span>   <span class="c1"># the mask that makes a decoder autoregressive</span>
+</code></pre></div>
+<h3 id="multi-head-attention-and-the-kv-cache-flavors">Multi-head attention, and the KV-cache flavors<a class="headerlink" href="#multi-head-attention-and-the-kv-cache-flavors" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> Instead of one attention with dimension <span class="arithmatex">\(d\)</span>, we run <span class="arithmatex">\(h\)</span> heads of dimension <span class="arithmatex">\(d/h\)</span> in parallel and concatenate — each head can specialize (syntax, coreference, positional patterns) and attend to a different subspace. The cost is the same FLOPs but more expressive routing. <em>MQA/GQA</em> share keys and values across heads to shrink the KV cache (the dominant memory cost at inference); <em>MLA</em> compresses KV into a low-rank latent.</p>
+<p>The KV-cache trade-off is a <em>systems</em> answer the interviewer will reward: with <span class="arithmatex">\(h\)</span> heads, naive multi-head attention (MHA) stores <span class="arithmatex">\(h\)</span> separate K and V vectors per token, which at long context dominates GPU memory during decode. <strong>Multi-Query Attention (MQA)</strong> uses one shared K/V for all heads (≈<span class="arithmatex">\(h\times\)</span> smaller cache, slight quality loss); <strong>Grouped-Query Attention (GQA)</strong> interpolates with <span class="arithmatex">\(g\)</span> groups. This is the central reason modern LLMs ship GQA. The math and KV-cache sizing live in <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a> and <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: KV-cache size, and why GQA matters</p>
+<p>Take a model with <span class="arithmatex">\(L = 32\)</span> layers, <span class="arithmatex">\(h = 32\)</span> heads, head dimension <span class="arithmatex">\(d_h = 128\)</span> (so model dim <span class="arithmatex">\(d = 4096\)</span>), serving in bf16 (2 bytes). The KV cache stores <strong>2</strong> tensors (K and V) per layer per token.</p>
+<p><strong>Per token, full MHA:</strong> <span class="arithmatex">\(2 \times L \times h \times d_h \times 2\text{ bytes} = 2 \times 32 \times 32 \times 128 \times 2 = 2{,}097{,}152\)</span> bytes <span class="arithmatex">\(\approx\)</span> <strong>2 MiB per token</strong>.</p>
+<p>For a single sequence of <strong>8{,}192 tokens</strong>: <span class="arithmatex">\(8192 \times 2\text{ MiB} = 16\text{ GiB}\)</span> — for <em>one</em> request&rsquo;s KV cache. That is most of an A100-40GB before you&rsquo;ve batched anything. <strong>Now switch to GQA with 8 KV groups</strong> instead of 32 heads: the K/V projection shrinks by <span class="arithmatex">\(32/8 = 4\times\)</span>, so the cache drops to <strong>4 GiB</strong>, letting you batch ~4× more concurrent requests on the same card. This single architectural choice is the difference between serving 1 user and 4 — which is exactly why every production LLM since ~2023 uses GQA or MLA. The throughput consequences are worked out in <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a>.</p>
+</div>
+<h3 id="embeddings-what-they-are-and-why-dot-products-mean-similar">Embeddings: what they are and why dot products mean &ldquo;similar&rdquo;<a class="headerlink" href="#embeddings-what-they-are-and-why-dot-products-mean-similar" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> An embedding is a learned dense vector representing a discrete object (token, word, user, item) in a continuous space where geometric proximity encodes semantic similarity. They are trained so that objects appearing in similar contexts get similar vectors (the distributional hypothesis). We compare them with cosine similarity or dot product; the magic is that <em>meaning becomes arithmetic</em> — <code>king - man + woman ≈ queen</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="c1"># Cosine similarity vs. dot product: when do they differ?</span>
+<span class="n">a</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">])</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">])</span>   <span class="c1"># same direction, 2x magnitude</span>
+<span class="n">c</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">])</span>   <span class="c1"># orthogonal</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">F</span><span class="o">.</span><span class="n">cosine_similarity</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">))</span>  <span class="c1"># 1.0 — direction identical</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">a</span> <span class="o">@</span> <span class="n">b</span><span class="p">)</span>                             <span class="c1"># 2.0 — magnitude inflates dot product</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">F</span><span class="o">.</span><span class="n">cosine_similarity</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">c</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">))</span>  <span class="c1"># 0.0 — orthogonal = unrelated</span>
+</code></pre></div>
+<p>The crisp distinction: <strong>cosine similarity ignores magnitude (pure direction); dot product rewards both alignment and magnitude.</strong> For retrieval where vectors are L2-normalized, the two are equivalent. Token embeddings, the input pipeline, and positional information are in <a href="../02-transformer/02-embeddings-input.html">Embeddings &amp; The Input Pipeline</a>; representation learning, contrastive training, and retrieval embeddings in <a href="../09-rag-retrieval/01-embeddings-representation.html">Embeddings &amp; Representation Learning</a>.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Why does positional encoding exist at all — what would break without it?</p>
+<p><strong>A:</strong> Self-attention is <em>permutation-equivariant</em>: it computes a weighted sum over a <em>set</em> of tokens with no notion of order, so &ldquo;dog bites man&rdquo; and &ldquo;man bites dog&rdquo; would produce identical representations. Positional encodings inject order. Sinusoidal (Vaswani) and learned absolute encodings add a position-dependent vector to the input. Modern LLMs prefer <strong>RoPE</strong> (rotary), which rotates the query/key vectors by an angle proportional to position, so the attention dot product depends only on <em>relative</em> offset <span class="arithmatex">\((i-j)\)</span> — this generalizes better to longer contexts and is what enables context-length extension. The taxonomy is in <a href="../02-transformer/05-positional-encoding.html">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a>.</p>
+</div>
+<h2 id="evaluation-metrics-class-imbalance-calibration">Evaluation Metrics, Class Imbalance &amp; Calibration<a class="headerlink" href="#evaluation-metrics-class-imbalance-calibration" title="Permanent link">¶</a></h2>
+<h3 id="the-confusion-matrix-and-its-derived-metrics">The confusion matrix and its derived metrics<a class="headerlink" href="#the-confusion-matrix-and-its-derived-metrics" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> From the four cells — true positive, false positive, true negative, false negative — you derive everything. <em>Precision</em> = TP/(TP+FP): of what I flagged positive, how much was right (penalizes false alarms). <em>Recall</em> = TP/(TP+FN): of all actual positives, how many I caught (penalizes misses). <em>F1</em> is their harmonic mean. Which you optimize depends on the cost of each error type: a cancer screen wants recall, a spam filter that must not bury real mail wants precision.</p>
+<div class="arithmatex">\[
+P = \frac{TP}{TP+FP}, \quad R = \frac{TP}{TP+FN}, \quad F_1 = \frac{2PR}{P+R}, \quad F_\beta = (1+\beta^2)\frac{PR}{\beta^2 P + R}
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">metrics</span><span class="p">(</span><span class="n">y_true</span><span class="p">,</span> <span class="n">y_pred</span><span class="p">):</span>
+    <span class="n">tp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">y_pred</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">y_true</span> <span class="o">==</span> <span class="mi">1</span><span class="p">))</span>
+    <span class="n">fp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">y_pred</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">y_true</span> <span class="o">==</span> <span class="mi">0</span><span class="p">))</span>
+    <span class="n">fn</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">y_pred</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">y_true</span> <span class="o">==</span> <span class="mi">1</span><span class="p">))</span>
+    <span class="n">tn</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">y_pred</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">y_true</span> <span class="o">==</span> <span class="mi">0</span><span class="p">))</span>
+    <span class="n">precision</span> <span class="o">=</span> <span class="n">tp</span> <span class="o">/</span> <span class="p">(</span><span class="n">tp</span> <span class="o">+</span> <span class="n">fp</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">)</span>
+    <span class="n">recall</span>    <span class="o">=</span> <span class="n">tp</span> <span class="o">/</span> <span class="p">(</span><span class="n">tp</span> <span class="o">+</span> <span class="n">fn</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">)</span>
+    <span class="n">f1</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">precision</span> <span class="o">*</span> <span class="n">recall</span> <span class="o">/</span> <span class="p">(</span><span class="n">precision</span> <span class="o">+</span> <span class="n">recall</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="n">precision</span><span class="o">=</span><span class="n">precision</span><span class="p">,</span> <span class="n">recall</span><span class="o">=</span><span class="n">recall</span><span class="p">,</span> <span class="n">f1</span><span class="o">=</span><span class="n">f1</span><span class="p">,</span>
+                <span class="n">accuracy</span><span class="o">=</span><span class="p">(</span><span class="n">tp</span> <span class="o">+</span> <span class="n">tn</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">y_true</span><span class="p">))</span>
+
+<span class="c1"># A 99%-negative dataset: accuracy is a liar.</span>
+<span class="n">y_true</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="mi">990</span> <span class="o">+</span> <span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="mi">10</span><span class="p">)</span>
+<span class="n">y_pred_lazy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span>              <span class="c1"># predict &quot;negative&quot; for everything</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">metrics</span><span class="p">(</span><span class="n">y_true</span><span class="p">,</span> <span class="n">y_pred_lazy</span><span class="p">))</span>
+<span class="c1"># accuracy=0.99, but recall=0.0 — the model is useless and accuracy hides it.</span>
+</code></pre></div>
+<h3 id="roc-auc-vs-pr-auc-and-the-threshold-question">ROC-AUC vs. PR-AUC, and the threshold question<a class="headerlink" href="#roc-auc-vs-pr-auc-and-the-threshold-question" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> A classifier outputs a score; the <em>threshold</em> turns it into a decision, and every threshold gives a different (precision, recall) and (TPR, FPR). The <strong>ROC curve</strong> plots TPR vs. FPR across all thresholds; its area (ROC-AUC) is the probability the model ranks a random positive above a random negative — a <em>threshold-independent</em> ranking quality. <strong>PR-AUC</strong> plots precision vs. recall and is the better summary under heavy class imbalance, because ROC-AUC can look deceptively good when negatives vastly outnumber positives (a few extra false positives barely move FPR but crater precision).</p>
+<p>The threshold-tuning loop is what you actually ship:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">best_threshold</span><span class="p">(</span><span class="n">y_true</span><span class="p">,</span> <span class="n">scores</span><span class="p">,</span> <span class="n">beta</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Sweep thresholds, return the one maximizing F-beta.&quot;&quot;&quot;</span>
+    <span class="n">thresholds</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+    <span class="n">best_t</span><span class="p">,</span> <span class="n">best_f</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span>
+    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">thresholds</span><span class="p">:</span>
+        <span class="n">y_pred</span> <span class="o">=</span> <span class="p">(</span><span class="n">scores</span> <span class="o">&gt;=</span> <span class="n">t</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+        <span class="n">tp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">y_pred</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">y_true</span> <span class="o">==</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">fp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">y_pred</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">y_true</span> <span class="o">==</span> <span class="mi">0</span><span class="p">))</span>
+        <span class="n">fn</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">y_pred</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">y_true</span> <span class="o">==</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="n">tp</span> <span class="o">/</span> <span class="p">(</span><span class="n">tp</span> <span class="o">+</span> <span class="n">fp</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">);</span> <span class="n">r</span> <span class="o">=</span> <span class="n">tp</span> <span class="o">/</span> <span class="p">(</span><span class="n">tp</span> <span class="o">+</span> <span class="n">fn</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">)</span>
+        <span class="n">f</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">beta</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="n">p</span> <span class="o">*</span> <span class="n">r</span> <span class="o">/</span> <span class="p">(</span><span class="n">beta</span><span class="o">**</span><span class="mi">2</span> <span class="o">*</span> <span class="n">p</span> <span class="o">+</span> <span class="n">r</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">f</span> <span class="o">&gt;</span> <span class="n">best_f</span><span class="p">:</span>
+            <span class="n">best_f</span><span class="p">,</span> <span class="n">best_t</span> <span class="o">=</span> <span class="n">f</span><span class="p">,</span> <span class="n">t</span>
+    <span class="k">return</span> <span class="n">best_t</span><span class="p">,</span> <span class="n">best_f</span>
+</code></pre></div>
+<p>The default 0.5 threshold is arbitrary — it is optimal only for a calibrated model with equal error costs and balanced classes. <strong>Choosing the operating point is a product decision, not a modeling one</strong>; say that and the interviewer relaxes.</p>
+<h3 id="class-imbalance-a-menu-of-fixes">Class imbalance: a menu of fixes<a class="headerlink" href="#class-imbalance-a-menu-of-fixes" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> Imbalance hurts because the loss is dominated by the majority class, so the model can score well by ignoring the minority. The fixes, roughly in order of preference: (1) <em>use the right metric</em> (PR-AUC, per-class recall — never raw accuracy); (2) <em>resample</em> — oversample the minority (SMOTE synthesizes interpolated examples) or undersample the majority; (3) <em>reweight the loss</em> so minority errors cost more; (4) <em>focal loss</em>, which down-weights easy, well-classified examples and focuses gradient on the hard minority; (5) <em>threshold-move</em> at inference. Often a combination.</p>
+<p>Class-weighted and focal loss are two lines each:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{weighted}} = -\sum_i w_{y_i}\log p_{i,y_i}, \qquad
+\mathcal{L}_{\text{focal}} = -\sum_i (1 - p_{i,y_i})^{\gamma}\log p_{i,y_i}
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">focal_loss</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">targets</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.25</span><span class="p">):</span>
+    <span class="c1"># logits: (N, C), targets: (N,) class indices</span>
+    <span class="n">logp</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">logp</span><span class="o">.</span><span class="n">exp</span><span class="p">()</span>
+    <span class="n">pt</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">targets</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">])</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>     <span class="c1"># prob of the true class</span>
+    <span class="n">logpt</span> <span class="o">=</span> <span class="n">logp</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">targets</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">])</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">focal</span> <span class="o">=</span> <span class="o">-</span><span class="n">alpha</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">pt</span><span class="p">)</span> <span class="o">**</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">logpt</span>        <span class="c1"># easy examples (pt→1) contribute ≈0</span>
+    <span class="k">return</span> <span class="n">focal</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</code></pre></div>
+<p>The focal-loss insight is the gem: <span class="arithmatex">\((1-p_t)^\gamma\)</span> is ≈0 when the model is already confident and correct (<span class="arithmatex">\(p_t \to 1\)</span>), so gradient flows almost entirely from hard or misclassified examples — exactly the minority class in an imbalanced problem.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: resampling before splitting</p>
+<p>If you oversample (or run SMOTE) <em>before</em> the train/validation split, synthetic or duplicated copies of the same example land in <em>both</em> sets — a data leak that inflates validation scores and collapses in production. <strong>Always split first, then resample only the training fold.</strong> Same rule for any imbalance handling, feature scaling fit on train only, and target encoding. This &ldquo;fit on train, apply to val/test&rdquo; discipline is the most common interview trap in the whole evaluation section.</p>
+</div>
+<h3 id="calibration">Calibration<a class="headerlink" href="#calibration" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> A model is <em>calibrated</em> if its confidence matches its accuracy — among predictions made with 0.8 probability, 80% should be correct. Modern deep networks are usually <em>over-confident</em>. We measure it with a reliability diagram and <strong>Expected Calibration Error (ECE)</strong>, which bins predictions by confidence and averages the gap between confidence and accuracy in each bin. Cheap fixes: <strong>temperature scaling</strong> (divide logits by a single learned scalar <span class="arithmatex">\(T&gt;1\)</span> to soften), Platt scaling, or isotonic regression — all fit on a held-out set.</p>
+<div class="arithmatex">\[
+\text{ECE} = \sum_{b=1}^{B}\frac{|B_b|}{N}\,\big|\,\text{acc}(B_b) - \text{conf}(B_b)\,\big|
+\]</div>
+<p>Temperature scaling matters directly for LLMs: the sampling temperature in decoding <em>is</em> this <span class="arithmatex">\(T\)</span>, dividing logits before softmax to trade off diversity vs. determinism — see <a href="../07-inference-serving/09-sampling-decoding.html">Sampling Strategies &amp; Decoding Algorithms</a>. Honest measurement of models is the subject of <a href="../11-evaluation/01-eval-landscape.html">The Evaluation Problem &amp; Benchmark Landscape</a>.</p>
+<h2 id="loss-functions-information-theory-a-rapid-fire-round">Loss Functions, Information Theory &amp; A Rapid-Fire Round<a class="headerlink" href="#loss-functions-information-theory-a-rapid-fire-round" title="Permanent link">¶</a></h2>
+<h3 id="cross-entropy-log-loss-and-what-they-minimize">Cross-entropy, log-loss, and what they minimize<a class="headerlink" href="#cross-entropy-log-loss-and-what-they-minimize" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> Cross-entropy is the negative log-likelihood of the correct class under the model&rsquo;s predicted distribution; minimizing it is maximum-likelihood estimation. It pairs with softmax because the softmax+cross-entropy gradient is beautifully simple — <span class="arithmatex">\((\hat p - y)\)</span> — and because log-loss heavily penalizes confident wrong predictions (the <span class="arithmatex">\(-\log\)</span> goes to infinity as the predicted probability of the truth goes to 0). This is <em>the</em> loss for LLM pretraining: predict the next token, minimize its negative log-likelihood.</p>
+<div class="arithmatex">\[
+H(p,q) = -\sum_x p(x)\log q(x), \qquad
+\frac{\partial}{\partial z_j}\big[\text{softmax-CE}\big] = \hat p_j - y_j
+\]</div>
+<p>The clean gradient is why softmax+CE is the canonical classifier head — derive it once and you never forget it:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">softmax_cross_entropy</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">y_onehot</span><span class="p">):</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="n">logits</span> <span class="o">-</span> <span class="n">logits</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># numerical stability</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">z</span><span class="p">)</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">z</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">y_onehot</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">p</span> <span class="o">+</span> <span class="mf">1e-12</span><span class="p">))</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="n">grad</span> <span class="o">=</span> <span class="p">(</span><span class="n">p</span> <span class="o">-</span> <span class="n">y_onehot</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">logits</span><span class="p">)</span>                <span class="c1"># the famous (p - y)</span>
+    <span class="k">return</span> <span class="n">loss</span><span class="p">,</span> <span class="n">grad</span>
+</code></pre></div>
+<p>The <code>logits - max</code> trick is itself an interview-worthy detail: it prevents <code>exp</code> overflow without changing the softmax output, because softmax is invariant to adding a constant to all logits. The pretraining loss in full is in <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a>.</p>
+<h3 id="kl-divergence-entropy-and-perplexity">KL divergence, entropy, and perplexity<a class="headerlink" href="#kl-divergence-entropy-and-perplexity" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> Entropy <span class="arithmatex">\(H(p)\)</span> is the average bits to encode samples from <span class="arithmatex">\(p\)</span>; cross-entropy <span class="arithmatex">\(H(p,q)\)</span> is the cost of using a wrong code <span class="arithmatex">\(q\)</span>; their difference is the <strong>KL divergence</strong> <span class="arithmatex">\(D_{\text{KL}}(p\,\|\,q) \ge 0\)</span>, the extra bits from the mismatch. KL is <em>not</em> symmetric — forward KL (used in MLE) is mass-covering, reverse KL (used in variational inference and as the RLHF penalty) is mode-seeking. <strong>Perplexity</strong> is just <span class="arithmatex">\(\exp(\text{cross-entropy})\)</span> — the effective branching factor, &ldquo;how many equally-likely next tokens is the model confused among.&rdquo;</p>
+<div class="arithmatex">\[
+D_{\text{KL}}(p\,\|\,q) = \sum_x p(x)\log\frac{p(x)}{q(x)} = H(p,q) - H(p), \qquad \text{PPL} = e^{H(p,q)}
+\]</div>
+<p>KL divergence is load-bearing across the LLM stack: it is the regularizer keeping an RLHF policy near its reference model (so it doesn&rsquo;t reward-hack into gibberish), and it is the distillation objective. See <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a> and <a href="../05-posttraining-alignment/12-distillation-compression.html">Distillation, Model Compression &amp; Knowledge Transfer</a>. The information-theory foundations are in <a href="../01-foundations/02-probability-information.html">Probability, Statistics &amp; Information Theory</a>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: perplexity intuition</p>
+<p>A language model assigns probability <span class="arithmatex">\(0.1\)</span> to each of the actual next tokens in a held-out sentence of length 10 (so cross-entropy per token is <span class="arithmatex">\(-\log(0.1) = \ln 10 \approx 2.303\)</span> nats). Then perplexity <span class="arithmatex">\(= e^{2.303} = 10\)</span> — the model is, on average, as confused as if it were guessing uniformly among <strong>10</strong> equally likely tokens. If we improve it so it assigns <span class="arithmatex">\(0.5\)</span> to the right tokens, perplexity drops to <span class="arithmatex">\(e^{-\ln 0.5} = 2\)</span>: down to 2 effective choices. A perplexity of 1 means perfect, deterministic prediction; a vocabulary-size perplexity (~50{,}000) means the model learned nothing. This is why a drop from PPL 20 to PPL 12 is a <em>big</em> deal — the relationship to loss is logarithmic.</p>
+</div>
+<h3 id="generative-vs-discriminative-parametric-vs-non-parametric">Generative vs. discriminative, parametric vs. non-parametric<a class="headerlink" href="#generative-vs-discriminative-parametric-vs-non-parametric" title="Permanent link">¶</a></h3>
+<p><strong>Model answer.</strong> A <strong>discriminative</strong> model learns <span class="arithmatex">\(p(y\mid x)\)</span> directly (logistic regression, most classifiers, the discriminative head of a fine-tuned LLM) — it draws decision boundaries. A <strong>generative</strong> model learns the joint <span class="arithmatex">\(p(x,y)\)</span> or <span class="arithmatex">\(p(x)\)</span> and can <em>sample new data</em> (naive Bayes, GANs, diffusion, and <em>autoregressive LLMs themselves</em>, which model <span class="arithmatex">\(p(\text{tokens})\)</span>). Discriminative models usually win at pure classification accuracy with enough data; generative models give you sampling, anomaly detection, and work better with little data or missing features. <strong>Parametric</strong> models have a fixed parameter count regardless of dataset size (linear/logistic regression, neural nets); <strong>non-parametric</strong> models grow with the data (k-NN, kernel SVMs, decision trees, Gaussian processes).</p>
+<h3 id="the-rapid-fire-lightning-round">The rapid-fire lightning round<a class="headerlink" href="#the-rapid-fire-lightning-round" title="Permanent link">¶</a></h3>
+<p>These come fast; have a one-liner ready for each.</p>
+<ul>
+<li><strong>Why is a validation set separate from test?</strong> Validation tunes hyperparameters and triggers early stopping (you &ldquo;fit&rdquo; to it indirectly); test is touched <em>once</em> for an unbiased final estimate. Touch test repeatedly and you overfit to it too.</li>
+<li><strong>What is k-fold cross-validation for?</strong> Reuse scarce data: rotate the held-out fold <span class="arithmatex">\(k\)</span> times, average the metric — lower-variance estimate than a single split, at <span class="arithmatex">\(k\times\)</span> compute. Use it when data is small.</li>
+<li><strong>Generative model in a few words?</strong> Learns to <em>sample</em>; an LLM is generative — it models <span class="arithmatex">\(p(x_t \mid x_{&lt;t})\)</span>.</li>
+<li><strong>One-hot vs. embedding?</strong> One-hot is sparse, orthogonal, no notion of similarity, dimension = vocab. Embedding is dense, low-dim, learned, encodes similarity. Embedding = one-hot times a learned weight matrix (a lookup).</li>
+<li><strong>Why mini-batches and not full-batch GD?</strong> Full-batch is expensive per step and the gradient noise from mini-batches both regularizes and helps escape sharp minima; pure SGD (batch=1) is too noisy/slow.</li>
+<li><strong>Bagging vs. boosting?</strong> Bagging (random forests) trains models in <em>parallel</em> on bootstrap samples and averages — reduces <em>variance</em>. Boosting (gradient boosting, XGBoost) trains models <em>sequentially</em>, each correcting the last&rsquo;s residuals — reduces <em>bias</em>.</li>
+<li><strong>Curse of dimensionality?</strong> In high dimensions, volume explodes, all points become roughly equidistant, and distance-based methods (k-NN) and density estimation degrade — you need exponentially more data to fill the space. This is <em>why</em> we learn low-dimensional embeddings.</li>
+<li><strong>L2 vs. L1 in one line?</strong> L2 = smooth shrinkage (all weights small); L1 = sparsity (many weights exactly zero, feature selection).</li>
+<li><strong>Why does a deeper/wider model not always help?</strong> Past the data&rsquo;s capacity you trade bias for variance and start overfitting; you also hit optimization and compute walls. Scaling laws say compute, data, and parameters must grow <em>together</em> — see <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>.</li>
+<li><strong>What is the reparameterization trick?</strong> Rewrite a stochastic node <span class="arithmatex">\(z\sim\mathcal{N}(\mu,\sigma^2)\)</span> as <span class="arithmatex">\(z = \mu + \sigma\,\epsilon,\ \epsilon\sim\mathcal{N}(0,1)\)</span> so gradients flow through <span class="arithmatex">\(\mu,\sigma\)</span> — the trick that makes VAEs trainable.</li>
+<li><strong>Precision/recall trade-off knob?</strong> The decision threshold. Raise it → higher precision, lower recall, and vice versa.</li>
+<li><strong>What is label smoothing?</strong> Replace hard one-hot targets with <span class="arithmatex">\((1-\epsilon)\)</span> on the true class and <span class="arithmatex">\(\epsilon/(K-1)\)</span> elsewhere; prevents over-confidence, improves calibration, mild regularizer.</li>
+</ul>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You train a model and get 98% accuracy, but in production it performs terribly on the minority class you actually care about. Diagnose and fix.</p>
+<p><strong>A:</strong> The 98% almost certainly reflects a class imbalance where the majority class dominates accuracy — accuracy is the wrong metric. I&rsquo;d first re-evaluate with per-class precision/recall, the confusion matrix, and PR-AUC for the minority class; I expect to find recall near zero there. Fixes, layered: (1) switch the reported metric to PR-AUC / minority-recall so we optimize the right thing; (2) rebalance training via class-weighted or focal loss, or minority oversampling / SMOTE — but resample <em>only the training fold after splitting</em> to avoid leakage; (3) move the decision threshold using a held-out set to hit the precision/recall operating point the product needs; (4) check for distribution shift between train and production and for label noise in the minority class. I&rsquo;d also verify the train/val split is stratified so the minority class is represented in both.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Bias–variance is the master axis.</strong> Underfitting = high bias (both losses high, small gap); overfitting = high variance (low train, high val, large gap). Regularization, more data, and ensembling buy variance reduction for a little bias; double descent is the modern footnote.</li>
+<li><strong>Regularization is anything that shrinks variance.</strong> L2/weight decay (use AdamW for <em>decoupled</em> decay; never decay norms/biases), L1 for sparsity, dropout (inverted, rescale by <span class="arithmatex">\(1/(1-p)\)</span>, off in eval), early stopping, augmentation, normalization, ensembling.</li>
+<li><strong>Gradient pathologies are exponential in depth.</strong> Fix vanishing/exploding with residual connections (identity highway), normalization, He/Xavier init, non-saturating activations, and global-norm gradient clipping.</li>
+<li><strong>LayerNorm/RMSNorm beat BatchNorm for sequences</strong> because they normalize per-example over features — batch-independent and identical at train and test. Pre-norm is more stable than post-norm at depth.</li>
+<li><strong>Attention is content-based routing:</strong> <span class="arithmatex">\(\operatorname{softmax}(QK^\top/\sqrt{d_k})V\)</span>. The <span class="arithmatex">\(\sqrt{d_k}\)</span> keeps logits unit-variance so softmax doesn&rsquo;t saturate; multi-head adds subspace specialization; GQA/MLA shrink the KV cache that dominates inference memory.</li>
+<li><strong>Pick the metric before the model.</strong> Accuracy lies under imbalance; use precision/recall/F1, PR-AUC, and a <em>tuned threshold</em>. The 0.5 default is only optimal for a calibrated, balanced, equal-cost problem.</li>
+<li><strong>Cross-entropy = MLE; its softmax gradient is <span class="arithmatex">\((\hat p - y)\)</span>.</strong> KL divergence, entropy, and perplexity (<span class="arithmatex">\(e^{\text{loss}}\)</span>) are the same idea in different clothes — and KL is the load-bearing regularizer across RLHF and distillation.</li>
+<li><strong>The deadliest interview trap is data leakage:</strong> fit scalers, resamplers, and encoders on the training fold only, split before you resample, and touch the test set exactly once.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Vaswani et al., <em>Attention Is All You Need</em> (2017) — the transformer and scaled dot-product attention.</li>
+<li>Goodfellow, Bengio &amp; Courville, <em>Deep Learning</em> (2016) — chapters on regularization (Ch. 7) and optimization (Ch. 8) are the canonical breadth reference.</li>
+<li>Bishop, <em>Pattern Recognition and Machine Learning</em> (2006) — the definitive bias–variance and probabilistic-modeling treatment.</li>
+<li>Hastie, Tibshirani &amp; Friedman, <em>The Elements of Statistical Learning</em> — bias–variance, regularization paths, and ensembles.</li>
+<li>Ioffe &amp; Szegedy, <em>Batch Normalization</em> (2015); Ba, Kiros &amp; Hinton, <em>Layer Normalization</em> (2016) — the two normalization schemes contrasted above.</li>
+<li>Srivastava et al., <em>Dropout: A Simple Way to Prevent Neural Networks from Overfitting</em> (2014).</li>
+<li>Kingma &amp; Ba, <em>Adam: A Method for Stochastic Optimization</em> (2015); Loshchilov &amp; Hutter, <em>Decoupled Weight Decay Regularization</em> (AdamW, 2019).</li>
+<li>Lin et al., <em>Focal Loss for Dense Object Detection</em> (2017) — class imbalance done right.</li>
+<li>Guo et al., <em>On Calibration of Modern Neural Networks</em> (2017) — temperature scaling and ECE.</li>
+<li>Belkin et al., <em>Reconciling Modern Machine-Learning Practice and the Bias–Variance Trade-off</em> (2019) — the double-descent paper.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="01-google-ml-interview-format.html"><span class="pn-label">← Previous</span><span class="pn-title">The ML Engineer Interview: Formats &amp; What&#x27;s Tested</span></a>
+<a class="next" href="03-ml-system-design-framework.html"><span class="pn-label">Next →</span><span class="pn-title">ML System Design: A Framework</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>ML/LLM Interview Companion · Prep for Top-Tier ML &amp; LLM Engineering Interviews</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#generalization-bias-variance-overfitting-regularization">Generalization: Bias, Variance, Overfitting &amp;amp; Regularization</a></li>
+<li class="toc-l3"><a href="#the-biasvariance-decomposition">The bias–variance decomposition</a></li>
+<li class="toc-l3"><a href="#diagnosing-overfitting-vs-underfitting">Diagnosing overfitting vs. underfitting</a></li>
+<li class="toc-l3"><a href="#regularization-the-full-toolbox">Regularization: the full toolbox</a></li>
+<li class="toc-l2"><a href="#optimization-gradient-descent-adam-gradient-pathologies">Optimization: Gradient Descent, Adam &amp;amp; Gradient Pathologies</a></li>
+<li class="toc-l3"><a href="#from-sgd-to-adam-in-one-mental-model">From SGD to Adam in one mental model</a></li>
+<li class="toc-l3"><a href="#learning-rate-the-single-most-important-hyperparameter">Learning rate: the single most important hyperparameter</a></li>
+<li class="toc-l3"><a href="#vanishing-and-exploding-gradients">Vanishing and exploding gradients</a></li>
+<li class="toc-l2"><a href="#normalization-dropout-activations">Normalization, Dropout &amp;amp; Activations</a></li>
+<li class="toc-l3"><a href="#batchnorm-vs-layernorm-and-why-transformers-use-layernorm">BatchNorm vs. LayerNorm — and why transformers use LayerNorm</a></li>
+<li class="toc-l3"><a href="#dropout-train-time-noise-test-time-scaling">Dropout — train-time noise, test-time scaling</a></li>
+<li class="toc-l3"><a href="#activation-functions">Activation functions</a></li>
+<li class="toc-l2"><a href="#transformers-attention-embeddings">Transformers, Attention &amp;amp; Embeddings</a></li>
+<li class="toc-l3"><a href="#self-attention-in-one-breath">Self-attention in one breath</a></li>
+<li class="toc-l3"><a href="#multi-head-attention-and-the-kv-cache-flavors">Multi-head attention, and the KV-cache flavors</a></li>
+<li class="toc-l3"><a href="#embeddings-what-they-are-and-why-dot-products-mean-similar">Embeddings: what they are and why dot products mean &amp;ldquo;similar&amp;rdquo;</a></li>
+<li class="toc-l2"><a href="#evaluation-metrics-class-imbalance-calibration">Evaluation Metrics, Class Imbalance &amp;amp; Calibration</a></li>
+<li class="toc-l3"><a href="#the-confusion-matrix-and-its-derived-metrics">The confusion matrix and its derived metrics</a></li>
+<li class="toc-l3"><a href="#roc-auc-vs-pr-auc-and-the-threshold-question">ROC-AUC vs. PR-AUC, and the threshold question</a></li>
+<li class="toc-l3"><a href="#class-imbalance-a-menu-of-fixes">Class imbalance: a menu of fixes</a></li>
+<li class="toc-l3"><a href="#calibration">Calibration</a></li>
+<li class="toc-l2"><a href="#loss-functions-information-theory-a-rapid-fire-round">Loss Functions, Information Theory &amp;amp; A Rapid-Fire Round</a></li>
+<li class="toc-l3"><a href="#cross-entropy-log-loss-and-what-they-minimize">Cross-entropy, log-loss, and what they minimize</a></li>
+<li class="toc-l3"><a href="#kl-divergence-entropy-and-perplexity">KL divergence, entropy, and perplexity</a></li>
+<li class="toc-l3"><a href="#generative-vs-discriminative-parametric-vs-non-parametric">Generative vs. discriminative, parametric vs. non-parametric</a></li>
+<li class="toc-l3"><a href="#the-rapid-fire-lightning-round">The rapid-fire lightning round</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

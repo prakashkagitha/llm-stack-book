@@ -1,0 +1,1810 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism — The LLM Stack</title>
+<meta name="description" content="Tensor parallelism (Megatron column/row split, all-reduce points); pipeline parallelism (GPipe, 1F1B, interleaved, bubbles); sequence/context parallelism (Ring ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="active" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="36-distributed-training-ii-tensor-pipeline-sequence-expert-parallelism">3.6 Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism<a class="headerlink" href="#36-distributed-training-ii-tensor-pipeline-sequence-expert-parallelism" title="Permanent link">¶</a></h1>
+<p>In <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I</a> we learned to <em>replicate</em> a model across many GPUs and split the <strong>data</strong>. That strategy — data parallelism (DP), and its memory-sharded cousins ZeRO and FSDP — has one non-negotiable requirement: a single replica&rsquo;s <em>worth of state</em> (parameters, gradients, optimizer states, and at least one microbatch of activations) must fit on the device, or be shardable into something that fits. When that breaks, you must split the <strong>model itself</strong>.</p>
+<p>A 70B-parameter model in bf16 is 140 GB of weights alone. Add fp32 optimizer states (Adam&rsquo;s two moments plus an fp32 master copy) and you are well over half a terabyte before a single token of activation memory. No single GPU — not an 80 GB H100, not a 192 GB MI300X — holds that. You have no choice but to <em>carve the model up</em> and spread the pieces across devices. This chapter is about the three orthogonal axes for doing so:</p>
+<ul>
+<li><strong>Tensor parallelism (TP)</strong> — split <em>within</em> a layer (each matmul is shared across GPUs).</li>
+<li><strong>Pipeline parallelism (PP)</strong> — split <em>across</em> layers (each GPU owns a contiguous block of layers).</li>
+<li><strong>Sequence / context parallelism (SP/CP)</strong> — split <em>along the sequence dimension</em> (each GPU owns part of the token sequence).</li>
+<li><strong>Expert parallelism (EP)</strong> — split <em>across the experts</em> of a Mixture-of-Experts layer.</li>
+</ul>
+<p>These compose with data parallelism into what practitioners call <strong>3D, 4D, or 5D parallelism</strong>. Getting the composition right — and understanding exactly <em>where the communication lives</em> — is the single highest-leverage systems skill in large-scale pretraining. It is also a favorite interview topic precisely because it forces you to reason about the <a href="../01-foundations/08-gpu-architecture.html">memory hierarchy</a>, <a href="../01-foundations/09-parallel-collectives.html">collective communication</a>, and the <a href="../02-transformer/06-transformer-block.html">transformer block</a> all at once.</p>
+<h2 id="the-memory-wall-and-the-three-axes-of-splitting">The Memory Wall and the Three Axes of Splitting<a class="headerlink" href="#the-memory-wall-and-the-three-axes-of-splitting" title="Permanent link">¶</a></h2>
+<p>Let us first quantify <em>why</em> we split. Consider a dense decoder-only transformer with <span class="arithmatex">\(L\)</span> layers, hidden size <span class="arithmatex">\(h\)</span>, and FFN expansion factor 4. The parameter count is dominated by</p>
+<div class="arithmatex">\[
+N \approx L \cdot \left( \underbrace{4 h^2}_{\text{attention } QKVO} + \underbrace{8 h^2}_{\text{FFN up+down}} \right) = 12 L h^2 .
+\]</div>
+<p>For training, every parameter carries a <strong>memory multiplier</strong>. With mixed-precision Adam (see <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a>) and the optimizer details from <a href="../03-pretraining/09-optimizers.html">Optimizers</a>, the per-parameter footprint is roughly:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Precision</th>
+<th>Bytes / param</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Weights</td>
+<td>bf16</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Gradients</td>
+<td>bf16 (or fp32)</td>
+<td>2–4</td>
+</tr>
+<tr>
+<td>Adam momentum <span class="arithmatex">\(m\)</span></td>
+<td>fp32</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Adam variance <span class="arithmatex">\(v\)</span></td>
+<td>fp32</td>
+<td>4</td>
+</tr>
+<tr>
+<td>fp32 master weights</td>
+<td>fp32</td>
+<td>4</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td></td>
+<td><strong>~16</strong></td>
+</tr>
+</tbody>
+</table>
+<p>So a model needs on the order of <span class="arithmatex">\(16N\)</span> bytes of <em>static</em> state, plus activations. For a 70B model that is <span class="arithmatex">\(\approx 1.1\)</span> TB — which <strong>ZeRO/FSDP can sharded across the DP group</strong>. But ZeRO does <em>not</em> reduce the activation memory of a single microbatch, and it does <em>not</em> reduce the size of the largest single tensor you must materialize. When a single layer&rsquo;s activations, or a single forward pass, are too big for one device, sharding optimizer state is not enough. That is where the model-parallel axes come in.</p>
+<p>The mental model: <strong>DP/ZeRO splits state across replicas of the whole model; model parallelism splits the computation graph itself.</strong> They are orthogonal and combine multiplicatively.</p>
+<figure class="viz" id="fig-dmp-orthogonal-axes">
+<svg viewBox="0 0 900 570" role="img" aria-label="The four orthogonal parallelism axes (TP, PP, SP/CP, DP) shown on one transformer: PP cuts across layers, TP cuts within a layer, SP/CP cuts along the token sequence, DP replicates the whole stack.">
+  <defs>
+    <marker id="oa-arrowup" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 10 L5 0 L10 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="oa-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-dmp-orthogonal-axes text { fill: var(--ink-soft); }
+    #fig-dmp-orthogonal-axes .lbl { font: 600 11px var(--sans,sans-serif); }
+    #fig-dmp-orthogonal-axes .sm  { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-dmp-orthogonal-axes .axlbl { font: 700 11px var(--sans,sans-serif); }
+    #fig-dmp-orthogonal-axes .layerlbl { font: 500 10px var(--mono,monospace); fill: var(--muted); }
+    #fig-dmp-orthogonal-axes .lgd { font: 500 10.5px var(--sans,sans-serif); }
+  </style>
+
+
+  <rect x="132" y="42" width="512" height="430" rx="14"
+        fill="none" stroke="var(--ink-soft)" stroke-width="1" stroke-dasharray="5 3" opacity="0.22"/>
+
+
+  <rect x="120" y="54" width="512" height="430" rx="14"
+        fill="none" stroke="var(--ink-soft)" stroke-width="1.6" stroke-dasharray="6 4" opacity="0.5"/>
+
+
+  <text x="132" y="50" class="axlbl" fill="var(--muted)">DATA (DP): whole stack REPLICATED over data shards</text>
+
+
+
+  <rect x="148" y="70" width="474" height="68" rx="7"
+        fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--ink-soft)" stroke-width="1.2" stroke-opacity="0.35"/>
+
+  <line x1="148" y1="141" x2="622" y2="141" stroke="var(--ink-soft)" stroke-width="1.2"
+        stroke-dasharray="6 3" opacity="0.6"/>
+  <text x="616" y="135" text-anchor="end" class="sm" fill="var(--muted)">PP stage boundary: point-to-point send/recv</text>
+
+
+  <rect x="148" y="144" width="474" height="68" rx="7"
+        fill="var(--accent,#c15b39)" fill-opacity="0.35" stroke="var(--ink-soft)" stroke-width="1.2" stroke-opacity="0.35"/>
+  <rect x="148" y="218" width="474" height="68" rx="7"
+        fill="var(--accent,#c15b39)" fill-opacity="0.35" stroke="var(--ink-soft)" stroke-width="1.2" stroke-opacity="0.35"/>
+
+
+  <text x="136" y="108" text-anchor="end" class="layerlbl">layer L-1</text>
+  <text x="136" y="182" text-anchor="end" class="layerlbl">layer k</text>
+  <text x="136" y="256" text-anchor="end" class="layerlbl">layer 0</text>
+
+
+  <text x="156" y="92" class="sm" fill="var(--muted)">GPU0 owns layers k+1 .. L-1</text>
+  <text x="156" y="240" class="sm" fill="var(--muted)">GPU1 owns layers 0 .. k</text>
+
+
+
+  <rect x="270" y="148" width="100" height="60" rx="4"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.18" stroke="var(--accent2,#3b82f6)" stroke-width="1" stroke-opacity="0.7"/>
+  <rect x="374" y="148" width="100" height="60" rx="4"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.33" stroke="var(--accent2,#3b82f6)" stroke-width="1" stroke-opacity="0.7"/>
+  <rect x="478" y="148" width="100" height="60" rx="4"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.55" stroke="var(--accent2,#3b82f6)" stroke-width="1" stroke-opacity="0.7"/>
+  <text x="320" y="177" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">GPU0</text>
+  <text x="424" y="177" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">GPU1</text>
+  <text x="528" y="177" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">GPU2</text>
+  <text x="208" y="162" text-anchor="middle" class="sm">one matmul</text>
+  <text x="208" y="174" text-anchor="middle" class="sm">split across GPUs</text>
+
+  <line x1="370" y1="148" x2="370" y2="208" stroke="var(--accent2,#3b82f6)" stroke-width="1" stroke-dasharray="3 2" opacity="0.7"/>
+  <line x1="474" y1="148" x2="474" y2="208" stroke="var(--accent2,#3b82f6)" stroke-width="1" stroke-dasharray="3 2" opacity="0.7"/>
+
+
+  <line x1="634" y1="73" x2="634" y2="283" stroke="var(--accent,#c15b39)" stroke-width="1.4" opacity="0.7"/>
+  <line x1="629" y1="73" x2="639" y2="73" stroke="var(--accent,#c15b39)" stroke-width="1.4" opacity="0.7"/>
+  <line x1="629" y1="283" x2="639" y2="283" stroke="var(--accent,#c15b39)" stroke-width="1.4" opacity="0.7"/>
+
+
+  <text x="647" y="140" class="axlbl" fill="var(--accent,#c15b39)">PIPELINE (PP):</text>
+  <text x="647" y="153" class="sm" fill="var(--muted)">GPU owns a contiguous</text>
+  <text x="647" y="165" class="sm" fill="var(--muted)">BLOCK of layers</text>
+
+
+  <line x1="622" y1="178" x2="637" y2="178" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" marker-end="url(#oa-arrow)" opacity="0.7"/>
+  <text x="647" y="197" class="axlbl" fill="var(--accent2,#3b82f6)">TENSOR (TP):</text>
+  <text x="647" y="210" class="sm" fill="var(--muted)">split WITHIN a layer</text>
+  <text x="647" y="222" class="sm" fill="var(--muted)">(matmul sharded)</text>
+
+
+  <rect x="148" y="308" width="237" height="48" rx="6"
+        fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.2" stroke-opacity="0.6"/>
+  <rect x="385" y="308" width="237" height="48" rx="6"
+        fill="var(--warn,#e0a106)" fill-opacity="0.38" stroke="var(--warn,#e0a106)" stroke-width="1.2" stroke-opacity="0.6"/>
+  <line x1="385" y1="308" x2="385" y2="356" stroke="var(--ink-soft)" stroke-width="1.2" stroke-dasharray="4 2" opacity="0.7"/>
+
+  <text x="266" y="332" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">tokens 0 .. s/2</text>
+  <text x="503" y="332" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">tokens s/2 .. s</text>
+
+
+  <line x1="266" y1="308" x2="266" y2="293" stroke="var(--warn,#e0a106)" stroke-width="1.4" marker-end="url(#oa-arrowup)" opacity="0.7"/>
+  <line x1="503" y1="308" x2="503" y2="293" stroke="var(--warn,#e0a106)" stroke-width="1.4" marker-end="url(#oa-arrowup)" opacity="0.7"/>
+
+
+  <text x="647" y="305" class="axlbl" fill="var(--warn,#e0a106)">SEQUENCE (SP/CP):</text>
+  <text x="647" y="318" class="sm" fill="var(--muted)">split ALONG the</text>
+  <text x="647" y="330" class="sm" fill="var(--muted)">token sequence</text>
+  <line x1="622" y1="332" x2="637" y2="332" stroke="var(--warn,#e0a106)" stroke-width="1.2" marker-end="url(#oa-arrow)" opacity="0.7"/>
+
+
+  <text x="376" y="500" text-anchor="middle" class="axlbl" fill="var(--muted)">DATA (DP) — whole model replicated, one all-reduce per step</text>
+
+
+  <rect x="12" y="522" width="876" height="34" rx="6"
+        fill="var(--surface,#fff)" fill-opacity="0.06" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.7"/>
+  <rect x="22" y="531" width="11" height="11" rx="2"
+        fill="var(--accent,#c15b39)" fill-opacity="0.4" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+  <text x="39" y="541" class="lgd">PP = across layers</text>
+  <rect x="185" y="531" width="11" height="11" rx="2"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.5" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="202" y="541" class="lgd">TP = within a layer</text>
+  <rect x="355" y="531" width="11" height="11" rx="2"
+        fill="var(--warn,#e0a106)" fill-opacity="0.5" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+  <text x="372" y="541" class="lgd">SP/CP = along sequence</text>
+  <rect x="550" y="531" width="11" height="11" rx="2"
+        fill="none" stroke="var(--ink-soft)" stroke-width="1.2" stroke-dasharray="3 2"/>
+  <text x="567" y="541" class="lgd">DP = replicate whole model</text>
+</svg>
+<figcaption><b>Four orthogonal axes for splitting one transformer.</b> <b>PP</b> gives each GPU a contiguous block of layers (cheap point-to-point at the boundary); <b>TP</b> shards a single matmul across GPUs within a layer (expensive all-reduce, must stay on NVLink); <b>SP/CP</b> partitions the token sequence so each device only processes its chunk; <b>DP</b> replicates the entire stack over independent data shards. All four compose multiplicatively: total GPUs = d &amp;times; t &amp;times; p &amp;times; c.</figcaption>
+</figure>
+
+<h2 id="tensor-parallelism-splitting-the-matmul">Tensor Parallelism: Splitting the Matmul<a class="headerlink" href="#tensor-parallelism-splitting-the-matmul" title="Permanent link">¶</a></h2>
+<p>Tensor parallelism — introduced at scale by <strong>Megatron-LM (Shoeybi et al., 2019)</strong> — observes that the heavy lifting of a transformer is a sequence of large matrix multiplications, and a matrix multiplication can be partitioned across devices with a <em>single</em> collective per region. The art is choosing partitions so that consecutive matmuls compose without a collective <em>between</em> them.</p>
+<h3 id="column-and-row-parallel-linear-layers">Column and Row Parallel Linear Layers<a class="headerlink" href="#column-and-row-parallel-linear-layers" title="Permanent link">¶</a></h3>
+<p>Take a linear layer <span class="arithmatex">\(Y = XA\)</span> where <span class="arithmatex">\(X \in \mathbb{R}^{s \times h}\)</span> (sequence <span class="arithmatex">\(\times\)</span> hidden) and <span class="arithmatex">\(A \in \mathbb{R}^{h \times h'}\)</span>. There are two ways to split <span class="arithmatex">\(A\)</span> across <span class="arithmatex">\(t\)</span> GPUs.</p>
+<p><strong>Column-parallel.</strong> Split <span class="arithmatex">\(A\)</span> along its <em>output</em> columns: <span class="arithmatex">\(A = [A_1, A_2, \dots, A_t]\)</span> where each <span class="arithmatex">\(A_i \in \mathbb{R}^{h \times h'/t}\)</span>. Each GPU holds the full input <span class="arithmatex">\(X\)</span> (replicated) and computes a <em>slice</em> of the output:</p>
+<div class="arithmatex">\[
+Y_i = X A_i \in \mathbb{R}^{s \times h'/t}, \qquad Y = [Y_1, \dots, Y_t].
+\]</div>
+<p>No communication is needed to <em>produce</em> <span class="arithmatex">\(Y\)</span> — each GPU just holds a different chunk of the output columns. The output is <strong>sharded</strong> along the feature dimension.</p>
+<p><strong>Row-parallel.</strong> Split <span class="arithmatex">\(A\)</span> along its <em>input</em> rows: <span class="arithmatex">\(A = [A_1; A_2; \dots; A_t]\)</span>, <span class="arithmatex">\(A_i \in \mathbb{R}^{h/t \times h'}\)</span>, and correspondingly split the input <span class="arithmatex">\(X = [X_1, \dots, X_t]\)</span> along its columns. Each GPU computes a <em>partial sum</em>:</p>
+<div class="arithmatex">\[
+Y = \sum_{i=1}^{t} X_i A_i .
+\]</div>
+<p>Each GPU produces a full-shaped <span class="arithmatex">\(Y\)</span> but containing only its partial contribution; an <strong>all-reduce</strong> sums them to the correct result.</p>
+<p>The magic trick: <strong>chain a column-parallel layer into a row-parallel layer and the intermediate never needs to be gathered.</strong> A column-parallel layer leaves its output <em>sharded along features</em>; a row-parallel layer <em>wants</em> its input sharded along features. They fit like puzzle pieces, and you pay exactly <strong>one all-reduce</strong> at the very end (plus one in the backward pass).</p>
+<figure class="viz" id="fig-dmp-tp-column-row-flow">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 1000 420" role="img" aria-label="Megatron MLP data flow: X feeds Column-Parallel A, sharded intermediate Z flows through GeLU elementwise on shards, then Row-Parallel B produces partial outputs that merge in one all-reduce to give Y replicated.">
+  <defs>
+    <marker id="tp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="tp-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-dmp-tp-column-row-flow text { fill: var(--ink-soft); }
+    #fig-dmp-tp-column-row-flow .lbl  { font: 600 12px var(--sans,sans-serif); }
+    #fig-dmp-tp-column-row-flow .sm   { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-dmp-tp-column-row-flow .ok   { font: 600 10px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+    #fig-dmp-tp-column-row-flow .warn { font: 700 10px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+    #fig-dmp-tp-column-row-flow .hed  { font: 700 12px var(--sans,sans-serif); }
+    #fig-dmp-tp-column-row-flow .mono { font: 600 10px var(--mono,monospace); fill: var(--muted); }
+    #fig-dmp-tp-column-row-flow .note { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted); }
+
+    /* Animation keyframes */
+    #fig-dmp-tp-column-row-flow [data-anim] { opacity: 0; }
+
+    @keyframes tp-fadein { from { opacity:0; } to { opacity:1; } }
+    @keyframes tp-pulse  { 0%,100%{opacity:.35;} 50%{opacity:1;} }
+    @keyframes tp-pulse2 { 0%,100%{opacity:.4;} 50%{opacity:.9;} }
+
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="1"] {
+      animation: tp-fadein .5s ease .1s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="2"] {
+      animation: tp-pulse 1.2s ease .7s 2, tp-fadein .5s ease .7s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="3"] {
+      animation: tp-fadein .5s ease 1.8s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="4"] {
+      animation: tp-pulse2 1.2s ease 2.2s 2, tp-fadein .5s ease 2.2s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="5"] {
+      animation: tp-fadein .5s ease 3.5s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="6"] {
+      animation: tp-pulse 1s ease 3.9s 2, tp-fadein .5s ease 3.9s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="7"] {
+      animation: tp-fadein .5s ease 5s forwards; }
+  </style>
+
+
+  <text x="500" y="18" text-anchor="middle" class="note">
+    f = identity fwd / all-reduce bwd at input;  g = all-reduce fwd / identity bwd at output
+  </text>
+
+
+  <g data-anim="1">
+    <rect x="14" y="130" width="110" height="60" rx="8" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <text x="69" y="157" text-anchor="middle" class="hed" fill="var(--accent,#c15b39)">X</text>
+    <text x="69" y="172" text-anchor="middle" class="lbl">(replicated)</text>
+    <text x="69" y="202" text-anchor="middle" class="mono">shape s x h</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="124" y1="160" x2="178" y2="160" stroke="currentColor" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+    <text x="151" y="152" text-anchor="middle" class="note">broadcast</text>
+    <text x="151" y="177" text-anchor="middle" class="ok">no comm</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="182" y="108" width="130" height="104" rx="8" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+    <text x="247" y="130" text-anchor="middle" class="hed" fill="var(--accent2,#3b82f6)">Column-Par A</text>
+    <text x="247" y="143" text-anchor="middle" class="note">[A1 .. At]</text>
+
+    <rect x="196" y="150" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.6"/>
+    <rect x="196" y="170" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.4"/>
+    <rect x="196" y="190" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.25"/>
+    <text x="248" y="162" text-anchor="middle" class="mono" fill="var(--surface,#fff)">A1 (rank 0)</text>
+    <text x="248" y="182" text-anchor="middle" class="mono" fill="var(--surface,#fff)">A2 (rank 1)</text>
+    <text x="248" y="201" text-anchor="middle" class="mono" fill="var(--surface,#fff)">A3 (rank 2)</text>
+    <text x="247" y="226" text-anchor="middle" class="ok">no comm here</text>
+  </g>
+
+
+  <g data-anim="3">
+
+    <text x="350" y="85" text-anchor="middle" class="note">Z_i sharded on cols</text>
+
+    <line x1="312" y1="158" x2="408" y2="158" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.75" marker-end="url(#tp-arr-acc)" stroke-dasharray="none"/>
+    <text x="360" y="150" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">Z1</text>
+
+    <line x1="312" y1="178" x2="408" y2="178" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.5" marker-end="url(#tp-arr-acc)"/>
+    <text x="360" y="170" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">Z2</text>
+
+    <line x1="312" y1="198" x2="408" y2="198" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.3" marker-end="url(#tp-arr-acc)"/>
+    <text x="360" y="215" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">Z3</text>
+  </g>
+
+
+  <g data-anim="4">
+    <rect x="412" y="108" width="130" height="104" rx="8" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+    <text x="477" y="130" text-anchor="middle" class="hed" fill="var(--accent2,#3b82f6)">GeLU(Z_i)</text>
+    <text x="477" y="143" text-anchor="middle" class="note">(elementwise)</text>
+
+    <rect x="426" y="150" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.6"/>
+    <rect x="426" y="170" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.4"/>
+    <rect x="426" y="190" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.25"/>
+    <text x="478" y="162" text-anchor="middle" class="mono" fill="var(--surface,#fff)">shard 0</text>
+    <text x="478" y="182" text-anchor="middle" class="mono" fill="var(--surface,#fff)">shard 1</text>
+    <text x="478" y="201" text-anchor="middle" class="mono" fill="var(--surface,#fff)">shard 2</text>
+    <text x="477" y="226" text-anchor="middle" class="ok">no comm here</text>
+  </g>
+
+
+  <g data-anim="5">
+    <text x="590" y="85" text-anchor="middle" class="note">partial Y (per rank)</text>
+    <line x1="542" y1="158" x2="636" y2="158" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.75" marker-end="url(#tp-arr-acc)"/>
+    <line x1="542" y1="178" x2="636" y2="178" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.5" marker-end="url(#tp-arr-acc)"/>
+    <line x1="542" y1="198" x2="636" y2="198" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.3" marker-end="url(#tp-arr-acc)"/>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="640" y="108" width="130" height="104" rx="8" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+    <text x="705" y="130" text-anchor="middle" class="hed" fill="var(--accent2,#3b82f6)">Row-Par B</text>
+    <text x="705" y="143" text-anchor="middle" class="note">[B1 ; .. ; Bt]</text>
+    <rect x="654" y="150" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.6"/>
+    <rect x="654" y="170" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.4"/>
+    <rect x="654" y="190" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.25"/>
+    <text x="706" y="162" text-anchor="middle" class="mono" fill="var(--surface,#fff)">B1 (row)</text>
+    <text x="706" y="182" text-anchor="middle" class="mono" fill="var(--surface,#fff)">B2 (row)</text>
+    <text x="706" y="201" text-anchor="middle" class="mono" fill="var(--surface,#fff)">B3 (row)</text>
+  </g>
+
+
+  <g data-anim="6">
+    <line x1="770" y1="158" x2="814" y2="175" stroke="var(--accent2,#3b82f6)" stroke-width="2.5" opacity="0.75"/>
+    <line x1="770" y1="178" x2="814" y2="180" stroke="var(--accent2,#3b82f6)" stroke-width="2.5" opacity="0.5"/>
+    <line x1="770" y1="198" x2="814" y2="185" stroke="var(--accent2,#3b82f6)" stroke-width="2.5" opacity="0.3"/>
+  </g>
+
+
+  <g data-anim="6">
+    <circle cx="840" cy="180" r="28" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="2.2"/>
+
+    <path d="M824 172 A18 18 0 1 1 824 188" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.8" stroke-linecap="round"/>
+    <text x="840" y="176" text-anchor="middle" class="warn">all-</text>
+    <text x="840" y="189" text-anchor="middle" class="warn">reduce</text>
+    <text x="840" y="228" text-anchor="middle" class="warn" font-size="10">ONE all-reduce (g)</text>
+  </g>
+
+
+  <g data-anim="7">
+    <line x1="868" y1="180" x2="895" y2="180" stroke="currentColor" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+  </g>
+
+
+  <g data-anim="7">
+    <rect x="898" y="130" width="92" height="60" rx="8" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+    <text x="944" y="157" text-anchor="middle" class="hed" fill="var(--good,#2f9e6e)">Y</text>
+    <text x="944" y="172" text-anchor="middle" class="lbl">(replicated)</text>
+    <text x="944" y="202" text-anchor="middle" class="mono">full result</text>
+  </g>
+
+
+  <text x="247" y="255" text-anchor="middle" class="ok" font-size="9.5">no comm</text>
+  <text x="477" y="255" text-anchor="middle" class="ok" font-size="9.5">no comm (nonlinearity on shards)</text>
+  <text x="840" y="248" text-anchor="middle" class="warn" font-size="9.5">one collective</text>
+</svg>
+<figcaption><b>Megatron MLP: one all-reduce for the whole forward pass.</b> A column-parallel layer leaves the intermediate Z sharded across ranks, so GeLU runs independently on each shard with zero communication. The row-parallel layer then produces a partial Y per rank; a single all-reduce (the "g" operator) sums them to produce the full replicated output. The backward adds one more all-reduce at the input (the "f" operator), giving exactly two all-reduces per MLP block total.</figcaption>
+</figure>
+
+<h3 id="applying-it-to-the-transformer-block">Applying It to the Transformer Block<a class="headerlink" href="#applying-it-to-the-transformer-block" title="Permanent link">¶</a></h3>
+<p>Megatron maps this pattern onto both sublayers of a transformer block.</p>
+<p><strong>MLP block</strong> <span class="arithmatex">\(Y = \text{GeLU}(XA)B\)</span>:</p>
+<ul>
+<li><span class="arithmatex">\(A\)</span> (the up-projection, <span class="arithmatex">\(h \to 4h\)</span>) is <strong>column-parallel</strong> → the <span class="arithmatex">\(4h\)</span> intermediate is sharded across GPUs.</li>
+<li>GeLU is elementwise, so it acts independently on each shard — <em>no communication</em>, and crucially we did not have to gather before the nonlinearity (which would have been wrong to split naively).</li>
+<li><span class="arithmatex">\(B\)</span> (the down-projection, <span class="arithmatex">\(4h \to h\)</span>) is <strong>row-parallel</strong> → one all-reduce produces the final output.</li>
+</ul>
+<p><strong>Attention block.</strong> This is even more natural because attention is <em>already</em> partitioned by heads. With <span class="arithmatex">\(a\)</span> attention heads and <span class="arithmatex">\(t\)</span> TP ranks, give each GPU <span class="arithmatex">\(a/t\)</span> heads:</p>
+<ul>
+<li>The <span class="arithmatex">\(Q, K, V\)</span> projections are <strong>column-parallel</strong> — each GPU produces the Q/K/V for its own heads only.</li>
+<li>Each GPU runs full self-attention (softmax, the <span class="arithmatex">\(QK^\top\)</span>, the <span class="arithmatex">\(\times V\)</span>) <em>for its heads</em> with no cross-GPU communication. (This is why TP and <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention</a> are such a good fit, and why GQA changes the K/V sharding story — see the warning below.)</li>
+<li>The output projection <span class="arithmatex">\(O\)</span> is <strong>row-parallel</strong> → one all-reduce.</li>
+</ul>
+<p>So <strong>each transformer block needs exactly two all-reduces in the forward pass</strong> (one after attention&rsquo;s output proj, one after the MLP&rsquo;s down proj) and two in the backward pass. In Megatron&rsquo;s notation these are the operators <span class="arithmatex">\(f\)</span> and <span class="arithmatex">\(g\)</span>: <span class="arithmatex">\(f\)</span> is identity in forward / all-reduce in backward; <span class="arithmatex">\(g\)</span> is all-reduce in forward / identity in backward.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="c1"># Assume a TP process group `tp_group` of size `tp` already initialized.</span>
+<span class="c1"># These two autograd functions place the all-reduces in exactly the</span>
+<span class="c1"># right spots: g = forward-allreduce, f = backward-allreduce.</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_CopyToTPRegion</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">Function</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;f operator: identity forward, all-reduce backward.&quot;&quot;&quot;</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span> <span class="k">return</span> <span class="n">x</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad</span><span class="p">):</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">all_reduce</span><span class="p">(</span><span class="n">grad</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="n">tp_group</span><span class="p">)</span>   <span class="c1"># sum grads from all TP ranks</span>
+        <span class="k">return</span> <span class="n">grad</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_ReduceFromTPRegion</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">Function</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;g operator: all-reduce forward, identity backward.&quot;&quot;&quot;</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">all_reduce</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="n">tp_group</span><span class="p">)</span>      <span class="c1"># sum partial outputs</span>
+        <span class="k">return</span> <span class="n">x</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad</span><span class="p">):</span> <span class="k">return</span> <span class="n">grad</span>
+
+<span class="n">copy_to_region</span>   <span class="o">=</span> <span class="n">_CopyToTPRegion</span><span class="o">.</span><span class="n">apply</span>
+<span class="n">reduce_from_region</span> <span class="o">=</span> <span class="n">_ReduceFromTPRegion</span><span class="o">.</span><span class="n">apply</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ColumnParallelLinear</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Y = X A, with A split along output columns across `tp` ranks.</span>
+<span class="sd">    Output is sharded along the feature dim (gather_output=False).&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">in_f</span><span class="p">,</span> <span class="n">out_f</span><span class="p">,</span> <span class="n">tp</span><span class="p">,</span> <span class="n">rank</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">out_f</span> <span class="o">%</span> <span class="n">tp</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">out_local</span> <span class="o">=</span> <span class="n">out_f</span> <span class="o">//</span> <span class="n">tp</span>
+        <span class="c1"># Each rank only allocates its slice of the weight.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">out_local</span><span class="p">,</span> <span class="n">in_f</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bias</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">out_local</span><span class="p">))</span> <span class="k">if</span> <span class="n">bias</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">copy_to_region</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                    <span class="c1"># f: ensures correct bwd all-reduce</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">y</span>                                  <span class="c1"># shape [*, out_f/tp], sharded</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RowParallelLinear</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Y = X A, with A split along input rows; input already sharded.</span>
+<span class="sd">    Produces the full output via an all-reduce (g operator).&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">in_f</span><span class="p">,</span> <span class="n">out_f</span><span class="p">,</span> <span class="n">tp</span><span class="p">,</span> <span class="n">rank</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">in_f</span> <span class="o">%</span> <span class="n">tp</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">in_local</span> <span class="o">=</span> <span class="n">in_f</span> <span class="o">//</span> <span class="n">tp</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">out_f</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">in_local</span><span class="p">))</span>
+        <span class="c1"># bias is added ONCE, after the reduce, so only rank 0 should hold it</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bias</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">out_f</span><span class="p">))</span> <span class="k">if</span> <span class="p">(</span><span class="n">bias</span> <span class="ow">and</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>                         <span class="c1"># x sharded along features</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">)</span>   <span class="c1"># partial sum</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">reduce_from_region</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>                 <span class="c1"># g: all-reduce -&gt; full output</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">bias</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">y</span> <span class="o">=</span> <span class="n">y</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">bias</span>
+        <span class="k">return</span> <span class="n">y</span>
+
+<span class="c1"># A Megatron-style MLP: column then row, nonlinearity in between, zero gathers.</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ParallelMLP</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">tp</span><span class="p">,</span> <span class="n">rank</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fc1</span> <span class="o">=</span> <span class="n">ColumnParallelLinear</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">h</span><span class="p">,</span> <span class="n">tp</span><span class="p">,</span> <span class="n">rank</span><span class="p">)</span>   <span class="c1"># h -&gt; 4h, sharded</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fc2</span> <span class="o">=</span> <span class="n">RowParallelLinear</span><span class="p">(</span><span class="mi">4</span> <span class="o">*</span> <span class="n">h</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">tp</span><span class="p">,</span> <span class="n">rank</span><span class="p">)</span>      <span class="c1"># 4h -&gt; h, all-reduce</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">fc2</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">gelu</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">fc1</span><span class="p">(</span><span class="n">x</span><span class="p">)))</span>
+</code></pre></div>
+<h3 id="the-communication-cost-of-tp">The Communication Cost of TP<a class="headerlink" href="#the-communication-cost-of-tp" title="Permanent link">¶</a></h3>
+<p>The all-reduce in each block moves a tensor of shape <span class="arithmatex">\(s \times h\)</span>. With ring all-reduce over <span class="arithmatex">\(t\)</span> devices, each device sends and receives <span class="arithmatex">\(\approx 2 \cdot \frac{t-1}{t} \cdot (s \cdot h \cdot 2\text{ bytes})\)</span> per all-reduce. Two all-reduces forward + two backward = <strong>four all-reduces per layer per step</strong>. This is <em>a lot</em> of traffic, and it sits squarely on the critical path: the GPUs cannot proceed past the all-reduce until it completes.</p>
+<p>This is the defining constraint of tensor parallelism: <strong>it must run over the fastest interconnect you have.</strong> On a DGX/HGX node that is NVLink/NVSwitch (hundreds of GB/s, sometimes ~900 GB/s aggregate). Cross <em>more than</em> the NVLink domain — e.g. over InfiniBand between nodes — and TP collapses your throughput because the per-layer all-reduces serialize behind a 10–25× slower link. <strong>Rule of thumb: keep the TP group inside one node, <span class="arithmatex">\(t \le 8\)</span> (or whatever your NVLink domain is).</strong></p>
+<div class="admonition warning">
+<p class="admonition-title">GQA/MQA changes the K/V sharding</p>
+<p>With Grouped-Query Attention or Multi-Query Attention (see <a href="../02-transformer/04-mha-gqa-mla.html">MHA, MQA, GQA &amp; MLA</a>) there are fewer K/V heads than Q heads. If the number of KV heads is smaller than the TP degree <span class="arithmatex">\(t\)</span>, you cannot give each rank a distinct KV head. Megatron handles this by <em>replicating</em> KV heads across the ranks that share them, or by requiring <span class="arithmatex">\(t \le\)</span> (number of KV groups). Forgetting this produces silent wrong results or shape errors — check your KV-head-to-TP divisibility before launching.</p>
+</div>
+<h3 id="sequence-parallelism-as-tps-free-companion">Sequence Parallelism as TP&rsquo;s Free Companion<a class="headerlink" href="#sequence-parallelism-as-tps-free-companion" title="Permanent link">¶</a></h3>
+<p>Look again at the Megatron block: between the two TP regions sit the <strong>LayerNorm/RMSNorm and the dropout/residual-add</strong>, which Megatron <em>replicates</em> (every TP rank does the same redundant work on the full <span class="arithmatex">\(s \times h\)</span> tensor). That replication wastes both compute and, more importantly, <strong>activation memory</strong>: each rank stores the full LayerNorm activations.</p>
+<p><strong>Sequence parallelism (SP)</strong> — in this Megatron sense (Korthikanti et al., 2022) — splits those replicated regions along the <em>sequence</em> dimension instead. The norm and residual are now done on <span class="arithmatex">\(s/t \times h\)</span> shards. The catch: the boundaries between an SP region (sharded on sequence) and a TP region (sharded on hidden/features) require a conversion. Megatron shows that the <em>same</em> all-reduce of the TP region can be <strong>decomposed into a reduce-scatter + all-gather</strong> that achieves the layout conversion <em>for the same total communication volume</em>. So Megatron-style SP is essentially free communication-wise and meaningfully cuts activation memory — it is now standard and always-on in Megatron. (Note: this &ldquo;sequence parallelism&rdquo; is a memory optimization <em>within</em> a TP group, and is distinct from <strong>context parallelism / Ring Attention</strong>, covered later, which is a true sequence split for long context.)</p>
+<h2 id="pipeline-parallelism-splitting-across-layers">Pipeline Parallelism: Splitting Across Layers<a class="headerlink" href="#pipeline-parallelism-splitting-across-layers" title="Permanent link">¶</a></h2>
+<p>Tensor parallelism is bounded by the NVLink domain. To go bigger we split the model <em>depth-wise</em>: GPU 0 holds layers <span class="arithmatex">\(0..k\)</span>, GPU 1 holds layers <span class="arithmatex">\(k+1..2k\)</span>, and so on. A microbatch flows GPU 0 → GPU 1 → &hellip; → GPU <span class="arithmatex">\(p-1\)</span> in the forward pass, and the gradients flow back. The only communication is <strong>point-to-point</strong> (send/recv of the activation tensor at the stage boundary) — cheap, and tolerant of slower inter-node links. This is <strong>pipeline parallelism (PP)</strong>.</p>
+<p>The problem is the <strong>bubble</strong>. If you naively run one whole batch through the pipeline, while stage 0 computes, stages <span class="arithmatex">\(1..p-1\)</span> sit idle; while stage <span class="arithmatex">\(p-1\)</span> computes, the rest sit idle. Utilization is <span class="arithmatex">\(1/p\)</span> — catastrophic.</p>
+<figure class="viz" id="fig-pipeline-bubble">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 430" role="img" aria-label="Pipeline schedule for 4 stages: forward and backward microbatches flow as a diagonal of colored cells; the idle bubble shrinks when the number of microbatches grows from 2 to 6.">
+  <defs>
+    <pattern id="pb-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="7" height="7" fill="var(--warn,#e0a106)" fill-opacity="0.10"/>
+      <line x1="0" y1="0" x2="0" y2="7" stroke="var(--warn,#e0a106)" stroke-width="1.4" stroke-opacity="0.45"/>
+    </pattern>
+    <marker id="pb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-pipeline-bubble text{ fill:var(--ink-soft); }
+    #fig-pipeline-bubble .ttl{ font:600 13px var(--sans,sans-serif); }
+    #fig-pipeline-bubble .axis{ font:600 11px var(--mono,monospace); fill:var(--muted); }
+    #fig-pipeline-bubble .cell{ font:600 9px var(--mono,monospace); }
+    #fig-pipeline-bubble .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-pipeline-bubble .frac{ font:600 12px var(--mono,monospace); }
+  </style>
+
+
+  <g data-anim="1">
+    <text x="30" y="26" class="ttl">Few microbatches &#8212; m = 2, p = 4</text>
+
+
+    <text x="42" y="58"  text-anchor="end" class="axis">S0</text>
+    <text x="42" y="82"  text-anchor="end" class="axis">S1</text>
+    <text x="42" y="106" text-anchor="end" class="axis">S2</text>
+    <text x="42" y="130" text-anchor="end" class="axis">S3</text>
+
+
+    <rect x="50" y="46"  width="400" height="20" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="50" y="70"  width="400" height="20" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="50" y="94"  width="400" height="20" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="50" y="118" width="400" height="20" rx="2" class="v-fill v-grid" stroke-width="1"/>
+  </g>
+
+
+  <g data-anim="2">
+
+    <rect x="130" y="46"  width="240" height="20" fill="url(#pb-hatch)"/>
+
+    <rect x="50"  y="70"  width="40"  height="20" fill="url(#pb-hatch)"/>
+    <rect x="170" y="70"  width="160" height="20" fill="url(#pb-hatch)"/>
+    <rect x="410" y="70"  width="40"  height="20" fill="url(#pb-hatch)"/>
+
+    <rect x="50"  y="94"  width="80"  height="20" fill="url(#pb-hatch)"/>
+    <rect x="210" y="94"  width="80"  height="20" fill="url(#pb-hatch)"/>
+    <rect x="370" y="94"  width="80"  height="20" fill="url(#pb-hatch)"/>
+
+    <rect x="50"  y="118" width="120" height="20" fill="url(#pb-hatch)"/>
+    <rect x="330" y="118" width="120" height="20" fill="url(#pb-hatch)"/>
+  </g>
+
+
+  <g data-anim="3" class="v-accent" fill="var(--accent)">
+
+    <rect x="51"  y="48"  width="38" height="16" rx="2" fill-opacity="0.85"/>
+    <rect x="91"  y="48"  width="38" height="16" rx="2" fill-opacity="0.85"/>
+
+    <rect x="91"  y="72"  width="38" height="16" rx="2" fill-opacity="0.85"/>
+    <rect x="131" y="72"  width="38" height="16" rx="2" fill-opacity="0.85"/>
+
+    <rect x="131" y="96"  width="38" height="16" rx="2" fill-opacity="0.85"/>
+    <rect x="171" y="96"  width="38" height="16" rx="2" fill-opacity="0.85"/>
+
+    <rect x="171" y="120" width="38" height="16" rx="2" fill-opacity="0.85"/>
+    <rect x="211" y="120" width="38" height="16" rx="2" fill-opacity="0.85"/>
+  </g>
+
+  <g data-anim="3" class="cell" fill="#fff">
+    <text x="70"  y="60"  text-anchor="middle">F1</text><text x="110" y="60"  text-anchor="middle">F2</text>
+    <text x="110" y="84"  text-anchor="middle">F1</text><text x="150" y="84"  text-anchor="middle">F2</text>
+    <text x="150" y="108" text-anchor="middle">F1</text><text x="190" y="108" text-anchor="middle">F2</text>
+    <text x="190" y="132" text-anchor="middle">F1</text><text x="230" y="132" text-anchor="middle">F2</text>
+  </g>
+
+
+  <g data-anim="3" fill="var(--good,#2f9e6e)">
+
+    <rect x="251" y="120" width="38" height="16" rx="2" fill-opacity="0.82"/>
+    <rect x="291" y="120" width="38" height="16" rx="2" fill-opacity="0.82"/>
+
+    <rect x="291" y="96"  width="38" height="16" rx="2" fill-opacity="0.82"/>
+    <rect x="331" y="96"  width="38" height="16" rx="2" fill-opacity="0.82"/>
+
+    <rect x="331" y="72"  width="38" height="16" rx="2" fill-opacity="0.82"/>
+    <rect x="371" y="72"  width="38" height="16" rx="2" fill-opacity="0.82"/>
+
+    <rect x="371" y="48"  width="38" height="16" rx="2" fill-opacity="0.82"/>
+    <rect x="411" y="48"  width="38" height="16" rx="2" fill-opacity="0.82"/>
+  </g>
+  <g data-anim="3" class="cell" fill="#fff">
+    <text x="270" y="132" text-anchor="middle">B2</text><text x="310" y="132" text-anchor="middle">B1</text>
+    <text x="310" y="108" text-anchor="middle">B2</text><text x="350" y="108" text-anchor="middle">B1</text>
+    <text x="350" y="84"  text-anchor="middle">B2</text><text x="390" y="84"  text-anchor="middle">B1</text>
+    <text x="390" y="60"  text-anchor="middle">B2</text><text x="430" y="60"  text-anchor="middle">B1</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="478" y="72" width="252" height="40" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.13" stroke="var(--warn,#e0a106)" stroke-width="1.1"/>
+    <text x="604" y="88"  text-anchor="middle" class="sm" fill="var(--warn,#e0a106)">bubble fraction</text>
+    <text x="604" y="105" text-anchor="middle" class="frac" fill="var(--warn,#e0a106)">(p-1)/(m+p-1) = 3/5 = 60%</text>
+  </g>
+
+
+  <g data-anim="4">
+    <text x="30" y="222" class="ttl">More microbatches &#8212; m = 6, p = 4</text>
+
+    <text x="42" y="252" text-anchor="end" class="axis">S0</text>
+    <text x="42" y="276" text-anchor="end" class="axis">S1</text>
+    <text x="42" y="300" text-anchor="end" class="axis">S2</text>
+    <text x="42" y="324" text-anchor="end" class="axis">S3</text>
+
+
+    <rect x="50" y="240" width="396" height="20" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="50" y="264" width="396" height="20" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="50" y="288" width="396" height="20" rx="2" class="v-fill v-grid" stroke-width="1"/>
+    <rect x="50" y="312" width="396" height="20" rx="2" class="v-fill v-grid" stroke-width="1"/>
+  </g>
+
+
+  <g data-anim="5">
+
+    <rect x="182" y="240" width="132" height="20" fill="url(#pb-hatch)"/>
+
+    <rect x="50"  y="264" width="22"  height="20" fill="url(#pb-hatch)"/>
+    <rect x="204" y="264" width="88"  height="20" fill="url(#pb-hatch)"/>
+    <rect x="424" y="264" width="22"  height="20" fill="url(#pb-hatch)"/>
+
+    <rect x="50"  y="288" width="44"  height="20" fill="url(#pb-hatch)"/>
+    <rect x="226" y="288" width="44"  height="20" fill="url(#pb-hatch)"/>
+    <rect x="402" y="288" width="44"  height="20" fill="url(#pb-hatch)"/>
+
+    <rect x="50"  y="312" width="66"  height="20" fill="url(#pb-hatch)"/>
+    <rect x="380" y="312" width="66"  height="20" fill="url(#pb-hatch)"/>
+  </g>
+
+
+  <g data-anim="5" class="v-accent" fill="var(--accent)">
+
+    <rect x="51"  y="242" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="73"  y="242" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="95"  y="242" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="117" y="242" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="139" y="242" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="161" y="242" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+
+    <rect x="73"  y="266" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="95"  y="266" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="117" y="266" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="139" y="266" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="161" y="266" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="183" y="266" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+
+    <rect x="95"  y="290" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="117" y="290" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="139" y="290" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="161" y="290" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="183" y="290" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="205" y="290" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+
+    <rect x="117" y="314" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="139" y="314" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="161" y="314" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="183" y="314" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="205" y="314" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+    <rect x="227" y="314" width="20" height="16" rx="1.5" fill-opacity="0.85"/>
+  </g>
+
+
+  <g data-anim="5" fill="var(--good,#2f9e6e)">
+
+    <rect x="249" y="314" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="271" y="314" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="293" y="314" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="315" y="314" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="337" y="314" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="359" y="314" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+
+    <rect x="271" y="290" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="293" y="290" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="315" y="290" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="337" y="290" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="359" y="290" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="381" y="290" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+
+    <rect x="293" y="266" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="315" y="266" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="337" y="266" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="359" y="266" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="381" y="266" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="403" y="266" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+
+    <rect x="315" y="242" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="337" y="242" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="359" y="242" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="381" y="242" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="403" y="242" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+    <rect x="425" y="242" width="20" height="16" rx="1.5" fill-opacity="0.82"/>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="478" y="288" width="252" height="40" rx="6" fill="var(--good,#2f9e6e)" fill-opacity="0.13" stroke="var(--good,#2f9e6e)" stroke-width="1.1"/>
+    <text x="604" y="304" text-anchor="middle" class="sm" fill="var(--good,#2f9e6e)">bubble fraction</text>
+    <text x="604" y="321" text-anchor="middle" class="frac" fill="var(--good,#2f9e6e)">(p-1)/(m+p-1) = 3/9 = 33%</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="50" y1="350" x2="700" y2="350" class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#pb-arrow)"/>
+    <text x="375" y="368" text-anchor="middle" class="sm">time (one optimizer step)</text>
+
+
+    <g>
+      <rect x="70"  y="390" width="16" height="14" rx="2" fill="var(--accent)" fill-opacity="0.85"/>
+      <text x="92"  y="401" class="sm">forward (F)</text>
+      <rect x="190" y="390" width="16" height="14" rx="2" fill="var(--good,#2f9e6e)" fill-opacity="0.82"/>
+      <text x="212" y="401" class="sm">backward (B)</text>
+      <rect x="322" y="390" width="16" height="14" rx="2" fill="url(#pb-hatch)" stroke="var(--warn,#e0a106)" stroke-width="0.8"/>
+      <text x="344" y="401" class="sm">idle bubble (fill + drain)</text>
+    </g>
+  </g>
+</svg>
+<figcaption><b>Microbatching fills the pipe and shrinks the bubble.</b> Each stage <span class="frac">S0..S3</span> runs microbatches as a diagonal of forward (then backward) cells; the hatched <b>fill + drain</b> triangles are idle "bubble" time. Those wasted triangles are a fixed size set by the pipeline depth <span class="frac">p</span>, so adding more microbatches <span class="frac">m</span> dilutes them &#8212; the bubble fraction <span class="frac">(p-1)/(m+p-1)</span> falls from 60% at <span class="frac">m=2</span> to 33% at <span class="frac">m=6</span>, and keeps shrinking as <span class="frac">m &#8811; p</span>.</figcaption>
+</figure>
+
+<h3 id="gpipe-microbatching-to-fill-the-pipe">GPipe: Microbatching to Fill the Pipe<a class="headerlink" href="#gpipe-microbatching-to-fill-the-pipe" title="Permanent link">¶</a></h3>
+<p><strong>GPipe (Huang et al., 2019)</strong> fixes this by chopping the minibatch into <span class="arithmatex">\(m\)</span> <strong>microbatches</strong> and streaming them. Once the pipe is full, multiple stages work in parallel on different microbatches. The schedule is &ldquo;all-forward, then all-backward&rdquo;:</p>
+<figure class="viz" id="fig-dmp-gpipe-schedule">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+#fig-dmp-gpipe-schedule .slot-lbl { font: 700 11px var(--mono,monospace); fill: #fff; }
+#fig-dmp-gpipe-schedule .stage-lbl { font: 600 12px var(--mono,monospace); }
+#fig-dmp-gpipe-schedule .axis-lbl { font: 500 11px var(--sans,sans-serif); }
+#fig-dmp-gpipe-schedule .cap { font: 400 10.5px var(--sans,sans-serif); }
+#fig-dmp-gpipe-schedule .legend-lbl { font: 500 11px var(--sans,sans-serif); }
+#fig-dmp-gpipe-schedule .idle-dot { font: 500 18px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+#fig-dmp-gpipe-schedule text { fill: var(--ink-soft,#45413a); }
+
+@keyframes gp-pop {
+  from { opacity: 0; transform-origin: 50% 50%; transform: scale(0.7); }
+  to   { opacity: 1; transform-origin: 50% 50%; transform: scale(1); }
+}
+@media not (prefers-reduced-motion: reduce) {
+  #fig-dmp-gpipe-schedule .s1  { animation: gp-pop 0.14s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.05s); }
+  #fig-dmp-gpipe-schedule .s2  { animation: gp-pop 0.14s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.22s); }
+  #fig-dmp-gpipe-schedule .s3  { animation: gp-pop 0.14s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.39s); }
+  #fig-dmp-gpipe-schedule .s4  { animation: gp-pop 0.14s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.56s); }
+  #fig-dmp-gpipe-schedule .s5  { animation: gp-pop 0.14s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.73s); }
+  #fig-dmp-gpipe-schedule .s6  { animation: gp-pop 0.14s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.90s); }
+  #fig-dmp-gpipe-schedule .s7  { animation: gp-pop 0.14s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 1.07s); }
+  #fig-dmp-gpipe-schedule .s8  { animation: gp-pop 0.14s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 1.24s); }
+  #fig-dmp-gpipe-schedule .s9  { animation: gp-pop 0.14s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 1.41s); }
+  #fig-dmp-gpipe-schedule .s10 { animation: gp-pop 0.14s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 1.58s); }
+  #fig-dmp-gpipe-schedule .s11 { animation: gp-pop 0.14s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 1.75s); }
+}
+</style>
+<svg viewBox="0 0 920 360" role="img" aria-label="GPipe pipeline schedule with 4 stages and 4 microbatches showing the fill, bubble, and drain structure.">
+<defs>
+  <pattern id="gp-hatch" patternUnits="userSpaceOnUse" width="7" height="7" patternTransform="rotate(45)">
+    <line x1="0" y1="0" x2="0" y2="7" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  </pattern>
+</defs>
+
+
+<text x="50" y="26" class="axis-lbl" fill="var(--muted,#6d675d)">time</text>
+<text x="870" y="26" class="axis-lbl" text-anchor="end" fill="var(--muted,#6d675d)">&#8594;</text>
+<line x1="50" y1="32" x2="870" y2="32" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+
+
+<text x="114" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">1</text>
+<text x="186" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">2</text>
+<text x="258" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">3</text>
+<text x="330" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">4</text>
+<text x="402" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">5</text>
+<text x="474" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">6</text>
+<text x="546" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">7</text>
+<text x="618" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">8</text>
+<text x="690" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">9</text>
+<text x="762" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">10</text>
+<text x="834" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">11</text>
+
+
+<rect x="88" y="56" width="782" height="50" rx="3" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<rect x="88" y="126" width="782" height="50" rx="3" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<rect x="88" y="196" width="782" height="50" rx="3" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<rect x="88" y="266" width="782" height="50" rx="3" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+
+
+<text x="6" y="86" class="stage-lbl">stage0</text>
+<text x="6" y="156" class="stage-lbl">stage1</text>
+<text x="6" y="226" class="stage-lbl">stage2</text>
+<text x="6" y="296" class="stage-lbl">stage3</text>
+
+
+<rect x="580" y="18" width="12" height="10" rx="2" fill="var(--accent,#4f46e5)"/>
+<text x="596" y="27" class="legend-lbl" fill="var(--ink-soft,#45413a)">forward</text>
+<rect x="660" y="18" width="12" height="10" rx="2" fill="var(--accent-2,#0891b2)"/>
+<text x="676" y="27" class="legend-lbl" fill="var(--ink-soft,#45413a)">backward</text>
+<rect x="756" y="18" width="12" height="10" rx="2" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="772" y="27" class="legend-lbl" fill="var(--muted,#6d675d)">idle</text>
+
+
+
+
+<g class="s1"><rect x="81"  y="58" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="113" y="85" class="slot-lbl" text-anchor="middle">F1</text></g>
+<g class="s2"><rect x="153" y="58" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="185" y="85" class="slot-lbl" text-anchor="middle">F2</text></g>
+<g class="s3"><rect x="225" y="58" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="257" y="85" class="slot-lbl" text-anchor="middle">F3</text></g>
+<g class="s4"><rect x="297" y="58" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="329" y="85" class="slot-lbl" text-anchor="middle">F4</text></g>
+<g class="s5"><rect x="369" y="58" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="401" y="87" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s6"><rect x="441" y="58" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="473" y="87" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s7"><rect x="513" y="58" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="545" y="87" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s8"><rect  x="585" y="58" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="617" y="85" class="slot-lbl" text-anchor="middle">B4</text></g>
+<g class="s9"><rect  x="657" y="58" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="689" y="85" class="slot-lbl" text-anchor="middle">B3</text></g>
+<g class="s10"><rect x="729" y="58" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="761" y="85" class="slot-lbl" text-anchor="middle">B2</text></g>
+<g class="s11"><rect x="801" y="58" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="833" y="85" class="slot-lbl" text-anchor="middle">B1</text></g>
+
+
+<g class="s1"><rect x="81"  y="128" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="113" y="157" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s2"><rect x="153" y="128" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="185" y="155" class="slot-lbl" text-anchor="middle">F1</text></g>
+<g class="s3"><rect x="225" y="128" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="257" y="155" class="slot-lbl" text-anchor="middle">F2</text></g>
+<g class="s4"><rect x="297" y="128" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="329" y="155" class="slot-lbl" text-anchor="middle">F3</text></g>
+<g class="s5"><rect x="369" y="128" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="401" y="155" class="slot-lbl" text-anchor="middle">F4</text></g>
+<g class="s6"><rect x="441" y="128" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="473" y="157" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s7"><rect  x="513" y="128" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="545" y="155" class="slot-lbl" text-anchor="middle">B4</text></g>
+<g class="s8"><rect  x="585" y="128" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="617" y="155" class="slot-lbl" text-anchor="middle">B3</text></g>
+<g class="s9"><rect  x="657" y="128" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="689" y="155" class="slot-lbl" text-anchor="middle">B2</text></g>
+<g class="s10"><rect x="729" y="128" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="761" y="155" class="slot-lbl" text-anchor="middle">B1</text></g>
+<g class="s11"><rect x="801" y="128" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="833" y="157" class="idle-dot" text-anchor="middle">&#183;</text></g>
+
+
+<g class="s1"><rect x="81"  y="198" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="113" y="227" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s2"><rect x="153" y="198" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="185" y="227" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s3"><rect x="225" y="198" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="257" y="225" class="slot-lbl" text-anchor="middle">F1</text></g>
+<g class="s4"><rect x="297" y="198" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="329" y="225" class="slot-lbl" text-anchor="middle">F2</text></g>
+<g class="s5"><rect x="369" y="198" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="401" y="225" class="slot-lbl" text-anchor="middle">F3</text></g>
+<g class="s6"><rect x="441" y="198" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="473" y="225" class="slot-lbl" text-anchor="middle">F4</text></g>
+<g class="s7"><rect  x="513" y="198" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="545" y="225" class="slot-lbl" text-anchor="middle">B4</text></g>
+<g class="s8"><rect  x="585" y="198" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="617" y="225" class="slot-lbl" text-anchor="middle">B3</text></g>
+<g class="s9"><rect  x="657" y="198" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="689" y="225" class="slot-lbl" text-anchor="middle">B2</text></g>
+<g class="s10"><rect x="729" y="198" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="761" y="225" class="slot-lbl" text-anchor="middle">B1</text></g>
+<g class="s11"><rect x="801" y="198" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="833" y="227" class="idle-dot" text-anchor="middle">&#183;</text></g>
+
+
+<g class="s1"><rect x="81"  y="268" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="113" y="297" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s2"><rect x="153" y="268" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="185" y="297" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s3"><rect x="225" y="268" width="64" height="44" rx="4" fill="url(#gp-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="257" y="297" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s4"><rect x="297" y="268" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="329" y="295" class="slot-lbl" text-anchor="middle">F1</text></g>
+<g class="s5"><rect x="369" y="268" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="401" y="295" class="slot-lbl" text-anchor="middle">F2</text></g>
+<g class="s6"><rect x="441" y="268" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="473" y="295" class="slot-lbl" text-anchor="middle">F3</text></g>
+<g class="s7"><rect  x="513" y="268" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="545" y="295" class="slot-lbl" text-anchor="middle">F4</text></g>
+<g class="s8"><rect  x="585" y="268" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="617" y="295" class="slot-lbl" text-anchor="middle">B4</text></g>
+<g class="s9"><rect  x="657" y="268" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="689" y="295" class="slot-lbl" text-anchor="middle">B3</text></g>
+<g class="s10"><rect x="729" y="268" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="761" y="295" class="slot-lbl" text-anchor="middle">B2</text></g>
+<g class="s11"><rect x="801" y="268" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="833" y="295" class="slot-lbl" text-anchor="middle">B1</text></g>
+
+
+<line x1="81"  y1="320" x2="289" y2="320" stroke="var(--muted,#6d675d)" stroke-width="1.2"/>
+<line x1="81"  y1="316" x2="81"  y2="320" stroke="var(--muted,#6d675d)" stroke-width="1.2"/>
+<line x1="289" y1="316" x2="289" y2="320" stroke="var(--muted,#6d675d)" stroke-width="1.2"/>
+<text x="185" y="334" class="cap" text-anchor="middle" fill="var(--muted,#6d675d)">fill</text>
+
+
+<line x1="585" y1="320" x2="869" y2="320" stroke="var(--muted,#6d675d)" stroke-width="1.2"/>
+<line x1="585" y1="316" x2="585" y2="320" stroke="var(--muted,#6d675d)" stroke-width="1.2"/>
+<line x1="869" y1="316" x2="869" y2="320" stroke="var(--muted,#6d675d)" stroke-width="1.2"/>
+<text x="727" y="334" class="cap" text-anchor="middle" fill="var(--muted,#6d675d)">drain</text>
+
+
+<text x="460" y="352" class="cap" text-anchor="middle" fill="var(--muted,#6d675d)">bubble fraction = (p-1)/(m+p-1); here 3/7 ~ 43% — shrinks as m grows relative to p</text>
+</svg>
+<figcaption><b>GPipe all-forward-then-all-backward schedule (p=4 stages, m=4 microbatches).</b> The forward wave (purple) cascades diagonally; all four microbatch activations must remain in memory simultaneously before any backward begins. The triangular idle region (hatched) is the pipeline bubble; its fraction (p-1)/(m+p-1) shrinks by increasing m, but at the cost of storing more live activations.</figcaption>
+</figure>
+
+<p>The bubble is the fill + drain time. With <span class="arithmatex">\(p\)</span> stages and <span class="arithmatex">\(m\)</span> microbatches, the <strong>bubble fraction</strong> is</p>
+<div class="arithmatex">\[
+\text{bubble fraction} = \frac{p - 1}{m + p - 1}.
+\]</div>
+<p>Increase <span class="arithmatex">\(m\)</span> and the bubble shrinks. The rule: <strong><span class="arithmatex">\(m \gg p\)</span></strong>. With <span class="arithmatex">\(p=8\)</span> and <span class="arithmatex">\(m=8\)</span>, the bubble is <span class="arithmatex">\(7/15 \approx 47\%\)</span> — terrible. With <span class="arithmatex">\(m = 64\)</span>, it is <span class="arithmatex">\(7/71 \approx 10\%\)</span>. But GPipe has a memory problem: to do all forwards before any backward, it must <strong>stash the activations of all <span class="arithmatex">\(m\)</span> in-flight microbatches</strong> on each stage. Larger <span class="arithmatex">\(m\)</span> means lower bubble but higher peak activation memory — a direct tension. (Activation recomputation, from <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training</a>, is the usual escape valve.)</p>
+<h3 id="1f1b-the-steady-state-schedule">1F1B: The Steady-State Schedule<a class="headerlink" href="#1f1b-the-steady-state-schedule" title="Permanent link">¶</a></h3>
+<p><strong>PipeDream&rsquo;s 1F1B</strong> (&ldquo;one-forward-one-backward&rdquo;) schedule, adopted by Megatron, fixes the memory blowup. Once the pipeline is full, each stage <em>alternates</em>: do one forward, then one backward, then one forward, and so on. The key consequence: a stage only needs to keep activations for the microbatches <em>currently in flight through it</em>, which is at most <span class="arithmatex">\(p - s\)</span> for stage <span class="arithmatex">\(s\)</span> — bounded by <span class="arithmatex">\(p\)</span>, <strong>independent of <span class="arithmatex">\(m\)</span></strong>.</p>
+<figure class="viz" id="fig-dmp-1f1b-schedule">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+#fig-dmp-1f1b-schedule .slot-lbl { font: 700 10px var(--mono,monospace); fill: #fff; }
+#fig-dmp-1f1b-schedule .stage-lbl { font: 600 12px var(--mono,monospace); }
+#fig-dmp-1f1b-schedule .axis-lbl { font: 500 11px var(--sans,sans-serif); }
+#fig-dmp-1f1b-schedule .cap { font: 400 10px var(--sans,sans-serif); }
+#fig-dmp-1f1b-schedule .ann { font: 500 10px var(--sans,sans-serif); }
+#fig-dmp-1f1b-schedule .legend-lbl { font: 500 11px var(--sans,sans-serif); }
+#fig-dmp-1f1b-schedule .idle-dot { font: 500 18px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+#fig-dmp-1f1b-schedule text { fill: var(--ink-soft,#45413a); }
+
+@keyframes fb-pop {
+  from { opacity: 0; transform-origin: 50% 50%; transform: scale(0.7); }
+  to   { opacity: 1; transform-origin: 50% 50%; transform: scale(1); }
+}
+@media not (prefers-reduced-motion: reduce) {
+  #fig-dmp-1f1b-schedule .s1  { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.05s); }
+  #fig-dmp-1f1b-schedule .s2  { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.20s); }
+  #fig-dmp-1f1b-schedule .s3  { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.35s); }
+  #fig-dmp-1f1b-schedule .s4  { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.50s); }
+  #fig-dmp-1f1b-schedule .s5  { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.65s); }
+  #fig-dmp-1f1b-schedule .s6  { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.80s); }
+  #fig-dmp-1f1b-schedule .s7  { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 0.95s); }
+  #fig-dmp-1f1b-schedule .s8  { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 1.10s); }
+  #fig-dmp-1f1b-schedule .s9  { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 1.25s); }
+  #fig-dmp-1f1b-schedule .s10 { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 1.40s); }
+  #fig-dmp-1f1b-schedule .s11 { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 1.55s); }
+  #fig-dmp-1f1b-schedule .s12 { animation: fb-pop 0.13s ease-out both; animation-delay: calc(var(--replay-offset,0ms) + 1.70s); }
+}
+</style>
+<svg viewBox="0 0 980 390" role="img" aria-label="1F1B pipeline schedule: each stage alternates one-forward then one-backward in steady state, bounding in-flight activations to at most p, independent of the number of microbatches.">
+<defs>
+  <pattern id="fb-hatch" patternUnits="userSpaceOnUse" width="7" height="7" patternTransform="rotate(45)">
+    <line x1="0" y1="0" x2="0" y2="7" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  </pattern>
+</defs>
+
+
+<text x="50" y="26" class="axis-lbl" fill="var(--muted,#6d675d)">time</text>
+<text x="930" y="26" class="axis-lbl" text-anchor="end" fill="var(--muted,#6d675d)">&#8594;</text>
+<line x1="50" y1="32" x2="930" y2="32" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+
+
+<text x="114" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">1</text>
+<text x="186" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">2</text>
+<text x="258" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">3</text>
+<text x="330" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">4</text>
+<text x="402" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">5</text>
+<text x="474" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">6</text>
+<text x="546" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">7</text>
+<text x="618" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">8</text>
+<text x="690" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">9</text>
+<text x="762" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">10</text>
+<text x="834" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">11</text>
+<text x="906" y="44" class="axis-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">12</text>
+
+
+<rect x="88" y="56"  width="854" height="50" rx="3" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<rect x="88" y="126" width="854" height="50" rx="3" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<rect x="88" y="196" width="854" height="50" rx="3" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<rect x="88" y="266" width="854" height="50" rx="3" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+
+
+<text x="6" y="86"  class="stage-lbl">stage0</text>
+<text x="6" y="156" class="stage-lbl">stage1</text>
+<text x="6" y="226" class="stage-lbl">stage2</text>
+<text x="6" y="296" class="stage-lbl">stage3</text>
+
+
+<rect x="600" y="18" width="12" height="10" rx="2" fill="var(--accent,#4f46e5)"/>
+<text x="616" y="27" class="legend-lbl" fill="var(--ink-soft,#45413a)">forward</text>
+<rect x="685" y="18" width="12" height="10" rx="2" fill="var(--accent-2,#0891b2)"/>
+<text x="701" y="27" class="legend-lbl" fill="var(--ink-soft,#45413a)">backward</text>
+<rect x="782" y="18" width="12" height="10" rx="2" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="798" y="27" class="legend-lbl" fill="var(--muted,#6d675d)">idle</text>
+
+
+
+
+
+<g class="s1"> <rect x="81"  y="58" w="64" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="113" y="85" class="slot-lbl" text-anchor="middle">F1</text></g>
+<g class="s2"> <rect x="153" y="58" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="185" y="85" class="slot-lbl" text-anchor="middle">F2</text></g>
+<g class="s3"> <rect x="225" y="58" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="257" y="85" class="slot-lbl" text-anchor="middle">F3</text></g>
+<g class="s4"> <rect x="297" y="58" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="329" y="85" class="slot-lbl" text-anchor="middle">F4</text></g>
+<g class="s5"> <rect x="369" y="58" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="401" y="85" class="slot-lbl" text-anchor="middle">B1</text></g>
+<g class="s6"> <rect x="441" y="58" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="473" y="85" class="slot-lbl" text-anchor="middle">F5</text></g>
+<g class="s7"> <rect x="513" y="58" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="545" y="85" class="slot-lbl" text-anchor="middle">B2</text></g>
+<g class="s8"> <rect x="585" y="58" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="617" y="85" class="slot-lbl" text-anchor="middle">F6</text></g>
+<g class="s9"> <rect x="657" y="58" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="689" y="85" class="slot-lbl" text-anchor="middle">B3</text></g>
+<g class="s10"><rect x="729" y="58" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="761" y="85" class="slot-lbl" text-anchor="middle">B4</text></g>
+<g class="s11"><rect x="801" y="58" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="833" y="85" class="slot-lbl" text-anchor="middle">B5</text></g>
+<g class="s12"><rect x="873" y="58" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="905" y="85" class="slot-lbl" text-anchor="middle">B6</text></g>
+
+
+<g class="s1"> <rect x="81"  y="128" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="113" y="157" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s2"> <rect x="153" y="128" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="185" y="155" class="slot-lbl" text-anchor="middle">F1</text></g>
+<g class="s3"> <rect x="225" y="128" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="257" y="155" class="slot-lbl" text-anchor="middle">F2</text></g>
+<g class="s4"> <rect x="297" y="128" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="329" y="155" class="slot-lbl" text-anchor="middle">F3</text></g>
+<g class="s5"> <rect x="369" y="128" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="401" y="155" class="slot-lbl" text-anchor="middle">B1</text></g>
+<g class="s6"> <rect x="441" y="128" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="473" y="155" class="slot-lbl" text-anchor="middle">F4</text></g>
+<g class="s7"> <rect x="513" y="128" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="545" y="155" class="slot-lbl" text-anchor="middle">B2</text></g>
+<g class="s8"> <rect x="585" y="128" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="617" y="155" class="slot-lbl" text-anchor="middle">F5</text></g>
+<g class="s9"> <rect x="657" y="128" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="689" y="155" class="slot-lbl" text-anchor="middle">B3</text></g>
+<g class="s10"><rect x="729" y="128" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="761" y="155" class="slot-lbl" text-anchor="middle">B4</text></g>
+<g class="s11"><rect x="801" y="128" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="833" y="155" class="slot-lbl" text-anchor="middle">B5</text></g>
+<g class="s12"><rect x="873" y="128" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="905" y="157" class="idle-dot" text-anchor="middle">&#183;</text></g>
+
+
+<g class="s1"> <rect x="81"  y="198" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="113" y="227" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s2"> <rect x="153" y="198" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="185" y="227" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s3"> <rect x="225" y="198" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="257" y="225" class="slot-lbl" text-anchor="middle">F1</text></g>
+<g class="s4"> <rect x="297" y="198" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="329" y="225" class="slot-lbl" text-anchor="middle">F2</text></g>
+<g class="s5"> <rect x="369" y="198" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="401" y="225" class="slot-lbl" text-anchor="middle">B1</text></g>
+<g class="s6"> <rect x="441" y="198" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="473" y="225" class="slot-lbl" text-anchor="middle">F3</text></g>
+<g class="s7"> <rect x="513" y="198" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="545" y="225" class="slot-lbl" text-anchor="middle">B2</text></g>
+<g class="s8"> <rect x="585" y="198" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="617" y="225" class="slot-lbl" text-anchor="middle">F4</text></g>
+<g class="s9"> <rect x="657" y="198" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="689" y="225" class="slot-lbl" text-anchor="middle">B3</text></g>
+<g class="s10"><rect x="729" y="198" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="761" y="225" class="slot-lbl" text-anchor="middle">B4</text></g>
+<g class="s11"><rect x="801" y="198" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="833" y="227" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s12"><rect x="873" y="198" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="905" y="227" class="idle-dot" text-anchor="middle">&#183;</text></g>
+
+
+<g class="s1"> <rect x="81"  y="268" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="113" y="297" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s2"> <rect x="153" y="268" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="185" y="297" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s3"> <rect x="225" y="268" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="257" y="297" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s4"> <rect x="297" y="268" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="329" y="295" class="slot-lbl" text-anchor="middle">F1</text></g>
+<g class="s5"> <rect x="369" y="268" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="401" y="295" class="slot-lbl" text-anchor="middle">B1</text></g>
+<g class="s6"> <rect x="441" y="268" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="473" y="295" class="slot-lbl" text-anchor="middle">F2</text></g>
+<g class="s7"> <rect x="513" y="268" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="545" y="295" class="slot-lbl" text-anchor="middle">B2</text></g>
+<g class="s8"> <rect x="585" y="268" width="64" height="44" rx="4" fill="var(--accent,#4f46e5)"/><text x="617" y="295" class="slot-lbl" text-anchor="middle">F3</text></g>
+<g class="s9"> <rect x="657" y="268" width="64" height="44" rx="4" fill="var(--accent-2,#0891b2)"/><text x="689" y="295" class="slot-lbl" text-anchor="middle">B3</text></g>
+<g class="s10"><rect x="729" y="268" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="761" y="297" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s11"><rect x="801" y="268" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="833" y="297" class="idle-dot" text-anchor="middle">&#183;</text></g>
+<g class="s12"><rect x="873" y="268" width="64" height="44" rx="4" fill="url(#fb-hatch)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="5 3"/><text x="905" y="297" class="idle-dot" text-anchor="middle">&#183;</text></g>
+
+
+
+<line x1="81"  y1="52" x2="361" y2="52" stroke="var(--accent,#4f46e5)" stroke-width="1.2"/>
+<line x1="81"  y1="52" x2="81"  y2="56" stroke="var(--accent,#4f46e5)" stroke-width="1.2"/>
+<line x1="361" y1="52" x2="361" y2="56" stroke="var(--accent,#4f46e5)" stroke-width="1.2"/>
+<text x="221" y="50" class="ann" text-anchor="middle" fill="var(--accent,#4f46e5)">warmup (p=4 fwds, deepest stage)</text>
+
+
+<text x="432" y="326" class="ann" text-anchor="middle" fill="var(--accent-2,#0891b2)">F then immediately B (no warmup)</text>
+
+
+<text x="88"  y="345" class="cap" fill="var(--muted,#6d675d)">In-flight activations bounded by p, independent of m  |  Same bubble (p-1)/(m+p-1) as GPipe  |  Win is MEMORY, not bubble size</text>
+<text x="88"  y="358" class="cap" fill="var(--muted,#6d675d)">Steady state: each stage alternates F and B  |  stage0 warmup depth = p-1; stage3 warmup depth = 0</text>
+</svg>
+<figcaption><b>PipeDream/Megatron 1F1B steady-state pipeline schedule (p=4 stages).</b> Unlike GPipe, backward passes interleave with forward passes as soon as stage 3 completes its first forward, so each stage only keeps at most p live activation sets at once — independent of the total microbatch count m. The bubble fraction (p-1)/(m+p-1) matches GPipe, but 1F1B's memory footprint is bounded by p rather than m, making it practical with large m.</figcaption>
+</figure>
+
+<p>The bubble fraction is the <em>same</em> <span class="arithmatex">\(\frac{p-1}{m+p-1}\)</span> as GPipe — 1F1B&rsquo;s win is <strong>memory</strong>, not bubble. It lets you run a large <span class="arithmatex">\(m\)</span> (small bubble) without storing <span class="arithmatex">\(m\)</span> microbatches&rsquo; activations. This is why 1F1B is the default in essentially every production framework.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Minimal 1F1B driver (single-stage view). In reality each rank runs this with</span>
+<span class="c1"># send/recv to its neighbors. `num_micro` = m, `stage` in [0, p-1], `p` = #stages.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">run_1f1b</span><span class="p">(</span><span class="n">stage</span><span class="p">,</span> <span class="n">p</span><span class="p">,</span> <span class="n">num_micro</span><span class="p">,</span> <span class="n">fwd_step</span><span class="p">,</span> <span class="n">bwd_step</span><span class="p">,</span> <span class="n">recv_act</span><span class="p">,</span> <span class="n">send_act</span><span class="p">,</span>
+             <span class="n">recv_grad</span><span class="p">,</span> <span class="n">send_grad</span><span class="p">):</span>
+    <span class="n">warmup</span> <span class="o">=</span> <span class="n">p</span> <span class="o">-</span> <span class="n">stage</span> <span class="o">-</span> <span class="mi">1</span>                 <span class="c1"># how many forwards before first backward</span>
+    <span class="n">warmup</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">warmup</span><span class="p">,</span> <span class="n">num_micro</span><span class="p">)</span>
+    <span class="n">steady</span> <span class="o">=</span> <span class="n">num_micro</span> <span class="o">-</span> <span class="n">warmup</span>
+    <span class="n">act_queue</span> <span class="o">=</span> <span class="p">[]</span>                         <span class="c1"># activations awaiting their backward</span>
+
+    <span class="c1"># ---- warmup: only forwards, prime the pipe ----</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">warmup</span><span class="p">):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">recv_act</span><span class="p">()</span> <span class="k">if</span> <span class="n">stage</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="n">next_input</span><span class="p">()</span>
+        <span class="n">y</span><span class="p">,</span> <span class="n">act</span> <span class="o">=</span> <span class="n">fwd_step</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>               <span class="c1"># act = saved tensors for backward</span>
+        <span class="n">send_act</span><span class="p">(</span><span class="n">y</span><span class="p">)</span> <span class="k">if</span> <span class="n">stage</span> <span class="o">&lt;</span> <span class="n">p</span> <span class="o">-</span> <span class="mi">1</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="n">act_queue</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">act</span><span class="p">)</span>
+
+    <span class="c1"># ---- steady state: 1 forward then 1 backward, bounded memory ----</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">steady</span><span class="p">):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">recv_act</span><span class="p">()</span> <span class="k">if</span> <span class="n">stage</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="n">next_input</span><span class="p">()</span>
+        <span class="n">y</span><span class="p">,</span> <span class="n">act</span> <span class="o">=</span> <span class="n">fwd_step</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">send_act</span><span class="p">(</span><span class="n">y</span><span class="p">)</span> <span class="k">if</span> <span class="n">stage</span> <span class="o">&lt;</span> <span class="n">p</span> <span class="o">-</span> <span class="mi">1</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="n">act_queue</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">act</span><span class="p">)</span>
+        <span class="c1"># immediately do a backward for the OLDEST in-flight microbatch</span>
+        <span class="n">g</span> <span class="o">=</span> <span class="n">recv_grad</span><span class="p">()</span> <span class="k">if</span> <span class="n">stage</span> <span class="o">&lt;</span> <span class="n">p</span> <span class="o">-</span> <span class="mi">1</span> <span class="k">else</span> <span class="n">loss_grad</span><span class="p">()</span>
+        <span class="n">gx</span> <span class="o">=</span> <span class="n">bwd_step</span><span class="p">(</span><span class="n">act_queue</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">g</span><span class="p">)</span>
+        <span class="n">send_grad</span><span class="p">(</span><span class="n">gx</span><span class="p">)</span> <span class="k">if</span> <span class="n">stage</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="kc">None</span>
+
+    <span class="c1"># ---- cooldown: drain remaining backwards ----</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">warmup</span><span class="p">):</span>
+        <span class="n">g</span> <span class="o">=</span> <span class="n">recv_grad</span><span class="p">()</span> <span class="k">if</span> <span class="n">stage</span> <span class="o">&lt;</span> <span class="n">p</span> <span class="o">-</span> <span class="mi">1</span> <span class="k">else</span> <span class="n">loss_grad</span><span class="p">()</span>
+        <span class="n">gx</span> <span class="o">=</span> <span class="n">bwd_step</span><span class="p">(</span><span class="n">act_queue</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">g</span><span class="p">)</span>
+        <span class="n">send_grad</span><span class="p">(</span><span class="n">gx</span><span class="p">)</span> <span class="k">if</span> <span class="n">stage</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="kc">None</span>
+</code></pre></div>
+<h3 id="interleaved-1f1b-virtual-pipeline-stages">Interleaved 1F1B (Virtual Pipeline Stages)<a class="headerlink" href="#interleaved-1f1b-virtual-pipeline-stages" title="Permanent link">¶</a></h3>
+<p>We can shrink the bubble <em>without</em> more microbatches. <strong>Interleaved 1F1B</strong> (Megatron-LM, Narayanan et al., 2021) gives each physical GPU <em>several non-contiguous</em> chunks of layers — &ldquo;virtual stages.&rdquo; With <span class="arithmatex">\(v\)</span> virtual stages per device, the pipeline has <span class="arithmatex">\(p \cdot v\)</span> logical stages, and the bubble shrinks to</p>
+<div class="arithmatex">\[
+\text{bubble fraction} = \frac{1}{v} \cdot \frac{p - 1}{m + p - 1}.
+\]</div>
+<p>A factor <span class="arithmatex">\(v\)</span> improvement in the bubble. The cost is <span class="arithmatex">\(v\times\)</span> more point-to-point communication (more, smaller sends) and a more intricate schedule. With fast intra-cluster links this is usually a great trade, and interleaving is standard in large Megatron runs.</p>
+<div class="highlight"><pre><span></span><code>Interleaved (v=2): each GPU owns TWO chunks. GPU0 = {layers 0-1, 8-9}, etc.
+The pipe is &quot;deeper&quot; (more stages) so fill/drain is proportionally smaller,
+at the price of more boundary send/recv ops.
+</code></pre></div>
+<h3 id="zero-bubble-and-the-frontier">Zero-Bubble and the Frontier<a class="headerlink" href="#zero-bubble-and-the-frontier" title="Permanent link">¶</a></h3>
+<p>The bubble is fundamentally about the <em>forward → backward dependency</em>. <strong>Zero-Bubble Pipeline (Qi et al., 2023)</strong> observes that the backward pass actually splits into two pieces: the gradient w.r.t. the <em>input</em> (needed to keep the pipeline flowing upstream) and the gradient w.r.t. the <em>weights</em> (needed only before the optimizer step, and <em>not</em> on the critical path). By scheduling the weight-gradient computation into the bubbles, the bubble can be driven to near zero. DeepSeek-V3&rsquo;s &ldquo;DualPipe&rdquo; pushes this further by overlapping forward and backward across a <em>bidirectional</em> pipeline and hiding communication. These are the current frontier — but plain interleaved 1F1B remains the workhorse you should reach for first.</p>
+<div class="admonition warning">
+<p class="admonition-title">Pipeline parallelism needs load-balanced stages</p>
+<p>The pipeline runs at the speed of its <em>slowest</em> stage. The embedding layer (huge vocab matmul) and the final LM head + loss are unusually heavy. If you naively put <span class="arithmatex">\(L/p\)</span> layers per stage, stage 0 (with embeddings) and stage <span class="arithmatex">\(p-1\)</span> (with the LM head and cross-entropy over the full vocab) become stragglers and stall everyone. Megatron rebalances by giving the first/last stages <em>fewer</em> transformer layers, and sometimes splits the loss computation. Always profile per-stage time, not just per-stage layer count.</p>
+</div>
+<h2 id="sequence-context-parallelism-splitting-the-sequence">Sequence &amp; Context Parallelism: Splitting the Sequence<a class="headerlink" href="#sequence-context-parallelism-splitting-the-sequence" title="Permanent link">¶</a></h2>
+<p>For very long context (32k, 128k, 1M tokens — see <a href="../03-pretraining/13-long-context-pretraining.html">Long-Context Pretraining</a>), the bottleneck is no longer parameters but <strong>activation memory and the <span class="arithmatex">\(O(s^2)\)</span> attention computation</strong>, both scaling with sequence length <span class="arithmatex">\(s\)</span>. Neither TP nor PP addresses this directly — TP shards heads, PP shards layers, but every device still processes all <span class="arithmatex">\(s\)</span> tokens of its slice. <strong>Context parallelism (CP)</strong> shards the <em>token sequence itself</em> across devices: GPU 0 owns tokens <span class="arithmatex">\(0..s/c - 1\)</span>, GPU 1 owns the next chunk, and so on, for a CP group of size <span class="arithmatex">\(c\)</span>.</p>
+<p>The MLP and the projections are trivially sequence-parallel (they act per-token). The hard part is <strong>attention</strong>, where every query must attend to <em>all</em> keys/values — including those living on other devices.</p>
+<h3 id="ring-attention">Ring Attention<a class="headerlink" href="#ring-attention" title="Permanent link">¶</a></h3>
+<p><strong>Ring Attention (Liu et al., 2023)</strong> solves this by combining the <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention</a> online-softmax trick with a communication ring. Each device starts with its own block of <span class="arithmatex">\(Q\)</span>, <span class="arithmatex">\(K\)</span>, <span class="arithmatex">\(V\)</span>. It computes the local attention contribution, then the <span class="arithmatex">\(K\)</span>/<span class="arithmatex">\(V\)</span> blocks are passed around a ring (device <span class="arithmatex">\(i \to i+1\)</span>) so that, over <span class="arithmatex">\(c\)</span> steps, every device sees every other device&rsquo;s <span class="arithmatex">\(K\)</span>/<span class="arithmatex">\(V\)</span> — and crucially, <strong>the <span class="arithmatex">\(K\)</span>/<span class="arithmatex">\(V\)</span> for the next step is being sent while the current step is being computed</strong>, so communication hides under computation.</p>
+<p>The online-softmax running statistics (the running max <span class="arithmatex">\(\ell\)</span> and running sum <span class="arithmatex">\(m\)</span>, from FlashAttention) let each device <em>incrementally</em> fold in each incoming K/V block without ever materializing the full <span class="arithmatex">\(s \times s\)</span> attention matrix:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Ring Attention: each of c devices owns a contiguous query/key/value block.</span>
+<span class="c1"># We rotate K,V around the ring; online softmax accumulates the result.</span>
+<span class="c1"># `send_recv_ring(t)` sends t to rank+1 and returns the tensor from rank-1.</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="o">,</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">ring_attention</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">cp_group_size</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">):</span>
+    <span class="c1"># q,k,v: local blocks, shape [b, heads, s_local, d]</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">head_dim</span><span class="p">)</span>
+    <span class="c1"># running online-softmax state, FlashAttention-style</span>
+    <span class="n">out</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>                      <span class="c1"># accumulated output</span>
+    <span class="n">l_run</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="o">*</span><span class="n">q</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="mi">1</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">q</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>   <span class="c1"># running sum of exp</span>
+    <span class="n">m_run</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="o">*</span><span class="n">q</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="mi">1</span><span class="p">),</span> <span class="o">-</span><span class="mf">1e30</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">q</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>  <span class="c1"># running max</span>
+    <span class="n">k_cur</span><span class="p">,</span> <span class="n">v_cur</span> <span class="o">=</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span>
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">cp_group_size</span><span class="p">):</span>
+        <span class="c1"># Begin sending current K,V to the next rank; overlaps with the matmul.</span>
+        <span class="n">k_next</span><span class="p">,</span> <span class="n">v_next</span> <span class="o">=</span> <span class="n">send_recv_ring</span><span class="p">(</span><span class="n">k_cur</span><span class="p">),</span> <span class="n">send_recv_ring</span><span class="p">(</span><span class="n">v_cur</span><span class="p">)</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">matmul</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k_cur</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">))</span> <span class="o">*</span> <span class="n">scale</span>   <span class="c1"># [b,h,s_loc,s_loc]</span>
+        <span class="c1"># (apply causal mask here if needed, accounting for block offsets)</span>
+        <span class="n">m_new</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">m_run</span><span class="p">,</span> <span class="n">s</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">s</span> <span class="o">-</span> <span class="n">m_new</span><span class="p">)</span>                     <span class="c1"># rescaled exp</span>
+        <span class="n">corr</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">m_run</span> <span class="o">-</span> <span class="n">m_new</span><span class="p">)</span>              <span class="c1"># correction for old terms</span>
+        <span class="n">l_run</span> <span class="o">=</span> <span class="n">corr</span> <span class="o">*</span> <span class="n">l_run</span> <span class="o">+</span> <span class="n">p</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">out</span>   <span class="o">=</span> <span class="n">corr</span> <span class="o">*</span> <span class="n">out</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">matmul</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">v_cur</span><span class="p">)</span>  <span class="c1"># fold this block&#39;s V</span>
+        <span class="n">m_run</span> <span class="o">=</span> <span class="n">m_new</span>
+        <span class="n">k_cur</span><span class="p">,</span> <span class="n">v_cur</span> <span class="o">=</span> <span class="n">k_next</span><span class="p">,</span> <span class="n">v_next</span>                <span class="c1"># rotate to next block</span>
+    <span class="k">return</span> <span class="n">out</span> <span class="o">/</span> <span class="n">l_run</span>                               <span class="c1"># normalize at the very end</span>
+</code></pre></div>
+<p>The communication per step is one <span class="arithmatex">\(K\)</span> and one <span class="arithmatex">\(V\)</span> block (<span class="arithmatex">\(\approx 2 \cdot \frac{s}{c} \cdot h \cdot 2\)</span> bytes), and there are <span class="arithmatex">\(c\)</span> steps — so total volume per device is <span class="arithmatex">\(O(s \cdot h)\)</span>, independent of <span class="arithmatex">\(c\)</span>, and it overlaps with the <span class="arithmatex">\(O(s^2/c)\)</span> local compute. As <span class="arithmatex">\(s\)</span> grows, compute dominates communication and Ring Attention scales to arbitrarily long sequences as long as you add devices.</p>
+<div class="admonition warning">
+<p class="admonition-title">Causal masking unbalances the ring</p>
+<p>With a causal mask, early query blocks attend to fewer keys than late ones, so a naive Ring Attention has devices doing wildly different amounts of work (some K/V blocks are entirely masked out for a given Q block). Production implementations (e.g. <strong>Striped/Zig-Zag Ring Attention</strong>, and Megatron-CP) renumber or interleave the token assignment so each device gets a balanced mix of early and late positions. Ignore this and your &ldquo;8-way CP&rdquo; runs at the speed of the busiest rank.</p>
+</div>
+<h2 id="expert-parallelism-scaling-mixture-of-experts">Expert Parallelism: Scaling Mixture-of-Experts<a class="headerlink" href="#expert-parallelism-scaling-mixture-of-experts" title="Permanent link">¶</a></h2>
+<p>A <strong>Mixture-of-Experts (MoE)</strong> layer (see <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts Architectures</a>) replaces the single FFN with <span class="arithmatex">\(E\)</span> expert FFNs and a router that sends each token to its top-<span class="arithmatex">\(k\)</span> experts. The whole point is that the <em>active</em> compute per token stays constant (only <span class="arithmatex">\(k\)</span> of <span class="arithmatex">\(E\)</span> experts fire) while the <em>parameter count</em> grows with <span class="arithmatex">\(E\)</span>. But that means the parameters are enormous — far too big to replicate. <strong>Expert parallelism (EP)</strong> places different experts on different devices: with an EP group of size <span class="arithmatex">\(e\)</span>, each device holds <span class="arithmatex">\(E/e\)</span> experts.</p>
+<p>Because the router sends tokens to experts that live on <em>other</em> devices, EP&rsquo;s signature communication is a pair of <strong>all-to-all</strong> collectives:</p>
+<ol>
+<li><strong>Dispatch all-to-all:</strong> after routing, each device sends each token to the device holding its chosen expert(s).</li>
+<li>(Each device runs its local experts on the tokens it received.)</li>
+<li><strong>Combine all-to-all:</strong> send the expert outputs back to the device that owns each token, where they are weighted by the router scores and summed.</li>
+</ol>
+<figure class="viz" id="fig-dmp-ep-all-to-all">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+#fig-dmp-ep-all-to-all .box-lbl  { font: 600 11px var(--sans,sans-serif); }
+#fig-dmp-ep-all-to-all .box-sub  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+#fig-dmp-ep-all-to-all .phase-lbl { font: 700 12px var(--sans,sans-serif); }
+#fig-dmp-ep-all-to-all .step-lbl  { font: 600 11px var(--sans,sans-serif); }
+#fig-dmp-ep-all-to-all .cap       { font: 400 10.5px var(--sans,sans-serif); }
+#fig-dmp-ep-all-to-all .note      { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+#fig-dmp-ep-all-to-all text       { fill: var(--ink-soft,#45413a); }
+
+@keyframes ep-fade { from { opacity:0; } to { opacity:1; } }
+@keyframes ep-travel {
+  0%   { opacity:0; transform: translateX(0); }
+  10%  { opacity:1; }
+  90%  { opacity:1; }
+  100% { opacity:0; transform: translateX(var(--dx,200px)); }
+}
+@keyframes ep-travel-back {
+  0%   { opacity:0; transform: translateX(0); }
+  10%  { opacity:1; }
+  90%  { opacity:1; }
+  100% { opacity:0; transform: translateX(var(--dx,-200px)); }
+}
+@keyframes ep-pulse { 0%,100%{opacity:1;} 50%{opacity:0.5;} }
+
+@media not (prefers-reduced-motion: reduce) {
+  #fig-dmp-ep-all-to-all .dispatch-arrow { animation: ep-fade 0.4s ease-out both; }
+  #fig-dmp-ep-all-to-all .da1 { animation-delay: calc(var(--replay-offset,0ms) + 0.2s); }
+  #fig-dmp-ep-all-to-all .da2 { animation-delay: calc(var(--replay-offset,0ms) + 0.4s); }
+  #fig-dmp-ep-all-to-all .da3 { animation-delay: calc(var(--replay-offset,0ms) + 0.6s); }
+  #fig-dmp-ep-all-to-all .da4 { animation-delay: calc(var(--replay-offset,0ms) + 0.8s); }
+  #fig-dmp-ep-all-to-all .expert-pulse { animation: ep-pulse 0.5s ease-in-out both; animation-delay: calc(var(--replay-offset,0ms) + 1.2s); }
+  #fig-dmp-ep-all-to-all .combine-arrow { animation: ep-fade 0.4s ease-out both; }
+  #fig-dmp-ep-all-to-all .ca1 { animation-delay: calc(var(--replay-offset,0ms) + 1.7s); }
+  #fig-dmp-ep-all-to-all .ca2 { animation-delay: calc(var(--replay-offset,0ms) + 1.9s); }
+  #fig-dmp-ep-all-to-all .ca3 { animation-delay: calc(var(--replay-offset,0ms) + 2.1s); }
+  #fig-dmp-ep-all-to-all .ca4 { animation-delay: calc(var(--replay-offset,0ms) + 2.3s); }
+}
+</style>
+<svg viewBox="0 0 940 460" role="img" aria-label="Expert parallelism dispatch and combine all-to-all: tokens are routed to expert devices via dispatch all-to-all, experts compute locally, then outputs return via combine all-to-all.">
+<defs>
+  <marker id="ep-arr-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="ep-arr-c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#0891b2)"/>
+  </marker>
+</defs>
+
+
+
+<text x="115" y="20" class="phase-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">token owners</text>
+<text x="115" y="34" class="note" text-anchor="middle">routed by gate</text>
+
+<rect x="30"  y="50"  width="170" height="52" rx="6" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<text x="115" y="73"  class="box-lbl" text-anchor="middle">GPU 0 tokens</text>
+<text x="115" y="87"  class="box-sub" text-anchor="middle">batch of sequences</text>
+
+<rect x="30"  y="140" width="170" height="52" rx="6" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<text x="115" y="163" class="box-lbl" text-anchor="middle">GPU 1 tokens</text>
+<text x="115" y="177" class="box-sub" text-anchor="middle">batch of sequences</text>
+
+<rect x="30"  y="230" width="170" height="52" rx="6" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<text x="115" y="253" class="box-lbl" text-anchor="middle">GPU 2 tokens</text>
+<text x="115" y="267" class="box-sub" text-anchor="middle">batch of sequences</text>
+
+<rect x="30"  y="320" width="170" height="52" rx="6" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<text x="115" y="343" class="box-lbl" text-anchor="middle">GPU 3 tokens</text>
+<text x="115" y="357" class="box-sub" text-anchor="middle">batch of sequences</text>
+
+
+
+<text x="390" y="16" class="phase-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">1. DISPATCH all-to-all</text>
+<text x="390" y="30" class="note" text-anchor="middle">each token routed to its chosen expert's GPU</text>
+
+
+<line class="dispatch-arrow da1" x1="202" y1="76"  x2="590" y2="76"  stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#ep-arr-d)"/>
+<line class="dispatch-arrow da2" x1="202" y1="76"  x2="590" y2="166" stroke="var(--accent,#4f46e5)" stroke-width="1.4" stroke-dasharray="6 3" marker-end="url(#ep-arr-d)" opacity="0.75"/>
+<line class="dispatch-arrow da3" x1="202" y1="166" x2="590" y2="76"  stroke="var(--accent,#4f46e5)" stroke-width="1.4" stroke-dasharray="6 3" marker-end="url(#ep-arr-d)" opacity="0.75"/>
+<line class="dispatch-arrow da3" x1="202" y1="166" x2="590" y2="166" stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#ep-arr-d)"/>
+<line class="dispatch-arrow da2" x1="202" y1="166" x2="590" y2="256" stroke="var(--accent,#4f46e5)" stroke-width="1.4" stroke-dasharray="6 3" marker-end="url(#ep-arr-d)" opacity="0.6"/>
+<line class="dispatch-arrow da4" x1="202" y1="256" x2="590" y2="256" stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#ep-arr-d)"/>
+<line class="dispatch-arrow da3" x1="202" y1="256" x2="590" y2="166" stroke="var(--accent,#4f46e5)" stroke-width="1.4" stroke-dasharray="6 3" marker-end="url(#ep-arr-d)" opacity="0.55"/>
+<line class="dispatch-arrow da4" x1="202" y1="256" x2="590" y2="346" stroke="var(--accent,#4f46e5)" stroke-width="1.4" stroke-dasharray="6 3" marker-end="url(#ep-arr-d)" opacity="0.6"/>
+<line class="dispatch-arrow da4" x1="202" y1="346" x2="590" y2="346" stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#ep-arr-d)"/>
+<line class="dispatch-arrow da3" x1="202" y1="346" x2="590" y2="256" stroke="var(--accent,#4f46e5)" stroke-width="1.4" stroke-dasharray="6 3" marker-end="url(#ep-arr-d)" opacity="0.55"/>
+
+
+<text x="710" y="16" class="phase-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">experts</text>
+<text x="710" y="30" class="note" text-anchor="middle">run local experts on received tokens</text>
+
+<rect class="expert-pulse" x="596" y="52"  width="230" height="52" rx="6" fill="var(--accent,#4f46e5)" fill-opacity="0.15" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<text x="711" y="75"  class="box-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">expert 0 (GPU 0)</text>
+<text x="711" y="90"  class="box-sub" text-anchor="middle">FFN: h -&gt; 4h -&gt; h</text>
+
+<rect class="expert-pulse" x="596" y="142" width="230" height="52" rx="6" fill="var(--accent,#4f46e5)" fill-opacity="0.15" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<text x="711" y="165" class="box-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">expert 1 (GPU 1)</text>
+<text x="711" y="180" class="box-sub" text-anchor="middle">FFN: h -&gt; 4h -&gt; h</text>
+
+<rect class="expert-pulse" x="596" y="232" width="230" height="52" rx="6" fill="var(--accent,#4f46e5)" fill-opacity="0.15" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<text x="711" y="255" class="box-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">expert 2 (GPU 2)</text>
+<text x="711" y="270" class="box-sub" text-anchor="middle">FFN: h -&gt; 4h -&gt; h</text>
+
+<rect class="expert-pulse" x="596" y="322" width="230" height="52" rx="6" fill="var(--accent,#4f46e5)" fill-opacity="0.15" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<text x="711" y="345" class="box-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">expert 3 (GPU 3)</text>
+<text x="711" y="360" class="box-sub" text-anchor="middle">FFN: h -&gt; 4h -&gt; h</text>
+
+
+<text x="860" y="196" class="step-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">(2) run</text>
+<text x="860" y="209" class="step-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">local</text>
+<text x="860" y="222" class="step-lbl" text-anchor="middle" fill="var(--muted,#6d675d)">experts</text>
+
+
+
+<text x="390" y="408" class="phase-lbl" text-anchor="middle" fill="var(--accent-2,#0891b2)">2. COMBINE all-to-all</text>
+<text x="390" y="421" class="note" text-anchor="middle">outputs return to token owner, weighted by router probs, summed</text>
+
+
+<line class="combine-arrow ca1" x1="594" y1="88"  x2="204" y2="88"  stroke="var(--accent-2,#0891b2)" stroke-width="1.8" marker-end="url(#ep-arr-c)"/>
+<line class="combine-arrow ca2" x1="594" y1="178" x2="204" y2="178" stroke="var(--accent-2,#0891b2)" stroke-width="1.8" marker-end="url(#ep-arr-c)"/>
+<line class="combine-arrow ca3" x1="594" y1="268" x2="204" y2="268" stroke="var(--accent-2,#0891b2)" stroke-width="1.8" marker-end="url(#ep-arr-c)"/>
+<line class="combine-arrow ca4" x1="594" y1="358" x2="204" y2="358" stroke="var(--accent-2,#0891b2)" stroke-width="1.8" marker-end="url(#ep-arr-c)"/>
+
+<line class="combine-arrow ca2" x1="594" y1="178" x2="204" y2="88"  stroke="var(--accent-2,#0891b2)" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#ep-arr-c)" opacity="0.65"/>
+<line class="combine-arrow ca1" x1="594" y1="88"  x2="204" y2="178" stroke="var(--accent-2,#0891b2)" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#ep-arr-c)" opacity="0.65"/>
+<line class="combine-arrow ca3" x1="594" y1="268" x2="204" y2="178" stroke="var(--accent-2,#0891b2)" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#ep-arr-c)" opacity="0.5"/>
+<line class="combine-arrow ca4" x1="594" y1="358" x2="204" y2="268" stroke="var(--accent-2,#0891b2)" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#ep-arr-c)" opacity="0.5"/>
+
+
+<text x="394" y="200" class="step-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">(1) dispatch</text>
+
+
+<text x="30" y="438" class="note">Load balance gates performance: aux loss or capacity limits spread tokens evenly to avoid straggler experts.</text>
+<text x="30" y="452" class="note">Top-1 routing: each token assigned to exactly 1 expert; combine is the exact reverse permutation of dispatch.</text>
+</svg>
+<figcaption><b>Expert parallelism dispatch and combine all-to-all (E=4 experts, e=4 devices, top-1 routing).</b> After the gate assigns each token to one expert, a first all-to-all ships tokens to the device owning their expert (dispatch). Each GPU runs its local expert FFN on the tokens it received, then a second all-to-all returns outputs to the original token owners, weighted by router probabilities and summed (combine). Load imbalance — too many tokens sent to one expert — is the dominant performance bottleneck.</figcaption>
+</figure>
+
+<div class="highlight"><pre><span></span><code><span class="c1"># Sketch of one expert-parallel MoE layer. `ep_group` spans `e` ranks;</span>
+<span class="c1"># this rank owns experts [rank*E_local : (rank+1)*E_local].</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="o">,</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span><span class="o">,</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">moe_forward</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">gate</span><span class="p">,</span> <span class="n">experts_local</span><span class="p">,</span> <span class="n">E</span><span class="p">,</span> <span class="n">e</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+    <span class="c1"># x: [tokens, h];  gate: Linear(h, E);  experts_local: list of FFNs on this rank</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">gate</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                                   <span class="c1"># [tokens, E]</span>
+    <span class="n">topk</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>                      <span class="c1"># choose k experts/token</span>
+    <span class="n">probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">topk</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>             <span class="c1"># routing weights</span>
+    <span class="n">expert_ids</span> <span class="o">=</span> <span class="n">topk</span><span class="o">.</span><span class="n">indices</span>                          <span class="c1"># [tokens, k]</span>
+
+    <span class="c1"># Build send buffers: bucket tokens by the DEVICE that owns their expert.</span>
+    <span class="n">E_local</span> <span class="o">=</span> <span class="n">E</span> <span class="o">//</span> <span class="n">e</span>
+    <span class="n">dest_rank</span> <span class="o">=</span> <span class="n">expert_ids</span> <span class="o">//</span> <span class="n">E_local</span>                  <span class="c1"># which device per assignment</span>
+    <span class="c1"># (real code: sort tokens by dest_rank, compute per-rank counts, pad)</span>
+    <span class="n">send_buf</span><span class="p">,</span> <span class="n">counts</span> <span class="o">=</span> <span class="n">bucket_tokens_by_rank</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">dest_rank</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+    <span class="c1"># 1) DISPATCH: all-to-all sends each token to its expert&#39;s owner.</span>
+    <span class="n">recv_buf</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">send_buf</span><span class="p">)</span>
+    <span class="n">dist</span><span class="o">.</span><span class="n">all_to_all_single</span><span class="p">(</span><span class="n">recv_buf</span><span class="p">,</span> <span class="n">send_buf</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="n">ep_group</span><span class="p">)</span>
+
+    <span class="c1"># 2) Run the local experts on received tokens.</span>
+    <span class="n">local_out</span> <span class="o">=</span> <span class="n">run_local_experts</span><span class="p">(</span><span class="n">recv_buf</span><span class="p">,</span> <span class="n">experts_local</span><span class="p">,</span> <span class="n">E_local</span><span class="p">)</span>
+
+    <span class="c1"># 3) COMBINE: all-to-all back to each token&#39;s original owner, then weight+sum.</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">local_out</span><span class="p">)</span>
+    <span class="n">dist</span><span class="o">.</span><span class="n">all_to_all_single</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">local_out</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="n">ep_group</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">weighted_scatter_add</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">probs</span><span class="p">,</span> <span class="n">counts</span><span class="p">)</span>    <span class="c1"># combine top-k, scale by probs</span>
+</code></pre></div>
+<p>The deciding factor for EP performance is <strong>load balance</strong>. If the router sends most tokens to a few popular experts, those devices become stragglers while others idle, and the all-to-all is dominated by the heaviest bucket. This is why MoE training relies on an <strong>auxiliary load-balancing loss</strong> (or DeepSeek-style auxiliary-loss-free bias correction) to spread tokens evenly, and on <strong>expert capacity</strong> limits that drop or reroute overflow tokens. EP is almost always combined with TP and DP, and the all-to-all collectives are extremely bandwidth-sensitive — keep the EP group on fast links, and overlap dispatch/combine with the attention compute of the next layer where possible.</p>
+<h2 id="combining-everything-3d-4d-5d-parallelism">Combining Everything: 3D, 4D &amp; 5D Parallelism<a class="headerlink" href="#combining-everything-3d-4d-5d-parallelism" title="Permanent link">¶</a></h2>
+<p>No single axis suffices at frontier scale. Real systems compose them. The total number of GPUs is the product:</p>
+<div class="arithmatex">\[
+G = \underbrace{d}_{\text{DP}} \times \underbrace{t}_{\text{TP}} \times \underbrace{p}_{\text{PP}} \times \underbrace{c}_{\text{CP}} \times \underbrace{e}_{\text{EP}} .
+\]</div>
+<p>Each GPU belongs to one <em>group</em> per axis. The orchestration trick is <strong>mapping these groups onto the physical network topology</strong> so that the chattiest collectives ride the fastest links. The canonical ordering, fastest-comm axis innermost:</p>
+<figure class="viz" id="fig-dmp-axis-placement-priority">
+<style>
+#fig-dmp-axis-placement-priority .axis-name { font: 800 15px var(--sans,sans-serif); }
+#fig-dmp-axis-placement-priority .axis-sub  { font: 400 10.5px var(--sans,sans-serif); }
+#fig-dmp-axis-placement-priority .gauge-lbl { font: 600 10px var(--sans,sans-serif); }
+#fig-dmp-axis-placement-priority .gauge-sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+#fig-dmp-axis-placement-priority .cap       { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+#fig-dmp-axis-placement-priority .formula   { font: 600 12px var(--mono,monospace); }
+#fig-dmp-axis-placement-priority text       { fill: var(--ink-soft,#45413a); }
+</style>
+<svg viewBox="0 0 860 520" role="img" aria-label="Five parallelism axes nested by communication intensity: TP innermost requiring NVLink, then EP, CP, PP, with DP outermost tolerating slowest interconnect.">
+<defs>
+
+  <linearGradient id="app-gauge" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stop-color="var(--accent,#4f46e5)" stop-opacity="1"/>
+    <stop offset="100%" stop-color="var(--surface-3,#ece7da)" stop-opacity="1"/>
+  </linearGradient>
+
+
+
+
+
+
+</defs>
+
+
+<text x="430" y="22" font="700 14px var(--sans,sans-serif)" text-anchor="middle" fill="var(--ink-soft,#45413a)" font-size="14" font-weight="700" font-family="var(--sans,sans-serif)">Parallelism Axes Ordered by Communication Intensity</text>
+<text x="430" y="38" class="axis-sub" text-anchor="middle" fill="var(--muted,#6d675d)">innermost = fastest interconnect required; outermost = slowest link tolerable</text>
+
+
+
+
+<rect x="40"  y="90"  width="780" height="400" rx="18"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.07"
+      stroke="var(--accent,#4f46e5)" stroke-opacity="0.25" stroke-width="1.5"/>
+
+
+<rect x="110" y="124" width="640" height="332" rx="14"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.10"
+      stroke="var(--accent,#4f46e5)" stroke-opacity="0.32" stroke-width="1.5"/>
+
+
+<rect x="176" y="156" width="508" height="268" rx="12"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.14"
+      stroke="var(--accent,#4f46e5)" stroke-opacity="0.40" stroke-width="1.5"/>
+
+
+<rect x="240" y="186" width="380" height="208" rx="10"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.20"
+      stroke="var(--accent,#4f46e5)" stroke-opacity="0.50" stroke-width="1.8"/>
+
+
+<rect x="302" y="214" width="256" height="152" rx="8"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.30"
+      stroke="var(--accent,#4f46e5)" stroke-opacity="0.85" stroke-width="2.2"/>
+
+
+
+
+<text x="430" y="282" class="axis-name" text-anchor="middle" fill="var(--accent,#4f46e5)">TP</text>
+<text x="430" y="297" class="axis-sub" text-anchor="middle" fill="var(--accent,#4f46e5)" font-size="10.5">must be intra-node (NVLink)</text>
+<text x="430" y="310" class="axis-sub" text-anchor="middle" fill="var(--accent,#4f46e5)" font-size="10.5">heavy all-reduce every layer</text>
+<text x="430" y="323" class="axis-sub" text-anchor="middle" fill="var(--accent,#4f46e5)" font-size="10.5">t &lt;= 8 (NVLink domain)</text>
+<text x="430" y="340" class="axis-sub" text-anchor="middle" fill="var(--accent,#4f46e5)" font-size="10.5">4x all-reduce/layer</text>
+
+
+<text x="270" y="282" class="axis-name" text-anchor="middle" fill="var(--accent,#4f46e5)">EP</text>
+<text x="270" y="297" class="axis-sub" text-anchor="middle" font-size="10">intra-node / fast</text>
+<text x="270" y="309" class="axis-sub" text-anchor="middle" font-size="10">all-to-all x2</text>
+<text x="270" y="321" class="axis-sub" text-anchor="middle" font-size="10">bandwidth-bound</text>
+
+<text x="590" y="282" class="axis-name" text-anchor="middle" fill="var(--accent,#4f46e5)">EP</text>
+<text x="590" y="297" class="axis-sub" text-anchor="middle" font-size="10">intra-node / fast</text>
+<text x="590" y="309" class="axis-sub" text-anchor="middle" font-size="10">all-to-all x2</text>
+<text x="590" y="321" class="axis-sub" text-anchor="middle" font-size="10">bandwidth-bound</text>
+
+
+<text x="430" y="180" class="axis-name" text-anchor="middle" fill="var(--ink-soft,#45413a)">CP</text>
+<text x="430" y="194" class="axis-sub" text-anchor="middle" font-size="10">fast: ring send/recv</text>
+<text x="430" y="206" class="axis-sub" text-anchor="middle" font-size="10">overlaps with compute</text>
+
+<text x="430" y="394" class="axis-name" text-anchor="middle" fill="var(--ink-soft,#45413a)">CP</text>
+<text x="430" y="408" class="axis-sub" text-anchor="middle" font-size="10">per-step latency matters</text>
+
+
+<text x="430" y="146" class="axis-name" text-anchor="middle" fill="var(--ink-soft,#45413a)">PP</text>
+<text x="430" y="158" class="axis-sub" text-anchor="middle" font-size="10">tolerant of slower links</text>
+
+<text x="430" y="436" class="axis-name" text-anchor="middle" fill="var(--ink-soft,#45413a)">PP</text>
+<text x="430" y="448" class="axis-sub" text-anchor="middle" font-size="10">point-to-point at stage boundaries</text>
+
+
+<text x="80"  y="116" class="axis-name" text-anchor="start" fill="var(--muted,#6d675d)">DP</text>
+<text x="80"  y="130" class="axis-sub" text-anchor="start" font-size="10" fill="var(--muted,#6d675d)">outermost / slowest OK</text>
+<text x="80"  y="142" class="axis-sub" text-anchor="start" font-size="10" fill="var(--muted,#6d675d)">all-reduce (or RS+AG)</text>
+<text x="80"  y="154" class="axis-sub" text-anchor="start" font-size="10" fill="var(--muted,#6d675d)">once per step</text>
+
+<text x="782" y="116" class="axis-name" text-anchor="end" fill="var(--muted,#6d675d)">DP</text>
+<text x="782" y="130" class="axis-sub" text-anchor="end" font-size="10" fill="var(--muted,#6d675d)">one all-reduce per step</text>
+
+
+
+<defs>
+  <marker id="app-up" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 10 L5 0 L10 10 z" fill="var(--accent,#4f46e5)" fill-opacity="0.7"/>
+  </marker>
+  <marker id="app-dn" viewBox="0 0 10 10" refX="5" refY="1" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L5 10 L10 0 z" fill="var(--muted,#6d675d)" fill-opacity="0.7"/>
+  </marker>
+</defs>
+
+<rect x="16" y="90" width="14" height="400" rx="4"
+      fill="url(#app-gauge)" opacity="0.8"/>
+
+<text x="8" y="88" class="gauge-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)" transform="rotate(-90,8,88)" font-size="9" font-family="var(--sans,sans-serif)">fastest interconnect (NVLink)</text>
+
+<text x="8" y="492" class="gauge-lbl" text-anchor="middle" fill="var(--muted,#6d675d)" transform="rotate(-90,8,492)" font-size="9" font-family="var(--sans,sans-serif)">slowest link tolerable (Ethernet/IB)</text>
+
+
+<text x="430" y="472" class="formula" text-anchor="middle" fill="var(--ink-soft,#45413a)">G = d x t x p x c x e</text>
+<text x="430" y="488" class="cap" text-anchor="middle">e.g. TP=8 within a node (NVLink), PP across nodes (InfiniBand), DP across racks</text>
+<text x="430" y="502" class="cap" text-anchor="middle">Add axes in this order: TP (intra-node) -> PP (inter-node) -> CP (long context) -> EP (MoE) -> DP (throughput)</text>
+</svg>
+<figcaption><b>Canonical placement of the five parallelism axes ordered by communication intensity.</b> Tensor parallelism sits innermost because its per-layer all-reduces demand NVLink bandwidth; each outer band tolerates progressively slower fabric, with data parallelism outermost because it pays only one all-reduce per training step. Mapping this nesting onto the physical topology — fast interconnect inward, slow outward — is the single most important placement decision in large-scale training.</figcaption>
+</figure>
+
+<p>This is why you see configs like &ldquo;TP=8 (within a node), PP=12 (across nodes), DP=16 (across racks).&rdquo; TP is locked inside the NVLink domain; PP and DP span the InfiniBand/Ethernet fabric where their lighter, less frequent communication is tolerable.</p>
+<p>A useful way to think about it: <strong>TP and PP both reduce per-device memory and let you fit a bigger model; DP buys throughput; CP buys context length; EP buys parameter count.</strong> You first pick TP/PP/CP/EP large enough that one model replica fits and trains efficiently, then set DP to consume the remaining GPUs for throughput.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: sharding a 70B model on a 512-GPU cluster</p>
+<p>Take a 70B dense model: <span class="arithmatex">\(L = 80\)</span> layers, <span class="arithmatex">\(h = 8192\)</span>, <span class="arithmatex">\(a = 64\)</span> heads, sequence <span class="arithmatex">\(s = 8192\)</span>, on <strong>512 H100s (80 GB)</strong> arranged as 64 nodes × 8 GPUs (NVLink within a node, InfiniBand across).</p>
+<p><strong>Static memory.</strong> Full training state is <span class="arithmatex">\(\approx 16 \times 70\text{B} = 1120\)</span> GB — about <span class="arithmatex">\(14\times\)</span> an 80 GB GPU. We must shard the model at least 14-way <em>before</em> DP.</p>
+<p><strong>Step 1 — Tensor parallelism.</strong> Set <span class="arithmatex">\(t = 8\)</span> to fill the NVLink domain. Weights+optimizer per GPU drop to <span class="arithmatex">\(\approx 1120/8 = 140\)</span> GB. Still too big for one GPU — TP alone is not enough.</p>
+<p><strong>Step 2 — Pipeline parallelism.</strong> Add <span class="arithmatex">\(p = 8\)</span> stages across 8 nodes. Now each GPU holds <span class="arithmatex">\(80/8 = 10\)</span> layers, and static state per GPU is <span class="arithmatex">\(\approx 1120/(8 \cdot 8) = 17.5\)</span> GB. Comfortably fits, leaving room for activations and the KV/communication buffers.</p>
+<p><strong>Step 3 — Data parallelism.</strong> We have used <span class="arithmatex">\(t \times p = 64\)</span> GPUs for one replica. The cluster has 512, so <span class="arithmatex">\(d = 512/64 = 8\)</span> data-parallel replicas. Layer in ZeRO-1 (shard optimizer state across the 8 DP ranks) to shave static memory further.</p>
+<p><strong>Step 4 — Bubble check.</strong> With <span class="arithmatex">\(p = 8\)</span> and a global batch of, say, <span class="arithmatex">\(m = 64\)</span> microbatches per replica, the 1F1B bubble is <span class="arithmatex">\(\frac{p-1}{m+p-1} = \frac{7}{71} \approx 9.9\%\)</span>. Add interleaving with <span class="arithmatex">\(v = 2\)</span> and it halves to <span class="arithmatex">\(\approx 5\%\)</span>.</p>
+<p><strong>Result:</strong> a <strong>3D config TP=8 × PP=8 × DP=8 = 512 GPUs</strong>, model fits with headroom, pipeline bubble ~5–10%, and every heavy collective (TP all-reduce) stays on NVLink. This is a realistic, near-optimal layout — and exactly the kind of back-of-envelope an interviewer wants to see.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re training a model where one layer&rsquo;s activations fit on a GPU but the <em>full model&rsquo;s</em> parameters do not. You&rsquo;re told inter-node bandwidth is 10× slower than intra-node NVLink. How do you choose between tensor and pipeline parallelism, and how do you place them?</p>
+<p><strong>A:</strong> Tensor parallelism does a synchronous all-reduce <em>twice per layer per direction</em> — that traffic is on the critical path, so TP must live entirely inside the fast NVLink domain (typically <span class="arithmatex">\(t \le 8\)</span>). Pipeline parallelism only does point-to-point sends at stage boundaries (a handful per step), so it tolerates the 10×-slower inter-node link well. So: use TP <em>within</em> a node to get the model small enough to fit the NVLink domain, then use PP <em>across</em> nodes to add more capacity. Concretely, set TP = node size (e.g. 8), then PP across nodes to fit the parameter budget, then DP across the remaining GPUs for throughput. Two cautions: keep the pipeline bubble small with many microbatches (<span class="arithmatex">\(m \gg p\)</span>) and/or interleaving, and load-balance the pipeline stages (the embedding and LM-head stages are heavy — give them fewer transformer layers).</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>Don&rsquo;t reach for model parallelism prematurely. The decision ladder is: (1) plain DDP if it fits; (2) ZeRO/FSDP to shard optimizer/grad/param state — this alone handles surprisingly large models with <em>no</em> model-parallel complexity (see <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I</a>); (3) add TP once a single replica won&rsquo;t fit even sharded, keeping it intra-node; (4) add PP to cross node boundaries; (5) add CP only when context length (not parameters) is the binding constraint; (6) EP only for MoE. Every axis you add multiplies the debugging surface — add the <em>fewest</em> that make the run fit and run efficiently.</p>
+</div>
+<h2 id="where-the-communication-lives-a-summary-table">Where the Communication Lives: A Summary Table<a class="headerlink" href="#where-the-communication-lives-a-summary-table" title="Permanent link">¶</a></h2>
+<p>The single most important thing to internalize is <em>what collective each axis pays, how often, and over which tensor</em>. This is what lets you reason about whether a config will be fast on your hardware.</p>
+<table>
+<thead>
+<tr>
+<th>Axis</th>
+<th>Splits</th>
+<th>Collective</th>
+<th>Frequency</th>
+<th>Tensor moved</th>
+<th>Link needed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DP / ZeRO</strong></td>
+<td>data (replicas)</td>
+<td>all-reduce (or RS+AG)</td>
+<td>once per <strong>step</strong></td>
+<td>full gradients</td>
+<td>slowest OK</td>
+</tr>
+<tr>
+<td><strong>TP</strong></td>
+<td>within a layer</td>
+<td>all-reduce (<span class="arithmatex">\(\times 4\)</span>/layer)</td>
+<td>every <strong>layer</strong></td>
+<td><span class="arithmatex">\(s \times h\)</span> activations</td>
+<td>NVLink only</td>
+</tr>
+<tr>
+<td><strong>PP</strong></td>
+<td>across layers</td>
+<td>point-to-point send/recv</td>
+<td>stage boundaries</td>
+<td><span class="arithmatex">\(s \times h\)</span> activations</td>
+<td>inter-node OK</td>
+</tr>
+<tr>
+<td><strong>CP (Ring)</strong></td>
+<td>sequence</td>
+<td>ring send/recv (overlapped)</td>
+<td>per attention</td>
+<td><span class="arithmatex">\(K,V\)</span> blocks</td>
+<td>fast, overlaps</td>
+</tr>
+<tr>
+<td><strong>EP</strong></td>
+<td>experts</td>
+<td>all-to-all (<span class="arithmatex">\(\times 2\)</span>)</td>
+<td>every <strong>MoE layer</strong></td>
+<td>routed tokens</td>
+<td>fast (bandwidth)</td>
+</tr>
+</tbody>
+</table>
+<p>Notice the frequency column. TP and EP pay <em>per layer</em>, so they demand the fastest links and the tightest placement. DP pays <em>per step</em> (after gradient accumulation over all microbatches), so it tolerates the slow outer fabric. PP&rsquo;s communication is cheap point-to-point but introduces the <em>bubble</em>, a compute-utilization tax rather than a bandwidth one. CP&rsquo;s communication overlaps with compute and so is nearly hidden when sequences are long. This table — internalized — is most of what you need to design or debug a large training run, and it connects directly to the <a href="../01-foundations/09-parallel-collectives.html">collective communication</a> primitives and the practical framework details in <a href="../03-pretraining/07-megatron-deepspeed.html">Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a>.</p>
+<div class="admonition note">
+<p class="admonition-title">Activation memory is the quiet killer</p>
+<p>Engineers obsess over parameter memory because it&rsquo;s easy to compute, but at long sequence lengths and large microbatch counts, <strong>activation memory often dominates and is what actually OOMs your run.</strong> TP (with Megatron sequence parallelism) and CP both attack activation memory directly; PP&rsquo;s 1F1B bounds in-flight activations; and gradient checkpointing/recomputation trades compute to slash it further. When a large run OOMs, your first hypothesis should usually be activations, not weights.</p>
+</div>
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Three orthogonal model-parallel axes</strong> plus DP: TP splits <em>within</em> a layer (matmuls), PP splits <em>across</em> layers, CP/SP splits <em>along the sequence</em>, EP splits <em>across MoE experts</em>. They compose multiplicatively into 3D/4D/5D parallelism, and total GPUs <span class="arithmatex">\(= d \cdot t \cdot p \cdot c \cdot e\)</span>.</li>
+<li><strong>Tensor parallelism = column-then-row matmul partitioning.</strong> A column-parallel layer feeding a row-parallel layer needs exactly one all-reduce per region (two per transformer block forward), with the nonlinearity acting on sharded features in between. It is bandwidth-heavy and <em>must stay inside the NVLink domain</em> (<span class="arithmatex">\(t \le 8\)</span>).</li>
+<li><strong>Pipeline parallelism trades the bubble for cheap point-to-point comms.</strong> GPipe streams <span class="arithmatex">\(m\)</span> microbatches; 1F1B keeps the same <span class="arithmatex">\(\frac{p-1}{m+p-1}\)</span> bubble but bounds activation memory; interleaving divides the bubble by <span class="arithmatex">\(v\)</span>; zero-bubble schedules push it toward zero. Keep <span class="arithmatex">\(m \gg p\)</span> and load-balance the stages.</li>
+<li><strong>Context parallelism (Ring Attention)</strong> shards the token sequence and rotates K/V around a ring, using the FlashAttention online softmax to fold in remote blocks while overlapping communication with compute — the key to million-token context. Mind causal-mask load imbalance.</li>
+<li><strong>Expert parallelism</strong> places experts on different devices and pays two all-to-all collectives (dispatch + combine) per MoE layer; its performance is gated by <strong>router load balance</strong> and expert capacity.</li>
+<li><strong>Place axes by communication intensity:</strong> TP and EP (per-layer collectives) on the fastest links; PP and DP (boundary/per-step) on slower fabric. This single placement principle drives most real configs.</li>
+<li><strong>Climb the ladder, don&rsquo;t leap:</strong> DDP → ZeRO/FSDP → +TP (intra-node) → +PP (inter-node) → +CP (for context) → +EP (for MoE). Add the fewest axes that make the run fit and run efficiently — each one multiplies the debugging surface.</li>
+<li><strong>Activation memory, not parameters, is often what OOMs you</strong> at scale; TP+sequence-parallel, CP, 1F1B, and recomputation are your levers against it.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Tensor, pipeline, sequence, and expert parallelism are now mature, production-proven techniques: every frontier training run (GPT-4, Llama, DeepSeek-V3) uses some combination of all four axes. Active research is pushing toward zero-bubble schedules, compute-communication overlap (DualPipe), and smarter MoE load balancing — squeezing the last few percent of MFU out of clusters of thousands of GPUs.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1909.08053">Shoeybi et al., <em>Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism</em> (2019)</a> — introduced column/row parallel linear layers and the two-all-reduce-per-block TP formulation that every framework still uses.</li>
+<li><a href="https://arxiv.org/abs/1811.06965">Huang et al., <em>GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism</em> (2019)</a> — established the microbatch pipeline schedule and the bubble-fraction formula.</li>
+<li><a href="https://arxiv.org/abs/2104.04473">Narayanan et al., <em>Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM</em> (2021)</a> — interleaved 1F1B virtual stages, 3D-parallelism analysis, and the first trillion-parameter training result.</li>
+<li><a href="https://arxiv.org/abs/2205.05198">Korthikanti et al., <em>Reducing Activation Recomputation in Large Transformer Models</em> (2022)</a> — Megatron sequence parallelism (SP) and selective activation recomputation; SP is now always-on in Megatron.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2310.01889">Liu et al., <em>Ring Attention with Blockwise Transformers for Near-Infinite Context</em> (2023)</a> — overlaps K/V ring-rotation with FlashAttention blockwise compute to scale context parallelism to arbitrarily long sequences.</li>
+<li><a href="https://arxiv.org/abs/2401.10241">Qi et al., <em>Zero Bubble Pipeline Parallelism</em> (2024)</a> — splits the backward pass to schedule weight gradients into bubble slots, achieving near-zero bubble fraction under synchronous semantics; up to 31 % throughput gain.</li>
+<li><a href="https://arxiv.org/abs/2412.19437">DeepSeek-AI, <em>DeepSeek-V3 Technical Report</em> (2024)</a> — details DualPipe (bidirectional pipeline overlapping forward/backward with all-to-all MoE communication) and 64-way expert parallelism across 8 nodes; the clearest public description of 5D parallelism at scale.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/NVIDIA/Megatron-LM">NVIDIA/Megatron-LM</a> — the reference implementation of TP, PP, SP, CP, and EP; most large public training runs are based on or validated against it.</li>
+<li><a href="https://github.com/deepseek-ai/DualPipe">deepseek-ai/DualPipe</a> — standalone PyTorch implementation of the DualPipe bidirectional pipeline algorithm from DeepSeek-V3/R1 training.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://developer.nvidia.com/blog/scaling-language-model-training-to-a-trillion-parameters-using-megatron/">NVIDIA Technical Blog: <em>Scaling Language Model Training to a Trillion Parameters Using Megatron</em></a> — accessible walkthrough of 3D parallelism placement and the trillion-parameter milestone.</li>
+<li><a href="https://docs.nvidia.com/megatron-core/developer-guide/0.16.0/user-guide/parallelism-guide.html">Megatron-Core Parallelism Strategies Guide</a> — official reference covering TP, PP, CP, EP, and recommended configs for LLaMA, GPT, Mixtral, and DeepSeek models.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Shoeybi, Patwary, Puri, et al., <em>Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism</em> (2019) — the column/row tensor-parallel formulation.</li>
+<li>Narayanan, Shoeybi, Casper, et al., <em>Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM</em> (2021) — interleaved 1F1B and the 3D-parallelism analysis.</li>
+<li>Korthikanti, Casper, Lym, et al., <em>Reducing Activation Recomputation in Large Transformer Models</em> (2022) — Megatron sequence parallelism and selective recomputation.</li>
+<li>Huang, Cheng, Bapna, et al., <em>GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism</em> (2019).</li>
+<li>Narayanan, Harlap, Phanishayee, et al., <em>PipeDream: Generalized Pipeline Parallelism for DNN Training</em> (2019) — the 1F1B schedule.</li>
+<li>Qi, Wan, Huang, et al., <em>Zero Bubble Pipeline Parallelism</em> (2023).</li>
+<li>Liu, Zaharia, Abbeel, <em>Ring Attention with Blockwise Transformers for Near-Infinite Context</em> (2023).</li>
+<li>Lepikhin, Lee, Xu, et al., <em>GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding</em> (2020) — expert parallelism and all-to-all dispatch/combine.</li>
+<li>Rajbhandari, Rasley, Ruwase, He, <em>ZeRO: Memory Optimizations Toward Training Trillion Parameter Models</em> (2020) — the DP-side counterpart to this chapter.</li>
+<li>The <strong>Megatron-LM</strong> and <strong>DeepSpeed</strong> open-source repositories — the reference implementations of every schedule discussed here.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="05-distributed-data-parallel.html"><span class="pn-label">← Previous</span><span class="pn-title">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</span></a>
+<a class="next" href="07-megatron-deepspeed.html"><span class="pn-label">Next →</span><span class="pn-title">Megatron-LM, DeepSpeed &amp; Parallelism in Practice</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-memory-wall-and-the-three-axes-of-splitting">The Memory Wall and the Three Axes of Splitting</a></li>
+<li class="toc-l2"><a href="#tensor-parallelism-splitting-the-matmul">Tensor Parallelism: Splitting the Matmul</a></li>
+<li class="toc-l3"><a href="#column-and-row-parallel-linear-layers">Column and Row Parallel Linear Layers</a></li>
+<li class="toc-l3"><a href="#applying-it-to-the-transformer-block">Applying It to the Transformer Block</a></li>
+<li class="toc-l3"><a href="#the-communication-cost-of-tp">The Communication Cost of TP</a></li>
+<li class="toc-l3"><a href="#sequence-parallelism-as-tps-free-companion">Sequence Parallelism as TP&amp;rsquo;s Free Companion</a></li>
+<li class="toc-l2"><a href="#pipeline-parallelism-splitting-across-layers">Pipeline Parallelism: Splitting Across Layers</a></li>
+<li class="toc-l3"><a href="#gpipe-microbatching-to-fill-the-pipe">GPipe: Microbatching to Fill the Pipe</a></li>
+<li class="toc-l3"><a href="#1f1b-the-steady-state-schedule">1F1B: The Steady-State Schedule</a></li>
+<li class="toc-l3"><a href="#interleaved-1f1b-virtual-pipeline-stages">Interleaved 1F1B (Virtual Pipeline Stages)</a></li>
+<li class="toc-l3"><a href="#zero-bubble-and-the-frontier">Zero-Bubble and the Frontier</a></li>
+<li class="toc-l2"><a href="#sequence-context-parallelism-splitting-the-sequence">Sequence &amp;amp; Context Parallelism: Splitting the Sequence</a></li>
+<li class="toc-l3"><a href="#ring-attention">Ring Attention</a></li>
+<li class="toc-l2"><a href="#expert-parallelism-scaling-mixture-of-experts">Expert Parallelism: Scaling Mixture-of-Experts</a></li>
+<li class="toc-l2"><a href="#combining-everything-3d-4d-5d-parallelism">Combining Everything: 3D, 4D &amp;amp; 5D Parallelism</a></li>
+<li class="toc-l2"><a href="#where-the-communication-lives-a-summary-table">Where the Communication Lives: A Summary Table</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

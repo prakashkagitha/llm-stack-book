@@ -1,0 +1,1280 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observability, Logging &amp; LLMOps — The LLM Stack</title>
+<meta name="description" content="Tracing requests, token/latency/cost metrics, prompt/response logging, evaluation-in-production, drift detection, A/B testing, the LLMOps lifecycle, tools (Lang">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="active" href="02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XII — Production, Systems &amp; MLOps</div>
+<h1 id="122-observability-logging-llmops">12.2 Observability, Logging &amp; LLMOps<a class="headerlink" href="#122-observability-logging-llmops" title="Permanent link">¶</a></h1>
+<p>Deploying a language model is not the finish line — it is the starting gun. In traditional software, you ship code, watch error rates, and deploy a hotfix. With LLMs the failure modes are subtler: the model might still answer every request with HTTP 200 while silently hallucinating, gradually drifting off-topic, accumulating prompt-injection vulnerabilities, or costing ten times what you budgeted. Observability — the practice of understanding a system&rsquo;s internal state from its external outputs — is the discipline that closes this loop.</p>
+<p>This chapter covers the full LLMOps observability stack: how to trace individual requests, what metrics to collect and alert on, how to log prompts and responses safely, how to run evaluations inside production traffic, how to detect quality drift, and how to wire all of this into a continuous improvement flywheel. The tools we examine (Langfuse, Phoenix/Arize, Weights &amp; Biases, Prometheus, OpenTelemetry) are illustrative; the concepts are portable.</p>
+<p>For the upstream serving architecture that this observability layer wraps, see <a href="../12-production-mlops/01-serving-system-design.html">Designing an LLM Serving System</a>. For offline evaluation techniques such as LLM-as-a-judge, see <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a>.</p>
+<h2 id="the-three-pillars-traces-metrics-logs">The Three Pillars: Traces, Metrics, Logs<a class="headerlink" href="#the-three-pillars-traces-metrics-logs" title="Permanent link">¶</a></h2>
+<p>The canonical observability model from distributed systems gives us three signals. All three are necessary for LLMs; none alone is sufficient.</p>
+<p><strong>Traces</strong> capture the causal chain of a single request. For a RAG pipeline, a trace spans the user query, the embedding call, the vector-database retrieval, the prompt construction, the LLM call, and finally the response. Each step is a <em>span</em> with a start time, duration, input, and output. Traces answer &ldquo;what happened to request X?&rdquo;</p>
+<p><strong>Metrics</strong> are aggregated numerical time-series: token counts, latency percentiles, error rates, cost. Metrics answer &ldquo;how is the system behaving overall right now?&rdquo;</p>
+<p><strong>Logs</strong> are structured records of individual events. For LLMs the most important logs are the verbatim prompt and response strings, because the model&rsquo;s behavior is expressed in natural language that no metric can fully capture. Logs answer &ldquo;what exactly did the model say?&rdquo;</p>
+<figure class="viz" id="fig-obs-three-pillars-pipeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 860 620" role="img" aria-label="Data-flow diagram showing a single incoming request entering an instrumented LLM service, passing through Retrieval, LLM Call, and Postproc spans, then exported via an OpenTelemetry collector that fans out into three pillar stores: Trace Store, Metrics Store, and Log Store.">
+<defs>
+  <marker id="tpp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#666)"/>
+  </marker>
+  <marker id="tpp-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#7c3aed)"/>
+  </marker>
+  <marker id="tpp-arrow-acc2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--v-accent2,#3b82f6)"/>
+  </marker>
+  <marker id="tpp-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#999)"/>
+  </marker>
+</defs>
+<style>
+  #fig-obs-three-pillars-pipeline text { font-family: var(--sans, sans-serif); }
+  #fig-obs-three-pillars-pipeline .title { font: 600 13px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+  #fig-obs-three-pillars-pipeline .subtitle { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-obs-three-pillars-pipeline .band-title { font: 700 12px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-obs-three-pillars-pipeline .arrow-label { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+
+  /* Animated dot */
+  #fig-obs-three-pillars-pipeline .req-dot {
+    r: 6;
+    fill: var(--accent,#7c3aed);
+    opacity: 0;
+  }
+  #fig-obs-three-pillars-pipeline .particle-trace {
+    r: 5; fill: var(--accent,#7c3aed); opacity: 0;
+  }
+  #fig-obs-three-pillars-pipeline .particle-metric {
+    r: 5; fill: var(--v-accent2,#3b82f6); opacity: 0;
+  }
+  #fig-obs-three-pillars-pipeline .particle-log {
+    r: 5; fill: var(--muted,#888); opacity: 0;
+  }
+
+  @keyframes tpp-dot-travel {
+    0%   { opacity: 0; }
+    5%   { opacity: 1; }
+    12%  { opacity: 1; } /* at incoming req */
+    18%  { opacity: 1; } /* entering service */
+    28%  { opacity: 1; } /* span 1 lit */
+    35%  { opacity: 1; } /* span 2 lit */
+    42%  { opacity: 1; } /* span 3 lit */
+    50%  { opacity: 1; } /* at collector */
+    55%  { opacity: 0; } /* disappears — splits */
+    100% { opacity: 0; }
+  }
+  @keyframes tpp-particle-trace {
+    0%   { opacity: 0; }
+    55%  { opacity: 0; }
+    58%  { opacity: 1; }
+    75%  { opacity: 1; }
+    82%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes tpp-particle-metric {
+    0%   { opacity: 0; }
+    58%  { opacity: 0; }
+    62%  { opacity: 1; }
+    78%  { opacity: 1; }
+    85%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes tpp-particle-log {
+    0%   { opacity: 0; }
+    62%  { opacity: 0; }
+    66%  { opacity: 1; }
+    82%  { opacity: 1; }
+    89%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes tpp-span-glow {
+    0%, 100% { opacity: 0; }
+    28%, 42%  { opacity: 0.5; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-obs-three-pillars-pipeline .req-dot,
+    #fig-obs-three-pillars-pipeline .particle-trace,
+    #fig-obs-three-pillars-pipeline .particle-metric,
+    #fig-obs-three-pillars-pipeline .particle-log { display: none; }
+  }
+</style>
+
+
+<g data-anim="1">
+  <rect x="230" y="18" width="400" height="48" rx="8" class="v-fill v-stroke" stroke="var(--ink-soft,#666)" stroke-width="1.5" fill="var(--surface,#f5f5f5)"/>
+  <text x="430" y="38" text-anchor="middle" class="title">Incoming Request</text>
+  <text x="430" y="54" text-anchor="middle" class="subtitle">HTTP / gRPC</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="430" y1="66" x2="430" y2="108" stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#tpp-arrow)"/>
+  <text x="447" y="92" class="arrow-label">request enters root span</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="80" y="110" width="700" height="130" rx="10" fill="var(--surface,#f8f8f8)" stroke="var(--accent,#7c3aed)" stroke-width="1.8"/>
+  <text x="430" y="128" text-anchor="middle" class="title">Instrumented LLM Service</text>
+
+
+
+  <rect x="110" y="136" width="160" height="52" rx="6" fill="var(--accent-soft,rgba(124,58,237,0.12))" stroke="var(--accent,#7c3aed)" stroke-width="1.3"/>
+  <text x="190" y="157" text-anchor="middle" class="title" style="font-size:12px">Retrieval Span</text>
+  <text x="190" y="172" text-anchor="middle" class="subtitle">vector search</text>
+
+
+  <rect x="350" y="136" width="160" height="52" rx="6" fill="var(--accent-soft,rgba(124,58,237,0.12))" stroke="var(--accent,#7c3aed)" stroke-width="1.3"/>
+  <text x="430" y="157" text-anchor="middle" class="title" style="font-size:12px">LLM Call Span</text>
+  <text x="430" y="172" text-anchor="middle" class="subtitle">tokens, latency</text>
+
+
+  <rect x="590" y="136" width="160" height="52" rx="6" fill="var(--accent-soft,rgba(124,58,237,0.12))" stroke="var(--accent,#7c3aed)" stroke-width="1.3"/>
+  <text x="670" y="157" text-anchor="middle" class="title" style="font-size:12px">Postproc Span</text>
+  <text x="670" y="172" text-anchor="middle" class="subtitle">rerank, format</text>
+
+
+  <line x1="270" y1="162" x2="348" y2="162" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#tpp-arrow)"/>
+  <line x1="510" y1="162" x2="588" y2="162" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#tpp-arrow)"/>
+</g>
+
+
+<g data-anim="3">
+  <line x1="190" y1="188" x2="240" y2="268" stroke="var(--ink-soft,#666)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#tpp-arrow)"/>
+  <line x1="430" y1="188" x2="430" y2="268" stroke="var(--ink-soft,#666)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#tpp-arrow)"/>
+  <line x1="670" y1="188" x2="620" y2="268" stroke="var(--ink-soft,#666)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#tpp-arrow)"/>
+  <text x="430" y="242" text-anchor="middle" class="arrow-label">spans + attributes (async batch)</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="100" y="270" width="660" height="68" rx="8" fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#666)" stroke-width="1.5"/>
+  <text x="430" y="293" text-anchor="middle" class="title">Collector / Exporter</text>
+  <text x="430" y="312" text-anchor="middle" class="subtitle">(OpenTelemetry SDK to OTLP gRPC exporter)</text>
+</g>
+
+
+<g data-anim="4">
+
+  <line x1="280" y1="338" x2="200" y2="406" stroke="var(--accent,#7c3aed)" stroke-width="1.5" marker-end="url(#tpp-arrow-acc)"/>
+  <text x="212" y="388" text-anchor="middle" class="arrow-label" fill="var(--accent,#7c3aed)">traces</text>
+
+
+  <line x1="430" y1="338" x2="430" y2="406" stroke="var(--v-accent2,#3b82f6)" stroke-width="1.5" marker-end="url(#tpp-arrow-acc2)"/>
+  <text x="456" y="382" text-anchor="start" class="arrow-label" fill="var(--v-accent2,#3b82f6)">metrics</text>
+
+
+  <line x1="580" y1="338" x2="660" y2="406" stroke="var(--muted,#888)" stroke-width="1.5" marker-end="url(#tpp-arrow-muted)"/>
+  <text x="640" y="385" text-anchor="middle" class="arrow-label" fill="var(--muted,#888)">logs</text>
+</g>
+
+
+<g data-anim="4">
+
+  <rect x="90" y="408" width="220" height="72" rx="8" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#7c3aed)" stroke-width="1.8"/>
+  <text x="200" y="432" text-anchor="middle" class="title">Trace Store</text>
+  <text x="200" y="450" text-anchor="middle" class="subtitle">(Langfuse / Jaeger)</text>
+  <text x="200" y="466" text-anchor="middle" class="subtitle">spans, parent chains</text>
+
+
+  <rect x="330" y="408" width="200" height="72" rx="8" fill="var(--surface,#f5f5f5)" stroke="var(--v-accent2,#3b82f6)" stroke-width="1.8"/>
+  <text x="430" y="432" text-anchor="middle" class="title">Metrics Store</text>
+  <text x="430" y="450" text-anchor="middle" class="subtitle">(Prometheus / Grafana)</text>
+  <text x="430" y="466" text-anchor="middle" class="subtitle">time-series aggregates</text>
+
+
+  <rect x="545" y="408" width="225" height="72" rx="8" fill="var(--surface,#f5f5f5)" stroke="var(--muted,#888)" stroke-width="1.8"/>
+  <text x="657" y="432" text-anchor="middle" class="title">Log Store</text>
+  <text x="657" y="450" text-anchor="middle" class="subtitle">(S3 + Athena / BigQuery)</text>
+  <text x="657" y="466" text-anchor="middle" class="subtitle">prompt + response text</text>
+</g>
+
+
+<circle class="req-dot" cx="430" cy="42">
+  <animateMotion dur="4s" repeatCount="indefinite" calcMode="linear"
+    path="M0,0 L0,24 L0,80 L-240,120 L-240,150 L0,170 L0,220 L0,260" begin="0s"/>
+  <animate attributeName="opacity" values="0;1;1;1;1;1;1;0;0" keyTimes="0;0.05;0.15;0.3;0.45;0.5;0.55;0.6;1" dur="4s" repeatCount="indefinite"/>
+</circle>
+
+
+<circle class="particle-trace" cx="430" cy="338">
+  <animateMotion dur="4s" repeatCount="indefinite" calcMode="linear"
+    path="M0,0 L-150,30 L-230,62 L-230,62" begin="0s"/>
+  <animate attributeName="opacity" values="0;0;0;0;0;0;1;1;0;0" keyTimes="0;0.54;0.55;0.58;0.65;0.7;0.72;0.85;0.9;1" dur="4s" repeatCount="indefinite"/>
+</circle>
+
+
+<circle class="particle-metric" cx="430" cy="338">
+  <animateMotion dur="4s" repeatCount="indefinite" calcMode="linear"
+    path="M0,0 L0,30 L0,62 L0,62" begin="0s"/>
+  <animate attributeName="opacity" values="0;0;0;0;0;0;0;1;1;0;0" keyTimes="0;0.54;0.56;0.6;0.66;0.72;0.74;0.78;0.88;0.94;1" dur="4s" repeatCount="indefinite"/>
+</circle>
+
+
+<circle class="particle-log" cx="430" cy="338">
+  <animateMotion dur="4s" repeatCount="indefinite" calcMode="linear"
+    path="M0,0 L150,30 L230,62 L230,62" begin="0s"/>
+  <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;1;1;0;0" keyTimes="0;0.54;0.57;0.62;0.68;0.74;0.76;0.8;0.82;0.91;0.96;1" dur="4s" repeatCount="indefinite"/>
+</circle>
+
+</svg>
+<figcaption><b>One request fans out into three observability pillars.</b> Each incoming request creates a root span in the instrumented service; child spans for retrieval, LLM call, and post-processing are emitted asynchronously via the OpenTelemetry SDK to a collector, which routes them into a trace store (structured span trees), a metrics store (time-series aggregates), and a log store (verbatim prompt/response records).</figcaption>
+</figure>
+
+<h2 id="distributed-tracing-with-opentelemetry">Distributed Tracing with OpenTelemetry<a class="headerlink" href="#distributed-tracing-with-opentelemetry" title="Permanent link">¶</a></h2>
+<p>OpenTelemetry (OTel) is the vendor-neutral standard for generating and propagating traces, metrics, and logs. The Python SDK makes it straightforward to instrument an LLM service.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># trace_setup.py  —  one-time bootstrap for an LLM microservice</span>
+<span class="c1"># Requirements: opentelemetry-sdk opentelemetry-exporter-otlp-proto-grpc</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.sdk.trace</span><span class="w"> </span><span class="kn">import</span> <span class="n">TracerProvider</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.sdk.trace.export</span><span class="w"> </span><span class="kn">import</span> <span class="n">BatchSpanProcessor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.exporter.otlp.proto.grpc.trace_exporter</span><span class="w"> </span><span class="kn">import</span> <span class="n">OTLPSpanExporter</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">setup_tracing</span><span class="p">(</span><span class="n">service_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">otlp_endpoint</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;http://localhost:4317&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">trace</span><span class="o">.</span><span class="n">Tracer</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Configure an OTel TracerProvider that exports to any OTLP-compatible backend.</span>
+
+<span class="sd">    Compatible backends include: Langfuse (via proxy), Jaeger, Grafana Tempo,</span>
+<span class="sd">    Google Cloud Trace, Honeycomb, and Datadog.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">provider</span> <span class="o">=</span> <span class="n">TracerProvider</span><span class="p">()</span>
+    <span class="n">exporter</span> <span class="o">=</span> <span class="n">OTLPSpanExporter</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="n">otlp_endpoint</span><span class="p">,</span> <span class="n">insecure</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="c1"># BatchSpanProcessor buffers spans and sends them asynchronously</span>
+    <span class="c1"># to avoid adding latency to the critical path.</span>
+    <span class="n">provider</span><span class="o">.</span><span class="n">add_span_processor</span><span class="p">(</span><span class="n">BatchSpanProcessor</span><span class="p">(</span><span class="n">exporter</span><span class="p">))</span>
+    <span class="n">trace</span><span class="o">.</span><span class="n">set_tracer_provider</span><span class="p">(</span><span class="n">provider</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">trace</span><span class="o">.</span><span class="n">get_tracer</span><span class="p">(</span><span class="n">service_name</span><span class="p">)</span>
+
+
+<span class="n">TRACER</span> <span class="o">=</span> <span class="n">setup_tracing</span><span class="p">(</span><span class="s2">&quot;llm-chat-service&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># rag_pipeline.py  —  a fully-instrumented RAG request handler</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">trace_setup</span><span class="w"> </span><span class="kn">import</span> <span class="n">TRACER</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">handle_request</span><span class="p">(</span>
+    <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">retriever</span><span class="p">,</span>
+    <span class="n">llm_client</span><span class="p">,</span>
+    <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Process one user query through a RAG pipeline, emitting OTel spans for</span>
+<span class="sd">    every stage. The root span holds the full end-to-end latency.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Root span for the entire request.</span>
+    <span class="k">with</span> <span class="n">TRACER</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span><span class="s2">&quot;rag_request&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">root_span</span><span class="p">:</span>
+        <span class="c1"># Attach stable, low-cardinality attributes for filtering in dashboards.</span>
+        <span class="n">root_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;user.id&quot;</span><span class="p">,</span> <span class="n">user_id</span><span class="p">)</span>
+        <span class="n">root_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;query.length_chars&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">query</span><span class="p">))</span>
+        <span class="n">root_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;query.hash&quot;</span><span class="p">,</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">md5</span><span class="p">(</span><span class="n">query</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()[:</span><span class="mi">8</span><span class="p">])</span>
+
+        <span class="c1"># ── Stage 1: Retrieval ────────────────────────────────────────────────</span>
+        <span class="k">with</span> <span class="n">TRACER</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span><span class="s2">&quot;retrieval&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">ret_span</span><span class="p">:</span>
+            <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+            <span class="n">docs</span> <span class="o">=</span> <span class="n">retriever</span><span class="o">.</span><span class="n">retrieve</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+            <span class="n">ret_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;retrieval.latency_ms&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span><span class="p">)</span>
+            <span class="n">ret_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;retrieval.num_docs&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">docs</span><span class="p">))</span>
+            <span class="n">ret_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;retrieval.top_score&quot;</span><span class="p">,</span> <span class="n">docs</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;score&quot;</span><span class="p">]</span> <span class="k">if</span> <span class="n">docs</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">)</span>
+
+        <span class="c1"># ── Stage 2: Prompt construction ─────────────────────────────────────</span>
+        <span class="k">with</span> <span class="n">TRACER</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span><span class="s2">&quot;prompt_build&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">pb_span</span><span class="p">:</span>
+            <span class="n">context_text</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">d</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">docs</span><span class="p">)</span>
+            <span class="n">system_prompt</span> <span class="o">=</span> <span class="s2">&quot;You are a helpful assistant. Use the provided context.&quot;</span>
+            <span class="n">user_message</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Context:</span><span class="se">\n</span><span class="si">{</span><span class="n">context_text</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Question: </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="n">pb_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;prompt.system_chars&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">system_prompt</span><span class="p">))</span>
+            <span class="n">pb_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;prompt.user_chars&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">user_message</span><span class="p">))</span>
+
+        <span class="c1"># ── Stage 3: LLM inference ───────────────────────────────────────────</span>
+        <span class="k">with</span> <span class="n">TRACER</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span><span class="s2">&quot;llm_inference&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">llm_span</span><span class="p">:</span>
+            <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+            <span class="n">response</span> <span class="o">=</span> <span class="n">llm_client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+                <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+                <span class="n">messages</span><span class="o">=</span><span class="p">[</span>
+                    <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">system_prompt</span><span class="p">},</span>
+                    <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>   <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">user_message</span><span class="p">},</span>
+                <span class="p">],</span>
+                <span class="n">max_tokens</span><span class="o">=</span><span class="n">max_tokens</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">elapsed_ms</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+            <span class="n">usage</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">usage</span>
+            <span class="c1"># LLM-specific span attributes are the most valuable for cost analysis.</span>
+            <span class="n">llm_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;llm.model&quot;</span><span class="p">,</span>               <span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">)</span>
+            <span class="n">llm_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;llm.prompt_tokens&quot;</span><span class="p">,</span>       <span class="n">usage</span><span class="o">.</span><span class="n">prompt_tokens</span><span class="p">)</span>
+            <span class="n">llm_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;llm.completion_tokens&quot;</span><span class="p">,</span>   <span class="n">usage</span><span class="o">.</span><span class="n">completion_tokens</span><span class="p">)</span>
+            <span class="n">llm_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;llm.total_tokens&quot;</span><span class="p">,</span>        <span class="n">usage</span><span class="o">.</span><span class="n">total_tokens</span><span class="p">)</span>
+            <span class="n">llm_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;llm.latency_ms&quot;</span><span class="p">,</span>          <span class="n">elapsed_ms</span><span class="p">)</span>
+            <span class="n">llm_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;llm.finish_reason&quot;</span><span class="p">,</span>       <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">finish_reason</span><span class="p">)</span>
+
+        <span class="n">answer</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>
+        <span class="n">root_span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">&quot;response.length_chars&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">answer</span><span class="p">))</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="n">answer</span><span class="p">,</span> <span class="s2">&quot;docs&quot;</span><span class="p">:</span> <span class="n">docs</span><span class="p">}</span>
+</code></pre></div>
+<p>The key design principle here: put <em>semantic attributes</em> on every span so you can slice metrics by model, user cohort, or prompt template later. Avoid putting raw prompt strings in span attributes (size limits + PII risk) — instead log them separately and link by trace ID.</p>
+<h2 id="token-latency-cost-metrics">Token, Latency &amp; Cost Metrics<a class="headerlink" href="#token-latency-cost-metrics" title="Permanent link">¶</a></h2>
+<p>Metrics are aggregates. We want to observe their distributions over time, not just averages. Use Prometheus-style histograms (or their equivalents) to track percentiles.</p>
+<h3 id="the-four-core-llm-metrics">The four core LLM metrics<a class="headerlink" href="#the-four-core-llm-metrics" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Unit</th>
+<th>Why It Matters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Time to First Token (TTFT)</td>
+<td>milliseconds</td>
+<td>User-perceived responsiveness for streaming</td>
+</tr>
+<tr>
+<td>Time per Output Token (TPOT)</td>
+<td>ms / token</td>
+<td>Streaming smoothness; bottlenecks in decode</td>
+</tr>
+<tr>
+<td>Total request latency</td>
+<td>milliseconds</td>
+<td>End-to-end SLA</td>
+</tr>
+<tr>
+<td>Token cost</td>
+<td>USD / 1M tokens</td>
+<td>Unit economics; budget guardrails</td>
+</tr>
+</tbody>
+</table>
+<p>TTFT is dominated by prefill and queue wait. TPOT is dominated by memory bandwidth during autoregressive decode. See <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a> for the underlying mechanics, and <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a> for the cost model in full detail.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># metrics.py  —  Prometheus metrics for an LLM serving endpoint</span>
+<span class="c1"># Requirements: prometheus_client</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">prometheus_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span><span class="p">,</span> <span class="n">Histogram</span><span class="p">,</span> <span class="n">Gauge</span><span class="p">,</span> <span class="n">start_http_server</span>
+
+<span class="c1"># ── Counters (monotonically increasing) ──────────────────────────────────────</span>
+<span class="n">REQUESTS_TOTAL</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span>
+    <span class="s2">&quot;llm_requests_total&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Total LLM requests&quot;</span><span class="p">,</span>
+    <span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="s2">&quot;status&quot;</span><span class="p">],</span>          <span class="c1"># labels allow slicing by model and outcome</span>
+<span class="p">)</span>
+<span class="n">TOKENS_TOTAL</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span>
+    <span class="s2">&quot;llm_tokens_total&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Total tokens processed&quot;</span><span class="p">,</span>
+    <span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="s2">&quot;direction&quot;</span><span class="p">],</span>       <span class="c1"># direction = &#39;prompt&#39; or &#39;completion&#39;</span>
+<span class="p">)</span>
+
+<span class="c1"># ── Histograms (track distributions, not just averages) ───────────────────────</span>
+<span class="n">TTFT_HISTOGRAM</span> <span class="o">=</span> <span class="n">Histogram</span><span class="p">(</span>
+    <span class="s2">&quot;llm_time_to_first_token_seconds&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Time to first token in seconds&quot;</span><span class="p">,</span>
+    <span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span>
+    <span class="c1"># Buckets tuned for typical LLM latencies: 50ms → 10s</span>
+    <span class="n">buckets</span><span class="o">=</span><span class="p">[</span><span class="mf">0.05</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">5.0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">],</span>
+<span class="p">)</span>
+<span class="n">LATENCY_HISTOGRAM</span> <span class="o">=</span> <span class="n">Histogram</span><span class="p">(</span>
+    <span class="s2">&quot;llm_request_latency_seconds&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;End-to-end request latency&quot;</span><span class="p">,</span>
+    <span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span>
+    <span class="n">buckets</span><span class="o">=</span><span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">5.0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">,</span> <span class="mf">60.0</span><span class="p">],</span>
+<span class="p">)</span>
+<span class="n">COST_HISTOGRAM</span> <span class="o">=</span> <span class="n">Histogram</span><span class="p">(</span>
+    <span class="s2">&quot;llm_request_cost_usd&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Estimated cost per request in USD&quot;</span><span class="p">,</span>
+    <span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span>
+    <span class="n">buckets</span><span class="o">=</span><span class="p">[</span><span class="mf">0.0001</span><span class="p">,</span> <span class="mf">0.001</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">,</span> <span class="mf">0.10</span><span class="p">,</span> <span class="mf">0.50</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">],</span>
+<span class="p">)</span>
+
+<span class="c1"># ── Gauges (current snapshot) ─────────────────────────────────────────────────</span>
+<span class="n">QUEUE_DEPTH</span> <span class="o">=</span> <span class="n">Gauge</span><span class="p">(</span><span class="s2">&quot;llm_request_queue_depth&quot;</span><span class="p">,</span> <span class="s2">&quot;Current pending request count&quot;</span><span class="p">)</span>
+
+<span class="c1"># Pricing table (USD per 1M tokens); update as providers change rates</span>
+<span class="n">PRICING</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;prompt&quot;</span><span class="p">:</span> <span class="mf">0.15</span><span class="p">,</span> <span class="s2">&quot;completion&quot;</span><span class="p">:</span> <span class="mf">0.60</span><span class="p">},</span>
+    <span class="s2">&quot;gpt-4o&quot;</span><span class="p">:</span>      <span class="p">{</span><span class="s2">&quot;prompt&quot;</span><span class="p">:</span> <span class="mf">5.00</span><span class="p">,</span> <span class="s2">&quot;completion&quot;</span><span class="p">:</span> <span class="mf">15.0</span><span class="p">},</span>
+<span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">record_llm_call</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">prompt_tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">completion_tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                    <span class="n">latency_s</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">ttft_s</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">error</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Call this after every LLM API response to update all metrics.&quot;&quot;&quot;</span>
+    <span class="n">status</span> <span class="o">=</span> <span class="s2">&quot;error&quot;</span> <span class="k">if</span> <span class="n">error</span> <span class="k">else</span> <span class="s2">&quot;ok&quot;</span>
+    <span class="n">REQUESTS_TOTAL</span><span class="o">.</span><span class="n">labels</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span> <span class="n">status</span><span class="o">=</span><span class="n">status</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>
+    <span class="n">TOKENS_TOTAL</span><span class="o">.</span><span class="n">labels</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">&quot;prompt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">(</span><span class="n">prompt_tokens</span><span class="p">)</span>
+    <span class="n">TOKENS_TOTAL</span><span class="o">.</span><span class="n">labels</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">&quot;completion&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">(</span><span class="n">completion_tokens</span><span class="p">)</span>
+    <span class="n">TTFT_HISTOGRAM</span><span class="o">.</span><span class="n">labels</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">observe</span><span class="p">(</span><span class="n">ttft_s</span><span class="p">)</span>
+    <span class="n">LATENCY_HISTOGRAM</span><span class="o">.</span><span class="n">labels</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">observe</span><span class="p">(</span><span class="n">latency_s</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">model</span> <span class="ow">in</span> <span class="n">PRICING</span><span class="p">:</span>
+        <span class="n">cost</span> <span class="o">=</span> <span class="p">(</span><span class="n">prompt_tokens</span> <span class="o">/</span> <span class="mf">1e6</span> <span class="o">*</span> <span class="n">PRICING</span><span class="p">[</span><span class="n">model</span><span class="p">][</span><span class="s2">&quot;prompt&quot;</span><span class="p">]</span>
+                <span class="o">+</span> <span class="n">completion_tokens</span> <span class="o">/</span> <span class="mf">1e6</span> <span class="o">*</span> <span class="n">PRICING</span><span class="p">[</span><span class="n">model</span><span class="p">][</span><span class="s2">&quot;completion&quot;</span><span class="p">])</span>
+        <span class="n">COST_HISTOGRAM</span><span class="o">.</span><span class="n">labels</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">observe</span><span class="p">(</span><span class="n">cost</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">start_http_server</span><span class="p">(</span><span class="mi">9090</span><span class="p">)</span>   <span class="c1"># Prometheus scrapes :9090/metrics</span>
+</code></pre></div>
+<h3 id="alerting-thresholds-example-rules">Alerting thresholds (example rules)<a class="headerlink" href="#alerting-thresholds-example-rules" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># prometheus_alerts.yml</span>
+<span class="nt">groups</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">llm_service</span>
+<span class="w">    </span><span class="nt">rules</span><span class="p">:</span>
+<span class="w">      </span><span class="c1"># Alert if median TTFT exceeds 2 seconds for 5 minutes</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">alert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">LLMHighTTFT</span>
+<span class="w">        </span><span class="nt">expr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">histogram_quantile(0.50, rate(llm_time_to_first_token_seconds_bucket[5m])) &gt; 2.0</span>
+<span class="w">        </span><span class="nt">for</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5m</span>
+<span class="w">        </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">warning</span>
+<span class="w">        </span><span class="nt">annotations</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">summary</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;LLM</span><span class="nv"> </span><span class="s">median</span><span class="nv"> </span><span class="s">TTFT</span><span class="nv"> </span><span class="s">is</span><span class="nv"> </span><span class="s">{{</span><span class="nv"> </span><span class="s">$value</span><span class="nv"> </span><span class="s">|</span><span class="nv"> </span><span class="s">humanizeDuration</span><span class="nv"> </span><span class="s">}}&quot;</span>
+
+<span class="w">      </span><span class="c1"># Alert if error rate exceeds 1% over 5 minutes</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">alert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">LLMHighErrorRate</span>
+<span class="w">        </span><span class="nt">expr</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;</span>
+<span class="w">          </span><span class="no">rate(llm_requests_total{status=&quot;error&quot;}[5m])</span>
+<span class="w">          </span><span class="no">/ rate(llm_requests_total[5m]) &gt; 0.01</span>
+<span class="w">        </span><span class="nt">for</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5m</span>
+<span class="w">        </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">critical</span>
+
+<span class="w">      </span><span class="c1"># Alert if hourly token cost is trending toward budget overage</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">alert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">LLMCostBudgetWarning</span>
+<span class="w">        </span><span class="nt">expr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sum(rate(llm_tokens_total{direction=&quot;completion&quot;}[1h])) * 3600 * 0.60 / 1e6 &gt; 100</span>
+<span class="w">        </span><span class="nt">for</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10m</span>
+<span class="w">        </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">warning</span>
+<span class="w">        </span><span class="nt">annotations</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">summary</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Projected</span><span class="nv"> </span><span class="s">hourly</span><span class="nv"> </span><span class="s">completion</span><span class="nv"> </span><span class="s">cost</span><span class="nv"> </span><span class="s">exceeds</span><span class="nv"> </span><span class="s">$100&quot;</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: Cost and budget math</p>
+<p>Suppose your application sends an average of <strong>800 prompt tokens</strong> and receives <strong>300 completion tokens</strong> per request, using <code>gpt-4o-mini</code> (USD 0.15/M prompt, USD 0.60/M completion).</p>
+<p>Cost per request:</p>
+<div class="arithmatex">\[
+c = \frac{800}{10^6} \times 0.15 + \frac{300}{10^6} \times 0.60 = 0.00012 + 0.00018 = \$0.00030
+\]</div>
+<p>At 10 requests per second, that is:</p>
+<div class="arithmatex">\[
+0.00030 \times 10 \times 3600 \times 24 = \$259.20 \text{ per day}
+\]</div>
+<p>If you switch to a model that is 40% cheaper on completion tokens (USD 0.36/M), and you shorten the average prompt by 200 tokens via better context management, daily cost becomes:</p>
+<div class="arithmatex">\[
+\frac{600}{10^6} \times 0.15 + \frac{300}{10^6} \times 0.36 = 0.000090 + 0.000108 = \$0.000198
+\]</div>
+<p>That is USD 171.07/day — a 34% reduction. Tracking token distributions per-template makes these opportunities visible; without metrics you are flying blind.</p>
+</div>
+<h2 id="prompt-response-logging">Prompt &amp; Response Logging<a class="headerlink" href="#prompt-response-logging" title="Permanent link">¶</a></h2>
+<p>Raw prompt and response logging is the highest-fidelity signal available, but also the most sensitive. The discipline is: log what you need, protect what you log, and delete what you no longer need.</p>
+<h3 id="what-to-log">What to log<a class="headerlink" href="#what-to-log" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># log_schema.py  —  Pydantic model for a structured LLM log record</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">List</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">uuid</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LLMLogRecord</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="c1"># Identity</span>
+    <span class="n">record_id</span><span class="p">:</span>      <span class="nb">str</span>       <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()))</span>
+    <span class="n">trace_id</span><span class="p">:</span>       <span class="nb">str</span>       <span class="c1"># OTel trace ID — links to distributed trace</span>
+    <span class="n">session_id</span><span class="p">:</span>     <span class="nb">str</span>       <span class="c1"># Groups turns in a multi-turn conversation</span>
+    <span class="n">user_id_hashed</span><span class="p">:</span> <span class="nb">str</span>       <span class="c1"># SHA-256 of user ID — never store raw PII here</span>
+
+    <span class="c1"># Request context</span>
+    <span class="n">timestamp_utc</span><span class="p">:</span>  <span class="n">datetime</span>
+    <span class="n">model</span><span class="p">:</span>          <span class="nb">str</span>
+    <span class="n">prompt_version</span><span class="p">:</span> <span class="nb">str</span>       <span class="c1"># e.g. &quot;chat-v3.2&quot; — MUST be versioned for regression analysis</span>
+
+    <span class="c1"># Content — store in encrypted, access-controlled storage (not plaintext RDBMS)</span>
+    <span class="n">system_prompt</span><span class="p">:</span>  <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>   <span class="o">=</span> <span class="kc">None</span>   <span class="c1"># May contain IP; log if needed for debugging</span>
+    <span class="n">user_message</span><span class="p">:</span>   <span class="nb">str</span>
+    <span class="n">assistant_reply</span><span class="p">:</span> <span class="nb">str</span>
+
+    <span class="c1"># Usage</span>
+    <span class="n">prompt_tokens</span><span class="p">:</span>      <span class="nb">int</span>
+    <span class="n">completion_tokens</span><span class="p">:</span>  <span class="nb">int</span>
+    <span class="n">latency_ms</span><span class="p">:</span>         <span class="nb">float</span>
+    <span class="n">finish_reason</span><span class="p">:</span>      <span class="nb">str</span>   <span class="c1"># &quot;stop&quot;, &quot;length&quot;, &quot;content_filter&quot;, etc.</span>
+
+    <span class="c1"># Evaluation signals (filled in asynchronously)</span>
+    <span class="n">thumbs_up</span><span class="p">:</span>          <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span>  <span class="o">=</span> <span class="kc">None</span>   <span class="c1"># User feedback if collected</span>
+    <span class="n">auto_eval_score</span><span class="p">:</span>    <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>   <span class="c1"># From async LLM-as-judge pipeline</span>
+    <span class="n">safety_flagged</span><span class="p">:</span>     <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span>  <span class="o">=</span> <span class="kc">None</span>   <span class="c1"># From guardrail layer</span>
+
+    <span class="k">class</span><span class="w"> </span><span class="nc">Config</span><span class="p">:</span>
+        <span class="n">json_encoders</span> <span class="o">=</span> <span class="p">{</span><span class="n">datetime</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">v</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()}</span>
+</code></pre></div>
+<h3 id="privacy-and-data-handling-rules">Privacy and data-handling rules<a class="headerlink" href="#privacy-and-data-handling-rules" title="Permanent link">¶</a></h3>
+<ol>
+<li><strong>Hash or pseudonymize user IDs</strong> before logging. Use a keyed HMAC so you can re-identify for debugging under a formal process, but the logs are not linkable without the key.</li>
+<li><strong>Classify prompts by sensitivity tier.</strong> A coding assistant&rsquo;s prompts are low sensitivity; a healthcare assistant&rsquo;s prompts may contain PHI and must never leave a HIPAA-compliant boundary.</li>
+<li><strong>Define retention policies.</strong> Seven days for debugging, 90 days for eval/training, one year for compliance. Automate deletion.</li>
+<li><strong>Separate storage from compute.</strong> Write logs to an append-only, encrypted object store (S3 + SSE-KMS, GCS) and query with Athena or BigQuery. Do not log to a relational database that is also serving production traffic.</li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: logging to stdout in production</p>
+<p>Structured logs emitted to stdout get mixed with framework noise, may be truncated at 64 KB by your log collector, and — critically — are often streamed to a central logging system that security teams have not reviewed for PII. Always write LLM content logs to a dedicated, permission-controlled sink. Use the trace ID to correlate with the main log stream without duplicating sensitive data there.</p>
+</div>
+<h2 id="evaluation-in-production">Evaluation in Production<a class="headerlink" href="#evaluation-in-production" title="Permanent link">¶</a></h2>
+<p>Offline evaluation with held-out benchmarks tells you how a model performs on a fixed distribution. Production evaluation tells you how it performs on your actual users, who are always stranger than your benchmark dataset. The two must both be part of your release process.</p>
+<h3 id="sampling-strategy">Sampling strategy<a class="headerlink" href="#sampling-strategy" title="Permanent link">¶</a></h3>
+<p>You cannot judge every response with an LLM-as-judge (it is expensive and adds latency). Instead, sample strategically:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># production_eval_sampler.py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SamplingPolicy</span><span class="p">:</span>
+    <span class="n">base_rate</span><span class="p">:</span> <span class="nb">float</span>          <span class="c1"># Fraction of all traffic to evaluate (e.g. 0.05 = 5%)</span>
+    <span class="n">failure_rate</span><span class="p">:</span> <span class="nb">float</span>       <span class="c1"># Fraction of error/flagged requests to evaluate (e.g. 1.0 = 100%)</span>
+    <span class="n">new_prompt_rate</span><span class="p">:</span> <span class="nb">float</span>    <span class="c1"># Fraction of requests using a new prompt template to evaluate</span>
+    <span class="n">low_score_rate</span><span class="p">:</span> <span class="nb">float</span>     <span class="c1"># Fraction of requests below a score threshold to evaluate</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">should_evaluate</span><span class="p">(</span><span class="n">record</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">policy</span><span class="p">:</span> <span class="n">SamplingPolicy</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return True if this record should be sent to the async eval pipeline.&quot;&quot;&quot;</span>
+    <span class="c1"># Always evaluate failures and safety flags</span>
+    <span class="k">if</span> <span class="n">record</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;finish_reason&quot;</span><span class="p">)</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;content_filter&quot;</span><span class="p">,</span> <span class="s2">&quot;error&quot;</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">policy</span><span class="o">.</span><span class="n">failure_rate</span>
+    <span class="c1"># Evaluate new prompt versions at higher rate to catch regressions early</span>
+    <span class="k">if</span> <span class="n">record</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;is_new_prompt_version&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">policy</span><span class="o">.</span><span class="n">new_prompt_rate</span>
+    <span class="c1"># Evaluate previously low-scoring records (detected drift)</span>
+    <span class="k">if</span> <span class="n">record</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;auto_eval_score&quot;</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mf">0.5</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">policy</span><span class="o">.</span><span class="n">low_score_rate</span>
+    <span class="c1"># Baseline random sample for steady-state tracking</span>
+    <span class="k">return</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">policy</span><span class="o">.</span><span class="n">base_rate</span>
+
+<span class="n">POLICY</span> <span class="o">=</span> <span class="n">SamplingPolicy</span><span class="p">(</span>
+    <span class="n">base_rate</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+    <span class="n">failure_rate</span><span class="o">=</span><span class="mf">1.00</span><span class="p">,</span>
+    <span class="n">new_prompt_rate</span><span class="o">=</span><span class="mf">0.30</span><span class="p">,</span>
+    <span class="n">low_score_rate</span><span class="o">=</span><span class="mf">0.50</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="async-llm-as-judge-evaluation-pipeline">Async LLM-as-judge evaluation pipeline<a class="headerlink" href="#async-llm-as-judge-evaluation-pipeline" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># async_eval_worker.py</span>
+<span class="c1"># Runs as a separate process / Cloud Function; reads from an eval queue</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncOpenAI</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">AsyncOpenAI</span><span class="p">()</span>
+
+<span class="n">JUDGE_SYSTEM</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;You are an expert evaluator. Score the assistant reply on:</span>
+<span class="s2">1. Faithfulness (0-2): Does the reply contradict the provided context?</span>
+<span class="s2">2. Relevance (0-2): Does the reply address the user&#39;s question?</span>
+<span class="s2">3. Fluency (0-1): Is the reply grammatically correct?</span>
+
+<span class="s2">Output ONLY valid JSON: {&quot;faithfulness&quot;: X, &quot;relevance&quot;: X, &quot;fluency&quot;: X, &quot;reason&quot;: &quot;...&quot;}&quot;&quot;&quot;</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">judge_single</span><span class="p">(</span><span class="n">record</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Call the judge model and parse the score, with a 30-second timeout.&quot;&quot;&quot;</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Context provided to assistant:</span><span class="se">\n</span><span class="si">{</span><span class="n">record</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;context&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;none&#39;</span><span class="p">)</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;User question: </span><span class="si">{</span><span class="n">record</span><span class="p">[</span><span class="s1">&#39;user_message&#39;</span><span class="p">]</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Assistant reply: </span><span class="si">{</span><span class="n">record</span><span class="p">[</span><span class="s1">&#39;assistant_reply&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="p">)</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">wait_for</span><span class="p">(</span>
+        <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+            <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+            <span class="n">messages</span><span class="o">=</span><span class="p">[</span>
+                <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">JUDGE_SYSTEM</span><span class="p">},</span>
+                <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>   <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">prompt</span><span class="p">},</span>
+            <span class="p">],</span>
+            <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>      <span class="c1"># Zero temperature for reproducibility</span>
+            <span class="n">max_tokens</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>
+        <span class="p">),</span>
+        <span class="n">timeout</span><span class="o">=</span><span class="mf">30.0</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+    <span class="n">scores</span><span class="p">[</span><span class="s2">&quot;composite&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">scores</span><span class="p">[</span><span class="s2">&quot;faithfulness&quot;</span><span class="p">]</span> <span class="o">+</span> <span class="n">scores</span><span class="p">[</span><span class="s2">&quot;relevance&quot;</span><span class="p">]</span> <span class="o">+</span> <span class="n">scores</span><span class="p">[</span><span class="s2">&quot;fluency&quot;</span><span class="p">])</span> <span class="o">/</span> <span class="mf">5.0</span>
+    <span class="n">scores</span><span class="p">[</span><span class="s2">&quot;record_id&quot;</span><span class="p">]</span>  <span class="o">=</span> <span class="n">record</span><span class="p">[</span><span class="s2">&quot;record_id&quot;</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">scores</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">eval_batch</span><span class="p">(</span><span class="n">records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Evaluate a batch of records concurrently (up to 20 in parallel).&quot;&quot;&quot;</span>
+    <span class="n">semaphore</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Semaphore</span><span class="p">(</span><span class="mi">20</span><span class="p">)</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">bounded</span><span class="p">(</span><span class="n">r</span><span class="p">):</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">semaphore</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">return</span> <span class="k">await</span> <span class="n">judge_single</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;record_id&quot;</span><span class="p">:</span> <span class="n">r</span><span class="p">[</span><span class="s2">&quot;record_id&quot;</span><span class="p">],</span> <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span> <span class="s2">&quot;composite&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">}</span>
+    <span class="k">return</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">bounded</span><span class="p">(</span><span class="n">r</span><span class="p">)</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">records</span><span class="p">])</span>
+</code></pre></div>
+<p>For a deep dive into LLM-as-judge methodology and bias mitigation, see <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a>.</p>
+<h2 id="drift-detection">Drift Detection<a class="headerlink" href="#drift-detection" title="Permanent link">¶</a></h2>
+<p>A model that performed well at launch can degrade silently as user behaviour evolves, upstream data sources change, or the base model provider silently updates their serving stack. There are three types of drift to monitor.</p>
+<h3 id="input-drift-covariate-shift">Input drift (covariate shift)<a class="headerlink" href="#input-drift-covariate-shift" title="Permanent link">¶</a></h3>
+<p>Track statistics of the prompt distribution over time. If users start asking qualitatively different questions, your eval scores from an earlier period are no longer representative.</p>
+<div class="arithmatex">\[
+\text{PSI}(P \| Q) = \sum_{i=1}^{N} (P_i - Q_i) \ln \frac{P_i}{Q_i}
+\]</div>
+<p>The Population Stability Index (PSI) measures how much a distribution <span class="arithmatex">\(P\)</span> (current) has shifted from a reference <span class="arithmatex">\(Q\)</span> (baseline). By convention: PSI &lt; 0.1 is stable, 0.1–0.25 is moderate shift, &gt; 0.25 is significant. Apply it to binned token count distributions, embedding dimensions, or topic proportions.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># drift_detection.py  —  PSI on prompt embedding distributions</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.decomposition</span><span class="w"> </span><span class="kn">import</span> <span class="n">PCA</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_psi</span><span class="p">(</span><span class="n">reference</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">current</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">n_bins</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute Population Stability Index on 1-D arrays.</span>
+
+<span class="sd">    Typical usage: call this on the first principal component of prompt embeddings,</span>
+<span class="sd">    comparing a rolling 24-hour window against the previous 7-day baseline.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Use reference distribution to define bin edges (important: same bins for both)</span>
+    <span class="n">min_val</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">reference</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span> <span class="n">current</span><span class="o">.</span><span class="n">min</span><span class="p">())</span>
+    <span class="n">max_val</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">reference</span><span class="o">.</span><span class="n">max</span><span class="p">(),</span> <span class="n">current</span><span class="o">.</span><span class="n">max</span><span class="p">())</span>
+    <span class="n">bins</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="n">min_val</span><span class="p">,</span> <span class="n">max_val</span><span class="p">,</span> <span class="n">n_bins</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">ref_counts</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">histogram</span><span class="p">(</span><span class="n">reference</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="n">bins</span><span class="p">)</span>
+    <span class="n">cur_counts</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">histogram</span><span class="p">(</span><span class="n">current</span><span class="p">,</span>   <span class="n">bins</span><span class="o">=</span><span class="n">bins</span><span class="p">)</span>
+
+    <span class="c1"># Add small epsilon to avoid division by zero or log(0)</span>
+    <span class="n">eps</span> <span class="o">=</span> <span class="mf">1e-6</span>
+    <span class="n">ref_pct</span> <span class="o">=</span> <span class="p">(</span><span class="n">ref_counts</span> <span class="o">+</span> <span class="n">eps</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">ref_counts</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">+</span> <span class="n">eps</span> <span class="o">*</span> <span class="n">n_bins</span><span class="p">)</span>
+    <span class="n">cur_pct</span> <span class="o">=</span> <span class="p">(</span><span class="n">cur_counts</span> <span class="o">+</span> <span class="n">eps</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">cur_counts</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">+</span> <span class="n">eps</span> <span class="o">*</span> <span class="n">n_bins</span><span class="p">)</span>
+
+    <span class="n">psi</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">cur_pct</span> <span class="o">-</span> <span class="n">ref_pct</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">cur_pct</span> <span class="o">/</span> <span class="n">ref_pct</span><span class="p">))</span>
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">psi</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">monitor_embedding_drift</span><span class="p">(</span>
+    <span class="n">reference_embeddings</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>   <span class="c1"># shape: (N_ref, D)</span>
+    <span class="n">current_embeddings</span><span class="p">:</span>   <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>   <span class="c1"># shape: (N_cur, D)</span>
+    <span class="n">n_components</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Project embeddings to principal components, then compute PSI on each.&quot;&quot;&quot;</span>
+    <span class="n">pca</span> <span class="o">=</span> <span class="n">PCA</span><span class="p">(</span><span class="n">n_components</span><span class="o">=</span><span class="n">n_components</span><span class="p">)</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">reference_embeddings</span><span class="p">)</span>
+    <span class="n">ref_proj</span> <span class="o">=</span> <span class="n">pca</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">reference_embeddings</span><span class="p">)</span>
+    <span class="n">cur_proj</span> <span class="o">=</span> <span class="n">pca</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">current_embeddings</span><span class="p">)</span>
+
+    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_components</span><span class="p">):</span>
+        <span class="n">results</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;psi_pc</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">compute_psi</span><span class="p">(</span><span class="n">ref_proj</span><span class="p">[:,</span> <span class="n">i</span><span class="p">],</span> <span class="n">cur_proj</span><span class="p">[:,</span> <span class="n">i</span><span class="p">])</span>
+    <span class="n">results</span><span class="p">[</span><span class="s2">&quot;psi_max&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">results</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">results</span>
+</code></pre></div>
+<h3 id="output-quality-drift">Output quality drift<a class="headerlink" href="#output-quality-drift" title="Permanent link">¶</a></h3>
+<p>Track your eval composite score as a rolling mean. Use a Page-Cusum or CUSUM change-point algorithm to detect a sustained downward shift that is not noise:</p>
+<div class="arithmatex">\[
+S_n = \max\!\left(0,\; S_{n-1} + (x_n - \mu_0 - k)\right)
+\]</div>
+<p>where <span class="arithmatex">\(\mu_0\)</span> is the in-control mean quality score, <span class="arithmatex">\(k\)</span> is the allowance parameter (typically half the smallest shift to detect), and an alert fires when <span class="arithmatex">\(S_n &gt; h\)</span> (a decision threshold, commonly set by ARL — average run length — analysis).</p>
+<h3 id="provider-model-version-drift">Provider / model version drift<a class="headerlink" href="#provider-model-version-drift" title="Permanent link">¶</a></h3>
+<p>A model provider can silently change model behavior behind the same API endpoint (e.g. &ldquo;gpt-4o-2024-05-13&rdquo; vs a later snapshot). Pin model versions explicitly in your API calls. Add a canary that runs a fixed probe set once per hour and alerts if the judge score drops more than a threshold.</p>
+<h2 id="ab-testing-and-canary-releases">A/B Testing and Canary Releases<a class="headerlink" href="#ab-testing-and-canary-releases" title="Permanent link">¶</a></h2>
+<p>LLMOps borrows traffic-splitting patterns from traditional MLOps but with LLM-specific wrinkles: there is no single scalar prediction to compare; quality is a distribution; and changes compound over multi-turn conversations.</p>
+<h3 id="traffic-splitting">Traffic splitting<a class="headerlink" href="#traffic-splitting" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># ab_router.py  —  stateless traffic-split router for LLM variants</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+
+<span class="c1"># Variant config: (weight, handler_function)</span>
+<span class="c1"># Weights must sum to 1.0.</span>
+<span class="n">VARIANTS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;control&quot;</span><span class="p">:</span>     <span class="p">(</span><span class="mf">0.80</span><span class="p">,</span> <span class="s2">&quot;handle_with_gpt4o_mini&quot;</span><span class="p">),</span>
+    <span class="s2">&quot;treatment_A&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.10</span><span class="p">,</span> <span class="s2">&quot;handle_with_claude3_haiku&quot;</span><span class="p">),</span>
+    <span class="s2">&quot;treatment_B&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.10</span><span class="p">,</span> <span class="s2">&quot;handle_with_gpt4o_mini_v2_prompt&quot;</span><span class="p">),</span>
+<span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">route_request</span><span class="p">(</span><span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Route a request to a variant using a deterministic hash.</span>
+
+<span class="sd">    Using a hash of session_id (not a random draw) ensures that the SAME</span>
+<span class="sd">    user always gets the SAME variant across multiple turns — critical for</span>
+<span class="sd">    multi-turn conversation quality evaluation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># MD5 is fine here; we need bucketing, not cryptographic security.</span>
+    <span class="n">bucket</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">hashlib</span><span class="o">.</span><span class="n">md5</span><span class="p">(</span><span class="n">session_id</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">(),</span> <span class="mi">16</span><span class="p">)</span> <span class="o">%</span> <span class="mi">1000</span>
+
+    <span class="n">cumulative</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">variant_name</span><span class="p">,</span> <span class="p">(</span><span class="n">weight</span><span class="p">,</span> <span class="n">_handler</span><span class="p">)</span> <span class="ow">in</span> <span class="n">VARIANTS</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">cumulative</span> <span class="o">+=</span> <span class="nb">int</span><span class="p">(</span><span class="n">weight</span> <span class="o">*</span> <span class="mi">1000</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">bucket</span> <span class="o">&lt;</span> <span class="n">cumulative</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">variant_name</span>
+    <span class="k">return</span> <span class="s2">&quot;control&quot;</span>   <span class="c1"># fallback</span>
+</code></pre></div>
+<h3 id="statistical-significance-for-quality-metrics">Statistical significance for quality metrics<a class="headerlink" href="#statistical-significance-for-quality-metrics" title="Permanent link">¶</a></h3>
+<p>Comparing eval scores across two variants with a t-test requires careful sample size planning. Use a two-sample t-test on per-session composite scores:</p>
+<div class="arithmatex">\[
+t = \frac{\bar{X}_A - \bar{X}_B}{\sqrt{s_A^2/n_A + s_B^2/n_B}}
+\]</div>
+<p>A typical LLM quality score (0–1 range) has standard deviation on the order of 0.15–0.25. To detect a 5-percentage-point improvement (<span class="arithmatex">\(\delta = 0.05\)</span>) at 80% power and <span class="arithmatex">\(\alpha = 0.05\)</span>, you need roughly:</p>
+<div class="arithmatex">\[
+n \approx \frac{2 \sigma^2 (z_{\alpha/2} + z_\beta)^2}{\delta^2} = \frac{2 \times 0.04 \times (1.96 + 0.84)^2}{0.0025} \approx 250 \text{ sessions per variant}
+\]</div>
+<p>At 1,000 sessions/day with 10% traffic in the treatment arm, that is 100 sessions/day per variant — plan for 2–3 days before making a decision.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You deploy a new prompt template and want to know if it improves response quality. How do you set up and interpret the A/B test?</p>
+<p><strong>A:</strong> Route a small fraction of traffic (say 10%) to the new template, using session-level hashing for consistency within multi-turn conversations. Collect per-session composite quality scores from your async LLM-as-judge pipeline. After reaching the pre-determined sample size (calculated from expected effect size, variance, and desired power), run a two-sample t-test or Mann-Whitney U test (the latter is more robust to non-normal score distributions). Guard against multiple comparisons if you test several metrics — use Bonferroni correction or pre-register a primary metric. Also track secondary guardrails: latency, cost, error rate. Report lift as both absolute (e.g. +3.2 pp) and relative (+5.1%) with confidence intervals. Only ship if you see statistically significant improvement on the primary metric AND no degradation on guardrails.</p>
+</div>
+<h2 id="langfuse-and-the-llmops-ecosystem">Langfuse and the LLMOps Ecosystem<a class="headerlink" href="#langfuse-and-the-llmops-ecosystem" title="Permanent link">¶</a></h2>
+<p>Langfuse is an open-source LLM observability platform that provides a purpose-built UI for traces, evals, prompt versioning, and datasets. It exposes an OpenAI-compatible SDK decorator and a REST API.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># langfuse_integration.py  —  SDK-level Langfuse tracing</span>
+<span class="c1"># Requirements: langfuse openai</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">langfuse</span><span class="w"> </span><span class="kn">import</span> <span class="n">Langfuse</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">langfuse.decorators</span><span class="w"> </span><span class="kn">import</span> <span class="n">observe</span><span class="p">,</span> <span class="n">langfuse_context</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">openai</span>
+
+<span class="c1"># Langfuse reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST from env</span>
+<span class="n">lf</span> <span class="o">=</span> <span class="n">Langfuse</span><span class="p">()</span>
+
+<span class="nd">@observe</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;rag_pipeline&quot;</span><span class="p">)</span>          <span class="c1"># Creates a trace named &quot;rag_pipeline&quot;</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">run_rag</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="c1"># Update the current trace with metadata (user, session, tags)</span>
+    <span class="n">langfuse_context</span><span class="o">.</span><span class="n">update_current_trace</span><span class="p">(</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">,</span>
+        <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;production&quot;</span><span class="p">,</span> <span class="s2">&quot;rag-v2&quot;</span><span class="p">],</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Retrieval step — appears as a child span</span>
+    <span class="n">docs</span> <span class="o">=</span> <span class="n">retrieve_documents</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+
+    <span class="c1"># LLM call — use the Langfuse-wrapped OpenAI client for automatic token counting</span>
+    <span class="n">client</span> <span class="o">=</span> <span class="n">lf</span><span class="o">.</span><span class="n">get_openai_client</span><span class="p">()</span>     <span class="c1"># wraps openai.OpenAI transparently</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">build_prompt</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">docs</span><span class="p">)}],</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>
+
+
+<span class="nd">@observe</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;retrieve_documents&quot;</span><span class="p">)</span>    <span class="c1"># Child span for retrieval</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">retrieve_documents</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+    <span class="c1"># ... vector DB call ...</span>
+    <span class="k">return</span> <span class="p">[]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_prompt</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">docs</span><span class="p">):</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Context: </span><span class="si">{</span><span class="n">docs</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Question: </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p>Beyond Langfuse, the ecosystem includes:</p>
+<ul>
+<li><strong>Arize Phoenix</strong>: Open-source, strong embedding visualization and drift monitoring; excellent for RAG systems.</li>
+<li><strong>Weights &amp; Biases Weave</strong>: Integrates naturally if you are already using W&amp;B for training; supports traces and evals.</li>
+<li><strong>Helicone</strong>: Proxy-based approach — zero code changes; good for quick cost/latency dashboards.</li>
+<li><strong>Datadog LLM Observability</strong>: Managed, enterprise-grade; integrates with existing Datadog alerts.</li>
+<li><strong>OpenLIT</strong>: OpenTelemetry-native SDK with native GPU metric collection, useful when running self-hosted inference.</li>
+</ul>
+<p>For organizations running self-hosted inference with vLLM or SGLang, expose the OpenAI-compatible <code>/metrics</code> endpoint that these servers natively provide, then scrape with Prometheus. vLLM emits metrics including <code>vllm:num_requests_running</code>, <code>vllm:gpu_cache_usage_perc</code>, and <code>vllm:generation_tokens_total</code> — see <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a> for details.</p>
+<h2 id="the-llmops-lifecycle-and-continuous-improvement">The LLMOps Lifecycle and Continuous Improvement<a class="headerlink" href="#the-llmops-lifecycle-and-continuous-improvement" title="Permanent link">¶</a></h2>
+<p>LLMOps is the practice of operating LLM-powered systems with the same rigor applied to software services. The lifecycle has five phases that cycle continuously.</p>
+<figure class="viz" id="fig-obs-llmops-lifecycle-loop">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 820 520" role="img" aria-label="Cyclic diagram of the five-phase LLMOps lifecycle: Ship (deploy canary), Observe (traces, metrics, logs), Evaluate (sample and judge), Improve (prompt edits, model updates, data fixes), and Retrain/fine-tune, arranged in a clockwise loop with a traveling pulse indicating the continuous improvement cycle.">
+<defs>
+  <marker id="llc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#7c3aed)"/>
+  </marker>
+
+  <filter id="llc-glow" x="-30%" y="-30%" width="160%" height="160%">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
+    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>
+<style>
+  #fig-obs-llmops-lifecycle-loop text { font-family: var(--sans,sans-serif); }
+  #fig-obs-llmops-lifecycle-loop .node-title { font: 700 13px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+  #fig-obs-llmops-lifecycle-loop .node-sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-obs-llmops-lifecycle-loop .badge-num { font: 700 11px var(--sans,sans-serif); fill: #fff; }
+  #fig-obs-llmops-lifecycle-loop .center-title { font: 700 15px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+  #fig-obs-llmops-lifecycle-loop .center-sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+
+  /* traveling pulse dot */
+  #fig-obs-llmops-lifecycle-loop .pulse-dot {
+    r: 7;
+    fill: var(--accent,#7c3aed);
+    filter: url(#llc-glow);
+    opacity: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-obs-llmops-lifecycle-loop .pulse-dot { display: none; }
+  }
+</style>
+
+
+<circle cx="410" cy="270" r="160" fill="none" stroke="var(--border-2,rgba(0,0,0,0.06))" stroke-width="1.5" stroke-dasharray="6 6"/>
+
+
+<g data-anim="1">
+  <text x="410" y="258" text-anchor="middle" class="center-title">LLMOps</text>
+  <text x="410" y="273" text-anchor="middle" class="center-title">Lifecycle</text>
+  <text x="410" y="292" text-anchor="middle" class="center-sub">continuous improvement</text>
+  <text x="410" y="305" text-anchor="middle" class="center-sub">flywheel</text>
+</g>
+
+
+
+<g data-anim="3">
+  <path d="M 278,102 Q 370,68 472,102" fill="none" stroke="var(--accent,#7c3aed)" stroke-width="1.8" marker-end="url(#llc-arrow)"/>
+</g>
+
+
+<g data-anim="3">
+  <path d="M 598,152 Q 668,220 648,278" fill="none" stroke="var(--accent,#7c3aed)" stroke-width="1.8" marker-end="url(#llc-arrow)"/>
+</g>
+
+
+<g data-anim="3">
+  <path d="M 608,340 Q 560,408 510,410" fill="none" stroke="var(--accent,#7c3aed)" stroke-width="1.8" marker-end="url(#llc-arrow)"/>
+</g>
+
+
+<g data-anim="3">
+  <path d="M 308,418 Q 260,408 216,360" fill="none" stroke="var(--accent,#7c3aed)" stroke-width="1.8" marker-end="url(#llc-arrow)"/>
+</g>
+
+
+<g data-anim="3">
+  <path d="M 148,240 Q 130,168 190,120" fill="none" stroke="var(--accent,#7c3aed)" stroke-width="1.8" marker-end="url(#llc-arrow)"/>
+</g>
+
+
+
+<g data-anim="2">
+  <rect x="108" y="82" width="164" height="58" rx="8" fill="var(--accent-soft,rgba(124,58,237,0.12))" stroke="var(--accent,#7c3aed)" stroke-width="1.6"/>
+
+  <circle cx="122" cy="90" r="10" fill="var(--accent,#7c3aed)"/>
+  <text x="122" y="94" text-anchor="middle" class="badge-num">1</text>
+  <text x="196" y="107" text-anchor="middle" class="node-title">Ship</text>
+  <text x="196" y="123" text-anchor="middle" class="node-sub">deploy canary</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="488" y="82" width="170" height="66" rx="8" fill="var(--accent-soft,rgba(124,58,237,0.12))" stroke="var(--accent,#7c3aed)" stroke-width="1.6"/>
+  <circle cx="502" cy="90" r="10" fill="var(--accent,#7c3aed)"/>
+  <text x="502" y="94" text-anchor="middle" class="badge-num">2</text>
+  <text x="573" y="106" text-anchor="middle" class="node-title">Observe</text>
+  <text x="573" y="120" text-anchor="middle" class="node-sub">traces, metrics,</text>
+  <text x="573" y="133" text-anchor="middle" class="node-sub">logs</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="574" y="286" width="164" height="60" rx="8" fill="var(--accent-soft,rgba(124,58,237,0.12))" stroke="var(--accent,#7c3aed)" stroke-width="1.6"/>
+  <circle cx="588" cy="294" r="10" fill="var(--accent,#7c3aed)"/>
+  <text x="588" y="298" text-anchor="middle" class="badge-num">3</text>
+  <text x="656" y="311" text-anchor="middle" class="node-title">Evaluate</text>
+  <text x="656" y="327" text-anchor="middle" class="node-sub">sample + judge</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="270" y="400" width="274" height="70" rx="8" fill="var(--accent-soft,rgba(124,58,237,0.12))" stroke="var(--accent,#7c3aed)" stroke-width="1.6"/>
+  <circle cx="284" cy="408" r="10" fill="var(--accent,#7c3aed)"/>
+  <text x="284" y="412" text-anchor="middle" class="badge-num">4</text>
+  <text x="407" y="424" text-anchor="middle" class="node-title">Improve</text>
+  <text x="407" y="439" text-anchor="middle" class="node-sub">prompt edits, model updates,</text>
+  <text x="407" y="453" text-anchor="middle" class="node-sub">data fixes</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="68" y="272" width="170" height="68" rx="8" fill="var(--accent-soft,rgba(124,58,237,0.12))" stroke="var(--accent,#7c3aed)" stroke-width="1.6"/>
+  <circle cx="82" cy="280" r="10" fill="var(--accent,#7c3aed)"/>
+  <text x="82" y="284" text-anchor="middle" class="badge-num">5</text>
+  <text x="153" y="298" text-anchor="middle" class="node-title">Retrain /</text>
+  <text x="153" y="312" text-anchor="middle" class="node-title">fine-tune</text>
+  <text x="153" y="328" text-anchor="middle" class="node-sub">new model weights</text>
+</g>
+
+
+
+<circle class="pulse-dot" cx="0" cy="0">
+  <animateMotion
+    dur="6s"
+    repeatCount="indefinite"
+    calcMode="spline"
+    keySplines="0.4 0 0.6 1; 0.4 0 0.6 1; 0.4 0 0.6 1; 0.4 0 0.6 1; 0.4 0 0.6 1"
+    path="M 210,111 Q 370,68 560,111 Q 668,220 648,310 Q 580,408 440,430 Q 260,430 216,360 Q 130,240 148,172 Q 165,130 210,111"
+    begin="0s"
+  />
+  <animate attributeName="opacity" values="0;1;1;1;1;1;1;0;0" keyTimes="0;0.04;0.25;0.45;0.62;0.78;0.94;0.97;1" dur="6s" repeatCount="indefinite"/>
+</circle>
+
+</svg>
+<figcaption><b>The LLMOps lifecycle is a never-ending improvement loop.</b> Each phase feeds the next: shipping a canary generates observations, observations feed evaluations, evaluations surface improvements, improvements drive retraining, and the newly trained model ships again — forming a continuous flywheel that accumulates quality gains over time.</figcaption>
+</figure>
+
+<h3 id="phase-1-ship-with-a-canary">Phase 1: Ship with a canary<a class="headerlink" href="#phase-1-ship-with-a-canary" title="Permanent link">¶</a></h3>
+<p>Route 5–10% of traffic to the new version. Monitor error rate, latency P95, and eval composite score. Use automated rollback if any guardrail metric degrades beyond a threshold within the first hour.</p>
+<h3 id="phase-2-observe-continuously">Phase 2: Observe continuously<a class="headerlink" href="#phase-2-observe-continuously" title="Permanent link">¶</a></h3>
+<p>The metrics and trace pipeline described above should be always-on. Build dashboards at three granularities: real-time (1-minute granularity, for incident response), daily (for business-level KPIs), and weekly (for trend and drift analysis).</p>
+<h3 id="phase-3-evaluate-a-curated-sample">Phase 3: Evaluate a curated sample<a class="headerlink" href="#phase-3-evaluate-a-curated-sample" title="Permanent link">¶</a></h3>
+<p>Maintain a <em>golden dataset</em> of 200–500 representative requests with human-authored reference answers. Re-run this dataset against every new model version or prompt change before any canary. Supplement with production samples filtered by the sampling policy above. Track score over time in your experiment tracking tool.</p>
+<h3 id="phase-4-improve-the-data-flywheel">Phase 4: Improve — the data flywheel<a class="headerlink" href="#phase-4-improve-the-data-flywheel" title="Permanent link">¶</a></h3>
+<p>Production logs are a gold mine. Low-rated responses (thumbs-down or low judge score) become negative examples. High-rated responses become positive examples. If your platform supports it (see <a href="../12-production-mlops/05-data-flywheel.html">Data Flywheels &amp; Continuous Improvement</a>), route these curated examples back into your fine-tuning pipeline.</p>
+<p>Prompt improvements are often the fastest wins. Langfuse&rsquo;s prompt management lets you maintain versioned system prompts, A/B test them against production traffic, and roll back instantly — without a code deployment.</p>
+<h3 id="phase-5-retrain-or-fine-tune">Phase 5: Retrain or fine-tune<a class="headerlink" href="#phase-5-retrain-or-fine-tune" title="Permanent link">¶</a></h3>
+<p>After accumulating sufficient labeled production data, fine-tune the model. Track the fine-tuning run in your experiment tracking tool (W&amp;B, MLflow) with all hyperparameters and dataset hashes. Run your golden-dataset eval before and after, and require a statistically significant improvement on the primary metric to promote the new weights.</p>
+<p>For the mechanics of efficient fine-tuning, see <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a>. For the full data-flywheel architecture, see <a href="../12-production-mlops/05-data-flywheel.html">Data Flywheels &amp; Continuous Improvement</a>.</p>
+<h2 id="what-to-monitor-and-alert-on">What to Monitor and Alert On<a class="headerlink" href="#what-to-monitor-and-alert-on" title="Permanent link">¶</a></h2>
+<p>Consolidate your alerting policy into four layers, from raw infrastructure to business impact:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Metric / Signal</th>
+<th>Alert Threshold (example)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Infrastructure</strong></td>
+<td>GPU utilization, memory, host errors</td>
+<td>GPU util &lt; 40% for 10 min (underloaded) or &gt; 95% (saturated)</td>
+</tr>
+<tr>
+<td><strong>Serving</strong></td>
+<td>Request queue depth, TTFT P95, error rate</td>
+<td>TTFT P95 &gt; 3s for 5 min; error rate &gt; 1%</td>
+</tr>
+<tr>
+<td><strong>Quality</strong></td>
+<td>Rolling eval composite score, safety flag rate</td>
+<td>Score drop &gt; 5 pp vs 7-day baseline; safety flags &gt; 0.5%</td>
+</tr>
+<tr>
+<td><strong>Cost</strong></td>
+<td>Hourly USD spend, cost per DAU</td>
+<td>Projected daily cost &gt; 120% of budget</td>
+</tr>
+</tbody>
+</table>
+<p>For multi-turn agentic pipelines (see <a href="../08-agents-harness/02-agentic-loop.html">The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a>), add:
+- <strong>Tool call success rate</strong>: fraction of tool calls that return valid results
+- <strong>Turn count distribution</strong>: unusually high turn counts signal loops or confused planning
+- <strong>Context utilization</strong>: fraction of context window used (approaching the limit is a risk signal)</p>
+<p>For RAG systems (see <a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a>), add:
+- <strong>Retrieval relevance score</strong>: low scores mean the retriever is not finding useful context
+- <strong>No-hit rate</strong>: fraction of queries where no document score exceeds a minimum threshold</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: use composite burn-rate alerts, not fixed thresholds</p>
+<p>Fixed thresholds (alert if score &lt; 0.7) generate alarm fatigue when traffic is noisy. Instead, compute a <em>burn rate</em>: if your error budget allows 1% of responses to be low-quality, alert when the 1-hour burn rate exceeds 2x the budget rate. This is the SRE error-budget model applied to LLM quality, and it dramatically reduces false positives while catching genuine degradations faster.</p>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>LLMOps observability has rapidly matured from ad-hoc logging into a principled discipline: OpenTelemetry GenAI semantic conventions now provide a vendor-neutral standard for LLM spans and metrics, while purpose-built platforms (Langfuse, Arize Phoenix, MLflow Tracing) offer production-grade trace storage, eval pipelines, and drift monitoring. The key challenge in 2025–2026 is scaling these practices to multi-agent systems with complex, nested execution graphs.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://papers.nips.cc/paper/5656-hidden-technical-debt-in-machine-learning-syst">Sculley et al., <em>Hidden Technical Debt in Machine Learning Systems</em> (NeurIPS 2015)</a> — the canonical argument for why monitoring and observability are non-negotiable in any ML system.</li>
+<li><a href="https://arxiv.org/abs/2404.12272">Shankar et al., <em>Who Validates the Validators?</em> (2024)</a> — identifies &ldquo;criteria drift&rdquo; in LLM-as-judge pipelines and proposes a mixed-initiative approach to aligning automated evaluators with human preferences.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/">OpenTelemetry GenAI Semantic Conventions — Spans</a> — the emerging CNCF-backed standard for LLM span attributes (model, token counts, finish reason), now supported by Datadog, Google Cloud, AWS, and Azure.</li>
+<li><a href="https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/">OpenTelemetry GenAI Semantic Conventions — Metrics</a> — companion spec covering client-side metrics including time-to-first-token and throughput, enabling consistent dashboards across providers.</li>
+<li><a href="https://opentelemetry.io/blog/2024/llm-observability/">Jain, <em>An Introduction to Observability for LLM-based Applications using OpenTelemetry</em> (2024)</a> — official OpenTelemetry blog walkthrough for instrumenting LLM apps with OTel and exporting to Prometheus and Jaeger.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/langfuse/langfuse">langfuse/langfuse</a> — open-source LLM engineering platform (YC W23) providing OTel-native tracing, prompt versioning, evals, and datasets; the most widely adopted self-hostable LLMOps stack.</li>
+<li><a href="https://github.com/Arize-ai/phoenix">Arize-ai/phoenix</a> — open-source AI observability platform with strong RAG evaluation, embedding drift visualization, and support for 40+ frameworks via OpenInference traces.</li>
+<li><a href="https://github.com/openlit/openlit">openlit/openlit</a> — OpenTelemetry-native observability SDK that instruments 50+ LLM providers plus NVIDIA GPU metrics with one line of code; good for self-hosted inference.</li>
+<li><a href="https://github.com/wandb/weave">wandb/weave</a> — Weights &amp; Biases toolkit for GenAI tracing and evaluation; integrates naturally with W&amp;B experiment tracking for teams already in that ecosystem.</li>
+<li><a href="https://mlflow.org/docs/latest/genai/tracing/">MLflow Tracing for LLM and Agent Observability</a> — MLflow 3.0 adds fully OTel-compatible tracing for 50+ GenAI libraries, linking traces to code, data, and prompts; 100% open source and self-hosted.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://sre.google/workbook/alerting-on-slos/">Google SRE Workbook — Alerting on SLOs</a> — the multi-window, multi-burn-rate alerting model that LLMOps quality alerting adapts; essential reading for setting alert thresholds that minimize alarm fatigue.</li>
+<li><a href="https://langfuse.com/blog/2024-10-opentelemetry-for-llm-observability">Langfuse blog — OpenTelemetry for LLM Observability (2024)</a> — practitioner analysis of OTel adoption in LLMOps, including the Langfuse OTel Collector and why the industry is converging on OTel as the standard transport layer.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Sculley et al., &ldquo;Hidden Technical Debt in Machine Learning Systems&rdquo; (NIPS 2015)</strong> — the foundational paper on ML system complexity and why monitoring is non-negotiable.</li>
+<li><strong>Shankar et al., &ldquo;Who Validates the Validators? Aligning LLM-Assisted Evaluation of LLM Outputs with Human Preferences&rdquo; (2024)</strong> — on the reliability and calibration of LLM-as-judge pipelines.</li>
+<li><strong>Langfuse</strong> (github.com/langfuse/langfuse) — open-source LLM observability; read the architecture docs for a practical reference implementation.</li>
+<li><strong>Arize Phoenix</strong> (github.com/Arize-ai/phoenix) — OTel-native tracing and embedding drift for LLMs and RAG.</li>
+<li><strong>Google SRE Book, Chapter 5: Eliminating Toil</strong> (sre.google/sre-book) — the error-budget and burn-rate alerting model that LLMOps adapts.</li>
+<li><strong>Klaise et al., &ldquo;Alibi Detect: Algorithms for Outlier, Adversarial and Drift Detection&rdquo; (JMLR 2022)</strong> — statistical toolkit for production drift detection including CUSUM and PSI.</li>
+<li><strong>OpenTelemetry LLM Semantic Conventions</strong> (opentelemetry.io/docs/specs/semconv/gen-ai/) — the emerging standard for LLM span attributes, maintained by the OTel community.</li>
+</ul>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>LLM observability requires all three pillars: distributed <strong>traces</strong> (per-request causal chains), <strong>metrics</strong> (aggregated time-series for TTFT, tokens, cost), and <strong>logs</strong> (verbatim prompts and responses for qualitative debugging).</li>
+<li>Use OpenTelemetry as the vendor-neutral instrumentation layer; export to any backend (Langfuse, Jaeger, Grafana Tempo, Datadog).</li>
+<li>Track TTFT, TPOT, total latency, prompt/completion token counts, and estimated cost per request as your baseline metric set. Use Prometheus histograms, not averages.</li>
+<li>Prompt/response logs are uniquely valuable and uniquely sensitive: hash user IDs, classify by data sensitivity, enforce retention policies, and store in access-controlled object storage — never in plaintext RDBMS.</li>
+<li>Run eval-in-production with strategic sampling (100% of failures, 5–30% of new-template traffic, ~5% of baseline); use an async LLM-as-judge pipeline so eval does not add request latency.</li>
+<li>Detect three kinds of drift: input distribution shift (PSI on prompt embeddings), output quality drift (CUSUM on eval scores), and provider model drift (hourly canary probes).</li>
+<li>A/B test prompt and model changes with session-level hash routing for multi-turn consistency; pre-calculate required sample sizes before launch.</li>
+<li>The LLMOps lifecycle is a closed loop: Ship → Observe → Evaluate → Improve → Retrain. Production logs feed the data flywheel that makes the next version better.</li>
+<li>Prefer burn-rate alerts over fixed thresholds to reduce alarm fatigue while maintaining sensitivity to genuine degradation.</li>
+</ul>
+</div>
+<nav class="page-nav">
+<a class="prev" href="01-serving-system-design.html"><span class="pn-label">← Previous</span><span class="pn-title">Designing an LLM Serving System</span></a>
+<a class="next" href="03-caching-routing-cost.html"><span class="pn-label">Next →</span><span class="pn-title">Caching, Routing &amp; Cost Control in Production</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-three-pillars-traces-metrics-logs">The Three Pillars: Traces, Metrics, Logs</a></li>
+<li class="toc-l2"><a href="#distributed-tracing-with-opentelemetry">Distributed Tracing with OpenTelemetry</a></li>
+<li class="toc-l2"><a href="#token-latency-cost-metrics">Token, Latency &amp;amp; Cost Metrics</a></li>
+<li class="toc-l3"><a href="#the-four-core-llm-metrics">The four core LLM metrics</a></li>
+<li class="toc-l3"><a href="#alerting-thresholds-example-rules">Alerting thresholds (example rules)</a></li>
+<li class="toc-l2"><a href="#prompt-response-logging">Prompt &amp;amp; Response Logging</a></li>
+<li class="toc-l3"><a href="#what-to-log">What to log</a></li>
+<li class="toc-l3"><a href="#privacy-and-data-handling-rules">Privacy and data-handling rules</a></li>
+<li class="toc-l2"><a href="#evaluation-in-production">Evaluation in Production</a></li>
+<li class="toc-l3"><a href="#sampling-strategy">Sampling strategy</a></li>
+<li class="toc-l3"><a href="#async-llm-as-judge-evaluation-pipeline">Async LLM-as-judge evaluation pipeline</a></li>
+<li class="toc-l2"><a href="#drift-detection">Drift Detection</a></li>
+<li class="toc-l3"><a href="#input-drift-covariate-shift">Input drift (covariate shift)</a></li>
+<li class="toc-l3"><a href="#output-quality-drift">Output quality drift</a></li>
+<li class="toc-l3"><a href="#provider-model-version-drift">Provider / model version drift</a></li>
+<li class="toc-l2"><a href="#ab-testing-and-canary-releases">A/B Testing and Canary Releases</a></li>
+<li class="toc-l3"><a href="#traffic-splitting">Traffic splitting</a></li>
+<li class="toc-l3"><a href="#statistical-significance-for-quality-metrics">Statistical significance for quality metrics</a></li>
+<li class="toc-l2"><a href="#langfuse-and-the-llmops-ecosystem">Langfuse and the LLMOps Ecosystem</a></li>
+<li class="toc-l2"><a href="#the-llmops-lifecycle-and-continuous-improvement">The LLMOps Lifecycle and Continuous Improvement</a></li>
+<li class="toc-l3"><a href="#phase-1-ship-with-a-canary">Phase 1: Ship with a canary</a></li>
+<li class="toc-l3"><a href="#phase-2-observe-continuously">Phase 2: Observe continuously</a></li>
+<li class="toc-l3"><a href="#phase-3-evaluate-a-curated-sample">Phase 3: Evaluate a curated sample</a></li>
+<li class="toc-l3"><a href="#phase-4-improve-the-data-flywheel">Phase 4: Improve — the data flywheel</a></li>
+<li class="toc-l3"><a href="#phase-5-retrain-or-fine-tune">Phase 5: Retrain or fine-tune</a></li>
+<li class="toc-l2"><a href="#what-to-monitor-and-alert-on">What to Monitor and Alert On</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

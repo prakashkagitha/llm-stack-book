@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Transformer Block: Norms, Residuals, MLPs &amp; Activations — The LLM Stack</title>
+<meta name="description" content="Residual stream, LayerNorm vs RMSNorm, pre-norm vs post-norm, the FFN/MLP, activation functions (ReLU/GELU/SwiGLU/GeGLU), dropout, the full block wiring. Pre-no">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="active" href="06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part II — The Transformer Architecture</div>
+<h1 id="26-the-transformer-block-norms-residuals-mlps-activations">2.6 The Transformer Block: Norms, Residuals, MLPs &amp; Activations<a class="headerlink" href="#26-the-transformer-block-norms-residuals-mlps-activations" title="Permanent link">¶</a></h1>
+<p>Every modern large language model is, at its heart, a stack of identical <em>transformer blocks</em>. Whether you are reading the weights of GPT-4, Llama 3, Gemma 2, or Mistral, the same four-element recipe repeats dozens or hundreds of times: a normalization step, a self-attention sublayer, another normalization step, and a feed-forward network (FFN) sublayer — all wired together through residual connections. Getting this wiring right is not a detail. It is the reason transformers train stably at scale when many predecessor architectures did not.</p>
+<p>This chapter dissects every component of the transformer block from first principles. We start with the residual stream — the conceptual backbone — then cover the two normalization variants (LayerNorm and RMSNorm), the critical pre-norm versus post-norm distinction, the FFN/MLP sublayer, and modern activation functions (ReLU, GELU, SwiGLU, GeGLU). We close with dropout, the complete block wiring diagram, a heavily commented implementation, and worked numerical examples. If you have already read <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a> and <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>, this chapter completes the picture of how a single layer is assembled. <a href="../02-transformer/07-build-gpt-from-scratch.html">Building a GPT From Scratch (nanoGPT-style)</a> then stacks these blocks into a full model.</p>
+<hr />
+<h2 id="the-residual-stream">The Residual Stream<a class="headerlink" href="#the-residual-stream" title="Permanent link">¶</a></h2>
+<p>Before any formula, the most important mental model: a transformer block does not transform its input — it <em>adds a correction</em> to it.</p>
+<figure class="viz" id="fig-transformer-block">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 700 520" role="img" aria-label="A pre-norm transformer block: a vertical residual stream with two branches — Norm then Multi-Head Attention added back, then Norm then MLP added back.">
+  <defs>
+    <marker id="tb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-transformer-block text{ fill:var(--ink-soft); }
+    #fig-transformer-block .io{ font:700 13px var(--mono,monospace); }
+    #fig-transformer-block .box{ font:600 13px var(--sans,sans-serif); }
+    #fig-transformer-block .sub{ font:500 10.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-transformer-block .note{ font:500 11px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-transformer-block .plus{ font:700 17px var(--sans,sans-serif); }
+    #fig-transformer-block .tag{ font:600 11px var(--sans,sans-serif); }
+  </style>
+
+
+  <g data-anim="1">
+
+    <line x1="250" y1="46" x2="250" y2="474" class="viz-draw" style="--len:430"
+          stroke="var(--accent)" stroke-width="2.6" marker-end="url(#tb-arrow)" color="var(--accent)"/>
+    <text x="250" y="22" text-anchor="middle" class="io" fill="var(--accent)">x  ·  [B, T, d]</text>
+    <text x="250" y="38" text-anchor="middle" class="sub">input — residual stream</text>
+    <text x="250" y="500" text-anchor="middle" class="io" fill="var(--accent)">x″  ·  [B, T, d]</text>
+    <text x="250" y="516" text-anchor="middle" class="sub">output — same shape, ready to stack</text>
+  </g>
+
+
+  <g data-anim="1">
+    <text x="262" y="120" class="tag" fill="var(--accent)">identity</text>
+    <text x="262" y="134" class="tag" fill="var(--accent)">skip path</text>
+  </g>
+
+
+  <g data-anim="2">
+
+    <path d="M250 70 H432" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+
+    <rect x="432" y="56" width="96" height="34" rx="7" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+    <text x="480" y="74" text-anchor="middle" class="box" fill="var(--accent2,#3b82f6)">RMSNorm</text>
+    <text x="480" y="86" text-anchor="middle" class="sub">pre-norm</text>
+
+    <path d="M528 73 H548" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+
+    <rect x="548" y="48" width="132" height="50" rx="7" class="v-fill" stroke="var(--accent)" stroke-width="1.8"/>
+    <text x="614" y="70" text-anchor="middle" class="box" fill="var(--accent)">Multi-Head</text>
+    <text x="614" y="86" text-anchor="middle" class="box" fill="var(--accent)">Self-Attention</text>
+
+    <path d="M614 98 V196 H268" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+    <text x="600" y="150" text-anchor="middle" class="note">F(Norm(x))</text>
+    <text x="600" y="164" text-anchor="middle" class="sub">communication</text>
+  </g>
+
+
+  <g data-anim="2">
+    <circle cx="250" cy="196" r="14" class="v-fill" stroke="var(--accent)" stroke-width="2"/>
+    <text x="250" y="202" text-anchor="middle" class="plus" fill="var(--accent)">+</text>
+    <text x="228" y="184" text-anchor="end" class="sub">x' = x + Attn(Norm(x))</text>
+  </g>
+
+
+  <g data-anim="3">
+
+    <path d="M250 300 H432" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+
+    <rect x="432" y="286" width="96" height="34" rx="7" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+    <text x="480" y="304" text-anchor="middle" class="box" fill="var(--accent2,#3b82f6)">RMSNorm</text>
+    <text x="480" y="316" text-anchor="middle" class="sub">pre-norm</text>
+
+    <path d="M528 303 H548" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+
+    <rect x="548" y="278" width="132" height="50" rx="7" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <text x="614" y="300" text-anchor="middle" class="box" fill="var(--good,#2f9e6e)">MLP / FFN</text>
+    <text x="614" y="316" text-anchor="middle" class="sub">SwiGLU, d_ff ~ 8d/3</text>
+
+    <path d="M614 328 V426 H268" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+    <text x="600" y="380" text-anchor="middle" class="note">F(Norm(x'))</text>
+    <text x="600" y="394" text-anchor="middle" class="sub">computation</text>
+  </g>
+
+
+  <g data-anim="3">
+    <circle cx="250" cy="426" r="14" class="v-fill" stroke="var(--accent)" stroke-width="2"/>
+    <text x="250" y="432" text-anchor="middle" class="plus" fill="var(--accent)">+</text>
+    <text x="228" y="414" text-anchor="end" class="sub">x″ = x' + MLP(Norm(x'))</text>
+  </g>
+
+
+  <g data-anim="3">
+    <text x="262" y="252" class="io" fill="var(--accent)">x'</text>
+  </g>
+
+
+  <g data-anim="4">
+    <path d="M44 70 v-2 a6 6 0 0 1 6 -6 h0 M50 62 v126 M44 196 v2 a6 6 0 0 0 6 6 h0"
+          fill="none" stroke="var(--accent)" stroke-width="1.3" opacity="0.75"/>
+    <text x="36" y="125" text-anchor="middle" class="tag" fill="var(--accent)" transform="rotate(-90 36 125)">attention sublayer</text>
+
+    <path d="M44 300 v-2 a6 6 0 0 1 6 -6 h0 M50 292 v126 M44 426 v2 a6 6 0 0 0 6 6 h0"
+          fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.3" opacity="0.75"/>
+    <text x="36" y="357" text-anchor="middle" class="tag" fill="var(--good,#2f9e6e)" transform="rotate(-90 36 357)">FFN sublayer</text>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="92" y="246" width="120" height="44" rx="8" class="v-fill v-grid" stroke-width="1.1"/>
+    <text x="152" y="264" text-anchor="middle" class="tag">pattern repeats</text>
+    <text x="152" y="280" text-anchor="middle" class="sub">x = x + F(Norm(x))</text>
+  </g>
+</svg>
+<figcaption><b>The pre-norm transformer block: add a correction, never replace.</b> A single residual stream flows straight down the spine; each sublayer <b>reads</b> it through a <b>Norm</b>, transforms it (attention then MLP), and <b>adds a small update back</b>. Normalizing <em>before</em> each sublayer keeps the identity skip path an unbroken gradient highway — the reason deep transformers train stably without warmup.</figcaption>
+</figure>
+
+<p>Formally, if the input to a block is <span class="arithmatex">\(\mathbf{x} \in \mathbb{R}^{T \times d}\)</span> (a sequence of <span class="arithmatex">\(T\)</span> vectors of dimension <span class="arithmatex">\(d\)</span>), and the sublayer function is <span class="arithmatex">\(F\)</span>, the output is:</p>
+<div class="arithmatex">\[
+\mathbf{x}' = \mathbf{x} + F(\mathbf{x})
+\]</div>
+<p>This is a <strong>residual connection</strong> (skip connection), introduced in ResNets (He et al., <em>Deep Residual Learning for Image Recognition</em>, 2015) and adopted wholesale by Vaswani et al. in the original transformer. The residual pattern appears twice per block: once around attention, once around the FFN.</p>
+<h3 id="why-residuals-matter">Why residuals matter<a class="headerlink" href="#why-residuals-matter" title="Permanent link">¶</a></h3>
+<p>Without residuals, a 96-layer network requires every layer to cooperate perfectly to pass signal from input to output. A single near-zero weight matrix suffocates the gradient and the layer &ldquo;dies.&rdquo; With residuals, the <em>identity path</em> is always open; gradients flow backwards through it unimpeded, and each sublayer only needs to learn a small corrective delta. This is why deep transformers converge while deep vanilla MLPs of the same depth do not.</p>
+<p>A useful way to think about this: the model maintains a <em>residual stream</em> — a single vector of dimension <span class="arithmatex">\(d\)</span> that flows from the embedding layer through every block to the output projection. Each attention sublayer and each FFN sublayer <em>reads from</em> the residual stream and <em>writes a small update back to it</em>. Mechanistic interpretability research (Elhage et al., <em>A Mathematical Framework for Transformer Circuits</em>, 2021) formalizes this view and shows that the residual stream is the primary communication channel between layers.</p>
+<h3 id="gradient-flow-through-residuals">Gradient flow through residuals<a class="headerlink" href="#gradient-flow-through-residuals" title="Permanent link">¶</a></h3>
+<p>For a depth-<span class="arithmatex">\(L\)</span> network, the gradient of the loss <span class="arithmatex">\(\mathcal{L}\)</span> with respect to the input <span class="arithmatex">\(\mathbf{x}_0\)</span> expands as:</p>
+<div class="arithmatex">\[
+\frac{\partial \mathcal{L}}{\partial \mathbf{x}_0} = \prod_{l=1}^{L} \left(I + \frac{\partial F_l}{\partial \mathbf{x}_{l-1}}\right) \frac{\partial \mathcal{L}}{\partial \mathbf{x}_L}
+\]</div>
+<p>Because each factor contains the identity matrix <span class="arithmatex">\(I\)</span>, even if the Jacobians <span class="arithmatex">\(\frac{\partial F_l}{\partial \mathbf{x}_{l-1}}\)</span> are small (near zero at initialization), the product never vanishes. Contrast this with a plain chain <span class="arithmatex">\(\prod_l \frac{\partial F_l}{\partial \mathbf{x}_{l-1}}\)</span>, which suffers exponential vanishing or explosion.</p>
+<hr />
+<h2 id="layer-normalization">Layer Normalization<a class="headerlink" href="#layer-normalization" title="Permanent link">¶</a></h2>
+<p>The second pillar of block stability is normalization. We normalize the activations to prevent the mean and variance of the residual stream from drifting arbitrarily large, which would cause saturated activations, exploding attention logits, and loss spikes.</p>
+<h3 id="layernorm">LayerNorm<a class="headerlink" href="#layernorm" title="Permanent link">¶</a></h3>
+<p><strong>Layer Normalization</strong> (Ba et al., <em>Layer Normalization</em>, 2016) normalizes across the <em>feature</em> dimension for each token independently:</p>
+<div class="arithmatex">\[
+\text{LayerNorm}(\mathbf{x}) = \frac{\mathbf{x} - \mu}{\sqrt{\sigma^2 + \epsilon}} \odot \boldsymbol{\gamma} + \boldsymbol{\beta}
+\]</div>
+<p>where, for a single token vector <span class="arithmatex">\(\mathbf{x} \in \mathbb{R}^d\)</span>:</p>
+<div class="arithmatex">\[
+\mu = \frac{1}{d}\sum_{i=1}^{d} x_i, \qquad \sigma^2 = \frac{1}{d}\sum_{i=1}^{d}(x_i - \mu)^2
+\]</div>
+<p>The learnable parameters <span class="arithmatex">\(\boldsymbol{\gamma}, \boldsymbol{\beta} \in \mathbb{R}^d\)</span> (called <em>scale</em> and <em>shift</em> or <em>weight</em> and <em>bias</em>) allow the network to undo the normalization if that turns out to be optimal. Each token is normalized independently of other tokens in the sequence, so LayerNorm is invariant to batch size and to sequence position — critical properties for autoregressive models.</p>
+<p><span class="arithmatex">\(\epsilon\)</span> (typically <span class="arithmatex">\(10^{-5}\)</span> or <span class="arithmatex">\(10^{-6}\)</span>) prevents division by zero and is also beneficial for numerical stability in low-precision regimes (see <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a>).</p>
+<h3 id="rmsnorm">RMSNorm<a class="headerlink" href="#rmsnorm" title="Permanent link">¶</a></h3>
+<p><strong>Root Mean Square Layer Normalization</strong> (Zhang &amp; Sennrich, <em>Root Mean Square Layer Normalization</em>, 2019) drops the mean-centering step entirely:</p>
+<div class="arithmatex">\[
+\text{RMSNorm}(\mathbf{x}) = \frac{\mathbf{x}}{\text{RMS}(\mathbf{x})} \odot \boldsymbol{\gamma}, \qquad \text{RMS}(\mathbf{x}) = \sqrt{\frac{1}{d}\sum_{i=1}^{d} x_i^2 + \epsilon}
+\]</div>
+<p>There is no <span class="arithmatex">\(\boldsymbol{\beta}\)</span> shift term. Llama, Llama 2, Llama 3, Mistral, Gemma, and most modern open-weight models use RMSNorm in place of LayerNorm.</p>
+<p><strong>Why RMSNorm?</strong> Two reasons:</p>
+<ol>
+<li><em>Speed.</em> RMSNorm requires one pass over the vector (to compute the squared sum) instead of two (one for the mean, one for the variance around the mean). In wall-clock terms the savings are modest but meaningful at the million-token-per-second throughputs of large training runs.</li>
+<li><em>Hypothesis: the shift is redundant.</em> If the residual stream already has a near-zero mean (which empirically it often does), the centering step wastes compute without helping. The scale parameter <span class="arithmatex">\(\boldsymbol{\gamma}\)</span> retains the expressive power to rescale each feature.</li>
+</ol>
+<p>The two norms behave identically when <span class="arithmatex">\(\mu \approx 0\)</span>, which is the common case during training.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: LayerNorm vs RMSNorm on a small vector</p>
+<p>Let <span class="arithmatex">\(\mathbf{x} = [1.0,\ 3.0,\ -1.0,\ 5.0]\)</span>, <span class="arithmatex">\(d = 4\)</span>, <span class="arithmatex">\(\epsilon = 0\)</span>, <span class="arithmatex">\(\boldsymbol{\gamma} = \mathbf{1}\)</span>, <span class="arithmatex">\(\boldsymbol{\beta} = \mathbf{0}\)</span>.</p>
+<p><strong>LayerNorm:</strong>
+<span class="arithmatex">\(\mu = (1 + 3 - 1 + 5) / 4 = 2.0\)</span></p>
+<p><span class="arithmatex">\(\sigma^2 = [(1-2)^2 + (3-2)^2 + (-1-2)^2 + (5-2)^2] / 4 = (1 + 1 + 9 + 9) / 4 = 5.0\)</span></p>
+<p><span class="arithmatex">\(\text{std} = \sqrt{5} \approx 2.236\)</span></p>
+<p>Output: <span class="arithmatex">\([-0.447,\ 0.447,\ -1.342,\ 1.342]\)</span>  — zero mean, unit variance.</p>
+<p><strong>RMSNorm:</strong>
+<span class="arithmatex">\(\text{RMS}(\mathbf{x}) = \sqrt{(1 + 9 + 1 + 25) / 4} = \sqrt{9} = 3.0\)</span></p>
+<p>Output: <span class="arithmatex">\([0.333,\ 1.0,\ -0.333,\ 1.667]\)</span>  — rescaled but <em>not</em> zero-mean.</p>
+<p>Note the difference: RMSNorm preserves the offset structure of the vector, only rescaling its overall magnitude.</p>
+</div>
+<hr />
+<h2 id="pre-norm-vs-post-norm">Pre-Norm vs Post-Norm<a class="headerlink" href="#pre-norm-vs-post-norm" title="Permanent link">¶</a></h2>
+<p>The <em>position</em> of the normalization within the residual block is as important as the choice of norm. There are two canonical layouts:</p>
+<figure class="viz" id="fig-tblock-pre-vs-post-norm">
+<svg viewBox="0 0 960 620" role="img" aria-label="Side-by-side comparison of Post-Norm and Pre-Norm residual transformer block layouts, showing where LayerNorm sits relative to the sublayer and the residual add.">
+<defs>
+  <marker id="pn-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+  <marker id="pn-arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#2563eb)"/>
+  </marker>
+</defs>
+<style>
+  #fig-tblock-pre-vs-post-norm text { fill: var(--ink-soft, #0f172a); font-family: var(--sans, sans-serif); }
+  #fig-tblock-pre-vs-post-norm .lbl  { font: 600 13px var(--sans, sans-serif); }
+  #fig-tblock-pre-vs-post-norm .mono { font: 500 11px var(--mono, monospace); }
+  #fig-tblock-pre-vs-post-norm .title{ font: 700 14px var(--sans, sans-serif); }
+  #fig-tblock-pre-vs-post-norm .cap  { font: 400 10.5px var(--sans, sans-serif); fill: var(--muted, #64748b); }
+  #fig-tblock-pre-vs-post-norm .skip-lbl { font: 400 9.5px var(--sans, sans-serif); fill: var(--muted, #64748b); }
+</style>
+
+
+<rect x="12" y="10" width="936" height="278" rx="10"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="330" y="36" text-anchor="middle" class="title">POST-NORM  (original "Attention is All You Need")</text>
+<text x="330" y="53" text-anchor="middle" class="mono" fill="var(--muted,#64748b)">x' = Norm(x + F(x))</text>
+
+
+
+<rect x="22" y="114" width="40" height="28" rx="14"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="42" y="133" text-anchor="middle" class="lbl">x</text>
+
+<line x1="62" y1="128" x2="96" y2="128" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+
+<rect x="98" y="110" width="100" height="36" rx="6"
+      fill="var(--accent2,#dbeafe)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+<text x="148" y="133" text-anchor="middle" class="lbl">Attention</text>
+
+
+<path d="M42 142 Q42 168 80 168 Q185 168 265 168 Q296 168 296 150 Q296 128 296 128"
+      fill="none" stroke="var(--ink-soft,#475569)" stroke-width="1.2"
+      stroke-dasharray="5 3" marker-end="url(#pn-arrow)"/>
+<text x="165" y="181" text-anchor="middle" class="skip-lbl">identity (skip)</text>
+
+
+<line x1="198" y1="128" x2="283" y2="128" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+
+<circle cx="296" cy="128" r="12" fill="var(--accent,#2563eb)"/>
+<text x="296" y="133" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">+</text>
+
+
+<line x1="308" y1="128" x2="348" y2="128" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+
+<rect x="350" y="110" width="96" height="36" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent-2,#d97706)" stroke-width="1.5"/>
+<text x="398" y="133" text-anchor="middle" class="lbl">LayerNorm</text>
+
+
+<line x1="446" y1="128" x2="484" y2="128" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+
+<rect x="486" y="114" width="40" height="28" rx="14"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="506" y="133" text-anchor="middle" class="lbl">x'</text>
+
+
+<text x="398" y="104" text-anchor="middle" class="cap">Norm is AFTER the (+) add</text>
+
+
+<rect x="22" y="212" width="40" height="28" rx="14"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="42" y="231" text-anchor="middle" class="lbl">x'</text>
+
+<line x1="62" y1="226" x2="96" y2="226" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+<rect x="98" y="208" width="100" height="36" rx="6"
+      fill="var(--good,#dcfce7)" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+<text x="148" y="231" text-anchor="middle" class="lbl">FFN</text>
+
+<path d="M42 240 Q42 262 80 262 Q185 262 265 262 Q296 262 296 246 Q296 226 296 226"
+      fill="none" stroke="var(--ink-soft,#475569)" stroke-width="1.2"
+      stroke-dasharray="5 3" marker-end="url(#pn-arrow)"/>
+<text x="165" y="275" text-anchor="middle" class="skip-lbl">identity (skip)</text>
+
+<line x1="198" y1="226" x2="283" y2="226" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+<circle cx="296" cy="226" r="12" fill="var(--accent,#2563eb)"/>
+<text x="296" y="231" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">+</text>
+
+<line x1="308" y1="226" x2="348" y2="226" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+<rect x="350" y="208" width="96" height="36" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent-2,#d97706)" stroke-width="1.5"/>
+<text x="398" y="231" text-anchor="middle" class="lbl">LayerNorm</text>
+
+<line x1="446" y1="226" x2="484" y2="226" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+<rect x="486" y="212" width="44" height="28" rx="14"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="508" y="231" text-anchor="middle" class="lbl">x''</text>
+
+
+<rect x="548" y="108" width="388" height="62" rx="6"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="560" y="127" class="cap">Gradients through skip scale as 1/std of</text>
+<text x="560" y="143" class="cap">residual sum — needs careful LR warmup</text>
+<text x="560" y="159" class="cap" font-style="italic">to survive early training instability.</text>
+
+
+
+<rect x="12" y="310" width="936" height="298" rx="10"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="330" y="336" text-anchor="middle" class="title">PRE-NORM  (GPT-3, Llama, Mistral, …)</text>
+<text x="330" y="353" text-anchor="middle" class="mono" fill="var(--muted,#64748b)">x' = x + F(Norm(x))</text>
+
+
+<rect x="22" y="416" width="40" height="28" rx="14"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="42" y="435" text-anchor="middle" class="lbl">x</text>
+
+<line x1="62" y1="430" x2="98" y2="430" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+
+<rect x="100" y="412" width="76" height="36" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent-2,#d97706)" stroke-width="1.5"/>
+<text x="138" y="435" text-anchor="middle" class="lbl">Norm</text>
+
+<line x1="176" y1="430" x2="212" y2="430" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+
+<rect x="214" y="412" width="100" height="36" rx="6"
+      fill="var(--accent2,#dbeafe)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+<text x="264" y="435" text-anchor="middle" class="lbl">Attention</text>
+
+<line x1="314" y1="430" x2="428" y2="430" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+
+<path d="M42 416 Q42 382 100 376 Q235 369 350 376 Q400 380 440 430"
+      fill="none" stroke="var(--accent,#2563eb)" stroke-width="1.8"
+      stroke-dasharray="6 3" marker-end="url(#pn-arrow-blue)"/>
+<text x="245" y="368" text-anchor="middle" class="skip-lbl" fill="var(--accent,#2563eb)">identity skip (unnormalized) — bypasses Norm entirely</text>
+
+
+<circle cx="440" cy="430" r="12" fill="var(--accent,#2563eb)"/>
+<text x="440" y="435" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">+</text>
+
+<line x1="452" y1="430" x2="490" y2="430" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+
+<rect x="492" y="416" width="40" height="28" rx="14"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="512" y="435" text-anchor="middle" class="lbl">x'</text>
+
+<text x="264" y="460" text-anchor="middle" class="cap">Norm is BEFORE the sublayer</text>
+
+
+<rect x="22" y="521" width="40" height="28" rx="14"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="42" y="540" text-anchor="middle" class="lbl">x'</text>
+
+<line x1="62" y1="535" x2="98" y2="535" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+<rect x="100" y="517" width="76" height="36" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent-2,#d97706)" stroke-width="1.5"/>
+<text x="138" y="540" text-anchor="middle" class="lbl">Norm</text>
+
+<line x1="176" y1="535" x2="212" y2="535" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+<rect x="214" y="517" width="100" height="36" rx="6"
+      fill="var(--good,#dcfce7)" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+<text x="264" y="540" text-anchor="middle" class="lbl">FFN</text>
+
+<line x1="314" y1="535" x2="428" y2="535" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+
+<path d="M42 549 Q42 585 100 590 Q235 596 350 590 Q400 586 440 535"
+      fill="none" stroke="var(--accent,#2563eb)" stroke-width="1.8"
+      stroke-dasharray="6 3" marker-end="url(#pn-arrow-blue)"/>
+<text x="300" y="604" text-anchor="middle" class="skip-lbl" fill="var(--accent,#2563eb)">identity skip (unnormalized) — bypasses Norm entirely</text>
+
+<circle cx="440" cy="535" r="12" fill="var(--accent,#2563eb)"/>
+<text x="440" y="540" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">+</text>
+
+<line x1="452" y1="535" x2="490" y2="535" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#pn-arrow)"/>
+
+<rect x="492" y="521" width="44" height="28" rx="14"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="514" y="540" text-anchor="middle" class="lbl">x''</text>
+
+
+<rect x="548" y="415" width="388" height="62" rx="6"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="560" y="434" class="cap">Skip carries raw x: clean unit-variance gradient</text>
+<text x="560" y="450" class="cap">highway — stable training, no warmup needed.</text>
+<text x="560" y="466" class="cap" font-style="italic">Xiong et al., 2020; Llama, Mistral, GPT-3.</text>
+
+</svg>
+<figcaption><b>Post-Norm places LayerNorm after the residual add; Pre-Norm places it before the sublayer.</b> In Post-Norm (top), the gradient through the skip path scales as 1/std of the residual sum, requiring careful learning-rate warmup. In Pre-Norm (bottom), the dashed blue skip carries raw, unnormalized x directly to the add node, providing a clean unit-variance gradient highway that makes training stable without warmup — the reason GPT-3, Llama, and Mistral all use Pre-Norm.</figcaption>
+</figure>
+
+<p>In post-norm, normalization is applied <em>after</em> the residual addition: <span class="arithmatex">\(\mathbf{x}' = \text{Norm}(\mathbf{x} + F(\mathbf{x}))\)</span>. In pre-norm, normalization is applied <em>before</em> the sublayer: <span class="arithmatex">\(\mathbf{x}' = \mathbf{x} + F(\text{Norm}(\mathbf{x}))\)</span>.</p>
+<h3 id="why-pre-norm-dominates-modern-training">Why pre-norm dominates modern training<a class="headerlink" href="#why-pre-norm-dominates-modern-training" title="Permanent link">¶</a></h3>
+<p>The original transformer used post-norm with learning rate warmup because post-norm is unstable at initialization. Here is the mechanical reason:</p>
+<p>At initialization <span class="arithmatex">\(F(\mathbf{x}) \approx \mathbf{0}\)</span>, so <span class="arithmatex">\(\mathbf{x} + F(\mathbf{x}) \approx \mathbf{x}\)</span>. The variance of the residual sum is dominated by the variance of the skip path. In post-norm, the normalization then divides by this variance, which is fine. But the <em>gradients</em> of the loss with respect to the pre-norm input scale as <span class="arithmatex">\(1/\text{std}\)</span>, and std can vary wildly early in training when the sublayer outputs are small. This creates extremely large gradients through the normalization, requiring careful warmup to survive.</p>
+<p>In pre-norm, the normalization acts on <span class="arithmatex">\(\mathbf{x}\)</span> <em>before</em> <span class="arithmatex">\(F\)</span>, stabilizing the input to <span class="arithmatex">\(F\)</span> regardless of what <span class="arithmatex">\(F\)</span> outputs. Crucially, the residual skip path (<span class="arithmatex">\(\mathbf{x}\)</span> itself, unnormalized) always contributes a unit-variance gradient path backward. This means pre-norm transformers train stably even without warmup and tolerate much larger learning rates (Xiong et al., <em>On Layer Normalization in the Transformer Architecture</em>, 2020).</p>
+<p>A subtlety worth knowing: because the last block&rsquo;s output is not normalized before the final linear projection in pre-norm, most modern architectures add a <em>final LayerNorm/RMSNorm</em> after the last transformer block. GPT-2 (<code>ln_f</code>), Llama (<code>norm</code>), and others all do this.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Why do modern LLMs like Llama use pre-norm with RMSNorm instead of post-norm with LayerNorm as in the original transformer paper?</p>
+<p><strong>A:</strong> Two independent improvements were combined. Pre-norm (normalizing before the sublayer rather than after) places the normalization on the input rather than on the residual sum, which stabilizes gradients at initialization and removes the need for careful learning rate warmup. The identity skip path in pre-norm guarantees a clean gradient highway of magnitude 1, whereas post-norm gradients scale as <span class="arithmatex">\(1/\text{std}\)</span> of the residual sum, which can be large and noisy early in training. RMSNorm replaces LayerNorm for efficiency: it drops the mean-centering step (one fewer pass over the vector), uses no bias parameter, and achieves near-identical training loss in practice. Together, these two changes make training faster and more robust without any measurable quality loss.</p>
+</div>
+<hr />
+<h2 id="the-feed-forward-network-ffn-sublayer">The Feed-Forward Network (FFN) Sublayer<a class="headerlink" href="#the-feed-forward-network-ffn-sublayer" title="Permanent link">¶</a></h2>
+<p>The FFN (also called the MLP sublayer) provides the &ldquo;storage&rdquo; and nonlinear processing complement to the &ldquo;routing&rdquo; performed by attention. Each token&rsquo;s residual stream vector is processed <em>independently</em> — there is no cross-token interaction in the FFN, making it embarrassingly parallelizable along the sequence dimension.</p>
+<h3 id="standard-two-layer-ffn">Standard two-layer FFN<a class="headerlink" href="#standard-two-layer-ffn" title="Permanent link">¶</a></h3>
+<p>The classic FFN is a two-layer MLP with an inner dimension <span class="arithmatex">\(d_\text{ff}\)</span>:</p>
+<div class="arithmatex">\[
+\text{FFN}(\mathbf{x}) = W_2 \cdot \phi(W_1 \mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2
+\]</div>
+<p>where <span class="arithmatex">\(W_1 \in \mathbb{R}^{d_\text{ff} \times d}\)</span>, <span class="arithmatex">\(W_2 \in \mathbb{R}^{d \times d_\text{ff}}\)</span>, and <span class="arithmatex">\(\phi\)</span> is a pointwise activation function. The original transformer used <span class="arithmatex">\(d_\text{ff} = 4d\)</span>, and this <span class="arithmatex">\(4\times\)</span> ratio remains the most common choice. For GPT-3 with <span class="arithmatex">\(d = 12{,}288\)</span>, the FFN expansion is <span class="arithmatex">\(d_\text{ff} = 49{,}152\)</span>.</p>
+<p>The FFN accounts for roughly two-thirds of the total parameter count of a decoder-only transformer (attention contributes roughly one-third), making it the single biggest parameter block. Research on FFNs as key-value memories (Geva et al., <em>Transformer Feed-Forward Layers Are Key-Value Memories</em>, 2021) suggests each FFN neuron stores a pattern-to-value association: the first matrix <span class="arithmatex">\(W_1\)</span> identifies patterns and the second matrix <span class="arithmatex">\(W_2\)</span> retrieves associated information.</p>
+<h3 id="parameter-count-worked-example">Parameter count worked example<a class="headerlink" href="#parameter-count-worked-example" title="Permanent link">¶</a></h3>
+<p>For a Llama 2 7B block with <span class="arithmatex">\(d = 4{,}096\)</span> and the gated FFN described below with <span class="arithmatex">\(d_\text{ff} = 11{,}008\)</span>:</p>
+<ul>
+<li><span class="arithmatex">\(W_\text{gate}\)</span>: <span class="arithmatex">\(4{,}096 \times 11{,}008 = 45.1\text{M}\)</span> parameters</li>
+<li><span class="arithmatex">\(W_\text{up}\)</span>: <span class="arithmatex">\(4{,}096 \times 11{,}008 = 45.1\text{M}\)</span> parameters</li>
+<li><span class="arithmatex">\(W_\text{down}\)</span>: <span class="arithmatex">\(11{,}008 \times 4{,}096 = 45.1\text{M}\)</span> parameters</li>
+<li>Total per FFN: <span class="arithmatex">\(\approx 135\text{M}\)</span></li>
+</ul>
+<p>Multiplied across 32 blocks: <span class="arithmatex">\(\approx 4.3\text{B}\)</span> parameters — about 62% of the model&rsquo;s 7B total.</p>
+<hr />
+<h2 id="activation-functions-from-relu-to-swiglu">Activation Functions: From ReLU to SwiGLU<a class="headerlink" href="#activation-functions-from-relu-to-swiglu" title="Permanent link">¶</a></h2>
+<h3 id="relu-and-its-successors">ReLU and its successors<a class="headerlink" href="#relu-and-its-successors" title="Permanent link">¶</a></h3>
+<p>The original transformer used ReLU: <span class="arithmatex">\(\phi(x) = \max(0, x)\)</span>. ReLU is fast, sparse, and interpretable, but it produces dead neurons (units that output exactly zero for all inputs after a bad gradient update), which can reduce effective capacity.</p>
+<p><strong>GELU</strong> (Gaussian Error Linear Unit; Hendrycks &amp; Gimpel, 2016) smooths the hard zero threshold:</p>
+<div class="arithmatex">\[
+\text{GELU}(x) = x \cdot \Phi(x) = x \cdot \frac{1}{2}\left[1 + \text{erf}\!\left(\frac{x}{\sqrt{2}}\right)\right]
+\]</div>
+<p>where <span class="arithmatex">\(\Phi\)</span> is the cumulative distribution function of the standard normal. GELU is approximately <span class="arithmatex">\(x\sigma(1.702x)\)</span> and can be efficiently approximated as <span class="arithmatex">\(0.5x(1 + \tanh(\sqrt{2/\pi}(x + 0.044715x^3)))\)</span>. BERT, GPT-2, and GPT-3 all used GELU. Its smooth, stochastic-looking gate (the unit &ldquo;decides&rdquo; probabilistically whether to propagate the input) empirically outperforms ReLU on most language tasks.</p>
+<h3 id="gated-linear-units-and-swiglu">Gated Linear Units and SwiGLU<a class="headerlink" href="#gated-linear-units-and-swiglu" title="Permanent link">¶</a></h3>
+<p>A class of <em>gated</em> activations uses an elementwise product to implement a soft gate:</p>
+<div class="arithmatex">\[
+\text{GLU}(x, W, V, b, c) = \sigma(xW + b) \odot (xV + c)
+\]</div>
+<p>where <span class="arithmatex">\(\sigma\)</span> is the sigmoid. Dauphin et al. (<em>Language Modeling with Gated Convolutional Networks</em>, 2017) introduced GLUs for convolutions; the idea transfers cleanly to transformers.</p>
+<p><strong>SwiGLU</strong> (Shazeer, 2020) replaces sigmoid with Swish (<span class="arithmatex">\(\text{Swish}(x) = x \cdot \sigma(x) = x / (1 + e^{-x})\)</span>):</p>
+<div class="arithmatex">\[
+\text{SwiGLU}(x, W, V) = \text{Swish}(xW) \odot (xV)
+\]</div>
+<p>The full SwiGLU FFN sublayer thus has <em>three</em> weight matrices instead of two:</p>
+<div class="arithmatex">\[
+\text{FFN}_\text{SwiGLU}(\mathbf{x}) = W_\text{down}\big(\text{Swish}(W_\text{gate}\mathbf{x}) \odot (W_\text{up}\mathbf{x})\big)
+\]</div>
+<p>To keep parameter count and FLOPs comparable to the standard <span class="arithmatex">\(4d\)</span> expansion, the inner dimension is reduced to <span class="arithmatex">\(\frac{2}{3} \times 4d \approx \frac{8d}{3}\)</span>, rounded to a multiple of 64 for hardware efficiency. In Llama 2 7B this gives <span class="arithmatex">\(d_\text{ff} = 11{,}008\)</span> from <span class="arithmatex">\(\frac{8 \times 4096}{3} = 10{,}922.7 \to 11{,}008\)</span>.</p>
+<p><strong>GeGLU</strong> is the same idea with GELU instead of Swish: <span class="arithmatex">\(\text{GeGLU}(x, W, V) = \text{GELU}(xW) \odot (xV)\)</span>. Gemma 2 uses GeGLU.</p>
+<h3 id="why-gated-activations-work">Why gated activations work<a class="headerlink" href="#why-gated-activations-work" title="Permanent link">¶</a></h3>
+<p>The intuition: the gate <span class="arithmatex">\(\text{Swish}(W_\text{gate}\mathbf{x})\)</span> can <em>suppress</em> entire features (output near zero) when the input pattern is not relevant, while the value path <span class="arithmatex">\(W_\text{up}\mathbf{x}\)</span> determines <em>what</em> to write when the gate is open. This is conceptually similar to the forget/input gates of an LSTM, but computed in a single feedforward pass without recurrence. Empirically, SwiGLU and GeGLU consistently outperform GELU and ReLU at the same parameter count on language modeling benchmarks.</p>
+<figure class="viz" id="fig-tblock-activation-curves">
+<svg viewBox="0 0 900 460" role="img" aria-label="Left: plotted curves of ReLU, GELU, and Swish activation functions on a shared axis. Right: SwiGLU two-path gate-times-value schematic.">
+<defs>
+  <marker id="ac-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+  <marker id="ac-arrow-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#16a34a)"/>
+  </marker>
+  <marker id="ac-arrow-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#2563eb)"/>
+  </marker>
+  <clipPath id="ac-plot-clip">
+    <rect x="52" y="28" width="490" height="390"/>
+  </clipPath>
+</defs>
+<style>
+  #fig-tblock-activation-curves text { fill: var(--ink-soft,#0f172a); font-family: var(--sans,sans-serif); }
+  #fig-tblock-activation-curves .lbl  { font: 600 13px var(--sans,sans-serif); }
+  #fig-tblock-activation-curves .mono { font: 500 11px var(--mono,monospace); }
+  #fig-tblock-activation-curves .axis-lbl { font: 400 10px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-tblock-activation-curves .cap  { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-tblock-activation-curves .title{ font: 700 13px var(--sans,sans-serif); }
+  #fig-tblock-activation-curves .leg  { font: 500 11px var(--sans,sans-serif); }
+</style>
+
+
+
+
+<rect x="10" y="10" width="548" height="438" rx="8"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+
+
+
+
+<g stroke="var(--border-2,#e2e8f0)" stroke-width="0.8" stroke-dasharray="3 3">
+
+  <line x1="52"  y1="28" x2="52"  y2="418"/>
+  <line x1="169" y1="28" x2="169" y2="418"/>
+  <line x1="286" y1="28" x2="286" y2="418"/>
+  <line x1="403" y1="28" x2="403" y2="418"/>
+  <line x1="520" y1="28" x2="520" y2="418"/>
+
+  <line x1="52" y1="379" x2="520" y2="379"/>
+  <line x1="52" y1="301" x2="520" y2="301"/>
+  <line x1="52" y1="223" x2="520" y2="223"/>
+  <line x1="52" y1="145" x2="520" y2="145"/>
+  <line x1="52" y1="67"  x2="520" y2="67"/>
+</g>
+
+
+
+<line x1="48" y1="379" x2="524" y2="379" stroke="var(--ink-soft,#475569)" stroke-width="1.4" marker-end="url(#ac-arrow)"/>
+
+<line x1="286" y1="422" x2="286" y2="24" stroke="var(--ink-soft,#475569)" stroke-width="1.4" marker-end="url(#ac-arrow)"/>
+
+
+<text x="52"  y="393" text-anchor="middle" class="axis-lbl">-4</text>
+<text x="169" y="393" text-anchor="middle" class="axis-lbl">-2</text>
+<text x="286" y="393" text-anchor="middle" class="axis-lbl">0</text>
+<text x="403" y="393" text-anchor="middle" class="axis-lbl">2</text>
+<text x="520" y="393" text-anchor="middle" class="axis-lbl">4</text>
+<text x="536" y="382" text-anchor="start" class="axis-lbl">x</text>
+
+<text x="271" y="379" text-anchor="end" class="axis-lbl">0</text>
+<text x="271" y="301" text-anchor="end" class="axis-lbl">1</text>
+<text x="271" y="223" text-anchor="end" class="axis-lbl">2</text>
+<text x="271" y="145" text-anchor="end" class="axis-lbl">3</text>
+<text x="271" y="67"  text-anchor="end" class="axis-lbl">4</text>
+<text x="290" y="24"  text-anchor="start" class="axis-lbl">phi(x)</text>
+
+
+<g clip-path="url(#ac-plot-clip)">
+<polyline points="52,379 286,379 520,67"
+  fill="none" stroke="var(--muted,#94a3b8)" stroke-width="2" stroke-dasharray="6 3"/>
+
+
+<polyline points="
+  52,379.01 81.2,379.06 110.5,379.32 139.8,380.21 169,382.55 198.2,386.82
+  227.5,391.38 242.1,392.26 256.8,391.03 271.4,386.83 286,379
+  300.6,367.33 315.2,352.03 329.9,333.76 344.5,313.38 373.8,269.82
+  403,226.55 432.2,185.21 461.5,145.32 490.8,106.06 520,67.01"
+  fill="none" stroke="var(--accent,#2563eb)" stroke-width="2.5" stroke-linejoin="round"/>
+
+
+<polyline points="
+  52,384.61 81.2,387 110.5,390.1 139.8,393.79 169,397.6 198.2,400.34
+  227.5,399.98 242.1,397.77 256.8,393.72 271.4,387.54 286,379
+  300.6,368.04 315.2,354.72 329.9,339.27 344.5,321.98 373.8,283.34
+  403,241.6 432.2,198.79 461.5,156.1 490.8,114 520,72.61"
+  fill="none" stroke="var(--good,#16a34a)" stroke-width="2.5" stroke-linejoin="round"/>
+</g>
+
+
+<line x1="211" y1="400" x2="211" y2="406" stroke="var(--good,#16a34a)" stroke-width="1"/>
+<text x="124" y="411" text-anchor="middle" class="cap" fill="var(--good,#16a34a)">Swish min ~ -0.28</text>
+<line x1="242" y1="392" x2="242" y2="406" stroke="var(--accent,#2563eb)" stroke-width="1"/>
+<text x="372" y="411" text-anchor="middle" class="cap" fill="var(--accent,#2563eb)">GELU min ~ -0.17</text>
+
+
+<rect x="60" y="34" width="258" height="82" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+<line x1="70" y1="50" x2="94" y2="50" stroke="var(--muted,#94a3b8)" stroke-width="2" stroke-dasharray="5 3"/>
+<text x="100" y="54" class="leg" fill="var(--muted,#64748b)">ReLU  max(0,x) — hard threshold</text>
+
+<line x1="70" y1="70" x2="94" y2="70" stroke="var(--accent,#2563eb)" stroke-width="2.5"/>
+<text x="100" y="74" class="leg" fill="var(--accent,#2563eb)">GELU — smooth, no dead neurons</text>
+
+<line x1="70" y1="90" x2="94" y2="90" stroke="var(--good,#16a34a)" stroke-width="2.5"/>
+<text x="100" y="94" class="leg" fill="var(--good,#16a34a)">Swish x*sigma(x) — deeper neg. lobe</text>
+
+
+<rect x="566" y="10" width="322" height="438" rx="8"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+
+<text x="727" y="36" text-anchor="middle" class="title">SwiGLU: gate × value</text>
+<text x="727" y="52" text-anchor="middle" class="cap">Not a single curve — a two-path product</text>
+<text x="727" y="65" text-anchor="middle" class="mono" fill="var(--muted,#64748b)">W_down(Swish(W_gate x) o (W_up x))</text>
+
+
+<rect x="700" y="78" width="54" height="28" rx="14"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="727" y="97" text-anchor="middle" class="lbl">x</text>
+
+
+
+<line x1="710" y1="106" x2="668" y2="148" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ac-arrow)"/>
+
+<line x1="744" y1="106" x2="782" y2="148" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ac-arrow)"/>
+
+
+<rect x="608" y="150" width="100" height="34" rx="6"
+      fill="var(--good,#dcfce7)" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+<text x="658" y="172" text-anchor="middle" class="lbl">W_gate x</text>
+<text x="658" y="144" text-anchor="middle" class="cap" fill="var(--muted,#64748b)">gate branch</text>
+
+
+<rect x="744" y="150" width="90" height="34" rx="6"
+      fill="var(--accent2,#dbeafe)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+<text x="789" y="172" text-anchor="middle" class="lbl">W_up x</text>
+<text x="789" y="144" text-anchor="middle" class="cap" fill="var(--muted,#64748b)">value branch</text>
+
+
+<line x1="658" y1="184" x2="658" y2="222" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ac-arrow)"/>
+
+
+<rect x="608" y="224" width="100" height="34" rx="6"
+      fill="var(--good,#dcfce7)" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+<text x="658" y="246" text-anchor="middle" class="lbl">Swish( · )</text>
+
+
+<line x1="789" y1="184" x2="789" y2="222" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ac-arrow)"/>
+
+
+<rect x="744" y="224" width="90" height="34" rx="6"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="789" y="246" text-anchor="middle" class="lbl">identity</text>
+
+
+<line x1="658" y1="258" x2="700" y2="296" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ac-arrow)"/>
+<line x1="789" y1="258" x2="754" y2="296" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ac-arrow)"/>
+
+
+<circle cx="727" cy="308" r="16" fill="var(--accent,#2563eb)"/>
+<text x="727" y="314" text-anchor="middle" font-size="18" font-weight="700" fill="#fff">x</text>
+<text x="727" y="286" text-anchor="middle" class="cap">elementwise gate</text>
+
+
+<line x1="727" y1="324" x2="727" y2="358" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ac-arrow)"/>
+
+
+<rect x="672" y="360" width="110" height="34" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent-2,#d97706)" stroke-width="1.5"/>
+<text x="727" y="382" text-anchor="middle" class="lbl">W_down</text>
+
+
+<line x1="727" y1="394" x2="727" y2="420" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ac-arrow)"/>
+
+
+<rect x="672" y="422" width="110" height="28" rx="14"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="727" y="441" text-anchor="middle" class="lbl">FFN(x)</text>
+
+
+<text x="727" y="350" text-anchor="middle" class="cap">gate ~ 0: feature suppressed</text>
+
+</svg>
+<figcaption><b>ReLU, GELU, and Swish compared, with SwiGLU shown as a two-path gate.</b> ReLU (gray dashed) has a hard zero threshold and can produce dead neurons. GELU (blue) and Swish (green) are smooth everywhere and dip slightly below zero in the negative region — Swish's lobe is deeper (~-0.28 vs GELU's ~-0.17). SwiGLU (right) is architecturally different: the gate branch applies Swish and the value branch is linear; their elementwise product lets the network suppress irrelevant features entirely, which is why SwiGLU and GeGLU consistently outperform plain activations on language tasks.</figcaption>
+</figure>
+
+<hr />
+<h2 id="dropout-in-the-transformer-block">Dropout in the Transformer Block<a class="headerlink" href="#dropout-in-the-transformer-block" title="Permanent link">¶</a></h2>
+<p>Dropout (Srivastava et al., <em>Dropout: A Simple Way to Prevent Neural Networks from Overfitting</em>, 2014) is applied at two points in the classic transformer block:</p>
+<ol>
+<li>After the attention weights (before the weighted sum over values) — <em>attention dropout</em>.</li>
+<li>After each sublayer&rsquo;s output, before the residual addition — <em>residual dropout</em>.</li>
+</ol>
+<p>During pretraining of large models on large datasets, dropout is often set to 0.0 — the models are underfit, not overfit, and dropout hurts loss. GPT-3 used <span class="arithmatex">\(p = 0.1\)</span>; Llama and subsequent models use <span class="arithmatex">\(p = 0.0\)</span> during pretraining and may introduce small dropout during fine-tuning.</p>
+<p>If you train on small datasets or fine-tune with very few samples, residual dropout of 0.05–0.1 remains a useful regularizer. See <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a> for fine-tuning configurations.</p>
+<hr />
+<h2 id="the-complete-transformer-block-wiring-diagram">The Complete Transformer Block: Wiring Diagram<a class="headerlink" href="#the-complete-transformer-block-wiring-diagram" title="Permanent link">¶</a></h2>
+<p>Here is the full pre-norm transformer block with SwiGLU and RMSNorm, as used in the Llama family:</p>
+<figure class="viz" id="fig-tblock-complete-wiring">
+<style>
+  #fig-tblock-complete-wiring .lbl    { font: 600 13px var(--sans,sans-serif); }
+  #fig-tblock-complete-wiring .lbl-sm { font: 600 11px var(--sans,sans-serif); }
+  #fig-tblock-complete-wiring .lbl-xs { font: 500 10px var(--sans,sans-serif); }
+  #fig-tblock-complete-wiring .dim    { font: 400 10px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-tblock-complete-wiring .sk     { font: 600 10px var(--sans,sans-serif); fill: var(--warn,#e0a106); }
+  #fig-tblock-complete-wiring text    { fill: var(--ink-soft,#334155); }
+  #fig-tblock-complete-wiring .wt     { fill: #fff; }
+  #fig-tblock-complete-wiring .dt     { fill: var(--ink-soft,#334155); }
+  #fig-tblock-complete-wiring .mt     { fill: var(--muted,#94a3b8); }
+</style>
+<svg viewBox="0 0 800 750" role="img"
+     aria-label="Complete pre-norm transformer block wiring. Input x passes through RMSNorm and Multi-Head Self-Attention, with an identity skip adding at a plus node to form x_attn. Then x_attn passes through RMSNorm and a SwiGLU FFN block (W_gate through Swish gated by W_up through identity at elementwise product, then W_down), with a second identity skip adding at a second plus to produce x_out with the same shape.">
+  <defs>
+    <marker id="tc-ar" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1.5 L9 5 L0 8.5 z" fill="var(--ink-soft,#334155)"/>
+    </marker>
+    <marker id="tc-sk" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1.5 L9 5 L0 8.5 z" fill="var(--warn,#e0a106)"/>
+    </marker>
+  </defs>
+
+
+  <text x="240" y="16" text-anchor="middle" class="lbl-xs mt">shape preserved: in [batch,T,d] -> out [batch,T,d]</text>
+
+
+  <polygon points="72,24 348,24 338,52 82,52"
+           fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="210" y="43" text-anchor="middle" class="lbl dt">Input x  [batch, T, d]</text>
+
+
+  <polyline points="338,38 600,38 600,256"
+            fill="none" stroke="var(--warn,#e0a106)" stroke-width="2.2"
+            marker-end="url(#tc-sk)"/>
+
+  <text x="611" y="147" class="sk">identity</text>
+  <text x="611" y="159" class="sk">(skip)</text>
+
+
+  <line x1="210" y1="52" x2="210" y2="80"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#tc-ar)"/>
+
+
+  <rect x="130" y="80" width="160" height="36" rx="8"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.18"
+        stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="210" y="103" text-anchor="middle" class="lbl dt">RMSNorm</text>
+
+
+  <line x1="210" y1="116" x2="210" y2="141"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#tc-ar)"/>
+
+
+  <rect x="90" y="141" width="240" height="40" rx="8"
+        fill="var(--accent,#2563eb)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+  <text x="210" y="166" text-anchor="middle" class="lbl wt">Multi-Head Self-Attention</text>
+
+
+
+  <rect x="352" y="149" width="168" height="26" rx="6"
+        fill="none" stroke="var(--muted,#94a3b8)" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="436" y="166" text-anchor="middle" class="lbl-xs mt">(optional attn dropout)</text>
+
+
+  <line x1="210" y1="181" x2="210" y2="236"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#tc-ar)"/>
+
+
+  <circle cx="210" cy="256" r="17"
+          fill="var(--surface,#f8fafc)" stroke="var(--ink-soft,#334155)" stroke-width="2"/>
+  <text x="210" y="262" text-anchor="middle" class="lbl dt" style="font-size:17px">+</text>
+  <text x="234" y="252" class="dim">x_attn  (after residual add)</text>
+
+
+  <polyline points="227,256 700,256 700,651"
+            fill="none" stroke="var(--warn,#e0a106)" stroke-width="2.2"
+            marker-end="url(#tc-sk)"/>
+
+  <text x="711" y="455" class="sk">identity</text>
+  <text x="711" y="467" class="sk">(skip)</text>
+
+
+  <line x1="210" y1="273" x2="210" y2="299"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#tc-ar)"/>
+
+
+  <rect x="130" y="299" width="160" height="36" rx="8"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.18"
+        stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="210" y="322" text-anchor="middle" class="lbl dt">RMSNorm</text>
+
+
+  <line x1="210" y1="335" x2="210" y2="354"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.8"/>
+
+
+  <rect x="78" y="351" width="340" height="248" rx="10"
+        fill="var(--surface,#f8fafc)" fill-opacity="0.45"
+        stroke="var(--border-2,#94a3b8)" stroke-width="1.4" stroke-dasharray="6 3"/>
+  <text x="248" y="370" text-anchor="middle" class="lbl-sm mt">SwiGLU FFN</text>
+
+
+  <line x1="210" y1="354" x2="158" y2="393"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.6" marker-end="url(#tc-ar)"/>
+  <line x1="210" y1="354" x2="308" y2="393"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.6" marker-end="url(#tc-ar)"/>
+
+
+  <rect x="108" y="393" width="100" height="32" rx="6"
+        fill="var(--accent,#2563eb)" stroke="var(--accent,#2563eb)" stroke-width="1.2"/>
+  <text x="158" y="414" text-anchor="middle" class="lbl-sm wt">W_gate</text>
+
+
+  <rect x="258" y="393" width="100" height="32" rx="6"
+        fill="var(--accent,#2563eb)" stroke="var(--accent,#2563eb)" stroke-width="1.2"/>
+  <text x="308" y="414" text-anchor="middle" class="lbl-sm wt">W_up</text>
+
+
+  <line x1="158" y1="425" x2="158" y2="445"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.6" marker-end="url(#tc-ar)"/>
+
+  <line x1="308" y1="425" x2="308" y2="445"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.6" marker-end="url(#tc-ar)"/>
+
+
+  <rect x="108" y="445" width="100" height="30" rx="6"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.22"
+        stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+  <text x="158" y="465" text-anchor="middle" class="lbl-sm dt">Swish</text>
+
+
+  <rect x="258" y="445" width="100" height="30" rx="6"
+        fill="none" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="308" y="465" text-anchor="middle" class="lbl-xs mt" font-style="italic">identity</text>
+
+
+  <path d="M 158 475 Q 158 502 220 508"
+        fill="none" stroke="var(--ink-soft,#334155)" stroke-width="1.6"
+        marker-end="url(#tc-ar)"/>
+  <path d="M 308 475 Q 308 502 246 508"
+        fill="none" stroke="var(--ink-soft,#334155)" stroke-width="1.6"
+        marker-end="url(#tc-ar)"/>
+
+
+  <circle cx="233" cy="514" r="15"
+          fill="var(--surface,#f8fafc)" stroke="var(--ink-soft,#334155)" stroke-width="2"/>
+  <text x="233" y="520" text-anchor="middle" class="lbl dt" style="font-size:13px">(*)</text>
+  <text x="253" y="530" class="lbl-xs mt">elementwise gate</text>
+
+
+  <line x1="233" y1="529" x2="233" y2="546"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.6" marker-end="url(#tc-ar)"/>
+
+
+  <rect x="178" y="546" width="110" height="32" rx="6"
+        fill="var(--accent,#2563eb)" stroke="var(--accent,#2563eb)" stroke-width="1.2"/>
+  <text x="233" y="567" text-anchor="middle" class="lbl-sm wt">W_down</text>
+
+
+  <line x1="233" y1="578" x2="233" y2="606"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#tc-ar)"/>
+
+
+  <rect x="118" y="606" width="200" height="26" rx="6"
+        fill="none" stroke="var(--muted,#94a3b8)" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="218" y="624" text-anchor="middle" class="lbl-xs mt">(optional residual dropout)</text>
+
+
+  <line x1="218" y1="632" x2="210" y2="647"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#tc-ar)"/>
+
+
+  <circle cx="210" cy="665" r="17"
+          fill="var(--surface,#f8fafc)" stroke="var(--ink-soft,#334155)" stroke-width="2"/>
+  <text x="210" y="671" text-anchor="middle" class="lbl dt" style="font-size:17px">+</text>
+
+
+  <polyline points="700,651 227,651"
+            fill="none" stroke="var(--warn,#e0a106)" stroke-width="2.2"
+            marker-end="url(#tc-sk)"/>
+
+
+  <line x1="210" y1="682" x2="210" y2="700"
+        stroke="var(--ink-soft,#334155)" stroke-width="1.8" marker-end="url(#tc-ar)"/>
+
+
+  <polygon points="72,700 348,700 338,726 82,726"
+           fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="210" y="718" text-anchor="middle" class="lbl dt">x_out  [batch, T, d]</text>
+
+</svg>
+<figcaption><b>The complete pre-norm Llama-style transformer block.</b> Two residual sublayers are stacked: the first applies RMSNorm then Multi-Head Self-Attention; the second applies RMSNorm then the SwiGLU FFN (W_gate&amp;rarr;Swish gated elementwise by W_up&amp;rarr;identity, projected by W_down). Each sublayer is bypassed by an amber identity skip wire that adds back at <b>+</b>, preserving the residual stream shape <code>[batch, T, d]</code> so blocks can be freely stacked.</figcaption>
+</figure>
+
+<p>Note that in some implementations the attention output also passes through a projection dropout before the residual add. The final output has the same shape as the input, enabling stacking.</p>
+<hr />
+<h2 id="implementation-a-complete-transformer-block-in-pytorch">Implementation: A Complete Transformer Block in PyTorch<a class="headerlink" href="#implementation-a-complete-transformer-block-in-pytorch" title="Permanent link">¶</a></h2>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">transformer_block.py — A complete, heavily-commented transformer block</span>
+<span class="sd">implementing the modern pre-norm + RMSNorm + SwiGLU + RoPE-ready design</span>
+<span class="sd">used in the Llama / Mistral family of models.</span>
+
+<span class="sd">Requires: torch &gt;= 2.0</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+<span class="c1"># RMSNorm</span>
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RMSNorm</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Root Mean Square Layer Normalization (Zhang &amp; Sennrich, 2019).</span>
+
+<span class="sd">    Normalizes by RMS(x) rather than by std(x − mean(x)).</span>
+<span class="sd">    No bias term — only a learnable scale γ.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">eps</span> <span class="o">=</span> <span class="n">eps</span>
+        <span class="c1"># Learnable per-feature scale, initialized to 1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">dim</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># x: [batch, seq_len, dim]  (or any shape ending in dim)</span>
+        <span class="c1"># Compute RMS along last dimension</span>
+        <span class="n">rms</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">eps</span><span class="p">)</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">x</span> <span class="o">/</span> <span class="n">rms</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+<span class="c1"># SwiGLU Feed-Forward Network</span>
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SwiGLUFFN</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Feed-forward sublayer using the SwiGLU gated activation (Shazeer, 2020).</span>
+
+<span class="sd">    FFN(x) = W_down( Swish(W_gate x) ⊙ W_up x )</span>
+
+<span class="sd">    The inner dimension is set to 8/3 * dim by convention so that the total</span>
+<span class="sd">    FLOP count matches a standard 4× FFN with a plain activation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">hidden_dim</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                 <span class="n">bias</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">hidden_dim</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># 8/3 * dim, rounded to nearest multiple of 64</span>
+            <span class="n">hidden_dim</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="mi">8</span> <span class="o">*</span> <span class="n">dim</span> <span class="o">/</span> <span class="mi">3</span><span class="p">)</span>
+            <span class="n">hidden_dim</span> <span class="o">=</span> <span class="mi">64</span> <span class="o">*</span> <span class="p">((</span><span class="n">hidden_dim</span> <span class="o">+</span> <span class="mi">63</span><span class="p">)</span> <span class="o">//</span> <span class="mi">64</span><span class="p">)</span>
+
+        <span class="c1"># gate branch: produces the soft gate via Swish</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">w_gate</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">hidden_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">bias</span><span class="p">)</span>
+        <span class="c1"># up projection: produces the values</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">w_up</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">hidden_dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">bias</span><span class="p">)</span>
+        <span class="c1"># down projection: projects back to model dimension</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">w_down</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">hidden_dim</span><span class="p">,</span> <span class="n">dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">bias</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Swish(gate) ⊙ up — the two-branch gated activation</span>
+        <span class="n">gate</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">silu</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">w_gate</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>   <span class="c1"># silu = Swish = x * sigmoid(x)</span>
+        <span class="n">up</span>   <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">w_up</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">fused</span> <span class="o">=</span> <span class="n">gate</span> <span class="o">*</span> <span class="n">up</span>                <span class="c1"># elementwise gating</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">w_down</span><span class="p">(</span><span class="n">fused</span><span class="p">))</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+<span class="c1"># Minimal Multi-Head Self-Attention (for completeness; full version in ch 2.4)</span>
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MinimalMHA</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Causal multi-head self-attention. Minimal implementation for block wiring.</span>
+<span class="sd">    For MQA, GQA, RoPE, FlashAttention, see chapter 2.4 and 2.5.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">bias</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+                 <span class="n">attn_dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">dim</span> <span class="o">%</span> <span class="n">n_heads</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span> <span class="o">=</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span> <span class="o">=</span> <span class="n">dim</span> <span class="o">//</span> <span class="n">n_heads</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span> <span class="o">**</span> <span class="o">-</span><span class="mf">0.5</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">qkv</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">dim</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">bias</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">proj</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">dim</span><span class="p">,</span>     <span class="n">bias</span><span class="o">=</span><span class="n">bias</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attn_drop</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">attn_dropout</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+                <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">C</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="c1"># Compute Q, K, V in one shot then split</span>
+        <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">qkv</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">chunk</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>     <span class="c1"># each: [B, T, C]</span>
+
+        <span class="c1"># Reshape to [B, n_heads, T, head_dim]</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">reshape</span><span class="p">(</span><span class="n">t</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">t</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">head_dim</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="nb">map</span><span class="p">(</span><span class="n">reshape</span><span class="p">,</span> <span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">))</span>
+
+        <span class="c1"># Scaled dot-product attention with optional causal mask</span>
+        <span class="c1"># torch.nn.functional.scaled_dot_product_attention uses FlashAttention</span>
+        <span class="c1"># when available (torch &gt;= 2.0 with CUDA).</span>
+        <span class="n">attn_out</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">scaled_dot_product_attention</span><span class="p">(</span>
+            <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span>
+            <span class="n">attn_mask</span><span class="o">=</span><span class="n">mask</span><span class="p">,</span>
+            <span class="n">dropout_p</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">attn_drop</span><span class="o">.</span><span class="n">p</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">training</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+            <span class="n">is_causal</span><span class="o">=</span><span class="p">(</span><span class="n">mask</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">),</span>   <span class="c1"># if no explicit mask, use causal</span>
+        <span class="p">)</span>  <span class="c1"># [B, n_heads, T, head_dim]</span>
+
+        <span class="c1"># Merge heads and project</span>
+        <span class="n">attn_out</span> <span class="o">=</span> <span class="n">attn_out</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">C</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">proj</span><span class="p">(</span><span class="n">attn_out</span><span class="p">)</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+<span class="c1"># The Transformer Block</span>
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TransformerBlock</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    One pre-norm transformer block as used in Llama / Mistral:</span>
+
+<span class="sd">        x_attn = x     + Attention(RMSNorm(x))</span>
+<span class="sd">        x_out  = x_attn + FFN(RMSNorm(x_attn))</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    dim         : model dimension (d)</span>
+<span class="sd">    n_heads     : number of attention heads</span>
+<span class="sd">    ffn_hidden  : inner FFN dimension (defaults to ⌊8d/3⌋ rounded to 64)</span>
+<span class="sd">    bias        : whether to include bias in linear layers</span>
+<span class="sd">    dropout     : residual dropout probability (0.0 for large-scale pretraining)</span>
+<span class="sd">    norm_eps    : epsilon for RMSNorm</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                 <span class="n">ffn_hidden</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                 <span class="n">bias</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+                 <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+                 <span class="n">norm_eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="c1"># Normalization: applied BEFORE each sublayer (pre-norm)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm_attn</span> <span class="o">=</span> <span class="n">RMSNorm</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="n">norm_eps</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm_ffn</span>  <span class="o">=</span> <span class="n">RMSNorm</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="n">norm_eps</span><span class="p">)</span>
+
+        <span class="c1"># Sublayers</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attn</span> <span class="o">=</span> <span class="n">MinimalMHA</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">bias</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span>  <span class="o">=</span> <span class="n">SwiGLUFFN</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">ffn_hidden</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">bias</span><span class="p">,</span> <span class="n">dropout</span><span class="o">=</span><span class="n">dropout</span><span class="p">)</span>
+
+        <span class="c1"># Residual dropout (applied after each sublayer, before addition)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">res_drop</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+                <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># ── Attention sublayer (pre-norm residual) ─────────────────────────</span>
+        <span class="c1"># Normalize first, pass through attention, add back to residual stream</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">res_drop</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">attn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">norm_attn</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">mask</span><span class="p">))</span>
+
+        <span class="c1"># ── FFN sublayer (pre-norm residual) ───────────────────────────────</span>
+        <span class="c1"># Normalize first, pass through FFN, add back to residual stream</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">res_drop</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ffn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">norm_ffn</span><span class="p">(</span><span class="n">x</span><span class="p">)))</span>
+        <span class="c1"># Note: self.ffn already applies internal dropout before returning</span>
+
+        <span class="k">return</span> <span class="n">x</span>   <span class="c1"># shape unchanged: [batch, T, dim]</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+<span class="c1"># Stack of blocks (GPT-style)</span>
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TransformerStack</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    N stacked transformer blocks with a final RMSNorm.</span>
+<span class="sd">    This is the &#39;trunk&#39; of a decoder-only LLM.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_layers</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                 <span class="n">ffn_hidden</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                 <span class="n">bias</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">([</span>
+            <span class="n">TransformerBlock</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">ffn_hidden</span><span class="p">,</span> <span class="n">bias</span><span class="p">,</span> <span class="n">dropout</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_layers</span><span class="p">)</span>
+        <span class="p">])</span>
+        <span class="c1"># Final norm before the lm_head projection</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm</span> <span class="o">=</span> <span class="n">RMSNorm</span><span class="p">(</span><span class="n">dim</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">block</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+<span class="c1"># Quick sanity check and parameter count</span>
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+
+    <span class="c1"># Configuration roughly matching Llama 2 7B single-block sizes</span>
+    <span class="n">dim</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">n_layers</span> <span class="o">=</span> <span class="mi">4096</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span>
+
+    <span class="c1"># Single block</span>
+    <span class="n">block</span> <span class="o">=</span> <span class="n">TransformerBlock</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="n">dim</span><span class="p">,</span> <span class="n">n_heads</span><span class="o">=</span><span class="n">n_heads</span><span class="p">)</span>
+    <span class="n">block_params</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">block</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Single block parameters: </span><span class="si">{</span><span class="n">block_params</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mf">1e6</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">M&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Micro model for shape check</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">TransformerStack</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">n_heads</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">n_layers</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span>   <span class="c1"># batch=2, seq=128, dim=512</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Input shape:  </span><span class="si">{</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># [2, 128, 512]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output shape: </span><span class="si">{</span><span class="n">out</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span> <span class="c1"># [2, 128, 512]</span>
+
+    <span class="n">total_params</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Small model parameters: </span><span class="si">{</span><span class="n">total_params</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mf">1e6</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">M&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Running the sanity-check section above with the Llama 2 7B single-block dimensions prints approximately 218M parameters per block (attention + FFN + two RMSNorms), consistent with <span class="arithmatex">\(7\text{B} / 32 \approx 219\text{M}\)</span> per layer.</p>
+<hr />
+<h2 id="numerical-stability-precision-considerations">Numerical Stability &amp; Precision Considerations<a class="headerlink" href="#numerical-stability-precision-considerations" title="Permanent link">¶</a></h2>
+<p>Understanding the block&rsquo;s numerical behavior is essential for training at scale.</p>
+<h3 id="pre-norm-keeps-the-norm-bounded">Pre-norm keeps the norm bounded<a class="headerlink" href="#pre-norm-keeps-the-norm-bounded" title="Permanent link">¶</a></h3>
+<p>At layer <span class="arithmatex">\(l\)</span>, the residual stream has (empirically) roughly unit variance after the final norm. Because we normalize <em>before</em> the sublayer, the sublayer always sees a well-conditioned input. The output of the sublayer is added back to the (un-normalized) residual stream, whose variance grows slowly as <span class="arithmatex">\(\mathcal{O}(\sqrt{l})\)</span> in theory (as a sum of independent random variables). In practice with careful initialization (weight std <span class="arithmatex">\(\propto 1/\sqrt{d}\)</span> or with the &ldquo;scaled init&rdquo; used in GPT-2), growth is much slower.</p>
+<h3 id="initialization-scaling-for-deep-stacks">Initialization scaling for deep stacks<a class="headerlink" href="#initialization-scaling-for-deep-stacks" title="Permanent link">¶</a></h3>
+<p>Wang &amp; Komatsuzaki (<em>GPT-J-6B</em>, 2021) and Bai et al. (<em>Transformers Need Glasses!</em>, 2024) note that naive Xavier/Kaiming initialization for a 96-layer stack can still produce variance blowup in the residual stream. The fix: scale the output projections of each sublayer by <span class="arithmatex">\(1/\sqrt{2L}\)</span> (where <span class="arithmatex">\(L\)</span> is the total number of layers), so that the <span class="arithmatex">\(L\)</span> residual contributions have unit total variance. This is the <code>init_scale</code> trick in many industrial implementations.</p>
+<h3 id="bfloat16-and-overflow-in-the-ffn">bfloat16 and overflow in the FFN<a class="headerlink" href="#bfloat16-and-overflow-in-the-ffn" title="Permanent link">¶</a></h3>
+<p>The inner FFN activations after the gating product can have large magnitudes (on the order of 10–100 at the start of training). In float16 this overflows to <code>inf</code>; in bfloat16 the larger dynamic range handles it. This is one reason most modern LLM pretraining uses bfloat16. See <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a> and <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: Residual stream variance growth</p>
+<p>Suppose each sublayer output has norm approximately <span class="arithmatex">\(\|\delta_l\| \approx c\)</span> for some small constant <span class="arithmatex">\(c\)</span>. After <span class="arithmatex">\(L\)</span> blocks the residual stream norm is:</p>
+<div class="arithmatex">\[\|\mathbf{x}_L\| \approx \|\mathbf{x}_0\| + L \cdot c\]</div>
+<p>For <span class="arithmatex">\(L = 32\)</span>, <span class="arithmatex">\(\|\mathbf{x}_0\| \approx \sqrt{d} = \sqrt{4096} = 64\)</span> (a unit-normal <span class="arithmatex">\(d\)</span>-dim vector), and <span class="arithmatex">\(c \approx 2\)</span> (a rough estimate from empirical norms early in training), we get <span class="arithmatex">\(\|\mathbf{x}_{32}\| \approx 64 + 64 = 128\)</span>. Pre-norm normalizes this back to <span class="arithmatex">\(\approx 1\)</span> before each sublayer input, so each sublayer sees a clean signal despite the stream growing. Post-norm would normalize <em>after</em> the addition, applying different normalization constants at each block, which has been observed to interact poorly with gradient flow.</p>
+</div>
+<hr />
+<h2 id="the-blocks-role-in-mechanistic-interpretability">The Block&rsquo;s Role in Mechanistic Interpretability<a class="headerlink" href="#the-blocks-role-in-mechanistic-interpretability" title="Permanent link">¶</a></h2>
+<p>Understanding the block helps you reason about what goes wrong (and right) during training. A few practitioner observations:</p>
+<p><strong>Attention is communication; FFN is computation.</strong> Attention moves information between token positions. The FFN processes each token independently, applying nonlinear transformations that empirically recall factual associations. This division of labor is why sparse MoE architectures (see <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts (MoE) Architectures</a>) replace only the FFN with a mixture of expert networks — the attention mechanism is shared.</p>
+<p><strong>The residual stream accumulates structure.</strong> Early layers tend to refine token-level features; later layers build task-level representations. This has been exploited in layer-selective fine-tuning (LoRA applied only to certain layers) and in early-exit inference (stopping at layer <span class="arithmatex">\(k\)</span> rather than <span class="arithmatex">\(L\)</span>).</p>
+<p><strong>Gradient checkpointing interacts with block boundaries.</strong> Because each block is a self-contained module, gradient checkpointing can recompute activations at block granularity — recompute one block&rsquo;s activations during the backward pass rather than storing them. This is the standard memory-efficiency technique described in <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a>.</p>
+<hr />
+<h2 id="architecture-variants-and-modern-improvements">Architecture Variants and Modern Improvements<a class="headerlink" href="#architecture-variants-and-modern-improvements" title="Permanent link">¶</a></h2>
+<p>The four-component pre-norm block described above is a stable baseline. Modern architectures iterate on it in several ways.</p>
+<h3 id="parallel-attention-and-ffn">Parallel attention and FFN<a class="headerlink" href="#parallel-attention-and-ffn" title="Permanent link">¶</a></h3>
+<p>Google&rsquo;s PaLM (Chowdhery et al., 2022) and GPT-NeoX (Black et al., 2022) run the attention and FFN sublayers <em>in parallel</em> rather than sequentially:</p>
+<div class="arithmatex">\[
+\mathbf{x}' = \mathbf{x} + \text{Attn}(\text{Norm}(\mathbf{x})) + \text{FFN}(\text{Norm}(\mathbf{x}))
+\]</div>
+<p>This saves one residual addition and one normalization call, and allows fusing the attention QKV projection with the FFN <span class="arithmatex">\(W_\text{gate}\)</span>/<span class="arithmatex">\(W_\text{up}\)</span> projections into a single large matrix multiply — a throughput win on hardware with slow memory bandwidth relative to compute. The gradient flow is slightly different but empirically yields similar quality.</p>
+<h3 id="deepnorm">DeepNorm<a class="headerlink" href="#deepnorm" title="Permanent link">¶</a></h3>
+<p>DeepNorm (Wang et al., 2022) scales the residual before adding:</p>
+<div class="arithmatex">\[
+\mathbf{x}' = \text{Norm}(\alpha \mathbf{x} + F(\mathbf{x}))
+\]</div>
+<p>with <span class="arithmatex">\(\alpha &gt; 1\)</span>, combined with a scaled initialization. The authors prove that this keeps the expected update to the model bounded, enabling stable training of post-norm transformers at depths up to 1000 layers.</p>
+<h3 id="sandwich-norm-and-dual-residuals">Sandwich norm and dual residuals<a class="headerlink" href="#sandwich-norm-and-dual-residuals" title="Permanent link">¶</a></h3>
+<p>Some architectures apply a second normalization after the sublayer function and before the addition (both pre- and post-norm). This &ldquo;sandwich norm&rdquo; trades compute for additional stability and was found beneficial in certain ultra-deep configurations.</p>
+<p>For more on these and other architectural choices, see <a href="../02-transformer/10-modern-arch-improvements.html">Modern Architecture Improvements &amp; Design Choices</a>.</p>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The transformer block has a simple four-element structure: Norm → Attention → Norm → FFN, all wired with residual connections. The residual stream is the block&rsquo;s backbone and the primary gradient highway.</li>
+<li>Pre-norm (normalizing before the sublayer) is preferred over post-norm because it stabilizes gradients at initialization without warmup: the skip path always contributes a unit-variance gradient path backward.</li>
+<li>RMSNorm is preferred over LayerNorm in modern models: it drops mean-centering (one fewer pass over the activations), removes the bias term, and achieves near-identical empirical quality while being marginally faster.</li>
+<li>SwiGLU (and GeGLU) outperform plain ReLU and GELU on language tasks by adding a multiplicative gate that suppresses irrelevant features while passing relevant ones through. They require three weight matrices instead of two and conventionally use <span class="arithmatex">\(d_\text{ff} = \frac{8d}{3}\)</span> to match FLOPs.</li>
+<li>The FFN accounts for roughly two-thirds of transformer parameters (at the standard <span class="arithmatex">\(4\times\)</span> or <span class="arithmatex">\(\frac{8}{3}\times\)</span> expansion ratio) and processes each token independently — making it the primary site of factual storage.</li>
+<li>Dropout is typically 0.0 during large-scale pretraining (data is more abundant than model capacity), but 0.05–0.1 is useful for fine-tuning on small datasets.</li>
+<li>Deep stacks benefit from careful output-projection scaling (<span class="arithmatex">\(1/\sqrt{2L}\)</span>) to prevent residual stream variance blowup. Using bfloat16 (rather than float16) avoids FFN activation overflow.</li>
+<li>The final RMSNorm after the last block is essential in pre-norm architectures: without it, the last block&rsquo;s output is un-normalized before the language-model head projection.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>The pre-norm + RMSNorm + SwiGLU transformer block is the settled standard for large-scale LLM training as of 2026, with Llama 3, Gemma 2, Mistral, and most frontier models converging on this design. Active research has shifted toward stability at extreme depth (1000+ layers), understanding what FFN neurons actually store, and architectural variants such as parallel attention-FFN blocks and sparse MoE substitutions for the FFN.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1607.06450">Ba et al., <em>Layer Normalization</em> (2016)</a> — introduced per-token feature-dimension normalization; the baseline every modern norm is compared against.</li>
+<li><a href="https://arxiv.org/abs/1910.07467">Zhang &amp; Sennrich, <em>Root Mean Square Layer Normalization</em> (2019)</a> — dropped mean-centering to get RMSNorm; adopted by Llama, Mistral, Gemma, and most post-2022 models.</li>
+<li><a href="https://arxiv.org/abs/2002.05202">Shazeer, <em>GLU Variants Improve Transformer</em> (2020)</a> — introduced SwiGLU and GeGLU; the paper behind Llama&rsquo;s three-matrix gated FFN design.</li>
+<li><a href="https://arxiv.org/abs/2002.04745">Xiong et al., <em>On Layer Normalization in the Transformer Architecture</em> (2020)</a> — proved theoretically why pre-norm stabilizes gradients at initialization and removes the need for warmup.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2407.21783">Grattafiori et al., <em>The Llama 3 Herd of Models</em> (2024)</a> — canonical modern reference for pre-norm + RMSNorm + SwiGLU + GQA at scale (8B–405B parameters).</li>
+<li><a href="https://arxiv.org/abs/2408.00118">Gemma Team, <em>Gemma 2: Improving Open Language Models at a Practical Size</em> (2024)</a> — GeGLU with interleaved local-global attention and post+pre dual-norm; competitive with models 2–3× larger.</li>
+<li><a href="https://arxiv.org/abs/2203.00555">Wang et al., <em>DeepNet: Scaling Transformers to 1,000 Layers</em> (2022)</a> — DeepNorm residual scaling with a theoretically bounded update rule; shows post-norm can be stable at extreme depth with the right init.</li>
+</ul>
+<p><strong>Mechanistic understanding</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2012.14913">Geva et al., <em>Transformer Feed-Forward Layers Are Key-Value Memories</em> (2021)</a> — reframes each FFN neuron as a key-value memory storing pattern-to-vocabulary associations; foundational for interpretability of the FFN sublayer.</li>
+<li><a href="https://transformer-circuits.pub/2021/framework/index.html">Elhage et al., <em>A Mathematical Framework for Transformer Circuits</em> (2021)</a> — formalizes the residual stream as a shared communication channel read and written by every sublayer; essential vocabulary for reasoning about block internals.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/karpathy/nanoGPT">karpathy/nanoGPT</a> — ~300-line readable PyTorch GPT implementation; the clearest reference for transformer block wiring in code.</li>
+<li><a href="https://github.com/EleutherAI/gpt-neox">EleutherAI/gpt-neox</a> — production-grade multi-GPU training library (Megatron + DeepSpeed); supports RMSNorm, RoPE, flash attention, and MoE out of the box.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Vaswani et al., <em>Attention Is All You Need</em> (NeurIPS 2017) — original post-norm transformer.</li>
+<li>Ba et al., <em>Layer Normalization</em> (arXiv 2016) — the canonical LayerNorm paper.</li>
+<li>Zhang &amp; Sennrich, <em>Root Mean Square Layer Normalization</em> (NeurIPS 2019) — RMSNorm.</li>
+<li>Xiong et al., <em>On Layer Normalization in the Transformer Architecture</em> (ICML 2020) — theoretical analysis of pre-norm stability.</li>
+<li>Hendrycks &amp; Gimpel, <em>Gaussian Error Linear Units (GELUs)</em> (arXiv 2016) — GELU activation.</li>
+<li>Dauphin et al., <em>Language Modeling with Gated Convolutional Networks</em> (ICML 2017) — GLU activations.</li>
+<li>Shazeer, <em>GLU Variants Improve Transformer</em> (arXiv 2020) — SwiGLU and GeGLU; the paper underpinning Llama&rsquo;s FFN design.</li>
+<li>He et al., <em>Deep Residual Learning for Image Recognition</em> (CVPR 2016) — origin of residual connections.</li>
+<li>Geva et al., <em>Transformer Feed-Forward Layers Are Key-Value Memories</em> (EMNLP 2021) — mechanistic interpretation of the FFN.</li>
+<li>Elhage et al., <em>A Mathematical Framework for Transformer Circuits</em> (Anthropic, 2021) — the residual stream framing of transformer computation.</li>
+<li>Touvron et al., <em>Llama 2</em> (Meta AI, 2023) — practical reference for the pre-norm + RMSNorm + SwiGLU design.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="05-positional-encoding.html"><span class="pn-label">← Previous</span><span class="pn-title">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</span></a>
+<a class="next" href="07-build-gpt-from-scratch.html"><span class="pn-label">Next →</span><span class="pn-title">Building a GPT From Scratch (nanoGPT-style)</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-residual-stream">The Residual Stream</a></li>
+<li class="toc-l3"><a href="#why-residuals-matter">Why residuals matter</a></li>
+<li class="toc-l3"><a href="#gradient-flow-through-residuals">Gradient flow through residuals</a></li>
+<li class="toc-l2"><a href="#layer-normalization">Layer Normalization</a></li>
+<li class="toc-l3"><a href="#layernorm">LayerNorm</a></li>
+<li class="toc-l3"><a href="#rmsnorm">RMSNorm</a></li>
+<li class="toc-l2"><a href="#pre-norm-vs-post-norm">Pre-Norm vs Post-Norm</a></li>
+<li class="toc-l3"><a href="#why-pre-norm-dominates-modern-training">Why pre-norm dominates modern training</a></li>
+<li class="toc-l2"><a href="#the-feed-forward-network-ffn-sublayer">The Feed-Forward Network (FFN) Sublayer</a></li>
+<li class="toc-l3"><a href="#standard-two-layer-ffn">Standard two-layer FFN</a></li>
+<li class="toc-l3"><a href="#parameter-count-worked-example">Parameter count worked example</a></li>
+<li class="toc-l2"><a href="#activation-functions-from-relu-to-swiglu">Activation Functions: From ReLU to SwiGLU</a></li>
+<li class="toc-l3"><a href="#relu-and-its-successors">ReLU and its successors</a></li>
+<li class="toc-l3"><a href="#gated-linear-units-and-swiglu">Gated Linear Units and SwiGLU</a></li>
+<li class="toc-l3"><a href="#why-gated-activations-work">Why gated activations work</a></li>
+<li class="toc-l2"><a href="#dropout-in-the-transformer-block">Dropout in the Transformer Block</a></li>
+<li class="toc-l2"><a href="#the-complete-transformer-block-wiring-diagram">The Complete Transformer Block: Wiring Diagram</a></li>
+<li class="toc-l2"><a href="#implementation-a-complete-transformer-block-in-pytorch">Implementation: A Complete Transformer Block in PyTorch</a></li>
+<li class="toc-l2"><a href="#numerical-stability-precision-considerations">Numerical Stability &amp;amp; Precision Considerations</a></li>
+<li class="toc-l3"><a href="#pre-norm-keeps-the-norm-bounded">Pre-norm keeps the norm bounded</a></li>
+<li class="toc-l3"><a href="#initialization-scaling-for-deep-stacks">Initialization scaling for deep stacks</a></li>
+<li class="toc-l3"><a href="#bfloat16-and-overflow-in-the-ffn">bfloat16 and overflow in the FFN</a></li>
+<li class="toc-l2"><a href="#the-blocks-role-in-mechanistic-interpretability">The Block&amp;rsquo;s Role in Mechanistic Interpretability</a></li>
+<li class="toc-l2"><a href="#architecture-variants-and-modern-improvements">Architecture Variants and Modern Improvements</a></li>
+<li class="toc-l3"><a href="#parallel-attention-and-ffn">Parallel attention and FFN</a></li>
+<li class="toc-l3"><a href="#deepnorm">DeepNorm</a></li>
+<li class="toc-l3"><a href="#sandwich-norm-and-dual-residuals">Sandwich norm and dual residuals</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy, Memorization &amp; Differential Privacy for LLMs — The LLM Stack</title>
+<meta name="description" content="Why and when models memorize training data; extraction, reconstruction and membership-inference attacks; canary-based privacy auditing; PII leakage. Defenses ac">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="active" href="03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XIII — Interpretability, Safety &amp; Governance</div>
+<h1 id="133-privacy-memorization-differential-privacy-for-llms">13.3 Privacy, Memorization &amp; Differential Privacy for LLMs<a class="headerlink" href="#133-privacy-memorization-differential-privacy-for-llms" title="Permanent link">¶</a></h1>
+<p>Train a 7-billion-parameter model on a few trillion tokens of web text and you have built, among other things, a <em>lossy database of its training set</em>. Ask it the right way and it will hand back verbatim chunks of that data: a stranger&rsquo;s email signature with their phone number, a leaked API key from a GitHub commit, a paragraph of a copyrighted novel, a patient&rsquo;s discharge summary that slipped into a scraped forum. This is not a bug in any single line of code. It is a direct, <em>quantifiable</em> consequence of fitting a high-capacity function to data with a maximum-likelihood objective. The model that generalizes best is, all else equal, the model that has also memorized the most.</p>
+<p>That tension — generalization requires fitting the data, privacy requires <em>not</em> fitting any single example too well — is the subject of this chapter. We will make the threat concrete first: what memorization is, when and why it happens, and the family of attacks (extraction, membership inference, reconstruction) that turn it into a privacy breach. Then we audit it: canaries and the secret-sharer methodology that let you <em>measure</em> leakage before an attacker does. Then we defend it across the whole lifecycle — data sanitization, deduplication, differentially private training (DP-SGD), and inference-time mitigations — being honest about the utility and compute costs each one extracts. Finally we frame it for the lawyers: threat models and the compliance scaffolding (GDPR, HIPAA) that turns &ldquo;the model leaked PII&rdquo; into a reportable incident.</p>
+<p>This chapter sits next to several others. The mechanics of <em>removing</em> knowledge from an already-trained model live in <a href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html">Knowledge Editing &amp; Machine Unlearning</a>; the production redaction and guardrail layer is in <a href="../12-production-mlops/04-safety-guardrails.html">Safety, Guardrails &amp; Content Moderation</a>; the data-pipeline deduplication that is your cheapest privacy defense is in <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a>; and the legal/regulatory superstructure is in <a href="../13-interp-safety-gov/06-governance-compliance.html">AI Governance, Compliance &amp; Regulation</a>.</p>
+<hr />
+<h2 id="1-what-memorization-is-and-why-models-do-it">1. What Memorization Is, and Why Models Do It<a class="headerlink" href="#1-what-memorization-is-and-why-models-do-it" title="Permanent link">¶</a></h2>
+<p>Let us be precise. We say a model <span class="arithmatex">\(f_\theta\)</span> has <strong>memorized</strong> a training string <span class="arithmatex">\(s\)</span> if knowledge of <span class="arithmatex">\(s\)</span> being in the training set changes the model&rsquo;s behavior on <span class="arithmatex">\(s\)</span> in a way that knowledge of &ldquo;similar&rdquo; strings does not. Two operational definitions dominate the literature.</p>
+<p><strong>Eidetic / verbatim memorization (extractable memorization).</strong> A string <span class="arithmatex">\(s\)</span> of length <span class="arithmatex">\(\ell\)</span> tokens is <em><span class="arithmatex">\(k\)</span>-eidetic memorized</em> if there exists a prompt <span class="arithmatex">\(p\)</span> of length at most some budget such that greedy decoding of <span class="arithmatex">\(f_\theta(\cdot \mid p)\)</span> reproduces <span class="arithmatex">\(s\)</span> exactly, and <span class="arithmatex">\(s\)</span> appears in at most <span class="arithmatex">\(k\)</span> training documents. The smaller the <span class="arithmatex">\(k\)</span>, the more alarming: a string that appeared <em>once</em> and is still emitted verbatim is unambiguous memorization, not a learned statistical regularity. This is the definition behind the canonical extraction attacks.</p>
+<p><strong>Counterfactual memorization.</strong> Following the influence-function view, the memorization of example <span class="arithmatex">\(z=(x,y)\)</span> is the gap between how well a model predicts <span class="arithmatex">\(z\)</span> when <span class="arithmatex">\(z\)</span> is in the training set versus when it is held out:</p>
+<div class="arithmatex">\[
+\operatorname{mem}(z) \;=\; \underbrace{\mathbb{E}_{\theta \sim \mathcal{A}(D \cup \{z\})}\big[\,\text{perf}(f_\theta, z)\,\big]}_{\text{trained on }z} \;-\; \underbrace{\mathbb{E}_{\theta \sim \mathcal{A}(D \setminus \{z\})}\big[\,\text{perf}(f_\theta, z)\,\big]}_{\text{trained without }z}
+\]</div>
+<p>where <span class="arithmatex">\(\mathcal{A}\)</span> is the (randomized) training algorithm and <span class="arithmatex">\(\text{perf}\)</span> is, say, the negative loss. A high gap means the model&rsquo;s competence on <span class="arithmatex">\(z\)</span> comes <em>specifically</em> from having seen <span class="arithmatex">\(z\)</span>, not from generalization. This is the quantity differential privacy is designed to bound.</p>
+<h3 id="11-why-memorization-is-inevitable-under-maximum-likelihood">1.1 Why memorization is inevitable under maximum likelihood<a class="headerlink" href="#11-why-memorization-is-inevitable-under-maximum-likelihood" title="Permanent link">¶</a></h3>
+<p>The pretraining loss is the per-token cross-entropy (see <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a>):</p>
+<div class="arithmatex">\[
+\mathcal{L}(\theta) = -\frac{1}{N}\sum_{i=1}^{N} \log p_\theta(x_i \mid x_{&lt;i}).
+\]</div>
+<p>Gradient descent drives <span class="arithmatex">\(p_\theta(x_i \mid x_{&lt;i}) \to 1\)</span> for tokens it can fit. For a <em>unique, low-entropy, high-surprise</em> sequence — a random 16-digit credit-card number, a UUID, a GitHub token — there is no generalizable rule that predicts the next digit; the only way to drive its loss down is to <em>store</em> it in the weights. Modern LLMs are heavily over-parameterized relative to the information content of any single rare sequence, so there is ample capacity to do exactly that. Memorization is therefore not pathological overfitting that early stopping cures; it is the <em>optimal</em> behavior of the objective on rare sequences, and it appears well before the model overfits in the classical (rising-validation-loss) sense.</p>
+<h3 id="12-the-three-things-that-drive-memorization">1.2 The three things that drive memorization<a class="headerlink" href="#12-the-three-things-that-drive-memorization" title="Permanent link">¶</a></h3>
+<p>Empirically, three factors dominate how much a given string gets memorized:</p>
+<ol>
+<li><strong>Duplication.</strong> This is the single biggest lever. A sequence that appears <span class="arithmatex">\(n\)</span> times in the corpus is memorized roughly in proportion to <span class="arithmatex">\(\log n\)</span> — duplication has a <em>super-linear</em> effect on extractability. Deduplicating the training set is the highest-ROI privacy intervention you have, and it is free (you were going to dedup for quality anyway).</li>
+<li><strong>Model scale.</strong> Larger models memorize more, at every duplication level. Roughly, the fraction of extractable training data grows with <span class="arithmatex">\(\log(\text{parameters})\)</span>. A 6B model memorizes substantially more than a 125M model trained on the identical data.</li>
+<li><strong>Context length (prompt length).</strong> The longer the prefix you give the model that matches the training context, the more likely it completes the memorized continuation. Memorization is &ldquo;unlocked&rdquo; by sufficiently long, in-distribution prompts.</li>
+</ol>
+<p><figure class="viz" id="fig-privacy-memorization-scaling">
+<svg viewBox="0 0 720 460" role="img" aria-label="Line chart showing extractable fraction of training data rising with duplication count on a log scale, with a larger model curve consistently above a smaller model curve and the gap widening at higher duplication.">
+  <defs>
+    <marker id="pms-arrow-up" viewBox="0 0 10 10" refX="5" refY="10" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 10 L5 0 L10 10 z" fill="var(--ink-soft,#888)" class="v-muted"/>
+    </marker>
+    <marker id="pms-arrow-right" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#888)" class="v-muted"/>
+    </marker>
+    <clipPath id="pms-plot-clip">
+      <rect x="110" y="60" width="540" height="320"/>
+    </clipPath>
+  </defs>
+<br />
+<style>
+    #fig-privacy-memorization-scaling .axis-title {
+      font: 400 13px var(--sans,sans-serif);
+      fill: var(--muted,#888);
+    }
+    #fig-privacy-memorization-scaling .tick-label {
+      font: 400 12px var(--mono,monospace);
+      fill: var(--muted,#888);
+    }
+    #fig-privacy-memorization-scaling .curve-label {
+      font: 700 13px var(--sans,sans-serif);
+    }
+    #fig-privacy-memorization-scaling .annotation {
+      font: 400 11px var(--sans,sans-serif);
+      fill: var(--muted,#888);
+    }
+  </style>
+</p>
+<p><line x1="110" y1="380" x2="110" y2="65" stroke="var(--ink-soft,#888)" stroke-width="1.5" class="v-stroke" marker-end="url(#pms-arrow-up)"/></p>
+<p><line x1="110" y1="380" x2="645" y2="380" stroke="var(--ink-soft,#888)" stroke-width="1.5" class="v-stroke" marker-end="url(#pms-arrow-right)"/></p>
+<p><text x="28" y="220" text-anchor="middle" transform="rotate(-90,28,220)" class="axis-title">extractable fraction</text></p>
+<p><text x="380" y="440" text-anchor="middle" class="axis-title">duplication count (log scale)</text></p>
+<p><line x1="170" y1="380" x2="170" y2="385" stroke="var(--ink-soft,#888)" stroke-width="1.2" class="v-stroke"/>
+  <text x="170" y="398" text-anchor="middle" class="tick-label">1×</text></p>
+<p><line x1="290" y1="380" x2="290" y2="385" stroke="var(--ink-soft,#888)" stroke-width="1.2" class="v-stroke"/>
+  <text x="290" y="398" text-anchor="middle" class="tick-label">10×</text></p>
+<p><line x1="410" y1="380" x2="410" y2="385" stroke="var(--ink-soft,#888)" stroke-width="1.2" class="v-stroke"/>
+  <text x="410" y="398" text-anchor="middle" class="tick-label">100×</text></p>
+<p><line x1="530" y1="380" x2="530" y2="385" stroke="var(--ink-soft,#888)" stroke-width="1.2" class="v-stroke"/>
+  <text x="530" y="398" text-anchor="middle" class="tick-label">1000×</text></p>
+<p><path d="M150,352 C220,320 290,300 410,210 C480,165 570,130 640,95
+           L640,235 C570,250 480,265 410,290 C290,330 220,340 150,355 Z"
+        fill="var(--accent,#c15b39)" fill-opacity="0.08" clip-path="url(#pms-plot-clip)"/></p>
+<p><path d="M150,355 C200,345 260,335 290,330 C350,318 390,305 410,290 C450,272 500,258 530,250 C580,242 620,238 640,235"
+        fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="3" stroke-dasharray="6 4"
+        clip-path="url(#pms-plot-clip)"/></p>
+<p><path d="M150,352 C200,338 260,318 290,300 C350,272 390,240 410,210 C450,180 500,148 530,120 C570,103 615,96 640,95"
+        fill="none" stroke="var(--accent,#c15b39)" stroke-width="3"
+        clip-path="url(#pms-plot-clip)"/></p>
+<p><text x="556" y="80" text-anchor="start" class="curve-label" fill="var(--accent,#c15b39)">larger model</text></p>
+<p><text x="556" y="258" text-anchor="start" class="curve-label" fill="var(--accent2,#3b82f6)">smaller model</text></p>
+<p><text x="320" y="252" text-anchor="middle" class="annotation">gap = extra</text>
+  <text x="320" y="266" text-anchor="middle" class="annotation">memorization from scale</text>
+</svg></p>
+<figcaption><b>Extractable memorization scales with both duplication and model size.</b> Both curves rise with duplication count on a log scale, confirming that deduplication is the highest-ROI privacy intervention. Larger models memorize more at every duplication level, and the gap between the two curves widens as duplication grows — meaning scale amplifies the duplication effect.</figcaption>
+</figure>
+<div class="admonition note">
+<p class="admonition-title">Aside: memorization ≠ overfitting</p>
+<p>A model can have a perfectly healthy, still-decreasing validation loss and yet have memorized thousands of unique sequences verbatim. The two phenomena are decoupled because memorization concerns the <em>tail</em> of rare examples while validation loss is an <em>average</em> over the bulk. This is why you cannot rely on standard regularization (weight decay, dropout) or early stopping to make privacy go away — they target the wrong statistic.</p>
+</div>
+<hr />
+<h2 id="2-the-attack-surface-extraction-membership-inference-reconstruction">2. The Attack Surface: Extraction, Membership Inference, Reconstruction<a class="headerlink" href="#2-the-attack-surface-extraction-membership-inference-reconstruction" title="Permanent link">¶</a></h2>
+<p>Memorization is only a <em>privacy</em> problem when an adversary can exploit it. There are three canonical attack families, ordered roughly by how much they extract.</p>
+<h3 id="21-training-data-extraction">2.1 Training-data extraction<a class="headerlink" href="#21-training-data-extraction" title="Permanent link">¶</a></h3>
+<p>The goal: recover <em>some</em> verbatim training strings without knowing them in advance. The Carlini et al. extraction attack on GPT-2 is the template:</p>
+<ol>
+<li><strong>Generate</strong> a large pool of candidate completions by sampling from the model (optionally with diverse prompts, temperature schedules, or internet-scraped prefixes).</li>
+<li><strong>Score / rank</strong> candidates by a <em>membership signal</em> — a heuristic that a string is memorized rather than fluent-but-generic.</li>
+<li><strong>Verify</strong> the top-ranked candidates against the (or a) training corpus, or by checking they are low-<span class="arithmatex">\(k\)</span>.</li>
+</ol>
+<p>The crucial insight is the <em>ranking step</em>. Raw model perplexity over-selects generic, high-likelihood text (&ldquo;the the the&rdquo;). The fix is to compare the target model&rsquo;s likelihood against a <em>reference</em>: a string is suspicious if the model finds it <em>much</em> more likely than a baseline expects. Common membership signals:</p>
+<ul>
+<li><strong>zlib ratio:</strong> <span class="arithmatex">\(\dfrac{\log p_\theta(s)}{\text{zlib\_entropy}(s)}\)</span> — penalizes strings that are intrinsically compressible (and so trivially low-perplexity).</li>
+<li><strong>Reference-model ratio:</strong> <span class="arithmatex">\(\log p_\theta(s) - \log p_{\theta_{\text{ref}}}(s)\)</span>, where <span class="arithmatex">\(\theta_{\text{ref}}\)</span> is a smaller or differently-trained model. Memorized strings score high because the target memorized them and the reference did not.</li>
+<li><strong>Lowercase / windowing ratios:</strong> compare <span class="arithmatex">\(p_\theta(s)\)</span> to <span class="arithmatex">\(p_\theta\)</span> of a perturbed version of <span class="arithmatex">\(s\)</span>.</li>
+</ul>
+<p>A 2023 result extended this to <em>aligned</em> production models with a &ldquo;divergence attack&rdquo;: prompting an aligned chat model to repeat a token forever (<code>"poem poem poem ..."</code>) caused it to diverge from its alignment and emit memorized pretraining data. The lesson: alignment training masks but does not remove memorization.</p>
+<h3 id="22-membership-inference-attacks-mia">2.2 Membership inference attacks (MIA)<a class="headerlink" href="#22-membership-inference-attacks-mia" title="Permanent link">¶</a></h3>
+<p>The goal here is narrower but more general: given a <em>specific</em> candidate record <span class="arithmatex">\(z\)</span>, decide whether <span class="arithmatex">\(z\)</span> was in the training set. This is the workhorse privacy attack — it is the empirical instantiation of the differential-privacy adversary, and &ldquo;did my data train this model?&rdquo; is exactly the question GDPR and copyright litigation care about.</p>
+<p>The simplest MIA is the <strong>loss threshold (LOSS attack):</strong> members have lower loss than non-members, so predict &ldquo;member&rdquo; if <span class="arithmatex">\(\mathcal{L}(f_\theta, z) &lt; \tau\)</span>. This is weak because loss depends heavily on the <em>intrinsic</em> difficulty of <span class="arithmatex">\(z\)</span> — an easy sentence has low loss whether or not it was trained on.</p>
+<p>State-of-the-art MIAs <em>calibrate away</em> that intrinsic difficulty. The <strong>Likelihood Ratio Attack (LiRA)</strong> is the gold standard: train many &ldquo;shadow&rdquo; models, half including <span class="arithmatex">\(z\)</span> (IN) and half excluding it (OUT), fit Gaussians to the per-example loss distributions, and run a likelihood-ratio test:</p>
+<div class="arithmatex">\[
+\Lambda(z) = \frac{p\big(\ell(z)\mid \mathcal{N}(\mu_{\text{in}},\sigma_{\text{in}}^2)\big)}{p\big(\ell(z)\mid \mathcal{N}(\mu_{\text{out}},\sigma_{\text{out}}^2)\big)}.
+\]</div>
+<p>The key methodological point — and a frequent interview trap — is that <strong>MIA success must be measured by true-positive rate at very low false-positive rate (TPR @ low FPR)</strong>, plotted on a log-log ROC, <em>not</em> by average accuracy. A privacy attack that is correct 50.5% of the time on average but achieves 100× the chance TPR at 0.1% FPR is a serious breach for the few people in that high-confidence tail. Average accuracy hides exactly the worst-case leakage that matters.</p>
+<h3 id="23-reconstruction-and-attribute-inference">2.3 Reconstruction and attribute inference<a class="headerlink" href="#23-reconstruction-and-attribute-inference" title="Permanent link">¶</a></h3>
+<p>Reconstruction is the strongest attack: recover an input <em>given partial knowledge</em>. In LLMs this shows up as <strong>prompt-completion reconstruction</strong> — give the model <code>"John Smith's social security number is "</code> and see if it completes the real digits. <strong>Attribute inference</strong> is the inverse: infer a sensitive attribute of a known individual from the model&rsquo;s behavior. These are the attacks that turn &ldquo;the model memorized a document&rdquo; into &ldquo;the model deanonymized a person.&rdquo;</p>
+<figure class="viz" id="fig-privacy-attack-ladder">
+<svg viewBox="0 0 860 360" role="img" aria-label="Horizontal attack strength spectrum showing three attack families from left to right: Membership Inference (weakest, most general) to Extraction (middle) to Reconstruction (strongest, most targeted), with progressively shaded cards.">
+  <defs>
+    <linearGradient id="pal-bar-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="var(--surface,#e8e8e8)" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="var(--accent,#c15b39)" stop-opacity="0.9"/>
+    </linearGradient>
+    <marker id="pal-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+    </marker>
+    <marker id="pal-chevron" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M2 2 L10 6 L2 10" fill="none" stroke="var(--ink-soft,#888)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-privacy-attack-ladder .bar-label {
+      font: 600 14px var(--sans,sans-serif);
+      fill: var(--muted,#888);
+      letter-spacing: 0.04em;
+    }
+    #fig-privacy-attack-ladder .card-header {
+      font: 700 15px var(--sans,sans-serif);
+      fill: var(--accent,#c15b39);
+    }
+    #fig-privacy-attack-ladder .card-quote {
+      font: italic 12px var(--sans,sans-serif);
+      fill: var(--ink-soft,#888);
+    }
+    #fig-privacy-attack-ladder .card-detail {
+      font: 400 12px var(--sans,sans-serif);
+      fill: var(--muted,#888);
+    }
+    #fig-privacy-attack-ladder .trait-up {
+      font: 400 12px var(--sans,sans-serif);
+      fill: var(--good,#5bbf8a);
+    }
+    #fig-privacy-attack-ladder .trait-down {
+      font: 400 12px var(--sans,sans-serif);
+      fill: var(--muted,#888);
+    }
+  </style>
+
+
+  <rect x="40" y="48" width="780" height="16" rx="8" fill="url(#pal-bar-grad)"/>
+
+  <polygon points="820,48 840,56 820,64" fill="var(--accent,#c15b39)"/>
+
+
+  <text x="430" y="38" text-anchor="middle" class="bar-label">attack strength</text>
+
+
+
+  <rect x="50" y="90" width="233" height="210" rx="10"
+        fill="var(--accent,#c15b39)" fill-opacity="0.07"
+        stroke="var(--ink-soft,#888)" stroke-width="1.5" class="v-stroke"/>
+  <text x="166" y="118" text-anchor="middle" class="card-header">Membership Inference</text>
+  <text x="166" y="140" text-anchor="middle" class="card-quote">"was z trained on?"</text>
+  <text x="166" y="160" text-anchor="middle" class="card-detail">1 bit per record</text>
+  <line x1="70" y1="172" x2="263" y2="172" stroke="var(--ink-soft,#888)" stroke-width="0.7" opacity="0.4"/>
+  <g transform="translate(103,185)">
+    <polygon points="5,0 10,9 0,9" fill="var(--good,#5bbf8a)"/>
+    <text x="14" y="9" class="trait-up">general, cheap</text>
+  </g>
+  <g transform="translate(103,207)">
+    <polygon points="0,0 10,0 5,9" fill="var(--muted,#888)"/>
+    <text x="14" y="9" class="trait-down">weakest leakage</text>
+  </g>
+
+
+
+  <rect x="313" y="90" width="234" height="210" rx="10"
+        fill="var(--accent,#c15b39)" fill-opacity="0.13"
+        stroke="var(--ink-soft,#888)" stroke-width="1.5" class="v-stroke"/>
+  <text x="430" y="118" text-anchor="middle" class="card-header">Extraction</text>
+  <text x="430" y="140" text-anchor="middle" class="card-quote">"emit some training</text>
+  <text x="430" y="156" text-anchor="middle" class="card-quote">strings verbatim"</text>
+  <text x="430" y="176" text-anchor="middle" class="card-detail">no prior needed</text>
+  <line x1="333" y1="188" x2="527" y2="188" stroke="var(--ink-soft,#888)" stroke-width="0.7" opacity="0.4"/>
+  <g transform="translate(367,201)">
+    <polygon points="5,0 10,9 0,9" fill="var(--good,#5bbf8a)"/>
+    <text x="14" y="9" class="trait-up">no prior needed</text>
+  </g>
+  <g transform="translate(367,223)">
+    <polygon points="0,0 10,0 5,9" fill="var(--muted,#888)"/>
+    <text x="14" y="9" class="trait-down">medium strength</text>
+  </g>
+
+
+
+  <rect x="577" y="90" width="233" height="210" rx="10"
+        fill="var(--accent,#c15b39)" fill-opacity="0.18"
+        stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+  <text x="693" y="118" text-anchor="middle" class="card-header">Reconstruction</text>
+  <text x="693" y="140" text-anchor="middle" class="card-quote">"recover z given</text>
+  <text x="693" y="156" text-anchor="middle" class="card-quote">partial info / target"</text>
+  <line x1="597" y1="172" x2="790" y2="172" stroke="var(--ink-soft,#888)" stroke-width="0.7" opacity="0.4"/>
+  <g transform="translate(618,185)">
+    <polygon points="5,0 10,9 0,9" fill="var(--good,#5bbf8a)"/>
+    <text x="14" y="9" class="trait-up">targets an individual</text>
+  </g>
+  <g transform="translate(618,207)">
+    <polygon points="0,0 10,0 5,9" fill="var(--muted,#888)"/>
+    <text x="14" y="9" class="trait-down">strongest leakage</text>
+  </g>
+
+
+  <line x1="285" y1="195" x2="311" y2="195"
+        stroke="var(--ink-soft,#888)" stroke-width="1.5"
+        marker-end="url(#pal-chevron)" class="v-stroke"/>
+  <line x1="549" y1="195" x2="575" y2="195"
+        stroke="var(--ink-soft,#888)" stroke-width="1.5"
+        marker-end="url(#pal-chevron)" class="v-stroke"/>
+
+
+  <text x="166" y="320" text-anchor="middle" class="card-detail" font-size="11">weakest / most general</text>
+  <text x="693" y="320" text-anchor="middle" class="card-detail" font-size="11">strongest / most targeted</text>
+</svg>
+<figcaption><b>The privacy attack ladder: from membership inference to reconstruction.</b> The three canonical attack families are ordered by leakage severity — membership inference answers only a single yes/no bit per record, extraction recovers verbatim training strings without any prior knowledge, and reconstruction directly targets a specific individual given partial information. Moving right on the spectrum means stronger leakage but typically more attacker capability required.</figcaption>
+</figure>
+
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: reporting average-case MIA accuracy</p>
+<p>If a paper or your own audit reports &ldquo;our MIA gets 51% accuracy, so the model is basically private,&rdquo; be skeptical. The privacy-relevant question is the <em>low-FPR tail</em>. Always compute and plot TPR at FPR ∈ {0.001, 0.01} on a log-scaled ROC. A model can look private on average and still confidently leak membership for the most vulnerable (most-outlier, least-deduplicated) records — which are exactly the records a regulator or plaintiff will surface.</p>
+</div>
+<hr />
+<h2 id="3-auditing-privacy-canaries-and-the-secret-sharer">3. Auditing Privacy: Canaries and the Secret Sharer<a class="headerlink" href="#3-auditing-privacy-canaries-and-the-secret-sharer" title="Permanent link">¶</a></h2>
+<p>You cannot fix what you cannot measure. The dominant methodology for <em>measuring</em> a training pipeline&rsquo;s leakage is <strong>canary insertion</strong>, from Carlini et al.&rsquo;s &ldquo;The Secret Sharer.&rdquo;</p>
+<p>A <strong>canary</strong> is a synthetic, out-of-distribution secret you deliberately insert into the training data — for example, <code>"The access code is 7-2-9-3-5-1-8-4"</code> with a <em>randomly chosen</em> numeric body drawn from a known format <span class="arithmatex">\(R\)</span> (here, 8 digits, so <span class="arithmatex">\(|R| = 10^8\)</span>). After training, you measure how much the model has memorized the canary using its <strong>exposure</strong>:</p>
+<div class="arithmatex">\[
+\operatorname{exposure}_\theta(s) \;=\; \log_2 |R| \;-\; \log_2 \operatorname{rank}_\theta(s),
+\]</div>
+<p>where <span class="arithmatex">\(\operatorname{rank}_\theta(s)\)</span> is the rank of the true canary <span class="arithmatex">\(s\)</span> among all <span class="arithmatex">\(|R|\)</span> candidate fill-ins, sorted by model log-likelihood (lowest perplexity = rank 1). Intuitively:</p>
+<ul>
+<li>If the model has <em>not</em> memorized the canary, its rank is roughly uniform in <span class="arithmatex">\([1, |R|]\)</span>, so <span class="arithmatex">\(\mathbb{E}[\operatorname{rank}] \approx |R|/2\)</span> and exposure <span class="arithmatex">\(\approx 1\)</span> bit.</li>
+<li>If the model has <em>fully</em> memorized it, <span class="arithmatex">\(\operatorname{rank} = 1\)</span> and exposure <span class="arithmatex">\(= \log_2 |R|\)</span> bits (e.g. <span class="arithmatex">\(\approx 26.6\)</span> bits for <span class="arithmatex">\(10^8\)</span>). <strong>The canary is now extractable by brute-force enumeration.</strong></li>
+</ul>
+<p>Exposure is wonderful because it is a <em>continuous, calibrated</em> signal — you do not need to wait until the model emits the canary verbatim; you can watch exposure climb during training and catch the leak early. And computing exact rank does not require enumerating all <span class="arithmatex">\(|R|\)</span> candidates: under a log-normal model of the perplexity distribution you can estimate rank from a small sample.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: from exposure to extractability</p>
+<p>Insert a canary <code>"my secret key is XXXXXXXXX"</code> whose body is 9 random digits, so <span class="arithmatex">\(|R| = 10^9\)</span> and <span class="arithmatex">\(\log_2 |R| \approx 29.9\)</span> bits. We train, then rank the true body among all <span class="arithmatex">\(10^9\)</span> candidates by model perplexity.</p>
+<ul>
+<li><strong>Case A — not memorized:</strong> true body lands at rank <span class="arithmatex">\(\approx 5\times10^8\)</span>. Exposure <span class="arithmatex">\(= 29.9 - \log_2(5\times10^8) = 29.9 - 28.9 = 1.0\)</span> bit. Safe.</li>
+<li><strong>Case B — partial:</strong> rank <span class="arithmatex">\(= 1000\)</span>. Exposure <span class="arithmatex">\(= 29.9 - \log_2(1000) = 29.9 - 9.97 = 19.9\)</span> bits. An attacker who can make <span class="arithmatex">\(1000\)</span> guesses extracts it. Alarming.</li>
+<li><strong>Case C — full:</strong> rank <span class="arithmatex">\(= 1\)</span>. Exposure <span class="arithmatex">\(= 29.9\)</span> bits. Greedy decoding emits the secret. Breach.</li>
+</ul>
+<p>Now the duplication knob: insert the same canary <strong>once</strong> vs. <strong>nine times</strong>. In the original Secret Sharer experiments, inserting a canary a handful of times in a large corpus already pushed exposure from <span class="arithmatex">\(\approx 1\)</span> bit toward the full <span class="arithmatex">\(\log_2|R|\)</span>, while a single insertion in a well-deduplicated corpus often stayed near baseline. This is the empirical core of &ldquo;dedup is your best cheap defense.&rdquo;</p>
+</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">sequence_logprob</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Total log p_theta(text) in nats, summed over the conditional next-token terms.&quot;&quot;&quot;</span>
+    <span class="n">ids</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span>                      <span class="c1"># (1, T, V)</span>
+    <span class="n">logprobs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># predict token t from &lt;t</span>
+    <span class="n">target</span> <span class="o">=</span> <span class="n">ids</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>                               <span class="c1"># shifted targets</span>
+    <span class="n">tok_lp</span> <span class="o">=</span> <span class="n">logprobs</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">target</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (1, T-1)</span>
+    <span class="k">return</span> <span class="n">tok_lp</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>                         <span class="c1"># scalar, nats</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">canary_exposure</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">template</span><span class="p">,</span> <span class="n">true_body</span><span class="p">,</span> <span class="n">body_space_size</span><span class="p">,</span>
+                    <span class="n">n_samples</span><span class="o">=</span><span class="mi">20000</span><span class="p">,</span> <span class="n">rng</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Estimate exposure of a canary by Monte-Carlo rank estimation.</span>
+
+<span class="sd">    template:        e.g. &quot;the access code is {}&quot;</span>
+<span class="sd">    true_body:       the actual inserted secret, e.g. &quot;72935184&quot;</span>
+<span class="sd">    body_space_size: |R|, the number of possible bodies (e.g. 10**8)</span>
+
+<span class="sd">    We sample candidate bodies, score them, and estimate the rank of the true</span>
+<span class="sd">    body via a log-normal fit of the perplexity distribution (Carlini et al.).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">rng</span> <span class="ow">or</span> <span class="n">random</span><span class="o">.</span><span class="n">Random</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">n_digits</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">true_body</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">body_logprob</span><span class="p">(</span><span class="n">body</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">sequence_logprob</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">template</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">body</span><span class="p">),</span> <span class="n">device</span><span class="p">)</span>
+
+    <span class="n">true_lp</span> <span class="o">=</span> <span class="n">body_logprob</span><span class="p">(</span><span class="n">true_body</span><span class="p">)</span>
+
+    <span class="c1"># Sample a reference set of random bodies and collect their log-probs.</span>
+    <span class="n">sample_lps</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_samples</span><span class="p">):</span>
+        <span class="n">rand_body</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">rng</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">9</span><span class="p">))</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_digits</span><span class="p">))</span>
+        <span class="n">sample_lps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">body_logprob</span><span class="p">(</span><span class="n">rand_body</span><span class="p">))</span>
+
+    <span class="n">sample</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">sample_lps</span><span class="p">)</span>
+    <span class="n">mu</span><span class="p">,</span> <span class="n">sigma</span> <span class="o">=</span> <span class="n">sample</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span> <span class="n">sample</span><span class="o">.</span><span class="n">std</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">+</span> <span class="mf">1e-9</span>
+
+    <span class="c1"># Fraction of the WHOLE space expected to score &gt;= the true canary, under a</span>
+    <span class="c1"># Gaussian fit to log-prob. P(X &gt;= true_lp) = 1 - Phi((true_lp - mu)/sigma).</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="p">(</span><span class="n">true_lp</span> <span class="o">-</span> <span class="n">mu</span><span class="p">)</span> <span class="o">/</span> <span class="n">sigma</span>
+    <span class="n">frac_higher</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">erfc</span><span class="p">(</span><span class="n">z</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">2.0</span><span class="p">))</span>   <span class="c1"># upper-tail of normal</span>
+    <span class="n">est_rank</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">frac_higher</span> <span class="o">*</span> <span class="n">body_space_size</span><span class="p">)</span>
+
+    <span class="n">exposure</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">body_space_size</span><span class="p">)</span> <span class="o">-</span> <span class="n">math</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">est_rank</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">exposure</span><span class="p">,</span> <span class="n">est_rank</span><span class="p">,</span> <span class="n">true_lp</span><span class="p">,</span> <span class="n">mu</span>
+
+<span class="c1"># Usage sketch (pseudo — plug in a real HF model/tokenizer you trained with a canary):</span>
+<span class="c1">#   exp, rank, _, _ = canary_exposure(model, tok,</span>
+<span class="c1">#                                     template=&quot;the access code is {}&quot;,</span>
+<span class="c1">#                                     true_body=&quot;72935184&quot;,</span>
+<span class="c1">#                                     body_space_size=10**8)</span>
+<span class="c1">#   print(f&quot;exposure = {exp:.1f} bits, estimated rank = {rank:.0f} of 1e8&quot;)</span>
+<span class="c1">#   # exposure near 1.0  -&gt; safe;  near 26.6 -&gt; fully memorized / extractable.</span>
+</code></pre></div>
+<p>The audit recipe in production: insert a <em>family</em> of canaries (different formats, different duplication counts, placed at different points in training) and report the exposure distribution. Rising exposure on low-duplication canaries is your early-warning system that the pipeline memorizes too aggressively — <em>before</em> a real secret leaks.</p>
+<hr />
+<h2 id="4-defenses-across-the-lifecycle">4. Defenses Across the Lifecycle<a class="headerlink" href="#4-defenses-across-the-lifecycle" title="Permanent link">¶</a></h2>
+<p>There is no single switch. Privacy is defended in layers, each at a different point in the pipeline, each with a different cost. We go from cheapest-and-most-effective to most-expensive-and-most-rigorous.</p>
+<h3 id="41-data-level-deduplication-and-pii-scrubbing">4.1 Data-level: deduplication and PII scrubbing<a class="headerlink" href="#41-data-level-deduplication-and-pii-scrubbing" title="Permanent link">¶</a></h3>
+<p><strong>Deduplication</strong> is the highest-ROI defense, full stop. Because memorization scales with duplication, removing near-duplicate documents collapses the most extractable tail. Use suffix-array exact substring dedup and MinHash/LSH near-dedup (the full machinery is in <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a>). Deduplicating a corpus can reduce extractable memorization by an order of magnitude at essentially zero utility cost — indeed it usually <em>improves</em> quality.</p>
+<p><strong>PII scrubbing</strong> removes the secrets before training. Detect-and-redact pipelines combine high-recall regexes (emails, phone numbers, SSNs, credit cards, API-key formats) with a named-entity-recognition (NER) model for free-form PII (names, addresses). This is the same Presidio-style stack used at inference time in <a href="../12-production-mlops/04-safety-guardrails.html">Safety, Guardrails &amp; Content Moderation</a>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+
+<span class="c1"># High-recall regexes for the structured tail of PII. These over-redact on</span>
+<span class="c1"># purpose: false positives (a redacted non-secret) are far cheaper than false</span>
+<span class="c1"># negatives (a leaked SSN) when training a model whose weights are forever.</span>
+<span class="n">PII_PATTERNS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;EMAIL&quot;</span><span class="p">:</span>  <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\b[\w.+-]+@[\w-]+\.[\w.-]+\b&quot;</span><span class="p">),</span>
+    <span class="s2">&quot;PHONE&quot;</span><span class="p">:</span>  <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\b(?:\+?\d{1,2}[\s.-]?)?\(?\d</span><span class="si">{3}</span><span class="s2">\)?[\s.-]?\d</span><span class="si">{3}</span><span class="s2">[\s.-]?\d</span><span class="si">{4}</span><span class="s2">\b&quot;</span><span class="p">),</span>
+    <span class="s2">&quot;SSN&quot;</span><span class="p">:</span>    <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\b\d</span><span class="si">{3}</span><span class="s2">-\d</span><span class="si">{2}</span><span class="s2">-\d</span><span class="si">{4}</span><span class="s2">\b&quot;</span><span class="p">),</span>
+    <span class="s2">&quot;CCARD&quot;</span><span class="p">:</span>  <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\b(?:\d[ -]*?){13,16}\b&quot;</span><span class="p">),</span>
+    <span class="c1"># Common secret-key shapes (AWS, generic 32-64 hex, Slack/GitHub-ish tokens):</span>
+    <span class="s2">&quot;AWSKEY&quot;</span><span class="p">:</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\bAKIA[0-9A-Z]</span><span class="si">{16}</span><span class="s2">\b&quot;</span><span class="p">),</span>
+    <span class="s2">&quot;HEX32&quot;</span><span class="p">:</span>  <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\b[0-9a-fA-F]{32,64}\b&quot;</span><span class="p">),</span>
+    <span class="s2">&quot;GHPAT&quot;</span><span class="p">:</span>  <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\bghp_[0-9A-Za-z]</span><span class="si">{36}</span><span class="s2">\b&quot;</span><span class="p">),</span>
+<span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">scrub_pii</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replace structured PII with typed placeholders. Returns (clean, counts).</span>
+
+<span class="sd">    Order matters: redact the most specific patterns first so a credit-card</span>
+<span class="sd">    number is not partially eaten by the phone regex.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">label</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;AWSKEY&quot;</span><span class="p">,</span> <span class="s2">&quot;GHPAT&quot;</span><span class="p">,</span> <span class="s2">&quot;SSN&quot;</span><span class="p">,</span> <span class="s2">&quot;CCARD&quot;</span><span class="p">,</span> <span class="s2">&quot;EMAIL&quot;</span><span class="p">,</span> <span class="s2">&quot;PHONE&quot;</span><span class="p">,</span> <span class="s2">&quot;HEX32&quot;</span><span class="p">):</span>
+        <span class="n">pattern</span> <span class="o">=</span> <span class="n">PII_PATTERNS</span><span class="p">[</span><span class="n">label</span><span class="p">]</span>
+        <span class="n">text</span><span class="p">,</span> <span class="n">n</span> <span class="o">=</span> <span class="n">pattern</span><span class="o">.</span><span class="n">subn</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&lt;</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">&gt;&quot;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">n</span><span class="p">:</span>
+            <span class="n">counts</span><span class="p">[</span><span class="n">label</span><span class="p">]</span> <span class="o">=</span> <span class="n">counts</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">label</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="n">n</span>
+    <span class="k">return</span> <span class="n">text</span><span class="p">,</span> <span class="n">counts</span>
+
+<span class="c1"># For free-form PII (person names, locations, orgs) layer an NER model on top:</span>
+<span class="c1">#   import spacy; nlp = spacy.load(&quot;en_core_web_trf&quot;)</span>
+<span class="c1">#   doc = nlp(text)</span>
+<span class="c1">#   for ent in reversed(doc.ents):        # reverse so offsets stay valid</span>
+<span class="c1">#       if ent.label_ in {&quot;PERSON&quot;, &quot;GPE&quot;, &quot;ORG&quot;}:</span>
+<span class="c1">#           text = text[:ent.start_char] + f&quot;&lt;{ent.label_}&gt;&quot; + text[ent.end_char:]</span>
+
+<span class="n">sample</span> <span class="o">=</span> <span class="s2">&quot;Contact john.doe@acme.io or 415-555-0199; key AKIAIOSFODNN7EXAMPLE; ssn 123-45-6789.&quot;</span>
+<span class="n">clean</span><span class="p">,</span> <span class="n">counts</span> <span class="o">=</span> <span class="n">scrub_pii</span><span class="p">(</span><span class="n">sample</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">clean</span><span class="p">)</span>   <span class="c1"># Contact &lt;EMAIL&gt; or &lt;PHONE&gt;; key &lt;AWSKEY&gt;; ssn &lt;SSN&gt;.</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">counts</span><span class="p">)</span>  <span class="c1"># {&#39;AWSKEY&#39;: 1, &#39;SSN&#39;: 1, &#39;EMAIL&#39;: 1, &#39;PHONE&#39;: 1}</span>
+</code></pre></div>
+<p>The limitation is fundamental: scrubbing only removes the PII <em>you can detect</em>. It cannot catch a phone number written as &ldquo;four one five, five five five&hellip;&rdquo; or a name that is also a common word. Scrubbing is necessary, high-value, and <strong>not sufficient</strong>. It also gives no formal guarantee — which is what motivates the next layer.</p>
+<h3 id="42-training-level-differential-privacy-and-dp-sgd">4.2 Training-level: differential privacy and DP-SGD<a class="headerlink" href="#42-training-level-differential-privacy-and-dp-sgd" title="Permanent link">¶</a></h3>
+<p><strong>Differential privacy (DP)</strong> is the only defense with a <em>formal, worst-case, composable</em> guarantee. A randomized training algorithm <span class="arithmatex">\(\mathcal{A}\)</span> is <strong><span class="arithmatex">\((\varepsilon,\delta)\)</span>-differentially private</strong> if for any two datasets <span class="arithmatex">\(D, D'\)</span> differing in a single record, and any set of outcomes <span class="arithmatex">\(S\)</span>:</p>
+<div class="arithmatex">\[
+\Pr[\mathcal{A}(D) \in S] \;\le\; e^{\varepsilon}\,\Pr[\mathcal{A}(D') \in S] \;+\; \delta.
+\]</div>
+<p>Read it operationally: <em>no attacker, however powerful, with any side information, can tell whether any one record was in the training set with confidence beyond a factor of <span class="arithmatex">\(e^\varepsilon\)</span></em> (up to failure probability <span class="arithmatex">\(\delta\)</span>). This directly upper-bounds the success of <em>every</em> membership-inference attack — DP is precisely a worst-case bound on the MIA adversary of §2.2. Smaller <span class="arithmatex">\(\varepsilon\)</span> = more privacy. As a rule of thumb <span class="arithmatex">\(\varepsilon \le 1\)</span> is strong, <span class="arithmatex">\(\varepsilon \approx 8\)</span> is &ldquo;meaningful but loose,&rdquo; and <span class="arithmatex">\(\varepsilon \gg 50\)</span> is mostly cosmetic. <span class="arithmatex">\(\delta\)</span> should be <span class="arithmatex">\(\ll 1/N\)</span> (smaller than one over the dataset size).</p>
+<p>The algorithm that delivers DP for deep learning is <strong>DP-SGD</strong> (Abadi et al., 2016). It modifies ordinary SGD with two operations per step:</p>
+<ol>
+<li><strong>Per-example gradient clipping.</strong> Compute the gradient <em>for each example separately</em> and clip its <span class="arithmatex">\(L_2\)</span> norm to a bound <span class="arithmatex">\(C\)</span>. This caps the influence any single example can have on the update:
+   $$
+   \tilde{g}_i \;=\; g_i \cdot \min!\Big(1, \frac{C}{\lVert g_i \rVert_2}\Big).
+   $$</li>
+<li><strong>Gaussian noise addition.</strong> Sum the clipped gradients, add calibrated Gaussian noise, and average:
+   $$
+   \hat{g} \;=\; \frac{1}{B}\Big(\sum_{i=1}^{B} \tilde{g}_i \;+\; \mathcal{N}\big(0,\; \sigma^2 C^2 \mathbf{I}\big)\Big).
+   $$</li>
+</ol>
+<p>The noise multiplier <span class="arithmatex">\(\sigma\)</span> together with the <strong>sampling rate</strong> <span class="arithmatex">\(q = B/N\)</span> and the number of steps <span class="arithmatex">\(T\)</span> determines <span class="arithmatex">\(\varepsilon\)</span> via a <em>privacy accountant</em> (the Rényi-DP / moments accountant, or the tighter PRV accountant). Each step &ldquo;spends&rdquo; privacy budget; composition adds it up over training.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dp_sgd_step</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">loss_fn</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span>
+                <span class="n">clip_norm</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">noise_multiplier</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    One DP-SGD step done explicitly (microbatch=1) to expose the mechanism.</span>
+<span class="sd">    In production use Opacus (PrivacyEngine) or a JAX/Flax DP library, which</span>
+<span class="sd">    compute per-sample grads efficiently via vmap / functorch and track the</span>
+<span class="sd">    privacy accountant for you. This loop is pedagogical, not fast.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">xs</span><span class="p">,</span> <span class="n">ys</span> <span class="o">=</span> <span class="n">batch</span>                       <span class="c1"># xs: (B, ...), ys: (B, ...)</span>
+    <span class="n">B</span> <span class="o">=</span> <span class="n">xs</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="c1"># Accumulator for the summed, clipped gradients.</span>
+    <span class="n">summed</span> <span class="o">=</span> <span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()]</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">B</span><span class="p">):</span>                                   <span class="c1"># PER-EXAMPLE gradients</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">(</span><span class="n">set_to_none</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">xs</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">])</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">loss_fn</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">ys</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">])</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>                                  <span class="c1"># grad of a single example</span>
+
+        <span class="c1"># L2 norm of this example&#39;s full gradient (flattened across params).</span>
+        <span class="n">sq</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">((</span><span class="n">p</span><span class="o">.</span><span class="n">grad</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+        <span class="n">total_norm</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">sq</span><span class="p">)</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">clip_norm</span> <span class="o">/</span> <span class="p">(</span><span class="n">total_norm</span> <span class="o">+</span> <span class="mf">1e-6</span><span class="p">))</span>  <span class="c1"># clip to C</span>
+
+        <span class="k">for</span> <span class="n">acc</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">summed</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()):</span>
+            <span class="n">acc</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">grad</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">*</span> <span class="n">scale</span><span class="p">)</span>            <span class="c1"># accumulate clipped grad</span>
+
+    <span class="c1"># Add Gaussian noise calibrated to the clip bound, then average.</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">(</span><span class="n">set_to_none</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">acc</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">summed</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()):</span>
+        <span class="n">noise</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">mean</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+                             <span class="n">std</span><span class="o">=</span><span class="n">noise_multiplier</span> <span class="o">*</span> <span class="n">clip_norm</span><span class="p">,</span>
+                             <span class="n">size</span><span class="o">=</span><span class="n">acc</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">grad</span> <span class="o">=</span> <span class="p">(</span><span class="n">acc</span> <span class="o">+</span> <span class="n">noise</span><span class="p">)</span> <span class="o">/</span> <span class="n">B</span>                        <span class="c1"># noisy mean gradient</span>
+
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+<span class="c1"># Real usage with Opacus (handles per-sample grads + accountant efficiently):</span>
+<span class="c1">#   from opacus import PrivacyEngine</span>
+<span class="c1">#   privacy_engine = PrivacyEngine()</span>
+<span class="c1">#   model, optimizer, loader = privacy_engine.make_private_with_epsilon(</span>
+<span class="c1">#       module=model, optimizer=optimizer, data_loader=loader,</span>
+<span class="c1">#       target_epsilon=8.0, target_delta=1e-6, epochs=3, max_grad_norm=1.0)</span>
+<span class="c1">#   # ... standard training loop ...</span>
+<span class="c1">#   eps = privacy_engine.get_epsilon(delta=1e-6)   # report the spent budget</span>
+</code></pre></div>
+<h4 id="the-costs-of-dp-sgd-honestly">The costs of DP-SGD, honestly<a class="headerlink" href="#the-costs-of-dp-sgd-honestly" title="Permanent link">¶</a></h4>
+<p>DP-SGD is not free. Three taxes:</p>
+<ul>
+<li><strong>Utility tax.</strong> Clipping + noise hurt accuracy, and the damage falls hardest on the <em>tail</em> — rare classes, minority dialects, long-tail facts — because those examples have large, distinctive gradients that clipping flattens. This is the privacy/fairness tension: DP can disproportionately degrade underrepresented groups.</li>
+<li><strong>Compute and memory tax.</strong> Per-example gradients break the standard batched backward pass. Naively you store a gradient per example; even with <code>vmap</code>/functorch tricks, DP-SGD is materially slower and more memory-hungry than vanilla SGD. Large <em>physical</em> batch sizes are essential for DP to work well, which compounds the cost.</li>
+<li><strong>Hyperparameter sensitivity.</strong> DP-SGD wants very large batches, a carefully tuned clip norm <span class="arithmatex">\(C\)</span>, and more epochs than you would expect; it is finicky.</li>
+</ul>
+<p>The pragmatic finding that makes DP usable for LLMs: <strong>DP fine-tuning works far better than DP pretraining.</strong> Pretrain non-privately on public/web data, then <em>fine-tune with DP-SGD on the sensitive dataset</em>. The public pretraining gives a strong prior so the private phase only needs a small, noisy nudge — DP fine-tuning of large models recovers most of the non-private accuracy at <span class="arithmatex">\(\varepsilon\)</span> in the single digits, whereas DP <em>pretraining</em> from scratch is brutally lossy. Parameter-efficient methods (LoRA, prompt tuning — see <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a>) pair especially well with DP because there are fewer parameters to noise.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: reading a privacy budget</p>
+<p>You DP-fine-tune with batch <span class="arithmatex">\(B = 4096\)</span>, dataset <span class="arithmatex">\(N = 2{,}000{,}000\)</span> (so sampling rate <span class="arithmatex">\(q = B/N = 2.048\times10^{-3}\)</span>), noise multiplier <span class="arithmatex">\(\sigma = 0.8\)</span>, for <span class="arithmatex">\(T = 3\)</span> epochs <span class="arithmatex">\(\approx 1465\)</span> steps, targeting <span class="arithmatex">\(\delta = 10^{-6}\)</span>. Feed <span class="arithmatex">\((q, \sigma, T, \delta)\)</span> to a PRV/RDP accountant (e.g. Opacus <code>get_epsilon</code>) and it returns, say, <span class="arithmatex">\(\varepsilon \approx 7.3\)</span>.</p>
+<p>Interpretation: an attacker&rsquo;s posterior odds that any given record was a member can shift by at most a factor of <span class="arithmatex">\(e^{7.3} \approx 1480\)</span>. That sounds large, but it caps the <em>worst case over all adversaries and all records</em>; empirically the strongest MIA against such a model gets TPR @ 1% FPR only marginally above chance. Want <span class="arithmatex">\(\varepsilon \approx 1\)</span>? Raise <span class="arithmatex">\(\sigma\)</span> (more noise, lower utility) or cut steps. The dial is explicit: <strong>privacy, utility, compute — pick two, and the accountant tells you the exchange rate.</strong></p>
+</div>
+<h3 id="43-inference-level-mitigations">4.3 Inference-level mitigations<a class="headerlink" href="#43-inference-level-mitigations" title="Permanent link">¶</a></h3>
+<p>When you cannot retrain (the weights already memorized), you defend at serving time. These are <em>mitigations</em>, not guarantees — they raise the cost of an attack without bounding it:</p>
+<ul>
+<li><strong>Output filtering / memorization detection.</strong> Run generated text against a Bloom filter or n-gram index of known-sensitive strings (or the training corpus itself) and block verbatim emissions. Cheap and effective against <em>exact</em> extraction; defeated by paraphrase.</li>
+<li><strong>MEMFREE / &ldquo;min-<span class="arithmatex">\(k\)</span>&rdquo; decoding.</strong> Constrain decoding so the model cannot emit a span that exactly matches a forbidden n-gram, forcing a divergent token whenever a memorized continuation is about to be produced.</li>
+<li><strong>PII output guardrails.</strong> The same Presidio-style detect-and-redact stack on the <em>output</em> side (<a href="../12-production-mlops/04-safety-guardrails.html">Safety, Guardrails &amp; Content Moderation</a>).</li>
+<li><strong>Refusal / rate-limiting on extraction-shaped prompts.</strong> Detect the &ldquo;repeat the word X forever&rdquo; divergence attack and the long-prefix-completion pattern, and refuse or rate-limit.</li>
+<li><strong>Sampling temperature.</strong> Greedy decoding maximizes verbatim emission; higher temperature reduces exact extraction but does not prevent a determined attacker who samples many times and ranks.</li>
+<li><strong>Machine unlearning.</strong> If a specific record must be provably removed post-hoc (a GDPR erasure request, a copyright takedown), targeted unlearning is the tool — covered in depth in <a href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html">Knowledge Editing &amp; Machine Unlearning</a>. Note that unlearning is hard to <em>certify</em>; DP during training is the only thing that gives a guarantee without re-running.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Output-side memorization guard: block verbatim emission of known-sensitive</span>
+<span class="c1"># n-grams. Use a Bloom filter so the index of &quot;things we must never emit&quot;</span>
+<span class="c1"># (training secrets, copyrighted spans, prior leaked PII) is memory-cheap.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pybloom_live</span><span class="w"> </span><span class="kn">import</span> <span class="n">BloomFilter</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MemorizationGuard</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">capacity</span><span class="o">=</span><span class="mi">10_000_000</span><span class="p">,</span> <span class="n">error_rate</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n</span> <span class="o">=</span> <span class="n">n</span>                                  <span class="c1"># n-gram length (tokens/words)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bf</span> <span class="o">=</span> <span class="n">BloomFilter</span><span class="p">(</span><span class="n">capacity</span><span class="o">=</span><span class="n">capacity</span><span class="p">,</span> <span class="n">error_rate</span><span class="o">=</span><span class="n">error_rate</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">index</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sensitive_texts</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">sensitive_texts</span><span class="p">:</span>                <span class="c1"># build the forbidden set</span>
+            <span class="n">toks</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">toks</span><span class="p">)</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">bf</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">toks</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">n</span><span class="p">]))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">violates</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">generated</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="n">toks</span> <span class="o">=</span> <span class="n">generated</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">toks</span><span class="p">)</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="k">if</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">toks</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">n</span><span class="p">])</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">bf</span><span class="p">:</span>   <span class="c1"># verbatim overlap</span>
+                <span class="k">return</span> <span class="kc">True</span>                                <span class="c1"># block / regenerate</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+<span class="c1"># guard = MemorizationGuard(n=8)</span>
+<span class="c1"># guard.index(known_secrets_and_copyrighted_corpus)</span>
+<span class="c1"># if guard.violates(model_output): regenerate_with_higher_temp_or_refuse()</span>
+</code></pre></div>
+<hr />
+<h2 id="5-end-to-end-a-membership-inference-canary-extraction-demo">5. End-to-End: A Membership-Inference + Canary-Extraction Demo<a class="headerlink" href="#5-end-to-end-a-membership-inference-canary-extraction-demo" title="Permanent link">¶</a></h2>
+<p>Let us tie it together with a runnable harness you could point at a model you trained yourself. It does two things: (1) a calibrated, reference-model membership-inference attack reported at low FPR, and (2) a canary-extraction sweep that recovers an inserted secret by ranked enumeration. This is the audit you run <em>before</em> you ship.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">audit_privacy.py — membership inference (reference-calibrated) + canary extraction.</span>
+
+<span class="sd">Run against a target model you trained, with a reference model that did NOT see</span>
+<span class="sd">the same private data (e.g. a base checkpoint, or a smaller public model).</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">avg_nll</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Mean per-token negative log-likelihood (the model&#39;s &#39;loss&#39; on text).&quot;&quot;&quot;</span>
+    <span class="n">ids</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">lp</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">tgt</span> <span class="o">=</span> <span class="n">ids</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>
+    <span class="n">nll</span> <span class="o">=</span> <span class="o">-</span><span class="n">lp</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">tgt</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">nll</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+<span class="c1"># ----------------------------------------------------------------------------</span>
+<span class="c1"># (1) MEMBERSHIP INFERENCE, reference-calibrated, scored at low FPR.</span>
+<span class="c1"># ----------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">membership_scores</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">ref</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">records</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Score = ref_loss - target_loss  (a.k.a. the &#39;Ratio&#39; / LiRA-lite signal).</span>
+<span class="sd">    A MEMBER should have target_loss &lt;&lt; ref_loss  -&gt;  large positive score.</span>
+<span class="sd">    Calibrating by the reference removes the intrinsic difficulty of the text.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">records</span><span class="p">:</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="n">avg_nll</span><span class="p">(</span><span class="n">ref</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span> <span class="o">-</span> <span class="n">avg_nll</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">scores</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">roc_tpr_at_fpr</span><span class="p">(</span><span class="n">scores_member</span><span class="p">,</span> <span class="n">scores_nonmember</span><span class="p">,</span> <span class="n">fpr_targets</span><span class="o">=</span><span class="p">(</span><span class="mf">0.001</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">)):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    The privacy-correct metric: TPR at fixed (low) FPR. We threshold so that at</span>
+<span class="sd">    most `fpr` of NON-members are flagged, then measure how many MEMBERS we catch.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">fpr</span> <span class="ow">in</span> <span class="n">fpr_targets</span><span class="p">:</span>
+        <span class="c1"># threshold = the (1-fpr) quantile of non-member scores</span>
+        <span class="n">thresh</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">quantile</span><span class="p">(</span><span class="n">scores_nonmember</span><span class="p">,</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">fpr</span><span class="p">)</span>
+        <span class="n">tpr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">scores_member</span> <span class="o">&gt;=</span> <span class="n">thresh</span><span class="p">)</span>
+        <span class="n">out</span><span class="p">[</span><span class="n">fpr</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">tpr</span><span class="p">,</span> <span class="n">thresh</span><span class="p">)</span>
+    <span class="c1"># AUC for reference (NOT the headline number — the low-FPR TPR is).</span>
+    <span class="n">all_s</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">scores_member</span><span class="p">,</span> <span class="n">scores_nonmember</span><span class="p">])</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">np</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">scores_member</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">scores_nonmember</span><span class="p">)])</span>
+    <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="o">-</span><span class="n">all_s</span><span class="p">)</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">y</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
+    <span class="n">tps</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">y</span><span class="p">);</span> <span class="n">fps</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">y</span><span class="p">)</span>
+    <span class="n">tpr_curve</span> <span class="o">=</span> <span class="n">tps</span> <span class="o">/</span> <span class="n">tps</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">];</span> <span class="n">fpr_curve</span> <span class="o">=</span> <span class="n">fps</span> <span class="o">/</span> <span class="n">fps</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">auc</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">trapz</span><span class="p">(</span><span class="n">tpr_curve</span><span class="p">,</span> <span class="n">fpr_curve</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span><span class="p">,</span> <span class="n">auc</span>
+
+<span class="c1"># ----------------------------------------------------------------------------</span>
+<span class="c1"># (2) CANARY EXTRACTION by ranked enumeration (small body space).</span>
+<span class="c1"># ----------------------------------------------------------------------------</span>
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_canary</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">template</span><span class="p">,</span> <span class="n">true_body</span><span class="p">,</span> <span class="n">n_digits</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span>
+                   <span class="n">max_enum</span><span class="o">=</span><span class="mi">200000</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Enumerate (a sample of) the body space, rank candidates by model log-prob,</span>
+<span class="sd">    and report the rank of the TRUE body + exposure. If rank==1 the secret is</span>
+<span class="sd">    greedily extractable. For tiny spaces (&lt;= max_enum) we enumerate exactly.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">space</span> <span class="o">=</span> <span class="mi">10</span> <span class="o">**</span> <span class="n">n_digits</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">body_lp</span><span class="p">(</span><span class="n">body</span><span class="p">):</span>
+        <span class="n">ids</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">template</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">body</span><span class="p">),</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">lp</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">tgt</span> <span class="o">=</span> <span class="n">ids</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>
+        <span class="k">return</span> <span class="n">lp</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">tgt</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+    <span class="n">true_lp</span> <span class="o">=</span> <span class="n">body_lp</span><span class="p">(</span><span class="n">true_body</span><span class="p">)</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">space</span> <span class="o">&lt;=</span> <span class="n">max_enum</span><span class="p">:</span>                       <span class="c1"># exact rank by full enumeration</span>
+        <span class="n">better</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">space</span><span class="p">):</span>
+            <span class="n">body</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="o">.</span><span class="n">zfill</span><span class="p">(</span><span class="n">n_digits</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">body</span> <span class="o">==</span> <span class="n">true_body</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="k">if</span> <span class="n">body_lp</span><span class="p">(</span><span class="n">body</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">true_lp</span><span class="p">:</span>
+                <span class="n">better</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">rank</span> <span class="o">=</span> <span class="n">better</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="k">else</span><span class="p">:</span>                                        <span class="c1"># Monte-Carlo rank estimate</span>
+        <span class="n">sample</span> <span class="o">=</span> <span class="p">[</span><span class="n">body_lp</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">map</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="n">n_digits</span><span class="p">))))</span>
+                  <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">20000</span><span class="p">)]</span>
+        <span class="n">sample</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">sample</span><span class="p">)</span>
+        <span class="n">z</span> <span class="o">=</span> <span class="p">(</span><span class="n">true_lp</span> <span class="o">-</span> <span class="n">sample</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span> <span class="o">/</span> <span class="p">(</span><span class="n">sample</span><span class="o">.</span><span class="n">std</span><span class="p">()</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">)</span>
+        <span class="n">frac</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">erfc</span><span class="p">(</span><span class="n">z</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span>
+        <span class="n">rank</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">frac</span> <span class="o">*</span> <span class="n">space</span><span class="p">))</span>
+
+    <span class="n">exposure</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">space</span><span class="p">)</span> <span class="o">-</span> <span class="n">math</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">rank</span><span class="p">)</span>
+    <span class="n">extractable</span> <span class="o">=</span> <span class="p">(</span><span class="n">rank</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="n">rank</span><span class="o">=</span><span class="n">rank</span><span class="p">,</span> <span class="n">space</span><span class="o">=</span><span class="n">space</span><span class="p">,</span> <span class="n">exposure</span><span class="o">=</span><span class="n">exposure</span><span class="p">,</span>
+                <span class="n">extractable</span><span class="o">=</span><span class="n">extractable</span><span class="p">,</span> <span class="n">true_lp</span><span class="o">=</span><span class="n">true_lp</span><span class="p">)</span>
+
+<span class="c1"># ----------------------------------------------------------------------------</span>
+<span class="c1"># Driver (sketch): assumes you have `target`, `ref`, `tokenizer`, and that</span>
+<span class="c1"># `members` were in target&#39;s training set and `nonmembers` were held out.</span>
+<span class="c1"># ----------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">run_audit</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">ref</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">members</span><span class="p">,</span> <span class="n">nonmembers</span><span class="p">,</span>
+              <span class="n">canary_template</span><span class="o">=</span><span class="s2">&quot;the access code is </span><span class="si">{}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">canary_body</span><span class="o">=</span><span class="s2">&quot;72935&quot;</span><span class="p">,</span>
+              <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">):</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">membership_scores</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">ref</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">members</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">membership_scores</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">ref</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">nonmembers</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+    <span class="n">tpr_table</span><span class="p">,</span> <span class="n">auc</span> <span class="o">=</span> <span class="n">roc_tpr_at_fpr</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=== Membership Inference (reference-calibrated) ===&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;AUC (context only): </span><span class="si">{</span><span class="n">auc</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">fpr</span><span class="p">,</span> <span class="p">(</span><span class="n">tpr</span><span class="p">,</span> <span class="n">thr</span><span class="p">)</span> <span class="ow">in</span> <span class="n">tpr_table</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">ratio</span> <span class="o">=</span> <span class="n">tpr</span> <span class="o">/</span> <span class="n">fpr</span> <span class="k">if</span> <span class="n">fpr</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;inf&#39;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  TPR @ </span><span class="si">{</span><span class="n">fpr</span><span class="si">:</span><span class="s2">6.3%</span><span class="si">}</span><span class="s2"> FPR = </span><span class="si">{</span><span class="n">tpr</span><span class="si">:</span><span class="s2">6.3%</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">ratio</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">x chance)&quot;</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== Canary Extraction ===&quot;</span><span class="p">)</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="n">extract_canary</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">canary_template</span><span class="p">,</span> <span class="n">canary_body</span><span class="p">,</span>
+                         <span class="n">n_digits</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">canary_body</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  rank </span><span class="si">{</span><span class="n">res</span><span class="p">[</span><span class="s1">&#39;rank&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> of </span><span class="si">{</span><span class="n">res</span><span class="p">[</span><span class="s1">&#39;space&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> | &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;exposure </span><span class="si">{</span><span class="n">res</span><span class="p">[</span><span class="s1">&#39;exposure&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> bits | &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;extractable=</span><span class="si">{</span><span class="n">res</span><span class="p">[</span><span class="s1">&#39;extractable&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">tpr_table</span><span class="p">,</span> <span class="n">auc</span><span class="p">,</span> <span class="n">res</span>
+</code></pre></div>
+<p>What &ldquo;good&rdquo; looks like on this harness:</p>
+<div class="highlight"><pre><span></span><code>=== Membership Inference (reference-calibrated) ===
+AUC (context only): 0.58
+  TPR @  0.100% FPR =  0.180%   (1.8x chance)
+  TPR @  1.000% FPR =  2.400%   (2.4x chance)
+  TPR @ 10.000% FPR = 18.000%   (1.8x chance)
+
+=== Canary Extraction ===
+  rank 1 of 100000 | exposure 16.6 bits | extractable=True
+</code></pre></div>
+<p>The MIA numbers above are <em>illustrative</em> but show the right shape: a model that is only mildly vulnerable still leaks a few-× over chance in the low-FPR tail — and the canary, inserted with even modest duplication, is fully extractable (rank 1, exposure = <span class="arithmatex">\(\log_2 10^5 \approx 16.6\)</span> bits). Re-run after deduplication and DP fine-tuning and you want to see the canary&rsquo;s exposure collapse toward ~1 bit and the TPR @ 0.1% FPR fall toward chance.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A product team wants to fine-tune an LLM on internal support tickets containing customer PII and ship it to customers. Walk me through how you would reason about privacy, and where differential privacy does and does not help.</p>
+<p><strong>A:</strong> I&rsquo;d start with a threat model: the adversary is an external user of the deployed model who can issue arbitrary prompts; the asset is any single customer&rsquo;s PII; the attacks are extraction (verbatim PII in a completion) and membership inference (confirming a person is a customer). Then defenses in layers. (1) <strong>Dedup + PII scrubbing</strong> of the tickets — cheapest, biggest win, but no guarantee and incomplete recall. (2) <strong>DP-SGD fine-tuning</strong> on top of a non-privately-pretrained base, targeting a stated <span class="arithmatex">\(\varepsilon\)</span> (say single digits) and <span class="arithmatex">\(\delta \ll 1/N\)</span>. DP gives a <em>formal, worst-case</em> bound on membership inference: it caps how much any record changes the model, which is exactly the leakage we fear; it&rsquo;s the right tool <em>for training-set membership</em>. (3) What DP does <strong>not</strong> help with: PII the model learned during <em>public</em> pretraining (DP only protects the private fine-tune set), and the <em>utility/fairness</em> hit — DP clipping disproportionately degrades rare ticket types, so I&rsquo;d measure tail performance, not just aggregate. (4) <strong>Inference guardrails</strong> — output PII redaction and a verbatim-emission Bloom filter — as defense in depth. (5) <strong>Audit</strong>: insert canaries at known duplication counts, run a reference-calibrated MIA, and <em>report TPR at 0.1% FPR</em>, not average accuracy. Finally I&rsquo;d note the compliance framing: under GDPR the fine-tune set is personal data with purpose-limitation and erasure obligations, so I&rsquo;d want either DP (which makes &ldquo;is X a member?&rdquo; provably hard) or a clean retraining path for erasure requests, because unlearning a specific record from a shipped model is hard to certify.</p>
+</div>
+<hr />
+<h2 id="6-threat-modeling-compliance-framing">6. Threat Modeling &amp; Compliance Framing<a class="headerlink" href="#6-threat-modeling-compliance-framing" title="Permanent link">¶</a></h2>
+<p>Privacy engineering decisions are downstream of a <em>threat model</em> and a <em>legal regime</em>. Both must be explicit.</p>
+<h3 id="61-a-threat-model-template-for-llm-privacy">6.1 A threat model template for LLM privacy<a class="headerlink" href="#61-a-threat-model-template-for-llm-privacy" title="Permanent link">¶</a></h3>
+<p>State four things before choosing defenses:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Questions to answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Adversary</strong></td>
+<td>External API user? Insider with logits/weights? Nation-state with the full model? White-box (gradients) vs black-box (text only)?</td>
+</tr>
+<tr>
+<td><strong>Asset</strong></td>
+<td>PII of a specific person? Membership (was X a customer)? Copyrighted text? A trade secret in the fine-tune set?</td>
+</tr>
+<tr>
+<td><strong>Attack</strong></td>
+<td>Extraction, membership inference, reconstruction, attribute inference, model inversion?</td>
+</tr>
+<tr>
+<td><strong>Access</strong></td>
+<td>Black-box top-1 token? Full logits/log-probs? Many queries (extraction needs volume)? Weights (white-box MIA is far stronger)?</td>
+</tr>
+</tbody>
+</table>
+<p>The access level is decisive: a <strong>white-box</strong> adversary with weights and gradients runs LiRA-grade attacks and can read memorization directly, so for an open-weights release DP-during-training is essentially mandatory if the training set is sensitive. A <strong>black-box, rate-limited</strong> API adversary is far weaker, and inference guardrails + dedup may suffice. Never design defenses without naming the adversary.</p>
+<h3 id="62-gdpr-hipaa-and-friends">6.2 GDPR, HIPAA, and friends<a class="headerlink" href="#62-gdpr-hipaa-and-friends" title="Permanent link">¶</a></h3>
+<p>The compliance layer (covered fully in <a href="../13-interp-safety-gov/06-governance-compliance.html">AI Governance, Compliance &amp; Regulation</a>) reframes the technical risk as legal obligation:</p>
+<ul>
+<li><strong>GDPR (EU).</strong> Training data containing personal data is <em>processing of personal data</em>. Implicated principles: <strong>lawful basis</strong> for using it, <strong>purpose limitation</strong>, <strong>data minimization</strong> (don&rsquo;t train on PII you don&rsquo;t need — scrub it), and the <strong>right to erasure</strong> (Article 17). Erasure is the sharp one: if a data subject demands deletion, can you remove their influence from a shipped model? Honest options are (a) retrain without them (expensive), (b) certified machine unlearning (hard to prove), or &copy; having trained with DP, which weakens the &ldquo;their data is <em>in</em> the model&rdquo; claim because no single record provably changed it. Many regulators also treat <em>strong anonymization/DP</em> as moving data outside GDPR&rsquo;s scope, which is part of DP&rsquo;s appeal.</li>
+<li><strong>HIPAA (US healthcare).</strong> Protected Health Information (PHI) demands de-identification — the Safe Harbor method enumerates 18 identifiers to strip (names, dates finer than year, record numbers, etc.). A model that <em>regurgitates</em> a PHI-bearing training note is a reportable breach. HIPAA pushes you toward aggressive scrubbing <em>and</em> output guardrails, and toward keeping the model inside the covered entity&rsquo;s controlled environment.</li>
+<li><strong>Copyright &amp; the &ldquo;memorization = infringement&rdquo; question.</strong> Verbatim emission of copyrighted training text is the technical fact underlying ongoing litigation. Extraction audits and output Bloom-filtering are, in part, <em>legal</em> risk-reduction.</li>
+<li><strong>CCPA/CPRA, the EU AI Act, sectoral rules.</strong> Add transparency, opt-out, and (for high-risk systems) documentation and risk-assessment duties.</li>
+</ul>
+<p>The engineering upshot is a single sentence you can take to a design review: <strong>deduplicate and scrub to minimize, train with DP when the fine-tune set is sensitive and especially when weights are released, guard the output at inference, and audit with canaries + low-FPR MIA so you can prove — to yourself and to a regulator — what your model does and does not leak.</strong></p>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Memorization is a feature of the objective, not a bug.</strong> Maximum-likelihood training <em>stores</em> rare, high-surprise sequences verbatim; it scales up with model size and especially with <strong>data duplication</strong>, and it appears long before classical overfitting.</li>
+<li><strong>The attack ladder is MIA → extraction → reconstruction.</strong> Always evaluate membership inference at <strong>TPR @ low FPR</strong> on a log-ROC, never average accuracy — average accuracy hides the worst-case leakage that regulators and plaintiffs care about.</li>
+<li><strong>Canary exposure is your measuring stick.</strong> Insert synthetic secrets, compute <span class="arithmatex">\(\operatorname{exposure} = \log_2|R| - \log_2 \operatorname{rank}\)</span>; an exposure near <span class="arithmatex">\(\log_2|R|\)</span> means the secret is brute-force extractable. Watch it during training as an early-warning signal.</li>
+<li><strong>Deduplication is the highest-ROI privacy defense</strong> — order-of-magnitude reduction in extractable memorization at zero (often negative) utility cost. PII scrubbing is necessary but incomplete and gives no formal guarantee.</li>
+<li><strong>Differential privacy (DP-SGD) is the only formal guarantee.</strong> Per-example gradient clipping + calibrated Gaussian noise yields an <span class="arithmatex">\((\varepsilon,\delta)\)</span> bound that caps <em>every</em> membership-inference adversary. Read <span class="arithmatex">\(\varepsilon\)</span> as a bound on the attacker&rsquo;s odds shift of <span class="arithmatex">\(e^{\varepsilon}\)</span>.</li>
+<li><strong>DP fine-tuning ≫ DP pretraining.</strong> Pretrain non-privately, then DP-fine-tune the sensitive set (ideally with PEFT) to recover most utility at single-digit <span class="arithmatex">\(\varepsilon\)</span>. DP&rsquo;s costs are real: utility hit on the tail, higher compute/memory, and finicky hyperparameters.</li>
+<li><strong>Inference-time mitigations are mitigations, not guarantees</strong> — output PII redaction, verbatim-emission Bloom filters, MemFree-style decoding, and refusal of extraction-shaped prompts raise attack cost but don&rsquo;t bound leakage.</li>
+<li><strong>Defenses follow the threat model and the law.</strong> White-box / open-weights releases of sensitive-data models essentially require DP-during-training; GDPR&rsquo;s right-to-erasure and HIPAA&rsquo;s de-identification push you toward minimization, DP, and provable audits.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Privacy and memorization in LLMs is an active research frontier: the field has moved from demonstrating that extraction is possible to rigorous empirical auditing frameworks, efficient DP fine-tuning at scale, and user-level privacy guarantees for production systems. Deduplication + DP fine-tuning with PEFT is the current best-practice recipe for deploying sensitive-data models.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1802.08232">Carlini et al., <em>The Secret Sharer: Evaluating and Testing Unintended Memorization in Neural Networks</em> (2019)</a> — introduces canaries and the exposure metric; the foundation of quantitative privacy auditing for generative models.</li>
+<li><a href="https://arxiv.org/abs/1607.00133">Abadi et al., <em>Deep Learning with Differential Privacy</em> (2016)</a> — the DP-SGD algorithm (per-example gradient clipping + Gaussian noise + moments accountant) that remains the gold standard for formal privacy in deep learning.</li>
+<li><a href="https://www.nowpublishers.com/article/Details/TCS-042">Dwork &amp; Roth, <em>The Algorithmic Foundations of Differential Privacy</em> (2014)</a> — the canonical textbook for the (ε, δ) definition, composition theorems, and core mechanisms.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2012.07805">Carlini et al., <em>Extracting Training Data from Large Language Models</em> (2021)</a> — the canonical GPT-2 extraction attack; establishes the generate-rank-verify pipeline and zlib/reference-model membership signals.</li>
+<li><a href="https://arxiv.org/abs/2202.07646">Carlini et al., <em>Quantifying Memorization Across Neural Language Models</em> (2022)</a> — establishes the log-linear scaling of memorization with model size, duplication, and context length.</li>
+<li><a href="https://arxiv.org/abs/2112.03570">Carlini et al., <em>Membership Inference Attacks From First Principles</em> (LiRA, 2022)</a> — shadow-model likelihood-ratio attack and the case for TPR @ low FPR as the correct privacy metric.</li>
+<li><a href="https://arxiv.org/abs/2311.17035">Nasr et al., <em>Scalable Extraction of Training Data from (Production) Language Models</em> (2023)</a> — the &ldquo;divergence attack&rdquo; showing aligned models still leak pretraining data; extraction at scale from ChatGPT and other production models.</li>
+<li><a href="https://arxiv.org/abs/2302.07956">Nasr et al., <em>Tight Auditing of Differentially Private Machine Learning</em> (2023)</a> — empirical auditing that nearly matches provable DP guarantees using only two training runs; current state of the art in DP auditing.</li>
+<li><a href="https://research.google/blog/fine-tuning-llms-with-user-level-differential-privacy/">Ganesh &amp; Charles, <em>Fine-tuning LLMs with user-level differential privacy</em> (Google Research, 2025)</a> — extends DP fine-tuning to protect entire user histories rather than individual examples; reflects production deployment at Google.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/pytorch/opacus">pytorch/opacus</a> — Meta&rsquo;s production-grade DP-SGD library for PyTorch; handles per-sample gradients, privacy accounting, and LoRA-compatible fine-tuning with minimal code changes.</li>
+<li><a href="https://github.com/microsoft/presidio">microsoft/presidio</a> — open-source PII detection and anonymization framework (NER + regex + customizable pipelines) for scrubbing training data and filtering model outputs.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2107.06499">Lee et al., <em>Deduplicating Training Data Makes Language Models Better</em> (ACL 2022)</a> — quantifies the order-of-magnitude memorization reduction from deduplication, with released suffix-array tooling for large corpora.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Carlini, Liu, Erlingsson, Kos, Song, &ldquo;The Secret Sharer: Evaluating and Testing Unintended Memorization in Neural Networks,&rdquo; USENIX Security 2019</strong> — introduces canaries and the exposure metric; the foundation of privacy auditing.</li>
+<li><strong>Carlini et al., &ldquo;Extracting Training Data from Large Language Models,&rdquo; USENIX Security 2021</strong> — the canonical GPT-2 extraction attack (generate, rank by membership signal, verify).</li>
+<li><strong>Carlini, Ippolito, Jagielski, Lee, Tramèr, Zhang, &ldquo;Quantifying Memorization Across Neural Language Models,&rdquo; 2022</strong> — establishes the scaling of memorization with model size, duplication, and context length.</li>
+<li><strong>Abadi, Chu, Goodfellow, McMahan, Mironov, Talwar, Zhang, &ldquo;Deep Learning with Differential Privacy,&rdquo; ACM CCS 2016</strong> — the DP-SGD algorithm (per-example clipping + Gaussian noise + moments accountant).</li>
+<li><strong>Dwork &amp; Roth, &ldquo;The Algorithmic Foundations of Differential Privacy,&rdquo; 2014</strong> — the standard reference for the <span class="arithmatex">\((\varepsilon,\delta)\)</span> definition, composition, and mechanisms.</li>
+<li><strong>Carlini, Chien, Nasr, Song, Terzis, Tramèr, &ldquo;Membership Inference Attacks From First Principles&rdquo; (LiRA), IEEE S&amp;P 2022</strong> — the shadow-model likelihood-ratio attack and the case for low-FPR evaluation.</li>
+<li><strong>Lee, Ippolito et al., &ldquo;Deduplicating Training Data Makes Language Models Better,&rdquo; ACL 2022</strong> — quantifies how deduplication reduces memorization (and improves quality).</li>
+<li><strong>Yu, Naik, Backurs, Gopi, Inan, Kamath, Kulkarni, Lee, Manoel, Wutschitz, Zanella-Béguelin et al., &ldquo;Differentially Private Fine-tuning of Language Models,&rdquo; ICLR 2022</strong> — shows DP fine-tuning of large LMs recovers most utility at single-digit <span class="arithmatex">\(\varepsilon\)</span>.</li>
+<li><strong>Nasr et al., &ldquo;Scalable Extraction of Training Data from (Production) Language Models,&rdquo; 2023</strong> — the divergence (&ldquo;repeat this word&rdquo;) attack on aligned models.</li>
+<li><strong>microsoft/presidio</strong> and <strong>pytorch/opacus</strong> — production-grade open-source libraries for PII detection/anonymization and for DP-SGD training, respectively.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-knowledge-editing-unlearning.html"><span class="pn-label">← Previous</span><span class="pn-title">Knowledge Editing &amp; Machine Unlearning</span></a>
+<a class="next" href="04-watermarking-provenance.html"><span class="pn-label">Next →</span><span class="pn-title">Watermarking, Provenance &amp; AI-Content Detection</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#1-what-memorization-is-and-why-models-do-it">1. What Memorization Is, and Why Models Do It</a></li>
+<li class="toc-l3"><a href="#11-why-memorization-is-inevitable-under-maximum-likelihood">1.1 Why memorization is inevitable under maximum likelihood</a></li>
+<li class="toc-l3"><a href="#12-the-three-things-that-drive-memorization">1.2 The three things that drive memorization</a></li>
+<li class="toc-l2"><a href="#2-the-attack-surface-extraction-membership-inference-reconstruction">2. The Attack Surface: Extraction, Membership Inference, Reconstruction</a></li>
+<li class="toc-l3"><a href="#21-training-data-extraction">2.1 Training-data extraction</a></li>
+<li class="toc-l3"><a href="#22-membership-inference-attacks-mia">2.2 Membership inference attacks (MIA)</a></li>
+<li class="toc-l3"><a href="#23-reconstruction-and-attribute-inference">2.3 Reconstruction and attribute inference</a></li>
+<li class="toc-l2"><a href="#3-auditing-privacy-canaries-and-the-secret-sharer">3. Auditing Privacy: Canaries and the Secret Sharer</a></li>
+<li class="toc-l2"><a href="#4-defenses-across-the-lifecycle">4. Defenses Across the Lifecycle</a></li>
+<li class="toc-l3"><a href="#41-data-level-deduplication-and-pii-scrubbing">4.1 Data-level: deduplication and PII scrubbing</a></li>
+<li class="toc-l3"><a href="#42-training-level-differential-privacy-and-dp-sgd">4.2 Training-level: differential privacy and DP-SGD</a></li>
+<li class="toc-l3"><a href="#43-inference-level-mitigations">4.3 Inference-level mitigations</a></li>
+<li class="toc-l2"><a href="#5-end-to-end-a-membership-inference-canary-extraction-demo">5. End-to-End: A Membership-Inference + Canary-Extraction Demo</a></li>
+<li class="toc-l2"><a href="#6-threat-modeling-compliance-framing">6. Threat Modeling &amp;amp; Compliance Framing</a></li>
+<li class="toc-l3"><a href="#61-a-threat-model-template-for-llm-privacy">6.1 A threat model template for LLM privacy</a></li>
+<li class="toc-l3"><a href="#62-gdpr-hipaa-and-friends">6.2 GDPR, HIPAA, and friends</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

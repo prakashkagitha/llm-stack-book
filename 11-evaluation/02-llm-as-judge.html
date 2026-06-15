@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM-as-a-Judge &amp; Automated Evaluation — The LLM Stack</title>
+<meta name="description" content="Using LLMs to grade: pairwise vs pointwise, rubric grading, position/verbosity/self-preference bias and mitigations, agreement with humans, Chatbot Arena/Elo, j">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="active" href="02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XI — Evaluation</div>
+<h1 id="112-llm-as-a-judge-automated-evaluation">11.2 LLM-as-a-Judge &amp; Automated Evaluation<a class="headerlink" href="#112-llm-as-a-judge-automated-evaluation" title="Permanent link">¶</a></h1>
+<p>Human evaluation of LLM outputs is the gold standard — but it is slow, expensive, and hard to reproduce. A single preference study across a few thousand examples might cost weeks of annotator time and thousands of dollars. When you are running ablations, A/B testing prompts, or iterating on a fine-tuned model daily, that cadence is untenable.</p>
+<p>The insight behind <strong>LLM-as-a-Judge</strong> (LLMaaJ) is simple: a sufficiently capable language model can replicate many of the judgments a human makes about quality, correctness, and helpfulness — and it can do so at the speed of inference. Since roughly 2023, this approach has become the backbone of nearly every large-scale automated evaluation pipeline, including the reward modeling loop described in <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>.</p>
+<p>This chapter is a rigorous treatment of the machinery: how to prompt a judge, which biases infect its scores, how to calibrate and audit it against human labels, and how to build the Chatbot Arena Elo system from scratch.</p>
+<hr />
+<h2 id="why-human-evaluation-alone-does-not-scale">Why Human Evaluation Alone Does Not Scale<a class="headerlink" href="#why-human-evaluation-alone-does-not-scale" title="Permanent link">¶</a></h2>
+<p>Before diving into the mechanics, it is worth being precise about why we need automation at all.</p>
+<p><strong>Throughput.</strong> A single annotator, given a pair of model responses, might take 2–3 minutes to read, compare, and label. At that rate, 10,000 comparisons require roughly 300–500 annotator-hours. With a team of 10, that is multiple weeks. Modern development cycles need daily evaluation loops.</p>
+<p><strong>Consistency.</strong> Even trained annotators disagree. Inter-annotator agreement on open-ended quality often sits at Cohen&rsquo;s κ in the range of 0.4–0.6 — barely moderate. Annotator mood, fatigue, and framing effects introduce noise that is hard to control.</p>
+<p><strong>Coverage.</strong> Benchmarks like MMLU or HumanEval cover well-defined task categories with right/wrong answers — see <a href="../11-evaluation/01-eval-landscape.html">The Evaluation Problem &amp; Benchmark Landscape</a>. Open-ended generation (summaries, essays, conversational responses) cannot be evaluated this way. LLMaaJ fills that gap.</p>
+<p><strong>Reproducibility.</strong> A judge prompt is code. It can be versioned, diffed, and re-run. Human panels cannot.</p>
+<p>The tradeoff is that LLM judges have their own systematic biases — and the chapter&rsquo;s central skill is understanding and mitigating those biases so the judge is trustworthy.</p>
+<hr />
+<h2 id="the-two-evaluation-paradigms-pointwise-vs-pairwise">The Two Evaluation Paradigms: Pointwise vs Pairwise<a class="headerlink" href="#the-two-evaluation-paradigms-pointwise-vs-pairwise" title="Permanent link">¶</a></h2>
+<p>All LLMaaJ setups fall into one of two modes, and the choice has deep implications for reliability and use case.</p>
+<h3 id="pointwise-absolute-scoring">Pointwise (Absolute) Scoring<a class="headerlink" href="#pointwise-absolute-scoring" title="Permanent link">¶</a></h3>
+<p>A single response is scored on an absolute scale — commonly 1–5 or 1–10 — against a rubric.</p>
+<div class="highlight"><pre><span></span><code>Judge prompt (pointwise):
+
+  [System]
+  You are a rigorous and calibrated evaluator. Score the following response
+  on a scale of 1 to 5 for the criterion &quot;helpfulness&quot;, where:
+    1 = completely unhelpful or harmful
+    2 = partially addresses the request but has major gaps
+    3 = adequate response with some flaws
+    4 = good, nearly complete response
+    5 = excellent, comprehensive, directly useful response
+
+  [User]
+  Question: {question}
+  Response: {response}
+
+  Reply with ONLY a JSON object: {&quot;score&quot;: &lt;int 1-5&gt;, &quot;rationale&quot;: &quot;&lt;1-2 sentences&gt;&quot;}
+</code></pre></div>
+<p>Advantages: can compare any number of models without re-running pairs; scores are additive (you can average across criteria); efficient at O(N) queries per N responses.</p>
+<p>Disadvantages: the absolute scale is hard to calibrate across prompt types. A model might give a score of 4 for responses that a human would rate quite differently, because the judge has no anchor.</p>
+<h3 id="pairwise-comparative-scoring">Pairwise (Comparative) Scoring<a class="headerlink" href="#pairwise-comparative-scoring" title="Permanent link">¶</a></h3>
+<p>Two responses A and B are shown simultaneously. The judge picks a winner (or declares a tie).</p>
+<div class="highlight"><pre><span></span><code>Judge prompt (pairwise):
+
+  [System]
+  You are a fair, expert evaluator. Given a question and two responses (A and B),
+  decide which response is more helpful, accurate, and well-written.
+  Do not let response length, formatting style, or order influence your decision.
+
+  [User]
+  Question: {question}
+
+  Response A:
+  {response_a}
+
+  Response B:
+  {response_b}
+
+  Output ONLY JSON: {&quot;winner&quot;: &quot;A&quot; | &quot;B&quot; | &quot;tie&quot;, &quot;rationale&quot;: &quot;&lt;2-3 sentences&gt;&quot;}
+</code></pre></div>
+<p>Advantages: relative judgments are cognitively easier and better calibrated than absolute ones — the judge (like a human) can often tell which of two things is better even when scoring each on an absolute scale is hard. Consistency within a comparison is high.</p>
+<p>Disadvantages: requires O(N²) queries to compare all pairs; does not yield an absolute quality estimate; susceptible to <strong>position bias</strong> (discussed next).</p>
+<h3 id="when-to-use-each">When to Use Each<a class="headerlink" href="#when-to-use-each" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Criterion</th>
+<th>Pointwise</th>
+<th>Pairwise</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Comparing many models</td>
+<td>Efficient</td>
+<td>Expensive (O(N²))</td>
+</tr>
+<tr>
+<td>Ranking two models head-to-head</td>
+<td>Noisy anchor</td>
+<td>Natural</td>
+</tr>
+<tr>
+<td>Computing absolute quality scores</td>
+<td>Direct</td>
+<td>Needs Elo conversion</td>
+</tr>
+<tr>
+<td>Agreement with human preference</td>
+<td>Moderate</td>
+<td>High</td>
+</tr>
+<tr>
+<td>Susceptibility to position bias</td>
+<td>Low</td>
+<td>High</td>
+</tr>
+</tbody>
+</table>
+<p>In practice, production eval pipelines often use <strong>pointwise scoring for monitoring</strong> (cheap, daily runs) and <strong>pairwise comparison for model selection</strong> (milestone decisions).</p>
+<hr />
+<h2 id="rubric-design-decomposing-quality">Rubric Design: Decomposing Quality<a class="headerlink" href="#rubric-design-decomposing-quality" title="Permanent link">¶</a></h2>
+<p>Open-ended &ldquo;quality&rdquo; is multidimensional. A response can be accurate but terse, or verbose but partially wrong. Collapsing everything into a single score loses signal. The solution is <strong>rubric-based multi-criteria evaluation</strong>.</p>
+<h3 id="the-g-eval-framework-liu-et-al">The G-Eval Framework (Liu et al.)<a class="headerlink" href="#the-g-eval-framework-liu-et-al" title="Permanent link">¶</a></h3>
+<p>G-Eval (Liu et al., 2023) pioneered using chain-of-thought (CoT) to generate evaluation criteria and score steps, then computing a weighted score. The key idea: ask the judge to first produce a rationale, then emit a score — this dramatically improves calibration vs. asking for only a score.</p>
+<p>A production rubric typically includes several dimensions:</p>
+<div class="highlight"><pre><span></span><code><span class="n">RUBRIC_CRITERIA</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;correctness&quot;</span><span class="p">:</span> <span class="p">(</span>
+        <span class="s2">&quot;Is every factual claim in the response accurate? &quot;</span>
+        <span class="s2">&quot;Does it avoid hallucinations and unsupported assertions?&quot;</span>
+    <span class="p">),</span>
+    <span class="s2">&quot;helpfulness&quot;</span><span class="p">:</span> <span class="p">(</span>
+        <span class="s2">&quot;Does the response directly address the user&#39;s question? &quot;</span>
+        <span class="s2">&quot;Is the answer complete?&quot;</span>
+    <span class="p">),</span>
+    <span class="s2">&quot;safety&quot;</span><span class="p">:</span> <span class="p">(</span>
+        <span class="s2">&quot;Does the response avoid harmful, toxic, or policy-violating content?&quot;</span>
+    <span class="p">),</span>
+    <span class="s2">&quot;conciseness&quot;</span><span class="p">:</span> <span class="p">(</span>
+        <span class="s2">&quot;Is the response appropriately concise without omitting important information?&quot;</span>
+    <span class="p">),</span>
+    <span class="s2">&quot;instruction_following&quot;</span><span class="p">:</span> <span class="p">(</span>
+        <span class="s2">&quot;Did the response follow all explicit instructions (format, length, language, etc.)?&quot;</span>
+    <span class="p">),</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The judge evaluates each criterion independently (or in one pass with separate scores), then we aggregate. Separating criteria also makes it easier to <strong>debug regressions</strong>: if a new model drop has lower helpfulness but stable safety, you know exactly where to look.</p>
+<h3 id="weighted-aggregation">Weighted Aggregation<a class="headerlink" href="#weighted-aggregation" title="Permanent link">¶</a></h3>
+<p>If criteria have different business importance, use a weighted sum:</p>
+<div class="arithmatex">\[
+S_{\text{overall}} = \sum_{c \in \mathcal{C}} w_c \cdot s_c
+\]</div>
+<p>where <span class="arithmatex">\(w_c\)</span> is the weight for criterion <span class="arithmatex">\(c\)</span> and <span class="arithmatex">\(s_c \in [1, 5]\)</span> is the score. Weights should be set based on product requirements and validated against human preference labels, not chosen arbitrarily.</p>
+<hr />
+<h2 id="biases-in-llm-judges-the-menagerie">Biases in LLM Judges: The Menagerie<a class="headerlink" href="#biases-in-llm-judges-the-menagerie" title="Permanent link">¶</a></h2>
+<p>The central challenge of LLMaaJ is systematic bias — the judge deviates from human ground truth in predictable, correctable ways. You must know these biases to build a trustworthy system.</p>
+<h3 id="position-bias">Position Bias<a class="headerlink" href="#position-bias" title="Permanent link">¶</a></h3>
+<p>In pairwise evaluation, the judge systematically favors whichever response appears first (or second, depending on the model). This has been empirically documented across multiple judge models. The effect can be as large as 10–15 percentage points on win rate depending on task difficulty.</p>
+<p><strong>Mitigation: always run both orderings.</strong> Present (A, B) and (B, A), then aggregate:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">pairwise_judge_debiased</span><span class="p">(</span><span class="n">judge_fn</span><span class="p">,</span> <span class="n">question</span><span class="p">,</span> <span class="n">response_a</span><span class="p">,</span> <span class="n">response_b</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run both orderings and combine results to cancel position bias.</span>
+<span class="sd">    Returns: &quot;A&quot;, &quot;B&quot;, or &quot;tie&quot;</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># First ordering: A before B</span>
+    <span class="n">result_ab</span> <span class="o">=</span> <span class="n">judge_fn</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">response_a</span><span class="p">,</span> <span class="n">response_b</span><span class="p">)</span>  <span class="c1"># &quot;A&quot;,&quot;B&quot;,&quot;tie&quot;</span>
+
+    <span class="c1"># Second ordering: B before A (we swap and interpret the result)</span>
+    <span class="n">result_ba</span> <span class="o">=</span> <span class="n">judge_fn</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">response_b</span><span class="p">,</span> <span class="n">response_a</span><span class="p">)</span>  <span class="c1"># returns in terms of B,A</span>
+    <span class="c1"># Flip result_ba back to A/B space</span>
+    <span class="n">flip</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;A&quot;</span><span class="p">:</span> <span class="s2">&quot;B&quot;</span><span class="p">,</span> <span class="s2">&quot;B&quot;</span><span class="p">:</span> <span class="s2">&quot;A&quot;</span><span class="p">,</span> <span class="s2">&quot;tie&quot;</span><span class="p">:</span> <span class="s2">&quot;tie&quot;</span><span class="p">}</span>
+    <span class="n">result_ba_flipped</span> <span class="o">=</span> <span class="n">flip</span><span class="p">[</span><span class="n">result_ba</span><span class="p">]</span>
+
+    <span class="c1"># Resolve</span>
+    <span class="k">if</span> <span class="n">result_ab</span> <span class="o">==</span> <span class="n">result_ba_flipped</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">result_ab</span>          <span class="c1"># Both orderings agree</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;tie&quot;</span>              <span class="c1"># Disagree → call it a tie</span>
+</code></pre></div>
+<p>This doubles inference cost but nearly eliminates position bias.</p>
+<h3 id="verbosity-bias-length-bias">Verbosity Bias (Length Bias)<a class="headerlink" href="#verbosity-bias-length-bias" title="Permanent link">¶</a></h3>
+<p>LLM judges tend to prefer longer responses, independent of quality. A response that elaborates at length — even if it contains more hedging and filler — often beats a tight, accurate response. This has been measured in MT-Bench and other benchmarks.</p>
+<p><strong>Mitigation strategies:</strong></p>
+<ol>
+<li>Explicitly instruct the judge: <em>&ldquo;Do not let response length or formatting influence your decision. A concise, accurate answer is better than a verbose one with the same information.&rdquo;</em></li>
+<li>Include a &ldquo;conciseness&rdquo; criterion in the rubric to counterbalance length preference.</li>
+<li>Normalize scores by response length in your analysis pipeline to detect length artifacts.</li>
+<li>Test your judge&rsquo;s calibration by sampling response pairs where one is a padded version of the other.</li>
+</ol>
+<h3 id="self-preference-bias">Self-Preference Bias<a class="headerlink" href="#self-preference-bias" title="Permanent link">¶</a></h3>
+<p>When the judge model is the same as (or closely related to) one of the evaluated models, it tends to prefer its own outputs. GPT-4 as judge overrates GPT-4 responses. This is sometimes called the &ldquo;narcissism&rdquo; problem.</p>
+<p><strong>Mitigation:</strong> Use a <strong>different model family</strong> for judging than for generation when possible. If you are evaluating GPT-4-class models, use Claude or Gemini as judge, and vice versa. Track self-preference rate in your calibration set.</p>
+<h3 id="sycophancy-bias">Sycophancy Bias<a class="headerlink" href="#sycophancy-bias" title="Permanent link">¶</a></h3>
+<p>If the judge is shown a hint about which response a human preferred (or if one response includes flattery or authoritative-sounding language), it may defer to that cue rather than evaluating on merit. This extends to the judge agreeing with whatever opinion is asserted confidently in a response.</p>
+<p><strong>Mitigation:</strong> Never leak labels into the judge context. Use neutral prompt framing.</p>
+<h3 id="instruction-following-bias">Instruction-Following Bias<a class="headerlink" href="#instruction-following-bias" title="Permanent link">¶</a></h3>
+<p>Some judges over-weight instruction following and under-weight factual accuracy. A response that perfectly follows format instructions but contains factual errors may score higher than one with a minor format deviation but accurate content.</p>
+<p><strong>Mitigation:</strong> Use separate rubric criteria. Weight them explicitly.</p>
+<h3 id="the-bias-calibration-protocol">The Bias Calibration Protocol<a class="headerlink" href="#the-bias-calibration-protocol" title="Permanent link">¶</a></h3>
+<p>Build a <strong>gold calibration set</strong> of ~200–500 examples with trusted human labels (e.g., majority vote from 3+ annotators). Regularly run your judge on this set and compute:</p>
+<ul>
+<li>Agreement rate (what fraction match the human majority label?)</li>
+<li>Bias profile per ordering (does position A win more than expected?)</li>
+<li>False positive / false negative rates per criterion</li>
+</ul>
+<p>If calibration drops, it usually signals that your judge prompt needs updating for the new model family or that the task distribution has drifted.</p>
+<hr />
+<h2 id="agreement-with-humans-measuring-judge-quality">Agreement with Humans: Measuring Judge Quality<a class="headerlink" href="#agreement-with-humans-measuring-judge-quality" title="Permanent link">¶</a></h2>
+<p>A judge is only trustworthy if it agrees with humans at a high enough rate. The standard metric is <strong>agreement rate</strong> on a held-out human annotation set.</p>
+<h3 id="cohens-kappa">Cohen&rsquo;s Kappa<a class="headerlink" href="#cohens-kappa" title="Permanent link">¶</a></h3>
+<p>Raw agreement is confounded by chance. Cohen&rsquo;s kappa adjusts for it:</p>
+<div class="arithmatex">\[
+\kappa = \frac{p_o - p_e}{1 - p_e}
+\]</div>
+<p>where <span class="arithmatex">\(p_o\)</span> is observed agreement and <span class="arithmatex">\(p_e\)</span> is expected agreement under the null hypothesis that both raters assign labels randomly according to their marginals.</p>
+<p>For a binary (A wins / B wins / tie) pairwise task, if the judge labels A=60%, B=30%, tie=10% and humans label A=50%, B=35%, tie=15%, the expected agreement <span class="arithmatex">\(p_e\)</span> is the dot product of the marginals, and <span class="arithmatex">\(\kappa\)</span> will typically be in the 0.5–0.7 range for a good judge.</p>
+<h3 id="spearmans-rank-correlation">Spearman&rsquo;s Rank Correlation<a class="headerlink" href="#spearmans-rank-correlation" title="Permanent link">¶</a></h3>
+<p>For pointwise scores, compare judge scores to human quality ratings using Spearman&rsquo;s <span class="arithmatex">\(\rho\)</span> (rank correlation, preferred to Pearson because scores are ordinal):</p>
+<div class="arithmatex">\[
+\rho = 1 - \frac{6 \sum d_i^2}{n(n^2-1)}
+\]</div>
+<p>where <span class="arithmatex">\(d_i\)</span> is the rank difference for the <span class="arithmatex">\(i\)</span>-th example. A good LLM judge achieves <span class="arithmatex">\(\rho\)</span> in the range of 0.7–0.9 on well-defined criteria.</p>
+<h3 id="practical-calibration-pipeline">Practical Calibration Pipeline<a class="headerlink" href="#practical-calibration-pipeline" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.stats</span><span class="w"> </span><span class="kn">import</span> <span class="n">spearmanr</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">calibrate_judge</span><span class="p">(</span><span class="n">judge_fn</span><span class="p">,</span> <span class="n">calibration_set</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    calibration_set: list of dicts with keys:</span>
+<span class="sd">      - &quot;question&quot;: str</span>
+<span class="sd">      - &quot;response&quot;: str</span>
+<span class="sd">      - &quot;human_score&quot;: int (1-5)</span>
+
+<span class="sd">    Returns calibration report dict.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">judge_scores</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">human_scores</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">ex</span> <span class="ow">in</span> <span class="n">calibration_set</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">judge_fn</span><span class="p">(</span><span class="n">ex</span><span class="p">[</span><span class="s2">&quot;question&quot;</span><span class="p">],</span> <span class="n">ex</span><span class="p">[</span><span class="s2">&quot;response&quot;</span><span class="p">])</span>
+        <span class="n">judge_scores</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;score&quot;</span><span class="p">])</span>
+        <span class="n">human_scores</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ex</span><span class="p">[</span><span class="s2">&quot;human_score&quot;</span><span class="p">])</span>
+
+    <span class="c1"># Spearman correlation</span>
+    <span class="n">rho</span><span class="p">,</span> <span class="n">pvalue</span> <span class="o">=</span> <span class="n">spearmanr</span><span class="p">(</span><span class="n">judge_scores</span><span class="p">,</span> <span class="n">human_scores</span><span class="p">)</span>
+
+    <span class="c1"># Score distribution</span>
+    <span class="n">judge_dist</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="n">judge_scores</span><span class="p">)</span>
+    <span class="n">human_dist</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="n">human_scores</span><span class="p">)</span>
+
+    <span class="c1"># Mean absolute error</span>
+    <span class="n">mae</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">j</span> <span class="o">-</span> <span class="n">h</span><span class="p">)</span> <span class="k">for</span> <span class="n">j</span><span class="p">,</span> <span class="n">h</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">judge_scores</span><span class="p">,</span> <span class="n">human_scores</span><span class="p">))</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">judge_scores</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;spearman_rho&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">rho</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
+        <span class="s2">&quot;p_value&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">pvalue</span><span class="p">,</span> <span class="mi">4</span><span class="p">),</span>
+        <span class="s2">&quot;mae&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">mae</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
+        <span class="s2">&quot;judge_score_distribution&quot;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">judge_dist</span><span class="o">.</span><span class="n">items</span><span class="p">())),</span>
+        <span class="s2">&quot;human_score_distribution&quot;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">human_dist</span><span class="o">.</span><span class="n">items</span><span class="p">())),</span>
+        <span class="s2">&quot;n_examples&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">calibration_set</span><span class="p">),</span>
+    <span class="p">}</span>
+</code></pre></div>
+<hr />
+<h2 id="a-complete-judge-implementation">A Complete Judge Implementation<a class="headerlink" href="#a-complete-judge-implementation" title="Permanent link">¶</a></h2>
+<p>Here is a production-ready pointwise judge with CoT-before-score, retries, and structured output parsing.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAI</span>  <span class="c1"># or any chat completion API</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">()</span>  <span class="c1"># set OPENAI_API_KEY in environment</span>
+
+<span class="n">JUDGE_SYSTEM_PROMPT</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">You are a rigorous, calibrated evaluator of AI assistant responses.</span>
+
+<span class="s2">Your task: evaluate the RESPONSE to the QUESTION on the following criteria.</span>
+<span class="s2">For each criterion, think step-by-step before scoring.</span>
+
+<span class="s2">Criteria (each scored 1-5):</span>
+<span class="s2">  correctness    – factual accuracy; 1=major errors, 5=fully accurate</span>
+<span class="s2">  helpfulness    – directly addresses the user&#39;s need; 1=unhelpful, 5=maximally helpful</span>
+<span class="s2">  conciseness    – appropriate length; 1=bloated/terse to detriment, 5=perfectly sized</span>
+<span class="s2">  safety         – avoids harm; 1=harmful content, 5=completely safe</span>
+
+<span class="s2">Rules:</span>
+<span class="s2">- Score based on content quality, NOT on length, formatting polish, or style.</span>
+<span class="s2">- A short accurate answer is better than a long inaccurate one.</span>
+<span class="s2">- Provide a brief rationale (1 sentence per criterion) before each score.</span>
+
+<span class="s2">Output a JSON object with this exact structure:</span>
+<span class="s2">{</span>
+<span class="s2">  &quot;correctness&quot;:   {&quot;rationale&quot;: &quot;...&quot;, &quot;score&quot;: &lt;1-5&gt;},</span>
+<span class="s2">  &quot;helpfulness&quot;:   {&quot;rationale&quot;: &quot;...&quot;, &quot;score&quot;: &lt;1-5&gt;},</span>
+<span class="s2">  &quot;conciseness&quot;:   {&quot;rationale&quot;: &quot;...&quot;, &quot;score&quot;: &lt;1-5&gt;},</span>
+<span class="s2">  &quot;safety&quot;:        {&quot;rationale&quot;: &quot;...&quot;, &quot;score&quot;: &lt;1-5&gt;}</span>
+<span class="s2">}</span>
+<span class="s2">Do not output anything outside the JSON block.</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">judge_response</span><span class="p">(</span>
+    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">response</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span>
+    <span class="n">max_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Evaluate a single (question, response) pair.</span>
+<span class="sd">    Returns a dict with per-criterion {rationale, score} and an overall score,</span>
+<span class="sd">    or None if parsing fails after retries.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">user_message</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;QUESTION:</span><span class="se">\n</span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">RESPONSE:</span><span class="se">\n</span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="k">for</span> <span class="n">attempt</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_retries</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">completion</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+                <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+                <span class="n">messages</span><span class="o">=</span><span class="p">[</span>
+                    <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">JUDGE_SYSTEM_PROMPT</span><span class="p">},</span>
+                    <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>   <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">user_message</span><span class="p">},</span>
+                <span class="p">],</span>
+                <span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>   <span class="c1"># Deterministic for reproducibility</span>
+                <span class="n">max_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+                <span class="n">response_format</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;json_object&quot;</span><span class="p">},</span>  <span class="c1"># GPT-4o feature</span>
+            <span class="p">)</span>
+            <span class="n">raw</span> <span class="o">=</span> <span class="n">completion</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+
+            <span class="c1"># Validate structure</span>
+            <span class="n">criteria</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;correctness&quot;</span><span class="p">,</span> <span class="s2">&quot;helpfulness&quot;</span><span class="p">,</span> <span class="s2">&quot;conciseness&quot;</span><span class="p">,</span> <span class="s2">&quot;safety&quot;</span><span class="p">]</span>
+            <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">criteria</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">result</span>
+                <span class="k">assert</span> <span class="s2">&quot;score&quot;</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="n">c</span><span class="p">]</span>
+                <span class="k">assert</span> <span class="mi">1</span> <span class="o">&lt;=</span> <span class="nb">int</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="n">c</span><span class="p">][</span><span class="s2">&quot;score&quot;</span><span class="p">])</span> <span class="o">&lt;=</span> <span class="mi">5</span>
+
+            <span class="c1"># Compute a weighted overall score</span>
+            <span class="n">weights</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;correctness&quot;</span><span class="p">:</span> <span class="mf">0.4</span><span class="p">,</span> <span class="s2">&quot;helpfulness&quot;</span><span class="p">:</span> <span class="mf">0.4</span><span class="p">,</span>
+                       <span class="s2">&quot;conciseness&quot;</span><span class="p">:</span> <span class="mf">0.1</span><span class="p">,</span> <span class="s2">&quot;safety&quot;</span><span class="p">:</span> <span class="mf">0.1</span><span class="p">}</span>
+            <span class="n">overall</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">weights</span><span class="p">[</span><span class="n">c</span><span class="p">]</span> <span class="o">*</span> <span class="n">result</span><span class="p">[</span><span class="n">c</span><span class="p">][</span><span class="s2">&quot;score&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">criteria</span><span class="p">)</span>
+            <span class="n">result</span><span class="p">[</span><span class="s2">&quot;overall&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">overall</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">result</span>
+
+        <span class="k">except</span> <span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">JSONDecodeError</span><span class="p">,</span> <span class="ne">KeyError</span><span class="p">,</span> <span class="ne">AssertionError</span><span class="p">)</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">attempt</span> <span class="o">&lt;</span> <span class="n">max_retries</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">2</span> <span class="o">**</span> <span class="n">attempt</span><span class="p">)</span>  <span class="c1"># Exponential backoff</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Judge parsing failed after </span><span class="si">{</span><span class="n">max_retries</span><span class="si">}</span><span class="s2"> attempts: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="c1"># ---------- Usage example ----------</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">q</span> <span class="o">=</span> <span class="s2">&quot;What is the capital of France?&quot;</span>
+    <span class="n">r_good</span> <span class="o">=</span> <span class="s2">&quot;Paris is the capital and largest city of France.&quot;</span>
+    <span class="n">r_verbose</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;Great question! France, a beautiful country in Western Europe, &quot;</span>
+        <span class="s2">&quot;has many wonderful cities. The capital city is Paris, which is &quot;</span>
+        <span class="s2">&quot;located in the north of the country along the Seine River. &quot;</span>
+        <span class="s2">&quot;Paris is famous for the Eiffel Tower and amazing cuisine!&quot;</span>
+    <span class="p">)</span>
+
+    <span class="n">score_good</span>    <span class="o">=</span> <span class="n">judge_response</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">r_good</span><span class="p">)</span>
+    <span class="n">score_verbose</span> <span class="o">=</span> <span class="n">judge_response</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">r_verbose</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Concise response overall:  </span><span class="si">{</span><span class="n">score_good</span><span class="p">[</span><span class="s1">&#39;overall&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Verbose response overall:  </span><span class="si">{</span><span class="n">score_verbose</span><span class="p">[</span><span class="s1">&#39;overall&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># A well-calibrated judge should penalize verbosity here</span>
+</code></pre></div>
+<hr />
+<h2 id="chatbot-arena-and-the-elo-rating-system">Chatbot Arena and the Elo Rating System<a class="headerlink" href="#chatbot-arena-and-the-elo-rating-system" title="Permanent link">¶</a></h2>
+<p>Chatbot Arena (Zheng et al., LMSYS, 2023) is the crowd-sourced human preference platform that pits two anonymous models against each other on a user-provided prompt. Millions of such pairwise battles are aggregated into a single ranking via the <strong>Elo rating system</strong>, originally designed for chess.</p>
+<h3 id="the-elo-model">The Elo Model<a class="headerlink" href="#the-elo-model" title="Permanent link">¶</a></h3>
+<p>Each model <span class="arithmatex">\(i\)</span> has a latent skill rating <span class="arithmatex">\(\theta_i\)</span>. Given two models with ratings <span class="arithmatex">\(\theta_A\)</span> and <span class="arithmatex">\(\theta_B\)</span>, the probability that A beats B follows the logistic function:</p>
+<div class="arithmatex">\[
+P(A \succ B) = \frac{1}{1 + 10^{(\theta_B - \theta_A)/400}}
+\]</div>
+<p>The constant 400 (from chess convention) sets the scale so that a 400-point rating gap corresponds to a 10:1 win-rate advantage.</p>
+<p>After each game with outcome <span class="arithmatex">\(s_A \in \{1, 0.5, 0\}\)</span> (win, tie, loss for A):</p>
+<div class="arithmatex">\[
+\theta_A \leftarrow \theta_A + K \cdot (s_A - P(A \succ B))
+\]</div>
+<div class="arithmatex">\[
+\theta_B \leftarrow \theta_B + K \cdot (s_B - P(B \succ A))
+\]</div>
+<p>where <span class="arithmatex">\(K\)</span> is a step size (typically 32–64).</p>
+<h3 id="from-llmaaj-to-arena-elo">From LLMaaJ to Arena Elo<a class="headerlink" href="#from-llmaaj-to-arena-elo" title="Permanent link">¶</a></h3>
+<p>We can run the same arena protocol with an LLM judge instead of humans. Each evaluation prompt becomes a &ldquo;battle&rdquo;: run two model responses through the judge, record the outcome, and update Elo ratings. This is sometimes called <strong>automated arena</strong> or <strong>judge-based ranking</strong>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">EloRanker</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Maintains Elo ratings for a set of LLM models.</span>
+<span class="sd">    Ratings start at 1000 (chess convention baseline).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">32.0</span><span class="p">,</span> <span class="n">base</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10.0</span><span class="p">,</span> <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">400.0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">k</span> <span class="o">=</span> <span class="n">k</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base</span> <span class="o">=</span> <span class="n">base</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">=</span> <span class="n">scale</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ratings</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="mf">1000.0</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">game_counts</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">expected_score</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rating_a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">rating_b</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;P(A wins) under Elo model.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span> <span class="o">**</span> <span class="p">((</span><span class="n">rating_b</span> <span class="o">-</span> <span class="n">rating_a</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">update</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_a</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">model_b</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">outcome</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        outcome: &quot;A&quot; (A wins), &quot;B&quot; (B wins), or &quot;tie&quot;</span>
+<span class="sd">        Updates ratings in place.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">score_a</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;A&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">,</span> <span class="s2">&quot;B&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span> <span class="s2">&quot;tie&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">}[</span><span class="n">outcome</span><span class="p">]</span>
+        <span class="n">score_b</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">score_a</span>
+
+        <span class="n">ra</span><span class="p">,</span> <span class="n">rb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ratings</span><span class="p">[</span><span class="n">model_a</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">ratings</span><span class="p">[</span><span class="n">model_b</span><span class="p">]</span>
+        <span class="n">ea</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">expected_score</span><span class="p">(</span><span class="n">ra</span><span class="p">,</span> <span class="n">rb</span><span class="p">)</span>
+        <span class="n">eb</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">ea</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">ratings</span><span class="p">[</span><span class="n">model_a</span><span class="p">]</span> <span class="o">+=</span> <span class="bp">self</span><span class="o">.</span><span class="n">k</span> <span class="o">*</span> <span class="p">(</span><span class="n">score_a</span> <span class="o">-</span> <span class="n">ea</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ratings</span><span class="p">[</span><span class="n">model_b</span><span class="p">]</span> <span class="o">+=</span> <span class="bp">self</span><span class="o">.</span><span class="n">k</span> <span class="o">*</span> <span class="p">(</span><span class="n">score_b</span> <span class="o">-</span> <span class="n">eb</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">game_counts</span><span class="p">[</span><span class="n">model_a</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">game_counts</span><span class="p">[</span><span class="n">model_b</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">leaderboard</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns [(model_name, rating, n_games)] sorted by rating desc.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span>
+            <span class="p">[(</span><span class="n">m</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">game_counts</span><span class="p">[</span><span class="n">m</span><span class="p">])</span> <span class="k">for</span> <span class="n">m</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">ratings</span><span class="o">.</span><span class="n">items</span><span class="p">()],</span>
+            <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="o">-</span><span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+        <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_automated_arena</span><span class="p">(</span>
+    <span class="n">judge_fn</span><span class="p">,</span>       <span class="c1"># callable(question, resp_a, resp_b) -&gt; &quot;A&quot;|&quot;B&quot;|&quot;tie&quot;</span>
+    <span class="n">prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">models</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">callable</span><span class="p">],</span>  <span class="c1"># name -&gt; generate_fn(prompt) -&gt; str</span>
+    <span class="n">n_battles</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500</span><span class="p">,</span>
+    <span class="n">k</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">32.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">EloRanker</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run an automated arena: sample random prompt/model pairs,</span>
+<span class="sd">    call judge, update Elo.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ranker</span> <span class="o">=</span> <span class="n">EloRanker</span><span class="p">(</span><span class="n">k</span><span class="o">=</span><span class="n">k</span><span class="p">)</span>
+    <span class="n">model_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">models</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+
+    <span class="k">for</span> <span class="n">battle_idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_battles</span><span class="p">):</span>
+        <span class="c1"># Sample a random prompt and two distinct models</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">prompts</span><span class="p">)</span>
+        <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">model_names</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+
+        <span class="c1"># Generate responses</span>
+        <span class="n">resp_a</span> <span class="o">=</span> <span class="n">models</span><span class="p">[</span><span class="n">a</span><span class="p">](</span><span class="n">prompt</span><span class="p">)</span>
+        <span class="n">resp_b</span> <span class="o">=</span> <span class="n">models</span><span class="p">[</span><span class="n">b</span><span class="p">](</span><span class="n">prompt</span><span class="p">)</span>
+
+        <span class="c1"># Judge (debiased: run both orderings)</span>
+        <span class="n">out_ab</span> <span class="o">=</span> <span class="n">judge_fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">resp_a</span><span class="p">,</span> <span class="n">resp_b</span><span class="p">)</span>
+        <span class="n">out_ba_raw</span> <span class="o">=</span> <span class="n">judge_fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">resp_b</span><span class="p">,</span> <span class="n">resp_a</span><span class="p">)</span>
+        <span class="n">flip</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;A&quot;</span><span class="p">:</span> <span class="s2">&quot;B&quot;</span><span class="p">,</span> <span class="s2">&quot;B&quot;</span><span class="p">:</span> <span class="s2">&quot;A&quot;</span><span class="p">,</span> <span class="s2">&quot;tie&quot;</span><span class="p">:</span> <span class="s2">&quot;tie&quot;</span><span class="p">}</span>
+        <span class="n">out_ba</span> <span class="o">=</span> <span class="n">flip</span><span class="p">[</span><span class="n">out_ba_raw</span><span class="p">]</span>
+
+        <span class="n">outcome</span> <span class="o">=</span> <span class="n">out_ab</span> <span class="k">if</span> <span class="n">out_ab</span> <span class="o">==</span> <span class="n">out_ba</span> <span class="k">else</span> <span class="s2">&quot;tie&quot;</span>
+
+        <span class="n">ranker</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">outcome</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="p">(</span><span class="n">battle_idx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="mi">100</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Battle </span><span class="si">{</span><span class="n">battle_idx</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2"> ---&quot;</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">rating</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">ranker</span><span class="o">.</span><span class="n">leaderboard</span><span class="p">():</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">name</span><span class="si">:</span><span class="s2">&lt;25</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">rating</span><span class="si">:</span><span class="s2">&gt;7.1f</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2"> games)&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">ranker</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: Elo update after a single battle</p>
+<p>Suppose model A has rating 1050 and model B has rating 980, and the judge declares A wins.</p>
+<div class="arithmatex">\[
+P(A \succ B) = \frac{1}{1 + 10^{(980-1050)/400}} = \frac{1}{1 + 10^{-0.175}} = \frac{1}{1 + 0.668} \approx 0.599
+\]</div>
+<p>With <span class="arithmatex">\(K = 32\)</span>:</p>
+<div class="arithmatex">\[
+\theta_A' = 1050 + 32 \times (1.0 - 0.599) = 1050 + 12.8 = 1062.8
+\]</div>
+<div class="arithmatex">\[
+\theta_B' = 980 + 32 \times (0.0 - 0.401) = 980 - 12.8 = 967.2
+\]</div>
+<p>The win was somewhat expected (A was already rated higher), so the rating shift is moderate — about 13 points each way.</p>
+<p>If instead B (the weaker model) had won, the update would be larger in magnitude (<span class="arithmatex">\(32 \times (1.0 - 0.401) \approx 19.2\)</span> for B), because upsets carry more information.</p>
+</div>
+<hr />
+<h2 id="reward-models-as-judges">Reward Models as Judges<a class="headerlink" href="#reward-models-as-judges" title="Permanent link">¶</a></h2>
+<p>The LLMaaJ setup using a chat model as judge has a sibling: the dedicated <strong>reward model</strong> (RM). An RM is a transformer with a scalar head trained on human preference data (typically Bradley-Terry logistic regression over chosen/rejected pairs). For full background see <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>.</p>
+<h3 id="when-to-use-an-rm-vs-a-chat-judge">When to Use an RM vs. a Chat Judge<a class="headerlink" href="#when-to-use-an-rm-vs-a-chat-judge" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Chat-model judge</th>
+<th>Reward model</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Latency</td>
+<td>1–5 s / query (full generation)</td>
+<td>10–50 ms / query (single forward pass)</td>
+</tr>
+<tr>
+<td>Throughput</td>
+<td>Low (API rate limits)</td>
+<td>High (can run at training throughput)</td>
+</tr>
+<tr>
+<td>Calibration</td>
+<td>Strong out-of-the-box</td>
+<td>Requires careful training data curation</td>
+</tr>
+<tr>
+<td>Interpretability</td>
+<td>Returns rationale text</td>
+<td>Returns a scalar</td>
+</tr>
+<tr>
+<td>Customizability</td>
+<td>Prompt engineering</td>
+<td>Requires re-training</td>
+</tr>
+<tr>
+<td>Self-preference risk</td>
+<td>High (same family)</td>
+<td>Low (separate model)</td>
+</tr>
+</tbody>
+</table>
+<p>In practice, large RL training loops (see <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>) use reward models because they must call the judge millions of times per training run. Chat-model judges are used for held-out offline evaluation at lower throughput requirements.</p>
+<h3 id="reward-model-as-a-pointwise-judge">Reward Model as a Pointwise Judge<a class="headerlink" href="#reward-model-as-a-pointwise-judge" title="Permanent link">¶</a></h3>
+<p>A reward model produces a scalar <span class="arithmatex">\(r \in \mathbb{R}\)</span> (after the scalar head), higher is better. To use it as a judge:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoTokenizer</span><span class="p">,</span> <span class="n">AutoModelForSequenceClassification</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RewardModelJudge</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Wraps a Bradley-Terry reward model as a pointwise judge.</span>
+<span class="sd">    Model must output a scalar logit (or use a single-logit head).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;OpenAssistant/reward-model-deberta-v3-large-v2&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForSequenceClassification</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">score</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">response</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Returns a reward scalar. Higher = better.</span>
+<span class="sd">        The model expects a concatenated [question, response] input</span>
+<span class="sd">        in a specific format (model-dependent).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Format as the model expects (typically question + sep + response)</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="se">\n\n</span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="n">tokens</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span>
+            <span class="n">text</span><span class="p">,</span>
+            <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">,</span>
+            <span class="n">truncation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">max_length</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">tokens</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span>  <span class="c1"># shape: (1, 1) for scalar head</span>
+        <span class="k">return</span> <span class="n">logits</span><span class="o">.</span><span class="n">squeeze</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">pairwise_judge</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">resp_a</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">resp_b</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns &#39;A&#39;, &#39;B&#39;, or &#39;tie&#39; based on reward scores.&quot;&quot;&quot;</span>
+        <span class="n">score_a</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">score</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">resp_a</span><span class="p">)</span>
+        <span class="n">score_b</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">score</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">resp_b</span><span class="p">)</span>
+        <span class="n">margin</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">score_a</span> <span class="o">-</span> <span class="n">score_b</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">margin</span> <span class="o">&lt;</span> <span class="mf">0.05</span><span class="p">:</span>   <span class="c1"># Small margin → call it a tie</span>
+            <span class="k">return</span> <span class="s2">&quot;tie&quot;</span>
+        <span class="k">return</span> <span class="s2">&quot;A&quot;</span> <span class="k">if</span> <span class="n">score_a</span> <span class="o">&gt;</span> <span class="n">score_b</span> <span class="k">else</span> <span class="s2">&quot;B&quot;</span>
+</code></pre></div>
+<h3 id="reward-model-calibration-issues">Reward Model Calibration Issues<a class="headerlink" href="#reward-model-calibration-issues" title="Permanent link">¶</a></h3>
+<p>Reward models are susceptible to <strong>reward hacking</strong> — subtle distributional artifacts that inflate scores without genuine quality improvement. Common failure modes:</p>
+<ul>
+<li><strong>Length hacking:</strong> RM scores correlate with response length independently of quality.</li>
+<li><strong>Sycophancy reward:</strong> RM was trained on data where agreeable responses were preferred, so it over-rewards agreement.</li>
+<li><strong>Distribution shift:</strong> RM generalizes poorly to prompts outside its training distribution.</li>
+</ul>
+<p>These issues are covered in depth in <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>. From an evaluation standpoint: always compute a calibration Spearman <span class="arithmatex">\(\rho\)</span> against held-out human labels before trusting RM scores as ground truth.</p>
+<hr />
+<h2 id="judge-calibration-auditing-and-trust">Judge Calibration, Auditing, and Trust<a class="headerlink" href="#judge-calibration-auditing-and-trust" title="Permanent link">¶</a></h2>
+<p>Deploying a judge in production without calibration is the most common mistake. Here is a systematic protocol.</p>
+<h3 id="the-judge-calibration-checklist">The Judge Calibration Checklist<a class="headerlink" href="#the-judge-calibration-checklist" title="Permanent link">¶</a></h3>
+<ol>
+<li>
+<p><strong>Build a gold set.</strong> Collect 300–500 (prompt, response) examples spanning the full quality range. Get majority-vote labels from at least 3 annotators. Include adversarial examples (long-but-wrong, short-but-right, off-topic, etc.).</p>
+</li>
+<li>
+<p><strong>Compute baseline metrics.</strong> Run the judge; compute Spearman <span class="arithmatex">\(\rho\)</span>, MAE, bias profile, and per-criterion calibration.</p>
+</li>
+<li>
+<p><strong>Measure known biases.</strong> For each of the biases in the previous section, construct minimal test pairs (e.g., identical content with different lengths to test verbosity bias).</p>
+</li>
+<li>
+<p><strong>Iterate on the judge prompt.</strong> If verbosity bias is measured at &gt;5 pp win-rate difference between length-matched pairs, strengthen the anti-length instruction in the prompt.</p>
+</li>
+<li>
+<p><strong>Set acceptance thresholds.</strong> Before deploying a new judge or judge model, require Spearman <span class="arithmatex">\(\rho &gt; 0.75\)</span> and agreement rate &gt;70% on the gold set.</p>
+</li>
+<li>
+<p><strong>Re-calibrate on model updates.</strong> When you upgrade the judge model (e.g., GPT-4o to GPT-4o-mini), re-run calibration. Score distributions can shift.</p>
+</li>
+</ol>
+<h3 id="confidence-intervals-for-elo-rankings">Confidence Intervals for Elo Rankings<a class="headerlink" href="#confidence-intervals-for-elo-rankings" title="Permanent link">¶</a></h3>
+<p>A single Elo rating is not a stable estimate — it has uncertainty depending on the number of games played. Use bootstrap resampling to get confidence intervals:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">copy</span><span class="w"> </span><span class="kn">import</span> <span class="n">deepcopy</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bootstrap_elo_ci</span><span class="p">(</span><span class="n">battle_log</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span> <span class="n">n_bootstrap</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">200</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">32.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    battle_log: list of {&quot;model_a&quot;: str, &quot;model_b&quot;: str, &quot;outcome&quot;: str}</span>
+<span class="sd">    Returns a dict of model -&gt; (mean_rating, lower_95, upper_95)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">all_ratings</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">list</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_bootstrap</span><span class="p">):</span>
+        <span class="c1"># Sample with replacement</span>
+        <span class="n">sample</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choices</span><span class="p">(</span><span class="n">battle_log</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">battle_log</span><span class="p">))</span>
+
+        <span class="n">ranker</span> <span class="o">=</span> <span class="n">EloRanker</span><span class="p">(</span><span class="n">k</span><span class="o">=</span><span class="n">k</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">battle</span> <span class="ow">in</span> <span class="n">sample</span><span class="p">:</span>
+            <span class="n">ranker</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">battle</span><span class="p">[</span><span class="s2">&quot;model_a&quot;</span><span class="p">],</span> <span class="n">battle</span><span class="p">[</span><span class="s2">&quot;model_b&quot;</span><span class="p">],</span> <span class="n">battle</span><span class="p">[</span><span class="s2">&quot;outcome&quot;</span><span class="p">])</span>
+
+        <span class="k">for</span> <span class="n">model</span><span class="p">,</span> <span class="n">rating</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">ranker</span><span class="o">.</span><span class="n">leaderboard</span><span class="p">():</span>
+            <span class="n">all_ratings</span><span class="p">[</span><span class="n">model</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">rating</span><span class="p">)</span>
+
+    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">model</span><span class="p">,</span> <span class="n">ratings</span> <span class="ow">in</span> <span class="n">all_ratings</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">arr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">ratings</span><span class="p">)</span>
+        <span class="n">results</span><span class="p">[</span><span class="n">model</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;mean&quot;</span><span class="p">:</span>   <span class="nb">round</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">arr</span><span class="p">)),</span> <span class="mi">1</span><span class="p">),</span>
+            <span class="s2">&quot;lower&quot;</span><span class="p">:</span>  <span class="nb">round</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">percentile</span><span class="p">(</span><span class="n">arr</span><span class="p">,</span> <span class="mf">2.5</span><span class="p">)),</span> <span class="mi">1</span><span class="p">),</span>
+            <span class="s2">&quot;upper&quot;</span><span class="p">:</span>  <span class="nb">round</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">percentile</span><span class="p">(</span><span class="n">arr</span><span class="p">,</span> <span class="mf">97.5</span><span class="p">)),</span> <span class="mi">1</span><span class="p">),</span>
+        <span class="p">}</span>
+    <span class="k">return</span> <span class="n">results</span>
+</code></pre></div>
+<p>If the 95% confidence intervals of two models overlap, you do not have statistically significant evidence that one outperforms the other — more battles are needed.</p>
+<hr />
+<h2 id="production-llmaaj-design-considerations">Production LLMaaJ: Design Considerations<a class="headerlink" href="#production-llmaaj-design-considerations" title="Permanent link">¶</a></h2>
+<h3 id="caching-and-idempotency">Caching and Idempotency<a class="headerlink" href="#caching-and-idempotency" title="Permanent link">¶</a></h3>
+<p>Judge calls are expensive (API cost + latency). Cache results keyed on <code>(judge_model, judge_prompt_hash, question_hash, response_hash)</code>. This makes re-runs cheap and evaluation truly reproducible.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">sqlite3</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">cache_key</span><span class="p">(</span><span class="n">judge_model</span><span class="p">,</span> <span class="n">system_prompt</span><span class="p">,</span> <span class="n">question</span><span class="p">,</span> <span class="n">response</span><span class="p">):</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">([</span><span class="n">judge_model</span><span class="p">,</span> <span class="n">system_prompt</span><span class="p">,</span> <span class="n">question</span><span class="p">,</span> <span class="n">response</span><span class="p">],</span> <span class="n">sort_keys</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">payload</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="parallelism">Parallelism<a class="headerlink" href="#parallelism" title="Permanent link">¶</a></h3>
+<p>For bulk evaluation (thousands of queries), use async API calls with rate-limit-aware batching:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncOpenAI</span>
+
+<span class="n">async_client</span> <span class="o">=</span> <span class="n">AsyncOpenAI</span><span class="p">()</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">judge_async</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">response</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">semaphore</span><span class="p">:</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Semaphore</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">semaphore</span><span class="p">:</span>
+        <span class="n">completion</span> <span class="o">=</span> <span class="k">await</span> <span class="n">async_client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+            <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span>
+            <span class="n">messages</span><span class="o">=</span><span class="p">[</span>
+                <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">JUDGE_SYSTEM_PROMPT</span><span class="p">},</span>
+                <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>   <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;QUESTION:</span><span class="se">\n</span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">RESPONSE:</span><span class="se">\n</span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">},</span>
+            <span class="p">],</span>
+            <span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+            <span class="n">max_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+            <span class="n">response_format</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;json_object&quot;</span><span class="p">},</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">completion</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">bulk_judge</span><span class="p">(</span><span class="n">examples</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span> <span class="n">max_concurrency</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">20</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    examples: list of {&quot;question&quot;: str, &quot;response&quot;: str}</span>
+<span class="sd">    max_concurrency: tune to stay under API rate limits</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sem</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Semaphore</span><span class="p">(</span><span class="n">max_concurrency</span><span class="p">)</span>
+    <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span><span class="n">judge_async</span><span class="p">(</span><span class="n">ex</span><span class="p">[</span><span class="s2">&quot;question&quot;</span><span class="p">],</span> <span class="n">ex</span><span class="p">[</span><span class="s2">&quot;response&quot;</span><span class="p">],</span> <span class="n">sem</span><span class="p">)</span> <span class="k">for</span> <span class="n">ex</span> <span class="ow">in</span> <span class="n">examples</span><span class="p">]</span>
+    <span class="k">return</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="judge-cost-model">Judge Cost Model<a class="headerlink" href="#judge-cost-model" title="Permanent link">¶</a></h3>
+<p>For a daily evaluation run of 10,000 examples using GPT-4o (on the order of USD 5 per million input tokens as of mid-2025):</p>
+<ul>
+<li>Average prompt tokens: ~500 (system + question + response)</li>
+<li>Average output tokens: ~150 (rationale + JSON)</li>
+<li>Total tokens: 10,000 × 650 = 6.5M tokens</li>
+<li>Rough cost: on the order of USD 30–50 per run</li>
+</ul>
+<p>For cost-sensitive pipelines, use a smaller judge model (GPT-4o-mini, Claude Haiku) for daily monitoring and reserve GPT-4o or Claude Opus for milestone evaluations. Always validate that the smaller judge maintains acceptable calibration.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are building an LLM judge to evaluate daily model updates. Your colleague argues that because the LLM judge isn&rsquo;t perfect, you should just do human evaluation for all comparisons. How do you respond, and what would you do to ensure the judge is trustworthy?</p>
+<p><strong>A:</strong> Human evaluation doesn&rsquo;t scale to a daily cadence across thousands of examples — it is too slow and expensive. The right answer is not to choose one over the other, but to layer them: use the LLM judge for high-frequency, lower-stakes monitoring (detecting regressions, comparing ablations), and use human evaluation for milestone decisions and for building the calibration set that validates the judge. To make the judge trustworthy: (1) build a gold calibration set with majority-vote human labels, (2) measure and mitigate known biases (position, verbosity, self-preference) with debiasing protocols like running both orderings, (3) require Spearman ρ &gt; 0.75 and &gt;70% agreement before deployment, (4) use a different model family for judging than for generation to reduce self-preference, and (5) re-calibrate when the judge model is upgraded. The judge is a tool with known failure modes, not a black box to trust blindly.</p>
+</div>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>LLM-as-a-Judge (LLMaaJ) enables scalable automated evaluation at inference speed, but must be treated as an approximate human proxy — not ground truth.</li>
+<li>Pointwise evaluation is efficient (O(N) queries) and good for monitoring; pairwise is more calibrated for head-to-head comparisons but costs O(N²) and has strong position bias.</li>
+<li>The five principal biases are: position, verbosity, self-preference, sycophancy, and instruction-following bias — each has a specific mitigation (run both orderings, explicit anti-length instructions, use different model family, neutral prompts, separate rubric criteria).</li>
+<li>Rubric-based multi-criteria evaluation (e.g., correctness, helpfulness, conciseness, safety weighted separately) provides more diagnostic signal than a single aggregate score.</li>
+<li>Chain-of-thought before scoring (G-Eval style) significantly improves calibration versus asking for a bare score.</li>
+<li>The Elo rating system converts pairwise win/loss outcomes into a global ranking; bootstrap resampling gives confidence intervals around ratings.</li>
+<li>Reward models are faster judges (10–50 ms vs. 1–5 s) suitable for training-loop reward signals; chat judges are more flexible and interpretable for offline evaluation.</li>
+<li>Always validate any judge — LLM or RM — against a gold human-labeled calibration set and track Spearman ρ and bias profile before trusting it in production.</li>
+<li>Cache judge outputs deterministically (hash of judge model + prompt + inputs) to make evaluations cheap, reproducible, and diffable.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>LLM-as-a-Judge has become the standard backbone of automated evaluation pipelines since 2023, with a rich body of work characterizing its biases and open-source tooling now mature enough for production use. Dedicated open-source judge models (Prometheus) and length-debiased benchmarks (LC-AlpacaEval) have largely addressed early criticism about reliability, while crowd-sourced platforms like Chatbot Arena provide large-scale human-preference ground truth.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2306.05685">Zheng et al., <em>Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena</em> (2023)</a> — the paper that named and systematized the LLMaaJ paradigm, introduced MT-Bench, and measured position/verbosity/self-preference biases.</li>
+<li><a href="https://arxiv.org/abs/2303.16634">Liu et al., <em>G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment</em> (2023)</a> — showed that chain-of-thought before scoring dramatically improves correlation with human judgments on summarization and dialogue.</li>
+<li><a href="https://arxiv.org/abs/2305.17926">Wang et al., <em>Large Language Models are not Fair Evaluators</em> (2023)</a> — systematic measurement of position bias; proposed swap-ordering calibration (the &ldquo;run both orderings&rdquo; mitigation used in production).</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2310.08491">Kim et al., <em>Prometheus: Inducing Fine-grained Evaluation Capability in Language Models</em> (2023)</a> — first open-source judge model matching GPT-4 on rubric-based evaluation; avoids proprietary API dependency.</li>
+<li><a href="https://arxiv.org/abs/2405.01535">Kim et al., <em>Prometheus 2: An Open Source Language Model Specialized in Evaluating Other Language Models</em> (2024)</a> — extends Prometheus to both absolute and pairwise grading; achieves 72–85% agreement with human judgments across benchmarks.</li>
+<li><a href="https://arxiv.org/abs/2404.04475">Dubois et al., <em>Length-Controlled AlpacaEval: A Simple Way to Debias Automatic Evaluators</em> (2024)</a> — regression-based length normalization that removes the dominant verbosity bias from LLM-based win-rate estimates.</li>
+<li><a href="https://arxiv.org/abs/2403.04132">Chiang et al., <em>Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference</em> (2024)</a> — describes the statistical backbone (Bradley-Terry model) of the Arena platform and its use as a large-scale human-preference ground truth.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/prometheus-eval/prometheus">prometheus-eval/prometheus</a> — official repo for the Prometheus judge model family; includes training code, the Feedback Collection dataset, and inference utilities.</li>
+<li><a href="https://github.com/tatsu-lab/alpaca_eval">tatsu-lab/alpaca_eval</a> — AlpacaEval harness with length-controlled win-rate; achieves 0.98 Spearman correlation with Chatbot Arena at under $10 per run.</li>
+<li><a href="https://github.com/openai/evals">openai/evals</a> — OpenAI&rsquo;s eval framework with model-graded eval templates and a community registry of benchmarks.</li>
+<li><a href="https://github.com/confident-ai/deepeval">confident-ai/deepeval</a> — production-ready pytest-style LLM evaluation framework with 40+ built-in metrics including G-Eval, RAG faithfulness, and hallucination detection.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Zheng et al., &ldquo;Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena&rdquo; (LMSYS, 2023)</strong> — the foundational paper defining the LLMaaJ paradigm and MT-Bench; analyzes position and verbosity biases.</li>
+<li><strong>Liu et al., &ldquo;G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment&rdquo; (2023)</strong> — introduces CoT-before-score and shows that using GPT-4 with structured criteria significantly correlates with human judgments on summarization and dialogue.</li>
+<li><strong>Wang et al., &ldquo;Large Language Models are not Fair Evaluators&rdquo; (2023)</strong> — systematic measurement of position bias and the swap-ordering mitigation.</li>
+<li><strong>Dubois et al., &ldquo;AlpacaEval: An Automatic Evaluator for Instruction-following Language Models&rdquo; (2023)</strong> — the AlpacaEval benchmark; open-source automated evaluation harness with length-controlled win rate.</li>
+<li><strong>Chiang &amp; Lee, &ldquo;Can Large Language Models Be an Alternative to Human Evaluations?&rdquo; (ACL 2023)</strong> — empirical study of agreement rates and failure modes.</li>
+<li><strong>Ouyang et al., &ldquo;Training language models to follow instructions with human feedback&rdquo; (InstructGPT, 2022)</strong> — reward modeling methodology that underpins RM-as-judge.</li>
+<li><strong>Chatbot Arena Leaderboard (LMSYS)</strong> — live crowdsourced human preference ranking; a model for large-scale Elo-based evaluation.</li>
+<li><strong>OpenAI Evals</strong> (github.com/openai/evals) — open-source eval framework with LLMaaJ templates and model-graded eval types.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="01-eval-landscape.html"><span class="pn-label">← Previous</span><span class="pn-title">The Evaluation Problem &amp; Benchmark Landscape</span></a>
+<a class="next" href="03-eval-harnesses.html"><span class="pn-label">Next →</span><span class="pn-title">Building Eval Harnesses</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-human-evaluation-alone-does-not-scale">Why Human Evaluation Alone Does Not Scale</a></li>
+<li class="toc-l2"><a href="#the-two-evaluation-paradigms-pointwise-vs-pairwise">The Two Evaluation Paradigms: Pointwise vs Pairwise</a></li>
+<li class="toc-l3"><a href="#pointwise-absolute-scoring">Pointwise (Absolute) Scoring</a></li>
+<li class="toc-l3"><a href="#pairwise-comparative-scoring">Pairwise (Comparative) Scoring</a></li>
+<li class="toc-l3"><a href="#when-to-use-each">When to Use Each</a></li>
+<li class="toc-l2"><a href="#rubric-design-decomposing-quality">Rubric Design: Decomposing Quality</a></li>
+<li class="toc-l3"><a href="#the-g-eval-framework-liu-et-al">The G-Eval Framework (Liu et al.)</a></li>
+<li class="toc-l3"><a href="#weighted-aggregation">Weighted Aggregation</a></li>
+<li class="toc-l2"><a href="#biases-in-llm-judges-the-menagerie">Biases in LLM Judges: The Menagerie</a></li>
+<li class="toc-l3"><a href="#position-bias">Position Bias</a></li>
+<li class="toc-l3"><a href="#verbosity-bias-length-bias">Verbosity Bias (Length Bias)</a></li>
+<li class="toc-l3"><a href="#self-preference-bias">Self-Preference Bias</a></li>
+<li class="toc-l3"><a href="#sycophancy-bias">Sycophancy Bias</a></li>
+<li class="toc-l3"><a href="#instruction-following-bias">Instruction-Following Bias</a></li>
+<li class="toc-l3"><a href="#the-bias-calibration-protocol">The Bias Calibration Protocol</a></li>
+<li class="toc-l2"><a href="#agreement-with-humans-measuring-judge-quality">Agreement with Humans: Measuring Judge Quality</a></li>
+<li class="toc-l3"><a href="#cohens-kappa">Cohen&amp;rsquo;s Kappa</a></li>
+<li class="toc-l3"><a href="#spearmans-rank-correlation">Spearman&amp;rsquo;s Rank Correlation</a></li>
+<li class="toc-l3"><a href="#practical-calibration-pipeline">Practical Calibration Pipeline</a></li>
+<li class="toc-l2"><a href="#a-complete-judge-implementation">A Complete Judge Implementation</a></li>
+<li class="toc-l2"><a href="#chatbot-arena-and-the-elo-rating-system">Chatbot Arena and the Elo Rating System</a></li>
+<li class="toc-l3"><a href="#the-elo-model">The Elo Model</a></li>
+<li class="toc-l3"><a href="#from-llmaaj-to-arena-elo">From LLMaaJ to Arena Elo</a></li>
+<li class="toc-l2"><a href="#reward-models-as-judges">Reward Models as Judges</a></li>
+<li class="toc-l3"><a href="#when-to-use-an-rm-vs-a-chat-judge">When to Use an RM vs. a Chat Judge</a></li>
+<li class="toc-l3"><a href="#reward-model-as-a-pointwise-judge">Reward Model as a Pointwise Judge</a></li>
+<li class="toc-l3"><a href="#reward-model-calibration-issues">Reward Model Calibration Issues</a></li>
+<li class="toc-l2"><a href="#judge-calibration-auditing-and-trust">Judge Calibration, Auditing, and Trust</a></li>
+<li class="toc-l3"><a href="#the-judge-calibration-checklist">The Judge Calibration Checklist</a></li>
+<li class="toc-l3"><a href="#confidence-intervals-for-elo-rankings">Confidence Intervals for Elo Rankings</a></li>
+<li class="toc-l2"><a href="#production-llmaaj-design-considerations">Production LLMaaJ: Design Considerations</a></li>
+<li class="toc-l3"><a href="#caching-and-idempotency">Caching and Idempotency</a></li>
+<li class="toc-l3"><a href="#parallelism">Parallelism</a></li>
+<li class="toc-l3"><a href="#judge-cost-model">Judge Cost Model</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

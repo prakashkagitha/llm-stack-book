@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference — The LLM Stack</title>
+<meta name="description" content="The distinct serving problem of large sparse MoE models (DeepSeek-V3/R1, Llama-4, Qwen-MoE): expert-parallel (EP) inference, all-to-all token dispatch/combine (">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="active" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="713-serving-mixture-of-experts-expert-parallelism-all-to-all-inference">7.13 Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference<a class="headerlink" href="#713-serving-mixture-of-experts-expert-parallelism-all-to-all-inference" title="Permanent link">¶</a></h1>
+<p>A dense 70-billion-parameter model and a sparse 671-billion-parameter Mixture-of-Experts (MoE) model can have <em>identical</em> per-token FLOPs. DeepSeek-V3 has 671B total parameters but activates only ~37B per token; Llama-4 Maverick has ~400B total but ~17B active; Qwen3-235B-A22B activates ~22B of 235B. The promise of MoE — explained architecturally in <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts (MoE) Architectures</a> — is that <em>quality tracks total parameters while compute tracks active parameters</em>. That promise is what makes these models attractive to <em>train</em>. But it creates a serving problem that has almost nothing in common with serving a dense model of equivalent speed.</p>
+<p>The trouble is memory and movement, not arithmetic. Those 671B parameters still have to <em>live</em> on GPUs — roughly 671 GB in FP8, over 1.3 TB in BF16 — even though any single token touches a tiny fraction of them. And because experts are scattered across dozens of GPUs, every MoE layer becomes a two-phase <strong>all-to-all</strong> communication: send each token to the GPUs holding its chosen experts (<em>dispatch</em>), then send the results back (<em>combine</em>). A dense model with the same active parameter count does a couple of cheap all-reduces per layer; a large MoE does two cluster-wide shuffles whose cost is set by the <em>slowest, most overloaded</em> GPU in the group. Serving MoE well is the art of making that shuffle cheap and keeping every expert busy.</p>
+<p>This chapter is the inference-specific companion to the architecture chapter and to <a href="../07-inference-serving/11-multi-gpu-inference.html">Multi-GPU &amp; Multi-Node Inference</a>, which introduced expert parallelism (EP) as one of four parallelism axes. Here we go deep on EP at decode time: the all-to-all kernel itself (DeepEP), hot-expert skew and why it is worse in serving than in training, the attention-DP + expert-EP hybrid layout that frontier stacks now use, prefill-vs-decode EP asymmetry, expert and KV offloading, and the economics of &ldquo;dense-equivalent throughput.&rdquo; We assume you know prefill/decode and the KV cache (<a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference</a>) and collective communication (<a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a>).</p>
+<hr />
+<h2 id="why-moe-serving-is-a-different-problem">Why MoE Serving Is a Different Problem<a class="headerlink" href="#why-moe-serving-is-a-different-problem" title="Permanent link">¶</a></h2>
+<p>Start from the resource that dominates decode. A single decode step is <strong>memory-bandwidth-bound</strong>: the GPU must stream the weights it needs through its compute units, and at batch sizes typical of low-latency serving it does very little arithmetic per byte loaded. For a <em>dense</em> model the working set is the whole weight matrix every step. For an MoE model the per-token working set is small — the router, the attention block, the shared expert (if any), and the <span class="arithmatex">\(k\)</span> routed experts the token selected — but the <em>resident</em> working set is enormous because <strong>every expert must be in memory in case some token in the batch picks it</strong>.</p>
+<p>This is the first inversion. In a dense model, parameters loaded <span class="arithmatex">\(\approx\)</span> parameters resident. In an MoE model, with <span class="arithmatex">\(E\)</span> experts and top-<span class="arithmatex">\(k\)</span> routing, a single token loads <span class="arithmatex">\(k/E\)</span> of the expert weights but the <em>batch</em> may load all of them. Consider a batch of <span class="arithmatex">\(B\)</span> tokens, <span class="arithmatex">\(E=256\)</span> experts, <span class="arithmatex">\(k=8\)</span>. Expected distinct experts touched is</p>
+<div class="arithmatex">\[
+\mathbb{E}[\text{distinct experts}] = E\left(1 - \left(1 - \tfrac{k}{E}\right)^{B}\right).
+\]</div>
+<p>For <span class="arithmatex">\(B=64\)</span>, <span class="arithmatex">\(k=8\)</span>, <span class="arithmatex">\(E=256\)</span> this is <span class="arithmatex">\(256(1-(1-1/32)^{64})\approx 256(1-0.132)\approx 222\)</span> — already <strong>87% of all experts</strong> touched by a modest batch. So even though each <em>token</em> is sparse, a realistic decode <em>batch</em> is nearly dense in expert coverage. You cannot avoid keeping (almost) all experts resident and ready.</p>
+<p>The second inversion is communication. EP places experts on different GPUs; routing is data-dependent and changes every token. The required primitive is <strong>all-to-all</strong>: GPU <span class="arithmatex">\(i\)</span> has a variable number of tokens destined for each expert, hence for each GPU. Unlike the all-reduce of tensor parallelism (TP) — whose volume is fixed at <span class="arithmatex">\(\sim 2\,d_{\text{model}}\)</span> bytes per token per layer regardless of routing — all-to-all volume is <span class="arithmatex">\(\sim k\,d_{\text{model}}\)</span> bytes per token per layer <em>and</em> is <strong>load-imbalanced and irregular</strong>: the message sizes are unknown until the router fires.</p>
+<figure class="viz" id="fig-moe-serving-dense-tp-vs-moe-ep">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 860 570" role="img" aria-label="Side-by-side dataflow: Dense FFN under tensor parallelism uses one fixed-size all-reduce collective; MoE FFN under expert parallelism uses two irregular all-to-all collectives, dispatch and combine, with data-dependent sizes.">
+<defs>
+  <marker id="dtp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1.5 L9 5 L0 8.5 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="dtp-arr-c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1.5 L9 5 L0 8.5 z" fill="var(--accent2,#d9822b)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-moe-serving-dense-tp-vs-moe-ep text { font-family: var(--sans,sans-serif); }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-moe-serving-dense-tp-vs-moe-ep animate,
+    #fig-moe-serving-dense-tp-vs-moe-ep animateTransform { display: none; }
+  }
+</style>
+
+
+<rect x="12" y="10" width="390" height="535" rx="10"
+      fill="var(--surface,#f6f8fb)" stroke="var(--border-2,#d0d5dd)" stroke-width="1.2"/>
+<rect x="418" y="10" width="390" height="535" rx="10"
+      fill="var(--surface,#f6f8fb)" stroke="var(--border-2,#d0d5dd)" stroke-width="1.2"/>
+
+
+<line x1="408" y1="18" x2="408" y2="540"
+      stroke="var(--border-2,#d0d5dd)" stroke-width="1" stroke-dasharray="4 3"/>
+
+
+<text x="207" y="37" text-anchor="middle"
+      font="700 13px var(--sans,sans-serif)" fill="var(--ink-soft,#1a1a2e)">Dense FFN (Tensor Parallelism)</text>
+
+
+<rect x="107" y="50" width="200" height="40" rx="6"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#adb5bd)" stroke-width="1.4"/>
+<text x="207" y="75" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">x (input token)</text>
+
+
+<line x1="207" y1="90" x2="207" y2="108"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="97" y="110" width="220" height="40" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.4"/>
+<text x="207" y="135" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">up-proj (col-parallel)</text>
+
+<line x1="207" y1="150" x2="207" y2="168"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="107" y="170" width="200" height="40" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.4"/>
+<text x="207" y="195" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">activation</text>
+
+<line x1="207" y1="210" x2="207" y2="228"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="97" y="230" width="220" height="40" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.4"/>
+<text x="207" y="255" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">down-proj (row-parallel)</text>
+
+<line x1="207" y1="270" x2="207" y2="288"
+      stroke="var(--accent2,#d9822b)" stroke-width="2" marker-end="url(#dtp-arr-c)"/>
+
+
+<rect x="87" y="290" width="240" height="48" rx="7"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2.4"/>
+<text x="207" y="319" text-anchor="middle"
+      font="700 12px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">ALL-REDUCE (sum)</text>
+
+<line x1="207" y1="338" x2="207" y2="356"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="107" y="358" width="200" height="40" rx="6"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#adb5bd)" stroke-width="1.4"/>
+<text x="207" y="383" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">y (output)</text>
+
+
+<text x="207" y="428" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">one collective · fixed size ~2·d_model bytes/token</text>
+<text x="207" y="441" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">well overlapped</text>
+
+
+<circle cx="207" cy="70" r="5" fill="var(--accent,#4f8cff)" opacity="0">
+  <animate attributeName="cy"
+    values="70;130;190;250;314;378"
+    keyTimes="0;0.15;0.30;0.45;0.62;0.80"
+    dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="opacity"
+    values="0;1;1;1;1;1;0"
+    keyTimes="0;0.05;0.45;0.62;0.76;0.82;1"
+    dur="5s" repeatCount="indefinite"/>
+</circle>
+
+<circle cx="207" cy="314" r="14" fill="none"
+        stroke="var(--accent2,#d9822b)" stroke-width="1.8" opacity="0">
+  <animate attributeName="r" values="14;32" keyTimes="0;1" dur="0.7s"
+    begin="3.1s;8.1s;13.1s" fill="freeze"/>
+  <animate attributeName="opacity" values="0.8;0" keyTimes="0;1" dur="0.7s"
+    begin="3.1s;8.1s;13.1s" fill="freeze"/>
+</circle>
+
+
+<text x="613" y="37" text-anchor="middle"
+      font="700 12px var(--sans,sans-serif)" fill="var(--ink-soft,#1a1a2e)">MoE FFN (Expert Parallelism) · top-2 of 8 experts</text>
+
+
+<rect x="513" y="50" width="200" height="40" rx="6"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#adb5bd)" stroke-width="1.4"/>
+<text x="613" y="75" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">x (input token)</text>
+
+<line x1="613" y1="90" x2="613" y2="108"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="563" y="110" width="100" height="40" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.4"/>
+<text x="613" y="135" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">router</text>
+
+<rect x="672" y="117" width="80" height="22" rx="11"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#adb5bd)" stroke-width="1"/>
+<text x="712" y="132" text-anchor="middle"
+      font="400 9.5px var(--mono,monospace)" fill="var(--muted,#777)">pick e_a, e_b</text>
+<line x1="663" y1="128" x2="672" y2="128"
+      stroke="var(--ink-soft,#777)" stroke-width="1" marker-end="url(#dtp-arr)"/>
+
+<line x1="613" y1="150" x2="613" y2="170"
+      stroke="var(--accent2,#d9822b)" stroke-width="2" marker-end="url(#dtp-arr-c)"/>
+
+
+<rect x="493" y="172" width="240" height="48" rx="7"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2.4"/>
+<text x="613" y="201" text-anchor="middle"
+      font="700 12px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">DISPATCH — all-to-all #1</text>
+
+<text x="855" y="182" text-anchor="end" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">send to owner GPUs</text>
+<text x="855" y="194" text-anchor="end" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">&gt; irregular sizes</text>
+<line x1="733" y1="190" x2="742" y2="190"
+      stroke="var(--muted,#aaa)" stroke-width="0.9" stroke-dasharray="3 2" marker-end="url(#dtp-arr)"/>
+
+
+<line x1="576" y1="220" x2="548" y2="252"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      marker-end="url(#dtp-arr-c)" opacity="0.65"/>
+<line x1="613" y1="220" x2="613" y2="252"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      marker-end="url(#dtp-arr-c)" opacity="0.65"/>
+<line x1="650" y1="220" x2="678" y2="252"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      marker-end="url(#dtp-arr-c)" opacity="0.65"/>
+
+<line x1="613" y1="254" x2="613" y2="272"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="503" y="274" width="220" height="48" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.4"/>
+<text x="613" y="298" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">expert compute locally</text>
+<text x="613" y="313" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#777)">(grouped GEMM)</text>
+
+
+<line x1="548" y1="322" x2="576" y2="352"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      opacity="0.65"/>
+<line x1="613" y1="322" x2="613" y2="352"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      opacity="0.65"/>
+<line x1="678" y1="322" x2="650" y2="352"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      opacity="0.65"/>
+
+<line x1="613" y1="322" x2="613" y2="352"
+      stroke="var(--accent2,#d9822b)" stroke-width="2" marker-end="url(#dtp-arr-c)"/>
+
+
+<rect x="493" y="354" width="240" height="48" rx="7"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2.4"/>
+<text x="613" y="383" text-anchor="middle"
+      font="700 12px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">COMBINE — all-to-all #2</text>
+
+<text x="855" y="362" text-anchor="end" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">gather back &amp;</text>
+<text x="855" y="374" text-anchor="end" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">gate-weighted sum</text>
+<line x1="733" y1="370" x2="742" y2="370"
+      stroke="var(--muted,#aaa)" stroke-width="0.9" stroke-dasharray="3 2" marker-end="url(#dtp-arr)"/>
+
+<line x1="613" y1="402" x2="613" y2="420"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="513" y="422" width="200" height="40" rx="6"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#adb5bd)" stroke-width="1.4"/>
+<text x="613" y="447" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">y (output)</text>
+
+
+<text x="613" y="490" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">two collectives · data-dependent sizes</text>
+<text x="613" y="503" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">cost set by the busiest GPU</text>
+
+
+
+<circle cx="613" cy="70" r="5" fill="var(--accent,#4f8cff)" opacity="0">
+  <animate attributeName="cy" values="70;130" keyTimes="0;0.22" dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.05;0.20;0.26" dur="5s" repeatCount="indefinite"/>
+</circle>
+
+<circle cx="613" cy="130" r="4" fill="var(--accent,#4f8cff)" opacity="0">
+  <animate attributeName="cx" values="613;578;548;548;576;613" keyTimes="0;0.28;0.42;0.56;0.72;0.90" dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="cy" values="130;196;298;354;402;462" keyTimes="0;0.28;0.42;0.56;0.72;0.90" dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="opacity" values="0;0;1;1;1;1;0" keyTimes="0;0.22;0.27;0.42;0.72;0.88;0.96" dur="5s" repeatCount="indefinite"/>
+</circle>
+
+<circle cx="613" cy="130" r="4" fill="var(--good,#2f9e6e)" opacity="0">
+  <animate attributeName="cx" values="613;648;678;678;650;613" keyTimes="0;0.28;0.42;0.56;0.72;0.90" dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="cy" values="130;196;298;354;402;462" keyTimes="0;0.28;0.42;0.56;0.72;0.90" dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="opacity" values="0;0;1;1;1;1;0" keyTimes="0;0.22;0.27;0.42;0.72;0.88;0.96" dur="5s" repeatCount="indefinite"/>
+</circle>
+
+</svg>
+<figcaption><b>Dense FFN (one all-reduce) vs. MoE FFN (two all-to-all collectives).</b> In tensor-parallel dense serving a single fixed-size all-reduce sums partial results — one barrier, predictable cost, easily overlapped. In expert-parallel MoE the token is routed to its chosen experts via DISPATCH (all-to-all #1), experts compute locally via grouped GEMM, and results return home via COMBINE (all-to-all #2). The orange collective boxes make the asymmetry concrete: MoE pays two barriers with irregular, data-dependent message sizes whose cost is set by the slowest, most-loaded GPU in the group.</figcaption>
+</figure>
+
+<p>The third inversion is <em>who is the bottleneck</em>. In dense decode, the bottleneck is HBM bandwidth on a balanced set of identical GPUs. In MoE decode, the bottleneck is whichever GPU happens to hold a <strong>hot expert</strong> that the current batch over-selects, because the all-to-all cannot complete until that GPU finishes its disproportionate share. Routing skew, which is a mild efficiency annoyance during training (you fix it with an auxiliary load-balance loss; see <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts Architectures</a>), becomes a <strong>tail-latency weapon</strong> in serving, where each decode step is a synchronization barrier.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: &lsquo;dense-equivalent&rsquo; is the right mental model</p>
+<p>Throughout this chapter, compare an MoE model to the <em>dense model with the same active parameter count</em>, not the same total. DeepSeek-V3 (37B active) should be benchmarked against a hypothetical dense 37B, not a dense 671B. The MoE wins on quality-per-FLOP; the question this chapter answers is how much of that win survives the serving overhead — the all-to-all, the skew, and the memory to hold all experts. A well-tuned large-EP deployment recovers most of it; a naive single-node MoE deployment can throw it all away.</p>
+</div>
+<hr />
+<h2 id="expert-parallelism-mechanics-dispatch-compute-combine">Expert Parallelism Mechanics: Dispatch, Compute, Combine<a class="headerlink" href="#expert-parallelism-mechanics-dispatch-compute-combine" title="Permanent link">¶</a></h2>
+<p>Let us pin down the layout. Suppose <span class="arithmatex">\(E\)</span> experts spread over <span class="arithmatex">\(G\)</span> GPUs in the EP group, <span class="arithmatex">\(E/G\)</span> experts per GPU (assume it divides). Each GPU also holds a replica of the non-expert parts (attention, router, shared expert, norms) — or, in the hybrid layout of the next section, a <em>shard</em> of attention. A token resident on GPU <span class="arithmatex">\(i\)</span> is processed as:</p>
+<ol>
+<li><strong>Router</strong> runs locally; produces top-<span class="arithmatex">\(k\)</span> expert ids and gate weights for each local token.</li>
+<li><strong>Dispatch (all-to-all #1):</strong> tokens are permuted so that all tokens destined for expert <span class="arithmatex">\(e\)</span> are contiguous, then sent to the GPU owning <span class="arithmatex">\(e\)</span>. Because token-to-GPU counts vary, this is an <em>all-to-all-v</em> (variable length).</li>
+<li><strong>Expert compute:</strong> each GPU runs its local experts&rsquo; FFNs over the tokens it received — a grouped GEMM (one matmul per expert, batched).</li>
+<li><strong>Combine (all-to-all #2):</strong> expert outputs are sent back to each token&rsquo;s home GPU and <strong>weighted-summed</strong> by the gate weights. (With top-<span class="arithmatex">\(k&gt;1\)</span>, a token&rsquo;s home GPU receives <span class="arithmatex">\(k\)</span> partial results to combine.)</li>
+</ol>
+<p>Here is a minimal but correct single-process reference that makes the data movement explicit. It simulates EP across <code>G</code> virtual ranks with plain tensors so you can run it on one GPU or CPU and inspect the permutations.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">moe_ep_layer</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">router_w</span><span class="p">,</span> <span class="n">expert_w1</span><span class="p">,</span> <span class="n">expert_w2</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">G</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Reference EP forward for ONE MoE layer, simulating G ranks in-process.</span>
+<span class="sd">      x          : (T, d)         tokens for the whole EP group (gathered for clarity)</span>
+<span class="sd">      router_w   : (E, d)         router weights</span>
+<span class="sd">      expert_w1  : (E, d, h)      per-expert up-projection</span>
+<span class="sd">      expert_w2  : (E, h, d)      per-expert down-projection</span>
+<span class="sd">      k          : top-k          experts per token</span>
+<span class="sd">      G          : number of EP ranks; expert e lives on rank (e // (E//G))</span>
+<span class="sd">    Returns y : (T, d). The point is to expose dispatch/compute/combine, not speed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">T</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">E</span> <span class="o">=</span> <span class="n">router_w</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">experts_per_rank</span> <span class="o">=</span> <span class="n">E</span> <span class="o">//</span> <span class="n">G</span>
+
+    <span class="c1"># ---- 1. ROUTER (runs on each token&#39;s home rank) ----</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">x</span> <span class="o">@</span> <span class="n">router_w</span><span class="o">.</span><span class="n">t</span><span class="p">()</span>                      <span class="c1"># (T, E)</span>
+    <span class="n">gate</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>               <span class="c1"># softmax over all experts</span>
+    <span class="n">topv</span><span class="p">,</span> <span class="n">topi</span> <span class="o">=</span> <span class="n">gate</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>              <span class="c1"># (T, k) weights and expert ids</span>
+    <span class="n">topv</span> <span class="o">=</span> <span class="n">topv</span> <span class="o">/</span> <span class="n">topv</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>       <span class="c1"># renormalize the chosen-k weights</span>
+
+    <span class="n">y</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+    <span class="c1"># ---- 2-4. For each rank, gather its tokens (DISPATCH), compute, scatter back (COMBINE)</span>
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">G</span><span class="p">):</span>
+        <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="n">r</span> <span class="o">*</span> <span class="n">experts_per_rank</span><span class="p">,</span> <span class="p">(</span><span class="n">r</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">experts_per_rank</span>
+        <span class="c1"># Which (token, slot) pairs route to an expert owned by rank r?</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="p">(</span><span class="n">topi</span> <span class="o">&gt;=</span> <span class="n">lo</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">topi</span> <span class="o">&lt;</span> <span class="n">hi</span><span class="p">)</span>          <span class="c1"># (T, k) boolean</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+            <span class="k">continue</span>
+        <span class="n">tok_idx</span><span class="p">,</span> <span class="n">slot_idx</span> <span class="o">=</span> <span class="n">mask</span><span class="o">.</span><span class="n">nonzero</span><span class="p">(</span><span class="n">as_tuple</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># variable length -&gt; all-to-all-v</span>
+        <span class="n">local_eid</span> <span class="o">=</span> <span class="n">topi</span><span class="p">[</span><span class="n">tok_idx</span><span class="p">,</span> <span class="n">slot_idx</span><span class="p">]</span> <span class="o">-</span> <span class="n">lo</span>          <span class="c1"># expert index within this rank</span>
+        <span class="n">gw</span> <span class="o">=</span> <span class="n">topv</span><span class="p">[</span><span class="n">tok_idx</span><span class="p">,</span> <span class="n">slot_idx</span><span class="p">]</span>                      <span class="c1"># gate weight for the combine</span>
+
+        <span class="c1"># Grouped expert compute: loop experts on this rank (real kernels fuse this GEMM)</span>
+        <span class="k">for</span> <span class="n">le</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">experts_per_rank</span><span class="p">):</span>
+            <span class="n">sel</span> <span class="o">=</span> <span class="p">(</span><span class="n">local_eid</span> <span class="o">==</span> <span class="n">le</span><span class="p">)</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">sel</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+                <span class="k">continue</span>
+            <span class="n">rows</span> <span class="o">=</span> <span class="n">tok_idx</span><span class="p">[</span><span class="n">sel</span><span class="p">]</span>
+            <span class="n">xin</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="n">rows</span><span class="p">]</span>                                  <span class="c1"># tokens sent to this expert</span>
+            <span class="n">hmid</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">gelu</span><span class="p">(</span><span class="n">xin</span> <span class="o">@</span> <span class="n">expert_w1</span><span class="p">[</span><span class="n">lo</span> <span class="o">+</span> <span class="n">le</span><span class="p">])</span>        <span class="c1"># up-proj + act</span>
+            <span class="n">out</span> <span class="o">=</span> <span class="n">hmid</span> <span class="o">@</span> <span class="n">expert_w2</span><span class="p">[</span><span class="n">lo</span> <span class="o">+</span> <span class="n">le</span><span class="p">]</span>                <span class="c1"># down-proj</span>
+            <span class="c1"># COMBINE: weighted scatter-add back to the home token</span>
+            <span class="n">y</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">rows</span><span class="p">,</span> <span class="n">out</span> <span class="o">*</span> <span class="n">gw</span><span class="p">[</span><span class="n">sel</span><span class="p">]</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">y</span>
+
+<span class="c1"># --- tiny smoke test ---</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">T</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">E</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">G</span> <span class="o">=</span> <span class="mi">12</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">4</span>
+<span class="n">x</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+<span class="n">rw</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">E</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.1</span>
+<span class="n">w1</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">E</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span> <span class="n">h</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">d</span> <span class="o">**</span> <span class="o">-</span><span class="mf">0.5</span><span class="p">)</span>
+<span class="n">w2</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">E</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">h</span> <span class="o">**</span> <span class="o">-</span><span class="mf">0.5</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">moe_ep_layer</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">rw</span><span class="p">,</span> <span class="n">w1</span><span class="p">,</span> <span class="n">w2</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">G</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>   <span class="c1"># torch.Size([12, 16])</span>
+</code></pre></div>
+<p>The <code>mask.nonzero</code> step is the heart of the cost model: its length on each rank is <strong>how many tokens that rank must process</strong>, and it varies wildly with routing. In a real distributed kernel, steps 2 and 4 are <code>torch.distributed.all_to_all_single</code> calls with per-rank split sizes computed from the router output. The grouped GEMM in step 3 is a single fused kernel (e.g., CUTLASS grouped GEMM, or Triton&rsquo;s <code>grouped_matmul</code>) that runs all local experts&rsquo; matmuls with one launch, padding or masking ragged group sizes.</p>
+<h3 id="the-two-costs-bytes-moved-and-the-barrier">The Two Costs: Bytes Moved and the Barrier<a class="headerlink" href="#the-two-costs-bytes-moved-and-the-barrier" title="Permanent link">¶</a></h3>
+<p>Per MoE layer, the all-to-all moves about <span class="arithmatex">\(k\,d_{\text{model}}\)</span> bytes per token <em>out</em> (dispatch) and the same back (combine), times bytes-per-element. For BF16, <span class="arithmatex">\(d_{\text{model}}=7168\)</span> (DeepSeek-V3), <span class="arithmatex">\(k=8\)</span>:</p>
+<div class="arithmatex">\[
+\text{dispatch bytes/token} = k \cdot d_{\text{model}} \cdot 2 = 8 \cdot 7168 \cdot 2 \approx 115\,\text{KB}.
+\]</div>
+<p>That is per token, per MoE layer, in <em>each</em> direction — and DeepSeek-V3 has 58 MoE layers. The volume is not the killer on fast interconnect (NVLink at ~900 GB/s, or 8×400 Gb/s InfiniBand per node); the killer is that <strong>each all-to-all is a barrier</strong>. Decode is one token per request per step, so the batch must cross the all-to-all 2× per MoE layer, and the step cannot finish until the last byte from the slowest rank arrives. Latency, not bandwidth, is what large-EP engineering fights — which is exactly what DeepEP is built for.</p>
+<hr />
+<h2 id="deepep-a-production-all-to-all-kernel">DeepEP: A Production All-to-All Kernel<a class="headerlink" href="#deepep-a-production-all-to-all-kernel" title="Permanent link">¶</a></h2>
+<p><code>all_to_all_single</code> from a generic NCCL build works, but it leaves a lot on the table for MoE decode: it does not overlap dispatch with router computation, it does not exploit the two-tier topology (NVLink within a node, RDMA across nodes), and it synchronizes the GPU with the host to compute split sizes. <strong>DeepEP</strong> (released by DeepSeek alongside DeepSeek-V3) is a purpose-built expert-parallel communication library that addresses all three. The mechanisms generalize to any large-EP serving stack (vLLM and SGLang both integrate DeepEP-style kernels), so they are worth understanding even if you never call the library directly.</p>
+<p>DeepEP provides two families of kernels:</p>
+<ul>
+<li><strong>High-throughput (normal) kernels</strong> for <em>prefill</em> and training, where batches are large and you want to saturate bandwidth. These do <strong>NVLink+RDMA forwarding</strong>: a token going to a remote node&rsquo;s expert is sent over RDMA once, then forwarded over NVLink to the right GPU inside that node, instead of doing <span class="arithmatex">\(G\)</span> independent point-to-point sends. This is the all-to-all analogue of a hierarchical all-reduce.</li>
+<li><strong>Low-latency kernels</strong> for <em>decode</em>, where batches are tiny and the all-to-all latency directly sets time-per-output-token (TPOT). These use <strong>pure RDMA with no NVLink hop</strong> (lower latency, fewer synchronization points) and a <strong>hook-based overlap</strong> scheme: the kernel returns control to Python before the receive completes, lets you run unrelated compute (the attention of the next micro-step, or the router), and you call a hook later that consumes the arrived data. This hides the all-to-all latency <em>behind</em> useful work — communication and computation truly overlap rather than serialize.</li>
+</ul>
+<p>Two further tricks matter:</p>
+<ol>
+<li><strong>FP8 dispatch.</strong> DeepEP can quantize the dispatched activations to FP8 (E4M3) on the fly, halving the bytes moved versus BF16. The combine comes back in BF16 (gate-weighted sums are precision-sensitive). This nearly halves dispatch latency at negligible quality cost — the same logic as FP8 KV cache.</li>
+<li><strong>Communication–computation overlap via the SM-free design.</strong> The low-latency kernels are designed to use few or no streaming multiprocessors for the RDMA path (the NIC does the work), leaving the SMs free to compute experts on already-arrived tokens. The classic DeepSeek serving picture is a software pipeline where, at any instant, one micro-batch&rsquo;s tokens are <em>in flight</em> over RDMA while another micro-batch&rsquo;s experts are <em>computing</em>.</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="c1"># Sketch of the low-latency decode pattern DeepEP enables (pseudo-API).</span>
+<span class="c1"># The real library: deep_ep.Buffer.low_latency_dispatch / _combine with a hook.</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">moe_decode_step</span><span class="p">(</span><span class="n">hidden</span><span class="p">,</span> <span class="n">router</span><span class="p">,</span> <span class="n">experts</span><span class="p">,</span> <span class="n">ep_buffer</span><span class="p">):</span>
+    <span class="n">topk_idx</span><span class="p">,</span> <span class="n">topk_w</span> <span class="o">=</span> <span class="n">router</span><span class="p">(</span><span class="n">hidden</span><span class="p">)</span>                  <span class="c1"># local routing</span>
+
+    <span class="c1"># Kick off dispatch; returns immediately with a &#39;hook&#39; you call later.</span>
+    <span class="n">recv_x</span><span class="p">,</span> <span class="n">recv_layout</span><span class="p">,</span> <span class="n">hook</span> <span class="o">=</span> <span class="n">ep_buffer</span><span class="o">.</span><span class="n">low_latency_dispatch</span><span class="p">(</span>
+        <span class="n">hidden</span><span class="p">,</span> <span class="n">topk_idx</span><span class="p">,</span> <span class="n">num_experts</span><span class="o">=</span><span class="n">experts</span><span class="o">.</span><span class="n">E</span><span class="p">,</span> <span class="n">use_fp8</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="c1"># ---- OVERLAP WINDOW: do work that doesn&#39;t depend on recv_x ----</span>
+    <span class="c1">#   e.g., prefetch next layer&#39;s expert weights, compute shared-expert FFN,</span>
+    <span class="c1">#         run the next request stream&#39;s attention, etc.</span>
+    <span class="n">shared_out</span> <span class="o">=</span> <span class="n">experts</span><span class="o">.</span><span class="n">shared_expert</span><span class="p">(</span><span class="n">hidden</span><span class="p">)</span>         <span class="c1"># dense path, no all-to-all</span>
+    <span class="c1"># --------------------------------------------------------------</span>
+    <span class="n">hook</span><span class="p">()</span>                                             <span class="c1"># block only now, on arrival</span>
+
+    <span class="n">expert_out</span> <span class="o">=</span> <span class="n">experts</span><span class="o">.</span><span class="n">grouped_gemm</span><span class="p">(</span><span class="n">recv_x</span><span class="p">,</span> <span class="n">recv_layout</span><span class="p">)</span>   <span class="c1"># local expert FFNs (FP8 in)</span>
+    <span class="c1"># Combine: send results home and weighted-sum by gate weights.</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">ep_buffer</span><span class="o">.</span><span class="n">low_latency_combine</span><span class="p">(</span><span class="n">expert_out</span><span class="p">,</span> <span class="n">topk_idx</span><span class="p">,</span> <span class="n">topk_w</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">y</span> <span class="o">+</span> <span class="n">shared_out</span>
+</code></pre></div>
+<p>The single most important idea: <strong>on the decode critical path, the all-to-all should not be visible</strong>. If your profiler shows the GPU idle inside the EP collective, your overlap is broken, and your effective decode throughput will be a fraction of dense-equivalent. Getting the overlap right is the difference between a large-EP deployment that hits 80%+ of dense-equivalent throughput and one that hits 30%.</p>
+<hr />
+<h2 id="hot-expert-skew-at-decode-and-load-balancing">Hot-Expert Skew at Decode and Load Balancing<a class="headerlink" href="#hot-expert-skew-at-decode-and-load-balancing" title="Permanent link">¶</a></h2>
+<p>Routing is never perfectly uniform, and uniformity is harder to guarantee at inference than in training. Three things make decode skew dangerous.</p>
+<p><strong>First, no auxiliary loss is acting.</strong> During training, a load-balancing loss (or DeepSeek&rsquo;s auxiliary-loss-free bias-correction) actively pushes the router toward balance. At inference the weights are frozen; whatever imbalance the deployment-time traffic induces is simply <em>suffered</em>. Worse, real traffic is not the training distribution: a burst of code requests, or one language, or one prompt template repeated across a batch (think a RAG system with a fixed system prompt) can correlate routing decisions and spike a few experts.</p>
+<p><strong>Second, decode batches are small, so the law of large numbers does not save you.</strong> With <span class="arithmatex">\(B=2048\)</span> tokens spread over <span class="arithmatex">\(E=256\)</span> experts, expected tokens per expert is <span class="arithmatex">\(\sim 8B \cdot k/E\)</span> and the <em>relative</em> fluctuation is small. With a low-latency decode batch of <span class="arithmatex">\(B=64\)</span>, a single popular expert can receive several times the mean, and the all-to-all barrier waits for it.</p>
+<p><strong>Third, every step is a barrier.</strong> In prefill you process thousands of tokens per request; skew averages out over the prompt and the cost is amortized over a big GEMM. In decode you cross the all-to-all once per token per layer; a hot expert taxes <em>every single step</em>.</p>
+<p>Quantify skew with the imbalance factor — the max load over the mean load:</p>
+<div class="arithmatex">\[
+\text{IF} = \frac{\max_g L_g}{\frac{1}{G}\sum_g L_g},
+\]</div>
+<p>where <span class="arithmatex">\(L_g\)</span> is the number of tokens GPU <span class="arithmatex">\(g\)</span>&rsquo;s experts must process. Because the all-to-all completes at the slowest rank, the <em>effective</em> expert-compute time scales with IF. An IF of 1.0 is perfect; an IF of 2.0 means you are wasting half your aggregate expert FLOPs waiting on one GPU.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">imbalance_factor</span><span class="p">(</span><span class="n">token_expert_ids</span><span class="p">,</span> <span class="n">E</span><span class="p">,</span> <span class="n">G</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;token_expert_ids: (T, k) selected expert ids for a decode batch.&quot;&quot;&quot;</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">token_expert_ids</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">minlength</span><span class="o">=</span><span class="n">E</span><span class="p">)</span>
+    <span class="n">experts_per_rank</span> <span class="o">=</span> <span class="n">E</span> <span class="o">//</span> <span class="n">G</span>
+    <span class="n">rank_load</span> <span class="o">=</span> <span class="n">counts</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">G</span><span class="p">,</span> <span class="n">experts_per_rank</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">rank_load</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">/</span> <span class="n">rank_load</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+<span class="c1"># Uniform routing vs. a skewed batch (one rank&#39;s experts are 4x popular)</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">E</span><span class="p">,</span> <span class="n">G</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">k</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">2048</span><span class="p">,</span> <span class="mi">8</span>
+<span class="n">uniform</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">E</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">k</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;uniform IF:&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">imbalance_factor</span><span class="p">(</span><span class="n">uniform</span><span class="p">,</span> <span class="n">E</span><span class="p">,</span> <span class="n">G</span><span class="p">),</span> <span class="mi">3</span><span class="p">))</span>    <span class="c1"># ~1.05</span>
+
+<span class="n">p</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">E</span><span class="p">);</span> <span class="n">p</span><span class="p">[:</span><span class="mi">8</span><span class="p">]</span> <span class="o">*=</span> <span class="mi">4</span><span class="p">;</span> <span class="n">p</span> <span class="o">/=</span> <span class="n">p</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>                            <span class="c1"># experts 0..7 hot</span>
+<span class="n">skewed</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">E</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">k</span><span class="p">),</span> <span class="n">p</span><span class="o">=</span><span class="n">p</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;skewed  IF:&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">imbalance_factor</span><span class="p">(</span><span class="n">skewed</span><span class="p">,</span> <span class="n">E</span><span class="p">,</span> <span class="n">G</span><span class="p">),</span> <span class="mi">3</span><span class="p">))</span>     <span class="c1"># &gt; 1.5</span>
+</code></pre></div>
+<p>The production countermeasures are layered:</p>
+<ul>
+<li><strong>Expert replication / redundant experts.</strong> Identify the busiest experts offline (from traffic logs) and place an extra copy on an under-loaded GPU; the dispatch then load-balances tokens for that expert across its replicas. DeepSeek&rsquo;s deployment calls these <em>redundant experts</em>; a handful of replicas of the top-K hottest experts can cut IF dramatically. The cost is a little extra memory.</li>
+<li><strong>Dynamic expert rebalancing.</strong> Periodically (every few seconds) recompute expert placement from recent load and migrate experts to flatten the histogram. This is a control loop, not a per-step decision — migrating experts mid-decode is too expensive.</li>
+<li><strong>Capacity factor and token dropping.</strong> As in training, you can cap tokens per expert at <span class="arithmatex">\(C = \text{cf} \cdot \frac{B k}{E}\)</span> and drop overflow (the token skips that expert, keeping only its other top-<span class="arithmatex">\(k\)</span> choices, or falls back to the shared expert). Dropping bounds the worst-case all-to-all but degrades quality; in serving most stacks prefer <strong>no drop</strong> with replication instead, because a dropped token is a silently worse answer.</li>
+<li><strong>Shared experts as a relief valve.</strong> Models like DeepSeek-V3 route <em>every</em> token through one or two always-on <strong>shared experts</strong> (a dense path) in addition to the routed ones. The shared expert carries the &ldquo;common&rdquo; computation, reduces what the routed experts must specialize in, and — crucially for serving — its FFN runs locally with <strong>no all-to-all</strong>, giving you free overlap work to hide dispatch latency behind.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: benchmarking MoE on uniform synthetic traffic</p>
+<p>A favorite way to fool yourself is to benchmark an EP deployment with randomly sampled prompts that route near-uniformly, measure a beautiful IF <span class="arithmatex">\(\approx 1.05\)</span>, and ship. Production traffic is correlated — shared system prompts, one dominant language, bursty topics — and IF in the wild is routinely 1.3–2.0. Always benchmark with <em>replayed production traces</em>, and always report tail TPOT (p99), not mean, because skew lives in the tail.</p>
+</div>
+<hr />
+<h2 id="the-hybrid-layout-attention-dp-expert-ep">The Hybrid Layout: Attention-DP + Expert-EP<a class="headerlink" href="#the-hybrid-layout-attention-dp-expert-ep" title="Permanent link">¶</a></h2>
+<p>Here is the layout subtlety that separates a 2024-era MoE deployment from a 2025/2026 one. A large MoE has two very different sublayers with opposite parallelism preferences:</p>
+<ul>
+<li><strong>Attention</strong> has <em>few</em> parameters but a <em>large, per-request</em> KV cache. You want to shard it in a way that does not replicate the KV cache and keeps it bandwidth-efficient. With Multi-head Latent Attention (MLA), as used by DeepSeek (see <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>), the per-token KV is a small compressed latent, so each GPU can cheaply hold the <em>full</em> KV for <em>its own</em> requests.</li>
+<li><strong>Experts</strong> have <em>most</em> of the parameters and need to be <em>spread</em> (EP) so they fit and so aggregate expert bandwidth is high.</li>
+</ul>
+<p>If you naively apply tensor parallelism (TP) to the whole model, you replicate the KV cache across all TP ranks — wasteful — and you split attention heads, which for MLA or low-head-count attention can underutilize each GPU. The modern answer is a <strong>hybrid</strong>:</p>
+<blockquote>
+<p><strong>Attention runs data-parallel (attention-DP): each GPU handles a disjoint set of requests and keeps those requests&rsquo; full KV cache locally. Experts run expert-parallel (EP): the FFN/MoE sublayer is sharded across the same GPUs.</strong></p>
+</blockquote>
+<figure class="viz" id="fig-moe-serving-attn-dp-expert-ep-layout">
+<svg viewBox="0 0 860 550" role="img" aria-label="Hybrid MoE serving layout on 8 GPUs: each GPU row is split into a local attention/KV half (blue, data-parallel, no cross-GPU communication) and an expert shard half (orange, expert-parallel), joined by a central all-to-all bus. A per-layer step sequence on the right shows the order: attention local, router local, DISPATCH all-to-all, expert grouped GEMM, COMBINE all-to-all.">
+
+<style>
+  #fig-moe-serving-attn-dp-expert-ep-layout text { font-family: var(--sans,sans-serif); }
+</style>
+
+<defs>
+  <marker id="ep-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1.5 L9 5 L0 8.5 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="ep-arr-c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1.5 L9 5 L0 8.5 z" fill="var(--accent2,#d9822b)"/>
+  </marker>
+  <marker id="ep-arr-cr" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M10 1.5 L1 5 L10 8.5 z" fill="var(--accent2,#d9822b)"/>
+  </marker>
+</defs>
+
+
+
+
+
+
+
+<rect x="14" y="40" width="388" height="46" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<rect x="402" y="40" width="158" height="46" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1.3"/>
+
+<line x1="402" y1="40" x2="402" y2="86" stroke="var(--border-2,#bbb)" stroke-width="0.8"/>
+<text x="20" y="58" font="700 10px var(--sans,sans-serif)" fill="var(--accent,#2060cc)">GPU 0</text>
+<text x="60" y="58" font="400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">requests {r0..r7}</text>
+<text x="20" y="73" font="400 9.5px var(--sans,sans-serif)" fill="var(--muted,#777)">KV(r0..r7) — LOCAL, no replication</text>
+<text x="406" y="60" font="600 10px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">experts 0 – 31</text>
+<text x="406" y="75" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">(32 of 256)</text>
+
+
+<rect x="14" y="94" width="388" height="46" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<rect x="402" y="94" width="158" height="46" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1.3"/>
+<line x1="402" y1="94" x2="402" y2="140" stroke="var(--border-2,#bbb)" stroke-width="0.8"/>
+<text x="20" y="112" font="700 10px var(--sans,sans-serif)" fill="var(--accent,#2060cc)">GPU 1</text>
+<text x="60" y="112" font="400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">requests {r8..r15}</text>
+<text x="20" y="127" font="400 9.5px var(--sans,sans-serif)" fill="var(--muted,#777)">KV(r8..r15) — LOCAL, no replication</text>
+<text x="406" y="114" font="600 10px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">experts 32 – 63</text>
+<text x="406" y="129" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">(32 of 256)</text>
+
+
+<rect x="14" y="148" width="388" height="46" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<rect x="402" y="148" width="158" height="46" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1.3"/>
+<line x1="402" y1="148" x2="402" y2="194" stroke="var(--border-2,#bbb)" stroke-width="0.8"/>
+<text x="20" y="166" font="700 10px var(--sans,sans-serif)" fill="var(--accent,#2060cc)">GPU 2</text>
+<text x="60" y="166" font="400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">requests {r16..r23}</text>
+<text x="20" y="181" font="400 9.5px var(--sans,sans-serif)" fill="var(--muted,#777)">KV(r16..r23) — LOCAL, no replication</text>
+<text x="406" y="168" font="600 10px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">experts 64 – 95</text>
+<text x="406" y="183" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">(32 of 256)</text>
+
+
+<rect x="14" y="202" width="388" height="34" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1" stroke-dasharray="5 3"/>
+<rect x="402" y="202" width="158" height="34" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1" stroke-dasharray="5 3"/>
+<text x="208" y="223" text-anchor="middle" font="400 9.5px var(--sans,sans-serif)" fill="var(--ink-soft,#555)">GPU 3 – 6  . . .</text>
+<text x="481" y="223" text-anchor="middle" font="400 9.5px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">experts 96–191</text>
+
+
+<rect x="14" y="244" width="388" height="46" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<rect x="402" y="244" width="158" height="46" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1.3"/>
+<line x1="402" y1="244" x2="402" y2="290" stroke="var(--border-2,#bbb)" stroke-width="0.8"/>
+<text x="20" y="262" font="700 10px var(--sans,sans-serif)" fill="var(--accent,#2060cc)">GPU 7</text>
+<text x="60" y="262" font="400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">requests {r56..r63}</text>
+<text x="20" y="277" font="400 9.5px var(--sans,sans-serif)" fill="var(--muted,#777)">KV(r56..r63) — LOCAL, no replication</text>
+<text x="406" y="264" font="600 10px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">experts 224 – 255</text>
+<text x="406" y="279" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">(32 of 256)</text>
+
+
+<text x="208" y="30" text-anchor="middle"
+      font="700 11px var(--sans,sans-serif)" fill="var(--accent,#2060cc)">Attention + KV  (DATA-PARALLEL · purely local)</text>
+<text x="481" y="30" text-anchor="middle"
+      font="700 11px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">Experts (EXPERT-PARALLEL)</text>
+
+
+<rect x="16" y="298" width="242" height="24" rx="5"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#bbb)" stroke-width="0.9"/>
+
+<line x1="24" y1="304" x2="32" y2="320" stroke="var(--accent,#4f8cff)" stroke-width="1.8"/>
+<line x1="32" y1="304" x2="24" y2="320" stroke="var(--accent,#4f8cff)" stroke-width="1.8"/>
+<text x="42" y="314" font="400 9.5px var(--sans,sans-serif)" fill="var(--muted,#777)">no cross-GPU comm · no KV replication</text>
+<line x1="140" y1="298" x2="140" y2="290" stroke="var(--accent,#4f8cff)" stroke-width="0.9" stroke-dasharray="3 2" marker-end="url(#ep-arr)"/>
+
+
+
+<rect x="572" y="40" width="42" height="250" rx="8"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2.2"/>
+
+<text x="593" y="168" text-anchor="middle"
+      font="700 9px var(--sans,sans-serif)" fill="var(--accent2,#b45309)"
+      transform="rotate(-90 593 168)">ALL-TO-ALL  ·  tokens from ALL GPUs mix here</text>
+
+
+
+<line x1="560" y1="63" x2="572" y2="63"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.6"
+      marker-start="url(#ep-arr-cr)" marker-end="url(#ep-arr-c)"/>
+
+<line x1="560" y1="117" x2="572" y2="117"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.6"
+      marker-start="url(#ep-arr-cr)" marker-end="url(#ep-arr-c)"/>
+
+<line x1="560" y1="171" x2="572" y2="171"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.6"
+      marker-start="url(#ep-arr-cr)" marker-end="url(#ep-arr-c)"/>
+
+<line x1="560" y1="219" x2="572" y2="219"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.5"
+      marker-start="url(#ep-arr-cr)" marker-end="url(#ep-arr-c)"/>
+
+<line x1="560" y1="267" x2="572" y2="267"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.6"
+      marker-start="url(#ep-arr-cr)" marker-end="url(#ep-arr-c)"/>
+
+
+<text x="593" y="302" text-anchor="middle"
+      font="600 9px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">dispatch</text>
+<text x="593" y="313" text-anchor="middle"
+      font="600 9px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">&gt; GEMM &gt;</text>
+<text x="593" y="324" text-anchor="middle"
+      font="600 9px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">combine</text>
+
+
+<text x="730" y="30" text-anchor="middle"
+      font="700 12px var(--sans,sans-serif)" fill="var(--ink)">Per MoE Layer</text>
+
+
+<rect x="636" y="40" width="188" height="36" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<text x="730" y="56" text-anchor="middle"
+      font="600 10.5px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">1. attention (local)</text>
+<text x="730" y="69" text-anchor="middle"
+      font="400 9px var(--sans,sans-serif)" fill="var(--muted,#777)">no collective</text>
+
+<line x1="730" y1="76" x2="730" y2="90" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#ep-arr)"/>
+
+
+<rect x="656" y="92" width="148" height="32" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<text x="730" y="112" text-anchor="middle"
+      font="600 10.5px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">2. router (local)</text>
+
+<line x1="730" y1="124" x2="730" y2="138" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#ep-arr)"/>
+
+
+<rect x="636" y="140" width="188" height="36" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2"/>
+<text x="730" y="156" text-anchor="middle"
+      font="700 10.5px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">3. DISPATCH all-to-all</text>
+<text x="730" y="169" text-anchor="middle"
+      font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">send to expert GPUs</text>
+
+<line x1="730" y1="176" x2="730" y2="190" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#ep-arr)"/>
+
+
+<rect x="646" y="192" width="168" height="36" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<text x="730" y="208" text-anchor="middle"
+      font="600 10.5px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">4. expert grouped GEMM</text>
+<text x="730" y="221" text-anchor="middle"
+      font="400 9px var(--sans,sans-serif)" fill="var(--muted,#777)">local per GPU</text>
+
+<line x1="730" y1="228" x2="730" y2="242" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#ep-arr)"/>
+
+
+<rect x="636" y="244" width="188" height="36" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2"/>
+<text x="730" y="260" text-anchor="middle"
+      font="700 10.5px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">5. COMBINE all-to-all</text>
+<text x="730" y="273" text-anchor="middle"
+      font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">return to home GPUs</text>
+
+
+<path d="M 636 162 C 620 162 614 162 614 165"
+      stroke="var(--border-2,#bbb)" stroke-width="1" fill="none" stroke-dasharray="4 3"/>
+
+
+<text x="430" y="365" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">Attention is data-parallel and local: each GPU keeps its own requests' KV cache with zero cross-GPU communication.</text>
+<text x="430" y="378" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">Only the MoE sublayer crosses GPUs via one all-to-all per direction (steps 3 and 5). Straggler risk: if one GPU holds longer</text>
+<text x="430" y="391" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">requests, everyone waits at the barrier — so the scheduler must balance tokens-in-flight across attention-DP ranks.</text>
+
+
+<rect x="14" y="408" width="14" height="14" rx="2"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<text x="34" y="420" font="400 10px var(--sans,sans-serif)" fill="var(--muted,#777)">Attention / KV (blue — data-parallel, local, no collective)</text>
+<rect x="14" y="428" width="14" height="14" rx="2"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1.3"/>
+<text x="34" y="440" font="400 10px var(--sans,sans-serif)" fill="var(--muted,#777)">Expert shards + all-to-all bus (orange — expert-parallel, collective required)</text>
+
+</svg>
+<figcaption><b>Hybrid layout: attention-DP (local KV, zero cross-GPU communication) + expert-EP (one all-to-all per direction per layer).</b> Each GPU's blue left half owns a disjoint shard of requests with their complete MLA KV caches — no replication, no attention collective. The orange right half holds 32 of 256 experts, joined each layer by a bidirectional all-to-all bus that mixes tokens from all 8 GPUs. Steps 3 and 5 in the per-layer sequence are the only cross-GPU collectives; all other computation is local. The key straggler risk: request-length imbalance across attention-DP ranks delays the all-to-all barrier for every GPU.</figcaption>
+</figure>
+
+<p>The payoff is large. Attention does <strong>zero</strong> cross-GPU communication (no all-reduce, no KV replication), so the only collective in the whole layer is the MoE all-to-all. The KV cache is partitioned by request, so total KV capacity scales with GPU count — you can serve more concurrent requests. And because attention is local and cheap, the GPUs have spare time to <em>overlap</em> the MoE all-to-all behind attention of the next micro-batch.</p>
+<p>The catch is <strong>balance across the DP attention ranks</strong>. Each GPU now owns a different set of requests with different sequence lengths and different arrival times. If GPU0&rsquo;s requests are long (big prefill, big KV) and GPU7&rsquo;s are short, GPU0 becomes the straggler — and since the MoE all-to-all is a group barrier, <em>everyone</em> waits for GPU0. So the scheduler must <strong>balance tokens-in-flight across attention-DP ranks</strong>, not just balance experts. This couples request scheduling (<a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>) to the parallelism layout in a way dense serving never has to think about.</p>
+<p>A common refinement combines a <em>small</em> TP degree for attention (to fit MLA/attention compute on fast GEMMs and to bound per-GPU KV) with DP across TP groups, and EP for experts — written as TP×DP for attention and EP for the MoE, all multiplexed on the same physical GPUs. The exact recipe depends on model shape and interconnect; the invariant is <em>attention and experts are parallelized differently, on the same devices.</em></p>
+<hr />
+<h2 id="prefill-vs-decode-why-ep-needs-two-modes">Prefill vs. Decode: Why EP Needs Two Modes<a class="headerlink" href="#prefill-vs-decode-why-ep-needs-two-modes" title="Permanent link">¶</a></h2>
+<p>Prefill and decode stress EP in opposite ways, and a serious deployment configures (or even physically disaggregates; see <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>) them differently.</p>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Prefill</th>
+<th>Decode</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tokens per step</td>
+<td>thousands (whole prompt)</td>
+<td>one per request</td>
+</tr>
+<tr>
+<td>Expert GEMM</td>
+<td>large, compute-bound, well-utilized</td>
+<td>tiny, latency-bound, often padded</td>
+</tr>
+<tr>
+<td>All-to-all goal</td>
+<td><strong>bandwidth</strong> (move bytes fast)</td>
+<td><strong>latency</strong> (finish the barrier fast)</td>
+</tr>
+<tr>
+<td>DeepEP kernel</td>
+<td>high-throughput (NVLink+RDMA forwarding)</td>
+<td>low-latency (pure RDMA, hook overlap)</td>
+</tr>
+<tr>
+<td>EP degree sweet spot</td>
+<td>smaller EP, big batches saturate experts</td>
+<td><strong>large EP</strong>, spread experts to add bandwidth</td>
+</tr>
+<tr>
+<td>Skew sensitivity</td>
+<td>low (averages over many tokens)</td>
+<td>high (every step is a barrier)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Prefill</strong> sends many tokens per expert, so the grouped GEMM is fat and compute-bound; the all-to-all is a bandwidth problem you solve with the high-throughput kernel. Skew matters less because thousands of tokens average out per expert.</p>
+<p><strong>Decode</strong> sends ~<span class="arithmatex">\(Bk/E\)</span> tokens per expert per step — often a handful or even zero. The grouped GEMM is skinny and dominated by overhead and padding; the bottleneck is the all-to-all <em>latency</em> and the per-step barrier. This is why <strong>decode wants large EP</strong>: spreading experts over more GPUs means each GPU holds fewer experts, so the local grouped GEMM is faster <em>and</em> more aggregate HBM bandwidth feeds expert weights, while DeepEP&rsquo;s low-latency kernels keep the wider all-to-all from dominating. Counterintuitively, for decode of a huge MoE, <em>more</em> GPUs in the EP group can <em>lower</em> per-token latency — the opposite of dense TP, where adding ranks eventually hurts because the all-reduce grows.</p>
+<p>This asymmetry is the core argument for <strong>disaggregating</strong> prefill and decode onto separate GPU pools for MoE serving: run prefill on a smaller-EP, high-throughput pool, then hand the KV cache to a large-EP, low-latency decode pool. Each pool uses the matching DeepEP kernel and a matching EP degree, and neither compromises for the other.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: sizing a large-EP DeepSeek-V3 decode deployment</p>
+<p><strong>Model.</strong> DeepSeek-V3: 671B total params, ~37B active/token, 256 routed experts + 1 shared, top-8 routing, <span class="arithmatex">\(d_{\text{model}}=7168\)</span>, 61 layers (58 MoE), MLA KV.</p>
+<p><strong>Weights, FP8 (1 byte/param).</strong> Resident weight memory <span class="arithmatex">\(\approx 671\text{ GB}\)</span>. On 8×H100-80GB (640 GB) it does <em>not</em> fit with room for KV and activations. On <strong>2 nodes = 16×H100 (1.28 TB)</strong> it fits comfortably: <span class="arithmatex">\(\approx 42\text{ GB}\)</span> weights/GPU, leaving ~38 GB/GPU for KV + activations + overhead.</p>
+<p><strong>EP layout.</strong> Place 256 experts over 16 GPUs <span class="arithmatex">\(\Rightarrow\)</span> 16 experts/GPU. Attention runs DP (each GPU owns its requests&rsquo; MLA KV); MoE runs EP=16 with all-to-all.</p>
+<p><strong>All-to-all per layer (decode, BF16 dispatch).</strong> Per token, dispatch moves <span class="arithmatex">\(k\,d_{\text{model}}\cdot 2 = 8\cdot7168\cdot2 \approx 115\text{ KB}\)</span>. With FP8 dispatch, ~57 KB. For a decode batch of <span class="arithmatex">\(B=128\)</span> tokens that is <span class="arithmatex">\(\approx 7.3\text{ MB}\)</span> out per MoE layer; over 58 MoE layers, <span class="arithmatex">\(\approx 423\text{ MB}\)</span> moved per decode step (dispatch) and similar for combine. At an effective ~150 GB/s usable bidirectional RDMA per GPU after overlap, the <em>exposed</em> (non-overlapped) fraction is what hits TPOT — the engineering goal is to drive that toward zero with the low-latency hook kernels.</p>
+<p><strong>KV budget.</strong> MLA compresses KV to a small latent (on the order of ~70 KB/token across all layers in FP8, vs. hundreds of KB for vanilla MHA). With ~38 GB/GPU free, one GPU holds <span class="arithmatex">\(\sim 38\text{e}9 / 70\text{e}3 \approx 540{,}000\)</span> tokens of KV — i.e., hundreds of concurrent long-context requests <em>per GPU</em>, times 16 GPUs. KV capacity is plentiful precisely because MLA + attention-DP avoids replication.</p>
+<p><strong>Takeaway.</strong> The binding constraint is not arithmetic (37B active is cheap) — it is fitting 671B of weights resident, keeping IF near 1.0 with redundant experts, and hiding the 58-layer all-to-all behind compute. Two H100 nodes with large EP and DeepEP overlap is a sensible decode pool; a single node cannot hold the weights.</p>
+</div>
+<hr />
+<h2 id="offloading-experts-and-kv-when-you-cant-fit">Offloading: Experts and KV When You Can&rsquo;t Fit<a class="headerlink" href="#offloading-experts-and-kv-when-you-cant-fit" title="Permanent link">¶</a></h2>
+<p>Not everyone has two H100 nodes. The defining property of MoE — most parameters are <em>cold</em> on any given step — makes MoE unusually amenable to <strong>offloading</strong>: keep hot/shared parameters in HBM and stream cold experts from CPU RAM (or NVMe) on demand. The math that makes this viable: with top-<span class="arithmatex">\(k\)</span> routing, a single token needs only <span class="arithmatex">\(k\)</span> experts; if you can <em>predict or prefetch</em> which experts the batch will use, you move only those.</p>
+<p>The techniques, roughly in order of aggressiveness:</p>
+<ul>
+<li><strong>Keep attention + router + shared expert in HBM; offload routed experts to CPU.</strong> Each step, after the router fires, the needed experts are copied HBM-ward over PCIe/NVLink-C2C just-in-time. This works when the per-step expert set is small (small batch, low <span class="arithmatex">\(k\)</span>) and the PCIe transfer overlaps compute. It collapses for large batches that touch most experts.</li>
+<li><strong>Expert caching with an LRU.</strong> Treat HBM as a cache of experts; keep the most-recently/most-frequently-used experts resident and fault in the rest from CPU. Because real traffic is skewed (the same hot experts again and again), a cache far smaller than the full expert set can achieve a high hit rate. The cache <em>eviction policy is the router&rsquo;s load histogram</em> — keep the hot experts pinned.</li>
+<li><strong>Pre-gating / look-ahead prefetch.</strong> Run the router (or a cheap proxy) a step early so you know which experts the next step needs and start the CPU→GPU copy before you need them, hiding transfer latency behind the current step&rsquo;s compute.</li>
+<li><strong>NVMe tier (ZeRO-Inference / FlexGen style).</strong> For truly memory-starved setups, experts live on NVMe and stream through CPU RAM to GPU. Throughput is low (this is for offline batch, not interactive serving), but it lets a single GPU &ldquo;run&rdquo; a model far larger than its HBM. See <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training</a> for the offload hierarchy and ZeRO-Infinity mechanics.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Illustrative expert offload with an LRU resident cache (single GPU).</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">OrderedDict</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ExpertCache</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Keep `capacity` experts on GPU; fault the rest in from CPU on demand.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cpu_experts</span><span class="p">,</span> <span class="n">capacity</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cpu</span> <span class="o">=</span> <span class="n">cpu_experts</span>                  <span class="c1"># dict: eid -&gt; (w1_cpu, w2_cpu) pinned</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">capacity</span> <span class="o">=</span> <span class="n">capacity</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">device</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resident</span> <span class="o">=</span> <span class="n">OrderedDict</span><span class="p">()</span>           <span class="c1"># eid -&gt; (w1_gpu, w2_gpu), LRU order</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">eid</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">eid</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">resident</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">resident</span><span class="o">.</span><span class="n">move_to_end</span><span class="p">(</span><span class="n">eid</span><span class="p">)</span>      <span class="c1"># mark most-recently-used</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">resident</span><span class="p">[</span><span class="n">eid</span><span class="p">]</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">resident</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">capacity</span><span class="p">:</span>
+            <span class="n">old</span><span class="p">,</span> <span class="p">(</span><span class="n">w1</span><span class="p">,</span> <span class="n">w2</span><span class="p">)</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">resident</span><span class="o">.</span><span class="n">popitem</span><span class="p">(</span><span class="n">last</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>   <span class="c1"># evict LRU</span>
+            <span class="k">del</span> <span class="n">w1</span><span class="p">,</span> <span class="n">w2</span>
+        <span class="n">w1c</span><span class="p">,</span> <span class="n">w2c</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cpu</span><span class="p">[</span><span class="n">eid</span><span class="p">]</span>
+        <span class="c1"># non_blocking copy overlaps with compute if src is pinned memory</span>
+        <span class="n">w1</span> <span class="o">=</span> <span class="n">w1c</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">non_blocking</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">w2</span> <span class="o">=</span> <span class="n">w2c</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">non_blocking</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resident</span><span class="p">[</span><span class="n">eid</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">w1</span><span class="p">,</span> <span class="n">w2</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">w1</span><span class="p">,</span> <span class="n">w2</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">prefetch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">eids</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Look-ahead: kick off copies for next step&#39;s experts.&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">eids</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">e</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">resident</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>                     <span class="c1"># warms the cache before it&#39;s needed</span>
+</code></pre></div>
+<p>The honest caveat: offloading trades latency for capacity. PCIe 5.0 moves ~64 GB/s; an expert FFN in DeepSeek-V3 is on the order of tens of MB, so faulting in a handful per step costs hundreds of microseconds to milliseconds of transfer — easily dominating a decode step if not overlapped, and impossible to fully hide once a large batch touches most experts. Offloading is a <em>cost-saving for low-QPS or batch workloads</em>, not a path to low-latency high-throughput serving. For that, you buy the HBM.</p>
+<hr />
+<h2 id="the-economics-of-dense-equivalent-throughput">The Economics of Dense-Equivalent Throughput<a class="headerlink" href="#the-economics-of-dense-equivalent-throughput" title="Permanent link">¶</a></h2>
+<p>Why do labs build these monsters if serving them is this hard? Because the <em>unit economics</em> — discussed in general in <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a> — favor sparsity when you can keep the experts busy.</p>
+<p>Frame it as cost per million output tokens. The compute per token is set by <em>active</em> parameters: DeepSeek-V3 at 37B active does roughly the arithmetic of a dense 37B. But it answers with the <em>quality</em> of something far larger than 37B dense. So if you compare at equal quality, the MoE serves each token with a fraction of the FLOPs — <em>provided you reach high GPU utilization</em>. The serving overheads we have catalogued — all-to-all, skew, padding, the memory to hold all experts — are the &ldquo;tax&rdquo; on that FLOP advantage. Define <strong>dense-equivalent throughput efficiency</strong>:</p>
+<div class="arithmatex">\[
+\eta = \frac{\text{achieved tokens/s on the MoE}}{\text{tokens/s of a dense model with the same active params on the same GPUs}}.
+\]</div>
+<p><span class="arithmatex">\(\eta = 1\)</span> means the MoE serves as fast as its dense-active twin — you got the quality of a giant model for the price of a small one. A naive single-node MoE deployment, hammered by exposed all-to-all and IF <span class="arithmatex">\(\approx 2\)</span>, might land at <span class="arithmatex">\(\eta \approx 0.3\)</span>. A well-engineered large-EP deployment — attention-DP, redundant experts, DeepEP overlap, FP8 dispatch, prefill/decode disaggregation — recovers most of the gap, <span class="arithmatex">\(\eta \approx 0.7\)</span>–<span class="arithmatex">\(0.9\)</span>. That last factor of 2–3× is the entire ballgame; it is why DeepEP, redundant experts, and the hybrid layout exist.</p>
+<p>The other half of the economics is <strong>batch size</strong>. MoE <em>needs</em> large batches to be efficient: only a big batch keeps every expert&rsquo;s grouped GEMM fat enough to be compute-bound, and only a big batch amortizes the all-to-all overhead per token. A dense model degrades gracefully at small batch (it is just bandwidth-bound); an MoE at small batch is doubly punished — skinny expert GEMMs <em>and</em> a per-step all-to-all barrier with little to overlap. The practical consequence: <strong>MoE serving lives at high concurrency.</strong> If your traffic cannot fill big batches, a dense model of equal active size may be cheaper to run despite &ldquo;wasting&rdquo; parameters. The break-even concurrency is a real number you should compute for your traffic before committing to an MoE in production.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re serving a 671B-parameter, 37B-active MoE on a 16-GPU cluster and observe that p50 TPOT matches a dense 37B baseline but p99 TPOT is 3× worse. The GPU utilization shows brief idle gaps inside every MoE layer. What is happening and how do you fix it?</p>
+<p><strong>A:</strong> Two coupled problems, both visible as idle inside the MoE layer. (1) <strong>Hot-expert skew</strong>: the all-to-all is a barrier that completes only when the slowest rank finishes, so a batch that over-selects experts on one GPU stalls every other GPU. This explains the <em>tail</em> (p99) blowing up while p50 looks fine — skew is bursty and traffic-dependent. Fix: add <strong>redundant replicas</strong> of the hottest experts on under-loaded GPUs and load-balance dispatch across replicas; run a periodic <strong>rebalancing</strong> control loop driven by the live load histogram; ensure you are <em>not</em> dropping tokens (prefer replication to capacity-factor dropping in serving). (2) <strong>Exposed all-to-all</strong>: idle gaps inside the layer mean the dispatch/combine latency is on the critical path, not overlapped. Fix: use <strong>low-latency DeepEP kernels with the hook-based overlap</strong>, schedule the <strong>shared-expert FFN</strong> and the next micro-batch&rsquo;s attention into the overlap window, and enable <strong>FP8 dispatch</strong> to halve the bytes moved. If the cluster is two nodes, also confirm attention is <strong>DP (local KV)</strong> so attention contributes no extra collective. Together these typically pull p99 back toward p50 and lift dense-equivalent efficiency from ~0.3–0.4 to ~0.7–0.9.</p>
+</div>
+<hr />
+<h2 id="putting-it-together-an-ep-serving-checklist">Putting It Together: An EP Serving Checklist<a class="headerlink" href="#putting-it-together-an-ep-serving-checklist" title="Permanent link">¶</a></h2>
+<p>A production MoE serving stack (vLLM, SGLang, TensorRT-LLM all converge here) assembles the pieces from this chapter:</p>
+<ol>
+<li><strong>Layout.</strong> Attention-DP (local KV, possibly small TP for MLA) + expert-EP, multiplexed on the same GPUs. Size EP so all experts fit resident with headroom for KV.</li>
+<li><strong>Communication.</strong> DeepEP (or equivalent): high-throughput kernels for prefill, low-latency hook kernels for decode, FP8 dispatch, NVLink+RDMA forwarding across nodes.</li>
+<li><strong>Balance.</strong> Redundant experts for the hot ones, a rebalancing control loop, and a scheduler that balances tokens-in-flight across attention-DP ranks (not just across experts).</li>
+<li><strong>Disaggregation.</strong> Separate prefill (smaller EP, throughput kernels) and decode (large EP, latency kernels) pools; hand off the KV cache between them.</li>
+<li><strong>Overlap.</strong> Drive exposed all-to-all toward zero by scheduling shared-expert compute, attention, and weight prefetch into the dispatch/combine windows.</li>
+<li><strong>Memory tiering.</strong> If HBM is tight, LRU expert caching / offload — but only for low-QPS or batch workloads; interactive low-latency serving needs experts resident.</li>
+<li><strong>Measure the right thing.</strong> Report <span class="arithmatex">\(\eta\)</span> (dense-equivalent efficiency), p99 TPOT, and the routing imbalance factor on <em>replayed production traffic</em>, not synthetic uniform routing.</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">ep_decode_step_pipeline</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">layers</span><span class="p">,</span> <span class="n">ep</span><span class="p">,</span> <span class="n">sched</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    End-to-end shape of one decode step in a hybrid attention-DP + expert-EP stack.</span>
+<span class="sd">    Each `layer` interleaves LOCAL attention with an EP MoE, overlapping the all-to-all.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sched</span><span class="o">.</span><span class="n">balance_tokens_across_dp_ranks</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>        <span class="c1"># keep attention ranks even</span>
+    <span class="n">h</span> <span class="o">=</span> <span class="n">batch</span><span class="o">.</span><span class="n">hidden</span>
+    <span class="k">for</span> <span class="n">layer</span> <span class="ow">in</span> <span class="n">layers</span><span class="p">:</span>
+        <span class="c1"># --- attention: purely local, owns this rank&#39;s request KV (MLA) ---</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="n">layer</span><span class="o">.</span><span class="n">attention</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">batch</span><span class="o">.</span><span class="n">kv_cache</span><span class="p">)</span>         <span class="c1"># NO cross-GPU collective</span>
+        <span class="c1"># --- router + MoE with overlapped all-to-all ---</span>
+        <span class="n">topk_idx</span><span class="p">,</span> <span class="n">topk_w</span> <span class="o">=</span> <span class="n">layer</span><span class="o">.</span><span class="n">router</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>
+        <span class="n">recv</span><span class="p">,</span> <span class="n">layout</span><span class="p">,</span> <span class="n">hook</span> <span class="o">=</span> <span class="n">ep</span><span class="o">.</span><span class="n">low_latency_dispatch</span><span class="p">(</span>   <span class="c1"># async; returns a hook</span>
+            <span class="n">h</span><span class="p">,</span> <span class="n">topk_idx</span><span class="p">,</span> <span class="n">use_fp8</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">shared</span> <span class="o">=</span> <span class="n">layer</span><span class="o">.</span><span class="n">shared_expert</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>                 <span class="c1"># overlap work, no all-to-all</span>
+        <span class="n">hook</span><span class="p">()</span>                                          <span class="c1"># block only on arrival</span>
+        <span class="n">expert_out</span> <span class="o">=</span> <span class="n">layer</span><span class="o">.</span><span class="n">grouped_gemm</span><span class="p">(</span><span class="n">recv</span><span class="p">,</span> <span class="n">layout</span><span class="p">)</span>   <span class="c1"># local experts</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="n">ep</span><span class="o">.</span><span class="n">low_latency_combine</span><span class="p">(</span><span class="n">expert_out</span><span class="p">,</span> <span class="n">topk_idx</span><span class="p">,</span> <span class="n">topk_w</span><span class="p">)</span> <span class="o">+</span> <span class="n">shared</span>
+    <span class="k">return</span> <span class="n">layer_norm_and_lm_head</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>
+</code></pre></div>
+<p>Every line of that loop is a decision this chapter argued for: local attention because of attention-DP, FP8 dispatch and an async hook because of DeepEP overlap, a shared expert sitting in the overlap window, and a scheduler that keeps the DP ranks balanced so the all-to-all barrier never waits on a straggler. That is what it takes to make a trillion-scale sparse model serve at the speed of a small dense one — which is the whole reason MoE exists.</p>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>MoE serving is a memory and movement problem, not an arithmetic one.</strong> Per-token FLOPs equal a small dense model, but all experts must stay resident (a modest decode batch touches ~85%+ of experts), and every MoE layer needs two all-to-all collectives.</li>
+<li><strong>The all-to-all is a barrier.</strong> Decode crosses dispatch+combine once per token per layer; the step finishes only when the slowest, most-overloaded rank does. Latency, not bandwidth, is the enemy at decode.</li>
+<li><strong>DeepEP-style kernels are the enabler:</strong> high-throughput (NVLink+RDMA forwarding) for prefill, low-latency hook-overlap (pure RDMA, FP8 dispatch) for decode. The goal is <em>zero exposed all-to-all</em> on the decode critical path.</li>
+<li><strong>Hot-expert skew is a tail-latency weapon at inference</strong> (no auxiliary loss acting, small batches, per-step barrier). Counter with redundant replicas of hot experts, dynamic rebalancing, shared experts, and replication-over-dropping.</li>
+<li><strong>The modern layout is hybrid: attention-DP (local KV, no replication, zero attention collective) + expert-EP.</strong> It requires balancing tokens-in-flight across attention-DP ranks, coupling scheduling to the parallelism layout.</li>
+<li><strong>Prefill and decode want opposite EP configs:</strong> prefill = smaller EP + throughput kernels; decode = <em>large</em> EP + latency kernels. This argues for disaggregating the two onto separate pools.</li>
+<li><strong>MoE is uniquely offload-friendly</strong> (most params cold per step) via LRU expert caching and look-ahead prefetch — but offload buys capacity, not low latency; interactive serving keeps experts in HBM.</li>
+<li><strong>Economics hinge on dense-equivalent efficiency <span class="arithmatex">\(\eta\)</span> and on batch size.</strong> A naive deployment lands at <span class="arithmatex">\(\eta\approx 0.3\)</span>; a well-engineered large-EP one at <span class="arithmatex">\(0.7\)</span>–<span class="arithmatex">\(0.9\)</span>. MoE needs high concurrency to win — at low QPS, a dense model of equal active size may be cheaper.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>MoE serving is a fast-moving frontier: the core challenge of making per-layer all-to-all collectives invisible on the decode critical path is now well-understood, with large-EP + attention-DP hybrid layouts and purpose-built overlap kernels (DeepEP) achieving dense-equivalent throughput efficiency of 0.7–0.9 on frontier hardware. Production deployments at scale (96–128 GPUs) using disaggregated prefill/decode and redundant expert replication are now open-source and reproducible via vLLM and SGLang.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2006.16668">Lepikhin et al., <em>GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding</em> (2020)</a> — first formalization of expert sharding with all-to-all dispatch/combine at 600B+ parameter scale on TPUs.</li>
+<li><a href="https://arxiv.org/abs/2101.03961">Fedus, Zoph &amp; Shazeer, <em>Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity</em> (2021)</a> — introduced capacity factor, token dropping, and the load-balancing auxiliary loss that underpins all later MoE routing analysis.</li>
+<li><a href="https://arxiv.org/abs/2201.05596">Rajbhandari et al., <em>DeepSpeed-MoE: Advancing Mixture-of-Experts Inference and Training to Power Next-Generation AI Scale</em> (2022)</a> — first systematic treatment of MoE inference optimization, combining EP + TP, achieving 4.5× speedup over quality-equivalent dense models.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2412.19437">DeepSeek-AI, <em>DeepSeek-V3 Technical Report</em> (2024)</a> — canonical large-EP production MoE: MLA, auxiliary-loss-free load balancing, redundant expert replication, and EP=32 serving across nodes.</li>
+<li><a href="https://arxiv.org/abs/2401.04088">Jiang et al., <em>Mixtral of Experts</em> (2024)</a> — first widely-deployed open-weight sparse MoE (8×7B), establishing the modern top-2 routing + grouped-GEMM baseline for MoE serving benchmarks.</li>
+<li><a href="https://arxiv.org/abs/2211.15841">Gale et al., <em>MegaBlocks: Efficient Sparse Training with Mixture-of-Experts</em> (2022)</a> — block-sparse GPU kernels for MoE that eliminate token dropping and padding waste; widely used as the grouped-GEMM backend in serving stacks.</li>
+<li><a href="https://www.lmsys.org/blog/2025-05-05-large-scale-ep/">LMSYS, <em>Deploying DeepSeek with PD Disaggregation and Large-Scale Expert Parallelism on 96 H100 GPUs</em> (2025)</a> — open-source reproduction of DeepSeek&rsquo;s production EP serving in SGLang: 52k input tokens/s/node, 5× over vanilla TP, at ~$0.20/1M output tokens.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/deepseek-ai/DeepEP">deepseek-ai/DeepEP</a> — purpose-built EP communication library: high-throughput NVLink+RDMA-forwarding kernels for prefill, low-latency hook-overlap RDMA kernels for decode, and FP8 dispatch.</li>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — high-performance serving framework with native large-scale EP, DeepEP integration, EPLB load rebalancing, and disaggregated prefill/decode for MoE models.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://docs.vllm.ai/en/latest/serving/expert_parallel_deployment/">vLLM Expert Parallel Deployment docs</a> — practical guide to EP layout, the vLLM Expert Parallel Load Balancer (EPLB), and multi-node MoE deployment with disaggregated serving.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>DeepSeek-AI, <em>DeepSeek-V3 Technical Report</em>, 2024 — the canonical large-EP MoE: MLA, auxiliary-loss-free balancing, redundant experts, and production EP serving across nodes.</li>
+<li>DeepSeek-AI, <em>DeepEP</em> (open-source repository) — purpose-built expert-parallel all-to-all kernels: high-throughput NVLink+RDMA forwarding, low-latency hook-overlap kernels, and FP8 dispatch.</li>
+<li>Lepikhin et al., <em>GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding</em>, ICLR 2021 — first formalization of expert sharding and all-to-all dispatch/combine at scale.</li>
+<li>Fedus, Zoph &amp; Shazeer, <em>Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity</em>, JMLR 2022 — capacity factor, token dropping, and load-balancing loss that this chapter&rsquo;s serving countermeasures echo.</li>
+<li>Rajbhandari et al., <em>DeepSpeed-MoE: Advancing Mixture-of-Experts Inference and Training to Power Next-Generation AI Scale</em>, ICML 2022 — early systematic treatment of MoE <em>inference</em> optimization and expert parallelism.</li>
+<li>Aminabadi et al., <em>DeepSpeed-Inference</em> / Rajbhandari et al., <em>ZeRO-Infinity</em>, SC 2021 — the offload hierarchy (HBM/CPU/NVMe) underpinning expert and KV offloading.</li>
+<li>vLLM (Kwon et al., 2023) and SGLang (Zheng et al., 2024) project documentation — open-source references for production EP serving, large-EP deployment, and DeepEP integration; see <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a> and <a href="../07-inference-serving/04-sglang-radixattention.html">SGLang: RadixAttention &amp; Structured Programs</a>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="12-inference-economics.html"><span class="pn-label">← Previous</span><span class="pn-title">Inference Economics: Latency, Throughput &amp; Cost</span></a>
+<a class="next" href="14-multi-tenant-lora-serving.html"><span class="pn-label">Next →</span><span class="pn-title">Multi-Tenant LoRA &amp; Adapter Serving at Scale</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-moe-serving-is-a-different-problem">Why MoE Serving Is a Different Problem</a></li>
+<li class="toc-l2"><a href="#expert-parallelism-mechanics-dispatch-compute-combine">Expert Parallelism Mechanics: Dispatch, Compute, Combine</a></li>
+<li class="toc-l3"><a href="#the-two-costs-bytes-moved-and-the-barrier">The Two Costs: Bytes Moved and the Barrier</a></li>
+<li class="toc-l2"><a href="#deepep-a-production-all-to-all-kernel">DeepEP: A Production All-to-All Kernel</a></li>
+<li class="toc-l2"><a href="#hot-expert-skew-at-decode-and-load-balancing">Hot-Expert Skew at Decode and Load Balancing</a></li>
+<li class="toc-l2"><a href="#the-hybrid-layout-attention-dp-expert-ep">The Hybrid Layout: Attention-DP + Expert-EP</a></li>
+<li class="toc-l2"><a href="#prefill-vs-decode-why-ep-needs-two-modes">Prefill vs. Decode: Why EP Needs Two Modes</a></li>
+<li class="toc-l2"><a href="#offloading-experts-and-kv-when-you-cant-fit">Offloading: Experts and KV When You Can&amp;rsquo;t Fit</a></li>
+<li class="toc-l2"><a href="#the-economics-of-dense-equivalent-throughput">The Economics of Dense-Equivalent Throughput</a></li>
+<li class="toc-l2"><a href="#putting-it-together-an-ep-serving-checklist">Putting It Together: An EP Serving Checklist</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction — The LLM Stack</title>
+<meta name="description" content="Retrieval when the corpus is images, screenshots, slides and scanned PDFs: CLIP/SigLIP cross-modal dense retrieval, ColBERT-style late interaction extended to v">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="active" href="06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IX — Retrieval &amp; RAG</div>
+<h1 id="96-multimodal-visual-document-retrieval-colpali-late-interaction">9.6 Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction<a class="headerlink" href="#96-multimodal-visual-document-retrieval-colpali-late-interaction" title="Permanent link">¶</a></h1>
+<p>Most of Part IX has quietly assumed that a &ldquo;document&rdquo; is text — a paragraph you can tokenize, embed, and stuff into a context window. But an enormous fraction of the world&rsquo;s high-value knowledge does not live as clean text. It lives in PDFs full of multi-column layouts, financial reports dense with tables, slide decks where the meaning is in the figure, scanned contracts, scientific papers with equations, invoices, engineering diagrams, and screenshots. The moment you try to retrieve over these with the standard pipeline, you hit a wall that has nothing to do with embeddings and everything to do with <strong>parsing</strong>.</p>
+<p>The traditional answer is an OCR-and-layout pipeline: run optical character recognition, detect tables and reading order, reconstruct a linearized text stream, chunk it, embed it, and proceed as in <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a>. This works, but it is brittle and lossy. OCR mangles multi-column reading order, drops table structure, and silently discards the very thing that made a chart informative — its visual form. Every error compounds downstream: a misread row in a table becomes a wrong retrieval becomes a wrong answer.</p>
+<p>This chapter is about the alternative that emerged in 2024–2025 and rapidly became a default for visually rich corpora: treat <strong>each page as an image</strong> and retrieve directly over the pixels, skipping OCR entirely. We will build up from cross-modal dense retrieval (CLIP/SigLIP), then develop the key idea — <strong>late interaction</strong>, borrowed from ColBERT and extended to vision in <strong>ColPali</strong> and <strong>ColQwen2</strong> — and finally engineer the full system: how to index thousands of multi-vector page embeddings (PLAID, HNSW-over-patches), how to rerank, what it costs, and how to evaluate it on ViDoRe. The generation half — feeding retrieved page images to a vision-language model (VLM) — connects directly to <a href="../10-multimodal-and-arch/02-vision-language-models.html">Vision-Language Models</a>.</p>
+<h2 id="cross-modal-dense-retrieval-clip-and-siglip">Cross-Modal Dense Retrieval: CLIP and SigLIP<a class="headerlink" href="#cross-modal-dense-retrieval-clip-and-siglip" title="Permanent link">¶</a></h2>
+<p>Before late interaction, the first question is simpler: can we put an image and a text query into the <strong>same vector space</strong> so that nearest-neighbor search retrieves the right image for a textual query? This is <strong>cross-modal dense retrieval</strong>, and the canonical answer is CLIP.</p>
+<h3 id="the-dual-encoder-contrastive-recipe">The Dual-Encoder Contrastive Recipe<a class="headerlink" href="#the-dual-encoder-contrastive-recipe" title="Permanent link">¶</a></h3>
+<p>CLIP (Radford et al., <em>Learning Transferable Visual Models From Natural Language Supervision</em>, 2021) trains two encoders — an image encoder <span class="arithmatex">\(f_\text{img}\)</span> (a Vision Transformer; see <a href="../10-multimodal-and-arch/01-vision-transformers.html">Vision Transformers &amp; Image Encoders</a>) and a text encoder <span class="arithmatex">\(f_\text{txt}\)</span> — to map their inputs into a shared <span class="arithmatex">\(d\)</span>-dimensional space. Each image and each text is reduced to a <strong>single normalized vector</strong>. Given a batch of <span class="arithmatex">\(N\)</span> matched (image, caption) pairs, we compute all <span class="arithmatex">\(N \times N\)</span> cosine similarities and apply a symmetric contrastive loss (InfoNCE) that pulls matched pairs together and pushes mismatched pairs apart.</p>
+<p>Let <span class="arithmatex">\(u_i = f_\text{img}(I_i) / \lVert f_\text{img}(I_i)\rVert\)</span> and <span class="arithmatex">\(v_j = f_\text{txt}(T_j) / \lVert f_\text{txt}(T_j)\rVert\)</span>. With a learned temperature <span class="arithmatex">\(\tau\)</span>, the image-to-text loss is</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{i}\to\text{t}} = -\frac{1}{N}\sum_{i=1}^{N} \log \frac{\exp(u_i^\top v_i / \tau)}{\sum_{j=1}^{N}\exp(u_i^\top v_j / \tau)}
+\]</div>
+<p>and the full loss symmetrizes over text-to-image as well. The mechanics are exactly the contrastive learning from <a href="../09-rag-retrieval/01-embeddings-representation.html">Embeddings &amp; Representation Learning</a>, just with two modalities sharing one space.</p>
+<p><strong>SigLIP</strong> (Zhai et al., <em>Sigmoid Loss for Language Image Pre-Training</em>, 2023) replaces the softmax-over-the-batch with an independent <strong>sigmoid</strong> loss per pair, treating every (image, text) pair as a binary classification:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{SigLIP}} = -\frac{1}{N}\sum_{i=1}^{N}\sum_{j=1}^{N} \log \sigma\!\big(z_{ij}\,(t\, u_i^\top v_j + b)\big), \quad z_{ij} = \begin{cases} +1 &amp; i = j \\ -1 &amp; i \ne j\end{cases}
+\]</div>
+<p>where <span class="arithmatex">\(\sigma\)</span> is the logistic sigmoid, <span class="arithmatex">\(t\)</span> is a learned scale, and <span class="arithmatex">\(b\)</span> a learned bias initialized negative (since most pairs are negatives). The practical win is that the sigmoid loss does not require a global softmax normalization across the batch, so it scales to very large batches without the all-gather coupling that softmax needs — and it tends to give better small-batch behavior. SigLIP&rsquo;s vision tower later became the backbone of several VLMs and, crucially for us, of ColPali.</p>
+<h3 id="using-clipsiglip-for-visual-document-retrieval">Using CLIP/SigLIP for Visual-Document Retrieval<a class="headerlink" href="#using-clipsiglip-for-visual-document-retrieval" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span><span class="p">,</span> <span class="n">AutoProcessor</span>
+
+<span class="c1"># Load a SigLIP checkpoint (image + text towers sharing one space).</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;google/siglip-base-patch16-224&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+<span class="n">proc</span> <span class="o">=</span> <span class="n">AutoProcessor</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;google/siglip-base-patch16-224&quot;</span><span class="p">)</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">embed_images</span><span class="p">(</span><span class="n">paths</span><span class="p">):</span>
+    <span class="n">imgs</span> <span class="o">=</span> <span class="p">[</span><span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">&quot;RGB&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">paths</span><span class="p">]</span>
+    <span class="n">inp</span> <span class="o">=</span> <span class="n">proc</span><span class="p">(</span><span class="n">images</span><span class="o">=</span><span class="n">imgs</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span>
+    <span class="n">emb</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">get_image_features</span><span class="p">(</span><span class="o">**</span><span class="n">inp</span><span class="p">)</span>        <span class="c1"># [N, d]</span>
+    <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">emb</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>              <span class="c1"># unit vectors -&gt; cosine = dot</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">embed_text</span><span class="p">(</span><span class="n">queries</span><span class="p">):</span>
+    <span class="n">inp</span> <span class="o">=</span> <span class="n">proc</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="n">queries</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="s2">&quot;max_length&quot;</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span>
+    <span class="n">emb</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">get_text_features</span><span class="p">(</span><span class="o">**</span><span class="n">inp</span><span class="p">)</span>         <span class="c1"># [M, d]</span>
+    <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">emb</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="c1"># Index: one vector per page image.</span>
+<span class="n">page_paths</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;page_001.png&quot;</span><span class="p">,</span> <span class="s2">&quot;page_002.png&quot;</span><span class="p">,</span> <span class="s2">&quot;page_003.png&quot;</span><span class="p">]</span>
+<span class="n">page_vecs</span>  <span class="o">=</span> <span class="n">embed_images</span><span class="p">(</span><span class="n">page_paths</span><span class="p">)</span>            <span class="c1"># [3, d]</span>
+
+<span class="n">q</span> <span class="o">=</span> <span class="n">embed_text</span><span class="p">([</span><span class="s2">&quot;What was Q3 revenue growth?&quot;</span><span class="p">])</span> <span class="c1"># [1, d]</span>
+<span class="n">scores</span> <span class="o">=</span> <span class="n">q</span> <span class="o">@</span> <span class="n">page_vecs</span><span class="o">.</span><span class="n">T</span>                         <span class="c1"># [1, 3] cosine similarities</span>
+<span class="n">best</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Best page:&quot;</span><span class="p">,</span> <span class="n">page_paths</span><span class="p">[</span><span class="n">best</span><span class="p">],</span> <span class="s2">&quot;score:&quot;</span><span class="p">,</span> <span class="n">scores</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="n">best</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+</code></pre></div>
+<p>This is genuinely useful for <strong>natural-image</strong> retrieval (&ldquo;find the photo of a dog on a beach&rdquo;). But it is weak for <strong>dense documents</strong>, and the reason is structural, not a tuning problem. CLIP/SigLIP compress an entire page into one vector. A page of a 10-K filing contains dozens of distinct facts: a revenue figure, a footnote about currency hedging, a segment table, a risk paragraph. A single 768-dimensional vector cannot simultaneously preserve all of them in a way that a <em>specific</em> keyword-like query can latch onto. This is the <strong>information-bottleneck</strong> problem of single-vector (&ldquo;bi-encoder&rdquo;) retrieval, and it is exactly the problem that late interaction was invented to solve in the text world.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: contrastive captions vs. document queries</p>
+<p>CLIP and SigLIP are trained on web image–caption pairs (&ldquo;a golden retriever running on a beach&rdquo;). The query distribution for documents is utterly different: &ldquo;depreciation schedule for fiscal 2022,&rdquo; &ldquo;the bar chart comparing latency across GPUs.&rdquo; A model trained on captions has never learned to align fine-grained query terms to the small region of a page that answers them. This domain mismatch is why off-the-shelf CLIP underperforms on ViDoRe, and why ColPali fine-tunes specifically on document-query pairs.</p>
+</div>
+<h2 id="late-interaction-from-colbert-to-colpali">Late Interaction: From ColBERT to ColPali<a class="headerlink" href="#late-interaction-from-colbert-to-colpali" title="Permanent link">¶</a></h2>
+<h3 id="the-colbert-idea">The ColBERT Idea<a class="headerlink" href="#the-colbert-idea" title="Permanent link">¶</a></h3>
+<p>ColBERT (Khattab &amp; Zaharia, <em>ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT</em>, 2020) sits between two extremes. A <strong>cross-encoder</strong> concatenates query and document, runs full attention across both, and scores them jointly — maximally expressive but <span class="arithmatex">\(O(\text{queries} \times \text{docs})\)</span> forward passes, far too slow to scan a corpus. A <strong>bi-encoder</strong> (single vector each) is fast — you precompute document vectors and do a dot product — but throws away token-level detail.</p>
+<p>Late interaction is the middle path. Encode the query into <strong>one vector per query token</strong> <span class="arithmatex">\(\{q_1, \dots, q_n\}\)</span> and the document into <strong>one vector per document token</strong> <span class="arithmatex">\(\{d_1, \dots, d_m\}\)</span>. Precompute and store all document token vectors offline. At query time, score with the <strong>MaxSim</strong> operator: for each query token, find its best-matching document token, then sum:</p>
+<div class="arithmatex">\[
+S(Q, D) = \sum_{i=1}^{n} \max_{j=1}^{m} \; q_i^\top d_j
+\]</div>
+<p>Intuitively, each query term gets to &ldquo;go shopping&rdquo; across the whole document for its single best evidence, and the score adds up that evidence. There is no cross-attention between query and document — the only interaction is the cheap MaxSim dot products at the very end, hence <em>late</em> interaction. This preserves token granularity (a rare query term can find its exact match) while keeping documents fully precomputable.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">maxsim</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">D</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Q: [n, d] query token embeddings (L2-normalized)</span>
+<span class="sd">    D: [m, d] document token embeddings (L2-normalized)</span>
+<span class="sd">    Returns the ColBERT late-interaction score (a scalar).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sim</span> <span class="o">=</span> <span class="n">Q</span> <span class="o">@</span> <span class="n">D</span><span class="o">.</span><span class="n">T</span>                  <span class="c1"># [n, m] all query-token x doc-token sims</span>
+    <span class="n">per_query</span> <span class="o">=</span> <span class="n">sim</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">values</span>   <span class="c1"># [n] best doc token per query token</span>
+    <span class="k">return</span> <span class="n">per_query</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>         <span class="c1"># sum over query tokens</span>
+
+<span class="c1"># Toy: 4 query tokens, 6 doc tokens, d=8</span>
+<span class="n">Q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">D</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;MaxSim score:&quot;</span><span class="p">,</span> <span class="n">maxsim</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+</code></pre></div>
+<p>The cost is storage: instead of one vector per document you store <span class="arithmatex">\(m\)</span> (often 100–300 for a passage). This is the central trade-off of all multi-vector retrieval, and most of the systems engineering later in this chapter exists to make it affordable.</p>
+<h3 id="colpali-late-interaction-over-page-patches">ColPali: Late Interaction Over Page Patches<a class="headerlink" href="#colpali-late-interaction-over-page-patches" title="Permanent link">¶</a></h3>
+<p>ColPali (Faysse et al., <em>ColPali: Efficient Document Retrieval with Vision Language Models</em>, 2024) makes one conceptually clean move: <strong>replace ColBERT&rsquo;s BERT-token document encoder with a vision-language model that turns a page image into a grid of patch embeddings.</strong> The query is still text; the document is now an image.</p>
+<p>The pipeline:</p>
+<ol>
+<li>Render each PDF page to an image (e.g., at ~150 DPI). <strong>No OCR.</strong></li>
+<li>Feed the image to a VLM&rsquo;s vision encoder + projection. The original ColPali used PaliGemma (a SigLIP vision tower feeding a Gemma language model). The image becomes a sequence of patch tokens — for PaliGemma, a <span class="arithmatex">\(32\times 32\)</span> grid yields <strong>1024 patch embeddings</strong> per page.</li>
+<li>Project each patch embedding down to a low dimension <span class="arithmatex">\(d\)</span> (ColPali uses <span class="arithmatex">\(d = 128\)</span>, matching ColBERT) with a linear layer, and L2-normalize. Store these 1024 vectors as the page&rsquo;s representation.</li>
+<li>The text query is tokenized and run through the <strong>same model&rsquo;s</strong> language tower to produce one <span class="arithmatex">\(d\)</span>-vector per query token.</li>
+<li>Score with MaxSim, identical to ColBERT.</li>
+</ol>
+<figure class="viz" id="fig-colpali-late-interaction-maxsim">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 760 590" role="img" aria-label="ColPali late-interaction pipeline: a PDF page passes through the VLM vision encoder to produce 1024 patch vectors in R^128, a text query passes through the VLM language tower to produce n query-token vectors in R^128, and both are combined by the MaxSim operator to yield a single page score.">
+<defs>
+  <marker id="cpm-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+  </marker>
+  <marker id="cpm-arr-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+</defs>
+<style>
+  #fig-colpali-late-interaction-maxsim text  { fill: var(--ink-soft,#374151); }
+  #fig-colpali-late-interaction-maxsim .lbl  { font: 600 13px var(--sans,sans-serif); }
+  #fig-colpali-late-interaction-maxsim .sub  { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-colpali-late-interaction-maxsim .cod  { font: 500 11px var(--mono,monospace); }
+  #fig-colpali-late-interaction-maxsim .mut  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-colpali-late-interaction-maxsim .on-acc { font: 700 14px var(--sans,sans-serif); fill: #fff; }
+
+  /* patch squares and query chips */
+  #fig-colpali-late-interaction-maxsim .patch { fill: var(--accent,#c15b39); fill-opacity: 0.4; }
+  #fig-colpali-late-interaction-maxsim .chip  { fill: var(--accent,#c15b39); fill-opacity: 0.4; }
+
+  @keyframes cpm-fade  { from{opacity:0} to{opacity:1} }
+  @keyframes cpm-pulse { 0%,100%{fill-opacity:.4} 50%{fill-opacity:.9} }
+  @keyframes cpm-glow  { 0%,20%{fill-opacity:.4} 40%,70%{fill-opacity:.9} 90%,100%{fill-opacity:.4} }
+  @keyframes cpm-fan   { 0%,25%{opacity:0} 45%,75%{opacity:.7} 95%,100%{opacity:0} }
+
+  #fig-colpali-late-interaction-maxsim [data-anim] { opacity: 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-colpali-late-interaction-maxsim [data-anim] { opacity:1 !important; animation:none !important; }
+    #fig-colpali-late-interaction-maxsim .patch,
+    #fig-colpali-late-interaction-maxsim .chip  { animation:none !important; fill-opacity:.4 !important; }
+  }
+</style>
+
+
+
+
+<g data-anim="1" style="animation:cpm-fade .5s ease .1s forwards">
+  <rect x="62" y="16" width="200" height="48" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+  <rect x="74" y="25" width="16" height="20" rx="2" fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1.2"/>
+  <line x1="77" y1="31" x2="88" y2="31" stroke="var(--muted,#9ca3af)" stroke-width=".8"/>
+  <line x1="77" y1="34" x2="88" y2="34" stroke="var(--muted,#9ca3af)" stroke-width=".8"/>
+  <line x1="77" y1="37" x2="88" y2="37" stroke="var(--muted,#9ca3af)" stroke-width=".8"/>
+  <text x="174" y="35" text-anchor="middle" class="lbl">PDF page (pixels)</text>
+  <text x="174" y="52" text-anchor="middle" class="sub">raw image, no OCR</text>
+</g>
+
+
+<g data-anim="1" style="animation:cpm-fade .5s ease .2s forwards">
+  <line x1="162" y1="64" x2="162" y2="102" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#cpm-arr)"/>
+  <text x="176" y="82" text-anchor="start" class="mut">render ~150 DPI, no OCR</text>
+</g>
+
+
+<g data-anim="2" style="animation:cpm-fade .5s ease .5s forwards">
+  <rect x="52" y="102" width="220" height="58" rx="8" class="v-fill v-accent-s" stroke-width="2"/>
+  <text x="162" y="126" text-anchor="middle" class="lbl">VLM vision encoder</text>
+  <text x="162" y="144" text-anchor="middle" class="sub">SigLIP tower + linear projection</text>
+</g>
+
+
+<g data-anim="2" style="animation:cpm-fade .5s ease .6s forwards">
+  <line x1="162" y1="160" x2="162" y2="198" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#cpm-arr)"/>
+</g>
+
+
+<g data-anim="3" style="animation:cpm-fade .5s ease .9s forwards">
+  <rect x="96"  y="200" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="112" y="200" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="128" y="200" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="144" y="200" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="96"  y="216" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="112" y="216" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="128" y="216" width="13" height="13" rx="2" class="patch" id="cpm-argmax" fill="var(--accent,#c15b39)" fill-opacity="0.4" style="animation:cpm-pulse 2s ease 2.8s infinite"/>
+  <rect x="144" y="216" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="96"  y="232" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="112" y="232" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="128" y="232" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="144" y="232" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="96"  y="248" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="112" y="248" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="128" y="248" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="144" y="248" width="13" height="13" rx="2" class="patch" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <text x="168" y="214" text-anchor="start" class="lbl">1024 patch vectors</text>
+  <text x="168" y="230" text-anchor="start" class="cod">each in R^128</text>
+  <text x="168" y="246" text-anchor="start" class="mut">(representative 4x4 grid)</text>
+</g>
+
+
+
+
+<g data-anim="1" style="animation:cpm-fade .5s ease .15s forwards">
+  <rect x="484" y="16" width="210" height="48" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+  <text x="589" y="35" text-anchor="middle" class="lbl">Text query</text>
+  <text x="589" y="52" text-anchor="middle" class="sub">"Q3 revenue?"</text>
+</g>
+
+
+<g data-anim="1" style="animation:cpm-fade .5s ease .25s forwards">
+  <line x1="589" y1="64" x2="589" y2="102" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#cpm-arr)"/>
+  <text x="600" y="88" text-anchor="start" class="mut">tokenize</text>
+</g>
+
+
+<g data-anim="2" style="animation:cpm-fade .5s ease .55s forwards">
+  <rect x="474" y="102" width="230" height="58" rx="8" class="v-fill v-accent-s" stroke-width="2"/>
+  <text x="589" y="126" text-anchor="middle" class="lbl">VLM language tower</text>
+  <text x="589" y="144" text-anchor="middle" class="sub">Gemma / Qwen2 text encoder</text>
+</g>
+
+
+<g data-anim="2" style="animation:cpm-fade .5s ease .65s forwards">
+  <line x1="589" y1="160" x2="589" y2="198" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#cpm-arr)"/>
+</g>
+
+
+<g data-anim="3" style="animation:cpm-fade .5s ease .95s forwards">
+  <rect x="484" y="200" width="20" height="18" rx="3" class="chip" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="508" y="200" width="20" height="18" rx="3" class="chip" id="cpm-hl-chip" fill="var(--accent,#c15b39)" fill-opacity="0.4" style="animation:cpm-glow 2s ease 2.8s infinite"/>
+  <rect x="532" y="200" width="20" height="18" rx="3" class="chip" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="556" y="200" width="20" height="18" rx="3" class="chip" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="580" y="200" width="20" height="18" rx="3" class="chip" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <rect x="604" y="200" width="20" height="18" rx="3" class="chip" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+  <text x="543" y="232" text-anchor="middle" class="lbl">n query-token vectors</text>
+  <text x="543" y="248" text-anchor="middle" class="cod">each in R^128</text>
+</g>
+
+
+<g data-anim="4" style="animation:cpm-fade .5s ease 1.6s forwards">
+  <polyline points="162,270 162,344 376,344 376,366" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6" marker-end="url(#cpm-arr-a)"/>
+  <polyline points="589,268 589,344 408,344 408,366" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6" marker-end="url(#cpm-arr-a)"/>
+  <text x="162" y="315" text-anchor="middle" class="mut">patch vectors</text>
+  <text x="589" y="315" text-anchor="middle" class="mut">query vectors</text>
+</g>
+
+
+<g data-anim="5" style="animation:cpm-fade .6s ease 2.0s forwards">
+  <rect x="186" y="366" width="396" height="72" rx="10" class="v-fill v-accent-s" stroke-width="2.5"/>
+  <text x="384" y="390" text-anchor="middle" class="lbl">MaxSim operator</text>
+  <text x="384" y="410" text-anchor="middle" class="cod">S(Q,D) = sum_i  max_j  q_i . patch_j</text>
+  <text x="384" y="428" text-anchor="middle" class="mut">late interaction — no cross-attention between query and page</text>
+</g>
+
+
+<g data-anim="5" style="animation:cpm-fade .5s ease 2.1s forwards">
+  <text x="592" y="386" text-anchor="start" class="mut" font-style="italic">each query token</text>
+  <text x="592" y="399" text-anchor="start" class="mut" font-style="italic">picks its best patch</text>
+</g>
+
+
+<g data-anim="5" style="animation:cpm-fade .5s ease 2.2s forwards">
+  <line x1="384" y1="438" x2="384" y2="482" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#cpm-arr)"/>
+  <text x="397" y="462" text-anchor="start" class="mut">single relevance score</text>
+  <rect x="308" y="484" width="152" height="38" rx="19" fill="var(--accent,#c15b39)"/>
+  <text x="384" y="508" text-anchor="middle" class="on-acc">page score</text>
+</g>
+
+</svg>
+<figcaption><b>ColPali late interaction: two multi-vector towers meet at MaxSim.</b> The VLM vision encoder converts a PDF page into 1024 patch vectors (R^128) while the VLM language tower converts the query into n token vectors (R^128). The only query-document interaction is the cheap MaxSim sum — each query token independently finds its single best-matching patch — making the page representation fully precomputable offline with no cross-attention needed.</figcaption>
+</figure>
+
+<p>The magic is in step 2. Because the patch embeddings come from a VLM that was pretrained to <em>read</em>, each patch vector is contextualized: a patch sitting on the cell of a table that says &ldquo;Revenue: USD 4.2B&rdquo; carries a representation that a query token for &ldquo;revenue&rdquo; can match against — <strong>without anyone ever running OCR</strong>. The model learned to associate visual glyphs and layout with textual meaning during pretraining, and ColPali&rsquo;s fine-tuning sharpens that for the retrieval objective.</p>
+<h3 id="colqwen2-and-the-family">ColQwen2 and the Family<a class="headerlink" href="#colqwen2-and-the-family" title="Permanent link">¶</a></h3>
+<p><strong>ColQwen2</strong> swaps the PaliGemma backbone for Qwen2-VL. Qwen2-VL&rsquo;s vision encoder supports <strong>dynamic resolution</strong> — it does not force every page into a fixed <span class="arithmatex">\(448\times 448\)</span> box but processes the native aspect ratio, producing a variable number of patch tokens. For a tall, dense page this means <em>more</em> patches (finer evidence) and for a sparse slide <em>fewer</em> (cheaper). This typically lifts retrieval quality on dense documents at the cost of variable, sometimes larger, per-page storage. The broader family — <strong>ColSmol</strong> (small, for edge/CPU), and later <strong>ColPali/ColQwen</strong> revisions, plus the general &ldquo;ColVision&rdquo; recipe — all share the same skeleton: VLM patch encoder + low-dim projection + MaxSim. The contrast with ColBERT-text is only in the document encoder.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: forgetting the query side is also multi-vector</p>
+<p>A frequent misreading is &ldquo;ColPali embeds pages into 1024 vectors and queries into one vector.&rdquo; No — the query is <strong>also</strong> multi-vector (one <span class="arithmatex">\(d\)</span>-dim vector per query token, typically a few dozen). MaxSim runs over the full <span class="arithmatex">\(n \times m\)</span> grid. If you accidentally mean-pool the query into a single vector, you have silently reverted to a worse bi-encoder and thrown away ColPali&rsquo;s entire advantage. Keep both sides token/patch-level until the MaxSim.</p>
+</div>
+<h3 id="training-colpali">Training ColPali<a class="headerlink" href="#training-colpali" title="Permanent link">¶</a></h3>
+<p>ColPali is fine-tuned with a contrastive in-batch loss on (query, positive-page) pairs, where the negatives are the other pages in the batch. The score is the MaxSim, and the loss is the same InfoNCE softmax over MaxSim scores. A common refinement adds a margin-aware or in-batch hard-negative term. The training data is the crux: synthetic and curated <strong>document-query pairs</strong> spanning tables, figures, infographics, and full pages, so the model learns the document query distribution that CLIP never saw.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">colbert_scores</span><span class="p">(</span><span class="n">Qb</span><span class="p">,</span> <span class="n">Db</span><span class="p">,</span> <span class="n">q_mask</span><span class="p">,</span> <span class="n">d_mask</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Vectorized MaxSim for a batch (used both in training and scoring).</span>
+<span class="sd">    Qb: [B, n, d] query token embeddings (padded)</span>
+<span class="sd">    Db: [B, m, d] doc patch embeddings (padded)</span>
+<span class="sd">    q_mask: [B, n] 1 for real query tokens, 0 for padding</span>
+<span class="sd">    d_mask: [B, m] 1 for real patches</span>
+<span class="sd">    Returns: [B, B] score matrix S[i, j] = MaxSim(query_i, doc_j)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Pairwise sims across the cross product of the batch:</span>
+    <span class="c1">#   [B, n, d] x [B, m, d] -&gt; [B(query), B(doc), n, m]</span>
+    <span class="n">sim</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;ind,jmd-&gt;ijnm&quot;</span><span class="p">,</span> <span class="n">Qb</span><span class="p">,</span> <span class="n">Db</span><span class="p">)</span>
+    <span class="c1"># Mask out padded doc patches before the max over patches.</span>
+    <span class="n">sim</span> <span class="o">=</span> <span class="n">sim</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="o">~</span><span class="n">d_mask</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:]</span><span class="o">.</span><span class="n">bool</span><span class="p">(),</span> <span class="o">-</span><span class="mf">1e4</span><span class="p">)</span>
+    <span class="n">sim</span> <span class="o">=</span> <span class="n">sim</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">values</span>                 <span class="c1"># [B, B, n] max over patches</span>
+    <span class="c1"># Zero out padded query tokens before summing over query tokens.</span>
+    <span class="n">sim</span> <span class="o">=</span> <span class="n">sim</span> <span class="o">*</span> <span class="n">q_mask</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:]</span>
+    <span class="k">return</span> <span class="n">sim</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>                        <span class="c1"># [B, B]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">colpali_loss</span><span class="p">(</span><span class="n">Qb</span><span class="p">,</span> <span class="n">Db</span><span class="p">,</span> <span class="n">q_mask</span><span class="p">,</span> <span class="n">d_mask</span><span class="p">):</span>
+    <span class="n">S</span> <span class="o">=</span> <span class="n">colbert_scores</span><span class="p">(</span><span class="n">Qb</span><span class="p">,</span> <span class="n">Db</span><span class="p">,</span> <span class="n">q_mask</span><span class="p">,</span> <span class="n">d_mask</span><span class="p">)</span>   <span class="c1"># [B, B], diagonal = positives</span>
+    <span class="n">labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">S</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">S</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="c1"># Standard in-batch InfoNCE over MaxSim scores (both directions optional).</span>
+    <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span><span class="n">S</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="a-worked-example-storage-and-scoring-cost">A Worked Example: Storage and Scoring Cost<a class="headerlink" href="#a-worked-example-storage-and-scoring-cost" title="Permanent link">¶</a></h2>
+<div class="admonition example">
+<p class="admonition-title">Worked example: indexing 100k pages with ColPali</p>
+<p>Suppose a corpus of <strong>100,000 pages</strong>. ColPali (PaliGemma backbone) produces <strong>1024 patch vectors per page</strong>, each of dimension <strong><span class="arithmatex">\(d = 128\)</span></strong>. Store at fp16 (2 bytes/element).</p>
+<p><strong>Per page:</strong></p>
+<div class="arithmatex">\[
+1024 \text{ patches} \times 128 \text{ dims} \times 2 \text{ bytes} = 262{,}144 \text{ bytes} \approx 256 \text{ KiB}
+\]</div>
+<p><strong>Full corpus:</strong></p>
+<div class="arithmatex">\[
+100{,}000 \times 256 \text{ KiB} \approx 25.6 \text{ GiB}
+\]</div>
+<p>Compare a single-vector SigLIP index at the same <span class="arithmatex">\(d=128\)</span> and fp16: <span class="arithmatex">\(100{,}000 \times 128 \times 2 = 25.6\)</span> MB — a <strong>1000×</strong> difference, because each page now holds 1024 vectors instead of 1. That factor of 1024 is the price of late interaction and the reason indexing strategy matters enormously.</p>
+<p><strong>Scoring cost (brute force) for one query</strong> with <span class="arithmatex">\(n = 20\)</span> query tokens against all pages:</p>
+<div class="arithmatex">\[
+100{,}000 \text{ pages} \times 1024 \text{ patches} \times 20 \text{ q-tokens} \times 128 \text{ flops/dot} \approx 2.6 \times 10^{11} \text{ FLOPs}
+\]</div>
+<p>That is ~260 GFLOPs of dot products <strong>per query</strong> if you score every page exhaustively. On a modern GPU this is milliseconds of compute but tens of GiB of memory traffic — memory bandwidth, not arithmetic, is the bottleneck (see the <a href="../04-kernels-efficiency/01-roofline-performance.html">Roofline Model</a>). At scale you cannot brute-force every query; you need an approximate candidate-generation stage (next section) and only run full MaxSim on a shortlist.</p>
+<p><strong>Binary quantization</strong> (1 bit/dim instead of 16) shrinks the index from 25.6 GiB to <strong>1.6 GiB</strong> at a small recall cost — often the single highest-leverage optimization for multi-vector indexes.</p>
+</div>
+<h2 id="indexing-multi-vector-embeddings-at-scale">Indexing Multi-Vector Embeddings at Scale<a class="headerlink" href="#indexing-multi-vector-embeddings-at-scale" title="Permanent link">¶</a></h2>
+<p>The brute-force MaxSim above is fine for a few thousand pages but collapses at corpus scale. The whole field of efficient multi-vector retrieval is about avoiding the full <span class="arithmatex">\(O(\text{pages} \times \text{patches} \times \text{q-tokens})\)</span> scan. There are two dominant approaches.</p>
+<h3 id="plaid-colberts-native-engine">PLAID: ColBERT&rsquo;s Native Engine<a class="headerlink" href="#plaid-colberts-native-engine" title="Permanent link">¶</a></h3>
+<p>PLAID (Santhanam et al., <em>PLAID: An Efficient Engine for Late Interaction Retrieval</em>, 2022) is the production indexing system designed for ColBERT, and it carries over to ColPali. Its pipeline:</p>
+<ol>
+<li><strong>Residual compression.</strong> Cluster all patch/token vectors in the corpus with k-means into a codebook of centroids. Store each vector as <code>(centroid_id, residual)</code>, where the residual (vector minus its centroid) is <strong>quantized to 1–2 bits per dimension</strong>. This is the dominant memory saving.</li>
+<li><strong>Centroid-based candidate generation.</strong> Each query token retrieves the nearest centroids. Any document that has patches assigned to those centroids becomes a candidate. This avoids touching documents with no plausible matching patch.</li>
+<li><strong>Centroid-pruned scoring.</strong> Approximate MaxSim using centroid similarities first to prune, then refine only promising candidates with the decompressed residuals.</li>
+<li><strong>Full re-ranking.</strong> Decompress the top candidates and compute exact MaxSim for the final ordering.</li>
+</ol>
+<p>The staged funnel — cheap-and-approximate to expensive-and-exact — is the recurring pattern of all large-scale retrieval, and you saw it for single-vector ANN in <a href="../09-rag-retrieval/02-vector-databases-ann.html">Vector Databases &amp; Approximate Nearest Neighbor Search</a>.</p>
+<h3 id="hnsw-over-flattened-patch-vectors">HNSW Over Flattened Patch Vectors<a class="headerlink" href="#hnsw-over-flattened-patch-vectors" title="Permanent link">¶</a></h3>
+<p>A simpler, store-agnostic approach: <strong>flatten</strong> every patch vector of every page into one giant single-vector ANN index, tagging each with its page id. Build an HNSW graph (see the ANN chapter) over all <span class="arithmatex">\(100{,}000 \times 1024 \approx 10^8\)</span> patch vectors. Then:</p>
+<ol>
+<li>For each of the <span class="arithmatex">\(n\)</span> query token vectors, run an ANN search to retrieve the top-<span class="arithmatex">\(k\)</span> nearest <strong>patches</strong> (across all pages).</li>
+<li>Collect the <strong>union of page ids</strong> those patches belong to — this is the candidate page set.</li>
+<li>For each candidate page, fetch its full patch matrix and compute <strong>exact MaxSim</strong>.</li>
+<li>Sort by exact score; return top pages.</li>
+</ol>
+<p>This is the strategy used by libraries that build ColPali on top of generic vector databases (Qdrant&rsquo;s multivector support, Vespa&rsquo;s tensor/MaxSim ranking, Weaviate&rsquo;s MUVERA-style approaches). The candidate-generation step is approximate (you might miss a page whose best patch did not make any query token&rsquo;s top-<span class="arithmatex">\(k\)</span>), but in practice recall is high because a relevant page usually has <em>several</em> strongly matching patches.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">hnswlib</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PatchHNSWIndex</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Flatten all page patches into one HNSW index; rerank pages with exact MaxSim.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">128</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dim</span> <span class="o">=</span> <span class="n">dim</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">index</span> <span class="o">=</span> <span class="n">hnswlib</span><span class="o">.</span><span class="n">Index</span><span class="p">(</span><span class="n">space</span><span class="o">=</span><span class="s2">&quot;ip&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">dim</span><span class="p">)</span>  <span class="c1"># inner product</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">page_patches</span> <span class="o">=</span> <span class="p">{}</span>   <span class="c1"># page_id -&gt; [m, d] float32 patch matrix</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">label_to_page</span> <span class="o">=</span> <span class="p">{}</span>  <span class="c1"># global patch label -&gt; page_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_next</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">init</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_patches</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">init_index</span><span class="p">(</span><span class="n">max_elements</span><span class="o">=</span><span class="n">max_patches</span><span class="p">,</span> <span class="n">ef_construction</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span> <span class="n">M</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_page</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">page_id</span><span class="p">,</span> <span class="n">patches</span><span class="p">):</span>
+        <span class="n">patches</span> <span class="o">=</span> <span class="n">patches</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="n">patches</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">labels</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_next</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_next</span> <span class="o">+</span> <span class="n">n</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">add_items</span><span class="p">(</span><span class="n">patches</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">lab</span> <span class="ow">in</span> <span class="n">labels</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">label_to_page</span><span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">lab</span><span class="p">)]</span> <span class="o">=</span> <span class="n">page_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">page_patches</span><span class="p">[</span><span class="n">page_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">patches</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_next</span> <span class="o">+=</span> <span class="n">n</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">search</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query_patches</span><span class="p">,</span> <span class="n">k_per_token</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">topn</span><span class="o">=</span><span class="mi">10</span><span class="p">):</span>
+        <span class="n">query_patches</span> <span class="o">=</span> <span class="n">query_patches</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="c1"># 1) candidate generation: nearest patches per query token -&gt; union of pages</span>
+        <span class="n">candidates</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">qtok</span> <span class="ow">in</span> <span class="n">query_patches</span><span class="p">:</span>
+            <span class="n">labels</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">knn_query</span><span class="p">(</span><span class="n">qtok</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">k_per_token</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">lab</span> <span class="ow">in</span> <span class="n">labels</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+                <span class="n">candidates</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">label_to_page</span><span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">lab</span><span class="p">)])</span>
+        <span class="c1"># 2) exact MaxSim rerank over candidate pages only</span>
+        <span class="n">scored</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">pid</span> <span class="ow">in</span> <span class="n">candidates</span><span class="p">:</span>
+            <span class="n">D</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">page_patches</span><span class="p">[</span><span class="n">pid</span><span class="p">]</span>               <span class="c1"># [m, d]</span>
+            <span class="n">sim</span> <span class="o">=</span> <span class="n">query_patches</span> <span class="o">@</span> <span class="n">D</span><span class="o">.</span><span class="n">T</span>                <span class="c1"># [n, m]</span>
+            <span class="n">scored</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">pid</span><span class="p">,</span> <span class="n">sim</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()))</span>   <span class="c1"># MaxSim</span>
+        <span class="n">scored</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="o">-</span><span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+        <span class="k">return</span> <span class="n">scored</span><span class="p">[:</span><span class="n">topn</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="token-pooling-and-compression">Token Pooling and Compression<a class="headerlink" href="#token-pooling-and-compression" title="Permanent link">¶</a></h3>
+<p>Because 1024 patches per page is the cost driver, a cheap win is <strong>token pooling</strong>: cluster a page&rsquo;s patch vectors (e.g., hierarchical agglomerative clustering) and keep a smaller set of representative vectors — say 256 instead of 1024 — before indexing. Empirically you can drop a large fraction of patches with little retrieval-quality loss, because many patches (margins, whitespace, repeated background) are redundant. Combined with <strong>binary quantization</strong> of what remains, real ColPali deployments routinely shrink the index by 10–30× from the naive 256 KiB/page figure. <strong>MUVERA</strong> (Multi-Vector Retrieval via Fixed Dimensional Encodings) goes further: it deterministically projects the whole multi-vector set into a <em>single</em> fixed-dimensional vector whose dot product approximates MaxSim, letting you reuse a standard single-vector ANN index for candidate generation and only fall back to exact MaxSim for reranking.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: separate the two storage tiers</p>
+<p>Keep two representations of each page&rsquo;s patches: a <strong>compressed</strong> form (binary or 2-bit residuals) for fast candidate generation, and the <strong>full fp16</strong> form (possibly on cheaper storage or memory-mapped) for exact MaxSim reranking of the ~50 candidates that survive. You almost never need the full-precision vectors of pages that never enter the shortlist, so they can live on disk. This two-tier split is what keeps RAM bounded while preserving final-ranking accuracy.</p>
+</div>
+<h2 id="the-ocr-free-page-as-image-rag-pipeline">The OCR-Free Page-as-Image RAG Pipeline<a class="headerlink" href="#the-ocr-free-page-as-image-rag-pipeline" title="Permanent link">¶</a></h2>
+<p>Retrieval is half the system. The other half feeds the retrieved <strong>page images</strong> to a vision-language model to generate the answer — never reconstructing text at all. This is the OCR-free RAG loop, and it composes cleanly with everything in <a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a>, with images replacing text chunks.</p>
+<figure class="viz" id="fig-colpali-ocrfree-rag-pipeline">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 880 740" role="img" aria-label="OCR-free RAG pipeline: offline indexing builds a multi-vector index from PDF pages via ColPali patch embeddings; online query produces ColPali query embeddings; both meet at MaxSim retrieval returning top-k page images; a VLM generator produces a grounded answer.">
+<defs>
+  <marker id="orp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+  </marker>
+  <marker id="orp-arr-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+</defs>
+<style>
+  #fig-colpali-ocrfree-rag-pipeline text   { fill: var(--ink-soft,#374151); }
+  #fig-colpali-ocrfree-rag-pipeline .lbl   { font: 600 13px var(--sans,sans-serif); }
+  #fig-colpali-ocrfree-rag-pipeline .sub   { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-colpali-ocrfree-rag-pipeline .cod   { font: 500 11px var(--mono,monospace); }
+  #fig-colpali-ocrfree-rag-pipeline .mut   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-colpali-ocrfree-rag-pipeline .hdr   { font: 700 13px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-colpali-ocrfree-rag-pipeline .on-acc{ font: 700 14px var(--sans,sans-serif); fill: #fff; }
+
+  @keyframes orp-fade { from{opacity:0} to{opacity:1} }
+  @keyframes orp-drop { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:translateY(0)} }
+
+  #fig-colpali-ocrfree-rag-pipeline [data-anim] { opacity:0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-colpali-ocrfree-rag-pipeline [data-anim] { opacity:1 !important; animation:none !important; }
+  }
+</style>
+
+
+<g data-anim="1" style="animation:orp-fade .4s ease 0s forwards">
+  <text x="210" y="30" text-anchor="middle" class="hdr">Offline indexing</text>
+  <line x1="50" y1="36" x2="370" y2="36" stroke="var(--accent,#c15b39)" stroke-width="1.2" opacity=".4"/>
+
+  <text x="660" y="30" text-anchor="middle" class="hdr">Online query</text>
+  <line x1="510" y1="36" x2="810" y2="36" stroke="var(--accent,#c15b39)" stroke-width="1.2" opacity=".4"/>
+</g>
+
+
+
+
+<g data-anim="2" style="animation:orp-drop .45s ease .15s forwards">
+  <rect x="86" y="50" width="248" height="50" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+  <rect x="98" y="60" width="13" height="16" rx="2" fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1.1"/>
+  <rect x="102" y="56" width="13" height="16" rx="2" fill="none" stroke="var(--muted,#9ca3af)" stroke-width=".9"/>
+  <text x="210" y="72" text-anchor="middle" class="lbl">PDFs</text>
+  <text x="210" y="89" text-anchor="middle" class="sub">source documents</text>
+</g>
+
+
+<g data-anim="2" style="animation:orp-fade .4s ease .25s forwards">
+  <line x1="210" y1="100" x2="210" y2="136" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#orp-arr)"/>
+  <text x="224" y="123" text-anchor="start" class="mut">render pages to PNG</text>
+</g>
+
+
+<g data-anim="3" style="animation:orp-drop .45s ease .5s forwards">
+  <rect x="68" y="136" width="284" height="56" rx="8" class="v-fill v-accent-s" stroke-width="2"/>
+  <text x="210" y="158" text-anchor="middle" class="lbl">ColPali / ColQwen2</text>
+  <text x="210" y="174" text-anchor="middle" class="sub">patch embeddings</text>
+  <text x="210" y="186" text-anchor="middle" class="sub">1024 vectors x R^128 per page</text>
+</g>
+
+
+<g data-anim="3" style="animation:orp-fade .4s ease .6s forwards">
+  <line x1="210" y1="192" x2="210" y2="228" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#orp-arr)"/>
+  <text x="224" y="215" text-anchor="start" class="mut">token-pool + quantize</text>
+</g>
+
+
+<g data-anim="4" style="animation:orp-drop .45s ease .9s forwards">
+  <rect x="72" y="228" width="276" height="62" rx="7" class="v-fill v-accent-s" stroke-width="2"/>
+
+  <line x1="82" y1="241" x2="338" y2="241" stroke="var(--accent,#c15b39)" stroke-width=".8" stroke-dasharray="3 2" opacity=".55"/>
+  <line x1="82" y1="249" x2="338" y2="249" stroke="var(--accent,#c15b39)" stroke-width=".8" stroke-dasharray="3 2" opacity=".35"/>
+  <text x="210" y="270" text-anchor="middle" class="lbl">multi-vector index</text>
+  <text x="210" y="284" text-anchor="middle" class="sub">PLAID / HNSW over patch vectors</text>
+</g>
+
+
+
+
+<g data-anim="2" style="animation:orp-drop .45s ease .2s forwards">
+  <rect x="540" y="50" width="240" height="50" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+  <text x="660" y="72" text-anchor="middle" class="lbl">user question (text)</text>
+  <text x="660" y="89" text-anchor="middle" class="sub">"How did margin change in 2022?"</text>
+</g>
+
+
+<g data-anim="2" style="animation:orp-fade .4s ease .3s forwards">
+  <line x1="660" y1="100" x2="660" y2="136" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#orp-arr)"/>
+</g>
+
+
+<g data-anim="3" style="animation:orp-drop .45s ease .55s forwards">
+  <rect x="534" y="136" width="252" height="56" rx="8" class="v-fill v-accent-s" stroke-width="2"/>
+  <text x="660" y="158" text-anchor="middle" class="lbl">ColPali query embeddings</text>
+  <text x="660" y="176" text-anchor="middle" class="sub">n token vectors in R^128</text>
+</g>
+
+
+<g data-anim="5" style="animation:orp-fade .5s ease 1.3s forwards">
+
+  <polyline points="348,259 426,259 426,378 456,378" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6" marker-end="url(#orp-arr-a)"/>
+  <text x="438" y="300" text-anchor="start" class="mut">candidate gen</text>
+  <text x="438" y="313" text-anchor="start" class="mut">+ exact rerank</text>
+
+  <polyline points="660,192 660,259 754,259 754,378 728,378" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6" marker-end="url(#orp-arr-a)"/>
+  <text x="716" y="250" text-anchor="middle" class="mut">query vectors</text>
+</g>
+
+
+<g data-anim="5" style="animation:orp-fade .55s ease 1.5s forwards">
+  <rect x="456" y="352" width="272" height="52" rx="9" class="v-fill v-accent-s" stroke-width="2.5"/>
+
+  <rect x="456" y="352" width="272" height="52" rx="9" fill="var(--accent,#c15b39)" fill-opacity=".08"/>
+  <text x="592" y="374" text-anchor="middle" class="lbl">MaxSim retrieval</text>
+  <text x="592" y="393" text-anchor="middle" class="cod">S = sum_i  max_j  q_i . patch_j</text>
+</g>
+
+
+<g data-anim="6" style="animation:orp-fade .5s ease 1.9s forwards">
+  <line x1="592" y1="404" x2="592" y2="444" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#orp-arr)"/>
+
+  <text x="592" y="438" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">top-k PAGE IMAGES</text>
+
+
+  <rect x="496" y="450" width="60" height="46" rx="5" class="v-fill v-stroke" stroke-width="1.1" transform="rotate(-4 526 473)"/>
+  <rect x="502" y="450" width="60" height="46" rx="5" class="v-fill v-stroke" stroke-width="1.1" transform="rotate(-1.5 532 473)"/>
+  <rect x="508" y="450" width="60" height="46" rx="5" class="v-fill v-accent-s" stroke-width="1.5"/>
+
+  <polyline points="514,488 524,472 533,480 540,471 564,488" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.2" opacity=".7"/>
+  <circle cx="556" cy="460" r="4" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1" opacity=".6"/>
+
+  <text x="588" y="464" text-anchor="start" class="lbl">top-k page images</text>
+  <text x="588" y="479" text-anchor="start" class="sub">raw pixels — no OCR reconstruction</text>
+</g>
+
+
+<g data-anim="7" style="animation:orp-fade .4s ease 2.3s forwards">
+  <line x1="592" y1="500" x2="592" y2="534" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#orp-arr)"/>
+</g>
+
+
+<g data-anim="7" style="animation:orp-fade .5s ease 2.3s forwards">
+  <rect x="268" y="534" width="648" height="78" rx="9" class="v-fill v-accent-s" stroke-width="2"/>
+  <text x="592" y="558" text-anchor="middle" class="lbl">VLM generator</text>
+  <text x="592" y="576" text-anchor="middle" class="sub">Qwen2-VL, GPT-4o, Gemini, InternVL ...</text>
+  <text x="592" y="594" text-anchor="middle" class="sub">prompt = question + k page images  (no OCR text)</text>
+</g>
+
+
+<g data-anim="7" style="animation:orp-fade .4s ease 2.4s forwards">
+  <path d="M 778 100 C 840 100 840 560 870 573" fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="4 3" opacity=".5"/>
+  <text x="766" y="310" text-anchor="middle" class="mut" font-style="italic">question</text>
+  <text x="766" y="323" text-anchor="middle" class="mut" font-style="italic">also passed</text>
+  <text x="766" y="336" text-anchor="middle" class="mut" font-style="italic">to VLM</text>
+</g>
+
+
+<g data-anim="8" style="animation:orp-fade .4s ease 2.7s forwards">
+  <line x1="592" y1="612" x2="592" y2="648" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#orp-arr)"/>
+  <text x="606" y="636" text-anchor="start" class="mut">generate</text>
+</g>
+
+
+<g data-anim="8" style="animation:orp-fade .5s ease 2.9s forwards">
+  <rect x="390" y="648" width="404" height="42" rx="21" fill="var(--accent,#c15b39)"/>
+  <text x="592" y="674" text-anchor="middle" class="on-acc">grounded answer (+ page cites)</text>
+</g>
+
+</svg>
+<figcaption><b>The OCR-free page-as-image RAG pipeline, offline and online.</b> Offline, PDFs are rendered to images and encoded by ColPali into multi-vector patch embeddings, then compressed and stored in a PLAID or HNSW index. Online, the query is encoded to token vectors by the same model; MaxSim retrieval finds the top-k matching page images — raw pixels, no OCR reconstruction — which are passed with the question to a VLM generator that produces a grounded, page-cited answer.</figcaption>
+</figure>
+
+<div class="highlight"><pre><span></span><code><span class="c1"># End-to-end sketch with the `colpali-engine` library + a VLM generator.</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">colpali_engine.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">ColPali</span><span class="p">,</span> <span class="n">ColPaliProcessor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pdf2image</span><span class="w"> </span><span class="kn">import</span> <span class="n">convert_from_path</span>
+
+<span class="n">device</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">ColPali</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;vidore/colpali-v1.3&quot;</span><span class="p">,</span>
+                                <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+<span class="n">processor</span> <span class="o">=</span> <span class="n">ColPaliProcessor</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;vidore/colpali-v1.3&quot;</span><span class="p">)</span>
+
+<span class="c1"># --- OFFLINE: render pages and embed them ---</span>
+<span class="n">pages</span> <span class="o">=</span> <span class="n">convert_from_path</span><span class="p">(</span><span class="s2">&quot;annual_report.pdf&quot;</span><span class="p">,</span> <span class="n">dpi</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>  <span class="c1"># list[PIL.Image]</span>
+<span class="n">page_embeddings</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="k">for</span> <span class="n">batch_start</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">pages</span><span class="p">),</span> <span class="mi">4</span><span class="p">):</span>
+        <span class="n">batch</span> <span class="o">=</span> <span class="n">pages</span><span class="p">[</span><span class="n">batch_start</span><span class="p">:</span><span class="n">batch_start</span> <span class="o">+</span> <span class="mi">4</span><span class="p">]</span>
+        <span class="n">inp</span> <span class="o">=</span> <span class="n">processor</span><span class="o">.</span><span class="n">process_images</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">emb</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">inp</span><span class="p">)</span>                  <span class="c1"># [b, num_patches, 128]</span>
+        <span class="n">page_embeddings</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">emb</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()))</span>
+<span class="c1"># (Index page_embeddings into PLAID/HNSW here; see previous section.)</span>
+
+<span class="c1"># --- ONLINE: embed the query, score with MaxSim, retrieve top pages ---</span>
+<span class="n">query</span> <span class="o">=</span> <span class="s2">&quot;How did operating margin change from 2021 to 2022?&quot;</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">q_inp</span> <span class="o">=</span> <span class="n">processor</span><span class="o">.</span><span class="n">process_queries</span><span class="p">([</span><span class="n">query</span><span class="p">])</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">q_emb</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">q_inp</span><span class="p">)</span>                  <span class="c1"># [1, n_tokens, 128]</span>
+
+<span class="c1"># Exact MaxSim against all pages (small corpus; use the index at scale).</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">maxsim</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">d</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">q</span> <span class="o">@</span> <span class="n">d</span><span class="o">.</span><span class="n">T</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+<span class="n">scores</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">maxsim</span><span class="p">(</span><span class="n">q_emb</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">d</span><span class="o">.</span><span class="n">float</span><span class="p">())</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">page_embeddings</span><span class="p">])</span>
+<span class="n">top</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">indices</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+<span class="n">retrieved_images</span> <span class="o">=</span> <span class="p">[</span><span class="n">pages</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">top</span><span class="p">]</span>
+
+<span class="c1"># --- GENERATION: hand the raw page images to a VLM (no OCR text!) ---</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForImageTextToText</span><span class="p">,</span> <span class="n">AutoProcessor</span>
+<span class="n">vlm</span> <span class="o">=</span> <span class="n">AutoModelForImageTextToText</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="s2">&quot;Qwen/Qwen2-VL-7B-Instruct&quot;</span><span class="p">,</span> <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+<span class="n">vproc</span> <span class="o">=</span> <span class="n">AutoProcessor</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;Qwen/Qwen2-VL-7B-Instruct&quot;</span><span class="p">)</span>
+
+<span class="n">messages</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span>
+    <span class="p">[{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;image&quot;</span><span class="p">,</span> <span class="s2">&quot;image&quot;</span><span class="p">:</span> <span class="n">im</span><span class="p">}</span> <span class="k">for</span> <span class="n">im</span> <span class="ow">in</span> <span class="n">retrieved_images</span><span class="p">]</span>
+    <span class="o">+</span> <span class="p">[{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">query</span>
+        <span class="o">+</span> <span class="s2">&quot; Cite the page number you used.&quot;</span><span class="p">}]}]</span>
+<span class="n">prompt</span> <span class="o">=</span> <span class="n">vproc</span><span class="o">.</span><span class="n">apply_chat_template</span><span class="p">(</span><span class="n">messages</span><span class="p">,</span> <span class="n">add_generation_prompt</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">tokenize</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="n">vin</span> <span class="o">=</span> <span class="n">vproc</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="p">[</span><span class="n">prompt</span><span class="p">],</span> <span class="n">images</span><span class="o">=</span><span class="n">retrieved_images</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">vlm</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="o">**</span><span class="n">vin</span><span class="p">,</span> <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">256</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">vproc</span><span class="o">.</span><span class="n">batch_decode</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)[</span><span class="mi">0</span><span class="p">])</span>
+</code></pre></div>
+<h3 id="why-no-ocr-is-a-feature-not-a-hack">Why &ldquo;no OCR&rdquo; Is a Feature, Not a Hack<a class="headerlink" href="#why-no-ocr-is-a-feature-not-a-hack" title="Permanent link">¶</a></h3>
+<p>The instinct of a careful engineer is to distrust skipping OCR — surely text is more reliable than pixels? But consider what survives the round-trip. A bar chart&rsquo;s <em>meaning</em> is the relative height of bars; OCR captures only the axis labels and legend, discarding the comparison. A complex table&rsquo;s meaning is its 2-D structure; linearized OCR text frequently scrambles which number belongs to which row/column header. The page-as-image approach keeps the layout, the chart geometry, the equation rendering, and the spatial relationships intact, and a modern VLM can read all of it. You trade OCR&rsquo;s parsing errors for the VLM&rsquo;s vision — and for visually rich documents that is a strongly favorable trade.</p>
+<p>The cost is on the <strong>generation</strong> side: page images are expensive in tokens. A single high-resolution page can consume hundreds to over a thousand vision tokens in the VLM&rsquo;s context, so retrieving <span class="arithmatex">\(k=10\)</span> pages can blow a context budget that <span class="arithmatex">\(k=10\)</span> text chunks would not. This makes <strong>precision of retrieval</strong> more important here than in text RAG — you want the top 1–3 pages to be right, because you cannot afford to dump 20 page images into the VLM. It also makes reranking valuable.</p>
+<h2 id="visual-reranking-and-hybrid-strategies">Visual Reranking and Hybrid Strategies<a class="headerlink" href="#visual-reranking-and-hybrid-strategies" title="Permanent link">¶</a></h2>
+<p>Late-interaction retrieval already does fine-grained matching, so do we still need a reranker? Often yes — for the same staged-funnel reason as text RAG (see <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a>). Three flavors of visual reranking exist.</p>
+<ol>
+<li>
+<p><strong>Exact-MaxSim rerank.</strong> If candidate generation was approximate (HNSW union, MUVERA, or PLAID centroid pruning), recomputing exact MaxSim on the shortlist is itself a reranker. Cheap and almost always worth it.</p>
+</li>
+<li>
+<p><strong>Cross-encoder / VLM-as-judge rerank.</strong> Pass each candidate page <em>image</em> and the query jointly into a VLM and ask for a relevance score. This is the visual analogue of a text cross-encoder: maximally expressive (full cross-attention between query and page) but expensive, so apply it only to the top ~20 candidates. A prompt like &ldquo;On a scale of 0–10, does this page contain the information to answer: <code>&lt;query&gt;</code>?&rdquo; turns any capable VLM into a reranker.</p>
+</li>
+<li>
+<p><strong>Hybrid with text/OCR signals.</strong> Nothing forbids running OCR <em>in addition</em> for a BM25 lexical channel (see hybrid search). For documents with exact identifiers — invoice numbers, part codes, legal citations — a lexical match on OCR&rsquo;d text is unbeatable, while ColPali handles the semantic/visual layout. Fuse the rankings with Reciprocal Rank Fusion (RRF):</p>
+</li>
+</ol>
+<div class="arithmatex">\[
+\text{RRF}(d) = \sum_{r \in \{\text{ColPali},\,\text{BM25}\}} \frac{1}{k + \operatorname{rank}_r(d)}, \quad k \approx 60
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">reciprocal_rank_fusion</span><span class="p">(</span><span class="n">rankings</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">60</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;rankings: list of ranked lists, each a list of page_ids best-first.&quot;&quot;&quot;</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">ranking</span> <span class="ow">in</span> <span class="n">rankings</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">rank</span><span class="p">,</span> <span class="n">pid</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">ranking</span><span class="p">):</span>
+            <span class="n">scores</span><span class="p">[</span><span class="n">pid</span><span class="p">]</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">k</span> <span class="o">+</span> <span class="n">rank</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="o">-</span><span class="n">scores</span><span class="p">[</span><span class="n">p</span><span class="p">])</span>
+
+<span class="n">colpali_order</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;p17&quot;</span><span class="p">,</span> <span class="s2">&quot;p4&quot;</span><span class="p">,</span> <span class="s2">&quot;p23&quot;</span><span class="p">,</span> <span class="s2">&quot;p9&quot;</span><span class="p">]</span>
+<span class="n">bm25_order</span>    <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;p4&quot;</span><span class="p">,</span> <span class="s2">&quot;p17&quot;</span><span class="p">,</span> <span class="s2">&quot;p88&quot;</span><span class="p">,</span> <span class="s2">&quot;p23&quot;</span><span class="p">]</span>   <span class="c1"># from OCR + BM25</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">reciprocal_rank_fusion</span><span class="p">([</span><span class="n">colpali_order</span><span class="p">,</span> <span class="n">bm25_order</span><span class="p">]))</span>
+</code></pre></div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Your team retrieves over 2 million scanned pages. ColPali at 1024 patches/page would need a multi-vector index in the tens-to-hundreds of GB and exact MaxSim is too slow to scan. Walk me through a serving design that hits sub-200 ms p95 retrieval latency.</p>
+<p><strong>A:</strong> I would build a three-stage funnel and aggressively compress. <strong>(1) Compression at index time:</strong> token-pool each page from 1024 to ~128 patches via clustering, then store residuals at 1–2 bits/dim (PLAID) or binary-quantize. That alone shrinks 2M pages from hundreds of GB to a few tens of GB that fit in RAM across a couple of shards. <strong>(2) Approximate candidate generation:</strong> either PLAID&rsquo;s centroid-based retrieval or a MUVERA fixed-dimensional encoding so each query token hits a standard HNSW index; take the union of, say, the top few hundred candidate pages. This stage never touches full-precision vectors. <strong>(3) Exact MaxSim rerank:</strong> decompress the full fp16 patches for only those few hundred candidates (the two-tier storage split, full vectors memory-mapped on NVMe) and compute exact MaxSim, returning the top 3–5 pages. The latency budget goes mostly to stage 2&rsquo;s ANN graph traversal; stage 3 is a few hundred small matmuls. I would shard by document, replicate for QPS, cache query embeddings for repeated queries, and keep generation precision high by returning few but accurate pages. If latency still misses, I trade recall for speed by lowering <code>ef</code>/<code>nprobe</code> and the per-token top-<span class="arithmatex">\(k\)</span>, and I validate the recall hit on a held-out ViDoRe-style eval before shipping.</p>
+</div>
+<h2 id="evaluation-vidore-and-what-to-measure">Evaluation: ViDoRe and What to Measure<a class="headerlink" href="#evaluation-vidore-and-what-to-measure" title="Permanent link">¶</a></h2>
+<p>You cannot tune what you cannot measure, and visual-document retrieval needed its own benchmark because text-retrieval datasets do not exist as page images. <strong>ViDoRe</strong> (the Visual Document Retrieval Benchmark, introduced alongside ColPali) is the standard. It contains query–page tasks spanning academic papers, figures, infographics, tables, and multi-domain documents (medical, energy, government, AI), in multiple languages, with both synthetic and human-curated queries. Crucially, each task is <em>page-level</em>: given a query, retrieve the correct page(s) from a corpus of page images.</p>
+<p>The primary metric is <strong>nDCG@k</strong> (Normalized Discounted Cumulative Gain), with <strong>Recall@k</strong> and <strong>MRR</strong> as companions. nDCG rewards placing relevant pages near the top and discounts gains logarithmically by rank:</p>
+<div class="arithmatex">\[
+\text{DCG@}k = \sum_{i=1}^{k} \frac{2^{\text{rel}_i} - 1}{\log_2(i + 1)}, \qquad \text{nDCG@}k = \frac{\text{DCG@}k}{\text{IDCG@}k}
+\]</div>
+<p>where <span class="arithmatex">\(\text{rel}_i\)</span> is the relevance of the page at rank <span class="arithmatex">\(i\)</span> and IDCG is the DCG of the ideal ordering (so nDCG <span class="arithmatex">\(\in [0, 1]\)</span>).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dcg</span><span class="p">(</span><span class="n">relevances</span><span class="p">):</span>
+    <span class="n">relevances</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">relevances</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">discounts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">relevances</span><span class="o">.</span><span class="n">size</span> <span class="o">+</span> <span class="mi">2</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="mi">2</span><span class="o">**</span><span class="n">relevances</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">discounts</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">ndcg_at_k</span><span class="p">(</span><span class="n">retrieved_rels</span><span class="p">,</span> <span class="n">ideal_rels</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;retrieved_rels: relevance of each retrieved page, in retrieved order.</span>
+<span class="sd">       ideal_rels: all true relevances sorted descending (for the ideal ranking).&quot;&quot;&quot;</span>
+    <span class="n">actual</span> <span class="o">=</span> <span class="n">dcg</span><span class="p">(</span><span class="n">retrieved_rels</span><span class="p">[:</span><span class="n">k</span><span class="p">])</span>
+    <span class="n">ideal</span>  <span class="o">=</span> <span class="n">dcg</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">ideal_rels</span><span class="p">,</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)[:</span><span class="n">k</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">actual</span> <span class="o">/</span> <span class="n">ideal</span> <span class="k">if</span> <span class="n">ideal</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+
+<span class="c1"># Retrieved pages had relevances [1, 0, 1, 0, 0]; one other relevant page (rel 1)</span>
+<span class="c1"># existed but was missed, so the ideal top-5 is [1, 1, 1, 0, 0].</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">ndcg_at_k</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">k</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span> <span class="mi">4</span><span class="p">))</span>
+</code></pre></div>
+<p>A few measurement subtleties specific to this setting:</p>
+<ul>
+<li><strong>Report retrieval and end-to-end separately.</strong> A page can be retrieved correctly yet the VLM still answers wrong, or vice versa. Measure nDCG@k for retrieval and an answer-correctness metric (exact match, LLM-as-judge; see <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a>) for the full pipeline.</li>
+<li><strong>Watch DPI and resolution.</strong> Rendering pages too low-res hurts ColPali&rsquo;s patch evidence and the VLM&rsquo;s reading; too high-res inflates cost. ViDoRe-style ablations across DPI catch this.</li>
+<li><strong>Beware synthetic-query leakage.</strong> Synthetic queries generated by the <em>same</em> family of models used in retrieval can inflate scores; trust human-curated splits more. ViDoRe-v2 specifically broadened domains and tightened this.</li>
+<li><strong>Language and OCR-hardness.</strong> ColPali&rsquo;s biggest wins over OCR pipelines are on non-Latin scripts, handwriting, and heavy-layout pages where OCR degrades; stratify your eval by document difficulty to see where the visual approach actually pays off.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: comparing ColPali to OCR on the wrong corpus</p>
+<p>If your corpus is clean, single-column, born-digital text (e.g., Markdown docs or simple PDFs), a good OCR/text pipeline will match or beat ColPali at a fraction of the index size — the page images buy you nothing because there is no visual structure to lose. ColPali earns its 100–1000× storage premium specifically on <strong>visually rich, layout-heavy, OCR-hostile</strong> documents. Always benchmark both on <em>your</em> corpus before committing; do not assume the fancier method wins universally.</p>
+</div>
+<h2 id="putting-it-together-when-to-reach-for-this">Putting It Together: When to Reach for This<a class="headerlink" href="#putting-it-together-when-to-reach-for-this" title="Permanent link">¶</a></h2>
+<p>The decision is a corpus question, not a fashion question. Reach for ColPali-style visual-document retrieval when:</p>
+<ul>
+<li>Your corpus is <strong>PDFs, slides, scans, or screenshots</strong> with meaningful <strong>layout, tables, figures, or charts</strong>.</li>
+<li>OCR is <strong>lossy or failing</strong> on your documents (multi-column, non-Latin scripts, handwriting, complex tables).</li>
+<li>You can afford a <strong>multi-vector index</strong> (or the compression to make it affordable) and you want to skip the brittle OCR-and-layout engineering entirely.</li>
+</ul>
+<p>Stay with text RAG (and OCR if needed) when the corpus is <strong>born-digital clean text</strong>, when <strong>index size is tightly constrained</strong>, or when you need <strong>exact lexical matching</strong> on identifiers as the dominant signal (though hybrid fusion lets you have both). And remember the cost asymmetry: visual retrieval shifts expense from a parsing pipeline (offline, one-time) to <strong>storage</strong> (multi-vector index) and <strong>generation tokens</strong> (page images in the VLM). For high-value, layout-heavy corpora that trade is usually worth it; for commodity text it usually is not.</p>
+<p>This chapter closes Part IX. The retrieval mechanisms here — dual encoders, late interaction, multi-vector indexing, staged reranking — are the same primitives you have seen throughout the part, recombined for pixels instead of tokens. The generation side hands off directly to Part X: see <a href="../10-multimodal-and-arch/02-vision-language-models.html">Vision-Language Models</a> for how the VLM actually reads those retrieved pages, and <a href="../10-multimodal-and-arch/01-vision-transformers.html">Vision Transformers &amp; Image Encoders</a> for the patch encoders that make any of this possible.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Single-vector cross-modal retrieval (CLIP/SigLIP)</strong> puts images and text in one space but compresses each page to one vector — an information bottleneck that fails on dense, multi-fact documents.</li>
+<li><strong>Late interaction (ColBERT&rsquo;s MaxSim)</strong> keeps one vector per token/patch and scores by summing each query token&rsquo;s best match, recovering fine-grained matching while keeping documents precomputable.</li>
+<li><strong>ColPali / ColQwen2</strong> extend late interaction to vision: a VLM turns a page <em>image</em> into ~1024 patch vectors (128-dim), scored against multi-vector text queries via MaxSim — <strong>no OCR required</strong>.</li>
+<li><strong>Multi-vector indexing is the engineering crux:</strong> ~1000× more vectors than single-vector means PLAID (residual/centroid compression), HNSW-over-patches, token pooling, MUVERA, and binary quantization are essential, not optional.</li>
+<li><strong>The OCR-free pipeline</strong> feeds retrieved <strong>page images</strong> straight to a VLM generator, preserving layout, tables, and charts that OCR destroys — but page images are token-expensive, so retrieval <strong>precision</strong> matters more than in text RAG.</li>
+<li><strong>Reranking still helps:</strong> exact-MaxSim rerank after approximate candidate generation, VLM-as-judge cross-encoding, and RRF fusion with OCR/BM25 for exact-identifier queries.</li>
+<li><strong>Evaluate on ViDoRe</strong> with nDCG@k/Recall@k, separating retrieval quality from end-to-end answer correctness, and stratify by document difficulty and language.</li>
+<li><strong>Reach for it on layout-heavy, OCR-hostile corpora</strong>; stay with text RAG on clean born-digital text where the storage premium buys nothing.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Visual-document retrieval went from a niche idea to a default for layout-heavy corpora in under two years, driven by the ColPali line of work and a fast-maturing indexing ecosystem.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2103.00020">Radford et al., <em>Learning Transferable Visual Models From Natural Language Supervision (CLIP)</em> (2021)</a> — the dual-encoder contrastive recipe that put images and text in a shared space.</li>
+<li><a href="https://arxiv.org/abs/2303.15343">Zhai et al., <em>Sigmoid Loss for Language Image Pre-Training (SigLIP)</em> (2023)</a> — sigmoid contrastive loss; the vision backbone underpinning PaliGemma and ColPali.</li>
+<li><a href="https://arxiv.org/abs/2004.12832">Khattab &amp; Zaharia, <em>ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT</em> (2020)</a> — introduced late interaction and the MaxSim operator.</li>
+</ul>
+<p><strong>Visual late interaction</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2407.01449">Faysse et al., <em>ColPali: Efficient Document Retrieval with Vision Language Models</em> (2024)</a> — the central paper of this chapter; VLM patch embeddings + MaxSim + the ViDoRe benchmark.</li>
+<li><a href="https://arxiv.org/abs/2205.09707">Santhanam et al., <em>PLAID: An Efficient Engine for Late Interaction Retrieval</em> (2022)</a> — residual compression and centroid pruning for production multi-vector indexing.</li>
+<li><a href="https://arxiv.org/abs/2405.19504">Jayaram et al., <em>MUVERA: Multi-Vector Retrieval via Fixed Dimensional Encodings</em> (2024)</a> — collapses multi-vector sets into single vectors so standard ANN indexes can do candidate generation.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/illuin-tech/colpali">illuin-tech/colpali (<code>colpali-engine</code>)</a> — reference ColPali/ColQwen2 training and inference.</li>
+<li><a href="https://github.com/stanford-futuredata/ColBERT">stanford-futuredata/ColBERT</a> — the original ColBERT + PLAID engine.</li>
+<li>Multi-vector support in Qdrant, Vespa (tensor MaxSim ranking), and Weaviate for building ColPali indexes on production vector databases.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Faysse et al., <em>ColPali: Efficient Document Retrieval with Vision Language Models</em>, 2024 — the foundational paper and source of the ViDoRe benchmark.</li>
+<li>Khattab &amp; Zaharia, <em>ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT</em>, SIGIR 2020.</li>
+<li>Santhanam et al., <em>ColBERTv2: Effective and Efficient Retrieval via Lightweight Late Interaction</em>, NAACL 2022.</li>
+<li>Santhanam et al., <em>PLAID: An Efficient Engine for Late Interaction Retrieval</em>, CIKM 2022.</li>
+<li>Radford et al., <em>Learning Transferable Visual Models From Natural Language Supervision (CLIP)</em>, ICML 2021.</li>
+<li>Zhai et al., <em>Sigmoid Loss for Language Image Pre-Training (SigLIP)</em>, ICCV 2023.</li>
+<li>Beyer et al., <em>PaliGemma: A versatile 3B VLM for transfer</em>, 2024 — the backbone of the original ColPali.</li>
+<li>Jayaram et al., <em>MUVERA: Multi-Vector Retrieval via Fixed Dimensional Encodings</em>, 2024.</li>
+<li>The <code>colpali-engine</code> and <code>ColBERT</code> open-source repositories for reference implementations.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="05-advanced-rag.html"><span class="pn-label">← Previous</span><span class="pn-title">Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</span></a>
+<a class="next" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="pn-label">Next →</span><span class="pn-title">Vision Transformers &amp; Image Encoders</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#cross-modal-dense-retrieval-clip-and-siglip">Cross-Modal Dense Retrieval: CLIP and SigLIP</a></li>
+<li class="toc-l3"><a href="#the-dual-encoder-contrastive-recipe">The Dual-Encoder Contrastive Recipe</a></li>
+<li class="toc-l3"><a href="#using-clipsiglip-for-visual-document-retrieval">Using CLIP/SigLIP for Visual-Document Retrieval</a></li>
+<li class="toc-l2"><a href="#late-interaction-from-colbert-to-colpali">Late Interaction: From ColBERT to ColPali</a></li>
+<li class="toc-l3"><a href="#the-colbert-idea">The ColBERT Idea</a></li>
+<li class="toc-l3"><a href="#colpali-late-interaction-over-page-patches">ColPali: Late Interaction Over Page Patches</a></li>
+<li class="toc-l3"><a href="#colqwen2-and-the-family">ColQwen2 and the Family</a></li>
+<li class="toc-l3"><a href="#training-colpali">Training ColPali</a></li>
+<li class="toc-l2"><a href="#a-worked-example-storage-and-scoring-cost">A Worked Example: Storage and Scoring Cost</a></li>
+<li class="toc-l2"><a href="#indexing-multi-vector-embeddings-at-scale">Indexing Multi-Vector Embeddings at Scale</a></li>
+<li class="toc-l3"><a href="#plaid-colberts-native-engine">PLAID: ColBERT&amp;rsquo;s Native Engine</a></li>
+<li class="toc-l3"><a href="#hnsw-over-flattened-patch-vectors">HNSW Over Flattened Patch Vectors</a></li>
+<li class="toc-l3"><a href="#token-pooling-and-compression">Token Pooling and Compression</a></li>
+<li class="toc-l2"><a href="#the-ocr-free-page-as-image-rag-pipeline">The OCR-Free Page-as-Image RAG Pipeline</a></li>
+<li class="toc-l3"><a href="#why-no-ocr-is-a-feature-not-a-hack">Why &amp;ldquo;no OCR&amp;rdquo; Is a Feature, Not a Hack</a></li>
+<li class="toc-l2"><a href="#visual-reranking-and-hybrid-strategies">Visual Reranking and Hybrid Strategies</a></li>
+<li class="toc-l2"><a href="#evaluation-vidore-and-what-to-measure">Evaluation: ViDoRe and What to Measure</a></li>
+<li class="toc-l2"><a href="#putting-it-together-when-to-reach-for-this">Putting It Together: When to Reach for This</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

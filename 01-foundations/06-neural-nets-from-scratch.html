@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neural Networks From Scratch: MLPs &amp; Backprop — The LLM Stack</title>
+<meta name="description" content="Build an MLP and backprop engine from scratch in pure numpy (micrograd-style autograd). Forward, backward, activations, init (Xavier/Kaiming), vanishing/explodi">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="active" href="06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part I — Mathematical &amp; Systems Foundations</div>
+<h1 id="16-neural-networks-from-scratch-mlps-backprop">1.6 Neural Networks From Scratch: MLPs &amp; Backprop<a class="headerlink" href="#16-neural-networks-from-scratch-mlps-backprop" title="Permanent link">¶</a></h1>
+<p>If you can build backpropagation from nothing — a few hundred lines of pure Python and NumPy, no PyTorch, no autograd library — then every large model in this book becomes legible. A 70-billion-parameter transformer is not a different <em>kind</em> of object than the two-layer multi-layer perceptron (MLP) we are about to construct; it is the same machine with more layers, fancier blocks, and a vastly larger matrix-multiply budget. The forward pass is still a chain of differentiable functions. The backward pass is still the chain rule applied mechanically, right to left. The optimizer is still &ldquo;nudge each parameter against its gradient.&rdquo;</p>
+<p>This chapter is the hinge of Part I. We take the linear algebra of <a href="../01-foundations/01-linear-algebra.html">Linear Algebra for Deep Learning</a>, the gradients and convexity of <a href="../01-foundations/03-calculus-optimization.html">Calculus, Optimization &amp; Convexity</a>, and the learning-theory framing of <a href="../01-foundations/05-ml-fundamentals.html">Machine Learning Fundamentals</a>, and fuse them into a working neural network. We build twice: first a <strong>scalar autograd engine</strong> (micrograd-style) that makes the chain rule physically visible one operation at a time, then a <strong>vectorized MLP</strong> that is fast enough to actually train. Along the way we confront the things that make deep networks hard in practice — the choice of activation, the initialization scheme (Xavier and Kaiming), the twin demons of vanishing and exploding gradients, and the stabilizing trick of batch normalization. We close with the interview question every ML engineer is eventually asked: <em>derive and implement backprop on a whiteboard.</em></p>
+<p>When you finish, the autograd machinery of <a href="../01-foundations/07-autodiff-pytorch.html">Automatic Differentiation &amp; PyTorch Internals</a> will feel like an engineering refinement of something you already understand, not magic.</p>
+<hr />
+<h2 id="the-mlp-a-function-you-can-differentiate">The MLP: A Function You Can Differentiate<a class="headerlink" href="#the-mlp-a-function-you-can-differentiate" title="Permanent link">¶</a></h2>
+<h3 id="what-a-neuron-computes">What a neuron computes<a class="headerlink" href="#what-a-neuron-computes" title="Permanent link">¶</a></h3>
+<p>The atom of a neural network is the <strong>artificial neuron</strong>: a weighted sum of inputs, a bias, and a nonlinearity. Given an input vector <span class="arithmatex">\(\mathbf{x} \in \mathbb{R}^{d}\)</span>, weights <span class="arithmatex">\(\mathbf{w} \in \mathbb{R}^{d}\)</span>, and bias <span class="arithmatex">\(b \in \mathbb{R}\)</span>, the neuron outputs</p>
+<div class="arithmatex">\[
+a = \phi\!\left(\mathbf{w}^\top \mathbf{x} + b\right) = \phi\!\left(\sum_{i=1}^{d} w_i x_i + b\right),
+\]</div>
+<p>where <span class="arithmatex">\(\phi\)</span> is an <strong>activation function</strong> (sigmoid, tanh, ReLU, …). The pre-activation <span class="arithmatex">\(z = \mathbf{w}^\top \mathbf{x} + b\)</span> is an affine function of the input; the activation <span class="arithmatex">\(\phi\)</span> bends it. Without <span class="arithmatex">\(\phi\)</span>, stacking neurons would collapse into a single affine map — composition of linear maps is linear — and the whole network could represent nothing more than a single matrix. The nonlinearity is what buys <em>depth</em>.</p>
+<p>A <strong>layer</strong> is a stack of neurons sharing the same input. Collect the per-neuron weight vectors as rows of a matrix <span class="arithmatex">\(W \in \mathbb{R}^{h \times d}\)</span> (for <span class="arithmatex">\(h\)</span> neurons) and the biases into <span class="arithmatex">\(\mathbf{b} \in \mathbb{R}^{h}\)</span>. Then the layer is</p>
+<div class="arithmatex">\[
+\mathbf{z} = W\mathbf{x} + \mathbf{b}, \qquad \mathbf{a} = \phi(\mathbf{z}),
+\]</div>
+<p>with <span class="arithmatex">\(\phi\)</span> applied elementwise. An <strong>MLP</strong> (also called a feed-forward network) is a chain of <span class="arithmatex">\(L\)</span> such layers:</p>
+<div class="arithmatex">\[
+\mathbf{a}^{(0)} = \mathbf{x}, \qquad
+\mathbf{z}^{(\ell)} = W^{(\ell)} \mathbf{a}^{(\ell-1)} + \mathbf{b}^{(\ell)}, \qquad
+\mathbf{a}^{(\ell)} = \phi^{(\ell)}\!\left(\mathbf{z}^{(\ell)}\right),
+\]</div>
+<p>for <span class="arithmatex">\(\ell = 1, \dots, L\)</span>. The final <span class="arithmatex">\(\mathbf{a}^{(L)}\)</span> is the network&rsquo;s prediction. Every modern architecture — including the feed-forward sublayer of a transformer block in <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a> — is built from exactly this primitive.</p>
+<h3 id="why-depth-and-width-matter">Why depth and width matter<a class="headerlink" href="#why-depth-and-width-matter" title="Permanent link">¶</a></h3>
+<p>The <strong>universal approximation theorem</strong> (Cybenko, Hornik) says a single hidden layer with enough neurons can approximate any continuous function on a compact set to arbitrary accuracy. So why go deep? Because <em>width</em> needed to represent certain functions can be exponential, while <em>depth</em> lets you represent the same function with polynomially many parameters by composing features. Depth trades a hard combinatorial problem (find one enormous layer) for an easier compositional one (find many small layers, each building on the last). The catch is that depth makes the optimization landscape harder — which is the entire reason initialization, normalization, and residual connections exist.</p>
+<h3 id="batching-from-vectors-to-matrices">Batching: from vectors to matrices<a class="headerlink" href="#batching-from-vectors-to-matrices" title="Permanent link">¶</a></h3>
+<p>We never train on one example at a time. Stack a mini-batch of <span class="arithmatex">\(N\)</span> inputs as rows of a matrix <span class="arithmatex">\(X \in \mathbb{R}^{N \times d}\)</span>. The layer becomes a single matrix multiply:</p>
+<div class="arithmatex">\[
+Z = X W^\top + \mathbf{1}\mathbf{b}^\top \in \mathbb{R}^{N \times h}, \qquad A = \phi(Z).
+\]</div>
+<p>Here <span class="arithmatex">\(\mathbf{1} \in \mathbb{R}^{N}\)</span> broadcasts the bias across rows. This <strong>batched, row-major</strong> convention (inputs as rows, <span class="arithmatex">\(W\)</span> stored so we right-multiply by <span class="arithmatex">\(W^\top\)</span>, or equivalently store <span class="arithmatex">\(W \in \mathbb{R}^{d \times h}\)</span> and compute <span class="arithmatex">\(XW\)</span>) is what every framework uses, because a big matmul is exactly what GPUs are built to do — see <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>. For the rest of this chapter we store layer weights as <span class="arithmatex">\(W \in \mathbb{R}^{d_{\text{in}} \times d_{\text{out}}}\)</span> and compute <span class="arithmatex">\(Z = XW + \mathbf{b}\)</span>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">affine_forward</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One linear layer, batched.</span>
+<span class="sd">    X: (N, d_in)  inputs as rows</span>
+<span class="sd">    W: (d_in, d_out)</span>
+<span class="sd">    b: (d_out,)</span>
+<span class="sd">    returns Z: (N, d_out)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">X</span> <span class="o">@</span> <span class="n">W</span> <span class="o">+</span> <span class="n">b</span>                       <span class="c1"># bias broadcasts over the N rows</span>
+
+<span class="c1"># Sanity check shapes with a toy batch.</span>
+<span class="n">N</span><span class="p">,</span> <span class="n">d_in</span><span class="p">,</span> <span class="n">d_out</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">5</span>
+<span class="n">X</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">d_in</span><span class="p">)</span>
+<span class="n">W</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">d_in</span><span class="p">,</span> <span class="n">d_out</span><span class="p">)</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">d_out</span><span class="p">)</span>
+<span class="n">Z</span> <span class="o">=</span> <span class="n">affine_forward</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">Z</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>                              <span class="c1"># (4, 5)</span>
+</code></pre></div>
+<hr />
+<h2 id="backpropagation-the-chain-rule-mechanized">Backpropagation: The Chain Rule, Mechanized<a class="headerlink" href="#backpropagation-the-chain-rule-mechanized" title="Permanent link">¶</a></h2>
+<h3 id="the-training-loop-in-one-breath">The training loop in one breath<a class="headerlink" href="#the-training-loop-in-one-breath" title="Permanent link">¶</a></h3>
+<p>We want to minimize a scalar <strong>loss</strong> <span class="arithmatex">\(L(\theta)\)</span> over parameters <span class="arithmatex">\(\theta = \{W^{(\ell)}, \mathbf{b}^{(\ell)}\}\)</span>. Gradient descent does</p>
+<div class="arithmatex">\[
+\theta \leftarrow \theta - \eta \, \nabla_\theta L,
+\]</div>
+<p>with <strong>learning rate</strong> <span class="arithmatex">\(\eta\)</span>. The only hard part is computing <span class="arithmatex">\(\nabla_\theta L\)</span>. For a network with millions of parameters, computing each partial derivative by a separate finite-difference probe would cost millions of forward passes. <strong>Backpropagation</strong> computes <em>all</em> partials in a single backward sweep — at roughly the same cost as one forward pass — by reusing intermediate results via the chain rule. This is the single most important algorithm in the book.</p>
+<h3 id="the-chain-rule-stated-precisely">The chain rule, stated precisely<a class="headerlink" href="#the-chain-rule-stated-precisely" title="Permanent link">¶</a></h3>
+<p>Let the loss be a composition <span class="arithmatex">\(L = f_k \circ f_{k-1} \circ \cdots \circ f_1\)</span>. The chain rule says the derivative of the composition is the product of the local derivatives. For scalars,</p>
+<div class="arithmatex">\[
+\frac{dL}{dx} = \frac{dL}{du_k}\frac{du_k}{du_{k-1}} \cdots \frac{du_1}{dx}.
+\]</div>
+<p>For vector/matrix intermediates we replace each <span class="arithmatex">\(\frac{du_i}{du_{i-1}}\)</span> by a Jacobian and the products by matrix multiplies. The crucial insight that makes backprop efficient: we evaluate this product <strong>right to left from the loss</strong>, carrying a running quantity called the <strong>upstream gradient</strong> (or <em>adjoint</em>). For every intermediate tensor <span class="arithmatex">\(u\)</span> we define</p>
+<div class="arithmatex">\[
+\bar{u} \;\equiv\; \frac{\partial L}{\partial u},
+\]</div>
+<p>a tensor the same shape as <span class="arithmatex">\(u\)</span>. Backprop is the rule for turning the adjoint of an operation&rsquo;s <em>output</em> into the adjoint of its <em>inputs</em>. We call that rule a <strong>vector-Jacobian product</strong> (VJP): we never materialize the full Jacobian, only its product with the upstream gradient.</p>
+<h3 id="forward-graph-backward-graph">Forward graph, backward graph<a class="headerlink" href="#forward-graph-backward-graph" title="Permanent link">¶</a></h3>
+<p>Think of the computation as a <strong>directed acyclic graph</strong> (DAG). Nodes are operations; edges carry tensors. The forward pass walks the graph from inputs to loss, caching whatever each node will need later. The backward pass walks the same graph <em>in reverse topological order</em>, and at each node converts output-adjoints into input-adjoints, accumulating into each tensor&rsquo;s <span class="arithmatex">\(\bar{u}\)</span>.</p>
+<div class="highlight"><pre><span></span><code>   FORWARD  (left -&gt; right)                 BACKWARD (right -&gt; left)
+   x --[*W1+b1]--&gt; z1 --[relu]--&gt; a1            x̄  &lt;--  z̄1  &lt;--  ā1
+                                  |                              |
+        a1 --[*W2+b2]--&gt; z2 --[softmax+CE]--&gt; L      ā1 &lt;- z̄2 &lt;- L̄=1
+   Each node caches its inputs.          Each node applies its VJP rule.
+</code></pre></div>
+<p>There are exactly two facts you must memorize, because <em>every</em> dense-layer gradient is one of them. Let <span class="arithmatex">\(Z = XW + \mathbf{b}\)</span> with upstream gradient <span class="arithmatex">\(\bar{Z} = \partial L / \partial Z\)</span>. Then</p>
+<div class="arithmatex">\[
+\boxed{\;\bar{W} = X^\top \bar{Z}, \qquad \bar{X} = \bar{Z}\, W^\top, \qquad \bar{\mathbf{b}} = \mathbf{1}^\top \bar{Z}.\;}
+\]</div>
+<p>The bias gradient sums the upstream gradient over the batch dimension. These three identities — derived in full in <a href="../01-foundations/01-linear-algebra.html">Linear Algebra for Deep Learning</a> — are the workhorses of backprop. Notice the elegant symmetry: the input adjoint <span class="arithmatex">\(\bar X\)</span> reuses <span class="arithmatex">\(W\)</span>, the weight adjoint <span class="arithmatex">\(\bar W\)</span> reuses <span class="arithmatex">\(X\)</span>. Each operand of the matmul shows up transposed in the other&rsquo;s gradient.</p>
+<h3 id="a-scalar-autograd-engine-micrograd-style">A scalar autograd engine (micrograd-style)<a class="headerlink" href="#a-scalar-autograd-engine-micrograd-style" title="Permanent link">¶</a></h3>
+<p>The cleanest way to <em>internalize</em> backprop is to build it for scalars, where there are no Jacobians to confuse you — every local derivative is a single number. We build a <code>Value</code> class that wraps a float, records how it was produced, and knows how to push gradients to its parents. This is the micrograd pattern popularized by Andrej Karpathy, reconstructed here.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Value</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A scalar that remembers how it was computed, so it can backprop.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">_children</span><span class="o">=</span><span class="p">(),</span> <span class="n">_op</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">data</span>            <span class="c1"># the forward value (a float)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">grad</span> <span class="o">=</span> <span class="mf">0.0</span>             <span class="c1"># dL/d(self), accumulated during backward</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_backward</span> <span class="o">=</span> <span class="k">lambda</span><span class="p">:</span> <span class="kc">None</span>   <span class="c1"># closure: pushes grad to parents</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prev</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">_children</span><span class="p">)</span>     <span class="c1"># parent Values in the graph</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_op</span> <span class="o">=</span> <span class="n">_op</span>                  <span class="c1"># label, for debugging/visualization</span>
+
+    <span class="c1"># ---- arithmetic: each op builds a new node AND defines its local VJP ----</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__add__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="n">other</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">Value</span><span class="p">)</span> <span class="k">else</span> <span class="n">Value</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">Value</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">+</span> <span class="n">other</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">),</span> <span class="s2">&quot;+&quot;</span><span class="p">)</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_backward</span><span class="p">():</span>
+            <span class="c1"># d(a+b)/da = 1, d(a+b)/db = 1  -&gt; just pass the upstream grad through</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">grad</span>  <span class="o">+=</span> <span class="mf">1.0</span> <span class="o">*</span> <span class="n">out</span><span class="o">.</span><span class="n">grad</span>
+            <span class="n">other</span><span class="o">.</span><span class="n">grad</span> <span class="o">+=</span> <span class="mf">1.0</span> <span class="o">*</span> <span class="n">out</span><span class="o">.</span><span class="n">grad</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">_backward</span> <span class="o">=</span> <span class="n">_backward</span>
+        <span class="k">return</span> <span class="n">out</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__mul__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="n">other</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">Value</span><span class="p">)</span> <span class="k">else</span> <span class="n">Value</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">Value</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">*</span> <span class="n">other</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">),</span> <span class="s2">&quot;*&quot;</span><span class="p">)</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_backward</span><span class="p">():</span>
+            <span class="c1"># d(a*b)/da = b, d(a*b)/db = a  -&gt; multiply upstream by the OTHER operand</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">grad</span>  <span class="o">+=</span> <span class="n">other</span><span class="o">.</span><span class="n">data</span> <span class="o">*</span> <span class="n">out</span><span class="o">.</span><span class="n">grad</span>
+            <span class="n">other</span><span class="o">.</span><span class="n">grad</span> <span class="o">+=</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span>  <span class="o">*</span> <span class="n">out</span><span class="o">.</span><span class="n">grad</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">_backward</span> <span class="o">=</span> <span class="n">_backward</span>
+        <span class="k">return</span> <span class="n">out</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__pow__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">p</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">))</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">Value</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">**</span> <span class="n">p</span><span class="p">,</span> <span class="p">(</span><span class="bp">self</span><span class="p">,),</span> <span class="sa">f</span><span class="s2">&quot;**</span><span class="si">{</span><span class="n">p</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_backward</span><span class="p">():</span>
+            <span class="c1"># d(a**p)/da = p * a**(p-1)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">grad</span> <span class="o">+=</span> <span class="p">(</span><span class="n">p</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">**</span> <span class="p">(</span><span class="n">p</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span> <span class="o">*</span> <span class="n">out</span><span class="o">.</span><span class="n">grad</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">_backward</span> <span class="o">=</span> <span class="n">_backward</span>
+        <span class="k">return</span> <span class="n">out</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">relu</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">Value</span><span class="p">(</span><span class="mf">0.0</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="p">(</span><span class="bp">self</span><span class="p">,),</span> <span class="s2">&quot;relu&quot;</span><span class="p">)</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_backward</span><span class="p">():</span>
+            <span class="c1"># derivative is 0 where input&lt;0, else 1 (the &quot;gate&quot; passes grad or blocks it)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">grad</span> <span class="o">+=</span> <span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">data</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">*</span> <span class="n">out</span><span class="o">.</span><span class="n">grad</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">_backward</span> <span class="o">=</span> <span class="n">_backward</span>
+        <span class="k">return</span> <span class="n">out</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">tanh</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">t</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">tanh</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">Value</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="p">(</span><span class="bp">self</span><span class="p">,),</span> <span class="s2">&quot;tanh&quot;</span><span class="p">)</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_backward</span><span class="p">():</span>
+            <span class="c1"># d(tanh)/dx = 1 - tanh(x)^2</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">grad</span> <span class="o">+=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">t</span> <span class="o">*</span> <span class="n">t</span><span class="p">)</span> <span class="o">*</span> <span class="n">out</span><span class="o">.</span><span class="n">grad</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">_backward</span> <span class="o">=</span> <span class="n">_backward</span>
+        <span class="k">return</span> <span class="n">out</span>
+
+    <span class="c1"># ---- the backward pass: reverse topological order over the DAG ----</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">topo</span><span class="p">,</span> <span class="n">visited</span> <span class="o">=</span> <span class="p">[],</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">build</span><span class="p">(</span><span class="n">v</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">v</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">visited</span><span class="p">:</span>
+                <span class="n">visited</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="n">v</span><span class="o">.</span><span class="n">_prev</span><span class="p">:</span>
+                    <span class="n">build</span><span class="p">(</span><span class="n">child</span><span class="p">)</span>
+                <span class="n">topo</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>         <span class="c1"># children appended before parents</span>
+        <span class="n">build</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">grad</span> <span class="o">=</span> <span class="mf">1.0</span>                <span class="c1"># seed: dL/dL = 1</span>
+        <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="nb">reversed</span><span class="p">(</span><span class="n">topo</span><span class="p">):</span>       <span class="c1"># parents to children, i.e. loss -&gt; inputs</span>
+            <span class="n">v</span><span class="o">.</span><span class="n">_backward</span><span class="p">()</span>              <span class="c1"># each node pushes grad to its parents</span>
+
+    <span class="c1"># ---- conveniences so we can write natural math ----</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__neg__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>        <span class="k">return</span> <span class="bp">self</span> <span class="o">*</span> <span class="o">-</span><span class="mi">1</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">o</span><span class="p">):</span>     <span class="k">return</span> <span class="bp">self</span> <span class="o">+</span> <span class="p">(</span><span class="o">-</span><span class="n">o</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__radd__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">o</span><span class="p">):</span>    <span class="k">return</span> <span class="bp">self</span> <span class="o">+</span> <span class="n">o</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__rmul__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">o</span><span class="p">):</span>    <span class="k">return</span> <span class="bp">self</span> <span class="o">*</span> <span class="n">o</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__truediv__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">o</span><span class="p">):</span> <span class="k">return</span> <span class="bp">self</span> <span class="o">*</span> <span class="p">(</span><span class="n">o</span> <span class="o">**</span> <span class="o">-</span><span class="mi">1</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">o</span><span class="p">,</span> <span class="n">Value</span><span class="p">)</span> <span class="k">else</span> <span class="n">o</span> <span class="o">**</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>       <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Value(data=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, grad=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">grad</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">)&quot;</span>
+</code></pre></div>
+<p>Three things make this work. First, <strong>each operation builds a new node and defines a closure</strong> <code>_backward</code> that knows the local derivative — the VJP rule for that op. Second, <strong>gradients accumulate</strong> (<code>+=</code>, not <code>=</code>) because a value used in two places receives gradient along both paths; summing them is exactly the multivariate chain rule. Third, <strong>the topological sort</strong> guarantees we only call a node&rsquo;s <code>_backward</code> after its output&rsquo;s gradient is fully assembled.</p>
+<p>Let us verify it against calculus by hand on a tiny expression. Build <span class="arithmatex">\(L = (x \cdot w + b)\)</span> then a ReLU then square the error against a target — a one-neuron regression.</p>
+<div class="highlight"><pre><span></span><code><span class="n">x</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">Value</span><span class="p">(</span><span class="mf">2.0</span><span class="p">),</span> <span class="n">Value</span><span class="p">(</span><span class="o">-</span><span class="mf">3.0</span><span class="p">),</span> <span class="n">Value</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+<span class="n">z</span> <span class="o">=</span> <span class="n">x</span> <span class="o">*</span> <span class="n">w</span> <span class="o">+</span> <span class="n">b</span>                 <span class="c1"># z = 2*(-3) + 1 = -5</span>
+<span class="n">a</span> <span class="o">=</span> <span class="n">z</span><span class="o">.</span><span class="n">relu</span><span class="p">()</span>                  <span class="c1"># relu(-5) = 0</span>
+<span class="n">target</span> <span class="o">=</span> <span class="n">Value</span><span class="p">(</span><span class="mf">4.0</span><span class="p">)</span>
+<span class="n">loss</span> <span class="o">=</span> <span class="p">(</span><span class="n">a</span> <span class="o">-</span> <span class="n">target</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>      <span class="c1"># (0 - 4)^2 = 16</span>
+<span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;loss = </span><span class="si">{</span><span class="n">loss</span><span class="o">.</span><span class="n">data</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 16.0</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;dL/dw = </span><span class="si">{</span><span class="n">w</span><span class="o">.</span><span class="n">grad</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>    <span class="c1"># 0.0  (ReLU gate is closed: z&lt;0 blocks all gradient)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;dL/dx = </span><span class="si">{</span><span class="n">x</span><span class="o">.</span><span class="n">grad</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>    <span class="c1"># 0.0</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;dL/db = </span><span class="si">{</span><span class="n">b</span><span class="o">.</span><span class="n">grad</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>    <span class="c1"># 0.0</span>
+</code></pre></div>
+<p>Every gradient is zero because the ReLU&rsquo;s input was negative, so the gate is shut and no gradient flows back — a vivid demonstration of the <strong>dead-ReLU</strong> phenomenon we revisit below. Flip the sign of <code>w</code> to <code>+3.0</code> and you will see nonzero gradients flow, because the gate opens. This single closure-per-op design <em>is</em> reverse-mode automatic differentiation; <a href="../01-foundations/07-autodiff-pytorch.html">Automatic Differentiation &amp; PyTorch Internals</a> is the same idea scaled to tensors with a tape and C++ kernels.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: forgetting to zero gradients</p>
+<p>Because gradients <strong>accumulate</strong> (<code>+=</code>), you must reset every parameter&rsquo;s <code>.grad</code> to zero before each backward pass, or you will sum gradients across iterations and your steps will be garbage. In PyTorch this is <code>optimizer.zero_grad()</code>; in our engine you would loop and set <code>p.grad = 0.0</code>. Accumulation is a feature — it is how you implement gradient accumulation over micro-batches — but forgetting to zero is one of the most common beginner bugs, and it fails silently (training just diverges or stalls).</p>
+</div>
+<hr />
+<h2 id="a-vectorized-mlp-in-pure-numpy">A Vectorized MLP in Pure NumPy<a class="headerlink" href="#a-vectorized-mlp-in-pure-numpy" title="Permanent link">¶</a></h2>
+<p>The scalar engine is for understanding; it would take hours to train MNIST one float at a time. Production backprop is <strong>vectorized</strong>: each layer is a matrix op and its VJP is a matrix op. We now write a complete, runnable MLP classifier in NumPy, with the layer gradients derived above. No autograd — we write the backward pass by hand, which is the best way to truly own it.</p>
+<h3 id="activations-and-their-derivatives">Activations and their derivatives<a class="headerlink" href="#activations-and-their-derivatives" title="Permanent link">¶</a></h3>
+<p>We need each activation paired with its derivative (expressed in terms of cached forward quantities, which is what makes backprop cheap).</p>
+<table>
+<thead>
+<tr>
+<th>Activation</th>
+<th><span class="arithmatex">\(\phi(z)\)</span></th>
+<th><span class="arithmatex">\(\phi'(z)\)</span></th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sigmoid</td>
+<td><span class="arithmatex">\(\sigma(z)=\frac{1}{1+e^{-z}}\)</span></td>
+<td><span class="arithmatex">\(\sigma(z)\,(1-\sigma(z))\)</span></td>
+<td>saturates; gradient <span class="arithmatex">\(\le 0.25\)</span></td>
+</tr>
+<tr>
+<td>Tanh</td>
+<td><span class="arithmatex">\(\tanh(z)\)</span></td>
+<td><span class="arithmatex">\(1-\tanh^2(z)\)</span></td>
+<td>zero-centered; saturates</td>
+</tr>
+<tr>
+<td>ReLU</td>
+<td><span class="arithmatex">\(\max(0,z)\)</span></td>
+<td><span class="arithmatex">\(\mathbb{1}[z&gt;0]\)</span></td>
+<td>cheap; can &ldquo;die&rdquo;</td>
+</tr>
+<tr>
+<td>Leaky ReLU</td>
+<td><span class="arithmatex">\(\max(\alpha z, z)\)</span></td>
+<td><span class="arithmatex">\(\alpha\)</span> if <span class="arithmatex">\(z&lt;0\)</span> else <span class="arithmatex">\(1\)</span></td>
+<td>fixes dead units</td>
+</tr>
+<tr>
+<td>GELU</td>
+<td><span class="arithmatex">\(z\,\Phi(z)\)</span></td>
+<td><span class="arithmatex">\(\Phi(z)+z\,\phi(z)\)</span></td>
+<td>smooth; LLM default</td>
+</tr>
+</tbody>
+</table>
+<p>GELU (Gaussian Error Linear Unit; <span class="arithmatex">\(\Phi\)</span> is the standard normal CDF) is the activation inside most transformer feed-forward blocks; we cover it in <a href="../02-transformer/06-transformer-block.html">The Transformer Block</a>. For our from-scratch MLP we use ReLU, whose derivative is a simple gate.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">relu</span><span class="p">(</span><span class="n">z</span><span class="p">):</span>        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">z</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">relu_grad</span><span class="p">(</span><span class="n">z</span><span class="p">):</span>   <span class="k">return</span> <span class="p">(</span><span class="n">z</span> <span class="o">&gt;</span> <span class="mf">0.0</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">z</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">softmax</span><span class="p">(</span><span class="n">z</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Numerically stable softmax over the last axis. (See chapter 1.4 on numerics.)&quot;&quot;&quot;</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="n">z</span> <span class="o">-</span> <span class="n">z</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>        <span class="c1"># subtract max -&gt; no overflow in exp</span>
+    <span class="n">e</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">z</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">e</span> <span class="o">/</span> <span class="n">e</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>The max-subtraction trick prevents <span class="arithmatex">\(e^{z}\)</span> from overflowing in float32 — the same numerical-stability concern detailed in <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a>.</p>
+<h3 id="the-softmax-cross-entropy-gradient">The softmax + cross-entropy gradient<a class="headerlink" href="#the-softmax-cross-entropy-gradient" title="Permanent link">¶</a></h3>
+<p>For classification we end with a softmax over <span class="arithmatex">\(C\)</span> classes and the <strong>cross-entropy</strong> loss. Given logits <span class="arithmatex">\(\mathbf{z} \in \mathbb{R}^{C}\)</span>, probabilities <span class="arithmatex">\(\mathbf{p} = \operatorname{softmax}(\mathbf{z})\)</span>, and one-hot target <span class="arithmatex">\(\mathbf{y}\)</span>, the per-example loss is <span class="arithmatex">\(L = -\sum_c y_c \log p_c\)</span>. The gradient through the <em>combined</em> softmax-cross-entropy is famously clean:</p>
+<div class="arithmatex">\[
+\frac{\partial L}{\partial \mathbf{z}} = \mathbf{p} - \mathbf{y}.
+\]</div>
+<p>This is one of the most satisfying identities in deep learning: the gradient of the logits is simply &ldquo;predicted minus true.&rdquo; It is also why we fuse the two operations — computing them separately and chaining their Jacobians would be wasteful and numerically worse. The derivation lives in <a href="../01-foundations/02-probability-information.html">Probability, Statistics &amp; Information Theory</a>; here we just use it.</p>
+<h3 id="the-full-mlp-class">The full MLP class<a class="headerlink" href="#the-full-mlp-class" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MLP</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A from-scratch multi-layer perceptron classifier with hand-written backprop.</span>
+
+<span class="sd">    sizes: e.g. [784, 256, 128, 10] -&gt; input 784, two hidden layers, 10 classes.</span>
+<span class="sd">    Hidden layers use ReLU; the output layer feeds softmax + cross-entropy.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sizes</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+        <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sizes</span> <span class="o">=</span> <span class="n">sizes</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">b</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">d_in</span><span class="p">,</span> <span class="n">d_out</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">sizes</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">sizes</span><span class="p">[</span><span class="mi">1</span><span class="p">:]):</span>
+            <span class="c1"># Kaiming/He init for ReLU: variance 2/d_in keeps signal scale ~constant.</span>
+            <span class="n">std</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">2.0</span> <span class="o">/</span> <span class="n">d_in</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">W</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">std</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">d_in</span><span class="p">,</span> <span class="n">d_out</span><span class="p">)))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">b</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">d_out</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">X</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return logits and a cache of intermediates needed for backward.&quot;&quot;&quot;</span>
+        <span class="n">cache</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;A&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">X</span><span class="p">]}</span>                      <span class="c1"># activations, A[0] = input</span>
+        <span class="n">cache</span><span class="p">[</span><span class="s2">&quot;Z&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>                          <span class="c1"># pre-activations</span>
+        <span class="n">A</span> <span class="o">=</span> <span class="n">X</span>
+        <span class="n">L</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">L</span><span class="p">):</span>
+            <span class="n">Z</span> <span class="o">=</span> <span class="n">A</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">W</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">b</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>        <span class="c1"># affine</span>
+            <span class="n">cache</span><span class="p">[</span><span class="s2">&quot;Z&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Z</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">L</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>                        <span class="c1"># hidden layers: ReLU</span>
+                <span class="n">A</span> <span class="o">=</span> <span class="n">relu</span><span class="p">(</span><span class="n">Z</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>                                <span class="c1"># output layer: leave as logits</span>
+                <span class="n">A</span> <span class="o">=</span> <span class="n">Z</span>
+            <span class="n">cache</span><span class="p">[</span><span class="s2">&quot;A&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">A</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">A</span><span class="p">,</span> <span class="n">cache</span>                          <span class="c1"># A is the logits (N, C)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">loss_and_grads</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Forward, compute cross-entropy loss, then backprop all gradients.&quot;&quot;&quot;</span>
+        <span class="n">N</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">logits</span><span class="p">,</span> <span class="n">cache</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">X</span><span class="p">)</span>
+        <span class="n">P</span> <span class="o">=</span> <span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">)</span>                      <span class="c1"># (N, C) probabilities</span>
+
+        <span class="c1"># cross-entropy loss, averaged over the batch</span>
+        <span class="c1"># pick the prob of the true class for each row; -log of it</span>
+        <span class="n">correct_logp</span> <span class="o">=</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">P</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">N</span><span class="p">),</span> <span class="n">y</span><span class="p">]</span> <span class="o">+</span> <span class="mf">1e-12</span><span class="p">)</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">correct_logp</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+        <span class="c1"># ---- BACKWARD ----</span>
+        <span class="c1"># Seed: dL/dlogits = (P - onehot(y)) / N  (softmax+CE fused gradient)</span>
+        <span class="n">dZ</span> <span class="o">=</span> <span class="n">P</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+        <span class="n">dZ</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">N</span><span class="p">),</span> <span class="n">y</span><span class="p">]</span> <span class="o">-=</span> <span class="mf">1.0</span>
+        <span class="n">dZ</span> <span class="o">/=</span> <span class="n">N</span>                                  <span class="c1"># because loss was a mean over N</span>
+
+        <span class="n">dW</span> <span class="o">=</span> <span class="p">[</span><span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W</span><span class="p">)</span>
+        <span class="n">db</span> <span class="o">=</span> <span class="p">[</span><span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">b</span><span class="p">)</span>
+        <span class="n">L</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">reversed</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">L</span><span class="p">)):</span>
+            <span class="n">A_prev</span> <span class="o">=</span> <span class="n">cache</span><span class="p">[</span><span class="s2">&quot;A&quot;</span><span class="p">][</span><span class="n">i</span><span class="p">]</span>               <span class="c1"># input to layer i, shape (N, d_in)</span>
+            <span class="c1"># The two golden identities:</span>
+            <span class="n">dW</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">A_prev</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">dZ</span>                <span class="c1"># (d_in, d_out)  =  X^T @ dZ</span>
+            <span class="n">db</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">dZ</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>               <span class="c1"># sum upstream grad over the batch</span>
+            <span class="k">if</span> <span class="n">i</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>                            <span class="c1"># propagate to the previous layer</span>
+                <span class="n">dA_prev</span> <span class="o">=</span> <span class="n">dZ</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">W</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">T</span>       <span class="c1"># (N, d_in)  =  dZ @ W^T</span>
+                <span class="c1"># gate the gradient through the ReLU of layer i-1</span>
+                <span class="n">dZ</span> <span class="o">=</span> <span class="n">dA_prev</span> <span class="o">*</span> <span class="n">relu_grad</span><span class="p">(</span><span class="n">cache</span><span class="p">[</span><span class="s2">&quot;Z&quot;</span><span class="p">][</span><span class="n">i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">])</span>
+        <span class="k">return</span> <span class="n">loss</span><span class="p">,</span> <span class="n">dW</span><span class="p">,</span> <span class="n">db</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dW</span><span class="p">,</span> <span class="n">db</span><span class="p">,</span> <span class="n">lr</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Vanilla SGD parameter update.&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W</span><span class="p">)):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">W</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">-=</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">dW</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">b</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">-=</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">db</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">predict</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">X</span><span class="p">):</span>
+        <span class="n">logits</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">X</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">logits</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>
+<p>Read the backward loop carefully — it is the entire chapter compressed into ten lines. We seed <code>dZ</code> with the fused softmax-cross-entropy gradient <span class="arithmatex">\((\mathbf{p}-\mathbf{y})/N\)</span>. Then for each layer, right to left, we apply <span class="arithmatex">\(\bar W = X^\top \bar Z\)</span> and <span class="arithmatex">\(\bar{\mathbf b}=\mathbf 1^\top\bar Z\)</span>, propagate <span class="arithmatex">\(\bar X = \bar Z W^\top\)</span>, and <strong>gate</strong> that gradient through the previous layer&rsquo;s ReLU by multiplying with <code>relu_grad</code>. That gate is the chain rule for the elementwise nonlinearity: <span class="arithmatex">\(\bar Z^{(\ell-1)} = \bar A^{(\ell-1)} \odot \phi'(Z^{(\ell-1)})\)</span>.</p>
+<h3 id="training-it-and-checking-gradients">Training it, and checking gradients<a class="headerlink" href="#training-it-and-checking-gradients" title="Permanent link">¶</a></h3>
+<p>Before trusting any hand-written backward pass, <strong>gradient-check</strong> it against finite differences. The numerical gradient of a scalar loss with respect to a parameter <span class="arithmatex">\(\theta_i\)</span> is</p>
+<div class="arithmatex">\[
+\frac{\partial L}{\partial \theta_i} \approx \frac{L(\theta_i + \epsilon) - L(\theta_i - \epsilon)}{2\epsilon},
+\]</div>
+<p>the <strong>central difference</strong>, accurate to <span class="arithmatex">\(O(\epsilon^2)\)</span>. If your analytic gradient and the numerical one agree to ~6 decimal places, your backprop is almost certainly correct.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">gradient_check</span><span class="p">(</span><span class="n">net</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compare analytic dW[0] against central-difference numerical gradient.&quot;&quot;&quot;</span>
+    <span class="n">loss</span><span class="p">,</span> <span class="n">dW</span><span class="p">,</span> <span class="n">db</span> <span class="o">=</span> <span class="n">net</span><span class="o">.</span><span class="n">loss_and_grads</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+    <span class="n">W</span> <span class="o">=</span> <span class="n">net</span><span class="o">.</span><span class="n">W</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">max_rel_err</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">20</span><span class="p">):</span>                          <span class="c1"># spot-check 20 random entries</span>
+        <span class="n">i</span><span class="p">,</span> <span class="n">j</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="n">W</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="n">W</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+        <span class="n">orig</span> <span class="o">=</span> <span class="n">W</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>
+        <span class="n">W</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">orig</span> <span class="o">+</span> <span class="n">eps</span><span class="p">;</span> <span class="n">Lp</span><span class="p">,</span> <span class="o">*</span><span class="n">_</span> <span class="o">=</span> <span class="n">net</span><span class="o">.</span><span class="n">loss_and_grads</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+        <span class="n">W</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">orig</span> <span class="o">-</span> <span class="n">eps</span><span class="p">;</span> <span class="n">Lm</span><span class="p">,</span> <span class="o">*</span><span class="n">_</span> <span class="o">=</span> <span class="n">net</span><span class="o">.</span><span class="n">loss_and_grads</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+        <span class="n">W</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">orig</span>                            <span class="c1"># restore</span>
+        <span class="n">num</span> <span class="o">=</span> <span class="p">(</span><span class="n">Lp</span> <span class="o">-</span> <span class="n">Lm</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">eps</span><span class="p">)</span>
+        <span class="n">ana</span> <span class="o">=</span> <span class="n">dW</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>
+        <span class="n">rel</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">num</span> <span class="o">-</span> <span class="n">ana</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">num</span><span class="p">)</span> <span class="o">+</span> <span class="nb">abs</span><span class="p">(</span><span class="n">ana</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-12</span><span class="p">)</span>
+        <span class="n">max_rel_err</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">max_rel_err</span><span class="p">,</span> <span class="n">rel</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">max_rel_err</span>
+
+<span class="c1"># ---- a tiny synthetic two-moons-ish dataset for a runnable demo ----</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+<span class="n">N</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">C</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span>
+<span class="n">X</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">D</span><span class="p">))</span>
+<span class="c1"># label by angle to make 3 non-linearly-separable blobs</span>
+<span class="n">theta</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arctan2</span><span class="p">(</span><span class="n">X</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">X</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">])</span>
+<span class="n">y</span> <span class="o">=</span> <span class="p">((</span><span class="n">theta</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span> <span class="o">*</span> <span class="n">C</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span> <span class="o">%</span> <span class="n">C</span>
+
+<span class="n">net</span> <span class="o">=</span> <span class="n">MLP</span><span class="p">([</span><span class="n">D</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="n">C</span><span class="p">],</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;gradient check (relative error):&quot;</span><span class="p">,</span> <span class="n">gradient_check</span><span class="p">(</span><span class="n">net</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">))</span>  <span class="c1"># ~1e-7</span>
+
+<span class="k">for</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">2000</span><span class="p">):</span>
+    <span class="n">loss</span><span class="p">,</span> <span class="n">dW</span><span class="p">,</span> <span class="n">db</span> <span class="o">=</span> <span class="n">net</span><span class="o">.</span><span class="n">loss_and_grads</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+    <span class="n">net</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">dW</span><span class="p">,</span> <span class="n">db</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.2</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">epoch</span> <span class="o">%</span> <span class="mi">400</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">acc</span> <span class="o">=</span> <span class="p">(</span><span class="n">net</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">X</span><span class="p">)</span> <span class="o">==</span> <span class="n">y</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;epoch </span><span class="si">{</span><span class="n">epoch</span><span class="si">:</span><span class="s2">4d</span><span class="si">}</span><span class="s2">  loss </span><span class="si">{</span><span class="n">loss</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">  acc </span><span class="si">{</span><span class="n">acc</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Running this, the gradient check prints a relative error on the order of <span class="arithmatex">\(10^{-7}\)</span> — the gap between analytic and numerical gradients is pure floating-point noise, confirming the backward pass is exact. The loss falls and accuracy climbs toward 1.0 as the two hidden ReLU layers carve the angular decision boundary that no single linear layer could. You have now trained a neural network with code you could write on a whiteboard.</p>
+<hr />
+<h2 id="initialization-and-the-gradient-pathologies">Initialization and the Gradient Pathologies<a class="headerlink" href="#initialization-and-the-gradient-pathologies" title="Permanent link">¶</a></h2>
+<p>A subtle truth: a correct backward pass is <em>necessary but not sufficient</em> to train a deep network. If you initialize the weights badly, the signal either explodes or vanishes as it propagates, and learning stalls. Understanding why leads directly to the Xavier and Kaiming initialization schemes.</p>
+<h3 id="variance-propagation-forward-and-backward">Variance propagation, forward and backward<a class="headerlink" href="#variance-propagation-forward-and-backward" title="Permanent link">¶</a></h3>
+<p>Consider a linear layer <span class="arithmatex">\(z_j = \sum_{i=1}^{d_{\text{in}}} W_{ij} x_i\)</span> with weights drawn i.i.d. with mean <span class="arithmatex">\(0\)</span> and variance <span class="arithmatex">\(\operatorname{Var}(W)\)</span>, and inputs <span class="arithmatex">\(x_i\)</span> i.i.d. with variance <span class="arithmatex">\(\operatorname{Var}(x)\)</span>, all independent. The variance of each output is the sum of <span class="arithmatex">\(d_{\text{in}}\)</span> independent products:</p>
+<div class="arithmatex">\[
+\operatorname{Var}(z) = d_{\text{in}} \cdot \operatorname{Var}(W) \cdot \operatorname{Var}(x).
+\]</div>
+<p>For the <em>forward</em> signal to neither grow nor shrink across a layer, we want <span class="arithmatex">\(\operatorname{Var}(z) = \operatorname{Var}(x)\)</span>, which requires</p>
+<div class="arithmatex">\[
+\operatorname{Var}(W) = \frac{1}{d_{\text{in}}}.
+\]</div>
+<p>Now run the same argument on the <em>backward</em> pass. The gradient flows back through <span class="arithmatex">\(W^\top\)</span>, so by symmetry the gradient variance is preserved when <span class="arithmatex">\(\operatorname{Var}(W) = 1/d_{\text{out}}\)</span>. You cannot satisfy both unless <span class="arithmatex">\(d_{\text{in}}=d_{\text{out}}\)</span>, so <strong>Xavier/Glorot initialization</strong> compromises with the harmonic-mean-flavored average:</p>
+<div class="arithmatex">\[
+\operatorname{Var}(W) = \frac{2}{d_{\text{in}} + d_{\text{out}}}.
+\]</div>
+<p>Xavier was derived assuming a symmetric activation with unit derivative near zero (like tanh). ReLU is different: it zeroes out half its inputs in expectation, halving the variance. <strong>Kaiming/He initialization</strong> corrects for this by doubling the variance:</p>
+<div class="arithmatex">\[
+\operatorname{Var}(W) = \frac{2}{d_{\text{in}}} \quad \text{(for ReLU)}.
+\]</div>
+<p>That factor of 2 is exactly the <code>np.sqrt(2.0 / d_in)</code> in our <code>MLP.__init__</code>. It is not a hyperparameter to tune — it is a derived constant that keeps activation magnitudes roughly constant from the first layer to the last.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: signal scale across 50 layers</p>
+<p>Take a 50-layer deep linear-plus-ReLU stack with width <span class="arithmatex">\(d=256\)</span> and a unit-variance input. With <strong>bad init</strong> (<span class="arithmatex">\(\operatorname{Var}(W)=1/d^2\)</span>, i.e. weights too small), each layer multiplies the activation standard deviation by roughly <span class="arithmatex">\(\sqrt{d\cdot\operatorname{Var}(W)\cdot\tfrac12}=\sqrt{256\cdot(1/256^2)\cdot 0.5}\approx 0.044\)</span>. After 50 layers the signal scale is <span class="arithmatex">\(0.044^{50}\approx 10^{-69}\)</span> — total collapse; gradients vanish to zero and nothing learns.</p>
+<p>With <strong>Kaiming init</strong> (<span class="arithmatex">\(\operatorname{Var}(W)=2/d\)</span>), each ReLU layer multiplies the std by <span class="arithmatex">\(\sqrt{d\cdot(2/d)\cdot\tfrac12}=\sqrt{1}=1\)</span>. After 50 layers the signal scale is still <span class="arithmatex">\(\approx 1.0\)</span>. The forward activations and backward gradients stay <span class="arithmatex">\(O(1)\)</span> all the way down. This is the entire point of principled initialization: it makes deep networks <em>trainable at all</em>.</p>
+</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">measure_signal</span><span class="p">(</span><span class="n">init_std</span><span class="p">,</span> <span class="n">depth</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">width</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Push a unit-variance batch through `depth` linear+ReLU layers, report std.&quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="mi">1024</span><span class="p">,</span> <span class="n">width</span><span class="p">))</span>            <span class="c1"># unit-variance input batch</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">depth</span><span class="p">):</span>
+        <span class="n">W</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">init_std</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="n">width</span><span class="p">))</span>
+        <span class="n">A</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">A</span> <span class="o">@</span> <span class="n">W</span><span class="p">)</span>                 <span class="c1"># linear + ReLU</span>
+    <span class="k">return</span> <span class="n">A</span><span class="o">.</span><span class="n">std</span><span class="p">()</span>
+
+<span class="n">d</span> <span class="o">=</span> <span class="mi">256</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;too small  :&quot;</span><span class="p">,</span> <span class="n">measure_signal</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="n">d</span><span class="p">))</span>            <span class="c1"># -&gt; ~0 (vanishes)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;kaiming    :&quot;</span><span class="p">,</span> <span class="n">measure_signal</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">2.0</span> <span class="o">/</span> <span class="n">d</span><span class="p">)))</span>   <span class="c1"># -&gt; ~O(1)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;too large  :&quot;</span><span class="p">,</span> <span class="n">measure_signal</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">8.0</span> <span class="o">/</span> <span class="n">d</span><span class="p">)))</span>   <span class="c1"># -&gt; explodes</span>
+</code></pre></div>
+<h3 id="vanishing-and-exploding-gradients">Vanishing and exploding gradients<a class="headerlink" href="#vanishing-and-exploding-gradients" title="Permanent link">¶</a></h3>
+<p>The variance argument has a dynamic consequence. In a deep chain, the gradient at layer 1 is a product of many Jacobian factors:</p>
+<div class="arithmatex">\[
+\frac{\partial L}{\partial \mathbf{a}^{(1)}}
+= \frac{\partial L}{\partial \mathbf{a}^{(L)}}
+\prod_{\ell=2}^{L} \underbrace{\operatorname{diag}\!\big(\phi'(\mathbf{z}^{(\ell)})\big)\,W^{(\ell)}}_{\text{Jacobian of layer } \ell}.
+\]</div>
+<p>If the typical singular value of each Jacobian factor is below 1, the product shrinks geometrically — <strong>vanishing gradients</strong>: early layers receive almost no signal and barely update. If it is above 1, the product grows geometrically — <strong>exploding gradients</strong>: updates blow up, losses go to NaN. This is the deep-learning version of &ldquo;raising a number to the 50<sup>th</sup> power&rdquo;: anything not exactly 1 runs away.</p>
+<p>Saturating activations make vanishing worse. Sigmoid&rsquo;s derivative peaks at <span class="arithmatex">\(0.25\)</span> and is near zero in its tails; chain 20 sigmoids and the gradient is multiplied by at most <span class="arithmatex">\(0.25^{20}\approx 10^{-12}\)</span>. This is precisely why sigmoid and tanh fell out of favor for deep hidden layers, replaced by ReLU (derivative exactly 1 in the active region). The three structural fixes the field converged on are:</p>
+<ol>
+<li><strong>Good initialization</strong> (Xavier/Kaiming) — start the product near 1.</li>
+<li><strong>Non-saturating activations</strong> (ReLU and friends) — keep per-layer derivatives near 1.</li>
+<li><strong>Normalization layers</strong> (BatchNorm, LayerNorm) and <strong>residual connections</strong> — actively re-center the signal and give gradients a multiplication-free highway. Residuals are the reason transformers can be hundreds of layers deep; see <a href="../02-transformer/06-transformer-block.html">The Transformer Block</a>.</li>
+</ol>
+<p>For exploding gradients specifically, the standard runtime guard is <strong>gradient clipping</strong>: rescale the whole gradient if its global norm exceeds a threshold <span class="arithmatex">\(\tau\)</span>.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">clip_grads</span><span class="p">(</span><span class="n">grads</span><span class="p">,</span> <span class="n">max_norm</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Global-norm gradient clipping, as used in essentially every LLM run.&quot;&quot;&quot;</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="nb">sum</span><span class="p">((</span><span class="n">g</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">grads</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">total</span> <span class="o">&gt;</span> <span class="n">max_norm</span><span class="p">:</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="n">max_norm</span> <span class="o">/</span> <span class="p">(</span><span class="n">total</span> <span class="o">+</span> <span class="mf">1e-6</span><span class="p">)</span>
+        <span class="n">grads</span> <span class="o">=</span> <span class="p">[</span><span class="n">g</span> <span class="o">*</span> <span class="n">scale</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">grads</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">grads</span>
+</code></pre></div>
+<p>This exact technique stabilizes large-model training runs; we return to it in <a href="../03-pretraining/11-training-stability.html">Training Stability, Loss Spikes &amp; Debugging Large Runs</a>.</p>
+<h3 id="the-dead-relu-trap">The dead-ReLU trap<a class="headerlink" href="#the-dead-relu-trap" title="Permanent link">¶</a></h3>
+<p>ReLU&rsquo;s blessing — a zero-or-one gate — is also its curse. If a neuron&rsquo;s pre-activation is negative for <em>every</em> training example (often because of a large negative bias or an unlucky update), its gradient is zero forever and it never recovers. This is a <strong>dead ReLU</strong>. We saw it concretely in the scalar engine, where a single negative pre-activation zeroed every upstream gradient. <strong>Leaky ReLU</strong> (<span class="arithmatex">\(\phi(z)=\max(\alpha z, z)\)</span> with small <span class="arithmatex">\(\alpha\approx 0.01\)</span>) and its learnable cousin PReLU fix this by letting a trickle of gradient through the negative region, keeping the unit alive.</p>
+<hr />
+<h2 id="batch-normalization">Batch Normalization<a class="headerlink" href="#batch-normalization" title="Permanent link">¶</a></h2>
+<p>Even with good initialization, the <em>distribution</em> of each layer&rsquo;s inputs shifts as training proceeds and earlier weights change — the original BatchNorm paper called this <strong>internal covariate shift</strong>. <strong>Batch normalization</strong> (Ioffe &amp; Szegedy, 2015) attacks this directly: it normalizes each pre-activation to zero mean and unit variance <em>across the mini-batch</em>, then lets the network learn its own scale and shift.</p>
+<h3 id="the-batchnorm-transform">The BatchNorm transform<a class="headerlink" href="#the-batchnorm-transform" title="Permanent link">¶</a></h3>
+<p>For a feature <span class="arithmatex">\(z\)</span> over a mini-batch of size <span class="arithmatex">\(N\)</span>, BatchNorm computes the batch mean and variance, normalizes, and applies a learnable affine <span class="arithmatex">\((\gamma, \beta)\)</span>:</p>
+<div class="arithmatex">\[
+\mu = \frac{1}{N}\sum_{n} z_n, \quad
+\sigma^2 = \frac{1}{N}\sum_{n}(z_n-\mu)^2, \quad
+\hat{z}_n = \frac{z_n - \mu}{\sqrt{\sigma^2 + \varepsilon}}, \quad
+y_n = \gamma\,\hat{z}_n + \beta.
+\]</div>
+<p>The <span class="arithmatex">\(\gamma\)</span> and <span class="arithmatex">\(\beta\)</span> are trained like any other parameter; crucially, the network <em>can</em> undo the normalization (by learning <span class="arithmatex">\(\gamma=\sqrt{\sigma^2+\varepsilon}\)</span>, <span class="arithmatex">\(\beta=\mu\)</span>) if that is optimal, so BatchNorm never reduces representational power. At <strong>inference time</strong> there is no batch, so BatchNorm uses running averages of <span class="arithmatex">\(\mu\)</span> and <span class="arithmatex">\(\sigma^2\)</span> accumulated during training — a detail that bites people who forget to switch to eval mode.</p>
+<p>The payoffs are large: BatchNorm permits much higher learning rates (the normalization caps how far activations can drift), reduces sensitivity to initialization, and has a mild regularizing effect because each example&rsquo;s normalization depends on the random composition of its batch.</p>
+<h3 id="backprop-through-batchnorm">Backprop through BatchNorm<a class="headerlink" href="#backprop-through-batchnorm" title="Permanent link">¶</a></h3>
+<p>BatchNorm is a genuinely instructive backward pass because the normalization couples every example in the batch — <span class="arithmatex">\(\mu\)</span> and <span class="arithmatex">\(\sigma^2\)</span> depend on all of them — so the gradient is not elementwise. Differentiating the transform and collecting terms gives the canonical result:</p>
+<div class="arithmatex">\[
+\frac{\partial L}{\partial z_n}
+= \frac{\gamma}{\sqrt{\sigma^2+\varepsilon}}\left(
+\bar{\hat z}_n
+- \frac{1}{N}\sum_{m}\bar{\hat z}_m
+- \frac{\hat z_n}{N}\sum_{m}\bar{\hat z}_m \hat z_m
+\right),
+\]</div>
+<p>where <span class="arithmatex">\(\bar{\hat z}_n = \partial L/\partial \hat z_n = \gamma \cdot \partial L/\partial y_n\)</span>. The two subtracted terms are corrections for how each input influences the shared mean and variance. Here is a complete, gradient-checkable implementation.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">BatchNorm1d</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;From-scratch BatchNorm over the batch dimension, with hand-written backward.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">,</span> <span class="n">momentum</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">gamma</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">dim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">beta</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">dim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">eps</span> <span class="o">=</span> <span class="n">eps</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">momentum</span> <span class="o">=</span> <span class="n">momentum</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">running_mean</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">dim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">running_var</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">dim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cache</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Z</span><span class="p">,</span> <span class="n">training</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">training</span><span class="p">:</span>
+            <span class="n">mu</span> <span class="o">=</span> <span class="n">Z</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>                       <span class="c1"># (dim,)</span>
+            <span class="n">var</span> <span class="o">=</span> <span class="n">Z</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>                       <span class="c1"># population variance</span>
+            <span class="n">std_inv</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">var</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">eps</span><span class="p">)</span>
+            <span class="n">Zhat</span> <span class="o">=</span> <span class="p">(</span><span class="n">Z</span> <span class="o">-</span> <span class="n">mu</span><span class="p">)</span> <span class="o">*</span> <span class="n">std_inv</span>
+            <span class="n">out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">gamma</span> <span class="o">*</span> <span class="n">Zhat</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">beta</span>
+            <span class="c1"># update running stats for inference</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">running_mean</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">momentum</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">running_mean</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">momentum</span> <span class="o">*</span> <span class="n">mu</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">running_var</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">momentum</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">running_var</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">momentum</span> <span class="o">*</span> <span class="n">var</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">cache</span> <span class="o">=</span> <span class="p">(</span><span class="n">Zhat</span><span class="p">,</span> <span class="n">std_inv</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">gamma</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">out</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">Zhat</span> <span class="o">=</span> <span class="p">(</span><span class="n">Z</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">running_mean</span><span class="p">)</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">running_var</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">eps</span><span class="p">)</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">gamma</span> <span class="o">*</span> <span class="n">Zhat</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">beta</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dOut</span><span class="p">):</span>
+        <span class="n">Zhat</span><span class="p">,</span> <span class="n">std_inv</span><span class="p">,</span> <span class="n">gamma</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cache</span>
+        <span class="n">N</span> <span class="o">=</span> <span class="n">dOut</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="c1"># gradients of the affine params</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dgamma</span> <span class="o">=</span> <span class="p">(</span><span class="n">dOut</span> <span class="o">*</span> <span class="n">Zhat</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dbeta</span> <span class="o">=</span> <span class="n">dOut</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="c1"># gradient through the normalization (the coupled part)</span>
+        <span class="n">dZhat</span> <span class="o">=</span> <span class="n">dOut</span> <span class="o">*</span> <span class="n">gamma</span>                          <span class="c1"># (N, dim)</span>
+        <span class="n">dZ</span> <span class="o">=</span> <span class="p">(</span><span class="n">std_inv</span> <span class="o">/</span> <span class="n">N</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span>
+            <span class="n">N</span> <span class="o">*</span> <span class="n">dZhat</span>
+            <span class="o">-</span> <span class="n">dZhat</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>                       <span class="c1"># mean correction</span>
+            <span class="o">-</span> <span class="n">Zhat</span> <span class="o">*</span> <span class="p">(</span><span class="n">dZhat</span> <span class="o">*</span> <span class="n">Zhat</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>       <span class="c1"># variance correction</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">dZ</span>
+
+<span class="c1"># quick gradient check against central differences</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">bn</span> <span class="o">=</span> <span class="n">BatchNorm1d</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
+<span class="n">Z</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+<span class="n">G</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>                          <span class="c1"># arbitrary upstream grad</span>
+<span class="n">out</span> <span class="o">=</span> <span class="n">bn</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">Z</span><span class="p">);</span> <span class="n">loss</span> <span class="o">=</span> <span class="p">(</span><span class="n">out</span> <span class="o">*</span> <span class="n">G</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+<span class="n">dZ</span> <span class="o">=</span> <span class="n">bn</span><span class="o">.</span><span class="n">backward</span><span class="p">(</span><span class="n">G</span><span class="p">)</span>
+<span class="n">eps</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">;</span> <span class="n">num</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">Z</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">Z</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]):</span>
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">Z</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]):</span>
+        <span class="n">o</span> <span class="o">=</span> <span class="n">Z</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>
+        <span class="n">Z</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">o</span> <span class="o">+</span> <span class="n">eps</span><span class="p">;</span> <span class="n">lp</span> <span class="o">=</span> <span class="p">(</span><span class="n">BatchNorm1d</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">Z</span><span class="p">)</span> <span class="o">*</span> <span class="n">G</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+        <span class="n">Z</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">o</span> <span class="o">-</span> <span class="n">eps</span><span class="p">;</span> <span class="n">lm</span> <span class="o">=</span> <span class="p">(</span><span class="n">BatchNorm1d</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">Z</span><span class="p">)</span> <span class="o">*</span> <span class="n">G</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+        <span class="n">Z</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">o</span><span class="p">;</span> <span class="n">num</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">lp</span> <span class="o">-</span> <span class="n">lm</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">eps</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;BN grad rel-error:&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">num</span> <span class="o">-</span> <span class="n">dZ</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">/</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">num</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">+</span> <span class="mf">1e-12</span><span class="p">))</span>
+</code></pre></div>
+<h3 id="batchnorm-vs-layernorm-and-why-llms-use-the-latter">BatchNorm vs LayerNorm, and why LLMs use the latter<a class="headerlink" href="#batchnorm-vs-layernorm-and-why-llms-use-the-latter" title="Permanent link">¶</a></h3>
+<p>BatchNorm normalizes <em>across the batch</em> for each feature; <strong>LayerNorm</strong> normalizes <em>across the features</em> for each example. The distinction matters enormously for transformers. BatchNorm&rsquo;s batch-coupling is a liability for language models: sequence lengths vary, batches are heterogeneous, and at inference (especially autoregressive decode, one token at a time) there is effectively no batch to normalize over. LayerNorm and its simpler cousin RMSNorm are per-token and batch-independent, so they behave identically in training and inference. That is why essentially every modern LLM uses LayerNorm/RMSNorm, not BatchNorm — a design choice we unpack in <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a>.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>The single most useful debugging instrument for a from-scratch network is a <strong>gradient check</strong>, and the second is a <strong>histogram of per-layer activation and gradient statistics</strong>. If early-layer gradients are orders of magnitude smaller than late-layer ones, you have a vanishing-gradient problem (fix the init or add normalization/residuals). If activation stds drift toward 0 or blow up as you go deeper, your initialization variance is wrong. Print <code>A.std()</code> per layer before you reach for anything fancier.</p>
+</div>
+<hr />
+<h2 id="interview-corner-backprop-on-a-whiteboard">Interview Corner: Backprop on a Whiteboard<a class="headerlink" href="#interview-corner-backprop-on-a-whiteboard" title="Permanent link">¶</a></h2>
+<p>The &ldquo;implement backprop&rdquo; question is a rite of passage. Interviewers want to see that you can derive the layer gradients from the chain rule, get the matrix shapes right, and reason about cost — not that you have memorized PyTorch.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> On a whiteboard, derive the backward pass for a two-layer MLP with ReLU and a softmax-cross-entropy loss, and state the shapes and compute cost.</p>
+<p><strong>A:</strong> Forward, with batch <span class="arithmatex">\(X\in\mathbb{R}^{N\times d}\)</span>:
+<span class="arithmatex">\(Z_1 = XW_1+\mathbf b_1\)</span>, <span class="arithmatex">\(A_1=\mathrm{ReLU}(Z_1)\)</span>, <span class="arithmatex">\(Z_2=A_1W_2+\mathbf b_2\)</span>, <span class="arithmatex">\(P=\mathrm{softmax}(Z_2)\)</span>, <span class="arithmatex">\(L=-\frac1N\sum\log P_{\text{true}}\)</span>.</p>
+<p>Backward, right to left. The fused softmax-CE gradient seeds everything: <span class="arithmatex">\(\bar Z_2 = (P-Y)/N\)</span> with shape <span class="arithmatex">\((N,C)\)</span>. Then the two golden identities give <span class="arithmatex">\(\bar W_2 = A_1^\top \bar Z_2\)</span> (shape <span class="arithmatex">\(d_h\times C\)</span>) and <span class="arithmatex">\(\bar{\mathbf b}_2 = \mathbf 1^\top \bar Z_2\)</span>. Propagate to the first layer: <span class="arithmatex">\(\bar A_1 = \bar Z_2 W_2^\top\)</span> (shape <span class="arithmatex">\(N\times d_h\)</span>), gate through ReLU with <span class="arithmatex">\(\bar Z_1 = \bar A_1 \odot \mathbb 1[Z_1&gt;0]\)</span>, then <span class="arithmatex">\(\bar W_1 = X^\top \bar Z_1\)</span> and <span class="arithmatex">\(\bar{\mathbf b}_1=\mathbf 1^\top\bar Z_1\)</span>. Cost: the backward pass is two matmuls per layer (one for the weight grad, one for the input grad), so it is about <strong>2× the FLOPs of the forward pass</strong>, and it requires caching the forward activations (<span class="arithmatex">\(A_1\)</span>, and the sign of <span class="arithmatex">\(Z_1\)</span>). Two things interviewers probe: <em>why is the softmax-CE gradient just <span class="arithmatex">\(P-Y\)</span>?</em> (the Jacobians of softmax and the log telescope), and <em>why gate through ReLU with the input sign and not the output?</em> (because <span class="arithmatex">\(\phi'(Z_1)=\mathbb 1[Z_1&gt;0]\)</span> depends on the pre-activation). Mention that gradient checking with central differences is how you would verify the implementation.</p>
+</div>
+<p>A second favorite: <em>why does backprop cost about the same as the forward pass rather than scaling with the number of parameters?</em> Because reverse-mode autodiff computes the gradient of one scalar output with respect to <em>all</em> inputs in a single sweep — each edge of the computation graph is traversed once forward and once backward. Contrast with forward-mode (and naive finite differences), which would need one pass <em>per parameter</em>. For a network with <span class="arithmatex">\(P\)</span> parameters and one scalar loss, reverse mode is the obvious choice; that asymmetry is the deepest reason every framework defaults to it, as we detail in <a href="../01-foundations/07-autodiff-pytorch.html">Automatic Differentiation &amp; PyTorch Internals</a>.</p>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>An MLP is a chain of affine maps and elementwise nonlinearities; the nonlinearity is non-negotiable, because composing linear maps just yields another linear map. Depth buys compositional efficiency at the price of a harder optimization landscape.</li>
+<li>Backprop is the chain rule evaluated right-to-left, carrying an adjoint (upstream gradient) and applying a vector-Jacobian product at each node. Reverse-mode autodiff computes all parameter gradients in one backward sweep at ~2× forward cost.</li>
+<li>The two identities you must own: for <span class="arithmatex">\(Z=XW+\mathbf b\)</span>, <span class="arithmatex">\(\bar W = X^\top\bar Z\)</span>, <span class="arithmatex">\(\bar X = \bar Z W^\top\)</span>, <span class="arithmatex">\(\bar{\mathbf b}=\mathbf 1^\top\bar Z\)</span>. Every dense-layer gradient is one of these.</li>
+<li>The softmax + cross-entropy gradient collapses to <span class="arithmatex">\(P-Y\)</span> (&ldquo;predicted minus true&rdquo;); always fuse the two for correctness and numerical stability.</li>
+<li>Gradients <strong>accumulate</strong>, so zero them before each backward pass — and always gradient-check a hand-written backward against central differences before trusting it.</li>
+<li>Initialization is derived, not tuned: Xavier <span class="arithmatex">\(\operatorname{Var}(W)=\frac{2}{d_{\text{in}}+d_{\text{out}}}\)</span> for tanh-like activations, Kaiming <span class="arithmatex">\(\operatorname{Var}(W)=\frac{2}{d_{\text{in}}}\)</span> for ReLU. Get the variance wrong and signal vanishes or explodes geometrically with depth.</li>
+<li>Vanishing/exploding gradients come from multiplying many Jacobian factors; the cures are good init, non-saturating activations (ReLU), normalization, residual connections, and gradient clipping.</li>
+<li>BatchNorm normalizes across the batch and couples examples in its backward pass; LayerNorm/RMSNorm normalize per token and are batch-independent, which is why LLMs use them.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>MLPs and backpropagation are a half-century-old foundation: the algorithms are settled, but the engineering art of initializing, normalizing, and stabilizing deep networks continues to evolve with every new architecture. Today&rsquo;s billion-parameter transformers are still built from the same forward-pass/backward-pass loop described in this chapter, extended by residual connections, layer normalization, and sophisticated optimizers.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://www.nature.com/articles/323533a0">Rumelhart, Hinton &amp; Williams, <em>Learning Representations by Back-Propagating Errors</em> (1986)</a> — The paper that put backpropagation on the map; derivation of the chain-rule training algorithm still used today.</li>
+<li><a href="https://proceedings.mlr.press/v9/glorot10a.html">Glorot &amp; Bengio, <em>Understanding the Difficulty of Training Deep Feedforward Neural Networks</em> (2010)</a> — Introduced Xavier initialization via forward/backward variance analysis; diagnosed why sigmoid saturates deep nets.</li>
+<li><a href="https://arxiv.org/abs/1502.01852">He et al., <em>Delving Deep into Rectifiers</em> (2015)</a> — Derived the factor-of-2 Kaiming correction for ReLU networks and introduced PReLU.</li>
+<li><a href="https://arxiv.org/abs/1502.03167">Ioffe &amp; Szegedy, <em>Batch Normalization</em> (2015)</a> — Showed that normalizing pre-activations per mini-batch allows much higher learning rates and reduces sensitivity to initialization.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/karpathy/micrograd">karpathy/micrograd</a> — ~150-line scalar autograd engine; the direct inspiration for the <code>Value</code> class in this chapter.</li>
+<li><a href="https://github.com/karpathy/nn-zero-to-hero">karpathy/nn-zero-to-hero</a> — Full lecture series building from micrograd up to GPT, with notebooks for every video.</li>
+<li><a href="https://docs.pytorch.org/tutorials/beginner/basics/buildmodel_tutorial.html">PyTorch — Build the Neural Network (official tutorial)</a> — The canonical first step to moving from NumPy to production-grade autograd and <code>nn.Module</code>.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.youtube.com/watch?v=VMj-3S1tku0">Karpathy, <em>The Spelled-Out Intro to Neural Networks and Backpropagation: Building Micrograd</em> (YouTube)</a> — 2.5-hour step-by-step walkthrough; best video resource for internalizing the chain rule.</li>
+<li><a href="https://www.deeplearningbook.org/">Goodfellow, Bengio &amp; Courville, <em>Deep Learning</em> (2016) — Chapters 6 &amp; 8</a> — Canonical textbook treatment of MLPs, backprop, and optimization difficulties; free online.</li>
+<li><a href="https://cs231n.github.io/optimization-2/">Stanford CS231n — Backpropagation Notes</a> — Excellent circuit-diagram intuition for how gradients flow through computational graphs.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Rumelhart, Hinton &amp; Williams, <em>Learning Representations by Back-Propagating Errors</em> (1986)</strong> — The paper that put backpropagation on the map; short and worth reading in the original.</li>
+<li><strong>Andrej Karpathy, <em>micrograd</em> (GitHub) and *The spelled-out intro to neural networks and backpropagation</strong>* — A ~150-line scalar autograd engine and an exceptional lecture; the direct inspiration for the <code>Value</code> class in this chapter.</li>
+<li><strong>Glorot &amp; Bengio, <em>Understanding the Difficulty of Training Deep Feedforward Neural Networks</em> (2010)</strong> — The Xavier initialization derivation via forward/backward variance preservation.</li>
+<li><strong>He, Zhang, Ren &amp; Sun, <em>Delving Deep into Rectifiers</em> (2015)</strong> — Kaiming initialization for ReLU networks, with the factor-of-2 correction.</li>
+<li><strong>Ioffe &amp; Szegedy, <em>Batch Normalization</em> (2015)</strong> — The original BatchNorm paper, including the forward transform and the backward derivation implemented above.</li>
+<li><strong>Goodfellow, Bengio &amp; Courville, <em>Deep Learning</em> (2016), Chapters 6 and 8</strong> — The canonical textbook treatment of feed-forward networks, backprop, and optimization difficulties.</li>
+<li><strong>Nielsen, <em>Neural Networks and Deep Learning</em> (online book)</strong> — A gentle, code-first derivation of backprop that complements the matrix-form presentation here.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="05-ml-fundamentals.html"><span class="pn-label">← Previous</span><span class="pn-title">Machine Learning Fundamentals</span></a>
+<a class="next" href="07-autodiff-pytorch.html"><span class="pn-label">Next →</span><span class="pn-title">Automatic Differentiation &amp; PyTorch Internals</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-mlp-a-function-you-can-differentiate">The MLP: A Function You Can Differentiate</a></li>
+<li class="toc-l3"><a href="#what-a-neuron-computes">What a neuron computes</a></li>
+<li class="toc-l3"><a href="#why-depth-and-width-matter">Why depth and width matter</a></li>
+<li class="toc-l3"><a href="#batching-from-vectors-to-matrices">Batching: from vectors to matrices</a></li>
+<li class="toc-l2"><a href="#backpropagation-the-chain-rule-mechanized">Backpropagation: The Chain Rule, Mechanized</a></li>
+<li class="toc-l3"><a href="#the-training-loop-in-one-breath">The training loop in one breath</a></li>
+<li class="toc-l3"><a href="#the-chain-rule-stated-precisely">The chain rule, stated precisely</a></li>
+<li class="toc-l3"><a href="#forward-graph-backward-graph">Forward graph, backward graph</a></li>
+<li class="toc-l3"><a href="#a-scalar-autograd-engine-micrograd-style">A scalar autograd engine (micrograd-style)</a></li>
+<li class="toc-l2"><a href="#a-vectorized-mlp-in-pure-numpy">A Vectorized MLP in Pure NumPy</a></li>
+<li class="toc-l3"><a href="#activations-and-their-derivatives">Activations and their derivatives</a></li>
+<li class="toc-l3"><a href="#the-softmax-cross-entropy-gradient">The softmax + cross-entropy gradient</a></li>
+<li class="toc-l3"><a href="#the-full-mlp-class">The full MLP class</a></li>
+<li class="toc-l3"><a href="#training-it-and-checking-gradients">Training it, and checking gradients</a></li>
+<li class="toc-l2"><a href="#initialization-and-the-gradient-pathologies">Initialization and the Gradient Pathologies</a></li>
+<li class="toc-l3"><a href="#variance-propagation-forward-and-backward">Variance propagation, forward and backward</a></li>
+<li class="toc-l3"><a href="#vanishing-and-exploding-gradients">Vanishing and exploding gradients</a></li>
+<li class="toc-l3"><a href="#the-dead-relu-trap">The dead-ReLU trap</a></li>
+<li class="toc-l2"><a href="#batch-normalization">Batch Normalization</a></li>
+<li class="toc-l3"><a href="#the-batchnorm-transform">The BatchNorm transform</a></li>
+<li class="toc-l3"><a href="#backprop-through-batchnorm">Backprop through BatchNorm</a></li>
+<li class="toc-l3"><a href="#batchnorm-vs-layernorm-and-why-llms-use-the-latter">BatchNorm vs LayerNorm, and why LLMs use the latter</a></li>
+<li class="toc-l2"><a href="#interview-corner-backprop-on-a-whiteboard">Interview Corner: Backprop on a Whiteboard</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

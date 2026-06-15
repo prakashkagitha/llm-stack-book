@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Continual &amp; Domain-Adaptive Pretraining — The LLM Stack</title>
+<meta name="description" content="Extending an existing base model instead of retraining: learning-rate re-warming/re-decay, replay ratios to fight catastrophic forgetting, domain/language adapt">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="active" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="316-continual-domain-adaptive-pretraining">3.16 Continual &amp; Domain-Adaptive Pretraining<a class="headerlink" href="#316-continual-domain-adaptive-pretraining" title="Permanent link">¶</a></h1>
+<p>The most expensive thing in this book is a from-scratch pretraining run. A frontier base model represents tens of millions of dollars of compute and months of wall-clock time. So the question that dominates real-world LLM engineering is rarely &ldquo;how do I train a model from scratch?&rdquo; — it is &ldquo;I have a good base model and a new requirement (a new domain, a new language, fresher data, a bigger model); how do I get there <em>without paying the full pretraining bill again</em>?&rdquo;</p>
+<p>That is <strong>continual pretraining (CPT)</strong> — also called <em>continued pretraining</em>, <em>continued pretraining</em>, or, when the new data is concentrated in one domain, <strong>domain-adaptive pretraining (DAPT)</strong>. You take a converged checkpoint and keep optimizing the language-modeling objective on a new data distribution. It sounds trivial — &ldquo;just keep training&rdquo; — and that is exactly why so many teams get it wrong. Naively resuming training on new data triggers two opposing failure modes at once: if you use a small learning rate, the model barely <em>learns</em> the new domain (the <em>plasticity</em> problem); if you use a large one, it <em>forgets</em> everything it knew (the <em>catastrophic forgetting</em> problem, also called the <em>stability</em> problem). The entire craft of CPT is navigating this stability–plasticity dilemma at a cost that is a single-digit percentage of the original run.</p>
+<p>This chapter covers the full toolkit. We start with the learning-rate dynamics that make or break a CPT run (re-warming and re-decay), then the data-side defense against forgetting (replay), then the specific recipes for domain, language, and streaming adaptation. The second half is about a more aggressive idea: not just continuing to train the <em>same</em> weights, but <strong>growing the model</strong> — adding depth and width, upcycling a dense model into a Mixture-of-Experts (MoE), and transplanting an old model&rsquo;s knowledge into a new, larger vocabulary. We close with how to <em>plan</em> a CPT run: predicting the loss trajectory and budgeting compute before you spend it.</p>
+<p>Read this chapter alongside <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>, which sets the compute-vs-data tradeoffs CPT exploits; <a href="../03-pretraining/10-lr-schedules-hparams.html">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a>, whose schedule machinery we reuse; <a href="../03-pretraining/14-data-mixing-curriculum.html">Data Mixing, Domain Weighting &amp; Curriculum</a> for the data-mix knobs; and <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts (MoE) Architectures</a> for the upcycling target.</p>
+<h2 id="the-stabilityplasticity-dilemma">The Stability–Plasticity Dilemma<a class="headerlink" href="#the-stabilityplasticity-dilemma" title="Permanent link">¶</a></h2>
+<p>Let <span class="arithmatex">\(\theta_0\)</span> be the weights of a base model converged on data distribution <span class="arithmatex">\(\mathcal{D}_{\text{base}}\)</span> (say, general web text). We want a model that performs well on a new distribution <span class="arithmatex">\(\mathcal{D}_{\text{new}}\)</span> (say, medical literature) <strong>without</strong> materially regressing on <span class="arithmatex">\(\mathcal{D}_{\text{base}}\)</span>. Formally we are minimizing a two-term objective,</p>
+<div class="arithmatex">\[
+\mathcal{L}(\theta) = \underbrace{\mathbb{E}_{x \sim \mathcal{D}_{\text{new}}}[-\log p_\theta(x)]}_{\text{plasticity: learn the new}} \;+\; \lambda\,\underbrace{\mathbb{E}_{x \sim \mathcal{D}_{\text{base}}}[-\log p_\theta(x)]}_{\text{stability: don't forget the old}},
+\]</div>
+<p>but with two complications: we usually do not have <span class="arithmatex">\(\mathcal{D}_{\text{base}}\)</span> exactly (the original mix is proprietary or lost), and we want the <em>new</em> term to dominate the compute. <strong>Catastrophic forgetting</strong> is the empirical fact that gradient descent on the first term alone drives the second term up sharply — the parameters that encoded general knowledge are overwritten by the new-domain gradient signal.</p>
+<p>Why does forgetting happen so violently in transformers? The loss landscape near a converged minimum is <em>not</em> flat in the directions that matter for old tasks. SGD on new data moves <span class="arithmatex">\(\theta\)</span> along whatever directions reduce the new loss fastest; those directions are generally <strong>not orthogonal</strong> to the directions that the old task cares about. The Fisher information matrix <span class="arithmatex">\(F\)</span> of the base task quantifies this — high-curvature directions (large <span class="arithmatex">\(F_{ii}\)</span>) are precisely the parameters whose perturbation most damages old performance. Elastic Weight Consolidation (EWC, Kirkpatrick et al., 2017) added an explicit penalty <span class="arithmatex">\(\sum_i F_{ii}(\theta_i - \theta_{0,i})^2\)</span>, but for LLM-scale CPT the dominant practical tools turn out to be <em>learning-rate control</em> and <em>replay</em>, not curvature penalties — they are cheaper and more robust. We will see why.</p>
+<figure class="viz" id="fig-cpt-stability-plasticity-tradeoff">
+<svg viewBox="0 0 760 560" role="img" aria-label="Stability-plasticity tradeoff diagram for continual pretraining. Three operating points lie on a downward-sloping tradeoff frontier: too-hot learning rate (high plasticity, low stability), too-cold learning rate (low plasticity, high stability), and a sweet-spot point above the frontier (re-warm to 10-30% peak plus replay) that achieves better balance than the naive tradeoff.">
+  <defs>
+    <marker id="cpt-arrow-up" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M5 0 L10 10 L0 10 z" fill="var(--ink-soft)" class="v-label"/>
+    </marker>
+    <marker id="cpt-arrow-right" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft)" class="v-label"/>
+    </marker>
+    <marker id="cpt-arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--v-accent,#2563eb)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-cpt-stability-plasticity-tradeoff .axis-label {
+      font: 600 15px var(--sans,sans-serif);
+      fill: var(--ink-soft);
+    }
+    #fig-cpt-stability-plasticity-tradeoff .pt-caption {
+      font: 700 14px var(--sans,sans-serif);
+    }
+    #fig-cpt-stability-plasticity-tradeoff .pt-sub {
+      font: 400 12px var(--sans,sans-serif);
+      fill: var(--muted,#6b7280);
+    }
+    #fig-cpt-stability-plasticity-tradeoff .pt-note {
+      font: 400 11px var(--sans,sans-serif);
+      fill: var(--muted,#6b7280);
+    }
+    #fig-cpt-stability-plasticity-tradeoff .sweet-caption {
+      font: 700 15px var(--sans,sans-serif);
+      fill: var(--v-accent,#2563eb);
+    }
+    #fig-cpt-stability-plasticity-tradeoff .sweet-sub {
+      font: 500 12px var(--sans,sans-serif);
+      fill: var(--v-accent,#2563eb);
+    }
+    #fig-cpt-stability-plasticity-tradeoff .frontier-label {
+      font: 400 11px var(--sans,sans-serif);
+      fill: var(--muted,#6b7280);
+    }
+    #fig-cpt-stability-plasticity-tradeoff .lift-label {
+      font: 500 11px var(--sans,sans-serif);
+      fill: var(--v-accent,#2563eb);
+    }
+  </style>
+
+
+
+  <line x1="120" y1="470" x2="120" y2="62" stroke="var(--ink-soft)" stroke-width="1.8" marker-end="url(#cpt-arrow-up)"/>
+
+  <line x1="120" y1="470" x2="688" y2="470" stroke="var(--ink-soft)" stroke-width="1.8" marker-end="url(#cpt-arrow-right)"/>
+
+
+  <text x="120" y="50" text-anchor="middle" class="axis-label">plasticity (learn D_new)</text>
+  <text x="690" y="466" text-anchor="end" class="axis-label">stability (keep D_base)</text>
+
+
+  <line x1="160" y1="120" x2="640" y2="440"
+        stroke="var(--ink-soft)" stroke-width="1.4"
+        stroke-dasharray="7 5" opacity="0.38"/>
+
+  <text x="540" y="385" text-anchor="start" class="frontier-label" transform="rotate(-28,540,385)">naive tradeoff frontier</text>
+
+
+  <rect x="340" y="195" width="200" height="100" rx="14"
+        fill="var(--v-accent,#2563eb)" fill-opacity="0.10"
+        stroke="var(--v-accent,#2563eb)" stroke-opacity="0.25" stroke-width="1" stroke-dasharray="5 4"/>
+  <text x="350" y="215" class="frontier-label" fill="var(--v-accent,#2563eb)" opacity="0.75" font-weight="600" font-size="11">GOOD CPT region</text>
+
+
+
+  <line x1="393" y1="310" x2="432" y2="265"
+        stroke="var(--v-accent,#2563eb)" stroke-width="1.3"
+        stroke-dasharray="4 3" opacity="0.65"
+        marker-end="url(#cpt-arrow-accent)"/>
+  <text x="348" y="325" class="lift-label">+replay lifts</text>
+  <text x="348" y="339" class="lift-label">above frontier</text>
+
+
+
+
+  <circle cx="185" cy="145" r="9"
+          fill="var(--v-warn,#e0a106)" stroke="var(--v-warn,#e0a106)" stroke-width="1.5" opacity="0.92"/>
+
+  <text x="204" y="140" class="pt-caption" fill="var(--v-warn,#e0a106)">Too-hot LR</text>
+  <text x="204" y="156" class="pt-sub">forgets D_base badly, learns D_new fast</text>
+
+  <text x="14" y="140" class="pt-note">(re-warm to</text>
+  <text x="14" y="154" class="pt-note">full peak)</text>
+
+  <line x1="81" y1="146" x2="174" y2="146"
+        stroke="var(--muted,#6b7280)" stroke-width="0.8" stroke-dasharray="3 3" opacity="0.55"/>
+
+
+  <circle cx="608" cy="425" r="9"
+          fill="var(--v-accent2,#3b82f6)" stroke="var(--v-accent2,#3b82f6)" stroke-width="1.5" opacity="0.85"/>
+
+  <text x="480" y="403" class="pt-caption" fill="var(--v-accent2,#3b82f6)">Too-cold LR</text>
+  <text x="480" y="419" class="pt-sub">keeps D_base, barely learns D_new</text>
+
+  <line x1="610" y1="421" x2="610" y2="407"
+        stroke="var(--muted,#6b7280)" stroke-width="0.8" opacity="0.55"/>
+
+  <text x="580" y="496" class="pt-note">(tiny LR)</text>
+
+
+
+  <circle cx="440" cy="255" r="18"
+          fill="none" stroke="var(--v-accent,#2563eb)" stroke-width="1.5" opacity="0.28"/>
+
+  <circle cx="440" cy="255" r="13"
+          fill="var(--v-accent,#2563eb)" stroke="var(--v-accent,#2563eb)" stroke-width="2" opacity="0.95"/>
+
+  <text x="462" y="248" class="sweet-caption">The sweet spot</text>
+  <text x="462" y="265" class="sweet-sub">re-warm to ~10-30% peak + replay</text>
+
+</svg>
+<figcaption><b>The stability-plasticity tradeoff in continual pretraining.</b> A too-high learning rate moves the model far up the plasticity axis (fast new-domain learning) but sacrifices stability (catastrophic forgetting of D_base), while a too-low rate preserves D_base but fails to absorb D_new. The re-warm-to-10-30%-peak plus replay recipe achieves a sweet spot <em>above</em> the naive tradeoff frontier — better on both axes simultaneously — by combining a moderate LR boost with a small fraction of base-distribution replay data.</figcaption>
+</figure>
+
+<p>The good news, established by Gupta et al. (2023) and the Ibrahim et al. (2024) &ldquo;Simple and Scalable Strategies to Continually Pre-train LLMs&rdquo; study, is that a <em>simple</em> recipe — re-warm the learning rate, re-decay it, and mix in a small fraction of replay data — recovers nearly the performance of an idealized from-scratch run on the union of the data, at a fraction of the cost. The rest of this chapter unpacks each ingredient.</p>
+<h2 id="learning-rate-re-warming-and-re-decaying">Learning-Rate Re-Warming and Re-Decaying<a class="headerlink" href="#learning-rate-re-warming-and-re-decaying" title="Permanent link">¶</a></h2>
+<p>The single most important CPT knob is the learning-rate schedule. The base model finished training at its minimum LR <span class="arithmatex">\(\eta_{\min}\)</span> (the floor of a cosine decay, see <a href="../03-pretraining/10-lr-schedules-hparams.html">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a>). If you simply resume at <span class="arithmatex">\(\eta_{\min}\)</span>, the model is in &ldquo;polish&rdquo; mode — gradients are tiny, and it will absorb almost nothing from <span class="arithmatex">\(\mathcal{D}_{\text{new}}\)</span>. To actually <em>learn</em>, you must raise the LR back up. This is <strong>re-warming</strong>.</p>
+<h3 id="the-mechanics">The mechanics<a class="headerlink" href="#the-mechanics" title="Permanent link">¶</a></h3>
+<p>A CPT schedule has three phases, mirroring a from-scratch run but compressed:</p>
+<ol>
+<li><strong>Re-warmup</strong> (<span class="arithmatex">\(T_w\)</span> steps): linearly ramp from a low value (often <span class="arithmatex">\(\eta_{\min}\)</span> of the base run, or even lower) up to a re-warm peak <span class="arithmatex">\(\eta_{\text{cpt}}\)</span>.</li>
+<li><strong>Stable/decay body</strong>: hold or cosine-decay over the CPT token budget.</li>
+<li><strong>Re-decay</strong> (<span class="arithmatex">\(T_d\)</span> steps): cosine or linear decay down to a new floor.</li>
+</ol>
+<p>Two decisions dominate outcomes: <strong>how high to re-warm</strong> (<span class="arithmatex">\(\eta_{\text{cpt}}\)</span>) and <strong>how to decay</strong>.</p>
+<p><strong>How high?</strong> The peak controls the stability–plasticity tradeoff directly. Empirically, re-warming to the <em>original pretraining peak</em> learns the new domain fastest but forgets the most. Re-warming to roughly <span class="arithmatex">\(10\%\)</span>–<span class="arithmatex">\(30\%\)</span> of the original peak is the common sweet spot for domain adaptation; for a large <em>distribution shift</em> (e.g., a brand-new language) you push higher, toward <span class="arithmatex">\(50\%\)</span>+; for a gentle <em>freshness</em> update (new web crawl, same distribution) you stay lower. A crucial subtlety from the Ibrahim et al. study: the <em>transient</em> loss spike caused by re-warming is temporary — the loss on both old and new data jumps up when you raise the LR, then recovers below the starting point. Do not panic at the spike; judge the run by where it settles after re-decay.</p>
+<p><strong>How to decay?</strong> You must re-decay to a low floor at the end, because — exactly as in the Warmup-Stable-Decay (WSD) schedule — most of the <em>committed</em> loss reduction happens during the decay phase. A CPT run held at high LR and never decayed looks unconverged. If you plan to do <em>several</em> CPT rounds (a streaming scenario), the WSD-style &ldquo;decay only at the end&rdquo; or &ldquo;infinite LR schedule&rdquo; of Ibrahim et al. is attractive: hold a constant high LR across rounds and only spend a short decay when you need a deployable checkpoint.</p>
+<h3 id="schedule-code">Schedule code<a class="headerlink" href="#schedule-code" title="Permanent link">¶</a></h3>
+<p>Here is a from-scratch CPT scheduler with explicit re-warm and re-decay, written as a plain multiplier on the optimizer&rsquo;s base LR.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.optim.lr_scheduler</span><span class="w"> </span><span class="kn">import</span> <span class="n">LambdaLR</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">make_cpt_schedule</span><span class="p">(</span>
+    <span class="n">optimizer</span><span class="p">,</span>
+    <span class="n">base_peak_lr</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>        <span class="c1"># the ORIGINAL pretraining peak LR</span>
+    <span class="n">rewarm_fraction</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>     <span class="c1"># eta_cpt = rewarm_fraction * base_peak_lr</span>
+    <span class="n">num_rewarm_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>      <span class="c1"># T_w: linear re-warmup</span>
+    <span class="n">num_total_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>       <span class="c1"># full CPT step budget</span>
+    <span class="n">num_decay_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>       <span class="c1"># T_d: final cosine re-decay</span>
+    <span class="n">start_lr_frac</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span> <span class="c1"># LR at step 0 as a fraction of eta_cpt</span>
+    <span class="n">final_lr_frac</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span> <span class="c1"># floor as a fraction of eta_cpt</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Three-phase CPT LR schedule (re-warm -&gt; stable -&gt; re-decay).</span>
+<span class="sd">    Returns a multiplier in [0, 1] RELATIVE to base_peak_lr, so set the</span>
+<span class="sd">    optimizer&#39;s base lr == base_peak_lr.</span>
+
+<span class="sd">        |       ____________________</span>
+<span class="sd">        |      /                    \\</span>
+<span class="sd">        |     /                      \\___</span>
+<span class="sd">        |    /                           (floor)</span>
+<span class="sd">        +---/------------------------------------&gt;</span>
+<span class="sd">          T_w        stable           T_d</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">eta_cpt_mult</span> <span class="o">=</span> <span class="n">rewarm_fraction</span>          <span class="c1"># peak as fraction of base peak</span>
+    <span class="n">stable_end</span>   <span class="o">=</span> <span class="n">num_total_steps</span> <span class="o">-</span> <span class="n">num_decay_steps</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">lr_lambda</span><span class="p">(</span><span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">step</span> <span class="o">&lt;</span> <span class="n">num_rewarm_steps</span><span class="p">:</span>
+            <span class="c1"># Phase 1: linear re-warm from start_lr_frac*eta_cpt -&gt; eta_cpt</span>
+            <span class="n">frac</span> <span class="o">=</span> <span class="n">step</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_rewarm_steps</span><span class="p">)</span>
+            <span class="n">mult</span> <span class="o">=</span> <span class="n">start_lr_frac</span> <span class="o">+</span> <span class="n">frac</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">start_lr_frac</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">eta_cpt_mult</span> <span class="o">*</span> <span class="n">mult</span>
+        <span class="k">elif</span> <span class="n">step</span> <span class="o">&lt;</span> <span class="n">stable_end</span><span class="p">:</span>
+            <span class="c1"># Phase 2: hold at the re-warm peak</span>
+            <span class="k">return</span> <span class="n">eta_cpt_mult</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Phase 3: cosine re-decay from eta_cpt -&gt; final_lr_frac*eta_cpt</span>
+            <span class="n">prog</span> <span class="o">=</span> <span class="p">(</span><span class="n">step</span> <span class="o">-</span> <span class="n">stable_end</span><span class="p">)</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_decay_steps</span><span class="p">)</span>
+            <span class="n">prog</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">prog</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+            <span class="n">cos</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">prog</span><span class="p">))</span>   <span class="c1"># 1 -&gt; 0</span>
+            <span class="n">mult</span> <span class="o">=</span> <span class="n">final_lr_frac</span> <span class="o">+</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">final_lr_frac</span><span class="p">)</span> <span class="o">*</span> <span class="n">cos</span>
+            <span class="k">return</span> <span class="n">eta_cpt_mult</span> <span class="o">*</span> <span class="n">mult</span>
+
+    <span class="k">return</span> <span class="n">LambdaLR</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">lr_lambda</span><span class="p">)</span>
+
+<span class="c1"># Example: base model trained at peak 3e-4, finished at 3e-5.</span>
+<span class="c1"># We re-warm to 20% of peak (6e-5), over 2% of the CPT budget, then</span>
+<span class="c1"># decay over the final 20%.</span>
+<span class="c1"># optimizer base lr is set to 3e-4 (base_peak_lr).</span>
+<span class="c1"># sched = make_cpt_schedule(opt, base_peak_lr=3e-4, rewarm_fraction=0.20,</span>
+<span class="c1">#             num_rewarm_steps=400, num_total_steps=20_000,</span>
+<span class="c1">#             num_decay_steps=4_000, final_lr_frac=0.05)</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: skipping re-warmup causes a worse spike than doing it</p>
+<p>It is tempting to think &ldquo;the model is already trained, so I can jump straight to my target CPT learning rate with no warmup.&rdquo; Don&rsquo;t. Resuming a converged checkpoint and immediately applying a 10x-higher LR than it finished at produces a large gradient step into a region the optimizer&rsquo;s stale Adam second-moment estimates (<span class="arithmatex">\(v_t\)</span>) are not calibrated for — you get a sharp loss spike and sometimes divergence. Always re-warm over at least a few hundred steps, and re-initialize or carefully load the optimizer state (see below).</p>
+</div>
+<h3 id="what-about-the-optimizer-state">What about the optimizer state?<a class="headerlink" href="#what-about-the-optimizer-state" title="Permanent link">¶</a></h3>
+<p>A subtle decision: do you resume the Adam optimizer state (<span class="arithmatex">\(m_t\)</span>, <span class="arithmatex">\(v_t\)</span>) from the base checkpoint, or reset it? Both are defensible. Resetting forces a fresh re-warmup (the <span class="arithmatex">\(v_t\)</span> estimates rebuild from scratch, so warmup is mandatory). Resuming preserves per-parameter learning-rate adaptation but the stale <span class="arithmatex">\(v_t\)</span> can mis-scale the first new gradients. The common practical choice is to <strong>reset the optimizer state and re-warm</strong>, which is also what you must do anyway if the model architecture changed (depth/width growth, new vocab) — the optimizer state has the wrong shape. We discuss precision and checkpoint-format issues in <a href="../03-pretraining/12-checkpointing-fault-tolerance.html">Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a>.</p>
+<h2 id="replay-fighting-catastrophic-forgetting-with-data">Replay: Fighting Catastrophic Forgetting With Data<a class="headerlink" href="#replay-fighting-catastrophic-forgetting-with-data" title="Permanent link">¶</a></h2>
+<p>Re-warming makes the model <em>plastic</em>; <strong>replay</strong> keeps it <em>stable</em>. The idea is dead simple and remarkably effective: mix a fraction of <em>old-distribution</em> data back into the CPT data stream so that the gradient never sees pure <span class="arithmatex">\(\mathcal{D}_{\text{new}}\)</span>. The <strong>replay ratio</strong> <span class="arithmatex">\(r\)</span> is the fraction of tokens drawn from <span class="arithmatex">\(\mathcal{D}_{\text{base}}\)</span> (or a proxy for it):</p>
+<div class="arithmatex">\[
+\mathcal{D}_{\text{cpt}} = (1 - r)\,\mathcal{D}_{\text{new}} + r\,\mathcal{D}_{\text{replay}}.
+\]</div>
+<p>Typical values are <span class="arithmatex">\(r \in [0.01, 0.30]\)</span>. The Ibrahim et al. study found that even <strong>5% replay</strong> dramatically reduces forgetting on the original distribution while costing almost nothing in new-domain learning, and that the marginal benefit of replay above ~25–50% is small. The intuition: a small but steady gradient signal pointing back toward <span class="arithmatex">\(\mathcal{D}_{\text{base}}\)</span> is enough to keep the model anchored, because forgetting is driven by <em>unopposed</em> drift away from the old minimum.</p>
+<h3 id="what-if-you-dont-have-the-original-data">What if you don&rsquo;t have the original data?<a class="headerlink" href="#what-if-you-dont-have-the-original-data" title="Permanent link">¶</a></h3>
+<p>You usually don&rsquo;t have the exact <span class="arithmatex">\(\mathcal{D}_{\text{base}}\)</span>. Three options, in rough order of preference:</p>
+<ol>
+<li><strong>Proxy replay</strong>: use a high-quality public general corpus (web text, books, Wikipedia, code) as a stand-in. It need not match the original mix exactly — it just needs to broadly cover the capabilities you want to preserve.</li>
+<li><strong>Self-generated replay</strong> (pseudo-rehearsal): sample text <em>from the base model itself</em> and replay that. The base model&rsquo;s own distribution is, by definition, the thing you&rsquo;re trying to preserve. This is the LLM analogue of generative replay and connects to <a href="../03-pretraining/15-synthetic-data.html">Synthetic Data for Pre- and Post-Training</a>.</li>
+<li><strong>No replay, low LR</strong>: if you genuinely cannot replay, lean harder on a <em>low</em> re-warm peak to limit drift — but accept more forgetting.</li>
+</ol>
+<h3 id="a-replay-aware-data-sampler">A replay-aware data sampler<a class="headerlink" href="#a-replay-aware-data-sampler" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">itertools</span><span class="w"> </span><span class="kn">import</span> <span class="n">cycle</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">replay_mixed_stream</span><span class="p">(</span><span class="n">new_iter</span><span class="p">,</span> <span class="n">replay_iter</span><span class="p">,</span> <span class="n">replay_ratio</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">seed</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Yield documents from a CPT stream that is `replay_ratio` old-distribution</span>
+<span class="sd">    and the rest new-distribution. Token-level ratios are approximated at the</span>
+<span class="sd">    document level here; for exact token budgets, weight by document length.</span>
+
+<span class="sd">    new_iter    : iterator over NEW-domain documents (the target)</span>
+<span class="sd">    replay_iter : iterator over BASE/REPLAY documents (anti-forgetting)</span>
+<span class="sd">    replay_ratio: probability a given document comes from replay (e.g. 0.05)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">Random</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    <span class="n">new_pool</span>    <span class="o">=</span> <span class="n">cycle</span><span class="p">(</span><span class="n">new_iter</span><span class="p">)</span>      <span class="c1"># in practice these are sharded streams,</span>
+    <span class="n">replay_pool</span> <span class="o">=</span> <span class="n">cycle</span><span class="p">(</span><span class="n">replay_iter</span><span class="p">)</span>   <span class="c1"># not in-memory; cycle is illustrative</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">rng</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">replay_ratio</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="nb">next</span><span class="p">(</span><span class="n">replay_pool</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="nb">next</span><span class="p">(</span><span class="n">new_pool</span><span class="p">)</span>
+
+<span class="c1"># For *exact* token accounting you instead track running token counts and</span>
+<span class="c1"># pull from whichever source is behind its target share -- this matters when</span>
+<span class="c1"># documents vary wildly in length (code files vs. tweets).</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">token_balanced_stream</span><span class="p">(</span><span class="n">new_iter</span><span class="p">,</span> <span class="n">replay_iter</span><span class="p">,</span> <span class="n">replay_ratio</span><span class="p">,</span> <span class="n">len_fn</span><span class="o">=</span><span class="nb">len</span><span class="p">):</span>
+    <span class="n">new_pool</span><span class="p">,</span> <span class="n">replay_pool</span> <span class="o">=</span> <span class="n">cycle</span><span class="p">(</span><span class="n">new_iter</span><span class="p">),</span> <span class="n">cycle</span><span class="p">(</span><span class="n">replay_iter</span><span class="p">)</span>
+    <span class="n">seen_new</span> <span class="o">=</span> <span class="n">seen_replay</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="n">seen_new</span> <span class="o">+</span> <span class="n">seen_replay</span>
+        <span class="c1"># current replay share; pull replay if we are below target, else new</span>
+        <span class="n">cur_replay_share</span> <span class="o">=</span> <span class="n">seen_replay</span> <span class="o">/</span> <span class="n">total</span> <span class="k">if</span> <span class="n">total</span> <span class="k">else</span> <span class="mf">0.0</span>
+        <span class="k">if</span> <span class="n">cur_replay_share</span> <span class="o">&lt;</span> <span class="n">replay_ratio</span><span class="p">:</span>
+            <span class="n">doc</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">replay_pool</span><span class="p">);</span> <span class="n">seen_replay</span> <span class="o">+=</span> <span class="n">len_fn</span><span class="p">(</span><span class="n">doc</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">doc</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">new_pool</span><span class="p">);</span> <span class="n">seen_new</span> <span class="o">+=</span> <span class="n">len_fn</span><span class="p">(</span><span class="n">doc</span><span class="p">)</span>
+        <span class="k">yield</span> <span class="n">doc</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: measure forgetting on a frozen held-out base set</p>
+<p>Before you start CPT, carve out a held-out evaluation set from the <em>base</em> distribution (general-knowledge MMLU-style tasks, a perplexity set on web text) and a held-out <em>new</em>-domain set. Log both every N steps. A healthy CPT run shows new-domain loss dropping steadily while base loss rises only slightly and then plateaus. If base loss climbs monotonically, raise the replay ratio or lower the re-warm peak. This two-curve plot is your single best diagnostic.</p>
+</div>
+<h2 id="domain-language-streaming-adaptation">Domain, Language &amp; Streaming Adaptation<a class="headerlink" href="#domain-language-streaming-adaptation" title="Permanent link">¶</a></h2>
+<p>The re-warm + replay recipe is the <em>engine</em>. The <em>application</em> — which domain, how big the shift, how the data arrives — sets the dials. Below are the canonical regimes.</p>
+<h3 id="domain-adaptation-code-medical-legal-finance">Domain adaptation (code, medical, legal, finance)<a class="headerlink" href="#domain-adaptation-code-medical-legal-finance" title="Permanent link">¶</a></h3>
+<p>The classic motivation (Gururangan et al., <em>Don&rsquo;t Stop Pretraining</em>, 2020) is that even a strong general model benefits from a continued pass over in-domain text before any task fine-tuning. Modern recipes (StarCoder-style code adaptation, the BloombergGPT finance model, PMC/Meditron-style medical models, SaulLM legal models) follow the same arc:</p>
+<ul>
+<li><strong>Token budget</strong>: a domain pass is typically <strong>10–100 B tokens</strong> — single-digit percent of the base run. Below ~5 B tokens you mostly polish; above ~100 B you risk drifting into a <em>new</em> base model with all the forgetting that implies.</li>
+<li><strong>Re-warm peak</strong>: <span class="arithmatex">\(\sim 10\)</span>–<span class="arithmatex">\(30\%\)</span> of base peak. Code adaptation often goes higher because code is structurally far from prose.</li>
+<li><strong>Replay</strong>: <span class="arithmatex">\(5\)</span>–<span class="arithmatex">\(30\%\)</span> general text, plus — importantly — <strong>keep some of the base domain&rsquo;s neighbors</strong>. For medical, replay general English <em>and</em> general science so you don&rsquo;t forget how to write fluently.</li>
+<li><strong>Tokenizer</strong>: domain text may tokenize poorly (chemical formulae, legal citations, code symbols). You may need vocabulary extension — covered in the tokenizer-transfer section below.</li>
+</ul>
+<p>The order matters too: domain CPT comes <em>before</em> instruction tuning and alignment (<a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a>). CPT injects <em>knowledge</em>; SFT/RLHF inject <em>behavior</em>. Doing CPT after alignment tends to wash out the alignment.</p>
+<h3 id="language-adaptation-adding-or-strengthening-a-language">Language adaptation (adding or strengthening a language)<a class="headerlink" href="#language-adaptation-adding-or-strengthening-a-language" title="Permanent link">¶</a></h3>
+<p>Extending a predominantly-English model to, say, Hindi or Swahili is the hardest CPT regime because the shift is large <em>and</em> the tokenizer is usually a bottleneck: an English-centric BPE tokenizer fragments other scripts into many tokens (high <em>fertility</em>), so the model wastes context and compute, and the new-language embeddings barely exist. The recipe:</p>
+<ol>
+<li><strong>Extend the tokenizer</strong> with new-language merges/tokens (see vocabulary transfer below), initializing new embeddings sensibly.</li>
+<li><strong>Re-warm higher</strong> (<span class="arithmatex">\(30\)</span>–<span class="arithmatex">\(60\%\)</span> of base peak) — you are teaching genuinely new statistics.</li>
+<li><strong>Heavy replay of the strong language(s)</strong> (<span class="arithmatex">\(\geq 25\%\)</span>) so the model retains English reasoning, which often <em>transfers</em> to the new language.</li>
+<li><strong>Larger budget</strong> (<span class="arithmatex">\(50\)</span>–<span class="arithmatex">\(300\)</span> B tokens) than a same-language domain pass.</li>
+</ol>
+<p>A counterintuitive but well-documented effect: cross-lingual transfer means a model that is strong in English and given even modest target-language CPT often reasons better in the target language than a model trained on the target language alone, because abstract reasoning circuits are largely language-agnostic.</p>
+<h3 id="streaming-temporal-adaptation-fresh-data-over-time">Streaming / temporal adaptation (fresh data over time)<a class="headerlink" href="#streaming-temporal-adaptation-fresh-data-over-time" title="Permanent link">¶</a></h3>
+<p>Models go stale: a 2024-trained model does not know 2026 events. The streaming regime does CPT <em>repeatedly</em> as new data arrives. Key differences from a one-shot pass:</p>
+<ul>
+<li><strong>Schedule</strong>: a one-shot cosine that decays to a floor &ldquo;ends&rdquo; the model. For repeated rounds, use a WSD/infinite schedule — hold a constant LR across rounds, decay only to produce a release checkpoint, then <em>resume from the pre-decay weights</em> (Ibrahim et al. show the decayed checkpoint is a worse starting point than the high-LR one). </li>
+<li><strong>Replay across all past rounds</strong>, not just the original base, to avoid forgetting <em>intermediate</em> knowledge.</li>
+<li><strong>Distribution-shift detection</strong>: monitor per-domain perplexity to decide <em>when</em> a refresh is warranted.</li>
+</ul>
+<p>This is the pretraining-side analogue of the production <a href="../12-production-mlops/05-data-flywheel.html">Data Flywheels &amp; Continuous Improvement</a> loop.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: budgeting a medical domain-adaptive pass</p>
+<p>We have a 7B-parameter base model trained on 2 T tokens at peak LR <span class="arithmatex">\(3\times10^{-4}\)</span>, decayed to <span class="arithmatex">\(3\times10^{-5}\)</span>. We want a medical variant.</p>
+<p><strong>Token budget.</strong> Pick 40 B CPT tokens — that is <span class="arithmatex">\(40/2000 = 2\%\)</span> of the original token budget, a typical DAPT magnitude.</p>
+<p><strong>Compute.</strong> Using the standard <span class="arithmatex">\(C \approx 6ND\)</span> FLOPs estimate (see <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws</a>), with <span class="arithmatex">\(N = 7\times10^9\)</span> params and <span class="arithmatex">\(D = 4\times10^{10}\)</span> tokens:</p>
+<div class="arithmatex">\[
+C \approx 6 \times 7\times10^9 \times 4\times10^{10} = 1.68\times10^{21}\ \text{FLOPs}.
+\]</div>
+<p>On 64 H100s at, say, an achieved <span class="arithmatex">\(4\times10^{14}\)</span> FLOP/s each (≈40% of bf16 peak), aggregate is <span class="arithmatex">\(2.56\times10^{16}\)</span> FLOP/s, so wall-clock <span class="arithmatex">\(\approx 1.68\times10^{21} / 2.56\times10^{16} \approx 6.6\times10^{4}\ \text{s} \approx 18\)</span> hours. The <em>original</em> 2 T-token run was 50x this — <strong>CPT costs ~2% of pretraining</strong>, exactly the leverage we wanted.</p>
+<p><strong>Data mix.</strong> <span class="arithmatex">\(r = 0.15\)</span> replay: <span class="arithmatex">\(34\)</span> B medical tokens + <span class="arithmatex">\(6\)</span> B general/science tokens. <strong>Schedule:</strong> re-warm to <span class="arithmatex">\(0.20 \times 3\times10^{-4} = 6\times10^{-5}\)</span> over 1% of steps, hold, then cosine re-decay over the final 20% to <span class="arithmatex">\(3\times10^{-6}\)</span>. <strong>Tokenizer:</strong> add ~2k medical/biochemical tokens; initialize new embeddings as the mean of their BPE sub-token embeddings (see below).</p>
+</div>
+<h2 id="model-growth-weight-reuse">Model Growth &amp; Weight Reuse<a class="headerlink" href="#model-growth-weight-reuse" title="Permanent link">¶</a></h2>
+<p>So far we kept the architecture fixed. The more ambitious form of &ldquo;don&rsquo;t retrain from scratch&rdquo; <em>changes the architecture</em> but <strong>reuses the trained weights</strong> as initialization. The premise — validated by Net2Net (Chen et al., 2015), bert2BERT, Gong et al.&rsquo;s progressive stacking, and the dense-to-MoE <em>sparse upcycling</em> of Komatsuzaki et al. (2022) — is that a smaller trained model is a far better initialization for a larger one than random init, so you can &ldquo;grow&rdquo; into a bigger model and finish with a short CPT pass.</p>
+<h3 id="depth-growth-layer-stacking">Depth growth (layer stacking)<a class="headerlink" href="#depth-growth-layer-stacking" title="Permanent link">¶</a></h3>
+<p>To go from <span class="arithmatex">\(L\)</span> to <span class="arithmatex">\(2L\)</span> layers, <strong>duplicate</strong> existing layers (interleaved or stacked) so the initial deeper network computes <em>nearly the same function</em> as the shallow one. The cleanest trick is <strong>function-preserving</strong> growth: add new layers initialized so their contribution is zero at step 0. Because transformer blocks are residual, <span class="arithmatex">\(x \mapsto x + f(x)\)</span>, you can make a new block an identity by zeroing the output projection of its attention and MLP sublayers — then <span class="arithmatex">\(f(x)=0\)</span> and the block passes its input through untouched. Training then &ldquo;wakes up&rdquo; the new layers gradually.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="o">,</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span><span class="o">,</span><span class="w"> </span><span class="nn">copy</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">grow_depth_identity</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">insert_after</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Insert function-preserving (identity-at-init) transformer blocks.</span>
+<span class="sd">    `model.layers` is a ModuleList of residual transformer blocks, each of</span>
+<span class="sd">    the form: x = x + attn(ln1(x)); x = x + mlp(ln2(x)).</span>
+<span class="sd">    We clone an existing block and ZERO its residual-output projections so the</span>
+<span class="sd">    new block is the identity map at initialization -&gt; the grown model</span>
+<span class="sd">    computes the SAME function as the original at step 0 (loss is preserved).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">new_layers</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">layer</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">layers</span><span class="p">):</span>
+        <span class="n">new_layers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">layer</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">insert_after</span><span class="p">:</span>
+            <span class="n">twin</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">layer</span><span class="p">)</span>
+            <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+                <span class="c1"># zero the output projection of attention (o_proj) and MLP</span>
+                <span class="c1"># (down_proj). Names depend on your block; adapt accordingly.</span>
+                <span class="n">twin</span><span class="o">.</span><span class="n">attn</span><span class="o">.</span><span class="n">o_proj</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">twin</span><span class="o">.</span><span class="n">attn</span><span class="o">.</span><span class="n">o_proj</span><span class="o">.</span><span class="n">bias</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">twin</span><span class="o">.</span><span class="n">attn</span><span class="o">.</span><span class="n">o_proj</span><span class="o">.</span><span class="n">bias</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">twin</span><span class="o">.</span><span class="n">mlp</span><span class="o">.</span><span class="n">down_proj</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">twin</span><span class="o">.</span><span class="n">mlp</span><span class="o">.</span><span class="n">down_proj</span><span class="p">,</span> <span class="s2">&quot;bias&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">twin</span><span class="o">.</span><span class="n">mlp</span><span class="o">.</span><span class="n">down_proj</span><span class="o">.</span><span class="n">bias</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+            <span class="n">new_layers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">twin</span><span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">layers</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">(</span><span class="n">new_layers</span><span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">num_layers</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">new_layers</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">model</span>
+</code></pre></div>
+<p>The alternative, <strong>progressive stacking</strong> (train shallow, copy-stack to deeper, continue), was shown by Gong et al. to reach a target deep model faster in total FLOPs than training the deep model from scratch — the shallow phase is cheap and the warm start is good.</p>
+<h3 id="width-growth">Width growth<a class="headerlink" href="#width-growth" title="Permanent link">¶</a></h3>
+<p>Widening a hidden dimension <span class="arithmatex">\(d \to d'\)</span> reuses Net2Net&rsquo;s <em>net2wider</em>: copy existing neurons and <strong>split their outgoing weights</strong> so the function is preserved. If neuron <span class="arithmatex">\(j\)</span> is duplicated <span class="arithmatex">\(k\)</span> times, divide each copy&rsquo;s outgoing weights by <span class="arithmatex">\(k\)</span> so the summed contribution is unchanged. To break the symmetry (otherwise the copies receive identical gradients forever and never diverge), add tiny noise. bert2BERT applies exactly this &ldquo;function-preserving&rdquo; widening to initialize a wide BERT from a narrow one and recovers most of the from-scratch performance with far less compute.</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">net2wider_linear</span><span class="p">(</span><span class="n">W_in</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">W_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">new_width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                     <span class="n">noise</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-3</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Function-preserving width expansion of one hidden layer.</span>
+<span class="sd">      W_in : (hidden, in)   -&gt; produces the hidden activations</span>
+<span class="sd">      W_out: (out, hidden)  -&gt; consumes them</span>
+<span class="sd">    Returns expanded (W_in&#39;, W_out&#39;) with hidden -&gt; new_width such that the</span>
+<span class="sd">    composed map is unchanged (up to small symmetry-breaking noise).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">hidden</span><span class="p">,</span> <span class="n">_in</span> <span class="o">=</span> <span class="n">W_in</span><span class="o">.</span><span class="n">shape</span>
+    <span class="k">assert</span> <span class="n">new_width</span> <span class="o">&gt;=</span> <span class="n">hidden</span>
+    <span class="c1"># choose which existing neurons to duplicate (uniform with replacement)</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">hidden</span><span class="p">,</span> <span class="p">(</span><span class="n">new_width</span> <span class="o">-</span> <span class="n">hidden</span><span class="p">,))</span>
+    <span class="n">pick</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">hidden</span><span class="p">),</span> <span class="n">idx</span><span class="p">])</span>         <span class="c1"># (new_width,)</span>
+    <span class="c1"># count copies of each original neuron, for the divide-by-k correction</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">pick</span><span class="p">,</span> <span class="n">minlength</span><span class="o">=</span><span class="n">hidden</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">W_in_new</span>  <span class="o">=</span> <span class="n">W_in</span><span class="p">[</span><span class="n">pick</span><span class="p">]</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>                        <span class="c1"># replicate rows</span>
+    <span class="n">W_in_new</span> <span class="o">+=</span> <span class="n">noise</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">W_in_new</span><span class="p">)</span>        <span class="c1"># break symmetry</span>
+    <span class="c1"># outgoing weights: divide each replica by the # of copies of its source</span>
+    <span class="n">W_out_new</span> <span class="o">=</span> <span class="p">(</span><span class="n">W_out</span><span class="p">[:,</span> <span class="n">pick</span><span class="p">]</span> <span class="o">/</span> <span class="n">counts</span><span class="p">[</span><span class="n">pick</span><span class="p">]</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">W_in_new</span><span class="p">,</span> <span class="n">W_out_new</span>
+</code></pre></div>
+<h3 id="dense-to-moe-upcycling">Dense-to-MoE upcycling<a class="headerlink" href="#dense-to-moe-upcycling" title="Permanent link">¶</a></h3>
+<p><strong>Sparse upcycling</strong> turns a trained <em>dense</em> model into a <em>sparse</em> Mixture-of-Experts model, reusing the dense weights. The recipe (Komatsuzaki et al., 2022; used at scale for several production MoEs): replace each (or every other) dense MLP block with an MoE layer whose <span class="arithmatex">\(E\)</span> experts are each <strong>initialized as a copy of the original dense MLP</strong>. The router is added fresh (small random init). At step 0, every expert is identical, so — if the router is roughly uniform — the MoE layer computes approximately the original dense MLP&rsquo;s output, preserving the function. Continued pretraining then <em>differentiates</em> the experts. This buys you a high-capacity MoE (more parameters, same or modestly higher FLOPs per token) for the cost of a CPT pass, rather than training an MoE from scratch.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span><span class="o">,</span><span class="w"> </span><span class="nn">copy</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">UpcycledMoE</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Replace a dense MLP with an MoE whose experts are clones of that MLP.</span>
+<span class="sd">    At init all experts are identical, so with a near-uniform router the layer</span>
+<span class="sd">    approximately reproduces the dense MLP -&gt; function-preserving upcycle.</span>
+<span class="sd">    See chapter 2.9 for routing, load balancing, and capacity factors.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dense_mlp</span><span class="p">,</span> <span class="n">num_experts</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="n">d_model</span> <span class="o">=</span> <span class="n">dense_mlp</span><span class="o">.</span><span class="n">up_proj</span><span class="o">.</span><span class="n">in_features</span>
+        <span class="c1"># one router (gate) added fresh; small init so logits start ~uniform</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">gate</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">num_experts</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">gate</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+        <span class="c1"># each expert is a deep copy of the trained dense MLP</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">experts</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">(</span><span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">dense_mlp</span><span class="p">)</span>
+                                     <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_experts</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">top_k</span> <span class="o">=</span> <span class="n">top_k</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>                       <span class="c1"># x: (tokens, d_model)</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                   <span class="c1"># (tokens, E)</span>
+        <span class="n">w</span><span class="p">,</span> <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">logits</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">top_k</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">w</span> <span class="o">=</span> <span class="n">w</span> <span class="o">/</span> <span class="n">w</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>         <span class="c1"># renormalize top-k weights</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">slot</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">top_k</span><span class="p">):</span>          <span class="c1"># gather-scatter over experts</span>
+            <span class="k">for</span> <span class="n">e</span><span class="p">,</span> <span class="n">expert</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">experts</span><span class="p">):</span>
+                <span class="n">mask</span> <span class="o">=</span> <span class="n">idx</span><span class="p">[:,</span> <span class="n">slot</span><span class="p">]</span> <span class="o">==</span> <span class="n">e</span>
+                <span class="k">if</span> <span class="n">mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+                    <span class="n">out</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span> <span class="o">+=</span> <span class="n">w</span><span class="p">[</span><span class="n">mask</span><span class="p">,</span> <span class="n">slot</span><span class="p">:</span><span class="n">slot</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">expert</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">mask</span><span class="p">])</span>
+        <span class="k">return</span> <span class="n">out</span>
+</code></pre></div>
+<p>See <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts (MoE) Architectures</a> for routing, auxiliary load-balancing losses, and capacity factors — all of which you must tune during the upcycling CPT, because freshly-added routers are prone to collapse (routing all tokens to one expert).</p>
+<h3 id="vocabulary-tokenizer-transfer">Vocabulary &amp; tokenizer transfer<a class="headerlink" href="#vocabulary-tokenizer-transfer" title="Permanent link">¶</a></h3>
+<p>When you change the tokenizer — extending the vocab for a new domain/language, or swapping to a different tokenizer entirely — the embedding matrix <span class="arithmatex">\(E \in \mathbb{R}^{|V|\times d}\)</span> and the output (unembedding) matrix must change shape, and the new rows must be initialized. Random init for new tokens is wasteful; the trained model already &ldquo;knows&rdquo; the meaning of the <em>pieces</em> of a new token. Two standard moves:</p>
+<ul>
+<li><strong>Mean-of-subtokens init</strong>: a new token (e.g., a whole word that the old tokenizer split into pieces) gets its embedding initialized to the <strong>mean of its old sub-token embeddings</strong>. This is the heuristic behind FOCUS and the widely-used embedding-init utilities, and it dramatically shortens the CPT needed to make the new tokens useful.</li>
+<li><strong>Shared-token preservation</strong>: tokens present in <em>both</em> vocabularies keep their trained embeddings exactly. Only genuinely new tokens are initialized.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">init_new_embeddings</span><span class="p">(</span><span class="n">old_emb</span><span class="p">,</span> <span class="n">new_vocab</span><span class="p">,</span> <span class="n">old_tokenizer</span><span class="p">,</span> <span class="n">mean_init</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Build a new embedding matrix for an extended/changed vocabulary.</span>
+<span class="sd">      old_emb       : (|V_old|, d) trained embedding matrix</span>
+<span class="sd">      new_vocab     : dict {new_token_str -&gt; new_id}</span>
+<span class="sd">      old_tokenizer : can encode a string into OLD ids</span>
+<span class="sd">    Shared tokens copy their trained vector; new tokens are initialized to the</span>
+<span class="sd">    mean of the OLD sub-token embeddings of their surface string (FOCUS-style).</span>
+<span class="sd">    Falls back to the overall mean (a safe centroid) when no sub-tokens exist.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">old_emb</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">new_emb</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">new_vocab</span><span class="p">),</span> <span class="n">d</span><span class="p">)</span>
+    <span class="n">overall_mean</span> <span class="o">=</span> <span class="n">old_emb</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">old_vocab</span> <span class="o">=</span> <span class="n">old_tokenizer</span><span class="o">.</span><span class="n">get_vocab</span><span class="p">()</span>       <span class="c1"># {token_str -&gt; old_id}</span>
+    <span class="k">for</span> <span class="n">tok</span><span class="p">,</span> <span class="n">new_id</span> <span class="ow">in</span> <span class="n">new_vocab</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">old_vocab</span><span class="p">:</span>                     <span class="c1"># shared: copy trained vector</span>
+            <span class="n">new_emb</span><span class="p">[</span><span class="n">new_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">old_emb</span><span class="p">[</span><span class="n">old_vocab</span><span class="p">[</span><span class="n">tok</span><span class="p">]]</span>
+        <span class="k">elif</span> <span class="n">mean_init</span><span class="p">:</span>                          <span class="c1"># new: mean of OLD sub-tokens</span>
+            <span class="n">sub_ids</span> <span class="o">=</span> <span class="n">old_tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">tok</span><span class="p">,</span> <span class="n">add_special_tokens</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">sub_ids</span><span class="p">:</span>
+                <span class="n">new_emb</span><span class="p">[</span><span class="n">new_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">old_emb</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">sub_ids</span><span class="p">)]</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">new_emb</span><span class="p">[</span><span class="n">new_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">overall_mean</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">new_emb</span><span class="p">[</span><span class="n">new_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">overall_mean</span>
+    <span class="k">return</span> <span class="n">new_emb</span>
+</code></pre></div>
+<p>After re-initializing embeddings you almost always <strong>CPT the whole model</strong> (not just the embeddings) so the body learns to use the new vocabulary; a common warm-up is to first train <em>only</em> the new embedding rows for a few hundred steps with the rest frozen, then unfreeze everything. See <a href="../02-transformer/01-tokenization.html">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a> for how the merges that define new tokens are produced, and <a href="../02-transformer/02-embeddings-input.html">Embeddings &amp; The Input Pipeline</a> for embedding/unembedding tying.</p>
+<h2 id="planning-cpt-compute-with-loss-trajectory-models">Planning CPT Compute With Loss-Trajectory Models<a class="headerlink" href="#planning-cpt-compute-with-loss-trajectory-models" title="Permanent link">¶</a></h2>
+<p>The final discipline is <em>planning</em>: before spending the compute, predict where the loss will land and how to split the budget. Three questions recur.</p>
+<p><strong>1. How many tokens?</strong> CPT obeys a scaling-law-like diminishing-returns curve. The new-domain loss after <span class="arithmatex">\(D\)</span> CPT tokens is well-modeled by a shifted power law,</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{new}}(D) \approx \mathcal{L}_\infty + \frac{A}{(D_0 + D)^{\alpha}},
+\]</div>
+<p>where <span class="arithmatex">\(D_0\)</span> encodes the &ldquo;head start&rdquo; the base model already has on the new domain, and <span class="arithmatex">\(A,\alpha,\mathcal{L}_\infty\)</span> are fit from a short pilot. Run a small pilot at, say, 1 B, 2 B, 4 B tokens, fit the curve, and extrapolate to find the <em>knee</em> where additional tokens stop paying. The same machinery is developed in <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>; CPT just adds the <span class="arithmatex">\(D_0\)</span> offset that represents transferred knowledge.</p>
+<p><strong>2. How much forgetting?</strong> Model the <em>base</em>-domain loss as <em>rising</em> with CPT tokens at a rate damped by the replay ratio <span class="arithmatex">\(r\)</span>. A serviceable empirical form is</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{base}}(D, r) \approx \mathcal{L}_{\text{base}}(0) + B\,(1-r)\,D^{\beta},
+\]</div>
+<p>so larger replay <span class="arithmatex">\(r\)</span> flattens forgetting. Fitting both curves from the pilot lets you pick the <span class="arithmatex">\((D, r, \eta_{\text{cpt}})\)</span> that hits a target — e.g., &ldquo;maximize medical gain subject to base-loss regression <span class="arithmatex">\(\le 2\%\)</span>.&rdquo;</p>
+<p><strong>3. Grow now or later?</strong> If you also plan model growth, the loss-trajectory model tells you whether to grow first (cheaper if the growth&rsquo;s function-preserving init starts near the base loss) or finish CPT on the small model first.</p>
+<p>Here is a tiny fitter you can run on pilot points.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.optimize</span><span class="w"> </span><span class="kn">import</span> <span class="n">curve_fit</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fit_cpt_trajectory</span><span class="p">(</span><span class="n">tokens</span><span class="p">,</span> <span class="n">losses</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Fit L(D) = L_inf + A / (D0 + D)**alpha to pilot (tokens, loss) points,</span>
+<span class="sd">    then return a predictor and the token count to hit a target loss.</span>
+<span class="sd">    tokens : array of CPT token counts (e.g. [1e9, 2e9, 4e9])</span>
+<span class="sd">    losses : measured new-domain loss at each.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">law</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">L_inf</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">D0</span><span class="p">,</span> <span class="n">alpha</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">L_inf</span> <span class="o">+</span> <span class="n">A</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">power</span><span class="p">(</span><span class="n">D0</span> <span class="o">+</span> <span class="n">D</span><span class="p">,</span> <span class="n">alpha</span><span class="p">)</span>
+    <span class="n">p0</span> <span class="o">=</span> <span class="p">[</span><span class="nb">min</span><span class="p">(</span><span class="n">losses</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.9</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1e9</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">]</span>            <span class="c1"># rough initial guess</span>
+    <span class="n">popt</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">curve_fit</span><span class="p">(</span><span class="n">law</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">tokens</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">losses</span><span class="p">),</span>
+                        <span class="n">p0</span><span class="o">=</span><span class="n">p0</span><span class="p">,</span> <span class="n">maxfev</span><span class="o">=</span><span class="mi">20000</span><span class="p">)</span>
+    <span class="n">L_inf</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">D0</span><span class="p">,</span> <span class="n">alpha</span> <span class="o">=</span> <span class="n">popt</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">predict</span><span class="p">(</span><span class="n">D</span><span class="p">):</span>                                    <span class="c1"># loss at D tokens</span>
+        <span class="k">return</span> <span class="n">L_inf</span> <span class="o">+</span> <span class="n">A</span> <span class="o">/</span> <span class="p">(</span><span class="n">D0</span> <span class="o">+</span> <span class="n">D</span><span class="p">)</span> <span class="o">**</span> <span class="n">alpha</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">tokens_for_target</span><span class="p">(</span><span class="n">target_loss</span><span class="p">):</span>                <span class="c1"># invert the law</span>
+        <span class="k">if</span> <span class="n">target_loss</span> <span class="o">&lt;=</span> <span class="n">L_inf</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;inf&quot;</span><span class="p">)</span>                        <span class="c1"># unreachable: below L_inf</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">A</span> <span class="o">/</span> <span class="p">(</span><span class="n">target_loss</span> <span class="o">-</span> <span class="n">L_inf</span><span class="p">))</span> <span class="o">**</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="n">alpha</span><span class="p">)</span> <span class="o">-</span> <span class="n">D0</span>
+
+    <span class="k">return</span> <span class="n">predict</span><span class="p">,</span> <span class="n">tokens_for_target</span><span class="p">,</span> <span class="n">popt</span>
+
+<span class="c1"># Example usage:</span>
+<span class="c1"># predict, tokens_for, params = fit_cpt_trajectory(</span>
+<span class="c1">#     [1e9, 2e9, 4e9], [2.41, 2.30, 2.22])</span>
+<span class="c1"># print(predict(40e9))           # extrapolated loss at the full 40B budget</span>
+<span class="c1"># print(tokens_for(2.10))        # tokens needed to reach loss 2.10</span>
+</code></pre></div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You have a strong 13B English base model and need a Japanese version on a fixed, modest compute budget. Walk me through your continual-pretraining plan and the top three things that will go wrong if you&rsquo;re careless.</p>
+<p><strong>A:</strong> First, fix the <strong>tokenizer</strong>: an English BPE fragments Japanese into many tokens (high fertility), wasting context and compute. I&rsquo;d extend the vocab with Japanese merges and initialize the new embedding rows as the <strong>mean of their old sub-token embeddings</strong>, copying the embeddings of any shared tokens unchanged. Second, the <strong>schedule</strong>: reset the optimizer state and <strong>re-warm</strong> to ~30–50% of the original peak LR (a language shift is large, so I want plasticity), then <strong>re-decay</strong> to a low floor at the end. Third, <strong>replay</strong>: keep ~25%+ English in the mix — English reasoning transfers cross-lingually, so heavy replay both prevents forgetting <em>and</em> lifts Japanese reasoning. Budget on the order of 50–200 B tokens, validated by a pilot-fit power law so I stop at the knee.</p>
+<p>The three failure modes: <strong>(1) Catastrophic forgetting of English</strong> if I re-warm too hot with no replay — the model becomes a mediocre monolingual model. <strong>(2) The re-warm loss spike scaring me into aborting</strong> — it&rsquo;s transient and recovers below baseline after decay; judge by the settled loss, not the spike. <strong>(3) A broken tokenizer</strong> — if I randomly init the new embeddings or don&rsquo;t fix fertility, I burn most of the budget just teaching the model to read, and the new tokens stay near-useless. I&rsquo;d also CPT <em>before</em> any instruction tuning, since alignment applied first gets washed out.</p>
+</div>
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Continual pretraining (CPT) extends a converged base model on new data for a few percent of the original compute; the whole craft is navigating the <strong>stability–plasticity dilemma</strong> — learning the new without forgetting the old.</li>
+<li><strong>Re-warm and re-decay</strong> the learning rate: resume too cold and the model learns nothing; resume too hot and it forgets. ~10–30% of the original peak suits domain adaptation; push higher (~30–60%) for large shifts like a new language. Always re-warm over a few hundred steps and reset/recalibrate the optimizer state.</li>
+<li>The re-warm <strong>loss spike is transient</strong> — judge a run by where loss settles after re-decay, not by the spike.</li>
+<li><strong>Replay</strong> a small fraction (often just 5%, up to ~30%) of old-distribution (or self-generated, or proxy) data to anchor the model against forgetting; even tiny replay buys most of the benefit.</li>
+<li><strong>Domain DAPT</strong> is ~10–100 B tokens before alignment; <strong>language adaptation</strong> needs tokenizer extension + heavy strong-language replay; <strong>streaming</strong> updates use a WSD/infinite schedule and replay across all past rounds.</li>
+<li><strong>Grow, don&rsquo;t retrain</strong>: function-preserving depth (zero the new block&rsquo;s residual output), width (Net2Net split-and-normalize), and <strong>dense→MoE sparse upcycling</strong> (clone the dense MLP into experts) let a trained model initialize a larger one, finished with a short CPT pass.</li>
+<li><strong>Tokenizer/vocabulary transfer</strong> initializes new token embeddings as the <strong>mean of their old sub-tokens</strong> and preserves shared tokens — this drastically shortens the CPT needed for the new vocab to become useful.</li>
+<li><strong>Plan with loss-trajectory models</strong>: fit a shifted power law <span class="arithmatex">\(\mathcal{L}\approx\mathcal{L}_\infty + A/(D_0+D)^\alpha\)</span> to a short pilot to choose token budget, replay ratio, and the forgetting/learning tradeoff before committing compute.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Continual and domain-adaptive pretraining is now a standard pillar of every production LLM pipeline: the re-warm + replay recipe from Ibrahim et al. (2024) has become the de-facto baseline, dense-to-MoE sparse upcycling is used at scale by several labs, and temporal-continual pretraining benchmarks (TiC-LM, 2025) are pushing the field toward rigorous evaluation of knowledge-freshness tradeoffs.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2004.10964">Gururangan et al., <em>Don&rsquo;t Stop Pretraining</em> (2020)</a> — the empirical case for domain-adaptive and task-adaptive pretraining (DAPT/TAPT) that established the practice.</li>
+<li><a href="https://arxiv.org/abs/2302.03241">Ke et al., <em>Continual Pre-training of Language Models</em> (ICLR 2023)</a> — introduces soft-masking over important parameters to prevent forgetting while enabling knowledge transfer across sequential domains.</li>
+<li><a href="https://arxiv.org/abs/2212.05055">Komatsuzaki et al., <em>Sparse Upcycling: Training Mixture-of-Experts from Dense Checkpoints</em> (2022)</a> — the canonical dense-to-MoE upcycling recipe showing ~50% compute savings vs. training an MoE from scratch.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2308.04014">Gupta et al., <em>Continual Pre-Training of LLMs: How to (re)warm your model?</em> (2023)</a> — systematic study of LR re-warming dynamics; shows the transient loss spike is harmless and rewarming consistently outperforms cold-resume.</li>
+<li><a href="https://arxiv.org/abs/2403.08763">Ibrahim et al., <em>Simple and Scalable Strategies to Continually Pre-train LLMs</em> (2024)</a> — the definitive large-scale ablation of re-warming, re-decaying, replay ratios, and the WSD infinite-LR schedule for streaming CPT.</li>
+<li><a href="https://arxiv.org/abs/2311.16079">Chen et al., <em>MEDITRON-70B: Scaling Medical Pretraining for LLMs</em> (2023)</a> — end-to-end DAPT recipe for medicine (48 B tokens from PubMed + guidelines on Llama-2), outperforming GPT-3.5 on medical benchmarks.</li>
+<li><a href="https://arxiv.org/abs/2504.02107">Li et al., <em>TiC-LM: A Web-Scale Benchmark for Time-Continual LLM Pretraining</em> (ACL 2025)</a> — 114 Common Crawl dumps as a temporal benchmark; shows meta-schedules + fixed replay achieve comparable loss to retraining from scratch at 2.6× less compute.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/apple/ml-tic-lm">apple/ml-tic-lm</a> — official code for TiC-LM: dataset pipelines, training scripts, and evaluation for time-continual pretraining experiments.</li>
+<li><a href="https://github.com/Wang-ML-Lab/llm-continual-learning-survey">Wang-ML-Lab/llm-continual-learning-survey</a> — living paper list for the ACM CSUR 2025 comprehensive survey on continual learning of LLMs; organized by CPT, DAPT, and continual fine-tuning.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2305.14481">Dobler &amp; de Melo, <em>FOCUS: Effective Embedding Initialization for Monolingual Specialization</em> (EMNLP 2023)</a> — sub-token-mean embedding init for vocabulary transfer; the standard reference for initializing new tokens when extending a tokenizer.</li>
+<li><a href="https://rocm.blogs.amd.com/artificial-intelligence/multilingual-continued-pretraining/README.html">AMD ROCm Blog, <em>Continued Pretraining: A Practical Playbook for Language-Specific LLM Adaptation</em> (2024)</a> — end-to-end walkthrough of building a Finnish Llama 3.1 variant with data mixing, schedule tuning, and alignment.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Gururangan et al., &ldquo;Don&rsquo;t Stop Pretraining: Adapt Language Models to Domains and Tasks&rdquo; (2020)</strong> — the foundational case for domain-adaptive and task-adaptive continued pretraining (DAPT/TAPT).</li>
+<li><strong>Ibrahim et al., &ldquo;Simple and Scalable Strategies to Continually Pre-train Large Language Models&rdquo; (2024)</strong> — the definitive modern recipe: re-warming, re-decaying, replay ratios, and infinite LR schedules, with large-scale ablations.</li>
+<li><strong>Gupta et al., &ldquo;Continual Pre-Training of Large Language Models: How to (re)warm your model?&rdquo; (2023)</strong> — focused study of LR re-warming dynamics and the transient spike.</li>
+<li><strong>Kirkpatrick et al., &ldquo;Overcoming Catastrophic Forgetting in Neural Networks&rdquo; (EWC, 2017)</strong> — the Fisher-information curvature penalty; the classic framing of forgetting that CPT replay sidesteps cheaply.</li>
+<li><strong>Chen et al., &ldquo;Net2Net: Accelerating Learning via Knowledge Transfer&rdquo; (2015)</strong> — function-preserving net2wider/net2deeper transformations underlying model growth.</li>
+<li><strong>Gong et al., &ldquo;Efficient Training of BERT by Progressively Stacking&rdquo; (2019)</strong> and <strong>Chen et al., &ldquo;bert2BERT: Towards Reusable Pretrained Language Models&rdquo; (2021)</strong> — depth/width growth with weight reuse for transformers.</li>
+<li><strong>Komatsuzaki et al., &ldquo;Sparse Upcycling: Training Mixture-of-Experts from Dense Checkpoints&rdquo; (2022)</strong> — the dense-to-MoE upcycling recipe.</li>
+<li><strong>Wu et al., &ldquo;FOCUS: Effective Embedding Initialization for Monolingual Specialization of Multilingual Models&rdquo; (2023)</strong> — sub-token-mean embedding initialization for vocabulary/tokenizer transfer.</li>
+<li><strong>Wu et al., &ldquo;BloombergGPT&rdquo; (2023)</strong> and <strong>Chen et al., &ldquo;Meditron&rdquo; / SaulLM legal-LM reports (2023–2024)</strong> — real domain-adaptive pretraining recipes for finance, medicine, and law.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="15-synthetic-data.html"><span class="pn-label">← Previous</span><span class="pn-title">Synthetic Data for Pre- and Post-Training</span></a>
+<a class="next" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="pn-label">Next →</span><span class="pn-title">The Roofline Model &amp; Performance Engineering</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-stabilityplasticity-dilemma">The Stability–Plasticity Dilemma</a></li>
+<li class="toc-l2"><a href="#learning-rate-re-warming-and-re-decaying">Learning-Rate Re-Warming and Re-Decaying</a></li>
+<li class="toc-l3"><a href="#the-mechanics">The mechanics</a></li>
+<li class="toc-l3"><a href="#schedule-code">Schedule code</a></li>
+<li class="toc-l3"><a href="#what-about-the-optimizer-state">What about the optimizer state?</a></li>
+<li class="toc-l2"><a href="#replay-fighting-catastrophic-forgetting-with-data">Replay: Fighting Catastrophic Forgetting With Data</a></li>
+<li class="toc-l3"><a href="#what-if-you-dont-have-the-original-data">What if you don&amp;rsquo;t have the original data?</a></li>
+<li class="toc-l3"><a href="#a-replay-aware-data-sampler">A replay-aware data sampler</a></li>
+<li class="toc-l2"><a href="#domain-language-streaming-adaptation">Domain, Language &amp;amp; Streaming Adaptation</a></li>
+<li class="toc-l3"><a href="#domain-adaptation-code-medical-legal-finance">Domain adaptation (code, medical, legal, finance)</a></li>
+<li class="toc-l3"><a href="#language-adaptation-adding-or-strengthening-a-language">Language adaptation (adding or strengthening a language)</a></li>
+<li class="toc-l3"><a href="#streaming-temporal-adaptation-fresh-data-over-time">Streaming / temporal adaptation (fresh data over time)</a></li>
+<li class="toc-l2"><a href="#model-growth-weight-reuse">Model Growth &amp;amp; Weight Reuse</a></li>
+<li class="toc-l3"><a href="#depth-growth-layer-stacking">Depth growth (layer stacking)</a></li>
+<li class="toc-l3"><a href="#width-growth">Width growth</a></li>
+<li class="toc-l3"><a href="#dense-to-moe-upcycling">Dense-to-MoE upcycling</a></li>
+<li class="toc-l3"><a href="#vocabulary-tokenizer-transfer">Vocabulary &amp;amp; tokenizer transfer</a></li>
+<li class="toc-l2"><a href="#planning-cpt-compute-with-loss-trajectory-models">Planning CPT Compute With Loss-Trajectory Models</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

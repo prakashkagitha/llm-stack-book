@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coding for ML Interviews — ML/LLM Interview Companion</title>
+<meta name="description" content="Likely coding: implement attention/softmax/k-means/logistic-regression/backprop from scratch, plus DS&amp;A staples (arrays, hashing, two-pointers, DP, graphs) fram">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../interview/index.html"><span class="logo">Λ</span><span class="brand-text">ML/LLM Interview Companion<small>Prep for Top-Tier ML &amp; LLM Engineering Interviews</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="interview-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<a class="sidebar-parent" href="../index.html">← The LLM Stack</a>
+<div class="nav-part" data-part="13-interview-prep">
+<div class="nav-part-title"><span>The ML/LLM Interview — Companion Prep</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-google-ml-interview-format.html"><span class="nav-num">1.1</span>The ML Engineer Interview: Formats &amp; What&#x27;s Tested</a></li>
+<li><a class="" href="02-ml-breadth-rapidfire.html"><span class="nav-num">1.2</span>ML Breadth: Rapid-Fire Concepts &amp; Model Answers</a></li>
+<li><a class="" href="03-ml-system-design-framework.html"><span class="nav-num">1.3</span>ML System Design: A Framework</a></li>
+<li><a class="" href="04-ml-system-design-cases.html"><span class="nav-num">1.4</span>ML System Design: Worked Cases</a></li>
+<li><a class="active" href="05-coding-for-ml-interviews.html"><span class="nav-num">1.5</span>Coding for ML Interviews</a></li>
+<li><a class="" href="06-llm-deepdive-questions.html"><span class="nav-num">1.6</span>LLM-Specific Deep-Dive Questions</a></li>
+<li><a class="" href="07-behavioral-googleyness.html"><span class="nav-num">1.7</span>Behavioral, Leadership &amp; Project Deep-Dive</a></li>
+<li><a class="" href="08-ten-day-study-plan.html"><span class="nav-num">1.8</span>The 10-Day Study Plan &amp; Final Checklist</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">The ML/LLM Interview — Companion Prep</div>
+<h1 id="135-coding-for-ml-interviews">13.5 Coding for ML Interviews<a class="headerlink" href="#135-coding-for-ml-interviews" title="Permanent link">¶</a></h1>
+<p>The coding round is where many strong ML candidates stumble — not because the problems are hard, but because they prepared for the <em>wrong</em> coding. A Google ML domain interview almost always includes a live-coding segment, and it splits into two flavors. The first is <strong>&ldquo;implement this ML primitive from scratch in numpy&rdquo;</strong>: softmax, attention, k-means, logistic regression, backprop through a tiny MLP. The second is <strong>classic data-structures-and-algorithms (DS&amp;A)</strong> — arrays, hashing, two pointers, dynamic programming, graphs — sometimes with an ML flavor stapled on (&ldquo;dedupe these embeddings,&rdquo; &ldquo;batch these requests&rdquo;). You need both in your fingers.</p>
+<p>This chapter is a drill book. We build the ML primitives the way an interviewer wants to see them built — vectorized, numerically stable, shape-annotated — and we work the DS&amp;A patterns that recur in ML interviews. Every block of code here is runnable. The goal is not to memorize solutions but to internalize the <em>shapes of the answers</em> so that under pressure you write the stable softmax, not the one that overflows.</p>
+<p>We assume you know Python and basic linear algebra. For the underlying theory, lean on the foundations chapters: <a href="../01-foundations/05-ml-fundamentals.html">Machine Learning Fundamentals</a>, <a href="../01-foundations/06-neural-nets-from-scratch.html">Neural Networks From Scratch: MLPs &amp; Backprop</a>, and <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a>. Here we focus on <em>typing it correctly in 25 minutes while talking</em>.</p>
+<h2 id="how-the-ml-coding-round-actually-works">How the ML coding round actually works<a class="headerlink" href="#how-the-ml-coding-round-actually-works" title="Permanent link">¶</a></h2>
+<p>Before the code, the meta-game. The interviewer is evaluating four things, and only one of them is &ldquo;did it pass the test.&rdquo;</p>
+<ol>
+<li><strong>Correctness under shapes.</strong> Can you keep <code>(batch, seq, dim)</code> straight? Vectorized code lives or dies by broadcasting. State your shapes out loud and annotate them in comments — <code># x: (n, d)</code>. This single habit prevents most bugs and signals seniority.</li>
+<li><strong>Numerical stability.</strong> Naive softmax overflows; naive log-likelihood underflows; naive variance loses precision. Interviewers <em>plant</em> these traps. Reach for the max-subtraction trick and <code>logsumexp</code> reflexively.</li>
+<li><strong>Communication.</strong> Narrate the plan before typing. &ldquo;I&rsquo;ll subtract the row max for stability, exponentiate, then normalize along the last axis.&rdquo; Silence reads as guessing.</li>
+<li><strong>Complexity awareness.</strong> State time and space. Know that attention is <span class="arithmatex">\(O(n^2 d)\)</span>, k-means is <span class="arithmatex">\(O(n k d)\)</span> per iteration, and a hash set lookup is <span class="arithmatex">\(O(1)\)</span> amortized.</li>
+</ol>
+<p>A practical rule: <strong>never use a Python loop where a numpy/torch broadcast will do</strong>, <em>except</em> to make a first version correct. It is perfectly fine to say &ldquo;let me write the loop version to nail correctness, then vectorize&rdquo; — that is exactly how a thoughtful engineer works. Just make sure you actually finish the vectorization.</p>
+<p>Set up your scratch environment with explicit imports and a fixed seed so your worked examples are reproducible:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># modern numpy RNG; reproducible across runs</span>
+<span class="n">np</span><span class="o">.</span><span class="n">set_printoptions</span><span class="p">(</span><span class="n">precision</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">suppress</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># readable arrays during the interview</span>
+</code></pre></div>
+<p>We use <code>numpy</code> for the from-scratch primitives (no autograd to hide behind) and bring in <code>torch</code> only where the question is explicitly &ldquo;do it in PyTorch.&rdquo; Knowing both fluently — and knowing when each is expected — is itself a signal.</p>
+<h2 id="softmax-log-sum-exp-and-cross-entropy">Softmax, log-sum-exp, and cross-entropy<a class="headerlink" href="#softmax-log-sum-exp-and-cross-entropy" title="Permanent link">¶</a></h2>
+<p>Softmax is the single most-asked from-scratch primitive because it tests numerical stability in three lines. The definition for a vector <span class="arithmatex">\(z \in \mathbb{R}^d\)</span> is</p>
+<div class="arithmatex">\[
+\operatorname{softmax}(z)_i = \frac{e^{z_i}}{\sum_{j=1}^{d} e^{z_j}}.
+\]</div>
+<p>The trap: if any <span class="arithmatex">\(z_i\)</span> is large (say 1000), <span class="arithmatex">\(e^{z_i}\)</span> overflows to <code>inf</code> and you get <code>nan</code>. The fix exploits <strong>shift invariance</strong> — subtracting a constant <span class="arithmatex">\(c\)</span> from every logit leaves the output unchanged, because the <span class="arithmatex">\(e^{-c}\)</span> factors cancel:</p>
+<div class="arithmatex">\[
+\frac{e^{z_i - c}}{\sum_j e^{z_j - c}} = \frac{e^{-c} e^{z_i}}{e^{-c}\sum_j e^{z_j}} = \frac{e^{z_i}}{\sum_j e^{z_j}}.
+\]</div>
+<p>Choosing <span class="arithmatex">\(c = \max_i z_i\)</span> guarantees the largest exponent is <span class="arithmatex">\(e^0 = 1\)</span>, so nothing overflows. Underflow in the small terms is harmless (they round to 0, which is the right answer).</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">softmax</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Numerically stable softmax over `axis`.</span>
+<span class="sd">    z: array of any shape. Returns same shape, sums to 1 along `axis`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">z_max</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># (..., 1) for broadcasting</span>
+    <span class="n">e</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">z</span> <span class="o">-</span> <span class="n">z_max</span><span class="p">)</span>                          <span class="c1"># largest entry becomes exp(0)=1</span>
+    <span class="k">return</span> <span class="n">e</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">e</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="c1"># normalize; never divides by 0</span>
+</code></pre></div>
+<p>The <code>keepdims=True</code> is the part candidates forget. Without it, <code>z_max</code> has the reduced shape and broadcasting against <code>z</code> either errors or — worse — silently broadcasts along the wrong axis. Say &ldquo;keepdims so the subtraction broadcasts row-wise&rdquo; as you type it.</p>
+<p>Closely related is <strong>log-softmax</strong>, which you want whenever the result feeds a log-likelihood. Computing <code>np.log(softmax(z))</code> works but wastes precision (you exponentiate then take a log). Compute it directly via the log-sum-exp identity:</p>
+<div class="arithmatex">\[
+\log \operatorname{softmax}(z)_i = z_i - \operatorname{logsumexp}(z), \qquad \operatorname{logsumexp}(z) = c + \log \sum_j e^{z_j - c},\; c=\max_j z_j.
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">logsumexp</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">):</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">)</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">z</span> <span class="o">-</span> <span class="n">c</span><span class="p">),</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">))</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">log_softmax</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">):</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">z</span> <span class="o">-</span> <span class="n">c</span><span class="p">)</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">z</span> <span class="o">-</span> <span class="n">c</span><span class="p">),</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
+</code></pre></div>
+<p>Now cross-entropy. For a batch of logits <code>Z</code> of shape <code>(n, K)</code> and integer labels <code>y</code> of shape <code>(n,)</code>, the mean cross-entropy loss is</p>
+<div class="arithmatex">\[
+\mathcal{L} = -\frac{1}{n}\sum_{i=1}^{n} \log \operatorname{softmax}(Z_i)_{y_i}.
+\]</div>
+<p>Build it on top of <code>log_softmax</code> so it inherits stability, and use <strong>fancy indexing</strong> to pull out the correct-class log-probabilities without a loop:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">cross_entropy</span><span class="p">(</span><span class="n">Z</span><span class="p">,</span> <span class="n">y</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Z: (n, K) logits, y: (n,) int labels in [0, K). Returns scalar mean loss.&quot;&quot;&quot;</span>
+    <span class="n">logp</span> <span class="o">=</span> <span class="n">log_softmax</span><span class="p">(</span><span class="n">Z</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>          <span class="c1"># (n, K)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">Z</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">nll</span> <span class="o">=</span> <span class="o">-</span><span class="n">logp</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n</span><span class="p">),</span> <span class="n">y</span><span class="p">]</span>           <span class="c1"># (n,) pick the true-class log-prob per row</span>
+    <span class="k">return</span> <span class="n">nll</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</code></pre></div>
+<p>The expression <code>logp[np.arange(n), y]</code> is the idiom to internalize: paired index arrays select element <code>(i, y[i])</code> for each <code>i</code>. Interviewers love it because it shows you think in vectors.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall</p>
+<p>Do <strong>not</strong> compute <code>cross_entropy(softmax(Z), y)</code> by then taking <code>np.log</code>. Combining softmax and log into one <code>log_softmax</code> is more stable and is also exactly what <code>torch.nn.functional.cross_entropy</code> does internally (it takes raw logits, not probabilities). If an interviewer hands you probabilities that already sum to 1, clamp before the log: <code>np.log(np.clip(p, 1e-12, 1.0))</code>.</p>
+</div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: softmax magnitudes</p>
+<p>Take logits <code>z = [2.0, 1.0, 0.1]</code>. Subtract the max (2.0) to get <code>[0.0, -1.0, -1.9]</code>. Exponentiate: <code>[1.0, 0.3679, 0.1496]</code>, summing to <code>1.5175</code>. Divide: <code>[0.659, 0.242, 0.099]</code> — a confident-but-not-certain distribution. Now try <code>z = [1000, 1000, 1000]</code> with the <em>naive</em> formula: <code>exp(1000)</code> is <code>inf</code>, so you get <code>[nan, nan, nan]</code>. The stable version subtracts 1000 first, exponentiates <code>[0,0,0]</code> to <code>[1,1,1]</code>, and returns the correct uniform <code>[0.333, 0.333, 0.333]</code>. This is the entire reason the trick exists, and it is a 30-second thing to demonstrate at the whiteboard.</p>
+</div>
+<h2 id="scaled-dot-product-attention-from-scratch">Scaled dot-product attention from scratch<a class="headerlink" href="#scaled-dot-product-attention-from-scratch" title="Permanent link">¶</a></h2>
+<p>Attention is the flagship ML-coding question for LLM roles. The interviewer wants the scaled dot-product form, optionally multi-head, optionally causally masked. The core equation:</p>
+<div class="arithmatex">\[
+\operatorname{Attention}(Q, K, V) = \operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V.
+\]</div>
+<p><span class="arithmatex">\(Q\)</span> is <code>(n_q, d_k)</code>, <span class="arithmatex">\(K\)</span> is <code>(n_k, d_k)</code>, <span class="arithmatex">\(V\)</span> is <code>(n_k, d_v)</code>. The scores <span class="arithmatex">\(QK^\top\)</span> are <code>(n_q, n_k)</code>; softmax runs over the <strong>last axis</strong> (the keys), so each query forms a distribution over keys; the weighted sum with <span class="arithmatex">\(V\)</span> gives <code>(n_q, d_v)</code>. The <span class="arithmatex">\(\sqrt{d_k}\)</span> divisor keeps the dot products from growing with dimension and saturating the softmax — derived and motivated in <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a>.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">attention</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">mask</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single-head scaled dot-product attention.</span>
+<span class="sd">    Q: (n_q, d_k), K: (n_k, d_k), V: (n_k, d_v), mask: (n_q, n_k) bool or None.</span>
+<span class="sd">    Returns: out (n_q, d_v), weights (n_q, n_k).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">d_k</span> <span class="o">=</span> <span class="n">Q</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">Q</span> <span class="o">@</span> <span class="n">K</span><span class="o">.</span><span class="n">T</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">d_k</span><span class="p">)</span>        <span class="c1"># (n_q, n_k)</span>
+    <span class="k">if</span> <span class="n">mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># set masked positions to -inf so softmax gives them ~0 weight</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="n">scores</span><span class="p">,</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
+    <span class="n">weights</span> <span class="o">=</span> <span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>      <span class="c1"># (n_q, n_k), each row sums to 1</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">weights</span> <span class="o">@</span> <span class="n">V</span>                       <span class="c1"># (n_q, d_v)</span>
+    <span class="k">return</span> <span class="n">out</span><span class="p">,</span> <span class="n">weights</span>
+</code></pre></div>
+<p>For a <strong>causal</strong> (autoregressive) mask, position <span class="arithmatex">\(i\)</span> may only attend to positions <span class="arithmatex">\(j \le i\)</span>. Build the lower-triangular allow-mask with <code>np.tril</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">causal_mask</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;(n, n) boolean: True where query i may attend to key j (j &lt;= i).&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">tril</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">))</span>
+</code></pre></div>
+<p>The batched, multi-head version is the senior-level ask. The trick is reshaping <code>(batch, seq, d_model)</code> into <code>(batch, heads, seq, d_head)</code> so a single <code>einsum</code> handles every head and every batch element at once. Keep <code>d_model = n_heads * d_head</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">multi_head_attention</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">Wq</span><span class="p">,</span> <span class="n">Wk</span><span class="p">,</span> <span class="n">Wv</span><span class="p">,</span> <span class="n">Wo</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">causal</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;X: (B, T, d_model). W*: (d_model, d_model). Returns (B, T, d_model).&quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">d_model</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">d_head</span> <span class="o">=</span> <span class="n">d_model</span> <span class="o">//</span> <span class="n">n_heads</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">split_heads</span><span class="p">(</span><span class="n">M</span><span class="p">):</span>                      <span class="c1"># (B, T, d_model) -&gt; (B, H, T, d_head)</span>
+        <span class="n">M</span> <span class="o">=</span> <span class="n">M</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">d_head</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">M</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+
+    <span class="n">Q</span> <span class="o">=</span> <span class="n">split_heads</span><span class="p">(</span><span class="n">X</span> <span class="o">@</span> <span class="n">Wq</span><span class="p">)</span>                   <span class="c1"># project then split, per head</span>
+    <span class="n">K</span> <span class="o">=</span> <span class="n">split_heads</span><span class="p">(</span><span class="n">X</span> <span class="o">@</span> <span class="n">Wk</span><span class="p">)</span>
+    <span class="n">V</span> <span class="o">=</span> <span class="n">split_heads</span><span class="p">(</span><span class="n">X</span> <span class="o">@</span> <span class="n">Wv</span><span class="p">)</span>
+
+    <span class="n">scale</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">d_head</span><span class="p">)</span>
+    <span class="c1"># &#39;bhqd,bhkd-&gt;bhqk&#39; contracts the d_head axis: scores per (batch, head, q, k)</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;bhqd,bhkd-&gt;bhqk&#39;</span><span class="p">,</span> <span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span>
+    <span class="k">if</span> <span class="n">causal</span><span class="p">:</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">causal_mask</span><span class="p">(</span><span class="n">T</span><span class="p">)</span>                    <span class="c1"># (T, T), broadcasts over B and H</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">scores</span><span class="p">,</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>              <span class="c1"># (B, H, T, T)</span>
+    <span class="n">ctx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;bhqk,bhkd-&gt;bhqd&#39;</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>  <span class="c1"># (B, H, T, d_head)</span>
+    <span class="n">ctx</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>  <span class="c1"># merge heads back</span>
+    <span class="k">return</span> <span class="n">ctx</span> <span class="o">@</span> <span class="n">Wo</span>
+</code></pre></div>
+<p>Three habits make this answer land. First, the <code>einsum</code> strings <em>are</em> the math — say &ldquo;contract over <code>d</code>&rdquo; as you write <code>bhqd,bhkd-&gt;bhqk</code>. Second, <code>transpose</code> then <code>reshape</code> to merge heads is the inverse of <code>reshape</code> then <code>transpose</code> to split them; getting the order wrong silently scrambles heads. Third, name the complexity unprompted: the score matrix is <span class="arithmatex">\(O(B \cdot H \cdot T^2 \cdot d_{\text{head}})\)</span> in time and <span class="arithmatex">\(O(B \cdot H \cdot T^2)\)</span> in memory — the quadratic-in-sequence-length term that motivates <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a>.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>If asked the same problem in PyTorch, the entire body collapses to <code>torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)</code>, which dispatches to a fused FlashAttention kernel. State that you <em>know</em> the one-liner, then offer to write it from scratch — interviewers want to see you can do both, and leading with the library call alone can read as not understanding the internals.</p>
+</div>
+<h2 id="logistic-regression-and-backprop-by-hand">Logistic regression and backprop by hand<a class="headerlink" href="#logistic-regression-and-backprop-by-hand" title="Permanent link">¶</a></h2>
+<p>These two are the classic &ldquo;do you understand gradients&rdquo; probes. Both come down to writing a forward pass, a loss, the analytic gradient, and a training loop — without an autograd framework.</p>
+<h3 id="logistic-regression-with-gradient-descent">Logistic regression with gradient descent<a class="headerlink" href="#logistic-regression-with-gradient-descent" title="Permanent link">¶</a></h3>
+<p>Binary logistic regression models <span class="arithmatex">\(P(y=1 \mid x) = \sigma(w^\top x + b)\)</span> with the sigmoid <span class="arithmatex">\(\sigma(z) = 1/(1+e^{-z})\)</span>, trained by minimizing binary cross-entropy. The gradient has a famously clean form: for the cross-entropy loss, <span class="arithmatex">\(\partial \mathcal{L} / \partial z = \sigma(z) - y\)</span>. That cancellation — the messy sigmoid derivative meets the log in the loss and simplifies — is the thing to be able to recite.</p>
+<div class="arithmatex">\[
+\mathcal{L}(w,b) = -\frac{1}{n}\sum_i \big[y_i \log p_i + (1-y_i)\log(1-p_i)\big], \quad p_i = \sigma(w^\top x_i + b).
+\]</div>
+<div class="arithmatex">\[
+\nabla_w \mathcal{L} = \frac{1}{n} X^\top (p - y), \qquad \frac{\partial \mathcal{L}}{\partial b} = \frac{1}{n}\sum_i (p_i - y_i).
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">sigmoid</span><span class="p">(</span><span class="n">z</span><span class="p">):</span>
+    <span class="c1"># stable sigmoid: avoid exp overflow for large-magnitude z</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">z</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">z</span><span class="p">)),</span>
+                           <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">z</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">z</span><span class="p">)))</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">train_logreg</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">epochs</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span> <span class="n">l2</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;X: (n, d), y: (n,) in {0,1}. Returns weights w (d,) and bias b.&quot;&quot;&quot;</span>
+    <span class="n">n</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">epochs</span><span class="p">):</span>
+        <span class="n">z</span> <span class="o">=</span> <span class="n">X</span> <span class="o">@</span> <span class="n">w</span> <span class="o">+</span> <span class="n">b</span>                  <span class="c1"># (n,) logits</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="n">sigmoid</span><span class="p">(</span><span class="n">z</span><span class="p">)</span>                 <span class="c1"># (n,) predicted probabilities</span>
+        <span class="n">err</span> <span class="o">=</span> <span class="n">p</span> <span class="o">-</span> <span class="n">y</span>                    <span class="c1"># (n,) the magic residual: dL/dz</span>
+        <span class="n">grad_w</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">err</span> <span class="o">/</span> <span class="n">n</span> <span class="o">+</span> <span class="n">l2</span> <span class="o">*</span> <span class="n">w</span>   <span class="c1"># (d,) plus optional L2 shrinkage</span>
+        <span class="n">grad_b</span> <span class="o">=</span> <span class="n">err</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+        <span class="n">w</span> <span class="o">-=</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">grad_w</span>
+        <span class="n">b</span> <span class="o">-=</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">grad_b</span>
+    <span class="k">return</span> <span class="n">w</span><span class="p">,</span> <span class="n">b</span>
+</code></pre></div>
+<p>The stable <code>sigmoid</code> (branching on the sign of <code>z</code>) is a detail worth showing: for very negative <code>z</code>, <code>exp(-z)</code> overflows, so we switch to the algebraically equal <code>exp(z)/(1+exp(z))</code>. Mention it; you do not have to belabor it.</p>
+<h3 id="backprop-through-a-two-layer-mlp">Backprop through a two-layer MLP<a class="headerlink" href="#backprop-through-a-two-layer-mlp" title="Permanent link">¶</a></h3>
+<p>The from-scratch backprop question is the deepest of the ML-coding asks. Build a one-hidden-layer network with a ReLU and a softmax-cross-entropy head, then derive the backward pass by hand. The forward pass:</p>
+<div class="arithmatex">\[
+h = \operatorname{ReLU}(X W_1 + b_1), \qquad Z = h W_2 + b_2, \qquad \mathcal{L} = \operatorname{CE}(\operatorname{softmax}(Z), y).
+\]</div>
+<p>The single fact that makes backprop tractable here is the same cancellation as logistic regression: the gradient of softmax-cross-entropy with respect to the logits is <span class="arithmatex">\(\partial \mathcal{L}/\partial Z = (\hat{p} - \text{onehot}(y))/n\)</span>, where <span class="arithmatex">\(\hat p = \operatorname{softmax}(Z)\)</span>. From there it is the chain rule, layer by layer, reusing the cached forward activations.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">mlp_step</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One forward+backward+update step. X: (n, d_in), y: (n,) int labels.</span>
+<span class="sd">    params: dict with W1 (d_in,h), b1 (h,), W2 (h,K), b2 (K,).&quot;&quot;&quot;</span>
+    <span class="n">W1</span><span class="p">,</span> <span class="n">b1</span><span class="p">,</span> <span class="n">W2</span><span class="p">,</span> <span class="n">b2</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s1">&#39;W1&#39;</span><span class="p">],</span> <span class="n">params</span><span class="p">[</span><span class="s1">&#39;b1&#39;</span><span class="p">],</span> <span class="n">params</span><span class="p">[</span><span class="s1">&#39;W2&#39;</span><span class="p">],</span> <span class="n">params</span><span class="p">[</span><span class="s1">&#39;b2&#39;</span><span class="p">]</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># ---- forward (cache activations we need for the backward pass) ----</span>
+    <span class="n">a1</span> <span class="o">=</span> <span class="n">X</span> <span class="o">@</span> <span class="n">W1</span> <span class="o">+</span> <span class="n">b1</span>            <span class="c1"># (n, h) pre-activation</span>
+    <span class="n">h</span>  <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">a1</span><span class="p">)</span>      <span class="c1"># (n, h) ReLU</span>
+    <span class="n">Z</span>  <span class="o">=</span> <span class="n">h</span> <span class="o">@</span> <span class="n">W2</span> <span class="o">+</span> <span class="n">b2</span>            <span class="c1"># (n, K) logits</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">cross_entropy</span><span class="p">(</span><span class="n">Z</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>  <span class="c1"># scalar (reuses our stable CE)</span>
+
+    <span class="c1"># ---- backward (every dX has the SAME shape as X) ----</span>
+    <span class="n">P</span> <span class="o">=</span> <span class="n">softmax</span><span class="p">(</span><span class="n">Z</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>             <span class="c1"># (n, K)</span>
+    <span class="n">dZ</span> <span class="o">=</span> <span class="n">P</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">dZ</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n</span><span class="p">),</span> <span class="n">y</span><span class="p">]</span> <span class="o">-=</span> <span class="mf">1.0</span>         <span class="c1"># subtract one-hot: dZ = P - onehot(y)</span>
+    <span class="n">dZ</span> <span class="o">/=</span> <span class="n">n</span>                            <span class="c1"># average over the batch</span>
+
+    <span class="n">dW2</span> <span class="o">=</span> <span class="n">h</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">dZ</span>                     <span class="c1"># (h, K)</span>
+    <span class="n">db2</span> <span class="o">=</span> <span class="n">dZ</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>              <span class="c1"># (K,)</span>
+    <span class="n">dh</span>  <span class="o">=</span> <span class="n">dZ</span> <span class="o">@</span> <span class="n">W2</span><span class="o">.</span><span class="n">T</span>                    <span class="c1"># (n, h) gradient flows back into hidden layer</span>
+    <span class="n">da1</span> <span class="o">=</span> <span class="n">dh</span> <span class="o">*</span> <span class="p">(</span><span class="n">a1</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>               <span class="c1"># (n, h) ReLU gate: pass grad only where a1&gt;0</span>
+    <span class="n">dW1</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">da1</span>                    <span class="c1"># (d_in, h)</span>
+    <span class="n">db1</span> <span class="o">=</span> <span class="n">da1</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>            <span class="c1"># (h,)</span>
+
+    <span class="c1"># ---- SGD update ----</span>
+    <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">g</span> <span class="ow">in</span> <span class="p">((</span><span class="s1">&#39;W1&#39;</span><span class="p">,</span> <span class="n">dW1</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;b1&#39;</span><span class="p">,</span> <span class="n">db1</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;W2&#39;</span><span class="p">,</span> <span class="n">dW2</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;b2&#39;</span><span class="p">,</span> <span class="n">db2</span><span class="p">)):</span>
+        <span class="n">params</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">-=</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">g</span>
+    <span class="k">return</span> <span class="n">loss</span>
+</code></pre></div>
+<p>Two checkpoints to verbalize. <strong>Shape symmetry:</strong> every gradient <code>dW</code> matches the shape of its <code>W</code>, and every <code>dX</code> matches <code>X</code> — if a <code>@</code> does not produce the right shape, the chain rule order is wrong. <strong>The ReLU gate:</strong> <code>da1 = dh * (a1 &gt; 0)</code> zeroes the gradient wherever the unit was inactive in the forward pass; this is the discrete switch that makes ReLU networks trainable. The full theory, including why these shapes work out, is in <a href="../01-foundations/06-neural-nets-from-scratch.html">Neural Networks From Scratch: MLPs &amp; Backprop</a> and <a href="../01-foundations/07-autodiff-pytorch.html">Automatic Differentiation &amp; PyTorch Internals</a>.</p>
+<p>A senior touch: offer a <strong>gradient check</strong>. Numerically perturb one parameter by <span class="arithmatex">\(\epsilon\)</span> and compare the finite-difference slope to your analytic gradient. It costs three lines and proves your backward pass is correct.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">grad_check</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;f: scalar function of array x. Returns max |numeric - none| placeholder; here</span>
+<span class="sd">    we just return the numeric gradient via central differences for spot checks.&quot;&quot;&quot;</span>
+    <span class="n">g</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="n">it</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">nditer</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;multi_index&#39;</span><span class="p">])</span>
+    <span class="k">while</span> <span class="ow">not</span> <span class="n">it</span><span class="o">.</span><span class="n">finished</span><span class="p">:</span>
+        <span class="n">i</span> <span class="o">=</span> <span class="n">it</span><span class="o">.</span><span class="n">multi_index</span>
+        <span class="n">old</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">old</span> <span class="o">+</span> <span class="n">eps</span><span class="p">;</span> <span class="n">fp</span> <span class="o">=</span> <span class="n">f</span><span class="p">()</span>
+        <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">old</span> <span class="o">-</span> <span class="n">eps</span><span class="p">;</span> <span class="n">fm</span> <span class="o">=</span> <span class="n">f</span><span class="p">()</span>
+        <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">old</span>
+        <span class="n">g</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">fp</span> <span class="o">-</span> <span class="n">fm</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">eps</span><span class="p">)</span>   <span class="c1"># central difference: O(eps^2) accurate</span>
+        <span class="n">it</span><span class="o">.</span><span class="n">iternext</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">g</span>
+</code></pre></div>
+<h2 id="k-means-and-vectorized-numpy-fluency">K-means and vectorized numpy fluency<a class="headerlink" href="#k-means-and-vectorized-numpy-fluency" title="Permanent link">¶</a></h2>
+<p>K-means is the canonical unsupervised-learning coding question and a pure test of numpy broadcasting. Given <span class="arithmatex">\(n\)</span> points in <span class="arithmatex">\(\mathbb{R}^d\)</span> and <span class="arithmatex">\(k\)</span> clusters, alternate two steps until assignments stop changing: <strong>assign</strong> each point to its nearest centroid, then <strong>update</strong> each centroid to the mean of its assigned points. The objective being minimized is within-cluster sum of squares (inertia):</p>
+<div class="arithmatex">\[
+J = \sum_{i=1}^{n} \lVert x_i - \mu_{c_i} \rVert_2^2, \qquad c_i = \arg\min_j \lVert x_i - \mu_j \rVert_2^2.
+\]</div>
+<p>The interview-grade move is computing the full <code>(n, k)</code> distance matrix <strong>without any loop</strong>, using broadcasting. The clean way avoids the squared-norm expansion and just broadcasts a <code>(n,1,d)</code> against a <code>(1,k,d)</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">kmeans</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;X: (n, d). Returns centroids (k, d) and assignments (n,).&quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    <span class="n">n</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">shape</span>
+    <span class="c1"># k-means++ style would be better, but random init is fine to start</span>
+    <span class="n">centroids</span> <span class="o">=</span> <span class="n">X</span><span class="p">[</span><span class="n">rng</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">k</span><span class="p">,</span> <span class="n">replace</span><span class="o">=</span><span class="kc">False</span><span class="p">)]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>  <span class="c1"># (k, d)</span>
+    <span class="n">assign</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">iters</span><span class="p">):</span>
+        <span class="c1"># (n, 1, d) - (1, k, d) -&gt; (n, k, d); sum over d -&gt; (n, k) squared dists</span>
+        <span class="n">d2</span> <span class="o">=</span> <span class="p">((</span><span class="n">X</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:]</span> <span class="o">-</span> <span class="n">centroids</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:])</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">new_assign</span> <span class="o">=</span> <span class="n">d2</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>          <span class="c1"># (n,) nearest centroid per point</span>
+        <span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">array_equal</span><span class="p">(</span><span class="n">new_assign</span><span class="p">,</span> <span class="n">assign</span><span class="p">):</span>  <span class="c1"># converged: assignments stable</span>
+            <span class="k">break</span>
+        <span class="n">assign</span> <span class="o">=</span> <span class="n">new_assign</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k</span><span class="p">):</span>                       <span class="c1"># update step</span>
+            <span class="n">members</span> <span class="o">=</span> <span class="n">X</span><span class="p">[</span><span class="n">assign</span> <span class="o">==</span> <span class="n">j</span><span class="p">]</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">members</span><span class="p">):</span>                     <span class="c1"># guard against empty clusters</span>
+                <span class="n">centroids</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">members</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">inertia</span> <span class="o">=</span> <span class="p">((</span><span class="n">X</span> <span class="o">-</span> <span class="n">centroids</span><span class="p">[</span><span class="n">assign</span><span class="p">])</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">centroids</span><span class="p">,</span> <span class="n">assign</span><span class="p">,</span> <span class="n">inertia</span>
+</code></pre></div>
+<p>The <code>X[:, None, :] - centroids[None, :, :]</code> line is the whole interview. Walk through the shapes aloud: inserting a length-1 axis lets numpy broadcast all <code>n × k</code> pairwise differences in one C-level operation. The memory cost is <span class="arithmatex">\(O(n k d)\)</span> for that intermediate tensor — fine for an interview, but flag it: for large <code>n</code> you would use the expansion <span class="arithmatex">\(\lVert x - \mu \rVert^2 = \lVert x \rVert^2 - 2 x^\top \mu + \lVert \mu \rVert^2\)</span> to avoid materializing the 3-D array:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">pairwise_sq_dist</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">C</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Memory-lean (n, k) squared distances via the norm expansion.&quot;&quot;&quot;</span>
+    <span class="n">xx</span> <span class="o">=</span> <span class="p">(</span><span class="n">X</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># (n, 1)</span>
+    <span class="n">cc</span> <span class="o">=</span> <span class="p">(</span><span class="n">C</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:]</span>         <span class="c1"># (1, k)</span>
+    <span class="n">cross</span> <span class="o">=</span> <span class="n">X</span> <span class="o">@</span> <span class="n">C</span><span class="o">.</span><span class="n">T</span>                            <span class="c1"># (n, k)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">xx</span> <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">cross</span> <span class="o">+</span> <span class="n">cc</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>  <span class="c1"># clamp tiny negatives from roundoff</span>
+</code></pre></div>
+<p>The <code>np.maximum(..., 0)</code> clamp is a subtle stability point: floating-point roundoff in <code>xx - 2*cross + cc</code> can produce small negatives that become <code>nan</code> under a later <code>sqrt</code>. Catching that detail unprompted reads as someone who has actually shipped numerical code — see <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: one k-means iteration</p>
+<p>Points <code>[[0,0],[0,1],[10,10],[11,9]]</code>, init centroids at the first and third points: <code>μ0=[0,0]</code>, <code>μ1=[10,10]</code>. Squared distances: point <code>[0,1]</code> is <code>1</code> from <code>μ0</code> and <code>181</code> from <code>μ1</code> → cluster 0; point <code>[11,9]</code> is <code>202</code> from <code>μ0</code> and <code>2</code> from <code>μ1</code> → cluster 1. So assignments are <code>[0,0,1,1]</code>. Update: <code>μ0 = mean([0,0],[0,1]) = [0,0.5]</code>, <code>μ1 = mean([10,10],[11,9]) = [10.5,9.5]</code>. The next iteration produces the same assignments → converged. Inertia is <code>0.5 + 0.5 = 1.0</code>. Doing this by hand on two clusters convinces the interviewer you understand the loop, not just the API.</p>
+</div>
+<h3 id="a-numpy-fluency-checklist">A numpy fluency checklist<a class="headerlink" href="#a-numpy-fluency-checklist" title="Permanent link">¶</a></h3>
+<p>Vectorized thinking is itself graded. These idioms come up constantly; have them automatic:</p>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Idiom</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Row-wise softmax</td>
+<td><code>e/e.sum(1, keepdims=True)</code></td>
+<td>always <code>keepdims</code></td>
+</tr>
+<tr>
+<td>One-hot from labels</td>
+<td><code>np.eye(K)[y]</code></td>
+<td>fancy indexing</td>
+</tr>
+<tr>
+<td>Pairwise distances</td>
+<td><code>((A[:,None]-B[None])**2).sum(-1)</code></td>
+<td><span class="arithmatex">\(O(nm d)\)</span> memory</td>
+</tr>
+<tr>
+<td>Select per-row element</td>
+<td><code>M[np.arange(n), idx]</code></td>
+<td>paired index arrays</td>
+</tr>
+<tr>
+<td>Masked fill</td>
+<td><code>np.where(mask, x, -np.inf)</code></td>
+<td>for attention masks</td>
+</tr>
+<tr>
+<td>Batched matmul</td>
+<td><code>np.einsum('bij,bjk-&gt;bik', A, B)</code></td>
+<td>or <code>A @ B</code> (batched)</td>
+</tr>
+<tr>
+<td>Normalize rows to unit L2</td>
+<td><code>X / np.linalg.norm(X,axis=1,keepdims=True)</code></td>
+<td>for cosine sim</td>
+</tr>
+<tr>
+<td>Cumulative without loop</td>
+<td><code>np.cumsum</code>, <code>np.cumprod</code></td>
+<td>DP-flavored</td>
+</tr>
+</tbody>
+</table>
+<p>The single highest-leverage habit: whenever you reach for a <code>for</code> loop over rows, pause and ask whether broadcasting or <code>einsum</code> does it in one line. In an ML interview, the vectorized answer is the expected answer.</p>
+<h2 id="dsa-staples-framed-for-ml-candidates">DS&amp;A staples, framed for ML candidates<a class="headerlink" href="#dsa-staples-framed-for-ml-candidates" title="Permanent link">¶</a></h2>
+<p>Half of ML coding rounds are ordinary algorithmic problems — but the interviewer often dresses them in ML clothing. Recognizing the underlying pattern is the skill. Here are the patterns that recur, each with a runnable solution and the ML framing you will actually hear.</p>
+<h3 id="hashing-and-arrays-dedup-counting-top-k">Hashing and arrays: dedup, counting, top-k<a class="headerlink" href="#hashing-and-arrays-dedup-counting-top-k" title="Permanent link">¶</a></h3>
+<p><strong>Pattern — hash set for membership / dedup.</strong> &ldquo;You have a stream of document fingerprints; return the first duplicate.&rdquo; This is the near-duplicate detection step from <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a>, reduced to its algorithmic core. A <code>set</code> gives <span class="arithmatex">\(O(1)\)</span> lookups and one pass:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">first_duplicate</span><span class="p">(</span><span class="n">stream</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;First element seen twice, or None. O(n) time, O(n) space.&quot;&quot;&quot;</span>
+    <span class="n">seen</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">seen</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">x</span>
+        <span class="n">seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="k">return</span> <span class="kc">None</span>
+</code></pre></div>
+<p><strong>Pattern — counting with a hash map → top-k with a heap.</strong> &ldquo;Return the <span class="arithmatex">\(k\)</span> most frequent tokens in a corpus&rdquo; is the vocabulary-building step of <a href="../02-transformer/01-tokenization.html">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a>. Count in a <code>Counter</code>, then use a size-<span class="arithmatex">\(k\)</span> heap to get top-<span class="arithmatex">\(k\)</span> in <span class="arithmatex">\(O(n \log k)\)</span> instead of sorting everything in <span class="arithmatex">\(O(n \log n)\)</span>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">heapq</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">top_k_frequent</span><span class="p">(</span><span class="n">tokens</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;k most frequent items. O(n log k) with a min-heap of size k.&quot;&quot;&quot;</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>              <span class="c1"># O(n)</span>
+    <span class="c1"># heapq.nlargest is the idiomatic one-liner; it maintains a size-k heap</span>
+    <span class="k">return</span> <span class="n">heapq</span><span class="o">.</span><span class="n">nlargest</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">counts</span><span class="o">.</span><span class="n">keys</span><span class="p">(),</span> <span class="n">key</span><span class="o">=</span><span class="n">counts</span><span class="o">.</span><span class="n">get</span><span class="p">)</span>
+</code></pre></div>
+<p>State the trade-off out loud: <code>Counter.most_common(k)</code> is fine and uses a heap under the hood, but if asked to implement it, the size-<span class="arithmatex">\(k\)</span> min-heap is the answer that shows you know why it beats a full sort.</p>
+<h3 id="two-pointers-and-sliding-windows">Two pointers and sliding windows<a class="headerlink" href="#two-pointers-and-sliding-windows" title="Permanent link">¶</a></h3>
+<p><strong>Pattern — sorted-array two pointers.</strong> &ldquo;Given sorted similarity scores, find a pair summing to a target threshold.&rdquo; The two-pointer sweep is <span class="arithmatex">\(O(n)\)</span> and beats the <span class="arithmatex">\(O(n^2)\)</span> brute force or the <span class="arithmatex">\(O(n)\)</span>-space hash approach:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">two_sum_sorted</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">target</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;a sorted ascending. Return indices (i, j) with a[i]+a[j]==target, or None.&quot;&quot;&quot;</span>
+    <span class="n">i</span><span class="p">,</span> <span class="n">j</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">a</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span>
+    <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">j</span><span class="p">:</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="n">a</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+</span> <span class="n">a</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">s</span> <span class="o">==</span> <span class="n">target</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">s</span> <span class="o">&lt;</span> <span class="n">target</span><span class="p">:</span>
+            <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>            <span class="c1"># need a bigger sum -&gt; move left pointer up</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">j</span> <span class="o">-=</span> <span class="mi">1</span>            <span class="c1"># need a smaller sum -&gt; move right pointer down</span>
+    <span class="k">return</span> <span class="kc">None</span>
+</code></pre></div>
+<p><strong>Pattern — sliding window.</strong> &ldquo;Find the longest span of a token stream with at most <span class="arithmatex">\(K\)</span> distinct token types&rdquo; — directly the kind of constraint that shows up in context-window and chunking logic (<a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a>). Grow the window on the right, shrink from the left when the constraint breaks; each element enters and leaves at most once, so it is <span class="arithmatex">\(O(n)\)</span>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">longest_at_most_k_distinct</span><span class="p">(</span><span class="n">seq</span><span class="p">,</span> <span class="n">K</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Length of the longest contiguous subarray with &lt;= K distinct values.&quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span>
+    <span class="n">count</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+    <span class="n">left</span> <span class="o">=</span> <span class="n">best</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">right</span><span class="p">,</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">seq</span><span class="p">):</span>
+        <span class="n">count</span><span class="p">[</span><span class="n">x</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="n">count</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">K</span><span class="p">:</span>            <span class="c1"># too many distinct -&gt; shrink from left</span>
+            <span class="n">count</span><span class="p">[</span><span class="n">seq</span><span class="p">[</span><span class="n">left</span><span class="p">]]</span> <span class="o">-=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="n">count</span><span class="p">[</span><span class="n">seq</span><span class="p">[</span><span class="n">left</span><span class="p">]]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">del</span> <span class="n">count</span><span class="p">[</span><span class="n">seq</span><span class="p">[</span><span class="n">left</span><span class="p">]]</span>
+            <span class="n">left</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">best</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">best</span><span class="p">,</span> <span class="n">right</span> <span class="o">-</span> <span class="n">left</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">best</span>
+</code></pre></div>
+<h3 id="dynamic-programming">Dynamic programming<a class="headerlink" href="#dynamic-programming" title="Permanent link">¶</a></h3>
+<p>DP is the pattern candidates fear most, yet ML interviews favor a small, recognizable set. The skeleton is always: define the state, write the recurrence, identify base cases, then either memoize (top-down) or tabulate (bottom-up).</p>
+<p><strong>Edit distance</strong> (Levenshtein) is the most ML-relevant — it underlies token-level evaluation metrics and fuzzy matching. The state <span class="arithmatex">\(dp[i][j]\)</span> is the minimum edits to turn the first <span class="arithmatex">\(i\)</span> characters of <code>a</code> into the first <span class="arithmatex">\(j\)</span> of <code>b</code>:</p>
+<div class="arithmatex">\[
+dp[i][j] = \begin{cases} \max(i,j) &amp; \text{if } \min(i,j)=0 \\ dp[i-1][j-1] &amp; \text{if } a_i = b_j \\ 1 + \min(dp[i-1][j],\, dp[i][j-1],\, dp[i-1][j-1]) &amp; \text{otherwise.}\end{cases}
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">edit_distance</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Levenshtein distance. O(len(a)*len(b)) time; O(len(b)) space (rolling rows).&quot;&quot;&quot;</span>
+    <span class="n">m</span><span class="p">,</span> <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">a</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
+    <span class="n">prev</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span>            <span class="c1"># dp row for i=0: j deletions</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">m</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">curr</span> <span class="o">=</span> <span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+</span> <span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">n</span>             <span class="c1"># dp[i][0] = i insertions</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">a</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">b</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>
+                <span class="n">curr</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">prev</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>                       <span class="c1"># match: no cost</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">curr</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">+</span> <span class="nb">min</span><span class="p">(</span><span class="n">prev</span><span class="p">[</span><span class="n">j</span><span class="p">],</span>     <span class="c1"># delete from a</span>
+                                  <span class="n">curr</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span>   <span class="c1"># insert into a</span>
+                                  <span class="n">prev</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>   <span class="c1"># substitute</span>
+        <span class="n">prev</span> <span class="o">=</span> <span class="n">curr</span>
+    <span class="k">return</span> <span class="n">prev</span><span class="p">[</span><span class="n">n</span><span class="p">]</span>
+</code></pre></div>
+<p>The rolling-array optimization (keeping only two rows, <span class="arithmatex">\(O(n)\)</span> space instead of <span class="arithmatex">\(O(mn)\)</span>) is the senior flourish — mention it even if you first write the full table. <strong>Longest common subsequence</strong>, <strong>coin change</strong>, and <strong>0/1 knapsack</strong> share this exact skeleton; if you can derive edit distance live, you can derive those.</p>
+<h3 id="graphs-bfs-dfs-and-topological-sort">Graphs: BFS, DFS, and topological sort<a class="headerlink" href="#graphs-bfs-dfs-and-topological-sort" title="Permanent link">¶</a></h3>
+<p>Graph problems appear as <strong>dependency resolution</strong> — and the model-parallel and pipeline-scheduling chapters (<a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a>) are literally about scheduling a computation DAG. The bread-and-butter is BFS/DFS for connectivity and topological sort for ordering.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">deque</span><span class="p">,</span> <span class="n">defaultdict</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">topo_sort</span><span class="p">(</span><span class="n">num_nodes</span><span class="p">,</span> <span class="n">edges</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Kahn&#39;s algorithm. edges: list of (u, v) meaning u must come before v.</span>
+<span class="sd">    Returns an ordering, or None if a cycle exists. O(V + E).&quot;&quot;&quot;</span>
+    <span class="n">indeg</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">num_nodes</span>
+    <span class="n">adj</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">list</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">u</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">edges</span><span class="p">:</span>
+        <span class="n">adj</span><span class="p">[</span><span class="n">u</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+        <span class="n">indeg</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="n">q</span> <span class="o">=</span> <span class="n">deque</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_nodes</span><span class="p">)</span> <span class="k">if</span> <span class="n">indeg</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>  <span class="c1"># sources</span>
+    <span class="n">order</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">while</span> <span class="n">q</span><span class="p">:</span>
+        <span class="n">u</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">popleft</span><span class="p">()</span>
+        <span class="n">order</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">u</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">adj</span><span class="p">[</span><span class="n">u</span><span class="p">]:</span>
+            <span class="n">indeg</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">-=</span> <span class="mi">1</span>                 <span class="c1"># &quot;remove&quot; u&#39;s outgoing edges</span>
+            <span class="k">if</span> <span class="n">indeg</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">q</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">order</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">order</span><span class="p">)</span> <span class="o">==</span> <span class="n">num_nodes</span> <span class="k">else</span> <span class="kc">None</span>  <span class="c1"># short order =&gt; cycle</span>
+</code></pre></div>
+<p>The detection of cycles via &ldquo;did we emit every node?&rdquo; is the part to articulate: a DAG has a valid topological order; if Kahn&rsquo;s algorithm terminates with fewer than <code>num_nodes</code> emitted, a cycle blocked the rest. For shortest-path-on-unweighted-graph, plain BFS suffices; for weighted, you would reach for Dijkstra with a heap — know which tool fits which graph.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Implement scaled dot-product attention with a causal mask in numpy, and tell me its time and memory complexity. Then: how would you cut the memory?</p>
+<p><strong>A:</strong> <em>(Writes the <code>attention</code> function above with <code>mask = np.tril(...)</code> and <code>np.where(mask, scores, -inf)</code>.)</em> Time is <span class="arithmatex">\(O(n^2 d)\)</span> — the <span class="arithmatex">\(QK^\top\)</span> matmul and the <span class="arithmatex">\(AV\)</span> matmul both scale with the <span class="arithmatex">\(n \times n\)</span> score matrix times the <span class="arithmatex">\(d\)</span> feature dimension. Memory is <span class="arithmatex">\(O(n^2)\)</span> for the explicit score/weight matrices, which dominates for long sequences. To cut the memory you avoid materializing the full <span class="arithmatex">\(n \times n\)</span> matrix: process keys/values in blocks and maintain a running softmax via the <strong>online-softmax</strong> trick — track the running max, the running denominator, and a rescaled running output, updating them block by block. That is exactly FlashAttention; it brings the activation memory down to <span class="arithmatex">\(O(n)\)</span> while keeping the math identical, and it is faster in practice because it is IO-aware about the GPU memory hierarchy. The key numerical subtlety is the same max-subtraction we use in plain softmax, applied incrementally so that merging two blocks rescales the older partial sums by <span class="arithmatex">\(e^{m_{\text{old}} - m_{\text{new}}}\)</span>.</p>
+</div>
+<h2 id="putting-it-together-a-tested-interview-kit">Putting it together: a tested interview kit<a class="headerlink" href="#putting-it-together-a-tested-interview-kit" title="Permanent link">¶</a></h2>
+<p>The final skill is <em>self-verification</em>. Strong candidates finish by running their code on a small case and stating the result — never &ldquo;I think this works.&rdquo; Here is a single script that exercises every primitive above against a known-good reference (PyTorch / sklearn-style checks), the way you would sanity-check at the end of a round:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_tests</span><span class="p">():</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="c1"># softmax sums to 1 and is overflow-safe</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">1000.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">])</span>
+    <span class="k">assert</span> <span class="n">np</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">softmax</span><span class="p">(</span><span class="n">z</span><span class="p">),</span> <span class="mi">1</span><span class="o">/</span><span class="mi">3</span><span class="p">),</span> <span class="s2">&quot;softmax must be overflow-stable&quot;</span>
+
+    <span class="c1"># cross_entropy matches the manual definition on a tiny case</span>
+    <span class="n">Z</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">]])</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">0</span><span class="p">])</span>
+    <span class="n">manual</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">Z</span> <span class="o">-</span> <span class="n">Z</span><span class="o">.</span><span class="n">max</span><span class="p">())</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">Z</span> <span class="o">-</span> <span class="n">Z</span><span class="o">.</span><span class="n">max</span><span class="p">())</span><span class="o">.</span><span class="n">sum</span><span class="p">())[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>
+    <span class="k">assert</span> <span class="n">np</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">cross_entropy</span><span class="p">(</span><span class="n">Z</span><span class="p">,</span> <span class="n">y</span><span class="p">),</span> <span class="n">manual</span><span class="p">),</span> <span class="s2">&quot;CE mismatch&quot;</span>
+
+    <span class="c1"># attention rows are probability distributions</span>
+    <span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">((</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">)),</span> <span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">((</span><span class="mi">6</span><span class="p">,</span> <span class="mi">8</span><span class="p">)),</span> <span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">((</span><span class="mi">6</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">attention</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">np</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">w</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="mf">1.0</span><span class="p">)</span> <span class="ow">and</span> <span class="n">out</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+
+    <span class="c1"># causal mask: query 0 attends only to key 0</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">wc</span> <span class="o">=</span> <span class="n">attention</span><span class="p">(</span><span class="n">Q</span><span class="p">[:</span><span class="mi">6</span><span class="p">],</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">mask</span><span class="o">=</span><span class="n">causal_mask</span><span class="p">(</span><span class="mi">6</span><span class="p">))</span>
+    <span class="k">assert</span> <span class="n">np</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">wc</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">:],</span> <span class="mf">0.0</span><span class="p">),</span> <span class="s2">&quot;causal mask leak&quot;</span>
+
+    <span class="c1"># logistic regression separates a linearly separable set</span>
+    <span class="n">X</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">vstack</span><span class="p">([</span><span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">((</span><span class="mi">50</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span> <span class="o">+</span> <span class="mi">3</span><span class="p">,</span> <span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">((</span><span class="mi">50</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span> <span class="o">-</span> <span class="mi">3</span><span class="p">])</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">r_</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">50</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">50</span><span class="p">)]</span>
+    <span class="n">w</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">train_logreg</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">epochs</span><span class="o">=</span><span class="mi">300</span><span class="p">)</span>
+    <span class="n">acc</span> <span class="o">=</span> <span class="p">((</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">X</span> <span class="o">@</span> <span class="n">w</span> <span class="o">+</span> <span class="n">b</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">==</span> <span class="n">y</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="k">assert</span> <span class="n">acc</span> <span class="o">&gt;</span> <span class="mf">0.95</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;logreg acc too low: </span><span class="si">{</span><span class="n">acc</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="c1"># k-means recovers two well-separated blobs</span>
+    <span class="n">blob</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">vstack</span><span class="p">([</span><span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">((</span><span class="mi">40</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span> <span class="o">+</span> <span class="mi">5</span><span class="p">,</span> <span class="n">rng</span><span class="o">.</span><span class="n">standard_normal</span><span class="p">((</span><span class="mi">40</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span> <span class="o">-</span> <span class="mi">5</span><span class="p">])</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">assign</span><span class="p">,</span> <span class="n">inertia</span> <span class="o">=</span> <span class="n">kmeans</span><span class="p">(</span><span class="n">blob</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="c1"># each true blob should be (mostly) one cluster</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">assign</span><span class="p">[:</span><span class="mi">40</span><span class="p">]))</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">assign</span><span class="p">[</span><span class="mi">40</span><span class="p">:]))</span> <span class="o">==</span> <span class="mi">1</span>
+
+    <span class="c1"># DS&amp;A spot checks</span>
+    <span class="k">assert</span> <span class="n">first_duplicate</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span> <span class="o">==</span> <span class="mi">2</span>
+    <span class="k">assert</span> <span class="n">two_sum_sorted</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">7</span><span class="p">],</span> <span class="mi">7</span><span class="p">)</span> <span class="o">==</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">edit_distance</span><span class="p">(</span><span class="s2">&quot;kitten&quot;</span><span class="p">,</span> <span class="s2">&quot;sitting&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="mi">3</span>
+    <span class="k">assert</span> <span class="n">topo_sort</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="p">[(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)])</span> <span class="o">==</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="k">assert</span> <span class="n">topo_sort</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="p">[(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)])</span> <span class="ow">is</span> <span class="kc">None</span>    <span class="c1"># cycle</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;all checks passed&quot;</span><span class="p">)</span>
+
+<span class="n">_tests</span><span class="p">()</span>
+</code></pre></div>
+<p>Running this prints <code>all checks passed</code>. The <code>edit_distance("kitten", "sitting") == 3</code> line is the textbook example (substitute k→s, e→i, append g). Ending a round by <em>running your own tests</em> — especially the adversarial ones like the overflow softmax and the cycle in topo-sort — is the single most reliable way to signal engineering maturity.</p>
+<p>A few closing tactics for the live round, distilled from the patterns above:</p>
+<ul>
+<li><strong>Restate the problem and the shapes</strong> before coding. &ldquo;So <code>X</code> is <code>(n, d)</code>, I return <code>(n,)</code> labels.&rdquo;</li>
+<li><strong>Write the brute force, then optimize</strong>, narrating the complexity at each step. A correct <span class="arithmatex">\(O(n^2)\)</span> beats a broken <span class="arithmatex">\(O(n)\)</span>.</li>
+<li><strong>Reach for stability reflexively</strong>: max-subtraction in softmax, sign-branched sigmoid, clamp-before-log, clamp-negative-before-sqrt.</li>
+<li><strong>Vectorize</strong>: a <code>for</code> loop over rows is a smell; broadcasting or <code>einsum</code> is the expected answer.</li>
+<li><strong>Test at the end</strong> on a tiny case with a known answer, including an adversarial input.</li>
+</ul>
+<p>For the surrounding interview strategy — pacing, how the loop is structured, and what each interviewer is scoring — see <a href="01-google-ml-interview-format.html">The Google ML Domain Interview: Format &amp; Strategy</a> and the rapid-fire concept drills in <a href="02-ml-breadth-rapidfire.html">ML Breadth: Rapid-Fire Concepts &amp; Model Answers</a>. For the deeper conceptual questions that bracket the coding, see <a href="06-llm-deepdive-questions.html">LLM-Specific Deep-Dive Questions</a>.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The ML coding round tests two tracks: <strong>implement-the-primitive in numpy</strong> (softmax, attention, k-means, logistic regression, backprop) and <strong>classic DS&amp;A</strong> (hashing, two pointers, sliding window, DP, graphs) — prepare both.</li>
+<li><strong>Numerical stability is graded.</strong> Subtract the max in softmax, use <code>log_softmax</code>/<code>logsumexp</code> for losses, branch the sigmoid on the sign of <code>z</code>, and clamp before <code>log</code> and <code>sqrt</code>. Interviewers plant overflow/underflow traps.</li>
+<li><strong>Shapes are your debugger.</strong> Annotate every array&rsquo;s shape, keep <code>keepdims=True</code> on reductions you broadcast against, and remember every <code>dW</code> matches its <code>W</code> and every <code>dX</code> matches <code>X</code>.</li>
+<li>The <strong>softmax-cross-entropy gradient simplifies to <span class="arithmatex">\(\hat p - \text{onehot}(y)\)</span></strong> — this single cancellation drives both logistic regression and MLP backprop; be able to recite and use it.</li>
+<li><strong>Vectorize instead of looping.</strong> Master broadcasting, fancy indexing (<code>M[np.arange(n), idx]</code>), and <code>einsum</code>; a Python loop over rows signals you have not internalized numpy.</li>
+<li>For DS&amp;A, <strong>recognize the pattern under the ML costume</strong>: dedup → hash set, top-k tokens → heap, longest-valid-span → sliding window, fuzzy match → edit-distance DP, dependency order → topological sort.</li>
+<li><strong>Always state time and space complexity</strong>, and know the headline numbers: attention <span class="arithmatex">\(O(n^2 d)\)</span>, k-means <span class="arithmatex">\(O(nkd)\)</span> per iteration, heap top-k <span class="arithmatex">\(O(n \log k)\)</span>, hash lookup <span class="arithmatex">\(O(1)\)</span> amortized.</li>
+<li><strong>Finish by running your own tests</strong> on tiny known-answer cases, including adversarial inputs — self-verification is the clearest seniority signal you can give.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Aurélien Géron, <em>Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow</em> — from-scratch implementations of logistic regression, k-means, and gradient descent with the numpy idioms used here.</li>
+<li>Vaswani et al., <em>Attention Is All You Need</em> (2017) — the source of the scaled dot-product attention you implement in this chapter.</li>
+<li>Dao et al., <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> — the online-softmax method behind the memory-reduction answer in the Interview Corner.</li>
+<li>Cormen, Leiserson, Rivest &amp; Stein, <em>Introduction to Algorithms</em> (CLRS) — the canonical reference for the DP, graph, and complexity material.</li>
+<li>Goodfellow, Bengio &amp; Courville, <em>Deep Learning</em> — backpropagation and the chain-rule mechanics underlying the MLP backward pass.</li>
+<li>The official NumPy documentation on broadcasting and <code>numpy.einsum</code> — the two features that turn loop-heavy code into one-liners under interview pressure.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="04-ml-system-design-cases.html"><span class="pn-label">← Previous</span><span class="pn-title">ML System Design: Worked Cases</span></a>
+<a class="next" href="06-llm-deepdive-questions.html"><span class="pn-label">Next →</span><span class="pn-title">LLM-Specific Deep-Dive Questions</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>ML/LLM Interview Companion · Prep for Top-Tier ML &amp; LLM Engineering Interviews</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#how-the-ml-coding-round-actually-works">How the ML coding round actually works</a></li>
+<li class="toc-l2"><a href="#softmax-log-sum-exp-and-cross-entropy">Softmax, log-sum-exp, and cross-entropy</a></li>
+<li class="toc-l2"><a href="#scaled-dot-product-attention-from-scratch">Scaled dot-product attention from scratch</a></li>
+<li class="toc-l2"><a href="#logistic-regression-and-backprop-by-hand">Logistic regression and backprop by hand</a></li>
+<li class="toc-l3"><a href="#logistic-regression-with-gradient-descent">Logistic regression with gradient descent</a></li>
+<li class="toc-l3"><a href="#backprop-through-a-two-layer-mlp">Backprop through a two-layer MLP</a></li>
+<li class="toc-l2"><a href="#k-means-and-vectorized-numpy-fluency">K-means and vectorized numpy fluency</a></li>
+<li class="toc-l3"><a href="#a-numpy-fluency-checklist">A numpy fluency checklist</a></li>
+<li class="toc-l2"><a href="#dsa-staples-framed-for-ml-candidates">DS&amp;amp;A staples, framed for ML candidates</a></li>
+<li class="toc-l3"><a href="#hashing-and-arrays-dedup-counting-top-k">Hashing and arrays: dedup, counting, top-k</a></li>
+<li class="toc-l3"><a href="#two-pointers-and-sliding-windows">Two pointers and sliding windows</a></li>
+<li class="toc-l3"><a href="#dynamic-programming">Dynamic programming</a></li>
+<li class="toc-l3"><a href="#graphs-bfs-dfs-and-topological-sort">Graphs: BFS, DFS, and topological sort</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-tested-interview-kit">Putting it together: a tested interview kit</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

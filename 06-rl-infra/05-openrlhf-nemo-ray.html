@@ -1,0 +1,1465 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems — The LLM Stack</title>
+<meta name="description" content="OpenRLHF (Ray + vLLM + DeepSpeed, distributed actor/critic/RM); NeMo-Aligner (Megatron-based, TRT-LLM rollouts); Ray as the orchestration substrate (actors, pla">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="active" href="05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VI — RL Infrastructure (Deep Dive)</div>
+<h1 id="65-openrlhf-nemo-aligner-ray-based-systems">6.5 OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems<a class="headerlink" href="#65-openrlhf-nemo-aligner-ray-based-systems" title="Permanent link">¶</a></h1>
+<p>Reinforcement learning from human feedback (RLHF) for large language models is not just an algorithmic problem — it is primarily a distributed systems engineering problem. When the policy, critic, and reward model together exceed the memory of a single GPU node, when rollout throughput must match gradient-update throughput, and when checkpoint synchronization needs to happen dozens of times per hour across hundreds of GPUs, the implementation framework becomes the bottleneck, not the math.</p>
+<p>This chapter examines two mature, production-grade open-source frameworks — <strong>OpenRLHF</strong> and <strong>NVIDIA NeMo-Aligner</strong> — and the <strong>Ray</strong> distributed actor system that underpins them both (in different ways). By the end of this chapter you will understand how each system assigns roles to processes, how they move tensors between actors, where their design choices diverge, and how to make the right choice for your cluster and model size.</p>
+<p>We assume familiarity with the PPO objective (see <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>) and with vLLM&rsquo;s PagedAttention engine (see <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a>). We also assume you have seen the four-role decomposition of an RL-for-LLM system in <a href="../06-rl-infra/01-anatomy-rl-system.html">The Anatomy of an RL-for-LLM System</a>.</p>
+<hr />
+<h2 id="651-ray-as-an-orchestration-substrate">6.5.1 Ray as an Orchestration Substrate<a class="headerlink" href="#651-ray-as-an-orchestration-substrate" title="Permanent link">¶</a></h2>
+<p>Before studying OpenRLHF or NeMo-Aligner, we need to understand <strong>Ray</strong> — the distributed computing framework developed at UC Berkeley and now maintained by Anyscale — because it is the runtime that ties everything together in the OpenRLHF design.</p>
+<h3 id="rays-programming-model">Ray&rsquo;s Programming Model<a class="headerlink" href="#rays-programming-model" title="Permanent link">¶</a></h3>
+<p>Ray exposes three primitives:</p>
+<ol>
+<li><strong>Remote functions</strong> (<code>@ray.remote</code> decorated): stateless tasks that execute on any available worker.</li>
+<li><strong>Actors</strong> (<code>@ray.remote</code> decorated classes): stateful processes with their own GPU, CPU, and memory allocations, addressable by handle.</li>
+<li><strong>Object store</strong>: shared memory backed by Apache Plasma. Objects put into the store are zero-copy readable by any process on the same node.</li>
+</ol>
+<p>The key insight for RL training is that <strong>actors map perfectly onto the roles in RLHF</strong>: the rollout engine is one actor (or a group), the critic is another, the reference model is a third. Each actor owns its model shards and optimizer state. The controller — typically a small CPU process — choreographs them by submitting tasks and awaiting futures.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">ray</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># --- Minimal Ray actor example: a stateful GPU model holder ---</span>
+<span class="nd">@ray</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">num_gpus</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ModelActor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A simple Ray actor that holds a model on a single GPU.</span>
+<span class="sd">    In a real RLHF system, this would be a policy, critic, or RM.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hidden_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda:0&quot;</span><span class="p">)</span>
+        <span class="c1"># Tiny toy model; in practice this is a multi-billion-parameter LLM</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">hidden_size</span><span class="p">,</span> <span class="n">hidden_size</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x_ref</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Receive a Ray object reference, run forward pass, return a new ref.&quot;&quot;&quot;</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">x_ref</span><span class="p">)</span>           <span class="c1"># deserialize tensor from object store</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">ray</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">cpu</span><span class="p">())</span>    <span class="c1"># put result back into object store</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">update</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">loss_ref</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Apply a gradient update given a remote loss tensor.&quot;&quot;&quot;</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">loss_ref</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="k">return</span> <span class="s2">&quot;updated&quot;</span>
+
+<span class="c1"># --- Controller (runs on CPU driver) ---</span>
+<span class="n">ray</span><span class="o">.</span><span class="n">init</span><span class="p">()</span>
+<span class="n">actor</span> <span class="o">=</span> <span class="n">ModelActor</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">hidden_size</span><span class="o">=</span><span class="mi">256</span><span class="p">)</span>
+
+<span class="n">x</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">256</span><span class="p">))</span>   <span class="c1"># put input into object store</span>
+<span class="n">out_ref</span> <span class="o">=</span> <span class="n">actor</span><span class="o">.</span><span class="n">forward</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># async dispatch; returns a future</span>
+<span class="n">out</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">out_ref</span><span class="p">)</span>             <span class="c1"># block until done</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>                   <span class="c1"># torch.Size([8, 256])</span>
+<span class="n">ray</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="placement-groups-and-gang-scheduling">Placement Groups and Gang Scheduling<a class="headerlink" href="#placement-groups-and-gang-scheduling" title="Permanent link">¶</a></h3>
+<p>When a single actor spans multiple GPUs (e.g., a 70B policy sharded with tensor parallelism across 8 GPUs), Ray uses <strong>placement groups</strong> to reserve a &ldquo;bundle&rdquo; of resources that are co-located and launched atomically. This prevents the partial-allocation deadlock that plagues naive multi-GPU resource requests.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">ray</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ray.util.placement_group</span><span class="w"> </span><span class="kn">import</span> <span class="n">placement_group</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ray.util.scheduling_strategies</span><span class="w"> </span><span class="kn">import</span> <span class="n">PlacementGroupSchedulingStrategy</span>
+
+<span class="n">ray</span><span class="o">.</span><span class="n">init</span><span class="p">()</span>
+
+<span class="c1"># Reserve 8 GPUs on the same node for a tensor-parallel actor group</span>
+<span class="n">pg</span> <span class="o">=</span> <span class="n">placement_group</span><span class="p">(</span>
+    <span class="n">bundles</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;GPU&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;CPU&quot;</span><span class="p">:</span> <span class="mi">4</span><span class="p">}</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">8</span><span class="p">)],</span>
+    <span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;STRICT_PACK&quot;</span><span class="p">,</span>   <span class="c1"># all 8 bundles MUST land on one node</span>
+<span class="p">)</span>
+<span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">.</span><span class="n">ready</span><span class="p">())</span>           <span class="c1"># wait for allocation</span>
+
+<span class="nd">@ray</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">num_gpus</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">TPShard</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One shard of a tensor-parallel model.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">world_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">init_process_group</span><span class="p">(</span>
+            <span class="n">backend</span><span class="o">=</span><span class="s2">&quot;nccl&quot;</span><span class="p">,</span>
+            <span class="n">init_method</span><span class="o">=</span><span class="s2">&quot;env://&quot;</span><span class="p">,</span>   <span class="c1"># env vars set by launcher</span>
+            <span class="n">rank</span><span class="o">=</span><span class="n">rank</span><span class="p">,</span>
+            <span class="n">world_size</span><span class="o">=</span><span class="n">world_size</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rank</span> <span class="o">=</span> <span class="n">rank</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">ping</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;shard </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">rank</span><span class="si">}</span><span class="s2"> alive&quot;</span>
+
+<span class="n">shards</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="n">TPShard</span><span class="o">.</span><span class="n">options</span><span class="p">(</span>
+        <span class="n">scheduling_strategy</span><span class="o">=</span><span class="n">PlacementGroupSchedulingStrategy</span><span class="p">(</span>
+            <span class="n">placement_group</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span>
+            <span class="n">placement_group_bundle_index</span><span class="o">=</span><span class="n">i</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">rank</span><span class="o">=</span><span class="n">i</span><span class="p">,</span> <span class="n">world_size</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span>
+<span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">([</span><span class="n">s</span><span class="o">.</span><span class="n">ping</span><span class="o">.</span><span class="n">remote</span><span class="p">()</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">shards</span><span class="p">]))</span>
+<span class="c1"># [&#39;shard 0 alive&#39;, &#39;shard 1 alive&#39;, ..., &#39;shard 7 alive&#39;]</span>
+<span class="n">ray</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="object-store-and-zero-copy-tensors">Object Store and Zero-Copy Tensors<a class="headerlink" href="#object-store-and-zero-copy-tensors" title="Permanent link">¶</a></h3>
+<p>A critical performance property of Ray&rsquo;s object store is <strong>zero-copy reads for numpy arrays and tensors on the same node</strong>. When rollout tokens and log-probabilities are serialized into the object store, the training worker can read them directly from shared memory without a copy. For a batch of 1024 sequences of length 2048, the logprob tensor is approximately:</p>
+<div class="arithmatex">\[
+1024 \times 2048 \times 4 \text{ bytes} \approx 8 \text{ GB}
+\]</div>
+<p>Eliminating even one copy of that tensor per step saves gigabytes of PCIe or NVLink bandwidth per iteration.</p>
+<p>Across nodes, Ray serializes via Apache Arrow and ships over TCP, so cross-node object transfers should be minimized — keep rollout workers and training workers co-located when possible.</p>
+<hr />
+<h2 id="652-openrlhf-architecture-and-design-philosophy">6.5.2 OpenRLHF: Architecture and Design Philosophy<a class="headerlink" href="#652-openrlhf-architecture-and-design-philosophy" title="Permanent link">¶</a></h2>
+<p><strong>OpenRLHF</strong> (originally open-sourced in late 2023 by the OpenLLMAI community) is built around a clean separation of concerns: every RLHF role — <strong>policy actor</strong>, <strong>reference actor</strong>, <strong>critic</strong>, and <strong>reward model</strong> — lives in its own Ray actor group. The rollout engine is vLLM. Gradient updates use DeepSpeed ZeRO (see <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a>).</p>
+<h3 id="role-decomposition">Role Decomposition<a class="headerlink" href="#role-decomposition" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-openrlhf-ray-role-decomposition">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 900 660" role="img" aria-label="OpenRLHF maps four RLHF roles onto separate Ray actor groups inside one Ray cluster. The vLLM Rollout Engine and Reference Actor feed tokens and log-probs into the central Experience Buffer. The Reward Model scores rollouts. The Experience Buffer fans out to the Critic Actor and Policy Training Actor. A weight-sync feedback loop closes the PPO cycle from the Policy Training Actor back to the vLLM engine.">
+<defs>
+  <marker id="ord-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#666)"/>
+  </marker>
+  <marker id="ord-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#d97706)"/>
+  </marker>
+  <style>
+    #fig-openrlhf-ray-role-decomposition .lbl {
+      font: 600 13px var(--sans, sans-serif);
+      fill: var(--ink-soft, #333);
+    }
+    #fig-openrlhf-ray-role-decomposition .sub {
+      font: 400 10.5px var(--sans, sans-serif);
+      fill: var(--ink-soft, #555);
+    }
+    #fig-openrlhf-ray-role-decomposition .mono {
+      font: 400 10px var(--mono, monospace);
+      fill: var(--ink-soft, #444);
+    }
+    #fig-openrlhf-ray-role-decomposition .cluster-lbl {
+      font: 700 11.5px var(--sans, sans-serif);
+      fill: var(--ink-soft, #444);
+      letter-spacing: 1px;
+    }
+    #fig-openrlhf-ray-role-decomposition .edge-lbl {
+      font: 400 10px var(--sans, sans-serif);
+      fill: var(--ink-soft, #555);
+    }
+    #fig-openrlhf-ray-role-decomposition .sync-lbl {
+      font: 600 10px var(--sans, sans-serif);
+      fill: var(--accent, #d97706);
+    }
+    /* Phase 1: tokens+logprobs into buffer */
+    #fig-openrlhf-ray-role-decomposition .flow-p1 {
+      stroke-dasharray: 8 5;
+      animation: ord-dash 2.4s linear infinite;
+    }
+    /* Phase 2: ref logprobs + reward into buffer */
+    #fig-openrlhf-ray-role-decomposition .flow-p2 {
+      stroke-dasharray: 8 5;
+      animation: ord-dash 2.4s linear 0.6s infinite;
+    }
+    /* Phase 3: experience batch fan-out */
+    #fig-openrlhf-ray-role-decomposition .flow-p3 {
+      stroke-dasharray: 8 5;
+      animation: ord-dash 2.4s linear 1.2s infinite;
+    }
+    /* Phase 4: weight sync loop */
+    #fig-openrlhf-ray-role-decomposition .flow-p4 {
+      stroke-dasharray: 10 5;
+      animation: ord-dash 2.4s linear 1.8s infinite;
+    }
+    @keyframes ord-dash {
+      to { stroke-dashoffset: -52; }
+    }
+  </style>
+</defs>
+
+
+<rect x="8" y="8" width="884" height="644" rx="14"
+      fill="var(--surface-3,rgba(128,128,128,0.07))"
+      stroke="var(--border-2,#999)" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="22" y="28" class="cluster-lbl">RAY CLUSTER</text>
+
+
+
+
+<rect x="30" y="40" width="320" height="115" rx="10"
+      fill="var(--accent,#d97706)" fill-opacity="0.15"
+      stroke="var(--accent,#d97706)" stroke-width="1.8"/>
+<text x="190" y="62" text-anchor="middle" class="lbl">vLLM Rollout Engine</text>
+<text x="190" y="79" text-anchor="middle" class="sub">policy weights (read-only copy)</text>
+<text x="190" y="94" text-anchor="middle" class="sub">fast generation, PagedAttention</text>
+<text x="190" y="110" text-anchor="middle" class="sub" style="font-style:italic">generates tokens &amp; logprobs</text>
+<text x="190" y="126" text-anchor="middle" class="sub" style="font-style:italic">during rollout phase</text>
+
+
+<rect x="420" y="40" width="300" height="115" rx="10"
+      fill="var(--surface-3,rgba(128,128,128,0.07))"
+      stroke="var(--border-2,#999)" stroke-width="1.5"/>
+<text x="570" y="62" text-anchor="middle" class="lbl">Reference Actor</text>
+<text x="570" y="79" text-anchor="middle" class="sub">frozen policy, no optimizer</text>
+<text x="570" y="94" text-anchor="middle" class="sub">ZeRO-3 sharding</text>
+<text x="570" y="110" text-anchor="middle" class="sub" style="font-style:italic">computes ref log-probs</text>
+<text x="570" y="126" text-anchor="middle" class="sub" style="font-style:italic">for KL penalty</text>
+
+
+
+<line x1="190" y1="155" x2="190" y2="213"
+      stroke="var(--ink-soft,#666)" stroke-width="2"
+      marker-end="url(#ord-arr)"
+      class="flow-p1"/>
+<text x="198" y="189" class="edge-lbl">tokens, logprobs</text>
+
+
+<line x1="570" y1="155" x2="570" y2="213"
+      stroke="var(--ink-soft,#666)" stroke-width="2"
+      marker-end="url(#ord-arr)"
+      class="flow-p2"/>
+<text x="578" y="189" class="edge-lbl">ref logprobs</text>
+
+
+<rect x="30" y="216" width="720" height="80" rx="10"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.12"
+      stroke="var(--accent2,#3b82f6)" stroke-width="2.2"/>
+<text x="390" y="240" text-anchor="middle" class="lbl">Experience Buffer (Ray Object Store)</text>
+<text x="390" y="257" text-anchor="middle" class="mono">{ prompt, response, reward, adv, logp, ref_logp }</text>
+<text x="390" y="273" text-anchor="middle" class="sub" style="font-style:italic">zero-copy shared store — central data hub</text>
+<text x="390" y="288" text-anchor="middle" class="sub" style="font-style:italic">consumed by all training actors</text>
+
+
+<line x1="390" y1="296" x2="390" y2="322"
+      stroke="var(--ink-soft,#666)" stroke-width="1.8"
+      class="flow-p3"/>
+<text x="396" y="312" class="edge-lbl">experience batch</text>
+
+
+<line x1="390" y1="322" x2="220" y2="350"
+      stroke="var(--ink-soft,#666)" stroke-width="1.8"
+      marker-end="url(#ord-arr)"
+      class="flow-p3"/>
+
+<line x1="390" y1="322" x2="580" y2="350"
+      stroke="var(--ink-soft,#666)" stroke-width="1.8"
+      marker-end="url(#ord-arr)"
+      class="flow-p3"/>
+
+
+
+
+<rect x="30" y="353" width="330" height="110" rx="10"
+      fill="var(--surface,rgba(128,128,128,0.1))"
+      stroke="var(--border-2,#999)" stroke-width="1.5"/>
+<text x="195" y="376" text-anchor="middle" class="lbl">Critic Actor</text>
+<text x="195" y="393" text-anchor="middle" class="sub">value head</text>
+<text x="195" y="408" text-anchor="middle" class="sub">ZeRO-1 / 2 / 3 optimizer</text>
+<text x="195" y="424" text-anchor="middle" class="sub" style="font-style:italic">computes value estimates V(s)</text>
+<text x="195" y="439" text-anchor="middle" class="sub" style="font-style:italic">for GAE advantage computation</text>
+<text x="195" y="454" text-anchor="middle" class="sub" style="font-style:italic">updates value head weights</text>
+
+
+<rect x="420" y="353" width="330" height="110" rx="10"
+      fill="var(--surface,rgba(128,128,128,0.1))"
+      stroke="var(--accent,#d97706)" stroke-width="2"/>
+<text x="585" y="376" text-anchor="middle" class="lbl">Policy Training Actor</text>
+<text x="585" y="393" text-anchor="middle" class="sub">PPO gradient updates</text>
+<text x="585" y="408" text-anchor="middle" class="sub">DeepSpeed ZeRO-3</text>
+<text x="585" y="424" text-anchor="middle" class="sub" style="font-style:italic; fill:var(--accent,#d97706)">calls sync_weights_to_vllm()</text>
+<text x="585" y="439" text-anchor="middle" class="sub" style="font-style:italic">broadcasts params via NCCL</text>
+<text x="585" y="454" text-anchor="middle" class="sub" style="font-style:italic">or Ray object store</text>
+
+
+<rect x="30" y="500" width="720" height="72" rx="10"
+      fill="var(--surface-3,rgba(128,128,128,0.07))"
+      stroke="var(--border-2,#999)" stroke-width="1.5"/>
+<text x="390" y="524" text-anchor="middle" class="lbl">Reward Model Actor</text>
+<text x="390" y="541" text-anchor="middle" class="sub">separate RM, or rule-based verifier</text>
+<text x="390" y="557" text-anchor="middle" class="sub" style="font-style:italic">scores rollout responses, feeds reward to buffer</text>
+
+
+<path d="M 100 500 C 100 460, 100 316, 200 296"
+      fill="none"
+      stroke="var(--ink-soft,#666)" stroke-width="1.8"
+      marker-end="url(#ord-arr)"
+      class="flow-p2"/>
+<text x="68" y="400" class="edge-lbl" text-anchor="middle"
+      transform="rotate(-90,68,400)">reward score</text>
+
+
+
+
+<path d="M 750 408 C 820 408, 855 98, 760 80 C 720 72, 400 52, 350 97"
+      fill="none"
+      stroke="var(--accent,#d97706)" stroke-width="2.8"
+      marker-end="url(#ord-arr-acc)"
+      class="flow-p4"/>
+
+
+<text x="840" y="280" text-anchor="middle" class="sync-lbl"
+      transform="rotate(-90,840,280)">sync_weights_to_vllm()</text>
+<text x="824" y="280" text-anchor="middle" class="sync-lbl"
+      style="font-size:9px; font-weight:400"
+      transform="rotate(-90,824,280)">NCCL broadcast / object store</text>
+
+</svg>
+<figcaption><b>OpenRLHF maps every RLHF role onto a dedicated Ray actor group, with the Ray object store as the shared Experience Buffer.</b> After each PPO update the Policy Training Actor calls <code>sync_weights_to_vllm()</code>, broadcasting updated weights back to the vLLM Rollout Engine (amber arc) — closing the RL cycle. Animated arrows show the temporal order of the six PPO phases: rollout generation, scoring, buffer population, and gradient updates.</figcaption>
+</figure>
+
+<p>The key design insight: <strong>the vLLM engine holds a <em>read-only copy</em> of policy weights for generation</strong>. After each PPO update, the policy training actor must push its updated weights to the vLLM engine. This weight-sync step is where OpenRLHF differs from single-process approaches.</p>
+<h3 id="weight-synchronization-via-distributed-checkpointing">Weight Synchronization via Distributed Checkpointing<a class="headerlink" href="#weight-synchronization-via-distributed-checkpointing" title="Permanent link">¶</a></h3>
+<p>OpenRLHF implements weight sync by having the policy actor broadcast updated parameters directly to the vLLM workers using NCCL collectives or shared-memory copies, bypassing disk entirely. The mechanism:</p>
+<ol>
+<li>Policy actor finishes a gradient step and calls <code>sync_weights_to_vllm()</code>.</li>
+<li>For each parameter tensor, the actor puts it into the Ray object store.</li>
+<li>vLLM workers pull the tensors and call <code>model.load_state_dict(...)</code> in-place.</li>
+<li>vLLM&rsquo;s KV cache is not invalidated by weight changes (generation restarts fresh).</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="c1"># Simplified weight-sync routine (OpenRLHF-style)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">ray</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span>
+
+<span class="nd">@ray</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">num_gpus</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">PolicyTrainingActor</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span> <span class="o">=</span> <span class="n">optimizer</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_named_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return state dict on CPU for broadcasting.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">()}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">ppo_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Run one PPO gradient update.&quot;&quot;&quot;</span>
+        <span class="c1"># ... (compute loss, backward, step) ...</span>
+        <span class="k">pass</span>
+
+
+<span class="nd">@ray</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">num_gpus</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">VLLMRolloutActor</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vllm_engine</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">engine</span> <span class="o">=</span> <span class="n">vllm_engine</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_weights</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state_dict_ref</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Receive new policy weights and reload into vLLM.&quot;&quot;&quot;</span>
+        <span class="n">state_dict</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">state_dict_ref</span><span class="p">)</span>
+        <span class="c1"># vLLM exposes model.llm_engine.model_executor.driver_worker.model_runner.model</span>
+        <span class="n">model</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">engine</span><span class="o">.</span><span class="n">llm_engine</span><span class="o">.</span><span class="n">model_executor</span><span class="o">.</span><span class="n">driver_worker</span> \
+                           <span class="o">.</span><span class="n">model_runner</span><span class="o">.</span><span class="n">model</span>
+        <span class="n">missing</span><span class="p">,</span> <span class="n">unexpected</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">load_weights</span><span class="p">(</span><span class="n">state_dict</span><span class="o">.</span><span class="n">items</span><span class="p">())</span>
+        <span class="k">assert</span> <span class="ow">not</span> <span class="n">missing</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">unexpected</span><span class="p">,</span> \
+            <span class="sa">f</span><span class="s2">&quot;Weight mismatch: missing=</span><span class="si">{</span><span class="n">missing</span><span class="si">}</span><span class="s2">, unexpected=</span><span class="si">{</span><span class="n">unexpected</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">return</span> <span class="s2">&quot;weights_loaded&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">rollout</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prompts</span><span class="p">,</span> <span class="n">sampling_params</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Generate responses using updated weights.&quot;&quot;&quot;</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">vllm</span><span class="w"> </span><span class="kn">import</span> <span class="n">SamplingParams</span>
+        <span class="n">outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">engine</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">SamplingParams</span><span class="p">(</span><span class="o">**</span><span class="n">sampling_params</span><span class="p">))</span>
+        <span class="k">return</span> <span class="p">[(</span><span class="n">o</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span> <span class="n">o</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span><span class="p">,</span> <span class="n">o</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">logprobs</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">outputs</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="the-ppo-training-loop-in-openrlhf">The PPO Training Loop in OpenRLHF<a class="headerlink" href="#the-ppo-training-loop-in-openrlhf" title="Permanent link">¶</a></h3>
+<p>Here is the high-level controller logic. Notice how it is a plain Python loop — no custom distributed runtime, just Ray futures:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">ray</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ExperienceBatch</span><span class="p">:</span>
+    <span class="n">prompts</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">responses</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">rewards</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span>
+    <span class="n">advantages</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span>
+    <span class="n">old_logprobs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span>    <span class="c1"># from vLLM at generation time</span>
+    <span class="n">ref_logprobs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span>    <span class="c1"># from reference model</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_ppo_training</span><span class="p">(</span>
+    <span class="n">policy_actor</span><span class="p">,</span>
+    <span class="n">vllm_actor</span><span class="p">,</span>
+    <span class="n">ref_actor</span><span class="p">,</span>
+    <span class="n">reward_actor</span><span class="p">,</span>
+    <span class="n">critic_actor</span><span class="p">,</span>
+    <span class="n">prompt_dataset</span><span class="p">,</span>
+    <span class="n">num_epochs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="n">rollout_batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span>
+    <span class="n">ppo_epochs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+    <span class="n">gamma</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">lam</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.95</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    High-level PPO controller. Runs entirely on CPU driver process.</span>
+<span class="sd">    Each .remote() call is non-blocking; ray.get() blocks until done.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_epochs</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">prompt_batch</span> <span class="ow">in</span> <span class="n">prompt_dataset</span><span class="o">.</span><span class="n">batches</span><span class="p">(</span><span class="n">rollout_batch_size</span><span class="p">):</span>
+
+            <span class="c1"># --- Phase 1: Generate rollouts ---</span>
+            <span class="n">rollout_ref</span> <span class="o">=</span> <span class="n">vllm_actor</span><span class="o">.</span><span class="n">rollout</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span>
+                <span class="n">prompt_batch</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">,</span> <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="mi">512</span><span class="p">}</span>
+            <span class="p">)</span>
+
+            <span class="c1"># --- Phase 2: Score with RM (can overlap with rollout) ---</span>
+            <span class="c1"># (actually waits on rollout_ref internally)</span>
+            <span class="n">reward_ref</span> <span class="o">=</span> <span class="n">reward_actor</span><span class="o">.</span><span class="n">score</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">rollout_ref</span><span class="p">)</span>
+
+            <span class="c1"># --- Phase 3: Compute reference log-probs ---</span>
+            <span class="n">ref_logp_ref</span> <span class="o">=</span> <span class="n">ref_actor</span><span class="o">.</span><span class="n">log_probs</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">rollout_ref</span><span class="p">)</span>
+
+            <span class="c1"># --- Phase 4: Estimate values and advantages ---</span>
+            <span class="n">value_ref</span> <span class="o">=</span> <span class="n">critic_actor</span><span class="o">.</span><span class="n">value</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">rollout_ref</span><span class="p">)</span>
+
+            <span class="c1"># Gather everything; build experience batch</span>
+            <span class="n">rollouts</span><span class="p">,</span> <span class="n">rewards</span><span class="p">,</span> <span class="n">ref_logps</span><span class="p">,</span> <span class="n">values</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+                <span class="p">[</span><span class="n">rollout_ref</span><span class="p">,</span> <span class="n">reward_ref</span><span class="p">,</span> <span class="n">ref_logp_ref</span><span class="p">,</span> <span class="n">value_ref</span><span class="p">]</span>
+            <span class="p">)</span>
+            <span class="n">batch</span> <span class="o">=</span> <span class="n">build_experience_batch</span><span class="p">(</span>
+                <span class="n">rollouts</span><span class="p">,</span> <span class="n">rewards</span><span class="p">,</span> <span class="n">ref_logps</span><span class="p">,</span> <span class="n">values</span><span class="p">,</span> <span class="n">gamma</span><span class="p">,</span> <span class="n">lam</span>
+            <span class="p">)</span>
+            <span class="n">batch_ref</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>  <span class="c1"># into shared object store</span>
+
+            <span class="c1"># --- Phase 5: PPO gradient updates (multiple epochs) ---</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">ppo_epochs</span><span class="p">):</span>
+                <span class="n">policy_loss_ref</span> <span class="o">=</span> <span class="n">policy_actor</span><span class="o">.</span><span class="n">ppo_step</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">batch_ref</span><span class="p">)</span>
+                <span class="n">critic_loss_ref</span> <span class="o">=</span> <span class="n">critic_actor</span><span class="o">.</span><span class="n">update</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">batch_ref</span><span class="p">)</span>
+                <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">([</span><span class="n">policy_loss_ref</span><span class="p">,</span> <span class="n">critic_loss_ref</span><span class="p">])</span>
+
+            <span class="c1"># --- Phase 6: Sync updated weights to vLLM ---</span>
+            <span class="n">params_ref</span> <span class="o">=</span> <span class="n">policy_actor</span><span class="o">.</span><span class="n">get_named_params</span><span class="o">.</span><span class="n">remote</span><span class="p">()</span>
+            <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">vllm_actor</span><span class="o">.</span><span class="n">load_weights</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">params_ref</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_experience_batch</span><span class="p">(</span><span class="n">rollouts</span><span class="p">,</span> <span class="n">rewards</span><span class="p">,</span> <span class="n">ref_logps</span><span class="p">,</span> <span class="n">values</span><span class="p">,</span> <span class="n">gamma</span><span class="p">,</span> <span class="n">lam</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute GAE advantages (lambda-return) and pack into ExperienceBatch.</span>
+<span class="sd">    See: Schulman et al. &#39;High-Dimensional Continuous Control Using</span>
+<span class="sd">         Generalized Advantage Estimation&#39;, 2015.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">advantages</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">last_gae</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">rewards</span><span class="p">)</span>
+    <span class="c1"># For language model RL the &#39;value&#39; is typically a scalar per sequence</span>
+    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">reversed</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">T</span><span class="p">)):</span>
+        <span class="n">next_val</span> <span class="o">=</span> <span class="n">values</span><span class="p">[</span><span class="n">t</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="n">t</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">&lt;</span> <span class="n">T</span> <span class="k">else</span> <span class="mf">0.0</span>
+        <span class="n">delta</span> <span class="o">=</span> <span class="n">rewards</span><span class="p">[</span><span class="n">t</span><span class="p">]</span> <span class="o">+</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">next_val</span> <span class="o">-</span> <span class="n">values</span><span class="p">[</span><span class="n">t</span><span class="p">]</span>
+        <span class="n">last_gae</span> <span class="o">=</span> <span class="n">delta</span> <span class="o">+</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">lam</span> <span class="o">*</span> <span class="n">last_gae</span>
+        <span class="n">advantages</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">last_gae</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">ExperienceBatch</span><span class="p">(</span>
+        <span class="n">prompts</span><span class="o">=</span><span class="p">[</span><span class="n">r</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rollouts</span><span class="p">],</span>
+        <span class="n">responses</span><span class="o">=</span><span class="p">[</span><span class="n">r</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rollouts</span><span class="p">],</span>
+        <span class="n">rewards</span><span class="o">=</span><span class="n">rewards</span><span class="p">,</span>
+        <span class="n">advantages</span><span class="o">=</span><span class="n">advantages</span><span class="p">,</span>
+        <span class="n">old_logprobs</span><span class="o">=</span><span class="p">[</span><span class="n">r</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rollouts</span><span class="p">],</span>
+        <span class="n">ref_logprobs</span><span class="o">=</span><span class="n">ref_logps</span><span class="p">,</span>
+    <span class="p">)</span>
+</code></pre></div>
+<h3 id="practical-configuration-openrlhf-launch-script">Practical Configuration: OpenRLHF Launch Script<a class="headerlink" href="#practical-configuration-openrlhf-launch-script" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="ch">#!/bin/bash</span>
+<span class="c1"># Launch OpenRLHF PPO training on 4 nodes, 8 GPUs each (32 GPUs total)</span>
+<span class="c1"># Policy: LLaMA-3-70B  |  RM: LLaMA-3-8B  |  Rollout: vLLM</span>
+
+<span class="c1"># Start Ray cluster (typically done via Kubernetes or Slurm integration)</span>
+ray<span class="w"> </span>start<span class="w"> </span>--head<span class="w"> </span>--num-gpus<span class="o">=</span><span class="m">8</span><span class="w"> </span>--num-cpus<span class="o">=</span><span class="m">64</span>
+
+<span class="c1"># On worker nodes:</span>
+<span class="c1"># ray start --address=&lt;head_ip&gt;:6379 --num-gpus=8</span>
+
+python<span class="w"> </span>train_ppo.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--pretrain<span class="w"> </span>meta-llama/Meta-Llama-3-70B-Instruct<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--reward_pretrain<span class="w"> </span>meta-llama/Meta-Llama-3-8B<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--save_path<span class="w"> </span>./checkpoints/llama3-70b-ppo<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--num_episodes<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--rollout_batch_size<span class="w"> </span><span class="m">1024</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--micro_rollout_batch_size<span class="w"> </span><span class="m">8</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--num_rollout_workers<span class="w"> </span><span class="m">4</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--vllm_num_engines<span class="w"> </span><span class="m">4</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--vllm_tensor_parallel_size<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--actor_num_nodes<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--actor_num_gpus_per_node<span class="w"> </span><span class="m">8</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--critic_num_nodes<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--critic_num_gpus_per_node<span class="w"> </span><span class="m">8</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ref_num_nodes<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ref_num_gpus_per_node<span class="w"> </span><span class="m">8</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--reward_num_nodes<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--reward_num_gpus_per_node<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--zero_stage<span class="w"> </span><span class="m">3</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--bf16<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--learning_rate<span class="w"> </span>5e-7<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--kl_target<span class="w"> </span><span class="m">0</span>.05<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--init_kl_coef<span class="w"> </span><span class="m">0</span>.01<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--normalize_reward<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--adam_offload<span class="w">      </span><span class="c1"># offload optimizer state to CPU to save GPU memory</span>
+</code></pre></div>
+<hr />
+<h2 id="653-memory-budget-analysis-for-openrlhf">6.5.3 Memory Budget Analysis for OpenRLHF<a class="headerlink" href="#653-memory-budget-analysis-for-openrlhf" title="Permanent link">¶</a></h2>
+<p>Understanding how OpenRLHF allocates memory across its four actor groups is essential for capacity planning.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked Memory Example: LLaMA-3-70B PPO on 32 GPUs</p>
+<p><strong>Model size:</strong> 70B parameters at bf16 = <span class="arithmatex">\(70 \times 10^9 \times 2\)</span> bytes = 140 GB.</p>
+<p><strong>Policy training actor (16 GPUs, ZeRO-3):</strong>
+- Model parameters: <span class="arithmatex">\(140 / 16 = 8.75\)</span> GB per GPU
+- Gradients (same size as params with ZeRO-3): <span class="arithmatex">\(8.75\)</span> GB per GPU
+- Optimizer state (Adam: 2 moments, fp32): <span class="arithmatex">\(140 \times 2 \times 4 / 16 = 70\)</span> GB across 16 GPUs = <span class="arithmatex">\(4.375\)</span> GB per GPU in fp32 (but Adam can be offloaded to CPU)
+- Activations (per micro-batch=8, len=2048): roughly <span class="arithmatex">\(2-4\)</span> GB per GPU with gradient checkpointing
+- <strong>Total per GPU (with CPU Adam offload):</strong> ~14–18 GB on an 80 GB A100. Comfortable.</p>
+<p><strong>vLLM rollout engine (8 GPUs, TP=2, 4 engines × 2 GPUs):</strong>
+- Model weights loaded as bfloat16: <span class="arithmatex">\(140 / 4\)</span> engines = 35 GB per engine = 17.5 GB per GPU
+- KV cache (remaining ~60 GB): supports ~100k tokens in flight per engine
+- <strong>Total per GPU:</strong> ~18 GB weights + KV cache fills the rest. Tight on 40 GB, comfortable on 80 GB.</p>
+<p><strong>Reference actor (8 GPUs, ZeRO-3, no optimizer):</strong>
+- Parameters only: <span class="arithmatex">\(140 / 8 = 17.5\)</span> GB per GPU. No gradient storage needed.</p>
+<p><strong>Reward model (2 GPUs, 8B params at bf16):</strong>
+- <span class="arithmatex">\(8 \times 10^9 \times 2 / 2 = 8\)</span> GB per GPU. Very comfortable.</p>
+<p><strong>Total cluster GPU memory used:</strong> roughly <span class="arithmatex">\(8 \times 18.75 + 8 \times 17.5 + 8 \times 17.5 + 2 \times 8 \approx\)</span> 437 GB across 26 GPUs. On 32 × 80 GB = 2560 GB total, there is substantial headroom for batch sizes, long contexts, or larger models.</p>
+</div>
+<hr />
+<h2 id="654-nemo-aligner-megatron-based-rlhf">6.5.4 NeMo-Aligner: Megatron-Based RLHF<a class="headerlink" href="#654-nemo-aligner-megatron-based-rlhf" title="Permanent link">¶</a></h2>
+<p><strong>NVIDIA NeMo-Aligner</strong> (released in 2023 as part of the NeMo framework) takes a fundamentally different approach: instead of Ray, it uses <strong>Megatron-LM&rsquo;s</strong> native 3D parallelism and <strong>NCCL</strong> collective communication as the backbone. TensorRT-LLM (TRT-LLM) serves as the rollout engine rather than vLLM.</p>
+<h3 id="megatron-lm-as-the-foundation">Megatron-LM as the Foundation<a class="headerlink" href="#megatron-lm-as-the-foundation" title="Permanent link">¶</a></h3>
+<p>Recall from <a href="../03-pretraining/07-megatron-deepspeed.html">Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a> that Megatron-LM implements:
+- <strong>Tensor parallelism (TP):</strong> column and row linear splits within a transformer layer.
+- <strong>Pipeline parallelism (PP):</strong> layer-level splits across devices with micro-batch pipelining.
+- <strong>Data parallelism (DP):</strong> replicated shards with ZeRO-style optimizer partitioning.</p>
+<p>NeMo-Aligner leverages all three for both the policy and critic. The communication topology is known at initialization time and uses only NCCL — there is no dynamic task graph as in Ray. This provides lower latency for gradient synchronization but less flexibility for heterogeneous role layouts.</p>
+<figure class="viz" id="fig-nemo-aligner-megatron-3d-layout">
+<svg viewBox="0 0 860 530" role="img" aria-label="NeMo-Aligner process layout: a Policy Trainer using Megatron 3D parallelism with TP=4, PP=4, DP=4 across 64 GPUs sits above a separate TRT-LLM Rollout Engine GPU partition. An NCCL broadcast arrow transfers weights from the policy trainer down to the rollout engine after each update epoch.">
+<defs>
+  <marker id="nma-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#d97706)"/>
+  </marker>
+  <style>
+    #fig-nemo-aligner-megatron-3d-layout .cap {
+      font: 400 11px var(--sans, sans-serif);
+      fill: var(--ink-soft, #444);
+    }
+    #fig-nemo-aligner-megatron-3d-layout .lbl {
+      font: 600 13px var(--sans, sans-serif);
+      fill: var(--ink-soft, #333);
+    }
+    #fig-nemo-aligner-megatron-3d-layout .sub {
+      font: 400 10.5px var(--sans, sans-serif);
+      fill: var(--ink-soft, #555);
+    }
+    #fig-nemo-aligner-megatron-3d-layout .title-cap {
+      font: 500 11.5px var(--sans, sans-serif);
+      fill: var(--ink-soft, #444);
+    }
+    #fig-nemo-aligner-megatron-3d-layout .acc-lbl {
+      font: 600 11px var(--sans, sans-serif);
+      fill: var(--accent, #d97706);
+    }
+    #fig-nemo-aligner-megatron-3d-layout .shard-lbl {
+      font: 500 10px var(--sans, sans-serif);
+      fill: var(--ink-soft, #333);
+    }
+  </style>
+</defs>
+
+
+<text x="430" y="20" text-anchor="middle" class="title-cap">NeMo-Aligner Process Layout — 64 GPUs, TP=4, PP=4, DP=4</text>
+
+
+<rect x="22" y="34" width="816" height="218" rx="12"
+      fill="var(--surface,rgba(128,128,128,0.08))"
+      stroke="var(--border-2,#888)" stroke-width="1.8"/>
+<text x="36" y="56" class="lbl">POLICY TRAINER  (TP=4, PP=4, DP=4 — 64 GPUs)</text>
+
+
+<g opacity="0.25">
+  <rect x="118" y="96" width="94" height="68" rx="7"
+        fill="var(--accent,#d97706)" fill-opacity="0.8" stroke="var(--accent,#d97706)" stroke-width="1"/>
+  <rect x="232" y="96" width="94" height="68" rx="7"
+        fill="var(--accent,#d97706)" fill-opacity="0.8" stroke="var(--accent,#d97706)" stroke-width="1"/>
+  <rect x="346" y="96" width="94" height="68" rx="7"
+        fill="var(--accent,#d97706)" fill-opacity="0.8" stroke="var(--accent,#d97706)" stroke-width="1"/>
+  <rect x="460" y="96" width="94" height="68" rx="7"
+        fill="var(--accent,#d97706)" fill-opacity="0.8" stroke="var(--accent,#d97706)" stroke-width="1"/>
+</g>
+
+<g opacity="0.12">
+  <rect x="126" y="104" width="94" height="68" rx="7"
+        fill="var(--accent,#d97706)" fill-opacity="0.8" stroke="var(--accent,#d97706)" stroke-width="1"/>
+  <rect x="240" y="104" width="94" height="68" rx="7"
+        fill="var(--accent,#d97706)" fill-opacity="0.8" stroke="var(--accent,#d97706)" stroke-width="1"/>
+  <rect x="354" y="104" width="94" height="68" rx="7"
+        fill="var(--accent,#d97706)" fill-opacity="0.8" stroke="var(--accent,#d97706)" stroke-width="1"/>
+  <rect x="468" y="104" width="94" height="68" rx="7"
+        fill="var(--accent,#d97706)" fill-opacity="0.8" stroke="var(--accent,#d97706)" stroke-width="1"/>
+</g>
+
+
+<rect x="110" y="88" width="94" height="68" rx="7"
+      fill="var(--accent,#d97706)" fill-opacity="0.22"
+      stroke="var(--accent,#d97706)" stroke-width="1.6"/>
+<text x="157" y="111" text-anchor="middle" class="shard-lbl">PP stage 0</text>
+<text x="157" y="126" text-anchor="middle" class="shard-lbl">TP shard ×4</text>
+<text x="157" y="141" text-anchor="middle" class="shard-lbl" style="font-size:9px">4 GPUs</text>
+
+<rect x="224" y="88" width="94" height="68" rx="7"
+      fill="var(--accent,#d97706)" fill-opacity="0.22"
+      stroke="var(--accent,#d97706)" stroke-width="1.6"/>
+<text x="271" y="111" text-anchor="middle" class="shard-lbl">PP stage 1</text>
+<text x="271" y="126" text-anchor="middle" class="shard-lbl">TP shard ×4</text>
+<text x="271" y="141" text-anchor="middle" class="shard-lbl" style="font-size:9px">4 GPUs</text>
+
+<rect x="338" y="88" width="94" height="68" rx="7"
+      fill="var(--accent,#d97706)" fill-opacity="0.22"
+      stroke="var(--accent,#d97706)" stroke-width="1.6"/>
+<text x="385" y="111" text-anchor="middle" class="shard-lbl">PP stage 2</text>
+<text x="385" y="126" text-anchor="middle" class="shard-lbl">TP shard ×4</text>
+<text x="385" y="141" text-anchor="middle" class="shard-lbl" style="font-size:9px">4 GPUs</text>
+
+<rect x="452" y="88" width="94" height="68" rx="7"
+      fill="var(--accent,#d97706)" fill-opacity="0.22"
+      stroke="var(--accent,#d97706)" stroke-width="1.6"/>
+<text x="499" y="111" text-anchor="middle" class="shard-lbl">PP stage 3</text>
+<text x="499" y="126" text-anchor="middle" class="shard-lbl">TP shard ×4</text>
+<text x="499" y="141" text-anchor="middle" class="shard-lbl" style="font-size:9px">4 GPUs</text>
+
+
+<line x1="110" y1="168" x2="546" y2="168"
+      stroke="var(--border-2,#888)" stroke-width="1.3"
+      marker-end="url(#nma-arr-acc)"/>
+<text x="330" y="182" text-anchor="middle" class="cap">pipeline micro-batches</text>
+
+
+<line x1="558" y1="88" x2="578" y2="88" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+<line x1="558" y1="156" x2="578" y2="156" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+<line x1="578" y1="88" x2="578" y2="156" stroke="var(--border-2,#888)" stroke-width="1.3"/>
+<text x="586" y="112" class="cap">x DP=4</text>
+<text x="586" y="126" class="cap">replicas</text>
+<text x="586" y="140" class="cap">(ghosted)</text>
+
+
+<text x="56" y="113" text-anchor="middle" class="cap" style="font-size:9.5px">PP: across</text>
+<text x="56" y="126" text-anchor="middle" class="cap" style="font-size:9.5px">layers</text>
+
+<text x="430" y="204" text-anchor="middle" class="sub" style="font-style:italic">DP=4 replicas: ghosted stacks above  |  TP: all-reduce within each layer  |  PP: NCCL sends across stages</text>
+
+
+<line x1="430" y1="252" x2="430" y2="305"
+      stroke="var(--accent,#d97706)" stroke-width="3.2"
+      marker-end="url(#nma-arr-acc)"/>
+<text x="438" y="269" class="acc-lbl">NCCL broadcast</text>
+<text x="438" y="284" class="acc-lbl" style="font-size:9.5px; font-weight:400">weights copied after each update epoch</text>
+<text x="438" y="298" class="cap" style="font-size:9px">send/recv activations via NCCL</text>
+
+
+<rect x="22" y="308" width="816" height="184" rx="12"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.08"
+      stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+<text x="36" y="332" class="lbl">TRT-LLM ROLLOUT ENGINE  (separate GPU partition)</text>
+<text x="430" y="358" text-anchor="middle" class="sub">Weights copied via NCCL broadcast from policy trainer</text>
+<text x="430" y="375" text-anchor="middle" class="sub">after each update epoch — topology fixed at initialization</text>
+<text x="430" y="394" text-anchor="middle" class="sub">Generates with FP16 / INT8; compiled TensorRT engine</text>
+<text x="430" y="413" text-anchor="middle" class="sub" style="font-style:italic">No dynamic Ray task graph — static SPMD NCCL topology</text>
+<text x="430" y="432" text-anchor="middle" class="sub" style="font-style:italic">Lower gradient-sync latency; less flexibility for heterogeneous roles</text>
+
+
+<text x="430" y="460" text-anchor="middle" class="cap" style="font-style:italic; font-size:10px">STATIC TOPOLOGY: vs. OpenRLHF — NeMo-Aligner uses NCCL only, no Ray object store, communication plan known at init</text>
+<text x="430" y="478" text-anchor="middle" class="cap" style="font-style:italic; font-size:10px">This trades dynamic flexibility for deterministic NCCL latency — all four components (policy, critic, RM, ref) share this topology</text>
+
+</svg>
+<figcaption><b>NeMo-Aligner uses a static Megatron-LM 3D parallel topology: tensor parallelism (TP=4) splits within each layer, pipeline parallelism (PP=4) splits across layers, and data parallelism (DP=4) replicates the whole grid across 64 GPUs.</b> After each policy update, weights are broadcast via NCCL (amber arrow) to a separate TRT-LLM Rollout Engine partition. Unlike OpenRLHF's dynamic Ray actor graph, this communication topology is fixed at initialization — providing lower gradient-sync latency at the cost of flexibility for heterogeneous role layouts.</figcaption>
+</figure>
+
+<h3 id="the-reward-model-and-critic-in-nemo-aligner">The Reward Model and Critic in NeMo-Aligner<a class="headerlink" href="#the-reward-model-and-critic-in-nemo-aligner" title="Permanent link">¶</a></h3>
+<p>In NeMo-Aligner&rsquo;s PPO implementation, the critic shares the same Megatron parallelism configuration as the policy (same TP, PP, DP degrees). The reward model can be a separate Megatron model or an external scoring function. The key difference from OpenRLHF: <strong>all four components communicate via NCCL point-to-point sends</strong>, not via Ray&rsquo;s object store.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># NeMo-Aligner PPO trainer (conceptual — simplified from actual source)</span>
+<span class="c1"># Actual code lives in nemo_aligner/algorithms/ppo.py</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nemo_aligner.utils.train_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">clip_gradients</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nemo_aligner.utils.distributed</span><span class="w"> </span><span class="kn">import</span> <span class="n">masked_mean</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MegatronPPOTrainer</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    PPO trainer built on Megatron-LM. All communication uses NCCL.</span>
+<span class="sd">    Policy, critic, RM are all Megatron GPTModel instances.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">policy</span><span class="p">,</span> <span class="n">critic</span><span class="p">,</span> <span class="n">rm</span><span class="p">,</span> <span class="n">ref_policy</span><span class="p">,</span> <span class="n">cfg</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">policy</span> <span class="o">=</span> <span class="n">policy</span>      <span class="c1"># MegatronGPTModel</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">critic</span> <span class="o">=</span> <span class="n">critic</span>      <span class="c1"># MegatronGPTModel with value head</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rm</span> <span class="o">=</span> <span class="n">rm</span>              <span class="c1"># frozen reward model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ref</span> <span class="o">=</span> <span class="n">ref_policy</span>     <span class="c1"># frozen reference policy</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span> <span class="o">=</span> <span class="n">cfg</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">compute_rewards_and_advantages</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rollout_batch</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Given generated sequences, compute per-token advantages.</span>
+<span class="sd">        Runs on the same Megatron process group — no Ray involved.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># rm_scores: [batch, 1] scalar reward per sequence</span>
+        <span class="n">rm_scores</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">rm</span><span class="o">.</span><span class="n">infer</span><span class="p">(</span><span class="n">rollout_batch</span><span class="p">[</span><span class="s2">&quot;tokens&quot;</span><span class="p">])</span>
+
+        <span class="c1"># values: [batch, seq_len] value estimates</span>
+        <span class="n">values</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">critic</span><span class="o">.</span><span class="n">infer</span><span class="p">(</span><span class="n">rollout_batch</span><span class="p">[</span><span class="s2">&quot;tokens&quot;</span><span class="p">])</span>
+
+        <span class="c1"># ref_logprobs: [batch, seq_len] for KL penalty</span>
+        <span class="n">ref_logprobs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ref</span><span class="o">.</span><span class="n">log_probs</span><span class="p">(</span><span class="n">rollout_batch</span><span class="p">[</span><span class="s2">&quot;tokens&quot;</span><span class="p">])</span>
+
+        <span class="c1"># KL divergence penalty (token-level)</span>
+        <span class="n">kl_penalty</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">rollout_batch</span><span class="p">[</span><span class="s2">&quot;logprobs&quot;</span><span class="p">]</span> <span class="o">-</span> <span class="n">ref_logprobs</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=-</span><span class="mi">10</span><span class="p">,</span> <span class="nb">max</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+
+        <span class="c1"># Combine: reward = RM score (at EOS) - kl_coef * KL</span>
+        <span class="n">rewards</span> <span class="o">=</span> <span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">kl_coef</span> <span class="o">*</span> <span class="n">kl_penalty</span>
+        <span class="n">rewards</span><span class="p">[:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+=</span> <span class="n">rm_scores</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># add RM reward at last token</span>
+
+        <span class="c1"># GAE advantage estimation</span>
+        <span class="n">advantages</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_gae</span><span class="p">(</span><span class="n">rewards</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">advantages</span><span class="p">,</span> <span class="n">values</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_gae</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rewards</span><span class="p">,</span> <span class="n">values</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">lam</span><span class="o">=</span><span class="mf">0.95</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Generalized Advantage Estimation (Schulman et al., 2015).</span>
+<span class="sd">        rewards, values: [batch, seq_len]</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span> <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">adv</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">rewards</span><span class="p">)</span>
+        <span class="n">last_gae</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">rewards</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">reversed</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">T</span><span class="p">)):</span>
+            <span class="n">next_val</span> <span class="o">=</span> <span class="n">values</span><span class="p">[:,</span> <span class="n">t</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="n">t</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">&lt;</span> <span class="n">T</span> <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">values</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">delta</span> <span class="o">=</span> <span class="n">rewards</span><span class="p">[:,</span> <span class="n">t</span><span class="p">]</span> <span class="o">+</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">next_val</span> <span class="o">-</span> <span class="n">values</span><span class="p">[:,</span> <span class="n">t</span><span class="p">]</span>
+            <span class="n">last_gae</span> <span class="o">=</span> <span class="n">delta</span> <span class="o">+</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">lam</span> <span class="o">*</span> <span class="n">last_gae</span>
+            <span class="n">adv</span><span class="p">[:,</span> <span class="n">t</span><span class="p">]</span> <span class="o">=</span> <span class="n">last_gae</span>
+        <span class="k">return</span> <span class="n">adv</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">ppo_policy_loss</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rollout_batch</span><span class="p">,</span> <span class="n">advantages</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Clipped PPO objective with value-function loss.</span>
+<span class="sd">        L^CLIP(θ) = E[min(r_t A_t, clip(r_t, 1-ε, 1+ε) A_t)]</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">logprobs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">policy</span><span class="o">.</span><span class="n">log_probs</span><span class="p">(</span><span class="n">rollout_batch</span><span class="p">[</span><span class="s2">&quot;tokens&quot;</span><span class="p">])</span>
+        <span class="n">old_logprobs</span> <span class="o">=</span> <span class="n">rollout_batch</span><span class="p">[</span><span class="s2">&quot;logprobs&quot;</span><span class="p">]</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">rollout_batch</span><span class="p">[</span><span class="s2">&quot;response_mask&quot;</span><span class="p">]</span>  <span class="c1"># 1 for response tokens only</span>
+
+        <span class="c1"># Importance-sampling ratio</span>
+        <span class="n">ratio</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">logprobs</span> <span class="o">-</span> <span class="n">old_logprobs</span><span class="p">)</span>
+
+        <span class="n">eps</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">cliprange</span>   <span class="c1"># typically 0.2</span>
+        <span class="n">clipped_ratio</span> <span class="o">=</span> <span class="n">ratio</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">eps</span><span class="p">,</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">eps</span><span class="p">)</span>
+
+        <span class="c1"># Clipped surrogate loss (negative because we maximize)</span>
+        <span class="n">policy_loss</span> <span class="o">=</span> <span class="o">-</span><span class="n">masked_mean</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">ratio</span> <span class="o">*</span> <span class="n">advantages</span><span class="p">,</span> <span class="n">clipped_ratio</span> <span class="o">*</span> <span class="n">advantages</span><span class="p">),</span>
+            <span class="n">mask</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">policy_loss</span>
+</code></pre></div>
+<h3 id="trt-llm-rollouts-in-nemo-aligner">TRT-LLM Rollouts in NeMo-Aligner<a class="headerlink" href="#trt-llm-rollouts-in-nemo-aligner" title="Permanent link">¶</a></h3>
+<p>NeMo-Aligner uses <strong>TensorRT-LLM</strong> for the generation phase rather than vLLM. TRT-LLM compiles the model into a highly optimized TensorRT engine with INT8/INT4 weight quantization and fused kernels. This can yield significantly higher throughput than vLLM for fixed batch shapes — an important property during RLHF where rollout prompts are typically drawn from a fixed distribution.</p>
+<p>The trade-off: TRT-LLM engines must be recompiled (or use dynamic shapes carefully) if the model architecture changes. Reloading weights into a compiled TRT engine after a gradient update involves an &ldquo;engine reload&rdquo; API call that is more expensive than vLLM&rsquo;s in-place <code>load_weights</code> call.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Convert a NeMo policy checkpoint to TRT-LLM for rollout</span>
+<span class="c1"># (Runs before training or after each N update steps)</span>
+python<span class="w"> </span>scripts/nemo_aligner/convert_nemo_to_trtllm.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--nemo_checkpoint<span class="w"> </span>/checkpoints/policy/step_0<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output_dir<span class="w"> </span>/tmp/trtllm_engine<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--tp_size<span class="w"> </span><span class="m">4</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max_batch_size<span class="w"> </span><span class="m">64</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max_input_len<span class="w"> </span><span class="m">1024</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max_output_len<span class="w"> </span><span class="m">512</span>
+</code></pre></div>
+<hr />
+<h2 id="655-design-comparison-openrlhf-vs-nemo-aligner">6.5.5 Design Comparison: OpenRLHF vs. NeMo-Aligner<a class="headerlink" href="#655-design-comparison-openrlhf-vs-nemo-aligner" title="Permanent link">¶</a></h2>
+<p>The two frameworks represent different points in a fundamental design space. Let us make this concrete.</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>OpenRLHF</th>
+<th>NeMo-Aligner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Orchestration</td>
+<td>Ray actors + Python controller</td>
+<td>Megatron-LM 3D parallelism + NCCL</td>
+</tr>
+<tr>
+<td>Rollout engine</td>
+<td>vLLM (PagedAttention)</td>
+<td>TRT-LLM (compiled TensorRT engine)</td>
+</tr>
+<tr>
+<td>Gradient backend</td>
+<td>DeepSpeed ZeRO-&frac12;/3</td>
+<td>Megatron-LM native (with ZeRO-1 optional)</td>
+</tr>
+<tr>
+<td>Weight sync method</td>
+<td>Ray object store + in-place load</td>
+<td>NCCL broadcast between process groups</td>
+</tr>
+<tr>
+<td>Flexibility</td>
+<td>High (swap any actor, add roles)</td>
+<td>Lower (fixed Megatron topology)</td>
+</tr>
+<tr>
+<td>Communication overhead</td>
+<td>Higher (Python coordination + serialization)</td>
+<td>Lower (direct NCCL, pinned buffers)</td>
+</tr>
+<tr>
+<td>Multi-model (actor ≠ critic model)</td>
+<td>First-class support</td>
+<td>Supported but same parallelism config</td>
+</tr>
+<tr>
+<td>Cluster management</td>
+<td>Ray cluster (Kubernetes/Slurm)</td>
+<td>Slurm + MPI launch</td>
+</tr>
+<tr>
+<td>Best fit</td>
+<td>Research, heterogeneous models, rapid iteration</td>
+<td>Production, large homogeneous clusters, throughput-optimized</td>
+</tr>
+</tbody>
+</table>
+<h3 id="the-fundamental-tension-flexibility-vs-communication-efficiency">The Fundamental Tension: Flexibility vs. Communication Efficiency<a class="headerlink" href="#the-fundamental-tension-flexibility-vs-communication-efficiency" title="Permanent link">¶</a></h3>
+<p>The core trade-off is between <strong>dynamic task graphs</strong> (Ray) and <strong>static SPMD execution</strong> (Megatron). Ray&rsquo;s actor model allows you to assign different GPU counts to each role — say, 16 GPUs for the policy, 4 for the critic, 2 for the RM — with no requirement that they share an NCCL communicator. This makes it easy to balance compute across heterogeneous models. The downside: every tensor that crosses actor boundaries must be serialized (even via shared memory), and the Python controller becomes a latency bottleneck for fine-grained coordination.</p>
+<p>Megatron&rsquo;s static NCCL topology amortizes this: all processes are launched together, all-reduce and send-recv operations are pre-planned, and there is no Python GIL involvement during the hot path. But every role must conform to the same parallelism configuration, which is restrictive when the policy and critic are different model sizes.</p>
+<h3 id="where-verl-sits">Where veRL Sits<a class="headerlink" href="#where-verl-sits" title="Permanent link">¶</a></h3>
+<p>For completeness: <strong>veRL</strong> (Volcano Engine RL, covered in <a href="../06-rl-infra/04-verl.html">veRL: HybridFlow &amp; The Single-Controller Architecture</a>) attempts a middle ground with its &ldquo;HybridFlow&rdquo; design — a single-controller architecture that uses Ray for orchestration but NCCL for intra-group communication, with explicit &ldquo;resource pools&rdquo; that can mix tensor-parallel groups from different model instances.</p>
+<hr />
+<h2 id="656-implementing-a-minimal-ray-based-rlhf-loop-from-scratch">6.5.6 Implementing a Minimal Ray-Based RLHF Loop from Scratch<a class="headerlink" href="#656-implementing-a-minimal-ray-based-rlhf-loop-from-scratch" title="Permanent link">¶</a></h2>
+<p>To cement understanding, let us build a minimal but complete RLHF loop using Ray actors. We use a toy GPT-2-scale model and a synthetic reward function (string length, normalized) to keep it runnable without a GPU cluster. This illustrates every mechanism: rollout, scoring, advantage estimation, PPO update, weight sync.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Minimal Ray-based RLHF loop (runnable on a single machine with 1-2 GPUs).</span>
+<span class="sd">Uses HuggingFace Transformers + Ray + simple PPO.</span>
+<span class="sd">NOT production code — for pedagogical clarity.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">ray</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoTokenizer</span><span class="p">,</span> <span class="n">AutoModelForCausalLM</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Dict</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+
+<span class="c1"># ── Reward function ────────────────────────────────────────────────────────</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">reward_fn</span><span class="p">(</span><span class="n">responses</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Toy reward: prefers responses of length 50–150 chars.</span>
+<span class="sd">    Real RLHF uses a trained reward model or verifier.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rewards</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">responses</span><span class="p">:</span>
+        <span class="n">length</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+        <span class="c1"># Gaussian-like reward centered at 100 chars</span>
+        <span class="n">reward</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="p">((</span><span class="n">length</span> <span class="o">-</span> <span class="mi">100</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="mi">50</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)))</span>
+        <span class="n">rewards</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">reward</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">rewards</span>
+
+
+<span class="c1"># ── Rollout Actor ──────────────────────────────────────────────────────────</span>
+<span class="nd">@ray</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">num_gpus</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>   <span class="c1"># share GPU for toy demo</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">RolloutActor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Generates responses given prompts.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tok</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tok</span><span class="o">.</span><span class="n">pad_token</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tok</span><span class="o">.</span><span class="n">eos_token</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+            <span class="n">model_name</span><span class="p">,</span> <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="s2">&quot;cpu&quot;</span>   <span class="c1"># CPU for toy demo; change to &quot;cuda&quot; in practice</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prompts</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">max_new_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">64</span>
+                 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns (response_text, token_logprobs) for each prompt.&quot;&quot;&quot;</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">prompt</span> <span class="ow">in</span> <span class="n">prompts</span><span class="p">:</span>
+            <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tok</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+            <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+                <span class="n">out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
+                    <span class="o">**</span><span class="n">inputs</span><span class="p">,</span>
+                    <span class="n">max_new_tokens</span><span class="o">=</span><span class="n">max_new_tokens</span><span class="p">,</span>
+                    <span class="n">do_sample</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                    <span class="n">temperature</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span>
+                    <span class="n">return_dict_in_generate</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                    <span class="n">output_scores</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="c1"># Decode generated tokens (excluding prompt)</span>
+            <span class="n">gen_tokens</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">sequences</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]:]</span>
+            <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tok</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">gen_tokens</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+            <span class="c1"># Compute per-token log-probabilities</span>
+            <span class="n">logprobs</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">step</span><span class="p">,</span> <span class="n">score</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">scores</span><span class="p">):</span>
+                <span class="n">lp</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">score</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+                <span class="n">tok_id</span> <span class="o">=</span> <span class="n">gen_tokens</span><span class="p">[</span><span class="n">step</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+                <span class="n">logprobs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">lp</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="n">tok_id</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+
+            <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">response</span><span class="p">,</span> <span class="n">logprobs</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">results</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">update_weights</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state_dict_ref</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Load new weights from Ray object store.&quot;&quot;&quot;</span>
+        <span class="n">state_dict</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">state_dict_ref</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">state_dict</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+
+<span class="c1"># ── Policy Training Actor ──────────────────────────────────────────────────</span>
+<span class="nd">@ray</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">num_gpus</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">PolicyActor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Holds the trainable policy and runs PPO updates.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-5</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tok</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tok</span><span class="o">.</span><span class="n">pad_token</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tok</span><span class="o">.</span><span class="n">eos_token</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+            <span class="n">model_name</span><span class="p">,</span> <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="n">lr</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="s2">&quot;cpu&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">ppo_step</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">prompts</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">responses</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">old_logprobs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]],</span>   <span class="c1"># per-token, from rollout</span>
+        <span class="n">advantages</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span>           <span class="c1"># per-sequence (scalar GAE)</span>
+        <span class="n">clip_eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.2</span><span class="p">,</span>
+        <span class="n">kl_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        PPO clipped policy gradient update.</span>
+<span class="sd">        For simplicity, uses sequence-level advantages (not token-level GAE).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">total_loss</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+
+        <span class="k">for</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">resp</span><span class="p">,</span> <span class="n">old_lp_seq</span><span class="p">,</span> <span class="n">adv</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span>
+            <span class="n">prompts</span><span class="p">,</span> <span class="n">responses</span><span class="p">,</span> <span class="n">old_logprobs</span><span class="p">,</span> <span class="n">advantages</span>
+        <span class="p">):</span>
+            <span class="c1"># Tokenize full sequence (prompt + response)</span>
+            <span class="n">full_text</span> <span class="o">=</span> <span class="n">prompt</span> <span class="o">+</span> <span class="n">resp</span>
+            <span class="n">tokens</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tok</span><span class="p">(</span><span class="n">full_text</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">prompt_len</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tok</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+            <span class="c1"># Forward pass</span>
+            <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">enable_grad</span><span class="p">():</span>
+                <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">tokens</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span>  <span class="c1"># [1, T, vocab]</span>
+
+            <span class="c1"># Log-probs for response tokens only</span>
+            <span class="n">resp_logits</span> <span class="o">=</span> <span class="n">logits</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="n">prompt_len</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span>  <span class="c1"># [resp_len, vocab]</span>
+            <span class="n">resp_token_ids</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">,</span> <span class="n">prompt_len</span><span class="p">:]</span>
+            <span class="n">new_lps</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">resp_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">new_lp_seq</span> <span class="o">=</span> <span class="n">new_lps</span><span class="p">[</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">resp_token_ids</span><span class="p">)),</span> <span class="n">resp_token_ids</span>
+            <span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+
+            <span class="c1"># Clip old_lp_seq to match actual response length</span>
+            <span class="n">seq_len</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">old_lp_seq</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">new_lp_seq</span><span class="p">))</span>
+            <span class="n">old_lp_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">old_lp_seq</span><span class="p">[:</span><span class="n">seq_len</span><span class="p">])</span>
+            <span class="n">new_lp_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span>
+                <span class="n">new_lps</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">resp_token_ids</span><span class="p">[</span><span class="n">i</span><span class="p">]]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">seq_len</span><span class="p">)</span>
+            <span class="p">])</span>
+
+            <span class="c1"># Importance sampling ratio: exp(new - old)</span>
+            <span class="n">ratio</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">new_lp_t</span> <span class="o">-</span> <span class="n">old_lp_t</span><span class="p">)</span>
+            <span class="n">adv_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">adv</span><span class="p">)</span>  <span class="c1"># broadcast over tokens</span>
+
+            <span class="c1"># Clipped surrogate</span>
+            <span class="n">surr1</span> <span class="o">=</span> <span class="n">ratio</span> <span class="o">*</span> <span class="n">adv_t</span>
+            <span class="n">surr2</span> <span class="o">=</span> <span class="n">ratio</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">clip_eps</span><span class="p">,</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">clip_eps</span><span class="p">)</span> <span class="o">*</span> <span class="n">adv_t</span>
+            <span class="n">loss</span> <span class="o">=</span> <span class="o">-</span><span class="n">torch</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">surr1</span><span class="p">,</span> <span class="n">surr2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+            <span class="n">total_loss</span> <span class="o">+=</span> <span class="n">loss</span>
+
+        <span class="p">(</span><span class="n">total_loss</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompts</span><span class="p">))</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+        <span class="c1"># Gradient clipping to prevent instability</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">max_norm</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;policy_loss&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">total_loss</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompts</span><span class="p">))</span><span class="o">.</span><span class="n">item</span><span class="p">()}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_state_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return CPU state dict for broadcasting to rollout actor.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+
+
+<span class="c1"># ── Main Training Loop ─────────────────────────────────────────────────────</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">ray</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">ignore_reinit_error</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">MODEL_NAME</span> <span class="o">=</span> <span class="s2">&quot;gpt2&quot;</span>   <span class="c1"># small model; swap for LLaMA-3-8B in practice</span>
+    <span class="n">prompts</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s2">&quot;Tell me about the water cycle:&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;Explain gradient descent:&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;What is a transformer model?&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;Describe how the internet works:&quot;</span><span class="p">,</span>
+    <span class="p">]</span> <span class="o">*</span> <span class="mi">4</span>   <span class="c1"># 16 prompts total</span>
+
+    <span class="n">rollout_actor</span> <span class="o">=</span> <span class="n">RolloutActor</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">MODEL_NAME</span><span class="p">)</span>
+    <span class="n">policy_actor</span> <span class="o">=</span> <span class="n">PolicyActor</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">MODEL_NAME</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">):</span>
+        <span class="c1"># 1. Generate rollouts</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">rollout_actor</span><span class="o">.</span><span class="n">generate</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">prompts</span><span class="p">))</span>
+        <span class="n">responses</span> <span class="o">=</span> <span class="p">[</span><span class="n">r</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">]</span>
+        <span class="n">old_logprobs</span> <span class="o">=</span> <span class="p">[</span><span class="n">r</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">]</span>
+
+        <span class="c1"># 2. Score with reward function</span>
+        <span class="n">rewards</span> <span class="o">=</span> <span class="n">reward_fn</span><span class="p">(</span><span class="n">responses</span><span class="p">)</span>
+
+        <span class="c1"># 3. Compute advantages (simple: advantage = reward - mean(reward))</span>
+        <span class="n">mean_r</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">rewards</span><span class="p">)</span>
+        <span class="n">std_r</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">rewards</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-8</span>
+        <span class="n">advantages</span> <span class="o">=</span> <span class="p">[(</span><span class="n">r</span> <span class="o">-</span> <span class="n">mean_r</span><span class="p">)</span> <span class="o">/</span> <span class="n">std_r</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rewards</span><span class="p">]</span>
+
+        <span class="c1"># 4. PPO update</span>
+        <span class="n">stats</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">policy_actor</span><span class="o">.</span><span class="n">ppo_step</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span>
+            <span class="n">prompts</span><span class="p">,</span> <span class="n">responses</span><span class="p">,</span> <span class="n">old_logprobs</span><span class="p">,</span> <span class="n">advantages</span>
+        <span class="p">))</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Step </span><span class="si">{</span><span class="n">step</span><span class="si">}</span><span class="s2">: loss=</span><span class="si">{</span><span class="n">stats</span><span class="p">[</span><span class="s1">&#39;policy_loss&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;mean_reward=</span><span class="si">{</span><span class="n">mean_r</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="c1"># 5. Sync weights to rollout actor</span>
+        <span class="n">sd_ref</span> <span class="o">=</span> <span class="n">policy_actor</span><span class="o">.</span><span class="n">get_state_dict</span><span class="o">.</span><span class="n">remote</span><span class="p">()</span>
+        <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">rollout_actor</span><span class="o">.</span><span class="n">update_weights</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">sd_ref</span><span class="p">))</span>
+
+    <span class="n">ray</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</code></pre></div>
+<hr />
+<h2 id="657-performance-engineering-and-scaling-considerations">6.5.7 Performance Engineering and Scaling Considerations<a class="headerlink" href="#657-performance-engineering-and-scaling-considerations" title="Permanent link">¶</a></h2>
+<h3 id="throughput-bottleneck-analysis">Throughput Bottleneck Analysis<a class="headerlink" href="#throughput-bottleneck-analysis" title="Permanent link">¶</a></h3>
+<p>In any Ray-based RLHF system, throughput is determined by the slowest stage in the pipeline. The typical bottleneck hierarchy (from most to least common):</p>
+<ol>
+<li><strong>Rollout (generation):</strong> autoregressive decoding is memory-bandwidth-bound. vLLM&rsquo;s PagedAttention and continuous batching partially amortize this, but for long sequences it dominates.</li>
+<li><strong>Reward model scoring:</strong> if the RM is large (e.g., 70B), its forward pass can match or exceed policy update time.</li>
+<li><strong>Weight synchronization:</strong> transferring 140 GB of bf16 parameters over PCIe (16 GB/s) takes ~9 seconds per sync. This motivates reducing sync frequency or using NVLink.</li>
+<li><strong>Python controller overhead:</strong> for very short update steps (small models), the Ray controller&rsquo;s Python overhead can be significant — on the order of 10–50 ms per step.</li>
+</ol>
+<div class="admonition example">
+<p class="admonition-title">Weight Sync Bandwidth Example</p>
+<p>Consider syncing a 70B parameter policy (140 GB bf16) from 8 training GPUs to 4 vLLM engines (2 GPUs each):</p>
+<ul>
+<li><strong>NVLink intra-node</strong> (600 GB/s bidirectional): <span class="arithmatex">\(140 \text{ GB} / 600 \text{ GB/s} \approx 0.23\)</span> seconds.</li>
+<li><strong>PCIe Gen4</strong> (64 GB/s bidirectional): <span class="arithmatex">\(140 \text{ GB} / 64 \text{ GB/s} \approx 2.2\)</span> seconds.</li>
+<li><strong>InfiniBand HDR</strong> (25 GB/s per link, 8 links): <span class="arithmatex">\(140 \text{ GB} / 200 \text{ GB/s} \approx 0.7\)</span> seconds.</li>
+</ul>
+<p>If PPO update epochs take roughly 30 seconds, weight sync adds 1–7% overhead depending on interconnect — acceptable. But for smaller models where updates are faster (say, 5 seconds for a 7B model), sync overhead can reach 20–40% without careful optimization (e.g., overlapping sync with the next rollout batch).</p>
+</div>
+<h3 id="reducing-weight-sync-overhead">Reducing Weight Sync Overhead<a class="headerlink" href="#reducing-weight-sync-overhead" title="Permanent link">¶</a></h3>
+<p>Three strategies used in practice:</p>
+<ol>
+<li><strong>Lazy sync:</strong> only sync every <span class="arithmatex">\(N\)</span> PPO epochs rather than every step. Trades off staleness of the rollout policy for reduced communication cost.</li>
+<li><strong>Differential sync:</strong> track which parameter blocks changed since the last sync (using gradient sparsity in ZeRO-3) and only transfer modified shards.</li>
+<li><strong>In-place NCCL broadcast:</strong> instead of going through the Ray object store, use a direct NCCL broadcast from training GPU ranks to vLLM GPU ranks. Requires pre-established NCCL communicators at startup — the approach NeMo-Aligner uses natively.</li>
+</ol>
+<h3 id="async-rollout-pipelines">Async Rollout Pipelines<a class="headerlink" href="#async-rollout-pipelines" title="Permanent link">¶</a></h3>
+<p>An advanced optimization (covered more fully in <a href="../06-rl-infra/06-prime-rl-async.html">Prime-RL, Async RL &amp; Decentralized Training</a>) is to decouple rollout from training: while the policy is being updated on one batch, the vLLM engine generates the <em>next</em> batch of rollouts using the previous policy weights. This &ldquo;off-policy&rdquo; approach introduces staleness but can nearly double throughput by keeping both GPU pools busy.</p>
+<p>OpenRLHF supports this via the <code>--async_rollout</code> flag, which launches rollout as a background Ray task while training proceeds:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Conceptual async pipeline</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">ray</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">queue</span><span class="w"> </span><span class="kn">import</span> <span class="n">Queue</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">async_ppo_loop</span><span class="p">(</span><span class="n">policy_actor</span><span class="p">,</span> <span class="n">vllm_actor</span><span class="p">,</span> <span class="n">reward_actor</span><span class="p">,</span> <span class="n">prompts</span><span class="p">):</span>
+    <span class="n">rollout_queue</span> <span class="o">=</span> <span class="n">Queue</span><span class="p">(</span><span class="n">maxsize</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>  <span class="c1"># prefetch up to 2 batches</span>
+
+    <span class="c1"># Kick off first rollout</span>
+    <span class="n">rollout_future</span> <span class="o">=</span> <span class="n">vllm_actor</span><span class="o">.</span><span class="n">rollout</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">prompts</span><span class="p">[:</span><span class="n">batch_size</span><span class="p">])</span>
+
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_steps</span><span class="p">):</span>
+        <span class="c1"># Overlap: while we update on current batch, prefetch next rollout</span>
+        <span class="n">next_rollout_future</span> <span class="o">=</span> <span class="n">vllm_actor</span><span class="o">.</span><span class="n">rollout</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span>
+            <span class="n">prompts</span><span class="p">[</span><span class="n">step</span> <span class="o">*</span> <span class="n">batch_size</span> <span class="p">:</span> <span class="p">(</span><span class="n">step</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">batch_size</span><span class="p">]</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Get current batch (may already be ready)</span>
+        <span class="n">current_rollout</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">rollout_future</span><span class="p">)</span>
+        <span class="n">rewards</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">reward_actor</span><span class="o">.</span><span class="n">score</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">ray</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">current_rollout</span><span class="p">)))</span>
+
+        <span class="c1"># Train on current batch (this is the slow step)</span>
+        <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">policy_actor</span><span class="o">.</span><span class="n">ppo_step</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">ray</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">current_rollout</span><span class="p">),</span> <span class="n">ray</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">rewards</span><span class="p">)))</span>
+
+        <span class="c1"># Sync weights only every K steps to amortize cost</span>
+        <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="n">sync_every</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">sd_ref</span> <span class="o">=</span> <span class="n">policy_actor</span><span class="o">.</span><span class="n">get_state_dict</span><span class="o">.</span><span class="n">remote</span><span class="p">()</span>
+            <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">vllm_actor</span><span class="o">.</span><span class="n">load_weights</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="n">sd_ref</span><span class="p">))</span>
+
+        <span class="n">rollout_future</span> <span class="o">=</span> <span class="n">next_rollout_future</span>   <span class="c1"># advance the pipeline</span>
+</code></pre></div>
+<hr />
+<h2 id="658-choosing-a-framework-decision-guide">6.5.8 Choosing a Framework: Decision Guide<a class="headerlink" href="#658-choosing-a-framework-decision-guide" title="Permanent link">¶</a></h2>
+<p>Here is a practical guide for selecting between OpenRLHF, NeMo-Aligner, and alternatives (TRL, veRL) based on your constraints.</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Recommendation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Research prototype, 7B–13B model, single node</td>
+<td>TRL (simplest, no Ray needed)</td>
+</tr>
+<tr>
+<td>Research, 70B+ model, heterogeneous roles</td>
+<td>OpenRLHF (flexible Ray decomposition)</td>
+</tr>
+<tr>
+<td>Production, NVIDIA DGX cluster, 70B+ model</td>
+<td>NeMo-Aligner (optimized Megatron kernels, TRT-LLM)</td>
+</tr>
+<tr>
+<td>Custom RL algorithm with unique role topology</td>
+<td>veRL (HybridFlow, explicit resource pools)</td>
+</tr>
+<tr>
+<td>Async / decentralized training across commodity</td>
+<td>Prime-RL (see Chapter 6.6)</td>
+</tr>
+<tr>
+<td>GRPO or critic-free RL</td>
+<td>TRL or veRL (no critic actor needed)</td>
+</tr>
+</tbody>
+</table>
+<p>The choice between OpenRLHF and NeMo-Aligner is often less about algorithmic capability and more about <strong>operational familiarity</strong>: teams already running Megatron-LM pretraining will find NeMo-Aligner&rsquo;s configuration files familiar; teams comfortable with Ray (e.g., those using Ray Serve for inference) will find OpenRLHF&rsquo;s programming model more natural.</p>
+<p>One practical note: as of mid-2025, OpenRLHF has a larger and more active open-source community, more documented examples for GRPO and RLVR (see <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a>), and broader model support. NeMo-Aligner is more tightly integrated with NVIDIA&rsquo;s hardware optimizations and is the framework of choice for production RLHF at NVIDIA scale.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You need to run PPO on a 70B policy and a 70B critic simultaneously. Both require ZeRO-3. Your cluster has 64 × H100 80 GB GPUs. How would you lay out the actors in OpenRLHF, and what is the main engineering risk?</p>
+<p><strong>A:</strong> A reasonable layout: 16 GPUs for the policy training actor (ZeRO-3, ~8.75 GB params per GPU), 16 GPUs for the critic (same), 8 GPUs for the reference model (no optimizer, ~17.5 GB per GPU), 8 GPUs across 4 vLLM engines (2 GPU TP each), 2 GPUs for the reward model (8B). Total: 50 GPUs, leaving 14 spare for headroom or a second RM instance.</p>
+<p>The main engineering risk is <strong>weight synchronization latency</strong>: after each PPO epoch, 140 GB of bf16 parameters must transfer from the policy training actor to the vLLM engines. Over InfiniBand or NVLink this takes on the order of 0.5–2 seconds per sync — tolerable if PPO updates take 10+ seconds, but a significant fraction of runtime for small batches. The mitigation is to sync less frequently (every N update epochs) or to pre-establish direct NCCL communicators between training and vLLM ranks to bypass the Ray object store.</p>
+</div>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Ray provides a <strong>distributed actor model</strong> that maps cleanly onto RLHF roles: each actor (policy, critic, RM, reference) owns its GPUs and communicates asynchronously via futures and the object store.</li>
+<li><strong>OpenRLHF</strong> uses Ray + vLLM + DeepSpeed ZeRO. Its strength is flexibility: roles can have different model sizes, parallelism degrees, and GPU counts, making it ideal for research and heterogeneous model configurations.</li>
+<li><strong>NeMo-Aligner</strong> uses Megatron-LM 3D parallelism + TRT-LLM rollouts. Its strength is throughput on homogeneous NVIDIA clusters: all-reduce and point-to-point transfers use pre-established NCCL communicators with no Python coordination overhead.</li>
+<li><strong>Weight synchronization</strong> (from training actor to rollout engine) is a key engineering cost. On a 70B model, even NVLink sync takes ~0.2 seconds; PCIe can take 2+ seconds. Sync frequency should be tuned to balance policy staleness against communication overhead.</li>
+<li>Ray&rsquo;s <strong>placement groups</strong> with <code>STRICT_PACK</code> are essential for multi-GPU actors: they guarantee that all shards of a tensor-parallel group land on the same node, enabling fast NVLink communication within the group.</li>
+<li>The <strong>object store</strong> provides zero-copy reads for co-located processes — critical for large experience batches (rollout tokens + log-probs) that can reach 8+ GB per batch.</li>
+<li>NeMo-Aligner is the better choice when your cluster is NVIDIA DGX-based, your models are homogeneous in size, and you want NVIDIA&rsquo;s kernel optimizations and TRT-LLM throughput. OpenRLHF is the better choice when you need flexibility, fast iteration, or heterogeneous actor sizes.</li>
+<li>Both frameworks support <strong>async rollout pipelines</strong> where generation and training overlap, roughly doubling end-to-end throughput at the cost of off-policy staleness.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Ray-based RLHF systems have matured rapidly: OpenRLHF and veRL are now the dominant open-source frameworks for large-scale PPO/GRPO training, while NVIDIA replaced NeMo-Aligner with NeMo-RL (2025) — adding Ray orchestration and Hugging Face integration alongside Megatron Core kernels. Async rollout pipelines (decoupling generation from gradient updates) have become standard practice, delivering ~40% throughput gains with minimal policy staleness.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1712.05889">Moritz et al., <em>Ray: A Distributed Framework for Emerging AI Applications</em> (2018)</a> — the OSDI paper that introduced Ray&rsquo;s actor/task model, now the de-facto orchestration substrate for RLHF.</li>
+<li><a href="https://arxiv.org/abs/1707.06347">Schulman et al., <em>Proximal Policy Optimization Algorithms</em> (2017)</a> — the PPO objective that all frameworks in this chapter implement.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2405.11143">Hu et al., <em>OpenRLHF: An Easy-to-use, Scalable and High-performance RLHF Framework</em> (2024)</a> — the paper describing OpenRLHF&rsquo;s Ray + vLLM + DeepSpeed ZeRO architecture with 1.2–1.7× speedups over prior systems.</li>
+<li><a href="https://arxiv.org/abs/2405.01481">Shen et al., <em>NeMo-Aligner: Scalable Toolkit for Efficient Model Alignment</em> (2024)</a> — NVIDIA&rsquo;s Megatron-LM + TRT-LLM RLHF design; now superseded by NeMo-RL.</li>
+<li><a href="https://arxiv.org/abs/2409.19256">Sheng et al., <em>HybridFlow: A Flexible and Efficient RLHF Framework</em> (2024)</a> — the veRL paper introducing the 3D-HybridEngine that reshards weights between training and generation with zero memory redundancy (EuroSys &lsquo;25).</li>
+<li><a href="https://arxiv.org/abs/2410.18252">Noukhovitch et al., <em>Asynchronous RLHF: Faster and More Efficient Off-Policy RL for Language Models</em> (2024)</a> — ICLR 2025 paper demonstrating ~40% wall-clock speedup by decoupling rollout generation from policy updates.</li>
+<li><a href="https://arxiv.org/abs/2503.14476">Yu et al., <em>DAPO: An Open-Source LLM Reinforcement Learning System at Scale</em> (2025)</a> — ByteDance&rsquo;s production-scale GRPO variant built on veRL, reaching 50 pts on AIME 2024 with Qwen2.5-32B.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF/OpenRLHF</a> — production-ready Ray + vLLM + DeepSpeed framework supporting PPO, GRPO, REINFORCE++, async rollout, and VLMs.</li>
+<li><a href="https://github.com/verl-project/verl">verl-project/verl</a> — HybridFlow&rsquo;s open-source implementation; supports FSDP, Megatron-LM, vLLM, and SGLang backends.</li>
+<li><a href="https://github.com/NVIDIA-NeMo/RL">NVIDIA-NeMo/RL</a> — NeMo-RL, NVIDIA&rsquo;s 2025 successor to NeMo-Aligner with Ray scheduling, Megatron Core, and HuggingFace integration.</li>
+<li><a href="https://github.com/PrimeIntellect-ai/prime-rl">PrimeIntellect-ai/prime-rl</a> — fully async, decentralized RL training framework scaling to 1000+ GPUs across heterogeneous nodes, used to train INTELLECT-2.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://docs.nvidia.com/nemo/rl/latest/index.html">NeMo-RL Documentation</a> — official NVIDIA docs covering DTensor and Megatron Core backends, GRPO/DPO recipes, and multi-node deployment.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>OpenRLHF</strong> — Jian Hu et al., &ldquo;OpenRLHF: An Easy-to-use, Scalable and High-performance RLHF Framework&rdquo;, 2024. (GitHub: OpenLLMAI/OpenRLHF)</li>
+<li><strong>NeMo-Aligner</strong> — Gerald Shen et al., &ldquo;NeMo-Aligner: Scalable Toolkit for Efficient Model Alignment&rdquo;, 2024. (GitHub: NVIDIA/NeMo-Aligner)</li>
+<li><strong>Ray</strong> — Moritz et al., &ldquo;Ray: A Distributed Framework for Emerging AI Applications&rdquo;, OSDI 2018.</li>
+<li><strong>DeepSpeed ZeRO</strong> — Rajbhandari et al., &ldquo;ZeRO: Memory Optimizations Toward Training Trillion Parameter Models&rdquo;, SC 2020.</li>
+<li><strong>vLLM</strong> — Kwon et al., &ldquo;Efficient Memory Management for Large Language Model Serving with PagedAttention&rdquo;, SOSP 2023.</li>
+<li><strong>Megatron-LM</strong> — Narayanan et al., &ldquo;Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM&rdquo;, SC 2021.</li>
+<li><strong>GAE</strong> — Schulman et al., &ldquo;High-Dimensional Continuous Control Using Generalized Advantage Estimation&rdquo;, ICLR 2016.</li>
+<li><strong>veRL HybridFlow</strong> — Sheng et al., &ldquo;HybridFlow: A Flexible and Efficient RLHF Framework&rdquo;, 2024. (GitHub: volcengine/verl)</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="04-verl.html"><span class="pn-label">← Previous</span><span class="pn-title">veRL: HybridFlow &amp; The Single-Controller Architecture</span></a>
+<a class="next" href="06-prime-rl-async.html"><span class="pn-label">Next →</span><span class="pn-title">Prime-RL, Async RL &amp; Decentralized Training</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#651-ray-as-an-orchestration-substrate">6.5.1 Ray as an Orchestration Substrate</a></li>
+<li class="toc-l3"><a href="#rays-programming-model">Ray&amp;rsquo;s Programming Model</a></li>
+<li class="toc-l3"><a href="#placement-groups-and-gang-scheduling">Placement Groups and Gang Scheduling</a></li>
+<li class="toc-l3"><a href="#object-store-and-zero-copy-tensors">Object Store and Zero-Copy Tensors</a></li>
+<li class="toc-l2"><a href="#652-openrlhf-architecture-and-design-philosophy">6.5.2 OpenRLHF: Architecture and Design Philosophy</a></li>
+<li class="toc-l3"><a href="#role-decomposition">Role Decomposition</a></li>
+<li class="toc-l3"><a href="#weight-synchronization-via-distributed-checkpointing">Weight Synchronization via Distributed Checkpointing</a></li>
+<li class="toc-l3"><a href="#the-ppo-training-loop-in-openrlhf">The PPO Training Loop in OpenRLHF</a></li>
+<li class="toc-l3"><a href="#practical-configuration-openrlhf-launch-script">Practical Configuration: OpenRLHF Launch Script</a></li>
+<li class="toc-l2"><a href="#653-memory-budget-analysis-for-openrlhf">6.5.3 Memory Budget Analysis for OpenRLHF</a></li>
+<li class="toc-l2"><a href="#654-nemo-aligner-megatron-based-rlhf">6.5.4 NeMo-Aligner: Megatron-Based RLHF</a></li>
+<li class="toc-l3"><a href="#megatron-lm-as-the-foundation">Megatron-LM as the Foundation</a></li>
+<li class="toc-l3"><a href="#the-reward-model-and-critic-in-nemo-aligner">The Reward Model and Critic in NeMo-Aligner</a></li>
+<li class="toc-l3"><a href="#trt-llm-rollouts-in-nemo-aligner">TRT-LLM Rollouts in NeMo-Aligner</a></li>
+<li class="toc-l2"><a href="#655-design-comparison-openrlhf-vs-nemo-aligner">6.5.5 Design Comparison: OpenRLHF vs. NeMo-Aligner</a></li>
+<li class="toc-l3"><a href="#the-fundamental-tension-flexibility-vs-communication-efficiency">The Fundamental Tension: Flexibility vs. Communication Efficiency</a></li>
+<li class="toc-l3"><a href="#where-verl-sits">Where veRL Sits</a></li>
+<li class="toc-l2"><a href="#656-implementing-a-minimal-ray-based-rlhf-loop-from-scratch">6.5.6 Implementing a Minimal Ray-Based RLHF Loop from Scratch</a></li>
+<li class="toc-l2"><a href="#657-performance-engineering-and-scaling-considerations">6.5.7 Performance Engineering and Scaling Considerations</a></li>
+<li class="toc-l3"><a href="#throughput-bottleneck-analysis">Throughput Bottleneck Analysis</a></li>
+<li class="toc-l3"><a href="#reducing-weight-sync-overhead">Reducing Weight Sync Overhead</a></li>
+<li class="toc-l3"><a href="#async-rollout-pipelines">Async Rollout Pipelines</a></li>
+<li class="toc-l2"><a href="#658-choosing-a-framework-decision-guide">6.5.8 Choosing a Framework: Decision Guide</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

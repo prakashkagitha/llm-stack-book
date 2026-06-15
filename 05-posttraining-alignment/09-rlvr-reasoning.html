@@ -1,0 +1,1240 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe — The LLM Stack</title>
+<meta name="description" content="Verifiable rewards (math/code/exact-match), no reward model needed; the R1-Zero phenomenon, emergent long CoT, &#x27;aha moments&#x27;; reward design for verifiable domai">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="active" href="09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part V — Post-Training &amp; Alignment</div>
+<h1 id="59-rl-with-verifiable-rewards-rlvr-the-reasoning-recipe">5.9 RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe<a class="headerlink" href="#59-rl-with-verifiable-rewards-rlvr-the-reasoning-recipe" title="Permanent link">¶</a></h1>
+<p>Every reinforcement-learning method we have built so far in this Part — <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>, <a href="../05-posttraining-alignment/06-ppo-for-llms.html">PPO for LLMs</a>, <a href="../05-posttraining-alignment/07-dpo-and-variants.html">DPO</a>, <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO and RLOO</a> — has shared one expensive assumption: that the reward comes from a <strong>learned reward model</strong> trained on human preference labels. That reward model is a second neural network. It is trained on noisy, expensive, slowly-collected human data. It is the <em>thing you optimize against</em>, and the moment your policy is strong enough it starts to <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">hack it</a> — finding inputs the reward model scores highly but a human would not.</p>
+<p>This chapter is about the idea that, for a large and important class of problems, <strong>you do not need a reward model at all</strong>. If the task has a <em>checkable</em> answer — a math problem with a known numerical solution, a coding problem with a unit-test suite, a constrained-format extraction task with an exact-match target — then the reward is just <em>a program that returns 1 if correct and 0 otherwise</em>. No human labels, no learned reward network, no preference dataset. We call this <strong>RL with Verifiable Rewards (RLVR)</strong>, and it is the single most consequential post-training idea of 2024–2025. It is the engine behind DeepSeek-R1, behind the OpenAI o-series reasoning models, behind Tülu 3, and behind nearly every open &ldquo;reasoning model&rdquo; released in that window.</p>
+<p>RLVR is conceptually trivial — &ldquo;reward = did the answer pass the checker&rdquo; — and that triviality is exactly the point. By replacing a fragile, hackable, expensive learned reward with a cheap, exact, <em>unhackable-in-the-usual-sense</em> programmatic one, you remove the dominant failure mode of RLHF and unlock something startling: when you point a base model at hard verifiable problems and reward only correctness, it teaches <em>itself</em> to reason — generating longer and longer chains of thought, learning to verify and backtrack, exhibiting the now-famous <strong>&ldquo;aha moment&rdquo;</strong> — with no demonstrations of reasoning at all. This chapter explains the reward mechanism in depth, builds real verifiers (math equivalence and a sandboxed code runner), dissects the <strong>R1-Zero phenomenon</strong>, and traces the path from narrow verifiable domains to general reasoning.</p>
+<p>We will lean on <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a> for the <em>optimizer</em> — RLVR is an answer to &ldquo;where does the reward come from,&rdquo; not &ldquo;how do we take the gradient&rdquo; — and on <a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a> for the production-infrastructure view.</p>
+<h2 id="what-makes-a-reward-verifiable">What makes a reward &ldquo;verifiable&rdquo;<a class="headerlink" href="#what-makes-a-reward-verifiable" title="Permanent link">¶</a></h2>
+<h3 id="the-defining-property">The defining property<a class="headerlink" href="#the-defining-property" title="Permanent link">¶</a></h3>
+<p>A reward is <strong>verifiable</strong> when correctness can be decided by a deterministic program <span class="arithmatex">\(V(q, o) \to \{0, 1\}\)</span> (or a graded <span class="arithmatex">\([0,1]\)</span>) that does <strong>not</strong> itself need to be learned and does <strong>not</strong> depend on the policy. Contrast the two regimes:</p>
+<div class="arithmatex">\[
+R_{\text{RM}}(q, o) = r_\phi(q, o) \quad\text{(learned, continuous, hackable)}
+\qquad\text{vs.}\qquad
+R_{\text{RLVR}}(q, o) = V(q, o) \in \{0, 1\} \quad\text{(programmatic, exact)}
+\]</div>
+<p>The learned reward <span class="arithmatex">\(r_\phi\)</span> is a neural network with parameters <span class="arithmatex">\(\phi\)</span> fit to human preferences; it is an <em>approximation</em> of &ldquo;what humans want,&rdquo; and it is differentiable, dense, and — crucially — <em>imperfect everywhere</em>. The verifiable reward <span class="arithmatex">\(V\)</span> is ground truth: if the math answer equals the gold answer, the reward is exactly 1; otherwise exactly 0. There is no approximation error to exploit. This is why RLVR is sometimes called &ldquo;RL against the environment&rdquo; rather than &ldquo;RL against a model.&rdquo;</p>
+<p>Three families of verifiers dominate practice:</p>
+<ol>
+<li><strong>Exact / equivalence match (math, factual short-answer).</strong> The model is asked to put its final answer in a delimiter (e.g. <code>\boxed{...}</code> or <code>&lt;answer&gt;...&lt;/answer&gt;</code>); the verifier parses it and compares to the gold answer, ideally with <em>semantic</em> equivalence (so <span class="arithmatex">\(\frac{1}{2}\)</span>, <span class="arithmatex">\(0.5\)</span>, and <span class="arithmatex">\(0.50\)</span> all match). This requires a symbolic/numeric normalizer, not naive string equality.</li>
+<li><strong>Execution match (code).</strong> The model emits a program; the verifier runs it in a <strong>sandbox</strong> against a hidden test suite and rewards the fraction (or all-or-nothing) of tests passed. This is the most powerful verifier because passing tests is a strong proxy for correctness — but it also has the largest attack surface (the model can try to read the tests, hard-code outputs, or exploit the sandbox).</li>
+<li><strong>Constraint / format check (structured output, instruction following).</strong> The verifier checks programmatically-decidable properties: &ldquo;is this valid JSON matching this schema,&rdquo; &ldquo;does the answer contain exactly three sentences,&rdquo; &ldquo;does it avoid the forbidden word.&rdquo; Used heavily in instruction-following RL (e.g. Tülu 3&rsquo;s &ldquo;RLVR&rdquo; recipe includes such constraint checkers).</li>
+</ol>
+<h3 id="why-verifiable-rewards-change-the-game">Why verifiable rewards change the game<a class="headerlink" href="#why-verifiable-rewards-change-the-game" title="Permanent link">¶</a></h3>
+<p>It is worth being precise about <em>why</em> this matters, beyond &ldquo;it&rsquo;s cheaper.&rdquo; There are four distinct advantages, and an interviewer will want all four:</p>
+<ul>
+<li><strong>No reward-model training loop.</strong> You skip preference data collection, reward-model architecture, reward-model training, and reward-model serving. The reward is a function call. This collapses the RLHF pipeline from &ldquo;two models and a human-data pipeline&rdquo; to &ldquo;one policy and a checker.&rdquo;</li>
+<li><strong>The reward cannot be over-optimized in the usual sense.</strong> Classic <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">reward over-optimization</a> (Goodhart&rsquo;s law: &ldquo;when a measure becomes a target it ceases to be a good measure&rdquo;) happens because the <em>learned</em> reward diverges from true quality off-distribution. A correct-answer checker <em>is</em> the true quality (for the narrow definition &ldquo;got the right answer&rdquo;). You can push the policy arbitrarily hard against <code>is_correct</code> and it will keep getting more correct. (RLVR still has <em>its own</em> hacks — see §6 — but they are program bugs, not statistical drift.)</li>
+<li><strong>Dense, free supervision at scale.</strong> Every problem with a known answer is a training example, and you can <em>generate</em> such problems (templated arithmetic, synthetic theorem instances, mutated code problems) essentially without limit. The bottleneck moves from &ldquo;human labels&rdquo; to &ldquo;problems with checkable answers.&rdquo;</li>
+<li><strong>It exposes a learning signal the model can climb.</strong> Because the reward is exact, the gradient is clean: the only way to increase reward is to <em>actually solve more problems</em>. This is the precondition for the emergent-reasoning phenomenon — the optimizer is not being nudged toward a fuzzy human aesthetic, it is being pushed straight at &ldquo;be correct,&rdquo; and the shortest path to &ldquo;be correct&rdquo; on hard problems turns out to be &ldquo;think more.&rdquo;</li>
+</ul>
+<figure class="viz" id="fig-rlvr-rm-vs-verifier">
+<svg viewBox="0 0 860 480" role="img" aria-label="Side-by-side comparison: RLHF uses a learned reward model r-phi that the policy hacks over time; RLVR uses a programmatic verifier V(q,o) in {0,1} that is ground truth and cannot be statistically over-optimized.">
+<defs>
+  <marker id="rmv-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--border-2,#cbd2dc)"/>
+  </marker>
+  <marker id="rmv-arr-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--danger,#c0392b)"/>
+  </marker>
+  <marker id="rmv-arr-grn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--good,#27a05f)"/>
+  </marker>
+  <marker id="rmv-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+</defs>
+<style>
+  #fig-rlvr-rm-vs-verifier text { fill: var(--ink-soft,#1c2330); font-family: var(--sans,sans-serif); }
+  #fig-rlvr-rm-vs-verifier .hdr  { font: 700 13px var(--sans,sans-serif); }
+  #fig-rlvr-rm-vs-verifier .lbl  { font: 600 12px var(--sans,sans-serif); }
+  #fig-rlvr-rm-vs-verifier .sub  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-rlvr-rm-vs-verifier .albl { font: 500 10px var(--sans,sans-serif); }
+  #fig-rlvr-rm-vs-verifier .ftr  { font: italic 10.5px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-rlvr-rm-vs-verifier .mono { font: 600 11px var(--mono,monospace); }
+  #fig-rlvr-rm-vs-verifier .danger { fill: var(--danger,#c0392b); }
+  #fig-rlvr-rm-vs-verifier .good   { fill: var(--good,#27a05f); }
+  #fig-rlvr-rm-vs-verifier .accent { fill: var(--accent2,#3b82f6); }
+</style>
+
+
+
+<rect x="10" y="10" width="410" height="460" rx="12" fill="var(--surface,#ffffff)" stroke="var(--border-2,#cbd2dc)" stroke-width="1.5"/>
+
+<rect x="440" y="10" width="410" height="460" rx="12" fill="var(--surface,#ffffff)" stroke="var(--good,#27a05f)" stroke-width="1.8"/>
+
+
+<line x1="430" y1="28" x2="430" y2="452" stroke="var(--border-2,#cbd2dc)" stroke-width="1" stroke-dasharray="5 4" opacity="0.4"/>
+
+
+<rect x="10" y="10" width="410" height="38" rx="12" fill="var(--surface-3,#eef1f5)"/>
+<rect x="10" y="34" width="410" height="14" fill="var(--surface-3,#eef1f5)"/>
+<text x="215" y="35" text-anchor="middle" class="hdr">RLHF — learned reward</text>
+
+
+<rect x="34" y="66" width="286" height="58" rx="8" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd2dc)" stroke-width="1.2"/>
+<text x="177" y="90" text-anchor="middle" class="lbl">Human preference labels</text>
+<text x="177" y="108" text-anchor="middle" class="sub">noisy · expensive · slow</text>
+
+
+<line x1="177" y1="124" x2="177" y2="144" stroke="var(--border-2,#cbd2dc)" stroke-width="1.5" marker-end="url(#rmv-arr)"/>
+<text x="191" y="138" class="albl" fill="var(--muted,#6b7280)">train reward model</text>
+
+
+<rect x="34" y="146" width="286" height="66" rx="8" fill="var(--accent-soft,#e8eefc)" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<text x="177" y="169" text-anchor="middle" class="lbl accent">r_phi(q,o) in R  (a network)</text>
+<text x="177" y="186" text-anchor="middle" class="sub">neural network, parameters phi</text>
+<text x="177" y="202" text-anchor="middle" class="sub">approximate · learned</text>
+
+
+<line x1="177" y1="212" x2="177" y2="238" stroke="var(--accent2,#3b82f6)" stroke-width="1.8" marker-end="url(#rmv-arr-acc)"/>
+<text x="177" y="230" text-anchor="middle" class="albl accent" font-weight="700" font-size="11">POLICY OPTIMIZES r_phi</text>
+
+
+<rect x="34" y="240" width="286" height="54" rx="8" fill="var(--surface,#ffffff)" stroke="var(--border-2,#cbd2dc)" stroke-width="1.2"/>
+<text x="177" y="265" text-anchor="middle" class="lbl">Policy samples o</text>
+<text x="177" y="283" text-anchor="middle" class="sub">output completions</text>
+
+
+<path d="M 318,267 C 348,267 348,179 318,179" fill="none" stroke="var(--danger,#c0392b)" stroke-width="2.2" marker-end="url(#rmv-arr-red)"/>
+<text x="293" y="232" class="albl danger" text-anchor="middle" font-size="10">...and</text>
+<text x="293" y="248" class="albl danger" text-anchor="middle" font-weight="700" font-size="10">HACKS r_phi</text>
+
+
+<text x="215" y="350" text-anchor="middle" class="ftr">approximate · differentiable · hackable</text>
+
+
+<rect x="440" y="10" width="410" height="38" rx="12" fill="var(--success-soft,#e3f5ec)"/>
+<rect x="440" y="34" width="410" height="14" fill="var(--success-soft,#e3f5ec)"/>
+<text x="645" y="35" text-anchor="middle" class="hdr good">RLVR — verifiable reward</text>
+
+
+<rect x="464" y="66" width="310" height="58" rx="8" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd2dc)" stroke-width="1.2"/>
+<text x="619" y="90" text-anchor="middle" class="lbl">Prompt q  (with gold answer)</text>
+<text x="619" y="108" text-anchor="middle" class="sub">no human reward labels needed</text>
+
+
+<line x1="619" y1="124" x2="619" y2="144" stroke="var(--border-2,#cbd2dc)" stroke-width="1.5" marker-end="url(#rmv-arr)"/>
+<text x="633" y="138" class="albl" fill="var(--muted,#6b7280)">policy samples o</text>
+
+
+<rect x="464" y="146" width="310" height="66" rx="8" fill="var(--accent-soft,#e8eefc)" stroke="var(--good,#27a05f)" stroke-width="2"/>
+<rect x="464" y="146" width="6" height="66" rx="3" fill="var(--good,#27a05f)"/>
+<text x="623" y="169" text-anchor="middle" class="mono">V(q,o) = checker(o, gold)</text>
+<text x="623" y="186" text-anchor="middle" class="sub">a deterministic program</text>
+<text x="623" y="202" text-anchor="middle" class="sub">ground truth · exact</text>
+
+
+<line x1="619" y1="212" x2="619" y2="238" stroke="var(--good,#27a05f)" stroke-width="1.8" marker-end="url(#rmv-arr-grn)"/>
+<text x="633" y="229" class="albl good">exact  (no approximation)</text>
+
+
+<rect x="464" y="240" width="310" height="54" rx="8" fill="var(--success-soft,#e3f5ec)" stroke="var(--good,#27a05f)" stroke-width="1.5"/>
+<text x="619" y="265" text-anchor="middle" class="lbl good" font-size="14">reward in {0, 1}</text>
+<text x="619" y="283" text-anchor="middle" class="sub">no network · no approximation</text>
+
+
+<g transform="translate(755,254)">
+  <circle r="11" fill="var(--good,#27a05f)" opacity="0.15"/>
+  <polyline points="-5,0 -1,5 6,-5" fill="none" stroke="var(--good,#27a05f)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+
+
+<text x="619" y="342" text-anchor="middle" class="ftr">ground truth · exact</text>
+<text x="619" y="356" text-anchor="middle" class="ftr">"unhackable" in the usual sense</text>
+
+
+<text x="430" y="432" text-anchor="middle" class="sub" font-size="10">Left: policy hacks the learned reward (red loop). Right: no hack loop — verifier IS ground truth.</text>
+
+</svg>
+<figcaption><b>Learned reward (RLHF) vs. verifiable reward (RLVR).</b> RLHF trains a neural network r_phi to approximate human preferences, which the policy optimizes and ultimately hacks (red feedback loop). RLVR replaces that with a deterministic checker V(q,o) in {0,1} that is exact ground truth — the absence of a red loop on the right is the whole point.</figcaption>
+</figure>
+
+<div class="admonition note">
+<p class="admonition-title">Aside: RLVR is not new, it is newly central</p>
+<p>Rewarding a model for getting the right answer is as old as RL itself, and &ldquo;execution-guided&rdquo; code generation and self-taught reasoners (the <strong>STaR</strong> line of work, Zelikman et al., 2022) predate the term. What changed in 2024–2025 is (a) base models became strong enough that pure correctness-RL <em>works</em> from scratch, (b) critic-free optimizers like GRPO made the RL cheap, and &copy; DeepSeek-R1 demonstrated the phenomenon at scale and open-sourced the recipe. &ldquo;RLVR&rdquo; as a named, deliberate strategy crystallized around Tülu 3 (Lambert et al., 2024) and DeepSeek-R1 (2025).</p>
+</div>
+<h2 id="the-r1-zero-phenomenon-reasoning-that-emerges-from-correctness-alone">The R1-Zero phenomenon: reasoning that emerges from correctness alone<a class="headerlink" href="#the-r1-zero-phenomenon-reasoning-that-emerges-from-correctness-alone" title="Permanent link">¶</a></h2>
+<p>This is the heart of the chapter and the result that made RLVR famous. We summarize the mechanism here; the <em>optimizer</em> (GRPO) and the multi-stage R1 pipeline are detailed in <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>, and the broader test-time-compute story is in <a href="../05-posttraining-alignment/10-reasoning-test-time-compute.html">Reasoning, Chain-of-Thought &amp; Test-Time Compute</a>. Here we focus on <em>why correctness pressure alone grows reasoning</em>.</p>
+<h3 id="the-setup">The setup<a class="headerlink" href="#the-setup" title="Permanent link">¶</a></h3>
+<p>R1-Zero starts from a <strong>base pretrained model</strong> — not even instruction-tuned — and applies GRPO with a reward that is <em>only</em>:</p>
+<div class="arithmatex">\[
+R(q, o) = \underbrace{\mathbb{1}[\text{boxed answer matches gold}]}_{\text{accuracy, the real signal}} \; + \; \underbrace{\lambda \cdot \mathbb{1}[\text{response uses } \texttt{&lt;think&gt;}\,/\,\texttt{&lt;answer&gt;} \text{ format}]}_{\text{small format shaping}}
+\]</div>
+<p>with <span class="arithmatex">\(\lambda\)</span> small (the format term teaches <em>structure</em>, not <em>content</em>; keep it a fraction of the accuracy reward so the model can never profit by formatting a wrong answer). There is <strong>no reward model, no value network, no human preference data, no demonstrations of how to reason.</strong> The prompts are hard math and code problems with known answers.</p>
+<h3 id="what-emerges">What emerges<a class="headerlink" href="#what-emerges" title="Permanent link">¶</a></h3>
+<p>Three behaviors appear over training, none of them programmed:</p>
+<ol>
+<li><strong>Response length grows.</strong> Average completion length climbs steadily over RL steps — the model spontaneously produces longer chains of thought. Nobody rewarded length directly (and as we saw in <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO</a>, naive GRPO has a <em>spurious</em> length bias, but the genuine reasoning-length growth persists even after that bias is removed).</li>
+<li><strong>Self-verification and backtracking.</strong> The model begins to write things like &ldquo;let me check this,&rdquo; recompute a sub-result, and correct itself mid-stream. It learns to <em>re-derive</em> and <em>cross-check</em> because, on hard problems, a single forward pass is wrong too often — and the only way to raise the correctness reward is to catch and fix its own mistakes.</li>
+<li><strong>The &ldquo;aha moment.&rdquo;</strong> The DeepSeek-R1 paper documents a striking qualitative event: the model, mid-derivation, writes something like &ldquo;<em>Wait, wait. That&rsquo;s an aha moment. Let me re-evaluate&hellip;</em>&rdquo; and revises its approach. This is not a canned phrase from SFT data (there was none); it is an emergent strategy that the correctness reward selected for.</li>
+</ol>
+<h3 id="why-correctness-pressure-causes-this-the-mechanism">Why correctness pressure <em>causes</em> this — the mechanism<a class="headerlink" href="#why-correctness-pressure-causes-this-the-mechanism" title="Permanent link">¶</a></h3>
+<p>The intuition is a credit-assignment-plus-exploration argument. Frame each problem as an MDP where the model&rsquo;s &ldquo;policy&rdquo; is its generation process. On a hard problem, the base model&rsquo;s single-shot accuracy is low — say it solves 10% of attempts. Under RLVR with a group of <span class="arithmatex">\(G\)</span> samples, the advantage is positive exactly for the <em>trajectories that reached the right answer</em> (see the group-baseline mechanics in <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO</a>). Now ask: <em>what distinguishes the winning trajectories from the losing ones?</em> Empirically, the winners are the ones that spent more tokens checking intermediate steps, exploring an alternative when the first approach stalled, and verifying the final result. So the gradient systematically up-weights those behaviors. More compute spent reasoning <span class="arithmatex">\(\to\)</span> higher probability of correctness <span class="arithmatex">\(\to\)</span> positive advantage <span class="arithmatex">\(\to\)</span> more of that behavior next time. The model is, in effect, <strong>discovering test-time compute as the solution to a sparse-reward optimization problem.</strong></p>
+<p>There is a deeper, somewhat humbling caveat that the 2025 literature surfaced and you should be ready to discuss: RLVR may be primarily <strong>eliciting and sharpening capabilities the base model already latently has</strong>, rather than teaching wholly new ones. Several analyses found that for modest sample budgets RLVR improves pass@1 dramatically but the <em>pass@k for large k</em> (the set of problems the model can solve <em>at all</em> given many tries) barely moves — i.e. RLVR concentrates probability mass on reasoning paths the base model could already occasionally find, rather than expanding the frontier of solvable problems. This reframes RLVR as <strong>a very efficient elicitation / distillation-of-self mechanism</strong>, which is consistent with why a base model with strong latent math ability is a prerequisite. (Other work pushes back, showing frontier expansion with enough compute and harder data. The honest answer in 2026 is &ldquo;it does both, and the balance depends on the base model and budget.&rdquo;)</p>
+<figure class="viz" id="fig-rlvr-length-emergence-loop">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 780 580" role="img" aria-label="Animated causal loop showing why response length grows under pure correctness reward: winners in each sample group (those that reached the correct answer) are up-weighted by the gradient, and the behaviors that distinguish winners — checking steps, trying alternatives, self-verifying — mean more tokens spent reasoning; over thousands of training steps this compounds into long chain-of-thought.">
+<defs>
+  <marker id="le-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--border-2,#cbd2dc)"/>
+  </marker>
+  <marker id="le-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+  <marker id="le-arr-grn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--good,#27a05f)"/>
+  </marker>
+  <marker id="le-arr-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--danger,#c0392b)"/>
+  </marker>
+
+  <clipPath id="le-bar-clip">
+    <rect x="18" y="82" width="20" height="400"/>
+  </clipPath>
+</defs>
+<style>
+  #fig-rlvr-length-emergence-loop text { fill: var(--ink-soft,#1c2330); font-family: var(--sans,sans-serif); }
+  #fig-rlvr-length-emergence-loop .hdr  { font: 700 13px var(--sans,sans-serif); }
+  #fig-rlvr-length-emergence-loop .lbl  { font: 600 12px var(--sans,sans-serif); }
+  #fig-rlvr-length-emergence-loop .sub  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-rlvr-length-emergence-loop .albl { font: 500 10px var(--sans,sans-serif); }
+  #fig-rlvr-length-emergence-loop .ftr  { font: italic 10.5px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-rlvr-length-emergence-loop .good   { fill: var(--good,#27a05f); }
+  #fig-rlvr-length-emergence-loop .accent { fill: var(--accent2,#3b82f6); }
+  #fig-rlvr-length-emergence-loop .danger { fill: var(--danger,#c0392b); }
+  #fig-rlvr-length-emergence-loop .chip   { font: 600 10px var(--sans,sans-serif); }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-rlvr-length-emergence-loop .anim-pulse,
+    #fig-rlvr-length-emergence-loop .anim-flow,
+    #fig-rlvr-length-emergence-loop .anim-grow { animation: none !important; }
+  }
+  /* winner chip pulse */
+  @keyframes le-pulse-win {
+    0%,100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  /* loser chip dim */
+  @keyframes le-dim-lose {
+    0%,100% { opacity: 0.4; }
+    50% { opacity: 0.9; }
+  }
+  /* arrow dash flow */
+  @keyframes le-dashflow {
+    0% { stroke-dashoffset: 20; }
+    100% { stroke-dashoffset: 0; }
+  }
+  /* feedback loop dash */
+  @keyframes le-loopflow {
+    0% { stroke-dashoffset: 200; }
+    100% { stroke-dashoffset: 0; }
+  }
+  /* length bar grow */
+  @keyframes le-bargrow {
+    0%   { transform: scaleY(0.15); }
+    100% { transform: scaleY(1); }
+  }
+  /* Node E emphasis */
+  @keyframes le-emerge {
+    0%,80% { opacity: 0.3; }
+    100%   { opacity: 1; }
+  }
+  /* sequential step reveals */
+  .le-s1 { animation: le-pulse-win 1.5s 0.5s ease-in-out infinite; }
+  .le-s1d{ animation: le-dim-lose 1.5s 0.5s ease-in-out infinite; }
+  .le-s2 { animation: le-dashflow 1s 1.8s linear infinite; stroke-dasharray: 5 3; }
+  .le-s3a{ animation: le-pulse-win 1.2s 2.8s ease-in-out infinite; }
+  .le-s3b{ animation: le-pulse-win 1.2s 3.2s ease-in-out infinite; }
+  .le-s3c{ animation: le-pulse-win 1.2s 3.6s ease-in-out infinite; }
+  .le-s4 { animation: le-dashflow 1s 4.2s linear infinite; stroke-dasharray: 5 3; }
+  .le-loop{ animation: le-loopflow 3s 4.8s linear infinite; stroke-dasharray: 8 4; }
+  .le-bar { animation: le-bargrow 3s 1s ease-out forwards; transform-origin: 28px 482px; }
+  .le-nodeE { animation: le-emerge 7s 5s ease-in forwards; }
+</style>
+
+
+<text x="390" y="26" text-anchor="middle" class="hdr">Why length grows under pure correctness reward</text>
+<text x="390" y="42" text-anchor="middle" class="sub">(correctness is rewarded; length is a side effect)</text>
+
+
+<rect x="18" y="82" width="20" height="400" rx="4" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd2dc)" stroke-width="1"/>
+<rect x="18" y="82" width="20" height="400" rx="4" fill="var(--accent2,#3b82f6)" opacity="0.25" class="le-bar"/>
+<text x="28" y="74" text-anchor="middle" class="sub" font-size="9">length</text>
+<text x="28" y="495" text-anchor="middle" class="sub" font-size="9">short</text>
+<text x="28" y="95" text-anchor="middle" class="sub" font-size="9">long</text>
+
+
+<g data-anim="1">
+  <rect x="55" y="58" width="460" height="58" rx="8" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd2dc)" stroke-width="1.2"/>
+  <text x="285" y="82" text-anchor="middle" class="lbl">STEP 0 — base model</text>
+  <text x="285" y="99" text-anchor="middle" class="sub">single-shot, short answers · ~10% correct</text>
+</g>
+
+
+<line x1="285" y1="116" x2="285" y2="132" stroke="var(--border-2,#cbd2dc)" stroke-width="1.5" marker-end="url(#le-arr)" class="le-s2"/>
+<text x="298" y="128" class="albl" fill="var(--muted,#6b7280)">sample group of G</text>
+
+
+<g data-anim="2">
+  <rect x="55" y="134" width="460" height="72" rx="8" fill="var(--surface,#ffffff)" stroke="var(--border-2,#cbd2dc)" stroke-width="1.2"/>
+  <text x="100" y="153" class="sub">sample group</text>
+
+
+  <rect x="62" y="160" width="50" height="22" rx="5" fill="var(--good,#27a05f)" opacity="0.85" class="le-s1"/>
+  <text x="87" y="175" text-anchor="middle" class="chip" fill="white">win +</text>
+
+  <rect x="118" y="160" width="50" height="22" rx="5" fill="var(--good,#27a05f)" opacity="0.85" class="le-s1"/>
+  <text x="143" y="175" text-anchor="middle" class="chip" fill="white">win +</text>
+
+
+  <rect x="174" y="160" width="50" height="22" rx="5" fill="var(--surface-3,#eef1f5)" stroke="var(--danger,#c0392b)" stroke-width="1" opacity="0.7" class="le-s1d"/>
+  <text x="199" y="175" text-anchor="middle" class="chip danger">lose -</text>
+
+  <rect x="230" y="160" width="50" height="22" rx="5" fill="var(--surface-3,#eef1f5)" stroke="var(--danger,#c0392b)" stroke-width="1" opacity="0.7" class="le-s1d"/>
+  <text x="255" y="175" text-anchor="middle" class="chip danger">lose -</text>
+
+  <rect x="286" y="160" width="50" height="22" rx="5" fill="var(--surface-3,#eef1f5)" stroke="var(--danger,#c0392b)" stroke-width="1" opacity="0.7" class="le-s1d"/>
+  <text x="311" y="175" text-anchor="middle" class="chip danger">lose -</text>
+
+  <rect x="342" y="160" width="50" height="22" rx="5" fill="var(--surface-3,#eef1f5)" stroke="var(--danger,#c0392b)" stroke-width="1" opacity="0.7" class="le-s1d"/>
+  <text x="367" y="175" text-anchor="middle" class="chip danger">lose -</text>
+
+  <text x="470" y="175" class="sub" font-size="9">few winners, many losers</text>
+</g>
+
+
+<line x1="285" y1="206" x2="285" y2="228" stroke="var(--border-2,#cbd2dc)" stroke-width="1.5" marker-end="url(#le-arr)" class="le-s2"/>
+<text x="298" y="221" class="albl good" font-size="10">adv. on winners</text>
+<text x="298" y="234" class="albl danger" font-size="10">adv. on losers</text>
+
+
+<g data-anim="3">
+  <rect x="55" y="244" width="460" height="78" rx="8" fill="var(--accent-soft,#e8eefc)" stroke="var(--accent2,#3b82f6)" stroke-width="1.3"/>
+  <text x="285" y="264" text-anchor="middle" class="lbl accent">What distinguishes the WINNERS?</text>
+  <text x="285" y="279" text-anchor="middle" class="sub">(these behaviors correlate with reaching the gold answer)</text>
+
+
+  <rect x="66" y="285" width="158" height="24" rx="6" fill="var(--accent-soft,#e8eefc)" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" class="le-s3a"/>
+  <text x="145" y="301" text-anchor="middle" class="chip accent" font-size="9.5">check intermediate steps</text>
+
+  <rect x="232" y="285" width="132" height="24" rx="6" fill="var(--accent-soft,#e8eefc)" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" class="le-s3b"/>
+  <text x="298" y="301" text-anchor="middle" class="chip accent" font-size="9.5">try alt. approaches</text>
+
+  <rect x="372" y="285" width="128" height="24" rx="6" fill="var(--accent-soft,#e8eefc)" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" class="le-s3c"/>
+  <text x="436" y="301" text-anchor="middle" class="chip accent" font-size="9.5">verify final result</text>
+</g>
+
+
+<line x1="285" y1="322" x2="285" y2="344" stroke="var(--accent2,#3b82f6)" stroke-width="1.8" marker-end="url(#le-arr-acc)" class="le-s4"/>
+<text x="298" y="337" class="albl accent" font-size="10">gradient up-weights these</text>
+
+
+<g data-anim="4">
+  <rect x="55" y="346" width="460" height="52" rx="8" fill="var(--accent-soft,#e8eefc)" stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+  <text x="285" y="369" text-anchor="middle" class="lbl accent">Gradient up-weights:</text>
+  <text x="285" y="387" text-anchor="middle" class="lbl accent">"spend more tokens reasoning"</text>
+</g>
+
+
+<path d="M 515,372 C 710,372 710,87 515,87" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="2.2" marker-end="url(#le-arr-acc)" class="le-loop"/>
+<text x="690" y="300" text-anchor="middle" class="albl accent" font-size="10" transform="rotate(-90,690,300)">repeat over thousands of steps</text>
+
+
+<line x1="285" y1="398" x2="285" y2="420" stroke="var(--good,#27a05f)" stroke-width="1.8" marker-end="url(#le-arr-grn)"/>
+
+
+<g data-anim="5" class="le-nodeE">
+  <rect x="55" y="422" width="460" height="76" rx="8" fill="var(--success-soft,#e3f5ec)" stroke="var(--good,#27a05f)" stroke-width="2"/>
+  <text x="285" y="446" text-anchor="middle" class="lbl good">STEP N — emergent behavior</text>
+  <text x="285" y="462" text-anchor="middle" class="sub">long CoT · self-verification · backtracking · "aha" · ~70%+ correct</text>
+  <text x="285" y="478" text-anchor="middle" class="ftr">(no reasoning demonstrations were ever provided)</text>
+</g>
+
+</svg>
+<figcaption><b>Why response length grows under pure correctness reward.</b> At step 0, a base model with ~10% accuracy generates a group of samples; the few winners (those that reached the correct answer) happen to have spent more tokens checking steps and verifying results. The gradient up-weights exactly those behaviors, creating a compounding loop: more reasoning tokens raise correctness, raising those behaviors' probability, making completions longer and more accurate until, at step N, long chain-of-thought, self-verification, and backtracking emerge — none of it trained directly.</figcaption>
+</figure>
+
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: R1-Zero needs a base model that <em>can</em> sometimes succeed</p>
+<p>The emergent-reasoning loop only turns if the group of <span class="arithmatex">\(G\)</span> samples contains <em>both</em> successes and failures — otherwise every advantage is zero and there is no gradient (the &ldquo;dead group&rdquo; problem from <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO</a>). On a base model too weak to ever solve a problem (pass@G <span class="arithmatex">\(\approx 0\)</span>), RLVR produces <em>nothing</em> — flat reward, no learning. This is why R1-Zero worked on a very strong base (DeepSeek-V3) and why people who tried &ldquo;R1-Zero on a small base model&rdquo; with hard problems often saw no emergence. The fix is curriculum: start with problems the base solves ~20–60% of the time and ramp difficulty as the policy improves.</p>
+</div>
+<h2 id="building-real-verifiers-i-math-equivalence">Building real verifiers I: math equivalence<a class="headerlink" href="#building-real-verifiers-i-math-equivalence" title="Permanent link">¶</a></h2>
+<p>The accuracy reward is only as good as the checker. Naive string equality is <em>catastrophically</em> wrong: it would mark <code>0.5</code> incorrect against gold <code>1/2</code>, mark <code>x=2</code> incorrect against <code>2</code>, and mark <code>\frac{1}{2}</code> incorrect against <code>0.5</code>. A real math verifier must (1) <strong>extract</strong> the final answer from a long chain of thought, then (2) <strong>normalize and compare</strong> with numeric/symbolic equivalence. Here is a compact but realistic implementation.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fractions</span><span class="w"> </span><span class="kn">import</span> <span class="n">Fraction</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_boxed_answer</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Pull the LAST \boxed{...} content from a chain-of-thought response.</span>
+<span class="sd">    We take the last one because the model often writes intermediate</span>
+<span class="sd">    \boxed expressions before its final answer. Handles nested braces.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\boxed&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">idx</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+        <span class="c1"># Fallback: try an &lt;answer&gt;...&lt;/answer&gt; delimiter.</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;&lt;answer&gt;(.*?)&lt;/answer&gt;&quot;</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">m</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">m</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="c1"># Walk braces to find the matching close for \boxed{ ... }.</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s2">&quot;{&quot;</span><span class="p">,</span> <span class="n">idx</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">i</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">depth</span><span class="p">,</span> <span class="n">j</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">i</span>
+    <span class="k">while</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">text</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;{&quot;</span><span class="p">:</span>
+            <span class="n">depth</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">elif</span> <span class="n">text</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;}&quot;</span><span class="p">:</span>
+            <span class="n">depth</span> <span class="o">-=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="n">depth</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">text</span><span class="p">[</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span> <span class="p">:</span> <span class="n">j</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="n">j</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="kc">None</span>  <span class="c1"># unbalanced braces</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">normalize_numeric</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Try to coerce a string answer to an exact rational or a float.</span>
+<span class="sd">    Handles fractions (&#39;3/4&#39;), LaTeX \frac, percentages, commas,</span>
+<span class="sd">    surrounding $ signs, and trailing units-free numbers. Returns</span>
+<span class="sd">    a Fraction/float, or None if it isn&#39;t a clean number.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">s</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;$&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">!&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">text\{.*?\}&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">s</span><span class="p">)</span>              <span class="c1"># drop \text{...} units</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">%&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;%&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>        <span class="c1"># treat percent as a number</span>
+    <span class="c1"># LaTeX \frac{a}{b}  or  \dfrac{a}{b}</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">fullmatch</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">d?frac\{(-?\d+)\}\{(-?\d+)\}&quot;</span><span class="p">,</span> <span class="n">s</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Fraction</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">)))</span>
+    <span class="c1"># plain a/b</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">fullmatch</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;(-?\d+)\s*/\s*(-?\d+)&quot;</span><span class="p">,</span> <span class="n">s</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Fraction</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">)))</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Fraction</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>            <span class="c1"># exact for integers / decimals like &#39;0.50&#39;</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="ne">ZeroDivisionError</span><span class="p">):</span>
+        <span class="k">pass</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>               <span class="c1"># last resort, lossy</span>
+    <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">math_is_correct</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">gold</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">atol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Verifiable math reward: 1.0 if the model&#39;s final boxed answer is</span>
+<span class="sd">    numerically equivalent to gold, else 0.0. Falls back to a</span>
+<span class="sd">    normalized string compare for non-numeric answers (e.g. &#39;(2, 3)&#39;).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pred</span> <span class="o">=</span> <span class="n">extract_boxed_answer</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">pred</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">normalize_numeric</span><span class="p">(</span><span class="n">pred</span><span class="p">),</span> <span class="n">normalize_numeric</span><span class="p">(</span><span class="n">gold</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">a</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">b</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># Exact when both are Fractions; tolerant when a float is involved.</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">Fraction</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="n">Fraction</span><span class="p">):</span>
+            <span class="k">return</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">a</span> <span class="o">==</span> <span class="n">b</span> <span class="k">else</span> <span class="mf">0.0</span>
+        <span class="k">return</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">a</span><span class="p">)</span> <span class="o">-</span> <span class="nb">float</span><span class="p">(</span><span class="n">b</span><span class="p">))</span> <span class="o">&lt;=</span> <span class="n">atol</span> <span class="k">else</span> <span class="mf">0.0</span>
+    <span class="c1"># Non-numeric: compare normalized strings (whitespace/case-insensitive).</span>
+    <span class="n">norm</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\s+&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="k">return</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">norm</span><span class="p">(</span><span class="n">pred</span><span class="p">)</span> <span class="o">==</span> <span class="n">norm</span><span class="p">(</span><span class="n">gold</span><span class="p">)</span> <span class="k">else</span> <span class="mf">0.0</span>
+
+<span class="c1"># --- quick sanity checks (these all return 1.0) ---</span>
+<span class="k">assert</span> <span class="n">math_is_correct</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;... so the answer is \boxed{1/2}.&quot;</span><span class="p">,</span> <span class="s2">&quot;0.5&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="mf">1.0</span>
+<span class="k">assert</span> <span class="n">math_is_correct</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;first \boxed</span><span class="si">{7}</span><span class="s2"> then \boxed</span><span class="si">{0.50}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="s2">&quot;1/2&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="mf">1.0</span>
+<span class="k">assert</span> <span class="n">math_is_correct</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;&lt;answer&gt;42&lt;/answer&gt;&quot;</span><span class="p">,</span> <span class="s2">&quot;42&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="mf">1.0</span>
+<span class="k">assert</span> <span class="n">math_is_correct</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\boxed{\frac</span><span class="si">{3}{4}</span><span class="s2">}&quot;</span><span class="p">,</span> <span class="s2">&quot;0.75&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="mf">1.0</span>
+<span class="k">assert</span> <span class="n">math_is_correct</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\boxed</span><span class="si">{8}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="s2">&quot;9&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="mf">0.0</span>
+</code></pre></div>
+<p>This is the <em>minimal</em> version. Production math verifiers (the widely-used <code>math-verify</code> library, or the checker in PRM800K / the MATH dataset tooling) additionally use a symbolic engine (SymPy) to compare expressions like <code>(x+1)^2</code> vs <code>x^2+2x+1</code>, handle sets and tuples and intervals, and canonicalize LaTeX aggressively. The principle is the same: <strong>parse, normalize to a canonical form, compare for equivalence — never raw strings.</strong> A weak verifier is a silent reward-hacking vector: if your checker marks <code>0.5</code> wrong against <code>1/2</code>, the model learns to <em>avoid</em> decimal answers, distorting behavior for no good reason.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: log verifier false-negatives as a first-class metric</p>
+<p>The most insidious RLVR bug is a verifier that rejects <em>correct</em> answers (false negatives) because of a parsing gap. These directly <em>poison</em> training: the model is punished for being right, learns to mimic the verifier&rsquo;s quirks, and your eval-vs-train gap silently widens. Periodically sample responses the verifier marked wrong, have a stronger model or a human spot-check them, and track the false-negative rate. A verifier with a 5% false-negative rate is a 5% mislabeling rate on your <em>reward</em> — far worse than the same rate in SFT data, because RL amplifies it.</p>
+</div>
+<h2 id="building-real-verifiers-ii-sandboxed-code-execution">Building real verifiers II: sandboxed code execution<a class="headerlink" href="#building-real-verifiers-ii-sandboxed-code-execution" title="Permanent link">¶</a></h2>
+<p>Code is the most powerful verifiable domain — &ldquo;did it pass the tests&rdquo; is a strong, dense correctness signal — and the most <em>dangerous</em> one, because you are about to execute <strong>model-generated code</strong> thousands of times per training step. The model is an adversary by construction: RL will find <em>any</em> path to reward, including <code>os.system("cat tests.py")</code>, infinite loops to stall the trainer, <code>while True: fork()</code> fork-bombs, network exfiltration, or writing to the host filesystem. <strong>You must sandbox.</strong> The non-negotiable requirements:</p>
+<ul>
+<li><strong>No host filesystem access</strong> (read or write) beyond a scratch dir; <strong>no network</strong>; <strong>no access to the test file contents</strong> from inside the executed program.</li>
+<li><strong>Hard wall-clock timeout</strong> and <strong>memory/CPU limits</strong> (a runaway generation must not stall the whole rollout).</li>
+<li><strong>Process isolation</strong> — a separate process at minimum, ideally a container (gVisor/Firecracker microVM, or a <code>bubblewrap</code>/<code>nsjail</code> jail) for untrusted code. Production RL stacks (see <a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a>) run code in ephemeral containers, often a remote execution service.</li>
+</ul>
+<p>Below is a single-process, resource-limited sandbox using POSIX <code>resource</code> limits and a subprocess timeout. <strong>This is illustrative — for truly untrusted code in production, use a container/microVM, not just <code>rlimit</code></strong> — but it shows the mechanism and is safe enough for trusted-ish synthetic problems on a locked-down box.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span><span class="o">,</span><span class="w"> </span><span class="nn">sys</span><span class="o">,</span><span class="w"> </span><span class="nn">tempfile</span><span class="o">,</span><span class="w"> </span><span class="nn">os</span><span class="o">,</span><span class="w"> </span><span class="nn">textwrap</span><span class="o">,</span><span class="w"> </span><span class="nn">resource</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_set_limits</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Called in the child via preexec_fn: cap CPU, memory, and file size.&quot;&quot;&quot;</span>
+    <span class="n">resource</span><span class="o">.</span><span class="n">setrlimit</span><span class="p">(</span><span class="n">resource</span><span class="o">.</span><span class="n">RLIMIT_CPU</span><span class="p">,</span> <span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span>            <span class="c1"># 5s CPU time</span>
+    <span class="n">mem</span> <span class="o">=</span> <span class="mi">512</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span>                                    <span class="c1"># 512 MB</span>
+    <span class="n">resource</span><span class="o">.</span><span class="n">setrlimit</span><span class="p">(</span><span class="n">resource</span><span class="o">.</span><span class="n">RLIMIT_AS</span><span class="p">,</span> <span class="p">(</span><span class="n">mem</span><span class="p">,</span> <span class="n">mem</span><span class="p">))</span>         <span class="c1"># address space</span>
+    <span class="n">resource</span><span class="o">.</span><span class="n">setrlimit</span><span class="p">(</span><span class="n">resource</span><span class="o">.</span><span class="n">RLIMIT_FSIZE</span><span class="p">,</span> <span class="p">(</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">,</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">))</span>  <span class="c1"># 1 MB files</span>
+    <span class="n">resource</span><span class="o">.</span><span class="n">setrlimit</span><span class="p">(</span><span class="n">resource</span><span class="o">.</span><span class="n">RLIMIT_NPROC</span><span class="p">,</span> <span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">))</span>       <span class="c1"># cap fork-bombs</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_in_sandbox</span><span class="p">(</span><span class="n">source_code</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">stdin</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">6.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Execute untrusted Python in an isolated subprocess with rlimits and a</span>
+<span class="sd">    wall-clock timeout. Returns (ok, stdout, stderr). Network is NOT blocked</span>
+<span class="sd">    here (do that with a namespace/seccomp in production); we run with a</span>
+<span class="sd">    minimal env and a temp CWD so there is nothing useful to touch.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">TemporaryDirectory</span><span class="p">()</span> <span class="k">as</span> <span class="n">workdir</span><span class="p">:</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">workdir</span><span class="p">,</span> <span class="s2">&quot;prog.py&quot;</span><span class="p">)</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">source_code</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">proc</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+                <span class="p">[</span><span class="n">sys</span><span class="o">.</span><span class="n">executable</span><span class="p">,</span> <span class="s2">&quot;-I&quot;</span><span class="p">,</span> <span class="n">path</span><span class="p">],</span>   <span class="c1"># -I = isolated mode (ignore env/PYTHONPATH)</span>
+                <span class="nb">input</span><span class="o">=</span><span class="n">stdin</span><span class="o">.</span><span class="n">encode</span><span class="p">(),</span>
+                <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">timeout</span><span class="o">=</span><span class="n">timeout</span><span class="p">,</span>                <span class="c1"># wall-clock kill</span>
+                <span class="n">cwd</span><span class="o">=</span><span class="n">workdir</span><span class="p">,</span>                    <span class="c1"># sandboxed working dir</span>
+                <span class="n">preexec_fn</span><span class="o">=</span><span class="n">_set_limits</span><span class="p">,</span>         <span class="c1"># apply rlimits in child (POSIX)</span>
+                <span class="n">env</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;PATH&quot;</span><span class="p">:</span> <span class="s2">&quot;/usr/bin&quot;</span><span class="p">,</span> <span class="s2">&quot;OPENBLAS_NUM_THREADS&quot;</span><span class="p">:</span> <span class="s2">&quot;1&quot;</span><span class="p">},</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="p">(</span><span class="n">proc</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="n">proc</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">errors</span><span class="o">=</span><span class="s2">&quot;replace&quot;</span><span class="p">),</span>
+                    <span class="n">proc</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">errors</span><span class="o">=</span><span class="s2">&quot;replace&quot;</span><span class="p">))</span>
+        <span class="k">except</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">TimeoutExpired</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;TIMEOUT&quot;</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">code_reward</span><span class="p">(</span><span class="n">completion</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">test_cases</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+                <span class="n">entry_point</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;solve&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Verifiable code reward = fraction of hidden unit tests passed.</span>
+<span class="sd">    `test_cases` is a list of {&quot;input&quot;: &quot;...&quot;, &quot;expected&quot;: &quot;...&quot;} dicts.</span>
+<span class="sd">    The model&#39;s `completion` is expected to define a function `entry_point`</span>
+<span class="sd">    that reads from stdin and prints to stdout. We assemble a harness so the</span>
+<span class="sd">    model&#39;s code NEVER sees the test inputs as data it can inspect.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">program</span> <span class="o">=</span> <span class="n">extract_code_block</span><span class="p">(</span><span class="n">completion</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">program</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="n">passed</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">tc</span> <span class="ow">in</span> <span class="n">test_cases</span><span class="p">:</span>
+        <span class="c1"># Harness runs the model code, then calls it on this test&#39;s stdin.</span>
+        <span class="n">harness</span> <span class="o">=</span> <span class="n">program</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">if __name__ == &#39;__main__&#39;:</span><span class="se">\n</span><span class="s2">    &quot;</span> <span class="o">+</span> <span class="n">entry_point</span> <span class="o">+</span> <span class="s2">&quot;()</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="n">ok</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="n">err</span> <span class="o">=</span> <span class="n">run_in_sandbox</span><span class="p">(</span><span class="n">harness</span><span class="p">,</span> <span class="n">stdin</span><span class="o">=</span><span class="n">tc</span><span class="p">[</span><span class="s2">&quot;input&quot;</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">ok</span> <span class="ow">and</span> <span class="n">out</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="o">==</span> <span class="n">tc</span><span class="p">[</span><span class="s2">&quot;expected&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">():</span>
+            <span class="n">passed</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="n">passed</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">test_cases</span><span class="p">)</span>   <span class="c1"># graded reward in [0, 1]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_code_block</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Pull the last ```python ... ``` fenced block (the final solution).&quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+    <span class="n">blocks</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;```(?:python)?\s*\n(.*?)```&quot;</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">blocks</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">blocks</span> <span class="k">else</span> <span class="kc">None</span>
+</code></pre></div>
+<p>Several design choices here are load-bearing and worth calling out for an interview:</p>
+<ul>
+<li><strong>Graded reward (fraction of tests passed), not all-or-nothing.</strong> This densifies a very sparse signal: a solution that passes 7/10 tests gets advantage over one that passes 0/10, even though both are &ldquo;wrong.&rdquo; Within a GRPO group this creates the reward <em>variance</em> needed for a nonzero gradient (avoiding the dead-group problem). Some recipes still use binary &ldquo;all tests pass&rdquo; as the final reward and reserve graded scores for shaping — both are defensible.</li>
+<li><strong>The model never sees the tests.</strong> The test inputs are fed via stdin by the harness; the model&rsquo;s source is concatenated <em>before</em> the harness. If you instead pasted tests into the prompt, the model would learn to special-case them (hard-code outputs) — a textbook reward hack. Hidden tests are the verifiable-code analog of a held-out set.</li>
+<li><strong>Isolated interpreter mode (<code>-I</code>)</strong> ignores <code>PYTHONPATH</code>/site customizations, and a minimal <code>env</code> removes most ambient capabilities. Still: this stops accidents, not a determined adversary with a Python escape. For real untrusted execution use gVisor/Firecracker.</li>
+<li><strong>Timeouts are part of the reward, not just safety.</strong> A program that times out scores 0 on that test. RL will <em>learn</em> to avoid pathological loops because they cost reward — but it will also learn to exploit a too-generous timeout to brute-force, so set it tight.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: test execution is your throughput bottleneck <em>and</em> your security boundary</p>
+<p>Naively running tests inline in the trainer process serializes everything and risks the whole job on one fork-bomb. In production, code execution is a <strong>separate, horizontally-scaled, sandboxed service</strong> the trainer calls asynchronously (see <a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a> and <a href="../06-rl-infra/02-generation-training-loop.html">The Generation–Training Loop &amp; Rollout Engines</a>). Budget for it: at <span class="arithmatex">\(G=16\)</span> samples × thousands of prompts × multiple tests each, you may execute <em>millions</em> of short programs per epoch. Caching identical (code, test) pairs and capping per-test time are essential.</p>
+</div>
+<h2 id="a-complete-rlvr-reward-function-and-a-worked-example">A complete RLVR reward function and a worked example<a class="headerlink" href="#a-complete-rlvr-reward-function-and-a-worked-example" title="Permanent link">¶</a></h2>
+<p>Let us assemble a full reward used in an R1-Zero-style run and then trace exact numbers through it. The reward is a <em>sum of components</em> where <strong>correctness dominates</strong> and everything else is a small, contingent guardrail.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">rlvr_reward</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">response</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">gold</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                <span class="n">domain</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">test_cases</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Full RLVR reward, returned as a breakdown so we can log each component.</span>
+<span class="sd">    Correctness is the real signal (weight 1.0). Format is a small shaping</span>
+<span class="sd">    bonus that is ONLY granted if the model also attempted a parseable answer,</span>
+<span class="sd">    so it can never be farmed independently of trying to solve the task.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># 1. Correctness (the only component we truly trust).</span>
+    <span class="k">if</span> <span class="n">domain</span> <span class="o">==</span> <span class="s2">&quot;math&quot;</span><span class="p">:</span>
+        <span class="n">accuracy</span> <span class="o">=</span> <span class="n">math_is_correct</span><span class="p">(</span><span class="n">response</span><span class="p">,</span> <span class="n">gold</span><span class="p">)</span>          <span class="c1"># {0, 1}</span>
+    <span class="k">elif</span> <span class="n">domain</span> <span class="o">==</span> <span class="s2">&quot;code&quot;</span><span class="p">:</span>
+        <span class="n">accuracy</span> <span class="o">=</span> <span class="n">code_reward</span><span class="p">(</span><span class="n">response</span><span class="p">,</span> <span class="n">test_cases</span><span class="p">)</span>         <span class="c1"># [0, 1] graded</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">accuracy</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="c1"># 2. Format shaping (tiny, and CONTINGENT on a parseable answer existing).</span>
+    <span class="n">has_think</span> <span class="o">=</span> <span class="s2">&quot;&lt;think&gt;&quot;</span> <span class="ow">in</span> <span class="n">response</span> <span class="ow">and</span> <span class="s2">&quot;&lt;/think&gt;&quot;</span> <span class="ow">in</span> <span class="n">response</span>
+    <span class="n">has_answer</span> <span class="o">=</span> <span class="n">extract_boxed_answer</span><span class="p">(</span><span class="n">response</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="n">format_bonus</span> <span class="o">=</span> <span class="mf">0.1</span> <span class="k">if</span> <span class="p">(</span><span class="n">has_think</span> <span class="ow">and</span> <span class="n">has_answer</span><span class="p">)</span> <span class="k">else</span> <span class="mf">0.0</span>
+
+    <span class="c1"># 3. Anti-hacking guard: zero out everything if the response is degenerate</span>
+    <span class="c1">#    (e.g. empty, or repeats one token — catches a known length-hack mode).</span>
+    <span class="k">if</span> <span class="n">_is_degenerate</span><span class="p">(</span><span class="n">response</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span> <span class="s2">&quot;format&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span> <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">}</span>
+
+    <span class="n">total</span> <span class="o">=</span> <span class="n">accuracy</span> <span class="o">+</span> <span class="n">format_bonus</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="n">accuracy</span><span class="p">,</span> <span class="s2">&quot;format&quot;</span><span class="p">:</span> <span class="n">format_bonus</span><span class="p">,</span> <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="n">total</span><span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_is_degenerate</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="n">toks</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">toks</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+    <span class="c1"># crude repetition check: &gt;60% of tokens are the single most common token</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
+    <span class="n">most</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="n">toks</span><span class="p">)</span><span class="o">.</span><span class="n">most_common</span><span class="p">(</span><span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">most</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">toks</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">0.6</span>
+</code></pre></div>
+<p>Now the worked example. We feed this reward into GRPO (whose advantage mechanics are in <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>) and trace one group.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: one GRPO group on a math prompt with the RLVR reward</p>
+<p><strong>Prompt:</strong> &ldquo;Compute <span class="arithmatex">\(\int_0^1 3x^2\,dx\)</span>. Put the final answer in <code>\boxed{}</code>.&rdquo; Gold answer: <code>1</code>. We sample a group of <span class="arithmatex">\(G = 6\)</span> responses and apply <code>rlvr_reward</code> (math domain). Suppose the outcomes are:</p>
+<table>
+<thead>
+<tr>
+<th>resp</th>
+<th>reasoning quality</th>
+<th>boxed answer</th>
+<th>accuracy</th>
+<th>format</th>
+<th><span class="arithmatex">\(R_i\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(o_1\)</span></td>
+<td>correct, with <code>&lt;think&gt;</code></td>
+<td><code>\boxed{1}</code></td>
+<td>1.0</td>
+<td>0.1</td>
+<td><strong>1.1</strong></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(o_2\)</span></td>
+<td>correct, no think tags</td>
+<td><code>\boxed{1}</code></td>
+<td>1.0</td>
+<td>0.0</td>
+<td><strong>1.0</strong></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(o_3\)</span></td>
+<td>wrong (forgot to evaluate)</td>
+<td><code>\boxed{x^3}</code></td>
+<td>0.0</td>
+<td>0.1</td>
+<td><strong>0.1</strong></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(o_4\)</span></td>
+<td>wrong, off by constant</td>
+<td><code>\boxed{3}</code></td>
+<td>0.0</td>
+<td>0.1</td>
+<td><strong>0.1</strong></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(o_5\)</span></td>
+<td>correct but as <code>1.0</code></td>
+<td><code>\boxed{1.0}</code></td>
+<td>1.0</td>
+<td>0.1</td>
+<td><strong>1.1</strong></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(o_6\)</span></td>
+<td>degenerate (repeats &ldquo;the the the…&rdquo;)</td>
+<td>—</td>
+<td>0.0</td>
+<td>0.0</td>
+<td><strong>0.0</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Note the verifier earned its keep: <span class="arithmatex">\(o_5\)</span> wrote <code>1.0</code>, which a naive string checker would mark wrong against gold <code>1</code> — our <code>normalize_numeric</code> correctly gives it accuracy 1.0. And <span class="arithmatex">\(o_6\)</span>&rsquo;s degeneracy guard zeroed it out.</p>
+<p><strong>Group statistics.</strong> Rewards <span class="arithmatex">\(R = \{1.1, 1.0, 0.1, 0.1, 1.1, 0.0\}\)</span>.</p>
+<ul>
+<li>Mean: <span class="arithmatex">\(\bar R = (1.1+1.0+0.1+0.1+1.1+0.0)/6 = 3.4/6 \approx 0.567\)</span>.</li>
+<li>Deviations <span class="arithmatex">\(R_i-\bar R\)</span>: <span class="arithmatex">\(\{+0.533, +0.433, -0.467, -0.467, +0.533, -0.567\}\)</span>.</li>
+<li>Population variance: sum of squares <span class="arithmatex">\(= 0.284+0.188+0.218+0.218+0.284+0.321 = 1.513\)</span>; <span class="arithmatex">\(\sigma^2 = 1.513/6 = 0.252\)</span>; <span class="arithmatex">\(\sigma \approx 0.502\)</span>.</li>
+</ul>
+<p><strong>GRPO advantages</strong> <span class="arithmatex">\(\hat A_i = (R_i - \bar R)/(\sigma + \varepsilon)\)</span> with <span class="arithmatex">\(\varepsilon = 10^{-4}\)</span> (using std-normalized GRPO; the <a href="../05-posttraining-alignment/08-grpo-rloo.html">Dr. GRPO</a> variant would skip the <span class="arithmatex">\(\div\sigma\)</span>):</p>
+<div class="arithmatex">\[
+\hat A_1 = \hat A_5 \approx \frac{0.533}{0.502} \approx +1.06,\quad
+\hat A_2 \approx +0.86,\quad
+\hat A_3 = \hat A_4 \approx -0.93,\quad
+\hat A_6 \approx \frac{-0.567}{0.502} \approx -1.13.
+\]</div>
+<p><strong>What the policy learns from this group.</strong> Every token of the two fully-correct-with-format responses (<span class="arithmatex">\(o_1, o_5\)</span>) gets pushed up hardest (<span class="arithmatex">\(+1.06\)</span>); the bare-correct <span class="arithmatex">\(o_2\)</span> is pushed up but <em>less</em> (<span class="arithmatex">\(+0.86\)</span>) — the model feels a gentle pull toward also producing the <code>&lt;think&gt;</code> structure, exactly the intended effect of the small format bonus. The two wrong-but-formatted answers (<span class="arithmatex">\(o_3, o_4\)</span>) are pushed down (<span class="arithmatex">\(-0.93\)</span>), and the degenerate <span class="arithmatex">\(o_6\)</span> is pushed down hardest (<span class="arithmatex">\(-1.13\)</span>). The dominant signal, by far, is <strong>correctness</strong> (<span class="arithmatex">\(\pm 1.0\)</span> accuracy swamps the <span class="arithmatex">\(\pm 0.1\)</span> format term), which is precisely what keeps the model honest: it cannot profit from format alone.</p>
+<p><strong>Sanity on magnitudes:</strong> the format bonus moved <span class="arithmatex">\(o_1\)</span>&rsquo;s advantage from <span class="arithmatex">\(+0.86\)</span> (what it would have been at reward <span class="arithmatex">\(1.0\)</span>) to <span class="arithmatex">\(+1.06\)</span> — about a 23% relative nudge. Tune <span class="arithmatex">\(\lambda\)</span> so this nudge is <em>noticeable but not dominant</em>; if you set the format bonus to, say, <span class="arithmatex">\(0.5\)</span>, a well-formatted <em>wrong</em> answer (<span class="arithmatex">\(R=0.5\)</span>) would out-score a badly-formatted <em>right</em> one (<span class="arithmatex">\(R=1.0\)</span>)? No — <span class="arithmatex">\(1.0 &gt; 0.5\)</span> still — but the <em>gap</em> shrinks dangerously, and the model starts spending capacity on formatting instead of solving. Small format weights are not aesthetic; they are a reward-hacking defense.</p>
+</div>
+<h2 id="from-narrow-rlvr-to-general-reasoning">From narrow RLVR to general reasoning<a class="headerlink" href="#from-narrow-rlvr-to-general-reasoning" title="Permanent link">¶</a></h2>
+<p>RLVR&rsquo;s superpower — an exact reward — is also its boundary: it only works where correctness is <em>programmatically decidable</em>. Math, code, formal logic, constrained extraction, unit-convertible science: yes. &ldquo;Write a moving poem,&rdquo; &ldquo;is this essay persuasive,&rdquo; &ldquo;is this medical advice safe&rdquo;: no — there is no <code>is_correct()</code>. The frontier question of 2025–2026 is <strong>how far the reasoning skills grown in verifiable domains transfer, and how to extend the recipe beyond them.</strong> Several strategies are now standard.</p>
+<h3 id="1-transfer-reasoning-learned-on-mathcode-generalizes">1. Transfer: reasoning learned on math/code generalizes<a class="headerlink" href="#1-transfer-reasoning-learned-on-mathcode-generalizes" title="Permanent link">¶</a></h3>
+<p>The most important empirical finding is that <strong>the reasoning machinery RLVR installs is not domain-locked.</strong> A model RLVR-trained on math and code becomes better at reasoning tasks it was <em>never</em> RL-trained on — logical puzzles, some scientific QA, even agentic planning. The interpretation: RLVR teaches a <em>transferable skill</em> (&ldquo;decompose, derive step by step, check your work, backtrack&rdquo;) using verifiable domains merely as the <em>gym</em> where that skill can be cheaply graded. You train the muscle where you can measure it, and the muscle works elsewhere. This is the strongest argument for RLVR as a general post-training stage rather than a niche math trick. (How far it transfers is debated and base-model-dependent; see <a href="../05-posttraining-alignment/10-reasoning-test-time-compute.html">Reasoning, Chain-of-Thought &amp; Test-Time Compute</a>.)</p>
+<h3 id="2-mixing-verifiable-and-non-verifiable-rewards">2. Mixing verifiable and non-verifiable rewards<a class="headerlink" href="#2-mixing-verifiable-and-non-verifiable-rewards" title="Permanent link">¶</a></h3>
+<p>To get a <em>deployable</em> model you must handle helpfulness, safety, tone, and open-ended tasks — none verifiable. The standard solution (DeepSeek-R1&rsquo;s final stage, Tülu 3) is to <strong>mix reward sources in a single RL run</strong>: a rule/verifier reward on the verifiable prompts and a learned reward model on the rest. GRPO does not care where the scalar comes from — it just needs one reward per response. You route each prompt to its appropriate scorer:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">mixed_reward</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">response</span><span class="p">,</span> <span class="n">meta</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Route to a verifiable checker when possible, else a reward model.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;math&quot;</span><span class="p">,</span> <span class="s2">&quot;code&quot;</span><span class="p">,</span> <span class="s2">&quot;format&quot;</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">rlvr_reward</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">response</span><span class="p">,</span> <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;gold&quot;</span><span class="p">],</span>
+                           <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">],</span> <span class="n">meta</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;tests&quot;</span><span class="p">))[</span><span class="s2">&quot;total&quot;</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Non-verifiable (chat/safety/helpfulness): fall back to the learned RM.</span>
+        <span class="k">return</span> <span class="n">reward_model_score</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">response</span><span class="p">)</span>   <span class="c1"># the network from ch. 5.5</span>
+</code></pre></div>
+<p>The risk reappears at the boundary: the <em>learned</em> portion can still be hacked, so you keep its weight modest, apply a KL anchor on those prompts, and monitor for sycophancy. The verifiable portion, mercifully, needs none of that.</p>
+<h3 id="3-process-rewards-and-self-verification-when-outcomes-arent-enough">3. Process rewards and self-verification (when outcomes aren&rsquo;t enough)<a class="headerlink" href="#3-process-rewards-and-self-verification-when-outcomes-arent-enough" title="Permanent link">¶</a></h3>
+<p>An <em>outcome</em> reward (final answer correct?) gives no credit for a correct sub-derivation that ends in an arithmetic slip, and it can reward a <em>right answer reached by wrong reasoning</em> (lucky guess). <strong>Process reward models (PRMs)</strong> score each reasoning <em>step</em>, giving denser, better-targeted feedback — at the cost of needing step-level labels (expensive) or a learned PRM (hackable again). RLVR&rsquo;s pragmatic middle ground is to make the model <em>its own verifier</em>: train it (still with verifiable outcome rewards) to generate a solution <strong>and</strong> a check, so self-verification is reinforced because it raises outcome accuracy. The &ldquo;aha moment&rdquo; is exactly this — self-verification emerging because it pays off on the outcome reward. PRMs and these blends are explored in <a href="../05-posttraining-alignment/10-reasoning-test-time-compute.html">Reasoning, Chain-of-Thought &amp; Test-Time Compute</a>.</p>
+<h3 id="4-generative-model-based-verifiers-for-fuzzy-domains">4. Generative / model-based verifiers for fuzzy domains<a class="headerlink" href="#4-generative-model-based-verifiers-for-fuzzy-domains" title="Permanent link">¶</a></h3>
+<p>When a domain is <em>almost</em> verifiable — e.g. &ldquo;does this answer entail the reference&rdquo; for free-form QA — a strong LLM acting as a <strong>judge/verifier</strong> (<a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge</a>) can stand in for a hard checker. This is a spectrum: pure-programmatic verifiers (unhackable, narrow) on one end, learned reward models (hackable, general) on the other, and LLM-judges in between. The RLVR philosophy — <em>prefer the most exact verifier the domain allows</em> — is the guiding principle: use a symbolic checker if you can, an execution sandbox if you can, an LLM-judge only when you must, and a free-form reward model last.</p>
+<figure class="viz" id="fig-rlvr-verifier-spectrum">
+<svg viewBox="0 0 900 360" role="img" aria-label="The verifier spectrum from most exact and least hackable on the left (symbolic/exact-match, code execution) to most general and most hackable on the right (LLM-as-judge, learned reward model), with the guiding principle: prefer the leftmost verifier the task allows.">
+<defs>
+  <linearGradient id="vvs-axis-grad" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="var(--accent,#2563eb)"/>
+    <stop offset="100%" stop-color="var(--warn,#d97706)"/>
+  </linearGradient>
+  <marker id="vvs-arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+    <path d="M0 1 L11 6 L0 11 z" fill="url(#vvs-axis-grad)"/>
+  </marker>
+</defs>
+<style>
+  #fig-rlvr-verifier-spectrum text { fill: var(--ink-soft, #374151); }
+  #fig-rlvr-verifier-spectrum .lbl-bold { font: 700 13px var(--sans,sans-serif); }
+  #fig-rlvr-verifier-spectrum .lbl-sm { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-rlvr-verifier-spectrum .node-label { font: 700 12px var(--sans,sans-serif); }
+  #fig-rlvr-verifier-spectrum .example-text { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-rlvr-verifier-spectrum .caption { font: italic 12px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-rlvr-verifier-spectrum .end-label { font: 700 14px var(--sans,sans-serif); }
+</style>
+
+
+<rect x="70" y="145" width="780" height="14" rx="7"
+      fill="url(#vvs-axis-grad)" opacity="0.85"/>
+
+<line x1="845" y1="152" x2="855" y2="152" stroke="url(#vvs-axis-grad)" stroke-width="2" marker-end="url(#vvs-arrow)"/>
+
+
+<text x="70" y="58" text-anchor="start" class="end-label" fill="var(--accent,#2563eb)">MOST EXACT</text>
+<text x="70" y="74" text-anchor="start" class="lbl-sm">least hackable,</text>
+<text x="70" y="88" text-anchor="start" class="lbl-sm">narrowest</text>
+
+
+<text x="860" y="58" text-anchor="end" class="end-label" fill="var(--warn,#d97706)">MOST GENERAL</text>
+<text x="860" y="74" text-anchor="end" class="lbl-sm">most hackable,</text>
+<text x="860" y="88" text-anchor="end" class="lbl-sm">broadest</text>
+
+
+
+<circle cx="185" cy="152" r="7" fill="var(--accent,#2563eb)" stroke="var(--surface,#fff)" stroke-width="2"/>
+
+<line x1="185" y1="145" x2="185" y2="115" stroke="var(--accent,#2563eb)" stroke-width="1.5" stroke-dasharray="3 2"/>
+
+<rect x="105" y="96" width="160" height="26" rx="5"
+      fill="var(--surface,#f0f4ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+<text x="185" y="113" text-anchor="middle" class="node-label" fill="var(--accent,#2563eb)">symbolic / exact-match</text>
+
+<line x1="185" y1="159" x2="185" y2="185" stroke="var(--accent,#2563eb)" stroke-width="1.5" stroke-dasharray="3 2"/>
+
+<text x="185" y="199" text-anchor="middle" class="example-text">math, logic</text>
+<text x="185" y="213" text-anchor="middle" class="example-text">exact extraction</text>
+
+
+<circle cx="395" cy="152" r="7" fill="var(--accent,#2563eb)" stroke="var(--surface,#fff)" stroke-width="2"/>
+<line x1="395" y1="145" x2="395" y2="115" stroke="var(--accent,#2563eb)" stroke-width="1.5" stroke-dasharray="3 2"/>
+<rect x="330" y="96" width="130" height="26" rx="5"
+      fill="var(--surface,#f0f4ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+<text x="395" y="113" text-anchor="middle" class="node-label" fill="var(--accent,#2563eb)">code execution</text>
+<line x1="395" y1="159" x2="395" y2="185" stroke="var(--accent,#2563eb)" stroke-width="1.5" stroke-dasharray="3 2"/>
+<text x="395" y="199" text-anchor="middle" class="example-text">unit tests</text>
+
+
+<circle cx="615" cy="152" r="7" fill="var(--warn,#d97706)" stroke="var(--surface,#fff)" stroke-width="2"/>
+<line x1="615" y1="145" x2="615" y2="115" stroke="var(--warn,#d97706)" stroke-width="1.5" stroke-dasharray="3 2"/>
+<rect x="550" y="96" width="130" height="26" rx="5"
+      fill="var(--surface,#fff8ed)" stroke="var(--warn,#d97706)" stroke-width="1.5"/>
+<text x="615" y="113" text-anchor="middle" class="node-label" fill="var(--warn,#d97706)">LLM-as-judge</text>
+<line x1="615" y1="159" x2="615" y2="185" stroke="var(--warn,#d97706)" stroke-width="1.5" stroke-dasharray="3 2"/>
+<text x="615" y="199" text-anchor="middle" class="example-text">entailment,</text>
+<text x="615" y="213" text-anchor="middle" class="example-text">style checks</text>
+
+
+<circle cx="810" cy="152" r="7" fill="var(--warn,#d97706)" stroke="var(--surface,#fff)" stroke-width="2"/>
+<line x1="810" y1="145" x2="810" y2="115" stroke="var(--warn,#d97706)" stroke-width="1.5" stroke-dasharray="3 2"/>
+<rect x="725" y="96" width="170" height="26" rx="5"
+      fill="var(--surface,#fff8ed)" stroke="var(--warn,#d97706)" stroke-width="1.5"/>
+<text x="810" y="113" text-anchor="middle" class="node-label" fill="var(--warn,#d97706)">learned reward model</text>
+<line x1="810" y1="159" x2="810" y2="185" stroke="var(--warn,#d97706)" stroke-width="1.5" stroke-dasharray="3 2"/>
+<text x="810" y="199" text-anchor="middle" class="example-text">helpfulness,</text>
+<text x="810" y="213" text-anchor="middle" class="example-text">safety, tone</text>
+
+
+<text x="450" y="330" text-anchor="middle" class="caption">Prefer the leftmost verifier the task allows; fall right only as needed.</text>
+</svg>
+<figcaption><b>The verifier spectrum: from exact-but-narrow to general-but-hackable.</b> Symbolic and execution-based verifiers (left) are deterministic and unhackable in the statistical sense; learned reward models (right) are flexible but subject to Goodhart drift. The RLVR principle is to occupy the leftmost position the task permits.</figcaption>
+</figure>
+
+<h2 id="reward-hacking-in-rlvr-its-not-gone-it-moved">Reward hacking in RLVR: it&rsquo;s not gone, it moved<a class="headerlink" href="#reward-hacking-in-rlvr-its-not-gone-it-moved" title="Permanent link">¶</a></h2>
+<p>A crucial nuance, and a favorite interview trap: people say verifiable rewards &ldquo;can&rsquo;t be hacked.&rdquo; That is <strong>false</strong> — what&rsquo;s true is that they can&rsquo;t be hacked the <em>statistical</em> way (the way a learned RM drifts off-distribution). RLVR rewards get hacked the <em>engineering</em> way: the model finds bugs in your verifier or sandbox. Real, observed RLVR hacks:</p>
+<ul>
+<li><strong>Test leakage / hard-coding.</strong> If the test inputs leak into the model&rsquo;s context (in the prompt, via a filesystem read, or because the harness is sloppy), the model hard-codes outputs: <code>if input == "5\n3": print("8")</code>. Defense: hidden tests, no filesystem/network in the sandbox, and <em>randomized</em> / held-out test inputs.</li>
+<li><strong>Verifier parsing exploits.</strong> If the answer extractor is naive, the model learns to emit strings that <em>parse</em> as correct without solving — e.g. dumping many <code>\boxed{}</code> candidates hoping one matches, or exploiting a regex. Defense: take the <em>last</em> boxed answer only, penalize multiple final answers, and fuzz-test your extractor against adversarial responses.</li>
+<li><strong>Sandbox escapes / resource abuse.</strong> <code>os.system</code>, <code>eval</code> of attacker-controlled strings, fork-bombs to crash the grader (so it returns a default), or <code>sys.setrecursionlimit</code> tricks. Defense: real isolation (container/microVM), strict rlimits, treat a crashed grader as reward <strong>0</strong>, never as &ldquo;skip.&rdquo;</li>
+<li><strong>Format farming.</strong> Covered above: if format/length bonuses are too large, the model optimizes them instead of correctness. Defense: keep shaping rewards small and <em>contingent</em> on attempting the task.</li>
+<li><strong>Length / &ldquo;thinking&rdquo; inflation.</strong> Partly a genuine emergent behavior, partly a <a href="../05-posttraining-alignment/08-grpo-rloo.html">loss bias</a> and partly the model padding to look like it is reasoning. Defense: the Dr. GRPO/token-level fixes, plus capping or mildly penalizing over-budget length.</li>
+</ul>
+<p>The mental model: <strong>RLVR converts statistical reward-hacking into software security.</strong> Your verifier and sandbox are now an <em>adversarial</em> interface — the policy is a relentless fuzzer that will execute your grader millions of times looking for the cheapest path to reward. Threat-model them as you would a public API taking untrusted input. The full taxonomy is in <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A teammate claims &ldquo;RLVR can&rsquo;t suffer reward hacking because the reward is ground truth.&rdquo; Is that right? Where exactly does the hacking go, and how do you defend?</p>
+<p><strong>A:</strong> It&rsquo;s half right. RLVR eliminates the <em>statistical</em> reward-hacking that plagues learned reward models — the kind where a policy drifts to a region where the learned reward <span class="arithmatex">\(r_\phi\)</span> disagrees with true human preference (Goodhart / over-optimization). A correctness checker doesn&rsquo;t drift, so you can optimize against it as hard as you like and the policy just gets <em>more correct</em> on the narrow metric. <strong>But</strong> the hacking moves from statistics to software: the policy becomes an adversary that fuzzes your verifier and sandbox. Observed exploits include hard-coding test outputs when tests leak, emitting many <code>\boxed{}</code> candidates to game a weak answer-extractor, fork-bombing or crashing the grader so it returns a default pass, and farming oversized format/length bonuses. Defenses are <em>engineering</em>, not statistics: hide and randomize tests; sandbox code execution with real isolation (container/microVM) plus strict CPU/memory/time rlimits, no network, no host FS; treat a crashed grader as reward 0; parse answers robustly (take the last boxed answer, penalize multiple finals, fuzz-test the extractor); and keep shaping rewards small and contingent on attempting the task. A second, subtler failure is the <em>verifier false-negative</em>: a buggy checker that marks correct answers wrong, which actively poisons training — so log and audit the verifier&rsquo;s false-negative rate as a first-class metric. Net: RLVR doesn&rsquo;t remove reward hacking, it <em>converts it into application security</em>.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Why does pure correctness reward (R1-Zero) cause long chain-of-thought to <em>emerge</em>, and what&rsquo;s the one precondition without which it fails?</p>
+<p><strong>A:</strong> Because longer reasoning <em>correlates with reaching the right answer</em> on hard problems, and correctness is the only thing rewarded. Under a group-relative optimizer like GRPO, the trajectories that solved the problem get positive advantage; empirically those winners are the ones that spent extra tokens checking intermediate steps, trying alternative approaches, and self-verifying. The gradient therefore up-weights &ldquo;spend more compute reasoning,&rdquo; and over thousands of steps this compounds into long CoT, self-verification, backtracking, and the &ldquo;aha moment&rdquo; — none of it demonstrated, all of it discovered as the cheapest path to higher correctness. The non-negotiable precondition is that the base model must <em>sometimes succeed</em>: the group of <span class="arithmatex">\(G\)</span> samples needs both successes and failures to produce a nonzero advantage. If pass@G <span class="arithmatex">\(\approx 0\)</span> (problems too hard) or <span class="arithmatex">\(\approx 1\)</span> (too easy), the group is &ldquo;dead&rdquo; — zero advantage, no gradient, no learning. That&rsquo;s why R1-Zero needs a strong base model and a difficulty-calibrated (curriculum) prompt set, and why the same recipe on a weak base with very hard problems produces nothing.</p>
+</div>
+<h2 id="putting-it-together-the-reasoning-recipe">Putting it together: the reasoning recipe<a class="headerlink" href="#putting-it-together-the-reasoning-recipe" title="Permanent link">¶</a></h2>
+<p>We can now state the full RLVR reasoning recipe as a checklist an engineer would actually follow. The optimizer details live in <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>; this is the <em>data-and-reward</em> recipe that wraps it.</p>
+<figure class="viz" id="fig-rlvr-reasoning-recipe-pipeline">
+<svg viewBox="0 0 820 980" role="img" aria-label="The RLVR reasoning recipe: a six-stage numbered pipeline from Stage 0 (BASE) through Stage 5 (BANK and BROADEN), showing the data-and-reward recipe an engineer would follow to train a reasoning model.">
+<defs>
+  <marker id="rr-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L10 5 L0 9 z" fill="var(--border-2,#9ca3af)"/>
+  </marker>
+</defs>
+<style>
+  #fig-rlvr-reasoning-recipe-pipeline text { fill: var(--ink-soft, #374151); }
+  #fig-rlvr-reasoning-recipe-pipeline .title { font: 700 16px var(--sans,sans-serif); letter-spacing: 0.05em; }
+  #fig-rlvr-reasoning-recipe-pipeline .stage-name { font: 700 13px var(--sans,sans-serif); }
+  #fig-rlvr-reasoning-recipe-pipeline .body { font: 400 11.5px var(--sans,sans-serif); }
+  #fig-rlvr-reasoning-recipe-pipeline .body-muted { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-rlvr-reasoning-recipe-pipeline .accent-dominant { font: 700 12.5px var(--sans,sans-serif); fill: var(--accent,#2563eb); }
+  #fig-rlvr-reasoning-recipe-pipeline .badge-num { font: 700 15px var(--sans,sans-serif); fill: #ffffff; }
+  #fig-rlvr-reasoning-recipe-pipeline .verifier-label { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-rlvr-reasoning-recipe-pipeline .verifier-arrow { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+</style>
+
+
+<rect x="50" y="12" width="720" height="36" rx="6" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#9ca3af)" stroke-width="1"/>
+<text x="410" y="35" text-anchor="middle" class="title" fill="var(--ink-soft,#374151)">THE RLVR REASONING RECIPE</text>
+
+
+
+<line x1="410" y1="186" x2="410" y2="204" stroke="var(--border-2,#9ca3af)" stroke-width="2" marker-end="url(#rr-arrow)"/>
+
+<line x1="410" y1="338" x2="410" y2="356" stroke="var(--border-2,#9ca3af)" stroke-width="2" marker-end="url(#rr-arrow)"/>
+
+
+<rect x="50" y="62" width="720" height="120" rx="8"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+
+<circle cx="92" cy="122" r="18" fill="var(--accent,#2563eb)"/>
+<text x="92" y="128" text-anchor="middle" class="badge-num">0</text>
+
+<text x="120" y="112" class="stage-name">BASE</text>
+
+<text x="120" y="132" class="body">Start from a strong base model (latent math/code ability is the fuel).</text>
+<text x="120" y="150" class="body">Optional small cold-start SFT on a few thousand clean long-CoT examples</text>
+<text x="120" y="167" class="body">to fix readability and stabilize early RL.</text>
+
+
+<rect x="50" y="208" width="720" height="128" rx="8"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+
+<circle cx="92" cy="272" r="18" fill="var(--accent,#2563eb)"/>
+<text x="92" y="278" text-anchor="middle" class="badge-num">1</text>
+
+<text x="120" y="232" class="stage-name">DATA</text>
+
+<text x="120" y="252" class="body">Assemble prompts with KNOWN, CHECKABLE answers:</text>
+
+<text x="136" y="272" class="body">math with gold final answers</text>
+<text x="366" y="272" class="body">-&gt;  symbolic/numeric verifier</text>
+<text x="136" y="289" class="body">code with hidden unit tests</text>
+<text x="366" y="289" class="body">-&gt;  sandboxed execution</text>
+<text x="136" y="306" class="body">constraint/format tasks</text>
+<text x="366" y="306" class="body">-&gt;  programmatic checks</text>
+
+<text x="120" y="326" class="body-muted">Calibrate difficulty so pass@G is mixed (~20-80%), not 0 or 1.</text>
+
+
+<rect x="50" y="360" width="720" height="142" rx="8"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+
+<circle cx="92" cy="431" r="18" fill="var(--accent,#2563eb)"/>
+<text x="92" y="437" text-anchor="middle" class="badge-num">2</text>
+
+<text x="120" y="384" class="stage-name">REWARD</text>
+
+<text x="120" y="404" class="body">total  =  </text>
+<text x="176" y="404" class="accent-dominant">accuracy</text>
+<text x="263" y="404" class="body-muted">  (dominant, exact: the verifier)</text>
+
+<text x="136" y="424" class="body-muted">+  small format bonus</text>
+<text x="307" y="424" class="body-muted">  (contingent on a parseable attempt)</text>
+
+<text x="136" y="444" class="body-muted">+  small language/length guard</text>
+<text x="380" y="444" class="body-muted">  (optional)</text>
+
+<text x="120" y="466" class="body-muted">Robust verifier (normalize, do not string-match);</text>
+<text x="120" y="484" class="body-muted">airtight sandbox (isolation + rlimits + no net/FS).</text>
+
+
+<line x1="410" y1="506" x2="410" y2="524" stroke="var(--border-2,#9ca3af)" stroke-width="2" marker-end="url(#rr-arrow)"/>
+
+
+<rect x="50" y="528" width="720" height="108" rx="8"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+
+<circle cx="92" cy="582" r="18" fill="var(--accent,#2563eb)"/>
+<text x="92" y="588" text-anchor="middle" class="badge-num">3</text>
+
+<text x="120" y="552" class="stage-name">RL</text>
+<text x="120" y="572" class="body">GRPO / RLOO with group-relative advantage (no reward model, no critic).</text>
+<text x="120" y="590" class="body">Token-level loss + clip-higher (DAPO); drop std-normalization (Dr. GRPO).</text>
+<text x="120" y="608" class="body">KL to ref often 0 for R1-Zero, &gt;0 when preserving an SFT persona.</text>
+
+
+<line x1="410" y1="640" x2="410" y2="658" stroke="var(--border-2,#9ca3af)" stroke-width="2" marker-end="url(#rr-arrow)"/>
+
+
+<rect x="50" y="662" width="720" height="110" rx="8"
+      fill="var(--surface,#f9fafb)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+
+<circle cx="92" cy="717" r="18" fill="var(--accent,#2563eb)"/>
+<text x="92" y="723" text-anchor="middle" class="badge-num">4</text>
+
+<text x="120" y="688" class="stage-name">MONITOR</text>
+<text x="120" y="708" class="body">Track: mean accuracy reward (NOT total), fraction of non-dead groups,</text>
+<text x="120" y="726" class="body">verifier false-negative rate, response length, entropy,</text>
+<text x="120" y="744" class="body">pass@1 vs pass@k on held-out eval.</text>
+
+
+<line x1="410" y1="776" x2="410" y2="794" stroke="var(--border-2,#9ca3af)" stroke-width="2" marker-end="url(#rr-arrow)"/>
+
+
+<rect x="50" y="798" width="720" height="130" rx="8"
+      fill="var(--surface,#fffbf5)" stroke="var(--warn,#d97706)" stroke-width="1.8"/>
+
+<circle cx="92" cy="863" r="18" fill="var(--warn,#d97706)"/>
+<text x="92" y="869" text-anchor="middle" class="badge-num">5</text>
+
+<text x="120" y="822" class="stage-name" fill="var(--warn,#d97706)">BANK &amp; BROADEN</text>
+<text x="120" y="842" class="body">Rejection-sampling SFT on the RL model's best outputs to lock in gains;</text>
+<text x="120" y="860" class="body">add non-verifiable (chat/safety) data;</text>
+<text x="120" y="878" class="body-muted">then a final mixed-reward RL pass (verifier + reward model)</text>
+<text x="120" y="896" class="body-muted">for a deployable general model.</text>
+
+
+<line x1="50" y1="942" x2="770" y2="942" stroke="var(--border-2,#9ca3af)" stroke-width="0.8" opacity="0.5"/>
+<text x="410" y="960" text-anchor="middle" style="font: italic 11px var(--sans,sans-serif); fill: var(--muted,#6b7280);">Stages 0-4 use pure verifiable rewards; Stage 5 reintroduces non-verifiable data and a learned RM.</text>
+</svg>
+<figcaption><b>The RLVR reasoning recipe: six stages from base model to deployable reasoner.</b> Stages 0-4 form the pure RLVR core — verifiable rewards only, critic-free RL, and disciplined monitoring; Stage 5 banks the gains via rejection-sampling SFT and broadens to general tasks by blending in non-verifiable data and a learned reward model.</figcaption>
+</figure>
+
+<p>The deepest takeaway is a shift in worldview. For a decade, the bottleneck of supervised and preference learning was <strong>labeled data</strong>: you needed humans to demonstrate or judge. RLVR moves the bottleneck to <strong>problems with checkable answers</strong> — which we can <em>generate, mine, and synthesize</em> far more cheaply than we can collect human judgments, and which give an <em>exact</em> signal instead of a noisy one. That is why a one-line idea — &ldquo;reward = did the checker pass&rdquo; — reorganized the entire post-training stack in two years.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>RLVR replaces the learned reward model with a program.</strong> For tasks with checkable answers (math equivalence, code unit-tests, exact/constraint match) the reward is <span class="arithmatex">\(V(q,o)\in\{0,1\}\)</span> computed by a deterministic verifier — no preference data, no reward network, no critic. The optimizer is critic-free RL (GRPO/RLOO); RLVR only changes <em>where the reward comes from</em>.</li>
+<li><strong>The big win is exactness, not just cost.</strong> A correctness checker <em>is</em> ground truth for &ldquo;got it right,&rdquo; so the policy can be optimized against it arbitrarily hard without statistical <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">over-optimization</a>. The bottleneck moves from &ldquo;human labels&rdquo; to &ldquo;problems with checkable answers,&rdquo; which are cheap to generate.</li>
+<li><strong>R1-Zero phenomenon:</strong> pure correctness reward on a <em>base</em> model spontaneously grows long chain-of-thought, self-verification, backtracking, and the &ldquo;aha moment&rdquo; — no reasoning demonstrations. Mechanism: longer reasoning correlates with correctness, so the group-relative gradient up-weights &ldquo;spend more compute,&rdquo; and it compounds.</li>
+<li><strong>The precondition is a base model that sometimes succeeds.</strong> Emergence needs mixed-outcome groups (pass@G neither 0 nor 1); too-hard or too-easy prompts give zero advantage (&ldquo;dead groups&rdquo;) and no learning. Calibrate difficulty / use curriculum.</li>
+<li><strong>Verifiers must normalize, not string-match.</strong> A real math checker extracts the final answer and compares with numeric/symbolic equivalence (<span class="arithmatex">\(\frac12 = 0.5 = 0.50\)</span>). A weak verifier&rsquo;s <em>false negatives</em> poison training — audit them as a first-class metric.</li>
+<li><strong>Code verifiers require true sandboxing.</strong> Model-generated code is adversarial: isolate it (container/microVM), apply strict CPU/memory/time rlimits, block network and host filesystem, hide the tests, and treat a crashed grader as reward 0. Use graded (fraction-of-tests) reward to densify the signal.</li>
+<li><strong>Reward hacking isn&rsquo;t eliminated — it moves from statistics to software.</strong> The policy fuzzes your verifier/sandbox: test hard-coding, parser exploits, sandbox escapes, format/length farming. Threat-model your grader like a public API taking untrusted input.</li>
+<li><strong>From narrow to general:</strong> reasoning learned on verifiable math/code <em>transfers</em> to untrained domains; mix verifier + reward-model rewards in one run for deployable models; prefer the most exact verifier a task allows (symbolic &gt; execution &gt; LLM-judge &gt; learned RM).</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>RLVR is now the dominant post-training paradigm for reasoning: every frontier reasoning model (OpenAI o-series, DeepSeek-R1, Qwen-QwQ) uses verifiable-reward RL, and open-source tooling (veRL, OpenRLHF, TRL) makes the full recipe reproducible at scale. Active research in 2025–2026 focuses on whether RLVR expands the base model&rsquo;s reasoning frontier or primarily elicits latent capability, on unbiased group-relative objectives, and on extending verifiable rewards to new domains.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2203.14465">Zelikman et al., <em>STaR: Bootstrapping Reasoning With Reasoning</em> (2022)</a> — the self-taught-reasoner precursor: iteratively keep rationales that lead to correct answers, enabling models to improve their own reasoning without large annotated datasets.</li>
+<li><a href="https://arxiv.org/abs/2411.15124">Lambert et al. (AI2), <em>Tülu 3: Pushing Frontiers in Open Language Model Post-Training</em> (2024)</a> — coins and operationalizes &ldquo;RLVR&rdquo; across math, code, and constraint-following tasks; the first paper to name and systematize the approach.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI, <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em> (2025)</a> — demonstrates R1-Zero: pure correctness-RL on a base model spontaneously produces long CoT, self-verification, and the &ldquo;aha moment&rdquo;; open-sources the full multi-stage recipe.</li>
+<li><a href="https://arxiv.org/abs/2503.14476">Yu et al. (ByteDance/Tsinghua), <em>DAPO: An Open-Source LLM Reinforcement Learning System at Scale</em> (2025)</a> — introduces Decoupled Clip and Dynamic Sampling Policy Optimization; fixes length-bias and clip asymmetry in GRPO; scores 50 on AIME 2024 with Qwen2.5-32B.</li>
+<li><a href="https://arxiv.org/abs/2504.13837">Yue et al., <em>Does Reinforcement Learning Really Incentivize Reasoning Capacity in LLMs Beyond the Base Model?</em> (2025)</a> — the pass@k critique: for large k, base models match or exceed RLVR models, suggesting RLVR primarily concentrates existing latent ability rather than expanding the frontier.</li>
+<li><a href="https://arxiv.org/abs/2506.14245">Wen et al., <em>Reinforcement Learning with Verifiable Rewards Implicitly Incentivizes Correct Reasoning in Base LLMs</em> (2025)</a> — pushes back with CoT-Pass@K analysis; shows RLVR does extend the reasoning boundary for math and code under the right evaluation.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/volcengine/verl">volcengine/verl</a> — flexible, production-ready RL training library (GRPO, PPO, DAPO, DrGRPO, RLOO, PRIME); scales to 671B models; used by DAPO and dozens of derivative reasoning-model projects.</li>
+<li><a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF/OpenRLHF</a> — Ray + vLLM distributed RLHF/RLVR framework; supports PPO, GRPO, REINFORCE++, RLOO; used by HKUST to reproduce DeepSeek-R1-Zero on small models.</li>
+<li><a href="https://github.com/huggingface/trl">huggingface/trl</a> — HuggingFace&rsquo;s RL library with a first-class GRPOTrainer; the lowest-friction entry point for RLVR experiments on any HF-compatible model.</li>
+<li><a href="https://github.com/BytedTsinghua-SIA/DAPO">BytedTsinghua-SIA/DAPO</a> — fully open-sourced DAPO system: algorithm, training code (built on veRL), DAPO-Math-17k dataset, and reproducible AIME 2024 scripts.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/blog/NormalUhr/deepseek-r1-explained">Zhang, <em>From Zero to Reasoning Hero: How DeepSeek-R1 Leverages RL</em> (HuggingFace Blog, 2025)</a> — clear technical walkthrough of R1-Zero and R1, including GRPO math and the emergence of chain-of-thought from pure correctness rewards.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>DeepSeek-AI, <strong>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</strong> (2025) — R1-Zero, the emergent long-CoT / &ldquo;aha moment&rdquo; phenomenon, and the full multi-stage reasoning recipe.</li>
+<li>Shao, Wang, Zhu, et al., <strong>DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models</strong> (2024) — introduces GRPO and rule-based math rewards.</li>
+<li>Lambert, Morrison, et al. (Allen Institute for AI), <strong>Tülu 3: Pushing Frontiers in Open Language Model Post-Training</strong> (2024) — coins and operationalizes &ldquo;RL with Verifiable Rewards (RLVR)&rdquo; across math, code, and constraint-following.</li>
+<li>Zelikman, Wu, Mu, Goodman, <strong>STaR: Bootstrapping Reasoning With Reasoning</strong> (2022) — the self-taught-reasoner precursor: keep rationales that lead to correct answers.</li>
+<li>Hendrycks, Burns, et al., <strong>Measuring Mathematical Problem Solving With the MATH Dataset</strong> (2021) — the MATH benchmark and answer-checking tooling that underpins math verifiers.</li>
+<li>Chen, Tworek, et al. (OpenAI), <strong>Evaluating Large Language Models Trained on Code</strong> (HumanEval, 2021) — unit-test-based code evaluation, the model for execution rewards.</li>
+<li>Lightman, Kosaraju, et al. (OpenAI), <strong>Let&rsquo;s Verify Step by Step</strong> (2023) — process reward models and step-level verification, the contrast to outcome-only RLVR.</li>
+<li>Yue, et al., <strong>Does Reinforcement Learning Really Incentivize Reasoning Capacity Beyond the Base Model?</strong> (2025) — the pass@k critique arguing RLVR mainly <em>elicits</em> latent base-model ability.</li>
+<li>The <strong><code>math-verify</code></strong> library and <strong>veRL / TRL</strong> repositories — production verifiers and RLVR training loops; see <a href="../06-rl-infra/03-trl.html">TRL: HuggingFace&rsquo;s RL Library</a> and <a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="08-grpo-rloo.html"><span class="pn-label">← Previous</span><span class="pn-title">GRPO, RLOO &amp; Critic-Free RL</span></a>
+<a class="next" href="10-reasoning-test-time-compute.html"><span class="pn-label">Next →</span><span class="pn-title">Reasoning, Chain-of-Thought &amp; Test-Time Compute</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#what-makes-a-reward-verifiable">What makes a reward &amp;ldquo;verifiable&amp;rdquo;</a></li>
+<li class="toc-l3"><a href="#the-defining-property">The defining property</a></li>
+<li class="toc-l3"><a href="#why-verifiable-rewards-change-the-game">Why verifiable rewards change the game</a></li>
+<li class="toc-l2"><a href="#the-r1-zero-phenomenon-reasoning-that-emerges-from-correctness-alone">The R1-Zero phenomenon: reasoning that emerges from correctness alone</a></li>
+<li class="toc-l3"><a href="#the-setup">The setup</a></li>
+<li class="toc-l3"><a href="#what-emerges">What emerges</a></li>
+<li class="toc-l3"><a href="#why-correctness-pressure-causes-this-the-mechanism">Why correctness pressure causes this — the mechanism</a></li>
+<li class="toc-l2"><a href="#building-real-verifiers-i-math-equivalence">Building real verifiers I: math equivalence</a></li>
+<li class="toc-l2"><a href="#building-real-verifiers-ii-sandboxed-code-execution">Building real verifiers II: sandboxed code execution</a></li>
+<li class="toc-l2"><a href="#a-complete-rlvr-reward-function-and-a-worked-example">A complete RLVR reward function and a worked example</a></li>
+<li class="toc-l2"><a href="#from-narrow-rlvr-to-general-reasoning">From narrow RLVR to general reasoning</a></li>
+<li class="toc-l3"><a href="#1-transfer-reasoning-learned-on-mathcode-generalizes">1. Transfer: reasoning learned on math/code generalizes</a></li>
+<li class="toc-l3"><a href="#2-mixing-verifiable-and-non-verifiable-rewards">2. Mixing verifiable and non-verifiable rewards</a></li>
+<li class="toc-l3"><a href="#3-process-rewards-and-self-verification-when-outcomes-arent-enough">3. Process rewards and self-verification (when outcomes aren&amp;rsquo;t enough)</a></li>
+<li class="toc-l3"><a href="#4-generative-model-based-verifiers-for-fuzzy-domains">4. Generative / model-based verifiers for fuzzy domains</a></li>
+<li class="toc-l2"><a href="#reward-hacking-in-rlvr-its-not-gone-it-moved">Reward hacking in RLVR: it&amp;rsquo;s not gone, it moved</a></li>
+<li class="toc-l2"><a href="#putting-it-together-the-reasoning-recipe">Putting it together: the reasoning recipe</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

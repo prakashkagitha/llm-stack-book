@@ -1,0 +1,1767 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response — The LLM Stack</title>
+<meta name="description" content="SRE adapted to LLMs: SLIs/SLOs for probabilistic systems (latency tails, availability, quality SLOs), a four-root-cause diagnosis tree (model/provider regressio">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="active" href="08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XII — Production, Systems &amp; MLOps</div>
+<h1 id="128-reliability-engineering-for-llm-systems-slos-incident-response">12.8 Reliability Engineering for LLM Systems: SLOs &amp; Incident Response<a class="headerlink" href="#128-reliability-engineering-for-llm-systems-slos-incident-response" title="Permanent link">¶</a></h1>
+<p>Classical site reliability engineering (SRE) was designed for systems with clear binary outcomes: a request either succeeds or it fails. Large language model (LLM) systems break this assumption in at least three important ways. First, a response can be syntactically valid but semantically wrong — the request &ldquo;succeeded&rdquo; but the user got garbage. Second, quality degrades continuously rather than discretely; there is no connection reset, no 500 status code, no stack trace. Third, correctness depends on the entire pipeline — the prompt template, retrieval corpus, model version, and sampling parameters — so the usual &ldquo;was the upstream service up?&rdquo; diagnosis tree is insufficient.</p>
+<p>This chapter adapts SRE methodology to these realities. We cover how to define service level indicators (SLIs) and objectives (SLOs) for probabilistic text systems, how to build a diagnosis tree for LLM-specific failure modes, how to execute prompt and model rollbacks safely, how to write trace-attached postmortems, and how to design graceful degradation and multi-provider failover. By the end you will have concrete runbooks you can paste into an incident wiki.</p>
+<p>This chapter sits at the intersection of several others. Observability primitives (traces, spans, structured logs) are covered in <a href="../12-production-mlops/02-observability-llmops.html">Observability, Logging &amp; LLMOps</a>. How to set up online A/B testing and guardrail metrics is in <a href="../12-production-mlops/07-online-eval-ab-testing.html">Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a>. Cost-based routing decisions belong in <a href="../12-production-mlops/03-caching-routing-cost.html">Caching, Routing &amp; Cost Control in Production</a>.</p>
+<hr />
+<h2 id="slis-and-slos-for-probabilistic-systems">SLIs and SLOs for Probabilistic Systems<a class="headerlink" href="#slis-and-slos-for-probabilistic-systems" title="Permanent link">¶</a></h2>
+<h3 id="the-problem-with-binary-success-rates">The problem with binary success rates<a class="headerlink" href="#the-problem-with-binary-success-rates" title="Permanent link">¶</a></h3>
+<p>In a traditional API, SLI = (successful requests) / (total requests). For an LLM API this ratio is deceptive: every response that comes back with HTTP 200 counts as a success, even if the model hallucinated a phone number, switched language mid-paragraph, or returned a blank string. A system could maintain 99.9% HTTP success while delivering value only 70% of the time.</p>
+<p>We need a richer SLI vocabulary that covers three dimensions:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>What it measures</th>
+<th>Typical SLO target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Availability</strong></td>
+<td>Fraction of requests that receive any response</td>
+<td>99.9% (43 min/month downtime budget)</td>
+</tr>
+<tr>
+<td><strong>Latency</strong></td>
+<td>Time-to-first-token (TTFT) and end-to-end (E2E) at tail percentiles</td>
+<td>TTFT p99 &lt; 1 s; E2E p99 &lt; 10 s</td>
+</tr>
+<tr>
+<td><strong>Quality</strong></td>
+<td>Fraction of responses meeting a quality bar (automated or sampled judge)</td>
+<td>Quality SLO ≥ 95% on canary eval suite</td>
+</tr>
+</tbody>
+</table>
+<h3 id="defining-quality-slos-concretely">Defining quality SLOs concretely<a class="headerlink" href="#defining-quality-slos-concretely" title="Permanent link">¶</a></h3>
+<p>A <em>quality SLI</em> requires an automated judge. The judge can be a lightweight classifier trained on your labeled data, an LLM-as-a-judge rubric (see <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a>), or a suite of regex/heuristic checks for structural properties (valid JSON output, correct language, non-empty, within length bounds).</p>
+<p>Define the SLO on a <em>sliding window</em>:</p>
+<div class="arithmatex">\[
+\text{Quality SLO window} = \frac{\text{judged-good responses in last } W \text{ minutes}}{\text{total judged responses in last } W \text{ minutes}} \geq \theta
+\]</div>
+<p>Choose <span class="arithmatex">\(W\)</span> and <span class="arithmatex">\(\theta\)</span> based on traffic volume. With 10,000 requests per hour a 30-minute window gives you 5,000 samples, enough to detect a 2-percentage-point drop at high confidence. With 100 requests per hour, use a 6-hour window and supplement with a daily offline eval suite.</p>
+<h3 id="latency-tail-budgets">Latency tail budgets<a class="headerlink" href="#latency-tail-budgets" title="Permanent link">¶</a></h3>
+<p>LLM latency is bimodal: most responses are fast, but long-input or long-output requests hit the tail hard. The p99 latency is often 5–10× the p50, unlike typical web APIs where the ratio is 2–3×. SLOs should track:</p>
+<ul>
+<li><strong>TTFT p99</strong> — the latency until the first token appears in the client. This is the &ldquo;loading&rdquo; experience. Budget: on the order of 0.5–2 s for interactive use cases.</li>
+<li><strong>Tokens-per-second (TPS) p50</strong> — decode speed during streaming.</li>
+<li><strong>Total response latency p99</strong> — relevant for non-streaming callers.</li>
+<li><strong>Timeout rate</strong> — fraction of requests exceeding a hard wall-clock limit.</li>
+</ul>
+<p>Track these per route, not just globally. A summarization endpoint with 4,096-token outputs has very different latency characteristics than a classification endpoint returning a single token.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: error budget arithmetic</p>
+<p>Suppose your availability SLO is 99.9% over a 30-day window.</p>
+<ul>
+<li>Total minutes in 30 days: <span class="arithmatex">\(30 \times 24 \times 60 = 43{,}200\)</span> minutes.</li>
+<li>Allowed downtime: <span class="arithmatex">\(43{,}200 \times 0.001 = 43.2\)</span> minutes.</li>
+<li>Your quality SLO is 95% (judged-good) on a per-hour window.</li>
+<li>With 2,000 requests/hour, a quality SLO burn of 1× means <span class="arithmatex">\(2{,}000 \times 0.05 = 100\)</span> bad responses per hour.</li>
+<li>A provider regression that drops quality to 80% burns <span class="arithmatex">\(2{,}000 \times (0.95 - 0.80) = 300\)</span> extra bad responses per hour, or <span class="arithmatex">\(300/100 = 3\times\)</span> your error budget rate.</li>
+<li>At that rate, your 30-day quality error budget (assuming budget = 5% × total requests) is exhausted in <span class="arithmatex">\(30/3 = 10\)</span> days — a clear threshold to trigger incident escalation.</li>
+</ul>
+</div>
+<h3 id="the-gradual-silent-collapse-failure-mode">The &ldquo;gradual silent collapse&rdquo; failure mode<a class="headerlink" href="#the-gradual-silent-collapse-failure-mode" title="Permanent link">¶</a></h3>
+<p>The most dangerous LLM failure is one you do not notice for days. This happens when:</p>
+<ol>
+<li>A provider silently rolls out a new model version that scores slightly worse on your task.</li>
+<li>Prompt drift — someone edits a prompt template without a review and degrades quality by a few percent.</li>
+<li>Retrieval corpus staleness — documents age out and the RAG index starts returning off-topic chunks.</li>
+</ol>
+<p>None of these produce HTTP errors. Your latency dashboard looks green. Only a quality SLO with a short enough window catches them early.</p>
+<p><strong>Detection strategy:</strong> run a <em>canary eval</em> — a fixed set of 50–200 golden request/response pairs with automated scoring — every 15 minutes in production. Alert if the pass rate drops below the SLO threshold for two consecutive windows. The fixed golden set is immune to traffic distribution changes, giving you a stable signal.</p>
+<hr />
+<h2 id="a-four-root-cause-diagnosis-tree">A Four-Root-Cause Diagnosis Tree<a class="headerlink" href="#a-four-root-cause-diagnosis-tree" title="Permanent link">¶</a></h2>
+<p>When a quality or latency alert fires, you need a structured way to identify the cause before you call a war room. Here is a practical four-branch tree:</p>
+<figure class="viz" id="fig-reliability-diagnosis-tree">
+<svg viewBox="0 0 920 560" role="img" aria-label="The four-root-cause diagnosis tree: a single quality or latency alert fans out into four parallel branches — provider regression, prompt change regression, retrieval drift, and upstream data regression — that must all be checked simultaneously.">
+<defs>
+  <marker id="dt-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+  <marker id="dt-arrow-down" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M1 0 L5 9 L9 0 z" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+  <marker id="dt-arrow-yes" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M1 0 L5 9 L9 0 z" fill="var(--accent,#7c3aed)"/>
+  </marker>
+</defs>
+<style>
+  #fig-reliability-diagnosis-tree text { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-reliability-diagnosis-tree .root-lbl { font: 700 14px var(--sans,sans-serif); fill: #fff; }
+  #fig-reliability-diagnosis-tree .q-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-reliability-diagnosis-tree .yes-lbl { font: 700 11px var(--sans,sans-serif); fill: #fff; }
+  #fig-reliability-diagnosis-tree .res-lbl { font: 600 10.5px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-reliability-diagnosis-tree .cap { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-reliability-diagnosis-tree .branch-hdr { font: 700 10px var(--sans,sans-serif); fill: var(--accent,#7c3aed); }
+</style>
+
+
+<rect x="360" y="14" width="200" height="48" rx="10" fill="var(--accent,#7c3aed)" stroke="var(--accent,#7c3aed)" stroke-width="1.5"/>
+<text x="460" y="34" text-anchor="middle" class="root-lbl">Alert fires</text>
+<text x="460" y="51" text-anchor="middle" class="root-lbl" style="font-size:11px;font-weight:500">quality or latency SLO breach</text>
+
+
+<line x1="460" y1="62" x2="460" y2="108" stroke="var(--border-2,#94a3b8)" stroke-width="2"/>
+
+
+<line x1="120" y1="108" x2="800" y2="108" stroke="var(--border-2,#94a3b8)" stroke-width="2"/>
+
+
+<line x1="175" y1="108" x2="175" y2="138" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#dt-arrow-down)"/>
+<line x1="368" y1="108" x2="368" y2="138" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#dt-arrow-down)"/>
+<line x1="556" y1="108" x2="556" y2="138" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#dt-arrow-down)"/>
+<line x1="748" y1="108" x2="748" y2="138" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#dt-arrow-down)"/>
+
+
+
+<rect x="80" y="144" width="190" height="72" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="175" y="164" text-anchor="middle" class="branch-hdr">Branch 1</text>
+<text x="175" y="179" text-anchor="middle" class="q-lbl">Provider/model API</text>
+<text x="175" y="193" text-anchor="middle" class="q-lbl">returning errors or</text>
+<text x="175" y="207" text-anchor="middle" class="q-lbl">high latency?</text>
+
+<line x1="175" y1="216" x2="175" y2="248" stroke="var(--accent,#7c3aed)" stroke-width="1.5" marker-end="url(#dt-arrow-yes)"/>
+
+<rect x="141" y="252" width="68" height="26" rx="13" fill="var(--accent,#7c3aed)"/>
+<text x="175" y="269" text-anchor="middle" class="yes-lbl">Yes</text>
+
+<line x1="175" y1="278" x2="175" y2="308" stroke="var(--accent,#7c3aed)" stroke-width="1.5" marker-end="url(#dt-arrow-yes)"/>
+
+<rect x="80" y="312" width="190" height="64" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#7c3aed)" stroke-width="1.5"/>
+<text x="175" y="331" text-anchor="middle" class="res-lbl">Provider/model</text>
+<text x="175" y="345" text-anchor="middle" class="res-lbl">regression</text>
+<text x="175" y="362" text-anchor="middle" class="res-lbl" style="font-style:italic;font-size:9.5px">-&gt; Provider Outage Runbook</text>
+
+
+<rect x="273" y="144" width="190" height="72" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="368" y="164" text-anchor="middle" class="branch-hdr">Branch 2</text>
+<text x="368" y="179" text-anchor="middle" class="q-lbl">Did a prompt template</text>
+<text x="368" y="193" text-anchor="middle" class="q-lbl">change in the</text>
+<text x="368" y="207" text-anchor="middle" class="q-lbl">last 24 h?</text>
+<line x1="368" y1="216" x2="368" y2="248" stroke="var(--accent,#7c3aed)" stroke-width="1.5" marker-end="url(#dt-arrow-yes)"/>
+<rect x="334" y="252" width="68" height="26" rx="13" fill="var(--accent,#7c3aed)"/>
+<text x="368" y="269" text-anchor="middle" class="yes-lbl">Yes</text>
+<line x1="368" y1="278" x2="368" y2="308" stroke="var(--accent,#7c3aed)" stroke-width="1.5" marker-end="url(#dt-arrow-yes)"/>
+<rect x="273" y="312" width="190" height="64" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#7c3aed)" stroke-width="1.5"/>
+<text x="368" y="331" text-anchor="middle" class="res-lbl">Prompt change</text>
+<text x="368" y="345" text-anchor="middle" class="res-lbl">regression</text>
+<text x="368" y="362" text-anchor="middle" class="res-lbl" style="font-style:italic">-&gt; Prompt Rollback</text>
+
+
+<rect x="461" y="144" width="190" height="72" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="556" y="164" text-anchor="middle" class="branch-hdr">Branch 3</text>
+<text x="556" y="179" text-anchor="middle" class="q-lbl">Did retrieval quality</text>
+<text x="556" y="193" text-anchor="middle" class="q-lbl">metrics drop (hit rate,</text>
+<text x="556" y="207" text-anchor="middle" class="q-lbl">score distribution)?</text>
+<line x1="556" y1="216" x2="556" y2="248" stroke="var(--accent,#7c3aed)" stroke-width="1.5" marker-end="url(#dt-arrow-yes)"/>
+<rect x="522" y="252" width="68" height="26" rx="13" fill="var(--accent,#7c3aed)"/>
+<text x="556" y="269" text-anchor="middle" class="yes-lbl">Yes</text>
+<line x1="556" y1="278" x2="556" y2="308" stroke="var(--accent,#7c3aed)" stroke-width="1.5" marker-end="url(#dt-arrow-yes)"/>
+<rect x="461" y="312" width="190" height="64" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#7c3aed)" stroke-width="1.5"/>
+<text x="556" y="331" text-anchor="middle" class="res-lbl">Retrieval drift</text>
+<text x="556" y="345" text-anchor="middle" class="res-lbl">-&gt; Re-index / revert</text>
+<text x="556" y="362" text-anchor="middle" class="res-lbl" style="font-size:9.5px">corpus / expand reranker</text>
+
+
+<rect x="653" y="144" width="190" height="72" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="748" y="164" text-anchor="middle" class="branch-hdr">Branch 4</text>
+<text x="748" y="179" text-anchor="middle" class="q-lbl">Did upstream data or</text>
+<text x="748" y="193" text-anchor="middle" class="q-lbl">feature pipeline</text>
+<text x="748" y="207" text-anchor="middle" class="q-lbl">change?</text>
+<line x1="748" y1="216" x2="748" y2="248" stroke="var(--accent,#7c3aed)" stroke-width="1.5" marker-end="url(#dt-arrow-yes)"/>
+<rect x="714" y="252" width="68" height="26" rx="13" fill="var(--accent,#7c3aed)"/>
+<text x="748" y="269" text-anchor="middle" class="yes-lbl">Yes</text>
+<line x1="748" y1="278" x2="748" y2="308" stroke="var(--accent,#7c3aed)" stroke-width="1.5" marker-end="url(#dt-arrow-yes)"/>
+<rect x="653" y="312" width="190" height="64" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#7c3aed)" stroke-width="1.5"/>
+<text x="748" y="331" text-anchor="middle" class="res-lbl">Upstream data</text>
+<text x="748" y="345" text-anchor="middle" class="res-lbl">regression</text>
+<text x="748" y="362" text-anchor="middle" class="res-lbl" style="font-style:italic">-&gt; Revert / re-process</text>
+
+
+<rect x="200" y="400" width="520" height="34" rx="8" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2" stroke-dasharray="6 3"/>
+<text x="460" y="414" text-anchor="middle" style="font:600 11px var(--sans,sans-serif);fill:var(--accent,#7c3aed)">CHECK ALL FOUR IN PARALLEL</text>
+<text x="460" y="428" text-anchor="middle" style="font:500 10px var(--sans,sans-serif);fill:var(--muted,#94a3b8)">causes can coincide; this is triage, not a decision tree</text>
+
+
+<line x1="175" y1="376" x2="175" y2="392" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="3 2"/>
+<line x1="368" y1="376" x2="368" y2="392" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="3 2"/>
+<line x1="556" y1="376" x2="556" y2="392" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="3 2"/>
+<line x1="748" y1="376" x2="748" y2="392" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="3 2"/>
+<line x1="175" y1="392" x2="748" y2="392" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="3 2"/>
+
+
+<text x="460" y="448" text-anchor="middle" class="cap">Triage guide, not an ML decision tree — check all four branches in parallel; causes can coincide.</text>
+
+
+<text x="175" y="132" text-anchor="middle" style="font:700 9px var(--sans,sans-serif);fill:var(--ink-soft,#475569)">Provider / Model</text>
+<text x="368" y="132" text-anchor="middle" style="font:700 9px var(--sans,sans-serif);fill:var(--ink-soft,#475569)">Prompt</text>
+<text x="556" y="132" text-anchor="middle" style="font:700 9px var(--sans,sans-serif);fill:var(--ink-soft,#475569)">Retrieval</text>
+<text x="748" y="132" text-anchor="middle" style="font:700 9px var(--sans,sans-serif);fill:var(--ink-soft,#475569)">Upstream Data</text>
+
+</svg>
+<figcaption><b>The four-root-cause diagnosis tree fans one alert into four parallel branches.</b> When a quality or latency SLO fires, engineers must simultaneously investigate all four potential causes — provider regression, prompt change, retrieval drift, and upstream data regression — because two or more can coincide. Checking sequentially wastes critical minutes.</figcaption>
+</figure>
+
+<p>This tree is a triage guide, not a decision tree in the ML sense. You should check all four branches in parallel; in practice, two or more causes can coincide.</p>
+<h3 id="branch-1-modelprovider-regression">Branch 1: Model/provider regression<a class="headerlink" href="#branch-1-modelprovider-regression" title="Permanent link">¶</a></h3>
+<p><strong>Signals:</strong>
+- Provider API error rate increases (5xx, 429, timeout).
+- TTFT or E2E latency p99 spike without change in traffic volume.
+- Quality drops suddenly on canary eval but prompt/retrieval show no change.
+- Provider status page (e.g., OpenAI&rsquo;s status.openai.com, Anthropic&rsquo;s status.anthropic.com) shows an incident.</p>
+<p><strong>Immediate actions:</strong>
+1. Check provider status page programmatically (see runbook code below).
+2. Compare quality on a fixed eval set against the last known-good baseline.
+3. If quality is degraded, activate failover to secondary provider (§Multi-Provider Failover).</p>
+<p><strong>Diagnostic code:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">httpx</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">datetime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="n">PROVIDER_STATUS_URLS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;openai&quot;</span><span class="p">:</span> <span class="s2">&quot;https://status.openai.com/api/v2/status.json&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;anthropic&quot;</span><span class="p">:</span> <span class="s2">&quot;https://status.anthropic.com/api/v2/status.json&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;google&quot;</span><span class="p">:</span> <span class="s2">&quot;https://status.cloud.google.com/incidents.json&quot;</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ProviderHealth</span><span class="p">:</span>
+    <span class="n">provider</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># &quot;operational&quot;, &quot;degraded&quot;, &quot;outage&quot;</span>
+    <span class="n">indicator</span><span class="p">:</span> <span class="nb">str</span>       <span class="c1"># raw indicator from status page</span>
+    <span class="n">checked_at</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">utcnow</span><span class="p">)</span>
+    <span class="n">error</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">check_provider_status</span><span class="p">(</span><span class="n">provider</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProviderHealth</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fetch provider status page and parse the summary indicator.&quot;&quot;&quot;</span>
+    <span class="n">url</span> <span class="o">=</span> <span class="n">PROVIDER_STATUS_URLS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">provider</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">url</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">ProviderHealth</span><span class="p">(</span><span class="n">provider</span><span class="o">=</span><span class="n">provider</span><span class="p">,</span> <span class="n">status</span><span class="o">=</span><span class="s2">&quot;unknown&quot;</span><span class="p">,</span> <span class="n">indicator</span><span class="o">=</span><span class="s2">&quot;no-url&quot;</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">httpx</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
+            <span class="n">r</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+            <span class="n">r</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">r</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+        <span class="c1"># Statuspage.io v2 format: data[&quot;status&quot;][&quot;indicator&quot;]</span>
+        <span class="c1"># values: &quot;none&quot; | &quot;minor&quot; | &quot;major&quot; | &quot;critical&quot;</span>
+        <span class="n">indicator</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;indicator&quot;</span><span class="p">,</span> <span class="s2">&quot;unknown&quot;</span><span class="p">)</span>
+        <span class="n">status</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="s2">&quot;operational&quot;</span> <span class="k">if</span> <span class="n">indicator</span> <span class="o">==</span> <span class="s2">&quot;none&quot;</span>
+            <span class="k">else</span> <span class="s2">&quot;degraded&quot;</span> <span class="k">if</span> <span class="n">indicator</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;minor&quot;</span><span class="p">,</span> <span class="s2">&quot;major&quot;</span><span class="p">)</span>
+            <span class="k">else</span> <span class="s2">&quot;outage&quot;</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">ProviderHealth</span><span class="p">(</span><span class="n">provider</span><span class="o">=</span><span class="n">provider</span><span class="p">,</span> <span class="n">status</span><span class="o">=</span><span class="n">status</span><span class="p">,</span> <span class="n">indicator</span><span class="o">=</span><span class="n">indicator</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="c1"># Treat connection failure as potential outage</span>
+        <span class="k">return</span> <span class="n">ProviderHealth</span><span class="p">(</span>
+            <span class="n">provider</span><span class="o">=</span><span class="n">provider</span><span class="p">,</span> <span class="n">status</span><span class="o">=</span><span class="s2">&quot;unknown&quot;</span><span class="p">,</span> <span class="n">indicator</span><span class="o">=</span><span class="s2">&quot;fetch-error&quot;</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span>
+        <span class="p">)</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">diagnose_providers</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ProviderHealth</span><span class="p">]:</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span>
+        <span class="o">*</span><span class="p">[</span><span class="n">check_provider_status</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">PROVIDER_STATUS_URLS</span><span class="p">],</span>
+        <span class="n">return_exceptions</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">h</span><span class="o">.</span><span class="n">provider</span><span class="p">:</span> <span class="n">h</span> <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">results</span><span class="p">}</span>
+</code></pre></div>
+<h3 id="branch-2-prompt-change-regression">Branch 2: Prompt change regression<a class="headerlink" href="#branch-2-prompt-change-regression" title="Permanent link">¶</a></h3>
+<p>Every prompt template must be versioned. The simplest versioning scheme is a SHA-256 hash of the rendered system prompt concatenated with the user prompt template. Store this hash in every request trace.</p>
+<p><strong>Signals:</strong>
+- Quality SLI drop coincides with a prompt template deployment.
+- The distribution of response lengths, refusal rates, or structured-output parse failures shifts.</p>
+<h3 id="branch-3-retrieval-drift">Branch 3: Retrieval drift<a class="headerlink" href="#branch-3-retrieval-drift" title="Permanent link">¶</a></h3>
+<p>For RAG pipelines, the retrieval layer can silently degrade when:
+- The corpus is not re-indexed after document updates, leaving stale or deleted documents in the index.
+- Embedding model version changes alter vector representations, misaligning query and document spaces.
+- The reranker&rsquo;s training distribution diverges from production queries.</p>
+<p><strong>Signals (instrument these as SLIs):</strong>
+- Mean reciprocal rank (MRR) on a golden query set drops below threshold.
+- Fraction of retrievals with cosine similarity above 0.7 drops.
+- Average chunk relevance score from the reranker drops.</p>
+<p>Cross-reference <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a> for reranker architecture, and <a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a> for end-to-end pipeline design.</p>
+<h3 id="branch-4-upstream-data-regression">Branch 4: Upstream data regression<a class="headerlink" href="#branch-4-upstream-data-regression" title="Permanent link">¶</a></h3>
+<p>LLM pipelines often sit downstream of data pipelines that feed feature stores, knowledge bases, or fine-tuning datasets. A schema migration, a missing backfill, or a buggy extraction job can inject corrupted context into every request.</p>
+<p><strong>Signals:</strong>
+- Spike in context parse errors.
+- Change in distribution of metadata fields (e.g., sudden increase in null values).
+- Data pipeline DAG shows failed or late runs.</p>
+<hr />
+<h2 id="prompt-and-model-rollback">Prompt and Model Rollback<a class="headerlink" href="#prompt-and-model-rollback" title="Permanent link">¶</a></h2>
+<h3 id="prompt-versioning-infrastructure">Prompt versioning infrastructure<a class="headerlink" href="#prompt-versioning-infrastructure" title="Permanent link">¶</a></h3>
+<p>Treat prompt templates like code: version them in git, gate deployments behind review, and make rollback a one-command operation.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">redis</span>  <span class="c1"># pip install redis</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">PromptVersion</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A versioned prompt template stored in a fast key-value store.&quot;&quot;&quot;</span>
+    <span class="n">template_id</span><span class="p">:</span> <span class="nb">str</span>      <span class="c1"># stable identifier, e.g. &quot;customer-support-v1&quot;</span>
+    <span class="n">version</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># semantic version, e.g. &quot;2.3.1&quot;</span>
+    <span class="n">sha256</span><span class="p">:</span> <span class="nb">str</span>           <span class="c1"># hash of the rendered canonical template</span>
+    <span class="n">system_prompt</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">user_prompt_template</span><span class="p">:</span> <span class="nb">str</span>  <span class="c1"># Jinja2 or f-string template</span>
+    <span class="n">deployed_at</span><span class="p">:</span> <span class="nb">float</span>    <span class="c1"># Unix timestamp</span>
+    <span class="n">deployed_by</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">rollback_to</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># version to revert to on rollback</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PromptRegistry</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Redis-backed registry for prompt versions.</span>
+<span class="sd">    Supports atomic deploy/rollback with audit trail.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">redis_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;redis://localhost:6379&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">r</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">from_url</span><span class="p">(</span><span class="n">redis_url</span><span class="p">,</span> <span class="n">decode_responses</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_compute_sha</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">system</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">user_template</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="n">payload</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&quot;system&quot;</span><span class="p">:</span> <span class="n">system</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="n">user_template</span><span class="p">},</span> <span class="n">sort_keys</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">payload</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()[:</span><span class="mi">16</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">deploy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">PromptVersion</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Atomically deploy a new prompt version, saving previous for rollback.&quot;&quot;&quot;</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;prompt:</span><span class="si">{</span><span class="n">v</span><span class="o">.</span><span class="n">template_id</span><span class="si">}</span><span class="s2">:current&quot;</span>
+        <span class="n">prev_json</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+        <span class="n">pipe</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">r</span><span class="o">.</span><span class="n">pipeline</span><span class="p">(</span><span class="n">transaction</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">prev_json</span><span class="p">:</span>
+            <span class="c1"># Archive previous version for rollback</span>
+            <span class="n">prev</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">prev_json</span><span class="p">)</span>
+            <span class="n">pipe</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;prompt:</span><span class="si">{</span><span class="n">v</span><span class="o">.</span><span class="n">template_id</span><span class="si">}</span><span class="s2">:previous&quot;</span><span class="p">,</span> <span class="n">prev_json</span><span class="p">)</span>
+            <span class="n">v</span><span class="o">.</span><span class="n">rollback_to</span> <span class="o">=</span> <span class="n">prev</span><span class="p">[</span><span class="s2">&quot;version&quot;</span><span class="p">]</span>
+        <span class="n">pipe</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">))</span>
+        <span class="c1"># Keep a full audit log</span>
+        <span class="n">pipe</span><span class="o">.</span><span class="n">lpush</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;prompt:</span><span class="si">{</span><span class="n">v</span><span class="o">.</span><span class="n">template_id</span><span class="si">}</span><span class="s2">:history&quot;</span><span class="p">,</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">))</span>
+        <span class="n">pipe</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Deployed </span><span class="si">{</span><span class="n">v</span><span class="o">.</span><span class="n">template_id</span><span class="si">}</span><span class="s2">@</span><span class="si">{</span><span class="n">v</span><span class="o">.</span><span class="n">version</span><span class="si">}</span><span class="s2"> (sha=</span><span class="si">{</span><span class="n">v</span><span class="o">.</span><span class="n">sha256</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">rollback</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">template_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">PromptVersion</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Atomically revert to the previous prompt version.&quot;&quot;&quot;</span>
+        <span class="n">prev_json</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;prompt:</span><span class="si">{</span><span class="n">template_id</span><span class="si">}</span><span class="s2">:previous&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">prev_json</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;No previous version found for </span><span class="si">{</span><span class="n">template_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="n">prev_data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">prev_json</span><span class="p">)</span>
+        <span class="n">prev</span> <span class="o">=</span> <span class="n">PromptVersion</span><span class="p">(</span><span class="o">**</span><span class="n">prev_data</span><span class="p">)</span>
+        <span class="c1"># Swap current ← previous</span>
+        <span class="n">pipe</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">r</span><span class="o">.</span><span class="n">pipeline</span><span class="p">(</span><span class="n">transaction</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">pipe</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;prompt:</span><span class="si">{</span><span class="n">template_id</span><span class="si">}</span><span class="s2">:current&quot;</span><span class="p">,</span> <span class="n">prev_json</span><span class="p">)</span>
+        <span class="n">pipe</span><span class="o">.</span><span class="n">lpush</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;prompt:</span><span class="si">{</span><span class="n">template_id</span><span class="si">}</span><span class="s2">:history&quot;</span><span class="p">,</span>
+            <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&quot;event&quot;</span><span class="p">:</span> <span class="s2">&quot;rollback&quot;</span><span class="p">,</span> <span class="s2">&quot;to&quot;</span><span class="p">:</span> <span class="n">prev</span><span class="o">.</span><span class="n">version</span><span class="p">,</span> <span class="s2">&quot;at&quot;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()}),</span>
+        <span class="p">)</span>
+        <span class="n">pipe</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rolled back </span><span class="si">{</span><span class="n">template_id</span><span class="si">}</span><span class="s2"> to </span><span class="si">{</span><span class="n">prev</span><span class="o">.</span><span class="n">version</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">prev</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_current</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">template_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">PromptVersion</span><span class="p">]:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;prompt:</span><span class="si">{</span><span class="n">template_id</span><span class="si">}</span><span class="s2">:current&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="n">PromptVersion</span><span class="p">(</span><span class="o">**</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>
+</code></pre></div>
+<h3 id="model-rollback">Model rollback<a class="headerlink" href="#model-rollback" title="Permanent link">¶</a></h3>
+<p>For self-hosted models, model rollback means reverting the serving deployment to a previous checkpoint. For API providers, you cannot directly control model versions, but you can:</p>
+<ol>
+<li>Pin a specific model version string (e.g., <code>gpt-4o-2024-08-06</code> instead of <code>gpt-4o</code>). Pinned versions are deprecated on a schedule, but they give you control over when to absorb a model update.</li>
+<li>Maintain a <em>shadow model</em> running the new version against 5% of traffic. Monitor quality SLI on both. Only switch 100% traffic after the shadow passes.</li>
+<li>If the provider offers no pinning and degrades quality, activate the secondary provider.</li>
+</ol>
+<p><strong>Canary eval on deploy:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Awaitable</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">canary_eval_gate</span><span class="p">(</span>
+    <span class="n">template_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">new_version</span><span class="p">:</span> <span class="n">PromptVersion</span><span class="p">,</span>
+    <span class="n">eval_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">Awaitable</span><span class="p">[</span><span class="nb">float</span><span class="p">]],</span>   <span class="c1"># (prompt, response) -&gt; [0,1]</span>
+    <span class="n">golden_cases</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>   <span class="c1"># list of {&quot;input&quot;: ..., &quot;expected_score&quot;: float}</span>
+    <span class="n">pass_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.92</span><span class="p">,</span>
+    <span class="n">registry</span><span class="p">:</span> <span class="n">PromptRegistry</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run a canary eval before fully deploying a new prompt version.</span>
+<span class="sd">    Returns True if the new version passes the quality gate.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">case</span> <span class="ow">in</span> <span class="n">golden_cases</span><span class="p">:</span>
+        <span class="c1"># Render prompt using new template</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="n">new_version</span><span class="o">.</span><span class="n">user_prompt_template</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="o">**</span><span class="n">case</span><span class="p">[</span><span class="s2">&quot;input&quot;</span><span class="p">])</span>
+        <span class="c1"># In production replace this with your actual LLM call</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">mock_llm_call</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">new_version</span><span class="o">.</span><span class="n">system_prompt</span><span class="p">)</span>
+        <span class="n">score</span> <span class="o">=</span> <span class="k">await</span> <span class="n">eval_fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">response</span><span class="p">)</span>
+        <span class="n">scores</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">score</span><span class="p">)</span>
+
+    <span class="n">mean_score</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+    <span class="n">passed</span> <span class="o">=</span> <span class="n">mean_score</span> <span class="o">&gt;=</span> <span class="n">pass_threshold</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Canary eval for </span><span class="si">{</span><span class="n">template_id</span><span class="si">}</span><span class="s2">@</span><span class="si">{</span><span class="n">new_version</span><span class="o">.</span><span class="n">version</span><span class="si">}</span><span class="s2">: &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;mean_score=</span><span class="si">{</span><span class="n">mean_score</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">, threshold=</span><span class="si">{</span><span class="n">pass_threshold</span><span class="si">}</span><span class="s2">, passed=</span><span class="si">{</span><span class="n">passed</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">passed</span> <span class="ow">and</span> <span class="n">registry</span><span class="p">:</span>
+        <span class="n">registry</span><span class="o">.</span><span class="n">deploy</span><span class="p">(</span><span class="n">new_version</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">passed</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">mock_llm_call</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">system</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Stub — replace with actual provider call.&quot;&quot;&quot;</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.01</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot;mock response&quot;</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Never roll forward without a quality gate</p>
+<p>A common mistake is to deploy a prompt fix during an active incident without running the canary eval suite first. The &ldquo;fix&rdquo; can introduce a new regression. Under incident pressure, add a fast gate: run 20–30 golden cases before touching 100% of traffic. Ten minutes of testing buys you confidence that the rollout won&rsquo;t make things worse.</p>
+</div>
+<hr />
+<h2 id="trace-attached-postmortems">Trace-Attached Postmortems<a class="headerlink" href="#trace-attached-postmortems" title="Permanent link">¶</a></h2>
+<h3 id="why-traces-matter-for-llm-postmortems">Why traces matter for LLM postmortems<a class="headerlink" href="#why-traces-matter-for-llm-postmortems" title="Permanent link">¶</a></h3>
+<p>Traditional postmortems rely on logs and metrics. LLM incidents require <em>trace-level</em> evidence: the exact prompt that was sent, the exact response received, the retrieval chunks that were injected, the sampling parameters used, and the latency of each pipeline stage. Without traces, you cannot answer &ldquo;did the prompt change cause the regression?&rdquo; or &ldquo;which requests were affected?&rdquo;</p>
+<p>Every LLM request should emit a structured trace with at least these fields:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;trace_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;a3f1b2c4-...&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;timestamp&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-06-04T09:42:11.123Z&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;route&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;customer-support&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;prompt_template_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;customer-support-v1&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;prompt_sha&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;4a7e9c12&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4o-2024-08-06&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;provider&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;openai&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;retrieval&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;query&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;how do I cancel my subscription&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;top_k&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;chunks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">      </span><span class="p">{</span><span class="nt">&quot;doc_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;faq-cancel-001&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.91</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">}</span>
+<span class="w">    </span><span class="p">],</span>
+<span class="w">    </span><span class="nt">&quot;retrieval_latency_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">38</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;llm_call&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;input_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">812</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;output_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">143</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;ttft_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">342</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;total_latency_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1204</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;finish_reason&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;stop&quot;</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;quality_judge&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.88</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;flags&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;user_feedback&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>See <a href="../12-production-mlops/02-observability-llmops.html">Observability, Logging &amp; LLMOps</a> for the full observability infrastructure to produce these traces.</p>
+<h3 id="postmortem-template">Postmortem template<a class="headerlink" href="#postmortem-template" title="Permanent link">¶</a></h3>
+<p>A good LLM postmortem has six sections. The key addition over traditional postmortems is the <em>trace evidence</em> section, which anchors every claim to a specific trace ID.</p>
+<div class="highlight"><pre><span></span><code>=== LLM INCIDENT POSTMORTEM ===
+
+Incident ID: INC-2026-0604-001
+Severity: SEV-2 (Quality SLO breach, ~18% quality degradation for 2h 20m)
+Author: on-call engineer
+Review date: 2026-06-06
+
+1. SUMMARY
+   &lt;2-3 sentences: what happened, how long, business impact&gt;
+
+2. TIMELINE (UTC)
+   09:12  Quality SLO alert fires (canary eval pass rate: 77%, SLO: 95%)
+   09:18  On-call acknowledges; begins diagnosis tree
+   09:24  Branch 1 (provider): OpenAI status operational; latency nominal
+   09:27  Branch 2 (prompt): no prompt deploy in last 48h
+   09:31  Branch 3 (retrieval): MRR on golden set dropped from 0.71 → 0.54
+   09:35  Root cause identified: corpus re-index job failed at 07:00;
+           stale index missing 12% of documents added last month
+   09:48  Re-index triggered; traffic held at current quality
+   11:32  Index rebuild complete; quality SLO restored (canary: 96%)
+
+3. ROOT CAUSE
+   The nightly re-index cron job failed silently (exit code 0 despite partial
+   failure). 23,000 documents added in the previous 3 weeks were absent from
+   the production index. Retrieval was returning lower-relevance fallback
+   documents for ~30% of queries.
+
+4. TRACE EVIDENCE
+   Affected trace sample (earliest detection):
+     trace_id: a3f1b2c4-7e9d-...
+     retrieval.chunks[0].score: 0.43  (normal: &gt;0.75)
+     quality_judge.score: 0.61        (SLO: &gt;=0.95)
+     quality_judge.flags: [&quot;off-topic-context&quot;]
+
+5. ACTION ITEMS
+   [ ] Add exit-code validation + document-count assertion to re-index job
+   [ ] Alert if post-index doc count drops &gt;5% vs pre-index count
+   [ ] Add retrieval MRR to real-time SLI dashboard (was offline-only)
+   [ ] Document re-index runbook in incident wiki
+
+6. WHAT WENT WELL
+   - Canary eval detected the issue within 10 min of corpus failure
+   - Diagnosis tree narrowed root cause to retrieval in &lt;25 min
+</code></pre></div>
+<h3 id="mean-time-to-detect-mttd-and-mean-time-to-restore-mttr">Mean-time-to-detect (MTTD) and mean-time-to-restore (MTTR)<a class="headerlink" href="#mean-time-to-detect-mttd-and-mean-time-to-restore-mttr" title="Permanent link">¶</a></h3>
+<p>Track these two metrics across all incidents:</p>
+<div class="arithmatex">\[
+\text{MTTD} = \frac{1}{N}\sum_{i=1}^{N} (t_{\text{alert},i} - t_{\text{fault\_start},i})
+\]</div>
+<div class="arithmatex">\[
+\text{MTTR} = \frac{1}{N}\sum_{i=1}^{N} (t_{\text{restored},i} - t_{\text{alert},i})
+\]</div>
+<p>For LLM quality incidents, MTTD is dominated by the width of your quality SLI window. A 30-minute window means worst-case 30-minute MTTD. A 5-minute window with lower confidence (more noise) means faster detection at the cost of false positives. Tune this tradeoff based on your error budget burn rate.</p>
+<hr />
+<h2 id="detecting-gradual-silent-quality-collapse">Detecting Gradual Silent Quality Collapse<a class="headerlink" href="#detecting-gradual-silent-quality-collapse" title="Permanent link">¶</a></h2>
+<h3 id="why-silent-collapse-is-harder-than-hard-failures">Why silent collapse is harder than hard failures<a class="headerlink" href="#why-silent-collapse-is-harder-than-hard-failures" title="Permanent link">¶</a></h3>
+<p>A provider outage causes an immediate spike in error rate. Silent quality collapse is insidious: it might manifest as a 2–3% drop per week in user satisfaction ratings, invisible against normal noise. By the time it is noticed, you have lost weeks of error budget and potentially user trust.</p>
+<p>Three instrumentation strategies combat this:</p>
+<p><strong>1. Anchored canary evals.</strong> As described above: a fixed golden set scored automatically every 15 minutes. The golden set must be <em>frozen</em> — never updated during an incident, only extended during calm periods after careful human review.</p>
+<p><strong>2. Behavioral drift metrics.</strong> Track the distribution of automated quality scores over time, not just the pass/fail rate. A shift in mean score from 0.91 to 0.87 may not breach the SLO threshold yet, but it is a leading indicator of imminent breach.</p>
+<div class="arithmatex">\[
+\text{quality drift} = \bar{s}_{t} - \bar{s}_{t-\Delta}
+\]</div>
+<p>Alert when <span class="arithmatex">\(|\text{quality drift}| &gt; \epsilon\)</span> for two consecutive windows, where <span class="arithmatex">\(\epsilon\)</span> is calibrated on historical variance (a common heuristic: <span class="arithmatex">\(\epsilon = 2\sigma_{\text{historical}}\)</span>).</p>
+<p><strong>3. User signal feedback loops.</strong> Thumbs-up/down, edit-rate, copy-rate, and session abandonment are lagging but high-signal quality indicators. Join them back to trace IDs for root-cause correlation. See <a href="../12-production-mlops/05-data-flywheel.html">Data Flywheels &amp; Continuous Improvement</a> for how to build this loop.</p>
+<h3 id="detecting-regression-at-the-segment-level">Detecting regression at the segment level<a class="headerlink" href="#detecting-regression-at-the-segment-level" title="Permanent link">¶</a></h3>
+<p>A global quality SLO can mask a severe regression in a specific user segment or query type. Track quality SLIs broken down by:</p>
+<ul>
+<li><strong>Route</strong> (summarization, Q&amp;A, code generation, classification)</li>
+<li><strong>Language</strong> (quality regressions in non-English languages are commonly missed)</li>
+<li><strong>Input length bucket</strong> (short / medium / long context)</li>
+<li><strong>Time of day</strong> (some providers have degraded off-peak performance)</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">statistics</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">NamedTuple</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">QualityRecord</span><span class="p">(</span><span class="n">NamedTuple</span><span class="p">):</span>
+    <span class="n">trace_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">route</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">language</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">input_len_bucket</span><span class="p">:</span> <span class="nb">str</span>   <span class="c1"># &quot;short&quot; | &quot;medium&quot; | &quot;long&quot;</span>
+    <span class="n">score</span><span class="p">:</span> <span class="nb">float</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">segment_quality_report</span><span class="p">(</span>
+    <span class="n">records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">QualityRecord</span><span class="p">],</span>
+    <span class="n">slo_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.95</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute per-segment quality pass rates and flag segments breaching SLO.</span>
+<span class="sd">    Returns a dict: segment_key -&gt; {pass_rate, count, breaching}.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">buckets</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">list</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">records</span><span class="p">:</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">route</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">language</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">input_len_bucket</span><span class="p">)</span>
+        <span class="n">buckets</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">score</span><span class="p">)</span>
+
+    <span class="n">report</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">scores</span> <span class="ow">in</span> <span class="n">buckets</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">pass_rate</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">scores</span> <span class="k">if</span> <span class="n">s</span> <span class="o">&gt;=</span> <span class="n">slo_threshold</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+        <span class="n">report</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;pass_rate&quot;</span><span class="p">:</span> <span class="n">pass_rate</span><span class="p">,</span>
+            <span class="s2">&quot;mean_score&quot;</span><span class="p">:</span> <span class="n">statistics</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">scores</span><span class="p">),</span>
+            <span class="s2">&quot;count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">scores</span><span class="p">),</span>
+            <span class="s2">&quot;breaching&quot;</span><span class="p">:</span> <span class="n">pass_rate</span> <span class="o">&lt;</span> <span class="n">slo_threshold</span><span class="p">,</span>
+        <span class="p">}</span>
+    <span class="c1"># Sort by pass_rate ascending so worst segments are first</span>
+    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;pass_rate&quot;</span><span class="p">]))</span>
+</code></pre></div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> How would you design a quality SLO for an LLM-powered customer support system, and how would you detect a silent quality regression?</p>
+<p><strong>A:</strong> I would define a multi-dimensional SLO: availability (HTTP success rate &gt;= 99.9%), latency (TTFT p99 &lt; 1 s), and quality (automated judge pass rate &gt;= 95% on a rolling 30-minute window). For silent regression detection, I&rsquo;d run an anchored canary eval — a frozen set of ~100 golden request/response pairs scored by a lightweight classifier — every 15 minutes. I&rsquo;d also track the <em>distribution</em> of quality scores, not just the pass rate, and alert on a 2-sigma drift in mean score. Finally, I&rsquo;d segment quality by route and language to catch regressions the global metric masks. The key insight is that HTTP-level metrics are insufficient; you need application-layer quality telemetry.</p>
+</div>
+<hr />
+<h2 id="fallback-and-degradation-design">Fallback and Degradation Design<a class="headerlink" href="#fallback-and-degradation-design" title="Permanent link">¶</a></h2>
+<h3 id="the-degradation-ladder">The degradation ladder<a class="headerlink" href="#the-degradation-ladder" title="Permanent link">¶</a></h3>
+<p>Rather than binary &ldquo;up or down,&rdquo; design a ladder of degraded states, each providing less value but more reliability:</p>
+<figure class="viz" id="fig-reliability-degradation-ladder">
+<button class="viz-replay" type="button">↻ replay</button>
+<style>
+  #fig-reliability-degradation-ladder .bar-lbl { font: 700 12px var(--sans,sans-serif); }
+  #fig-reliability-degradation-ladder .bar-desc { font: 500 11px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-reliability-degradation-ladder .badge-lbl { font: 700 11px var(--sans,sans-serif); fill: #fff; }
+  #fig-reliability-degradation-ladder .axis-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-reliability-degradation-ladder .cap { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-reliability-degradation-ladder .side-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-reliability-degradation-ladder .time-chip { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#7c3aed); }
+
+  /* Token animation */
+  #fig-reliability-degradation-ladder #dl-token {
+    r: 10;
+    fill: var(--accent,#7c3aed);
+    filter: drop-shadow(0 0 5px var(--accent,#7c3aed));
+  }
+  /* Active bar flash */
+  #fig-reliability-degradation-ladder .bar-flash {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  #fig-reliability-degradation-ladder .bar-flash.active {
+    opacity: 0.25;
+  }
+
+  @keyframes dl-move {
+    /* Start at level 0 */
+    0%   { cy: 60px; opacity:1; }
+    /* Down to L1 */
+    8%   { cy: 60px; }
+    16%  { cy: 150px; }
+    /* Down to L2 */
+    24%  { cy: 150px; }
+    32%  { cy: 240px; }
+    /* Down to L3 */
+    40%  { cy: 240px; }
+    48%  { cy: 330px; }
+    /* Pause at L3 */
+    54%  { cy: 330px; }
+    /* Up to L2 */
+    60%  { cy: 240px; }
+    /* Up to L1 */
+    68%  { cy: 240px; }
+    76%  { cy: 150px; }
+    /* Up to L0 */
+    84%  { cy: 150px; }
+    92%  { cy: 60px; }
+    100% { cy: 60px; opacity:1; }
+  }
+
+  @keyframes dl-flash0 {
+    0%,7%   { opacity:0.25 }
+    8%,15%  { opacity:0 }
+    83%,91% { opacity:0 }
+    92%,100%{ opacity:0.25 }
+  }
+  @keyframes dl-flash1 {
+    0%,7%   { opacity:0 }
+    8%,15%  { opacity:0.25 }
+    16%,23% { opacity:0 }
+    59%,67% { opacity:0 }
+    68%,75% { opacity:0.25 }
+    76%,83% { opacity:0 }
+    100%    { opacity:0 }
+  }
+  @keyframes dl-flash2 {
+    0%,23%  { opacity:0 }
+    24%,31% { opacity:0.25 }
+    32%,55% { opacity:0 }
+    60%,67% { opacity:0.25 }
+    68%,100%{ opacity:0 }
+  }
+  @keyframes dl-flash3 {
+    0%,39%  { opacity:0 }
+    40%,59% { opacity:0.25 }
+    60%,100%{ opacity:0 }
+  }
+
+  #fig-reliability-degradation-ladder #dl-token {
+    animation: dl-move 9s ease-in-out infinite;
+    animation-fill-mode: both;
+  }
+  #fig-reliability-degradation-ladder #flash0 { animation: dl-flash0 9s ease-in-out infinite; }
+  #fig-reliability-degradation-ladder #flash1 { animation: dl-flash1 9s ease-in-out infinite; }
+  #fig-reliability-degradation-ladder #flash2 { animation: dl-flash2 9s ease-in-out infinite; }
+  #fig-reliability-degradation-ladder #flash3 { animation: dl-flash3 9s ease-in-out infinite; }
+</style>
+<svg viewBox="0 0 760 500" role="img" aria-label="The graceful degradation ladder: five levels from full RAG at the top to graceful error at the bottom, with an animated circuit-breaker token stepping down and recovering back up.">
+
+
+
+  <line x1="38" y1="90" x2="38" y2="410" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#dl-down)"/>
+  <defs>
+    <marker id="dl-down" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M1 0 L5 9 L9 0 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+    <marker id="dl-up" viewBox="0 0 10 10" refX="5" refY="2" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M1 10 L5 1 L9 10 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+    <marker id="dl-deg-arrow" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M1 0 L5 9 L9 0 z" fill="var(--warn,#e0a106)"/>
+    </marker>
+    <marker id="dl-rec-arrow" viewBox="0 0 10 10" refX="5" refY="2" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M1 10 L5 1 L9 10 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+
+  <line x1="38" y1="410" x2="38" y2="90" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#dl-up)"/>
+
+
+  <text transform="translate(16,340) rotate(-90)" class="axis-lbl" text-anchor="middle">less value</text>
+  <text transform="translate(16,160) rotate(-90)" class="axis-lbl" text-anchor="middle">more reliability</text>
+
+
+
+
+  <rect x="72" y="25" width="560" height="70" rx="10"
+        fill="var(--good,#2f9e6e)" fill-opacity="0.15"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+
+  <rect id="flash0" x="72" y="25" width="560" height="70" rx="10"
+        fill="var(--good,#2f9e6e)" fill-opacity="0" class="bar-flash"/>
+
+  <rect x="72" y="33" width="128" height="52" rx="8" fill="var(--good,#2f9e6e)"/>
+  <text x="136" y="55" text-anchor="middle" class="badge-lbl">Level 0</text>
+  <text x="136" y="70" text-anchor="middle" class="badge-lbl" style="font-size:9px">NORMAL</text>
+  <text x="218" y="58" class="bar-desc">Full RAG + frontier model + streaming</text>
+
+
+  <rect x="72" y="115" width="560" height="70" rx="10"
+        fill="var(--accent,#7c3aed)" fill-opacity="0.10"
+        stroke="var(--accent,#7c3aed)" stroke-width="1.5" stroke-opacity="0.5"/>
+  <rect id="flash1" x="72" y="115" width="560" height="70" rx="10"
+        fill="var(--accent,#7c3aed)" fill-opacity="0" class="bar-flash"/>
+  <rect x="72" y="123" width="128" height="52" rx="8" fill="var(--accent,#7c3aed)" fill-opacity="0.7"/>
+  <text x="136" y="145" text-anchor="middle" class="badge-lbl">Level 1</text>
+  <text x="136" y="160" text-anchor="middle" class="badge-lbl" style="font-size:9px">RETRIEVAL_OFF</text>
+  <text x="218" y="148" class="bar-desc">Static context only</text>
+  <text x="218" y="163" class="bar-desc">+ frontier model</text>
+
+
+  <rect x="72" y="205" width="560" height="70" rx="10"
+        fill="var(--warn,#e0a106)" fill-opacity="0.12"
+        stroke="var(--warn,#e0a106)" stroke-width="1.5" stroke-opacity="0.6"/>
+  <rect id="flash2" x="72" y="205" width="560" height="70" rx="10"
+        fill="var(--warn,#e0a106)" fill-opacity="0" class="bar-flash"/>
+  <rect x="72" y="213" width="128" height="52" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0.75"/>
+  <text x="136" y="235" text-anchor="middle" class="badge-lbl">Level 2</text>
+  <text x="136" y="250" text-anchor="middle" class="badge-lbl" style="font-size:9px">MODEL_FALLBACK</text>
+  <text x="218" y="238" class="bar-desc">Static context + smaller/cheaper model</text>
+  <text x="218" y="253" class="bar-desc">(lower quality)</text>
+
+
+  <rect x="72" y="295" width="560" height="70" rx="10"
+        fill="var(--warn,#e0a106)" fill-opacity="0.22"
+        stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+  <rect id="flash3" x="72" y="295" width="560" height="70" rx="10"
+        fill="var(--warn,#e0a106)" fill-opacity="0" class="bar-flash"/>
+  <rect x="72" y="303" width="128" height="52" rx="8" fill="var(--warn,#e0a106)"/>
+  <text x="136" y="325" text-anchor="middle" class="badge-lbl">Level 3</text>
+  <text x="136" y="340" text-anchor="middle" class="badge-lbl" style="font-size:9px">CACHED_ONLY</text>
+  <text x="218" y="328" class="bar-desc">Return best cached response</text>
+  <text x="218" y="343" class="bar-desc">for similar queries</text>
+
+
+  <rect x="72" y="385" width="560" height="70" rx="10"
+        fill="var(--accent-2,#3b82f6)" fill-opacity="0.08"
+        stroke="var(--accent-2,#3b82f6)" stroke-width="1.5" stroke-opacity="0.5"/>
+  <rect x="72" y="393" width="128" height="52" rx="8" fill="var(--accent-2,#3b82f6)" fill-opacity="0.5"/>
+  <text x="136" y="415" text-anchor="middle" class="badge-lbl">Level 4</text>
+  <text x="136" y="430" text-anchor="middle" class="badge-lbl" style="font-size:9px">GRACEFUL_ERROR</text>
+  <text x="218" y="416" class="bar-desc">Inform user: "Service temporarily</text>
+  <text x="218" y="431" class="bar-desc">limited, try again shortly"</text>
+
+
+
+  <path d="M 690 85 C 714 85 720 150 706 188" stroke="var(--warn,#e0a106)" stroke-width="2" fill="none" marker-end="url(#dl-deg-arrow)"/>
+  <text x="718" y="122" text-anchor="middle" class="side-lbl" style="fill:var(--warn,#e0a106);font-size:10px">degrade</text>
+  <text x="718" y="135" text-anchor="middle" class="side-lbl" style="fill:var(--warn,#e0a106);font-size:10px">(reason)</text>
+
+
+  <path d="M 706 372 C 722 372 728 295 714 260" stroke="var(--good,#2f9e6e)" stroke-width="2" fill="none" marker-end="url(#dl-rec-arrow)"/>
+  <text x="718" y="316" text-anchor="middle" class="side-lbl" style="fill:var(--good,#2f9e6e);font-size:10px">recover()</text>
+  <text x="718" y="329" text-anchor="middle" class="side-lbl" style="fill:var(--good,#2f9e6e);font-size:10px">exp. backoff</text>
+  <text x="718" y="342" text-anchor="middle" class="side-lbl" style="fill:var(--good,#2f9e6e);font-size:10px">before retry</text>
+
+
+
+  <circle id="dl-token" cx="58" cy="60" r="9"/>
+
+
+  <text x="352" y="478" text-anchor="middle" class="cap">Automatic, reversible transitions — each step trades value for reliability</text>
+
+</svg>
+<figcaption><b>The graceful degradation ladder trades value for reliability at each step down.</b> A circuit-breaker controller automatically steps the system down when SLI thresholds are breached (degrade) and back up after a dwell period with exponential backoff (recover). The animated token shows the system cycling down through levels 0–3 and recovering, mirroring how the <code>DegradationController</code> operates in production.</figcaption>
+</figure>
+
+<p>Implement level transitions as a circuit-breaker pattern. Each transition should be automatic (triggered by SLI thresholds), logged, and reversible.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">enum</span><span class="w"> </span><span class="kn">import</span> <span class="n">IntEnum</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Optional</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">DegradationLevel</span><span class="p">(</span><span class="n">IntEnum</span><span class="p">):</span>
+    <span class="n">NORMAL</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">RETRIEVAL_OFF</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">MODEL_FALLBACK</span> <span class="o">=</span> <span class="mi">2</span>
+    <span class="n">CACHED_ONLY</span> <span class="o">=</span> <span class="mi">3</span>
+    <span class="n">GRACEFUL_ERROR</span> <span class="o">=</span> <span class="mi">4</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">DegradationController</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Thread-safe degradation controller.</span>
+<span class="sd">    Advances or retreats degradation level based on SLI measurements.</span>
+<span class="sd">    Uses exponential backoff before attempting recovery.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">recovery_probe_interval</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">60.0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_level</span> <span class="o">=</span> <span class="n">DegradationLevel</span><span class="o">.</span><span class="n">NORMAL</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_last_degraded_at</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_recovery_probe_interval</span> <span class="o">=</span> <span class="n">recovery_probe_interval</span>  <span class="c1"># seconds</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">level</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DegradationLevel</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_level</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">degrade</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DegradationLevel</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Advance one level; returns new level.&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_level</span> <span class="o">&lt;</span> <span class="n">DegradationLevel</span><span class="o">.</span><span class="n">GRACEFUL_ERROR</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_level</span> <span class="o">=</span> <span class="n">DegradationLevel</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_level</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_last_degraded_at</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[DEGRADATION] Level → </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_level</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">reason</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_level</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">recover</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DegradationLevel</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Retreat one level; returns new level.&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_level</span> <span class="o">&gt;</span> <span class="n">DegradationLevel</span><span class="o">.</span><span class="n">NORMAL</span><span class="p">:</span>
+                <span class="c1"># Enforce minimum dwell time before recovery attempt</span>
+                <span class="k">if</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_last_degraded_at</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span>
+                        <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_degraded_at</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">_recovery_probe_interval</span><span class="p">):</span>
+                    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_level</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_level</span> <span class="o">=</span> <span class="n">DegradationLevel</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_level</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[RECOVERY] Level → </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_level</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_level</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Force reset to NORMAL (use only in manual incident resolution).&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_level</span> <span class="o">=</span> <span class="n">DegradationLevel</span><span class="o">.</span><span class="n">NORMAL</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;[RESET] Degradation level reset to NORMAL&quot;</span><span class="p">)</span>
+
+<span class="c1"># Usage pattern: call from your SLI monitoring loop</span>
+<span class="n">controller</span> <span class="o">=</span> <span class="n">DegradationController</span><span class="p">(</span><span class="n">recovery_probe_interval</span><span class="o">=</span><span class="mf">120.0</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">handle_request</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">level</span> <span class="o">=</span> <span class="n">controller</span><span class="o">.</span><span class="n">level</span>
+    <span class="k">if</span> <span class="n">level</span> <span class="o">==</span> <span class="n">DegradationLevel</span><span class="o">.</span><span class="n">NORMAL</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">full_rag_pipeline</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">level</span> <span class="o">==</span> <span class="n">DegradationLevel</span><span class="o">.</span><span class="n">RETRIEVAL_OFF</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">model_only_pipeline</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">level</span> <span class="o">==</span> <span class="n">DegradationLevel</span><span class="o">.</span><span class="n">MODEL_FALLBACK</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">small_model_pipeline</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">level</span> <span class="o">==</span> <span class="n">DegradationLevel</span><span class="o">.</span><span class="n">CACHED_ONLY</span><span class="p">:</span>
+        <span class="n">cached</span> <span class="o">=</span> <span class="n">lookup_cache</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">cached</span> <span class="ow">or</span> <span class="n">graceful_error_response</span><span class="p">()</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">graceful_error_response</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">full_rag_pipeline</span><span class="p">(</span><span class="n">q</span><span class="p">):</span> <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;[RAG] </span><span class="si">{</span><span class="n">q</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">model_only_pipeline</span><span class="p">(</span><span class="n">q</span><span class="p">):</span> <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;[MODEL-ONLY] </span><span class="si">{</span><span class="n">q</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">small_model_pipeline</span><span class="p">(</span><span class="n">q</span><span class="p">):</span> <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;[SMALL-MODEL] </span><span class="si">{</span><span class="n">q</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">lookup_cache</span><span class="p">(</span><span class="n">q</span><span class="p">):</span> <span class="k">return</span> <span class="kc">None</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">graceful_error_response</span><span class="p">():</span> <span class="k">return</span> <span class="s2">&quot;Service temporarily limited. Please try again shortly.&quot;</span>
+</code></pre></div>
+<h3 id="caching-as-a-reliability-primitive">Caching as a reliability primitive<a class="headerlink" href="#caching-as-a-reliability-primitive" title="Permanent link">¶</a></h3>
+<p>A semantic cache (described in detail in <a href="../12-production-mlops/03-caching-routing-cost.html">Caching, Routing &amp; Cost Control in Production</a>) doubles as a reliability backstop. When the primary model is unavailable or degraded, serve cached responses for queries with cosine similarity above a threshold to a cached query.</p>
+<p>The hit rate of your semantic cache under normal traffic is the ceiling on how many requests you can serve from cache during an outage. Maintain a minimum cache size — warm the cache proactively with your top-K most frequent query patterns.</p>
+<hr />
+<h2 id="provider-outage-runbooks-and-multi-provider-failover">Provider Outage Runbooks and Multi-Provider Failover<a class="headerlink" href="#provider-outage-runbooks-and-multi-provider-failover" title="Permanent link">¶</a></h2>
+<h3 id="the-multi-provider-architecture">The multi-provider architecture<a class="headerlink" href="#the-multi-provider-architecture" title="Permanent link">¶</a></h3>
+<p>No single LLM provider offers five-nines availability. OpenAI, Anthropic, and Google all experience incidents several times per year. A production LLM system must have at least one secondary provider and an automatic failover mechanism.</p>
+<figure class="viz" id="fig-reliability-multiprovider-gateway">
+<button class="viz-replay" type="button">↻ replay</button>
+<style>
+  #fig-reliability-multiprovider-gateway text { font: 500 11px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-reliability-multiprovider-gateway .lbl-bold { font: 700 12px var(--sans,sans-serif); }
+  #fig-reliability-multiprovider-gateway .lbl-sm { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-reliability-multiprovider-gateway .lbl-code { font: 600 10px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-reliability-multiprovider-gateway .cap { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-reliability-multiprovider-gateway .route-lbl { font: 700 10px var(--sans,sans-serif); fill: var(--accent,#7c3aed); }
+
+  /* Packet animation: normal flow to Provider A */
+  @keyframes gw-pkt-normal {
+    0%   { cx: 90px; cy: 230px; opacity: 0; r: 5px; }
+    5%   { opacity: 1; }
+    25%  { cx: 240px; cy: 230px; opacity: 1; }
+    40%  { cx: 530px; cy: 175px; opacity: 1; }
+    55%  { cx: 530px; cy: 175px; opacity: 1; }
+    65%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  /* Fault flash on Provider A */
+  @keyframes gw-fault-flash {
+    0%,59%  { opacity: 0; }
+    60%,67% { opacity: 0.7; }
+    68%,73% { opacity: 0; }
+    74%,79% { opacity: 0.7; }
+    80%,100%{ opacity: 0; }
+  }
+  /* Circuit OPEN label appear */
+  @keyframes gw-open-lbl {
+    0%,64%  { opacity: 0; }
+    65%,88% { opacity: 1; }
+    89%,100%{ opacity: 0; }
+  }
+  /* Packet failover to Provider B */
+  @keyframes gw-pkt-failover {
+    0%,64%  { cx: 90px; cy: 230px; opacity: 0; r: 5px; }
+    65%     { opacity: 0; }
+    70%     { cx: 240px; cy: 230px; opacity: 1; }
+    85%     { cx: 530px; cy: 280px; opacity: 1; }
+    92%     { opacity: 1; }
+    95%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  /* Provider B border brightens during failover */
+  @keyframes gw-b-active {
+    0%,69%  { stroke: var(--border-2,#94a3b8); stroke-width: 1.5px; }
+    70%,94% { stroke: var(--good,#2f9e6e); stroke-width: 2.5px; }
+    95%,100%{ stroke: var(--border-2,#94a3b8); stroke-width: 1.5px; }
+  }
+  /* A path dims during failover */
+  @keyframes gw-a-dim {
+    0%,64%  { opacity: 1; }
+    65%,94% { opacity: 0.25; }
+    95%,100%{ opacity: 1; }
+  }
+
+  #fig-reliability-multiprovider-gateway #gw-pkt { animation: gw-pkt-normal 8s ease-in-out infinite; }
+  #fig-reliability-multiprovider-gateway #gw-pkt2 { animation: gw-pkt-failover 8s ease-in-out infinite; }
+  #fig-reliability-multiprovider-gateway #gw-fault { animation: gw-fault-flash 8s ease-in-out infinite; }
+  #fig-reliability-multiprovider-gateway #gw-open-lbl { animation: gw-open-lbl 8s ease-in-out infinite; }
+  #fig-reliability-multiprovider-gateway #gw-path-a { animation: gw-a-dim 8s ease-in-out infinite; }
+  #fig-reliability-multiprovider-gateway #gw-prov-b { animation: gw-b-active 8s ease-in-out infinite; }
+</style>
+<svg viewBox="0 0 880 440" role="img" aria-label="Multi-provider LLM gateway: requests flow to Provider A normally; when Provider A fails the circuit opens and the gateway automatically reroutes to Provider B.">
+<defs>
+  <marker id="gw-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+  <marker id="gw-arr-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="gw-arr-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#7c3aed)"/>
+  </marker>
+</defs>
+
+
+<rect x="14" y="202" width="112" height="52" rx="9" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="70" y="225" text-anchor="middle" class="lbl-bold">Request</text>
+<text x="70" y="241" text-anchor="middle" class="lbl-sm">from application</text>
+
+
+<line x1="126" y1="228" x2="190" y2="228" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#gw-arr)"/>
+
+
+<rect x="194" y="80" width="234" height="300" rx="12" fill="var(--accent,#7c3aed)" fill-opacity="0.07" stroke="var(--accent,#7c3aed)" stroke-width="1.8"/>
+<text x="311" y="104" text-anchor="middle" class="lbl-bold" style="fill:var(--accent,#7c3aed)">LLM Gateway</text>
+<text x="311" y="120" text-anchor="middle" class="lbl-sm">(your code)</text>
+
+
+<rect x="218" y="148" width="186" height="26" rx="13" fill="var(--accent,#7c3aed)" fill-opacity="0.15" stroke="var(--accent,#7c3aed)" stroke-width="1" stroke-opacity="0.5"/>
+<text x="311" y="166" text-anchor="middle" class="route-lbl">Primary route</text>
+
+<rect x="218" y="218" width="186" height="26" rx="13" fill="var(--border-2,#94a3b8)" fill-opacity="0.15" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="311" y="236" text-anchor="middle" class="route-lbl" style="fill:var(--muted,#64748b)">Fallback route</text>
+
+<rect x="218" y="288" width="186" height="26" rx="13" fill="var(--border-2,#94a3b8)" fill-opacity="0.10" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="4 2"/>
+<text x="311" y="306" text-anchor="middle" class="route-lbl" style="fill:var(--muted,#64748b)">Emergency route</text>
+
+
+<text x="214" y="334" class="lbl-sm">&#x2022; Health probing (synthetic every 30s)</text>
+<text x="214" y="346" class="lbl-sm">&#x2022; Circuit breaking (&gt;5% err / 60s)</text>
+<text x="214" y="358" class="lbl-sm">&#x2022; Latency SLO enforcement (p95)</text>
+<text x="214" y="370" class="lbl-sm">&#x2022; Model equivalence (alias -&gt; model id)</text>
+
+
+
+<g id="gw-path-a">
+  <line x1="404" y1="161" x2="546" y2="161" stroke="var(--good,#2f9e6e)" stroke-width="2" marker-end="url(#gw-arr-ok)"/>
+  <text x="475" y="153" text-anchor="middle" class="lbl-sm" style="fill:var(--good,#2f9e6e)">priority by weight</text>
+
+  <circle cx="476" cy="165" r="6" fill="var(--good,#2f9e6e)" opacity="0.9"/>
+  <text x="476" y="169" text-anchor="middle" style="font:700 8px sans-serif;fill:#fff">C</text>
+</g>
+
+<rect x="550" y="126" width="284" height="70" rx="10" fill="var(--surface,#f8fafc)" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+<text x="692" y="154" text-anchor="middle" class="lbl-bold" style="fill:var(--good,#2f9e6e)">Provider A (e.g., OpenAI)</text>
+<text x="692" y="172" text-anchor="middle" class="lbl-code">gpt-4o-2024-08-06</text>
+<circle cx="628" cy="184" r="3.5" fill="var(--good,#2f9e6e)"/>
+<text x="638" y="188" text-anchor="start" class="lbl-sm" style="fill:var(--good,#2f9e6e)">Healthy / serving</text>
+
+
+<line x1="428" y1="231" x2="546" y2="251" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#gw-arr)"/>
+
+<circle cx="487" cy="241" r="6" fill="var(--border-2,#94a3b8)" fill-opacity="0.5"/>
+<text x="487" y="245" text-anchor="middle" style="font:700 8px sans-serif;fill:var(--ink-soft,#334155)">C</text>
+
+<rect id="gw-prov-b" x="550" y="216" width="284" height="70" rx="10" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<text x="692" y="244" text-anchor="middle" class="lbl-bold">Provider B (e.g., Anthropic)</text>
+<text x="692" y="262" text-anchor="middle" class="lbl-code">claude-opus-4-5</text>
+<circle cx="660" cy="274" r="3.5" fill="none" stroke="var(--muted,#64748b)" stroke-width="1.2"/>
+<text x="670" y="278" text-anchor="start" class="lbl-sm" style="fill:var(--muted,#64748b)">Standby</text>
+
+
+<line x1="428" y1="301" x2="546" y2="326" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#gw-arr)"/>
+<circle cx="487" cy="313" r="6" fill="none" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+<text x="487" y="317" text-anchor="middle" style="font:700 8px sans-serif;fill:var(--muted,#64748b)">C</text>
+
+<rect x="550" y="306" width="284" height="60" rx="10" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="692" y="330" text-anchor="middle" class="lbl-bold" style="fill:var(--muted,#64748b)">Provider C (self-hosted)</text>
+<text x="692" y="348" text-anchor="middle" class="lbl-sm">last resort / emergency</text>
+
+
+
+<circle id="gw-pkt" cx="70" cy="228" r="5" fill="var(--good,#2f9e6e)" opacity="0">
+  <animate attributeName="cx" dur="8s" repeatCount="indefinite"
+    keyTimes="0;0.05;0.25;0.40;0.55;0.65;1"
+    values="70;70;240;530;530;530;70"/>
+  <animate attributeName="cy" dur="8s" repeatCount="indefinite"
+    keyTimes="0;0.05;0.25;0.40;0.55;0.65;1"
+    values="228;228;228;161;161;161;228"/>
+  <animate attributeName="opacity" dur="8s" repeatCount="indefinite"
+    keyTimes="0;0.02;0.05;0.50;0.65;0.68;1"
+    values="0;0;1;1;1;0;0"/>
+</circle>
+
+
+<circle id="gw-pkt2" cx="70" cy="228" r="5" fill="var(--accent,#7c3aed)" opacity="0">
+  <animate attributeName="cx" dur="8s" repeatCount="indefinite"
+    keyTimes="0;0.65;0.70;0.85;0.92;0.96;1"
+    values="70;70;240;530;530;530;70"/>
+  <animate attributeName="cy" dur="8s" repeatCount="indefinite"
+    keyTimes="0;0.65;0.70;0.85;0.92;0.96;1"
+    values="228;228;228;251;251;251;228"/>
+  <animate attributeName="opacity" dur="8s" repeatCount="indefinite"
+    keyTimes="0;0.65;0.67;0.70;0.88;0.93;0.96;1"
+    values="0;0;0;1;1;1;0;0"/>
+</circle>
+
+
+<rect id="gw-fault" x="550" y="126" width="284" height="70" rx="10" fill="var(--bad,#dc2626)" opacity="0">
+  <animate attributeName="opacity" dur="8s" repeatCount="indefinite"
+    keyTimes="0;0.59;0.60;0.67;0.68;0.73;0.74;0.79;0.80;1"
+    values="0;0;0.5;0.5;0;0;0.5;0.5;0;0"/>
+</rect>
+
+
+<g id="gw-open-lbl" opacity="0">
+  <animate attributeName="opacity" dur="8s" repeatCount="indefinite"
+    keyTimes="0;0.64;0.65;0.88;0.89;1"
+    values="0;0;1;1;0;0"/>
+  <rect x="558" y="198" width="196" height="18" rx="4" fill="var(--warn,#e0a106)"/>
+  <text x="656" y="211" text-anchor="middle" style="font:700 10px var(--sans,sans-serif);fill:#fff">circuit OPEN — cooldown 30s</text>
+</g>
+
+
+<text x="440" y="422" text-anchor="middle" class="cap">Gateway auto-reroutes on failure — circuit opens, traffic shifts to next available provider</text>
+
+</svg>
+<figcaption><b>The LLM gateway absorbs provider failures through automatic circuit-breaking and weighted failover.</b> Under normal operation a request flows to the primary provider (Provider A). When A accumulates errors, the circuit trips to OPEN and subsequent requests are transparently rerouted to the standby provider (Provider B) without application changes. The gateway also handles health probing, latency SLO enforcement, and model-alias mapping.</figcaption>
+</figure>
+
+<p>The gateway handles:
+1. <strong>Health probing</strong> — lightweight synthetic request every 30 s per provider.
+2. <strong>Circuit breaking</strong> — if a provider returns &gt;5% errors in a 60-second window, open its circuit and route to the next provider.
+3. <strong>Latency SLO enforcement</strong> — if provider latency p95 exceeds budget, deprioritize (soft circuit break) and increase weight on the faster provider.
+4. <strong>Model equivalence mapping</strong> — map your internal model alias (e.g., <code>llm-v2</code>) to provider-specific model IDs (e.g., <code>gpt-4o-2024-08-06</code> or <code>claude-opus-4-5</code>).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">httpx</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ProviderConfig</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">api_base</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">api_key_env</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># provider-specific model identifier</span>
+    <span class="n">weight</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>    <span class="c1"># routing weight (higher = preferred)</span>
+    <span class="n">max_failures</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span>  <span class="c1"># failures in window before circuit opens</span>
+    <span class="n">window_seconds</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">60.0</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">CircuitState</span><span class="p">:</span>
+    <span class="n">failures</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">open_until</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># monotonic timestamp; 0 = closed</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">record_failure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">window</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">failures</span> <span class="o">=</span> <span class="p">[</span><span class="n">t</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">failures</span> <span class="k">if</span> <span class="n">now</span> <span class="o">-</span> <span class="n">t</span> <span class="o">&lt;</span> <span class="n">window</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">failures</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">now</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_open</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_failures</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">open_until</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">failures</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">max_failures</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">trip</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cooldown</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">30.0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">open_until</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span> <span class="o">+</span> <span class="n">cooldown</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">failures</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MultiProviderGateway</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Routes LLM requests across multiple providers with circuit breaking.</span>
+<span class="sd">    Falls back automatically on error or timeout.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">providers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ProviderConfig</span><span class="p">]):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">providers</span> <span class="o">=</span> <span class="n">providers</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">circuits</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">CircuitState</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">CircuitState</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">providers</span>
+        <span class="p">}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_available_providers</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">ProviderConfig</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return providers whose circuits are closed, ordered by weight desc.&quot;&quot;&quot;</span>
+        <span class="n">available</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">providers</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">circuits</span><span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">is_open</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">max_failures</span><span class="p">)</span>
+        <span class="p">]</span>
+        <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">available</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="n">p</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">complete</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+        <span class="n">timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">30.0</span><span class="p">,</span>
+        <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1024</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Attempt completion across providers in priority order.</span>
+<span class="sd">        Returns the first successful response.</span>
+<span class="sd">        Raises RuntimeError if all providers fail.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+        <span class="n">available</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_available_providers</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">available</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;All providers have open circuits — no fallback available&quot;</span><span class="p">)</span>
+
+        <span class="n">last_error</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="ne">Exception</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">for</span> <span class="n">provider</span> <span class="ow">in</span> <span class="n">available</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_call_provider</span><span class="p">(</span>
+                    <span class="n">provider</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span> <span class="n">timeout</span><span class="p">,</span> <span class="n">max_tokens</span><span class="p">,</span>
+                    <span class="n">api_key</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">provider</span><span class="o">.</span><span class="n">api_key_env</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+                <span class="p">)</span>
+                <span class="c1"># Success: record and return</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[GATEWAY] Served by </span><span class="si">{</span><span class="n">provider</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">result</span>
+            <span class="k">except</span> <span class="p">(</span><span class="n">httpx</span><span class="o">.</span><span class="n">TimeoutException</span><span class="p">,</span> <span class="n">httpx</span><span class="o">.</span><span class="n">HTTPStatusError</span><span class="p">,</span> <span class="ne">Exception</span><span class="p">)</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="n">last_error</span> <span class="o">=</span> <span class="n">e</span>
+                <span class="n">circuit</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">circuits</span><span class="p">[</span><span class="n">provider</span><span class="o">.</span><span class="n">name</span><span class="p">]</span>
+                <span class="n">circuit</span><span class="o">.</span><span class="n">record_failure</span><span class="p">(</span><span class="n">provider</span><span class="o">.</span><span class="n">window_seconds</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">circuit</span><span class="o">.</span><span class="n">is_open</span><span class="p">(</span><span class="n">provider</span><span class="o">.</span><span class="n">max_failures</span><span class="p">):</span>
+                    <span class="n">circuit</span><span class="o">.</span><span class="n">trip</span><span class="p">(</span><span class="n">cooldown</span><span class="o">=</span><span class="mf">30.0</span><span class="p">)</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[CIRCUIT] Opened for </span><span class="si">{</span><span class="n">provider</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[GATEWAY] </span><span class="si">{</span><span class="n">provider</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> failed, trying next provider: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;All providers failed. Last error: </span><span class="si">{</span><span class="n">last_error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_call_provider</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">provider</span><span class="p">:</span> <span class="n">ProviderConfig</span><span class="p">,</span>
+        <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+        <span class="n">timeout</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">api_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Thin OpenAI-compatible API call. Extend for non-OpenAI providers.&quot;&quot;&quot;</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">httpx</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="n">timeout</span><span class="p">)</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
+            <span class="n">r</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">post</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">provider</span><span class="o">.</span><span class="n">api_base</span><span class="si">}</span><span class="s2">/chat/completions&quot;</span><span class="p">,</span>
+                <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Authorization&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;Bearer </span><span class="si">{</span><span class="n">api_key</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">},</span>
+                <span class="n">json</span><span class="o">=</span><span class="p">{</span>
+                    <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">provider</span><span class="o">.</span><span class="n">model_id</span><span class="p">,</span>
+                    <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="n">messages</span><span class="p">,</span>
+                    <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="n">max_tokens</span><span class="p">,</span>
+                <span class="p">},</span>
+            <span class="p">)</span>
+            <span class="n">r</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
+            <span class="k">return</span> <span class="n">r</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="provider-outage-runbook">Provider outage runbook<a class="headerlink" href="#provider-outage-runbook" title="Permanent link">¶</a></h3>
+<p>This is the step-by-step procedure for on-call engineers. Pin it in your incident wiki and Slack channel.</p>
+<figure class="viz" id="fig-reliability-provider-outage-runbook">
+<button class="viz-replay" type="button">↻ replay</button>
+<style>
+  #fig-reliability-provider-outage-runbook text { font: 500 11px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-reliability-provider-outage-runbook .step-num { font: 800 14px var(--sans,sans-serif); fill: #fff; }
+  #fig-reliability-provider-outage-runbook .step-title { font: 700 12px var(--sans,sans-serif); fill: var(--ink-soft,#1e293b); }
+  #fig-reliability-provider-outage-runbook .step-sub { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-reliability-provider-outage-runbook .chip { font: 700 9.5px var(--sans,sans-serif); fill: var(--accent,#7c3aed); }
+  #fig-reliability-provider-outage-runbook .cap { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-reliability-provider-outage-runbook .trigger-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+
+  /* Step highlight animation — each card brightens in sequence */
+  @keyframes rb-step1 {
+    0%,4%  { opacity:0 }
+    5%,18% { opacity:0.18 }
+    19%,100%{ opacity:0 }
+  }
+  @keyframes rb-step2 {
+    0%,19% { opacity:0 }
+    20%,34%{ opacity:0.18 }
+    35%,100%{ opacity:0 }
+  }
+  @keyframes rb-step3 {
+    0%,34% { opacity:0 }
+    35%,50%{ opacity:0.18 }
+    51%,100%{ opacity:0 }
+  }
+  @keyframes rb-step4 {
+    0%,50% { opacity:0 }
+    51%,68%{ opacity:0.18 }
+    69%,100%{ opacity:0 }
+  }
+  @keyframes rb-step5 {
+    0%,68% { opacity:0 }
+    69%,84%{ opacity:0.18 }
+    85%,100%{ opacity:0 }
+  }
+  /* Spine progress fill */
+  @keyframes rb-spine {
+    0%   { height:0px; y:88px; }
+    5%   { height:0px; y:88px; }
+    18%  { height:88px; y:88px; }
+    20%  { height:88px; y:88px; }
+    34%  { height:176px; y:88px; }
+    35%  { height:176px; y:88px; }
+    50%  { height:264px; y:88px; }
+    51%  { height:264px; y:88px; }
+    68%  { height:352px; y:88px; }
+    69%  { height:352px; y:88px; }
+    84%  { height:440px; y:88px; }
+    85%  { height:440px; y:88px; }
+    100% { height:440px; y:88px; }
+  }
+
+  #fig-reliability-provider-outage-runbook #rb-hl1 { animation: rb-step1 10s ease-in-out infinite; }
+  #fig-reliability-provider-outage-runbook #rb-hl2 { animation: rb-step2 10s ease-in-out infinite; }
+  #fig-reliability-provider-outage-runbook #rb-hl3 { animation: rb-step3 10s ease-in-out infinite; }
+  #fig-reliability-provider-outage-runbook #rb-hl4 { animation: rb-step4 10s ease-in-out infinite; }
+  #fig-reliability-provider-outage-runbook #rb-hl5 { animation: rb-step5 10s ease-in-out infinite; }
+  #fig-reliability-provider-outage-runbook #rb-spine-fill { animation: rb-spine 10s ease-in-out infinite; }
+</style>
+<svg viewBox="0 0 860 600" role="img" aria-label="Provider outage runbook: five time-boxed steps from confirming the outage to filing a postmortem, shown as a sequential animated procedure.">
+<defs>
+  <marker id="rb-arr" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M1 0 L5 9 L9 0 z" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+</defs>
+
+
+<rect x="14" y="12" width="832" height="34" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0.12" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+<text x="430" y="33" text-anchor="middle" class="trigger-lbl">Trigger: provider circuit opened OR status page shows major / critical</text>
+
+
+<rect x="67" y="62" width="6" height="502" rx="3" fill="var(--border-2,#e2e8f0)"/>
+
+<rect id="rb-spine-fill" x="67" y="88" width="6" height="0" rx="3" fill="var(--accent,#7c3aed)"/>
+
+
+<circle cx="70" cy="100" r="18" fill="var(--accent,#7c3aed)"/>
+<text x="70" y="106" text-anchor="middle" class="step-num">1</text>
+
+<rect x="102" y="62" width="744" height="78" rx="10" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+
+<rect id="rb-hl1" x="102" y="62" width="744" height="78" rx="10" fill="var(--accent,#7c3aed)" opacity="0"/>
+
+<text x="120" y="84" class="step-title">Step 1 — Confirm the outage</text>
+<rect x="684" y="66" width="72" height="18" rx="9" fill="var(--accent,#7c3aed)" fill-opacity="0.15" stroke="var(--accent,#7c3aed)" stroke-width="1"/>
+<text x="720" y="79" text-anchor="middle" class="chip">&lt; 5 min</text>
+<text x="120" y="101" class="step-sub">a. Check provider status page (automated: diagnose_providers())</text>
+<text x="120" y="116" class="step-sub">b. Run a synthetic test call to the provider API from terminal</text>
+<text x="120" y="131" class="step-sub">c. Check internal latency/error dashboards for provider</text>
+
+
+<circle cx="70" cy="192" r="18" fill="var(--good,#2f9e6e)"/>
+<text x="70" y="198" text-anchor="middle" class="step-num">2</text>
+
+<rect x="102" y="154" width="744" height="78" rx="10" fill="var(--surface,#f8fafc)" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+<rect id="rb-hl2" x="102" y="154" width="744" height="78" rx="10" fill="var(--good,#2f9e6e)" opacity="0"/>
+
+<text x="120" y="176" class="step-title" style="fill:var(--good,#2f9e6e)">Step 2 — Activate failover</text>
+<rect x="684" y="158" width="72" height="18" rx="9" fill="var(--good,#2f9e6e)" fill-opacity="0.15" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+<text x="720" y="171" text-anchor="middle" class="chip" style="fill:var(--good,#2f9e6e)">&lt; 2 min</text>
+<text x="120" y="193" class="step-sub">a. Verify gateway auto-routed to secondary (grep "Served by" logs)</text>
+<text x="120" y="208" class="step-sub">b. If not auto-routed: gateway.circuits["openai"].trip(cooldown=3600)</text>
+<text x="120" y="223" class="step-sub">c. Run canary eval on secondary to verify quality SLI</text>
+
+
+<circle cx="70" cy="284" r="18" fill="var(--accent,#7c3aed)"/>
+<text x="70" y="290" text-anchor="middle" class="step-num">3</text>
+
+<rect x="102" y="246" width="744" height="78" rx="10" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect id="rb-hl3" x="102" y="246" width="744" height="78" rx="10" fill="var(--accent,#7c3aed)" opacity="0"/>
+
+<text x="120" y="268" class="step-title">Step 3 — Monitor secondary health</text>
+<rect x="684" y="250" width="72" height="18" rx="9" fill="var(--accent,#7c3aed)" fill-opacity="0.15" stroke="var(--accent,#7c3aed)" stroke-width="1"/>
+<text x="720" y="263" text-anchor="middle" class="chip">ongoing</text>
+<text x="120" y="285" class="step-sub">a. Watch secondary latency — it may have different rate limits</text>
+<text x="120" y="300" class="step-sub">b. Adjust max_tokens / batching if secondary is congested</text>
+<text x="120" y="315" class="step-sub">c. Notify stakeholders if quality SLO degrades &gt;2% on secondary</text>
+
+
+<circle cx="70" cy="376" r="18" fill="var(--accent,#7c3aed)"/>
+<text x="70" y="382" text-anchor="middle" class="step-num">4</text>
+
+<rect x="102" y="338" width="744" height="88" rx="10" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect id="rb-hl4" x="102" y="338" width="744" height="88" rx="10" fill="var(--accent,#7c3aed)" opacity="0"/>
+
+<text x="120" y="360" class="step-title">Step 4 — Recovery (when primary recovers)</text>
+<rect x="672" y="342" width="84" height="18" rx="9" fill="var(--accent,#7c3aed)" fill-opacity="0.15" stroke="var(--accent,#7c3aed)" stroke-width="1"/>
+<text x="714" y="355" text-anchor="middle" class="chip">30 min ramp</text>
+<text x="120" y="377" class="step-sub">a. Primary status page returns to "operational"</text>
+<text x="120" y="392" class="step-sub">b. Send 5% test traffic to primary; verify latency and quality</text>
+<text x="120" y="407" class="step-sub">c. Restore weight gradually:</text>
+
+<rect x="270" y="398" width="60" height="12" rx="3" fill="var(--border-2,#e2e8f0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<rect x="270" y="398" width="12" height="12" rx="3" fill="var(--accent,#7c3aed)" fill-opacity="0.5"/>
+<text x="284" y="408" text-anchor="middle" style="font:700 8px var(--sans,sans-serif);fill:#fff">20%</text>
+<rect x="336" y="398" width="60" height="12" rx="3" fill="var(--border-2,#e2e8f0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<rect x="336" y="398" width="30" height="12" rx="3" fill="var(--accent,#7c3aed)" fill-opacity="0.7"/>
+<text x="351" y="408" text-anchor="middle" style="font:700 8px var(--sans,sans-serif);fill:#fff">50%</text>
+<rect x="402" y="398" width="60" height="12" rx="3" fill="var(--border-2,#e2e8f0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<rect x="402" y="398" width="60" height="12" rx="3" fill="var(--accent,#7c3aed)"/>
+<text x="432" y="408" text-anchor="middle" style="font:700 8px var(--sans,sans-serif);fill:#fff">100%</text>
+<text x="475" y="408" class="step-sub">over 30 min</text>
+<text x="120" y="420" class="step-sub">d. Close incident when 100% traffic stable for 15 min</text>
+
+
+<circle cx="70" cy="476" r="18" fill="var(--accent,#7c3aed)"/>
+<text x="70" y="482" text-anchor="middle" class="step-num">5</text>
+
+<rect x="102" y="438" width="744" height="78" rx="10" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect id="rb-hl5" x="102" y="438" width="744" height="78" rx="10" fill="var(--accent,#7c3aed)" opacity="0"/>
+
+<text x="120" y="460" class="step-title">Step 5 — Postmortem</text>
+<rect x="672" y="442" width="84" height="18" rx="9" fill="var(--accent,#7c3aed)" fill-opacity="0.15" stroke="var(--accent,#7c3aed)" stroke-width="1"/>
+<text x="714" y="455" text-anchor="middle" class="chip">within 48 h</text>
+<text x="120" y="477" class="step-sub">a. Complete postmortem template (trace evidence required)</text>
+<text x="120" y="492" class="step-sub">b. File action items in project tracker</text>
+<text x="120" y="507" class="step-sub">c. Update runbook with new learnings</text>
+
+
+<text x="430" y="535" text-anchor="middle" class="cap">Each step has a time budget — the animated spine tracks progress through the on-call procedure</text>
+
+</svg>
+<figcaption><b>The provider outage runbook sequences five time-boxed steps from initial confirmation to postmortem.</b> Step 2 (activate failover) is the most critical restore action and should complete in under two minutes; the traffic ramp in Step 4 prevents a sudden surge from stressing a primary that just recovered. The animated spine traces execution order and reinforces the time budgets.</figcaption>
+</figure>
+
+<h3 id="rate-limit-and-quota-management">Rate-limit and quota management<a class="headerlink" href="#rate-limit-and-quota-management" title="Permanent link">¶</a></h3>
+<p>Provider outages include soft outages from rate limiting. A burst of user traffic can exhaust your per-minute token quota, causing 429 errors that your monitoring might mis-classify as an outage.</p>
+<p>Track token consumption as a first-class metric. If your gateway observes a 429, it should:
+1. Apply exponential backoff with jitter before retrying on the same provider.
+2. Route overflow to secondary provider if primary is consistently 429-ing.
+3. Alert if token consumption is trending toward the quota limit so you can request a quota increase proactively.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">retry_with_backoff</span><span class="p">(</span>
+    <span class="n">call_fn</span><span class="p">,</span>
+    <span class="n">max_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+    <span class="n">base_delay</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">jitter</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Exponential backoff with full jitter for rate-limited LLM calls.</span>
+<span class="sd">    Jitter prevents the thundering-herd problem when many workers back off simultaneously.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">attempt</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_retries</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="k">await</span> <span class="n">call_fn</span><span class="p">()</span>
+        <span class="k">except</span> <span class="n">httpx</span><span class="o">.</span><span class="n">HTTPStatusError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">429</span><span class="p">:</span>
+                <span class="n">delay</span> <span class="o">=</span> <span class="n">base_delay</span> <span class="o">*</span> <span class="p">(</span><span class="mi">2</span> <span class="o">**</span> <span class="n">attempt</span><span class="p">)</span> <span class="o">+</span> <span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">jitter</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rate limited (attempt </span><span class="si">{</span><span class="n">attempt</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">max_retries</span><span class="si">}</span><span class="s2">), retrying in </span><span class="si">{</span><span class="n">delay</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+                <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">delay</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">raise</span>  <span class="c1"># Non-rate-limit errors: don&#39;t retry here, propagate</span>
+    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Exhausted </span><span class="si">{</span><span class="n">max_retries</span><span class="si">}</span><span class="s2"> retries due to rate limiting&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="the-on-call-lifecycle-alerts-war-rooms-and-error-budget-reviews">The On-Call Lifecycle: Alerts, War Rooms, and Error Budget Reviews<a class="headerlink" href="#the-on-call-lifecycle-alerts-war-rooms-and-error-budget-reviews" title="Permanent link">¶</a></h2>
+<h3 id="alert-design-principles">Alert design principles<a class="headerlink" href="#alert-design-principles" title="Permanent link">¶</a></h3>
+<p>Poorly designed alerts are the #1 cause of alert fatigue, which leads to on-call engineers ignoring alerts — defeating their purpose. Apply these principles:</p>
+<ol>
+<li><strong>Alert on symptoms, not causes.</strong> Alert on &ldquo;quality SLO breach&rdquo; rather than &ldquo;OpenAI error rate &gt; 1%&rdquo;. The symptom is what matters to users; the cause is what you investigate after.</li>
+<li><strong>Every alert must be actionable.</strong> If you cannot write a runbook step for an alert, delete it or convert it to a dashboard warning.</li>
+<li><strong>Use multi-window burn rate alerts.</strong> A burn rate of 14.4× means you exhaust your 30-day error budget in 2 days. Trigger pages at burn rate ≥ 14.4× (fast burn) and warnings at burn rate ≥ 6× (slow burn). This is the SRE Workbook recommendation.</li>
+</ol>
+<p>The fast-burn formula:</p>
+<div class="arithmatex">\[
+\text{burn rate} = \frac{1 - \text{SLI}_{\text{current}}}{1 - \text{SLO}_{\text{target}}}
+\]</div>
+<p>For example, if SLO = 0.95 and current quality rate = 0.80:</p>
+<div class="arithmatex">\[
+\text{burn rate} = \frac{1 - 0.80}{1 - 0.95} = \frac{0.20}{0.05} = 4\times
+\]</div>
+<p>A <span class="arithmatex">\(4\times\)</span> burn rate exhausts the monthly budget in <span class="arithmatex">\(30/4 = 7.5\)</span> days — a warning-level alert.</p>
+<h3 id="error-budget-reviews">Error budget reviews<a class="headerlink" href="#error-budget-reviews" title="Permanent link">¶</a></h3>
+<p>Hold a monthly error budget review. The agenda:</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>What to discuss</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Budget consumed</td>
+<td>How much of each SLO budget was spent vs. planned</td>
+</tr>
+<tr>
+<td>Top incidents by budget impact</td>
+<td>Which incidents caused the most budget burn</td>
+</tr>
+<tr>
+<td>Systemic patterns</td>
+<td>Provider &gt; prompt &gt; retrieval drift distribution</td>
+</tr>
+<tr>
+<td>Action item completion</td>
+<td>Were last month&rsquo;s postmortem items closed?</td>
+</tr>
+<tr>
+<td>Budget policy</td>
+<td>Should the team freeze feature deployments if budget &lt; 10%?</td>
+</tr>
+</tbody>
+</table>
+<p>Budget freezes are a powerful forcing function: when the error budget is nearly exhausted, no new prompt changes or retrieval updates ship until the budget is replenished — incentivizing reliability work over feature velocity.</p>
+<h3 id="war-room-setup">War room setup<a class="headerlink" href="#war-room-setup" title="Permanent link">¶</a></h3>
+<p>When a SEV-1 (complete outage) or SEV-2 (major SLO breach) fires:</p>
+<div class="highlight"><pre><span></span><code>War Room Checklist
+==================
+[ ] Incident commander assigned (not the same as the engineer debugging)
+[ ] Communications lead designated (updates to stakeholders every 30 min)
+[ ] Incident channel created: #inc-YYYYMMDD-NNN
+[ ] Live dashboard pinned in channel
+[ ] Diagnosis tree started in shared doc (anyone can update)
+[ ] Provider status pages bookmarked
+[ ] Runbook link shared
+[ ] Rollback authority confirmed (who can approve a prompt/model rollback?)
+[ ] Start a clock: MTTD and MTTR tracking begins now
+</code></pre></div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>SLOs for LLM systems must include a <strong>quality SLO</strong> (automated judge pass rate) in addition to availability and latency SLOs. HTTP success rate alone is blind to semantic failures.</li>
+<li>Use <strong>anchored canary evals</strong> — a frozen golden set scored every 15 minutes — to detect gradual silent quality collapse before it becomes a user-visible incident.</li>
+<li>The <strong>four-root-cause tree</strong> (provider regression, prompt change, retrieval drift, upstream data) gives on-call engineers a structured triage path; check all four branches in parallel.</li>
+<li><strong>Prompt and model versioning</strong> must be first-class infrastructure: SHA-based prompt registries with atomic rollback, pinned model version strings at the provider API, and canary eval gates before full rollout.</li>
+<li><strong>Trace-attached postmortems</strong> anchor every claim to a specific trace ID (prompt SHA, retrieval scores, quality judge output); without trace evidence, postmortems devolve into speculation.</li>
+<li>Design a <strong>degradation ladder</strong> (full RAG → retrieval-off → smaller model → cache-only → graceful error) with automatic circuit-breaker transitions; never assume binary up/down.</li>
+<li><strong>Multi-provider failover</strong> with circuit breaking is non-negotiable for production systems; no single provider offers five-nines availability, and automatic failover should reduce mean-time-to-restore to under 2 minutes.</li>
+<li>Use <strong>burn rate alerts</strong> (fast-burn ≥ 14.4×, slow-burn ≥ 6×) rather than raw SLI threshold alerts to give early warning proportional to the speed at which the error budget is being consumed.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Reliability engineering for LLM systems has rapidly matured from adapting classical SRE practices to a discipline in its own right: production experience now shows that quality SLOs, multi-window burn-rate alerting, and multi-provider circuit-breaker failover are table-stakes for any customer-facing deployment. The 2025–2026 literature provides the first large-scale empirical taxonomies of real LLM inference incidents.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://sre.google/sre-book/table-of-contents/">Beyer et al., <em>Site Reliability Engineering</em> (2016)</a> — Google&rsquo;s canonical SRE text; chapters on SLOs, error budgets, and incident management are free online.</li>
+<li><a href="https://sre.google/workbook/table-of-contents/">Beyer, Murphy et al., <em>The Site Reliability Workbook</em> (2018)</a> — hands-on companion covering SLO implementation and error budget policy; free online.</li>
+<li><a href="https://sre.google/workbook/alerting-on-slos/">Google SRE, <em>Alerting on SLOs</em> (SRE Workbook Chapter 5)</a> — the definitive treatment of multi-window, multi-burn-rate alerting that the chapter&rsquo;s burn-rate formulas are drawn from.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2511.07424">Ranganathan, Zhang, Wu, <em>Enhancing Reliability in AI Inference Services</em> (2025)</a> — empirical taxonomy of 156 high-severity LLM production incidents at Microsoft; identifies dominant failure modes and mitigation strategies.</li>
+<li><a href="https://arxiv.org/abs/2602.16666">Rabanser et al., <em>Towards a Science of AI Agent Reliability</em> (2026)</a> — ICML 2026 paper evaluating 15 models across consistency, robustness, predictability, and safety; shows capability gains have not translated into proportional reliability gains.</li>
+<li><a href="https://arxiv.org/abs/2604.00726">Altenbernd, Wiesner, Kao, <em>Exploring Silent Data Corruption as a Reliability Challenge in LLM Training</em> (2026)</a> — examines hardware-induced silent faults that bypass system-level detection, relevant to the &ldquo;silent quality collapse&rdquo; failure mode.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/traceloop/openllmetry">traceloop/openllmetry</a> — OpenTelemetry-based instrumentation for LLM pipelines; provides standard span attributes for model calls, prompt versions, and retrieval stages across 10+ providers.</li>
+<li><a href="https://github.com/BerriAI/litellm">BerriAI/litellm</a> — Python SDK and proxy gateway (49k+ stars) unifying 100+ LLM providers with built-in fallbacks, circuit-breaker-style cooldowns, and per-provider spend tracking.</li>
+<li><a href="https://www.langchain.com/langsmith">LangSmith</a> — trace-level observability platform for LLM agents; supports online evaluations, quality scoring, and PagerDuty/webhook alerting on production traces.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://opentelemetry.io/blog/2024/llm-observability/">OpenTelemetry, <em>LLM Observability with OpenTelemetry</em> (2024)</a> — official CNCF guide to instrumenting LLM applications with traces and metrics using the emerging semantic conventions for GenAI.</li>
+<li><a href="https://portkey.ai/blog/retries-fallbacks-and-circuit-breakers-in-llm-apps/">Portkey, <em>Retries, Fallbacks, and Circuit Breakers in LLM Apps</em> (2024)</a> — practical production guide distinguishing when to use each resilience primitive in an LLM gateway.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Beyer, Jones, Petoff, Murphy. <em>Site Reliability Engineering.</em> Google, O&rsquo;Reilly, 2016. The foundational SRE text; chapters on SLOs, error budgets, and incident management remain the gold standard.</li>
+<li>Beyer, Murphy, et al. <em>The Site Reliability Workbook.</em> Google, O&rsquo;Reilly, 2018. Practical implementation of SLOs, multi-window burn rate alerting, and error budget policy.</li>
+<li>Kleppmann, M. <em>Designing Data-Intensive Applications.</em> O&rsquo;Reilly, 2017. Chapter on reliability covers circuit breakers, timeouts, and fallback patterns applicable to LLM gateways.</li>
+<li>Brewer, E. &ldquo;Kubernetes and the Path to Cloud Native.&rdquo; SOSP 2019. Discusses graceful degradation at scale.</li>
+<li>LangSmith (LangChain). Observability and tracing for LLM pipelines — a practical reference for trace schema design. langchain.com/langsmith.</li>
+<li>OpenLLMetry / Traceloop. OpenTelemetry-based instrumentation for LLM systems; provides standard span attributes for model calls, prompt versions, and retrieval stages.</li>
+<li>Ribeiro, Wu, Guestrin, Singh. &ldquo;Beyond Accuracy: Behavioral Testing of NLP Models with CheckList.&rdquo; ACL 2020. Foundation for golden-set canary eval design — systematic behavioral test suites rather than held-out accuracy alone.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="07-online-eval-ab-testing.html"><span class="pn-label">← Previous</span><span class="pn-title">Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</span></a>
+<a class="next" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="pn-label">Next →</span><span class="pn-title">Mechanistic Interpretability &amp; Model Internals</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#slis-and-slos-for-probabilistic-systems">SLIs and SLOs for Probabilistic Systems</a></li>
+<li class="toc-l3"><a href="#the-problem-with-binary-success-rates">The problem with binary success rates</a></li>
+<li class="toc-l3"><a href="#defining-quality-slos-concretely">Defining quality SLOs concretely</a></li>
+<li class="toc-l3"><a href="#latency-tail-budgets">Latency tail budgets</a></li>
+<li class="toc-l3"><a href="#the-gradual-silent-collapse-failure-mode">The &amp;ldquo;gradual silent collapse&amp;rdquo; failure mode</a></li>
+<li class="toc-l2"><a href="#a-four-root-cause-diagnosis-tree">A Four-Root-Cause Diagnosis Tree</a></li>
+<li class="toc-l3"><a href="#branch-1-modelprovider-regression">Branch 1: Model/provider regression</a></li>
+<li class="toc-l3"><a href="#branch-2-prompt-change-regression">Branch 2: Prompt change regression</a></li>
+<li class="toc-l3"><a href="#branch-3-retrieval-drift">Branch 3: Retrieval drift</a></li>
+<li class="toc-l3"><a href="#branch-4-upstream-data-regression">Branch 4: Upstream data regression</a></li>
+<li class="toc-l2"><a href="#prompt-and-model-rollback">Prompt and Model Rollback</a></li>
+<li class="toc-l3"><a href="#prompt-versioning-infrastructure">Prompt versioning infrastructure</a></li>
+<li class="toc-l3"><a href="#model-rollback">Model rollback</a></li>
+<li class="toc-l2"><a href="#trace-attached-postmortems">Trace-Attached Postmortems</a></li>
+<li class="toc-l3"><a href="#why-traces-matter-for-llm-postmortems">Why traces matter for LLM postmortems</a></li>
+<li class="toc-l3"><a href="#postmortem-template">Postmortem template</a></li>
+<li class="toc-l3"><a href="#mean-time-to-detect-mttd-and-mean-time-to-restore-mttr">Mean-time-to-detect (MTTD) and mean-time-to-restore (MTTR)</a></li>
+<li class="toc-l2"><a href="#detecting-gradual-silent-quality-collapse">Detecting Gradual Silent Quality Collapse</a></li>
+<li class="toc-l3"><a href="#why-silent-collapse-is-harder-than-hard-failures">Why silent collapse is harder than hard failures</a></li>
+<li class="toc-l3"><a href="#detecting-regression-at-the-segment-level">Detecting regression at the segment level</a></li>
+<li class="toc-l2"><a href="#fallback-and-degradation-design">Fallback and Degradation Design</a></li>
+<li class="toc-l3"><a href="#the-degradation-ladder">The degradation ladder</a></li>
+<li class="toc-l3"><a href="#caching-as-a-reliability-primitive">Caching as a reliability primitive</a></li>
+<li class="toc-l2"><a href="#provider-outage-runbooks-and-multi-provider-failover">Provider Outage Runbooks and Multi-Provider Failover</a></li>
+<li class="toc-l3"><a href="#the-multi-provider-architecture">The multi-provider architecture</a></li>
+<li class="toc-l3"><a href="#provider-outage-runbook">Provider outage runbook</a></li>
+<li class="toc-l3"><a href="#rate-limit-and-quota-management">Rate-limit and quota management</a></li>
+<li class="toc-l2"><a href="#the-on-call-lifecycle-alerts-war-rooms-and-error-budget-reviews">The On-Call Lifecycle: Alerts, War Rooms, and Error Budget Reviews</a></li>
+<li class="toc-l3"><a href="#alert-design-principles">Alert design principles</a></li>
+<li class="toc-l3"><a href="#error-budget-reviews">Error budget reviews</a></li>
+<li class="toc-l3"><a href="#war-room-setup">War room setup</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

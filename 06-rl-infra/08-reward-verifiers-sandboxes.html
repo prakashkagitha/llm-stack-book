@@ -1,0 +1,1908 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reward Engineering, Verifiers &amp; Sandboxes — The LLM Stack</title>
+<meta name="description" content="Building reward functions: rule-based verifiers (math equivalence, code unit tests), sandboxed execution (security, isolation, throughput), LLM-judge rewards, r">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="active" href="08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VI — RL Infrastructure (Deep Dive)</div>
+<h1 id="68-reward-engineering-verifiers-sandboxes">6.8 Reward Engineering, Verifiers &amp; Sandboxes<a class="headerlink" href="#68-reward-engineering-verifiers-sandboxes" title="Permanent link">¶</a></h1>
+<p>The training signal in reinforcement learning from human feedback (RLHF) and in RL with verifiable rewards (RLVR) is just a scalar <span class="arithmatex">\(r \in \mathbb{R}\)</span> returned for each model completion. Everything the model learns — its reasoning habits, its code style, its factual accuracy — is shaped by what that scalar measures. Getting the reward function right is therefore the most consequential engineering decision in your entire post-training pipeline.</p>
+<p>This chapter is a practical deep-dive into reward engineering: how to build rule-based verifiers that check math answers or run code tests, how to sandbox arbitrary execution safely at scale, how to use a second LLM as a judge, how to combine multiple reward signals without one dominating, and how to instrument and serve the whole system at training throughput. We assume familiarity with the basic RLHF/RLVR pipeline described in <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a> and the training loop mechanics from <a href="../06-rl-infra/02-generation-training-loop.html">The Generation–Training Loop &amp; Rollout Engines</a>.</p>
+<h2 id="the-anatomy-of-a-reward-function">The Anatomy of a Reward Function<a class="headerlink" href="#the-anatomy-of-a-reward-function" title="Permanent link">¶</a></h2>
+<p>Every reward function takes a (prompt, completion) pair and optionally a reference answer or test suite, and returns a scalar. In practice they come in three families:</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Examples</th>
+<th>Pros</th>
+<th>Cons</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rule-based verifier</strong></td>
+<td>Math equivalence, regex match, code unit test</td>
+<td>Deterministic, zero cost at training time</td>
+<td>Only defined for tasks with ground truth</td>
+</tr>
+<tr>
+<td><strong>LLM-judge</strong></td>
+<td>GPT-4o / Claude scoring correctness, helpfulness</td>
+<td>Works for open-ended tasks</td>
+<td>Expensive, noisy, gameable</td>
+</tr>
+<tr>
+<td><strong>Learned reward model</strong></td>
+<td>Bradley-Terry model trained on preference data</td>
+<td>Smooth signal, general-purpose</td>
+<td>Reward hacking, needs fresh data</td>
+</tr>
+</tbody>
+</table>
+<p>In RLVR (the paradigm that produced DeepSeek-R1 and related reasoning models), the goal is to rely on the first family as much as possible. The key insight is that for tasks with a checkable ground truth, a rule-based verifier is both cheaper and harder to hack than a learned reward model. We still need LLM judges and learned reward models for tasks like &ldquo;write a good essay,&rdquo; but we should use them sparingly.</p>
+<h3 id="reward-signal-flow">Reward Signal Flow<a class="headerlink" href="#reward-signal-flow" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-reward-signal-flow">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 660 476" role="img" aria-label="Reward signal flow diagram: a prompt feeds into the Policy LLM to produce a completion, which fans out to three parallel verifiers (rule-based, LLM judge, reward model), then merges into a weighted combination, flows through advantage estimation, and feeds a policy loss that loops back via gradient update.">
+<defs>
+  <marker id="rsf-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="rsf-arr-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#6d675d)"/>
+  </marker>
+</defs>
+<style>
+  #fig-reward-signal-flow .lbl { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-reward-signal-flow .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-reward-signal-flow .cap { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-reward-signal-flow .header { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); letter-spacing: 0.08em; text-transform: uppercase; }
+  #fig-reward-signal-flow .math { font: 500 11px var(--mono,monospace); fill: var(--ink-soft,#45413a); }
+  #fig-reward-signal-flow .grad-lbl { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+
+  @keyframes rsf-tok1 {
+    0%   { transform: translateX(0);    opacity: 0; }
+    4%   { opacity: 1; }
+    28%  { transform: translateX(240px); opacity: 1; }
+    32%  { transform: translateX(240px); opacity: 0; }
+    100% { transform: translateX(240px); opacity: 0; }
+  }
+  @keyframes rsf-fanA {
+    0%,32%  { transform: translate(0,0);      opacity: 0; }
+    35%     { opacity: 1; }
+    52%     { transform: translate(-145px,95px); opacity: 1; }
+    57%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsf-fanB {
+    0%,37%  { transform: translate(0,0);    opacity: 0; }
+    40%     { opacity: 1; }
+    58%     { transform: translate(0,95px); opacity: 1; }
+    64%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsf-fanC {
+    0%,43%  { transform: translate(0,0);       opacity: 0; }
+    46%     { opacity: 1; }
+    66%     { transform: translate(138px,95px); opacity: 1; }
+    72%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsf-merge {
+    0%,68%  { transform: translateY(0);   opacity: 0; }
+    71%     { opacity: 1; }
+    82%     { transform: translateY(68px); opacity: 1; }
+    86%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsf-down {
+    0%,82%  { transform: translateX(0);    opacity: 0; }
+    85%     { opacity: 1; }
+    94%     { transform: translateX(88px); opacity: 1; }
+    97%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsf-fb {
+    0%,94%  { stroke-dashoffset: 400; opacity: 0; }
+    96%     { opacity: 0.7; }
+    100%    { stroke-dashoffset: 0; opacity: 0; }
+  }
+  #fig-reward-signal-flow .tok1   { animation: rsf-tok1  5s ease-in-out infinite; }
+  #fig-reward-signal-flow .tokFA  { animation: rsf-fanA  5s ease-in-out infinite; }
+  #fig-reward-signal-flow .tokFB  { animation: rsf-fanB  5s ease-in-out infinite; }
+  #fig-reward-signal-flow .tokFC  { animation: rsf-fanC  5s ease-in-out infinite; }
+  #fig-reward-signal-flow .tokMg  { animation: rsf-merge 5s ease-in-out infinite; }
+  #fig-reward-signal-flow .tokDn  { animation: rsf-down  5s ease-in-out infinite; }
+  #fig-reward-signal-flow .fb-anim{ animation: rsf-fb    5s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-reward-signal-flow .tok1,
+    #fig-reward-signal-flow .tokFA,
+    #fig-reward-signal-flow .tokFB,
+    #fig-reward-signal-flow .tokFC,
+    #fig-reward-signal-flow .tokMg,
+    #fig-reward-signal-flow .tokDn,
+    #fig-reward-signal-flow .fb-anim { animation: none; opacity: 0; }
+  }
+</style>
+
+
+<rect x="8" y="8" width="644" height="460" rx="14"
+      fill="var(--surface,#f7f7fb)" stroke="var(--border-2,#d0d0da)" stroke-width="1.2"/>
+<text x="22" y="26" class="header">Training Process</text>
+
+
+
+<rect x="30"  y="50" width="120" height="44" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="90" y="76" text-anchor="middle" class="lbl">Prompt</text>
+
+<line x1="150" y1="72" x2="168" y2="72"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+<rect x="170" y="50" width="140" height="44" rx="7"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
+<text x="240" y="76" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Policy (LLM)</text>
+
+<line x1="310" y1="72" x2="328" y2="72"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+<rect x="330" y="50" width="130" height="44" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="395" y="76" text-anchor="middle" class="lbl">Completion</text>
+
+
+<circle class="tok1" cx="50" cy="72" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+
+
+<line x1="395" y1="94" x2="395" y2="128"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+
+<line x1="180" y1="128" x2="580" y2="128"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+
+<line x1="180" y1="128" x2="180" y2="158"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+<line x1="395" y1="128" x2="395" y2="158"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+<line x1="580" y1="128" x2="580" y2="158"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+
+<circle class="tokFA" cx="395" cy="108" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+<circle class="tokFB" cx="395" cy="108" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+<circle class="tokFC" cx="395" cy="108" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+
+
+<rect x="102" y="158" width="156" height="54" rx="7"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
+<text x="180" y="180" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Rule-Based Verifier</text>
+<text x="180" y="196" text-anchor="middle" class="sub">fast / deterministic</text>
+<text x="180" y="222" text-anchor="middle" class="cap">cheap, deterministic</text>
+
+
+<rect x="317" y="158" width="156" height="54" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="395" y="180" text-anchor="middle" class="lbl">LLM Judge</text>
+<text x="395" y="196" text-anchor="middle" class="sub">async API</text>
+<text x="395" y="222" text-anchor="middle" class="cap">expensive, noisy</text>
+
+
+<rect x="510" y="158" width="140" height="54" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="580" y="180" text-anchor="middle" class="lbl">Reward Model</text>
+<text x="580" y="196" text-anchor="middle" class="sub">GPU</text>
+<text x="580" y="222" text-anchor="middle" class="cap">GPU, smooth</text>
+
+
+<line x1="180" y1="212" x2="180" y2="248"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<line x1="395" y1="212" x2="395" y2="248"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<line x1="580" y1="212" x2="580" y2="248"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<line x1="180" y1="248" x2="580" y2="248"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+
+<line x1="395" y1="248" x2="395" y2="270"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+<circle class="tokMg" cx="395" cy="248" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+
+<rect x="215" y="270" width="360" height="50" rx="8"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.4"/>
+<text x="395" y="292" text-anchor="middle" class="lbl">Weighted Combination  r_total</text>
+<text x="395" y="310" text-anchor="middle" class="math">r_total = sum(w_k * r_k)</text>
+
+
+<line x1="395" y1="320" x2="395" y2="348"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+
+<rect x="215" y="348" width="175" height="44" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="302" y="374" text-anchor="middle" class="lbl">Advantage Estimation</text>
+
+<line x1="390" y1="370" x2="418" y2="370"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+<circle class="tokDn" cx="225" cy="370" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+<rect x="420" y="348" width="130" height="44" rx="7"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
+<text x="485" y="374" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Policy Loss</text>
+
+
+
+<path d="M 485 392 Q 485 440 390 440 Q 160 440 160 72 Q 160 52 170 52"
+      fill="none"
+      stroke="var(--muted,#8a8a99)" stroke-width="1.2"
+      stroke-dasharray="6 4"
+      marker-end="url(#rsf-arr-muted)"/>
+
+<text x="330" y="454" text-anchor="middle" class="grad-lbl">gradient update</text>
+
+
+<path class="fb-anim"
+      d="M 485 392 Q 485 440 390 440 Q 160 440 160 72 Q 160 52 170 52"
+      fill="none"
+      stroke="var(--accent,#c15b39)" stroke-width="2"
+      stroke-dasharray="400" stroke-dashoffset="400"
+      opacity="0"/>
+
+</svg>
+<figcaption><b>Reward signal flow in the RLVR training loop.</b> Each training step generates a completion from the policy, fans it out to three parallel verifiers running at different latencies and costs, merges their outputs into a weighted scalar, computes advantages, and updates the policy via a gradient — closing the loop.</figcaption>
+</figure>
+
+<p>The weighted combination step is itself a design choice (see section on multi-objective rewards below). For now, note that different reward sources run at different latencies and different costs, which matters a lot for training throughput.</p>
+<h2 id="rule-based-verifiers">Rule-Based Verifiers<a class="headerlink" href="#rule-based-verifiers" title="Permanent link">¶</a></h2>
+<h3 id="math-equivalence-checking">Math Equivalence Checking<a class="headerlink" href="#math-equivalence-checking" title="Permanent link">¶</a></h3>
+<p>The canonical RLVR task is mathematical reasoning: generate a chain-of-thought and a boxed final answer, then check if the answer is mathematically equivalent to the ground-truth. &ldquo;Mathematically equivalent&rdquo; is harder than string equality.</p>
+<p>Consider: <code>1/2</code>, <code>0.5</code>, <code>\frac{1}{2}</code>, <code>50\%</code>, and <code>0.50</code> all represent the same value. A naive string comparison gives sparse reward and introduces arbitrary formatting bias. We need symbolic or numeric normalization.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">math_verifier.py — robust math answer checker for RL training.</span>
+
+<span class="sd">Handles:</span>
+<span class="sd">  - Fraction strings: &quot;1/2&quot;, &quot;3 1/4&quot; (mixed numbers)</span>
+<span class="sd">  - LaTeX: r&quot;\frac{3}{4}&quot;, r&quot;\sqrt{2}&quot;, r&quot;2^{10}&quot;</span>
+<span class="sd">  - Percentages: &quot;50%&quot; -&gt; 0.5 comparison</span>
+<span class="sd">  - Sets/tuples: &quot;{1, 2}&quot; == &quot;{2, 1}&quot;</span>
+<span class="sd">  - Symbolic via sympy with numeric fallback</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fractions</span><span class="w"> </span><span class="kn">import</span> <span class="n">Fraction</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Union</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sympy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sympy.parsing.latex</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_latex</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sympy</span><span class="w"> </span><span class="kn">import</span> <span class="n">simplify</span><span class="p">,</span> <span class="n">N</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">normalize_latex_number</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Strip LaTeX boilerplate that doesn&#39;t change value.&quot;&quot;&quot;</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="c1"># Remove \boxed{...}</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;</span><span class="se">\\</span><span class="s1">boxed\{(.+?)\}&#39;</span><span class="p">,</span> <span class="sa">r</span><span class="s1">&#39;\1&#39;</span><span class="p">,</span> <span class="n">s</span><span class="p">)</span>
+    <span class="c1"># Remove dollar signs</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;$&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="c1"># Normalize whitespace</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;\s+&#39;</span><span class="p">,</span> <span class="s1">&#39; &#39;</span><span class="p">,</span> <span class="n">s</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">s</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">try_numeric</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Try to evaluate s as a number.</span>
+<span class="sd">    Returns float or None if not parseable as a pure number.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">normalize_latex_number</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+    <span class="c1"># Handle percentages: &quot;50%&quot; → 0.5</span>
+    <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s1">&#39;%&#39;</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">s</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span> <span class="o">/</span> <span class="mf">100.0</span>
+        <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+            <span class="k">pass</span>
+    <span class="c1"># Handle fractions: &quot;3/4&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">Fraction</span><span class="p">(</span><span class="n">s</span><span class="p">))</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="ne">ZeroDivisionError</span><span class="p">):</span>
+        <span class="k">pass</span>
+    <span class="c1"># Plain float</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+        <span class="k">pass</span>
+    <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">try_sympy</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">sympy</span><span class="o">.</span><span class="n">Expr</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parse a LaTeX string with sympy.&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">expr</span> <span class="o">=</span> <span class="n">parse_latex</span><span class="p">(</span><span class="n">normalize_latex_number</span><span class="p">(</span><span class="n">s</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">expr</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">math_equivalent</span><span class="p">(</span><span class="n">pred</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">gold</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">rtol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Return True iff pred and gold represent the same mathematical value.</span>
+
+<span class="sd">    Strategy:</span>
+<span class="sd">      1. Exact string match after normalization</span>
+<span class="sd">      2. Both are numeric → compare with relative tolerance</span>
+<span class="sd">      3. Both parse as sympy expressions → simplify(pred - gold) == 0</span>
+<span class="sd">      4. Sympy + numeric fallback (N(expr))</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pred</span> <span class="o">=</span> <span class="n">normalize_latex_number</span><span class="p">(</span><span class="n">pred</span><span class="p">)</span>
+    <span class="n">gold</span> <span class="o">=</span> <span class="n">normalize_latex_number</span><span class="p">(</span><span class="n">gold</span><span class="p">)</span>
+
+    <span class="c1"># 1. Exact match</span>
+    <span class="k">if</span> <span class="n">pred</span> <span class="o">==</span> <span class="n">gold</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="c1"># 2. Numeric</span>
+    <span class="n">pn</span> <span class="o">=</span> <span class="n">try_numeric</span><span class="p">(</span><span class="n">pred</span><span class="p">)</span>
+    <span class="n">gn</span> <span class="o">=</span> <span class="n">try_numeric</span><span class="p">(</span><span class="n">gold</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">pn</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">gn</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">gn</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">abs</span><span class="p">(</span><span class="n">pn</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mf">1e-9</span>
+        <span class="k">return</span> <span class="nb">abs</span><span class="p">(</span><span class="n">pn</span> <span class="o">-</span> <span class="n">gn</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">gn</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-12</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">rtol</span>
+
+    <span class="c1"># 3. Symbolic</span>
+    <span class="n">pe</span> <span class="o">=</span> <span class="n">try_sympy</span><span class="p">(</span><span class="n">pred</span><span class="p">)</span>
+    <span class="n">ge</span> <span class="o">=</span> <span class="n">try_sympy</span><span class="p">(</span><span class="n">gold</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">pe</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">ge</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">diff</span> <span class="o">=</span> <span class="n">simplify</span><span class="p">(</span><span class="n">pe</span> <span class="o">-</span> <span class="n">ge</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">diff</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        <span class="c1"># Numeric fallback: evaluate to float</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">pf</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">N</span><span class="p">(</span><span class="n">pe</span><span class="p">,</span> <span class="mi">30</span><span class="p">))</span>
+            <span class="n">gf</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">N</span><span class="p">(</span><span class="n">ge</span><span class="p">,</span> <span class="mi">30</span><span class="p">))</span>
+            <span class="k">if</span> <span class="n">gf</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">return</span> <span class="nb">abs</span><span class="p">(</span><span class="n">pf</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mf">1e-9</span>
+            <span class="k">return</span> <span class="nb">abs</span><span class="p">(</span><span class="n">pf</span> <span class="o">-</span> <span class="n">gf</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">gf</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-12</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">rtol</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="k">pass</span>
+
+    <span class="k">return</span> <span class="kc">False</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_answer_from_completion</span><span class="p">(</span><span class="n">completion</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extract the model&#39;s final answer.</span>
+<span class="sd">    Expects the model to write \\boxed{answer} or &lt;answer&gt;...&lt;/answer&gt;.</span>
+<span class="sd">    Returns empty string if not found.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Try \boxed{...} (LaTeX math)</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;</span><span class="se">\\</span><span class="s1">boxed\{([^}]+)\}&#39;</span><span class="p">,</span> <span class="n">completion</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="c1"># Try &lt;answer&gt;...&lt;/answer&gt; tag</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;&lt;answer&gt;(.*?)&lt;/answer&gt;&#39;</span><span class="p">,</span> <span class="n">completion</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="c1"># Fallback: last number on a &quot;The answer is X&quot; line</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;[Tt]he answer is[:\s]+([^\n.]+)&#39;</span><span class="p">,</span> <span class="n">completion</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">return</span> <span class="s2">&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">math_reward</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">completion</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">gold_answer</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Main entry point: return reward in {0.0, 1.0} for a math response.</span>
+<span class="sd">    A partial reward of 0.5 is returned when the format is correct</span>
+<span class="sd">    but the answer is wrong, to encourage the model to use \boxed{}.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pred</span> <span class="o">=</span> <span class="n">extract_answer_from_completion</span><span class="p">(</span><span class="n">completion</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">pred</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>  <span class="c1"># No answer extracted</span>
+
+    <span class="k">if</span> <span class="n">math_equivalent</span><span class="p">(</span><span class="n">pred</span><span class="p">,</span> <span class="n">gold_answer</span><span class="p">):</span>
+        <span class="k">return</span> <span class="mf">1.0</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Small reward for correct format, zero for content</span>
+        <span class="k">return</span> <span class="mf">0.1</span>  <span class="c1"># format reward (optional — see section on reward shaping)</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Floating-point equality traps</p>
+<p>Never use <code>pred == gold</code> on raw strings. <code>"0.333"</code> and <code>"1/3"</code> are mathematically the same. <code>"3.0"</code> and <code>"3"</code> differ as strings. Always normalize before comparing, and use a tolerance for floats (relative tolerance around <span class="arithmatex">\(10^{-6}\)</span> works for competition math).</p>
+</div>
+<h3 id="code-execution-verifiers">Code Execution Verifiers<a class="headerlink" href="#code-execution-verifiers" title="Permanent link">¶</a></h3>
+<p>For coding tasks, the verifier runs unit tests inside a sandbox and returns pass/fail. The reward can be binary (all tests pass = 1.0) or proportional (fraction of tests passed).</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">code_verifier.py — unit-test-based reward for code generation.</span>
+
+<span class="sd">This module orchestrates sandboxed execution (see sandboxes section)</span>
+<span class="sd">and returns a float reward based on test outcomes.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">tempfile</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">textwrap</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">TestResult</span><span class="p">:</span>
+    <span class="n">passed</span><span class="p">:</span> <span class="nb">int</span>         <span class="c1"># number of tests that passed</span>
+    <span class="n">total</span><span class="p">:</span> <span class="nb">int</span>          <span class="c1"># total tests</span>
+    <span class="n">timed_out</span><span class="p">:</span> <span class="nb">bool</span>     <span class="c1"># did any test time out?</span>
+    <span class="n">error</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># compilation/import error if any</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_tests_in_subprocess</span><span class="p">(</span>
+    <span class="n">code</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">test_suite</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">timeout_seconds</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TestResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Execute generated code + test suite in a temporary directory.</span>
+<span class="sd">    Returns TestResult.</span>
+
+<span class="sd">    IMPORTANT: For production use, wrap this in a proper sandbox</span>
+<span class="sd">    (see the Sandboxed Execution section). This bare subprocess</span>
+<span class="sd">    approach is only safe on air-gapped machines or inside a container.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">TemporaryDirectory</span><span class="p">()</span> <span class="k">as</span> <span class="n">tmpdir</span><span class="p">:</span>
+        <span class="c1"># Write generated code</span>
+        <span class="n">code_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tmpdir</span><span class="p">,</span> <span class="s2">&quot;solution.py&quot;</span><span class="p">)</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">code_path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>
+
+        <span class="c1"># Write test runner that imports solution.py</span>
+        <span class="n">runner</span> <span class="o">=</span> <span class="n">textwrap</span><span class="o">.</span><span class="n">dedent</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">            import sys, json, traceback</span>
+<span class="s2">            sys.path.insert(0, </span><span class="si">{</span><span class="nb">repr</span><span class="p">(</span><span class="n">tmpdir</span><span class="p">)</span><span class="si">}</span><span class="s2">)</span>
+
+<span class="s2">            results = </span><span class="se">{{</span><span class="s2">&quot;passed&quot;: 0, &quot;total&quot;: 0, &quot;error&quot;: &quot;&quot;</span><span class="se">}}</span>
+<span class="s2">            try:</span>
+<span class="s2">                from solution import *</span>
+<span class="s2">                </span><span class="si">{</span><span class="n">textwrap</span><span class="o">.</span><span class="n">indent</span><span class="p">(</span><span class="n">test_suite</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;                &quot;</span><span class="p">)</span><span class="si">}</span>
+<span class="s2">                # Each test function is test_&lt;name&gt;; discover and run</span>
+<span class="s2">                test_fns = [v for k, v in globals().items() if k.startswith(&quot;test_&quot;)]</span>
+<span class="s2">                results[&quot;total&quot;] = len(test_fns)</span>
+<span class="s2">                for fn in test_fns:</span>
+<span class="s2">                    try:</span>
+<span class="s2">                        fn()</span>
+<span class="s2">                        results[&quot;passed&quot;] += 1</span>
+<span class="s2">                    except Exception:</span>
+<span class="s2">                        pass</span>
+<span class="s2">            except Exception as e:</span>
+<span class="s2">                results[&quot;error&quot;] = traceback.format_exc()</span>
+<span class="s2">                results[&quot;total&quot;] = 1  # At least one test failed</span>
+
+<span class="s2">            print(json.dumps(results))</span>
+<span class="s2">        &quot;&quot;&quot;</span><span class="p">)</span>
+        <span class="n">runner_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tmpdir</span><span class="p">,</span> <span class="s2">&quot;runner.py&quot;</span><span class="p">)</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">runner_path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">runner</span><span class="p">)</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">proc</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+                <span class="p">[</span><span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="n">runner_path</span><span class="p">],</span>
+                <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">timeout</span><span class="o">=</span><span class="n">timeout_seconds</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">if</span> <span class="n">proc</span><span class="o">.</span><span class="n">returncode</span> <span class="o">!=</span> <span class="mi">0</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">proc</span><span class="o">.</span><span class="n">stdout</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">TestResult</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="n">proc</span><span class="o">.</span><span class="n">stderr</span><span class="p">[:</span><span class="mi">500</span><span class="p">])</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">proc</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+            <span class="k">return</span> <span class="n">TestResult</span><span class="p">(</span>
+                <span class="n">passed</span><span class="o">=</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;passed&quot;</span><span class="p">],</span>
+                <span class="n">total</span><span class="o">=</span><span class="nb">max</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;total&quot;</span><span class="p">],</span> <span class="mi">1</span><span class="p">),</span>
+                <span class="n">timed_out</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                <span class="n">error</span><span class="o">=</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;error&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+            <span class="p">)</span>
+        <span class="k">except</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">TimeoutExpired</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">TestResult</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">timed_out</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="s2">&quot;timeout&quot;</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">json</span><span class="o">.</span><span class="n">JSONDecodeError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">TestResult</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;JSON decode error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">code_reward</span><span class="p">(</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">completion</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">test_suite</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">partial_credit</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Reward for code generation:</span>
+<span class="sd">      1.0  if all tests pass</span>
+<span class="sd">      k/n  if partial_credit and k of n tests pass</span>
+<span class="sd">      0.0  if syntax error, timeout, or all tests fail</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Strip markdown code fences if present</span>
+    <span class="n">code</span> <span class="o">=</span> <span class="n">completion</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="nb">__import__</span><span class="p">(</span><span class="s2">&quot;re&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;```(?:python)?\n(.*?)```&quot;</span><span class="p">,</span> <span class="n">completion</span><span class="p">,</span> <span class="nb">__import__</span><span class="p">(</span><span class="s2">&quot;re&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="n">code</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">result</span> <span class="o">=</span> <span class="n">run_tests_in_subprocess</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">test_suite</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">timed_out</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">error</span> <span class="ow">and</span> <span class="n">result</span><span class="o">.</span><span class="n">passed</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="k">if</span> <span class="n">partial_credit</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">passed</span> <span class="o">/</span> <span class="n">result</span><span class="o">.</span><span class="n">total</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">passed</span> <span class="o">==</span> <span class="n">result</span><span class="o">.</span><span class="n">total</span> <span class="k">else</span> <span class="mf">0.0</span>
+</code></pre></div>
+<h2 id="sandboxed-execution-security-isolation-throughput">Sandboxed Execution: Security, Isolation &amp; Throughput<a class="headerlink" href="#sandboxed-execution-security-isolation-throughput" title="Permanent link">¶</a></h2>
+<p>Running arbitrary model-generated code is a serious security risk. A model that has learned to manipulate the reward function will eventually generate code that:</p>
+<ul>
+<li>Reads its own test file and hard-codes the expected output.</li>
+<li>Calls <code>os.kill(os.getpid(), signal.SIGTERM)</code> to time out, then retries with correct answers.</li>
+<li>Escapes to the host via container breakouts.</li>
+<li>Consumes unbounded CPU/memory, starving other workers.</li>
+</ul>
+<p>A production sandbox must enforce: <strong>no network access, no filesystem writes outside tmpdir, CPU and memory limits, syscall filtering, and process tree isolation</strong>.</p>
+<h3 id="sandbox-architectures">Sandbox Architectures<a class="headerlink" href="#sandbox-architectures" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-sandbox-arch-options">
+<svg viewBox="0 0 660 470" role="img" aria-label="Three sandbox architectures compared: Option A uses Docker per-sample (simple but 200-500ms overhead), Option B uses a reusable Firecracker microVM pool via gRPC (preferred, 10-30ms), Option C uses seccomp plus cgroups in-process (fastest but riskier isolation).">
+<defs>
+  <marker id="sao-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+</defs>
+<style>
+  #fig-sandbox-arch-options .lbl     { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-sandbox-arch-options .title   { font: 700 13px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-sandbox-arch-options .sub     { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-sandbox-arch-options .sub-tag { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-sandbox-arch-options .lat-slow { font: 600 11px var(--sans,sans-serif); fill: var(--warn,#c0392b); }
+  #fig-sandbox-arch-options .lat-fast { font: 600 11px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+  #fig-sandbox-arch-options .lat-warn { font: 600 11px var(--sans,sans-serif); fill: var(--warn,#e0a106); }
+  #fig-sandbox-arch-options .mono    { font: 500 10.5px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-sandbox-arch-options .badge   { font: 700 9px var(--sans,sans-serif); fill: var(--accent2,#3b6fd4); }
+  #fig-sandbox-arch-options .legend  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+</style>
+
+
+<rect x="10" y="10" width="640" height="126" rx="10"
+      fill="var(--surface,#f7f7fb)" stroke="var(--border-2,#d0d0da)" stroke-width="1.2"/>
+<text x="22" y="30" class="title">Option A</text>
+<text x="96" y="30" class="sub-tag"> — Docker per-sample  (simple, slow)</text>
+
+
+<rect x="22" y="42" width="138" height="52" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="91" y="64" text-anchor="middle" class="lbl">Reward Server</text>
+<text x="91" y="80" text-anchor="middle" class="sub">(Python)</text>
+
+<line x1="160" y1="68" x2="200" y2="68"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#sao-arr)"/>
+
+
+<rect x="202" y="42" width="208" height="52" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--muted,#8a8a99)" stroke-width="1.3" stroke-dasharray="5 3"/>
+<text x="306" y="62" text-anchor="middle" class="lbl">docker run --rm ...</text>
+<text x="306" y="78" text-anchor="middle" class="sub">generated code + tests</text>
+
+
+<text x="426" y="60" class="lat-slow">~200-500 ms</text>
+<text x="426" y="76" class="lat-slow">per sample</text>
+
+
+<text x="22" y="110" class="legend">Isolation: strong (full container)  |  Security: good</text>
+<text x="22" y="124" class="legend">Simplest to set up; per-run container startup cost dominates at scale.</text>
+
+
+<rect x="10" y="144" width="640" height="134" rx="10"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
+
+
+<rect x="566" y="150" width="74" height="18" rx="5"
+      fill="var(--accent2,#3b6fd4)" opacity="0.15" stroke="var(--accent2,#3b6fd4)" stroke-width="1"/>
+<text x="603" y="163" text-anchor="middle" class="badge">PREFERRED</text>
+
+<text x="22" y="164" class="title">Option B</text>
+<text x="96" y="164" class="sub-tag"> — Reusable microVM  (fast, preferred for scale)</text>
+
+
+<rect x="22" y="176" width="138" height="48" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="91" y="204" text-anchor="middle" class="lbl">Reward Server</text>
+
+<line x1="160" y1="200" x2="200" y2="200"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#sao-arr)"/>
+<text x="180" y="193" text-anchor="middle" class="sub">gRPC</text>
+
+
+<rect x="210" y="182" width="186" height="40" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="205" y="178" width="186" height="40" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="200" y="174" width="186" height="40" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.6"/>
+<text x="293" y="190" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Firecracker MicroVM</text>
+<text x="293" y="206" text-anchor="middle" class="sub">Pool — snapshotted state</text>
+
+<text x="404" y="194" class="lat-fast">~10-30 ms</text>
+<text x="404" y="210" class="lat-fast">per sample</text>
+
+
+<text x="22" y="242" class="legend">Isolation: strong (hardware VM)  |  Security: very good  |  Speed: fast</text>
+<text x="22" y="256" class="legend">Snapshot restore reuses clean state; warm pool eliminates per-run startup cost.</text>
+<text x="22" y="270" class="legend">Size pool = throughput / per-worker capacity, with 2-3x headroom.</text>
+
+
+<rect x="10" y="302" width="640" height="144" rx="10"
+      fill="var(--surface,#f7f7fb)" stroke="var(--border-2,#d0d0da)" stroke-width="1.2"/>
+<text x="22" y="322" class="title">Option C</text>
+<text x="96" y="322"><tspan class="sub-tag"> — seccomp + cgroups in-process &#160; (fast, </tspan><tspan class="lat-warn">riskier</tspan><tspan class="sub-tag">)</tspan></text>
+
+
+<rect x="22" y="332" width="480" height="80" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="262" y="352" text-anchor="middle" class="lbl">Reward Worker Process</text>
+
+<rect x="32" y="360" width="460" height="20" rx="4"
+      fill="var(--surface-3,#eef0f6)" stroke="none"/>
+<text x="42" y="374" class="mono">fork() -&gt; install seccomp-BPF -&gt; exec code</text>
+
+<rect x="32" y="383" width="460" height="20" rx="4"
+      fill="var(--surface-3,#eef0f6)" stroke="none"/>
+<text x="42" y="397" class="mono">cgroup v2: 512 MB RAM, 1 CPU, 5s wall-clock</text>
+
+
+<text x="516" y="360" class="lat-fast">fastest</text>
+<text x="516" y="376" class="sub">(in-process)</text>
+
+
+<text x="22" y="424" class="legend">Isolation: partial (same OS kernel)  |  Security: moderate (kernel exploits possible)</text>
+<text x="22" y="438" class="legend">Trusted infra only; seccomp-BPF filters syscalls; cgroup v2 caps CPU/RAM/wall-time.</text>
+
+
+<text x="330" y="462" text-anchor="middle" class="legend">
+  isolation strength: A (strongest) -- B -- C (weakest)    speed: A (slowest) -- B -- C (fastest)
+</text>
+
+</svg>
+<figcaption><b>Three sandbox architectures for code-execution rewards, ordered by isolation vs. speed tradeoff.</b> Option A (Docker per-sample) is the simplest but incurs 200-500 ms per-run overhead. Option B (Firecracker microVM warm pool, gRPC) is the recommended production choice at 10-30 ms per sample. Option C (seccomp+cgroups in-process) is fastest but provides only partial kernel-level isolation.</figcaption>
+</figure>
+
+<p>For training at scale (on the order of thousands of completions per second), Docker-per-sample is too slow. The standard approach is a warm pool of microVMs or containers that are snapshotted after initialization, then restored to a clean state between runs.</p>
+<h3 id="building-a-sandboxed-execution-service">Building a Sandboxed Execution Service<a class="headerlink" href="#building-a-sandboxed-execution-service" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">sandbox_pool.py — reusable sandbox pool using Docker containers.</span>
+
+<span class="sd">In production you would use Firecracker or gVisor microVMs;</span>
+<span class="sd">Docker containers are shown here for clarity.</span>
+
+<span class="sd">Each sandbox is a long-lived container. We send code + tests</span>
+<span class="sd">over stdin and get results back over stdout, avoiding the per-run</span>
+<span class="sd">container startup cost (~200ms) by reusing warm containers.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">queue</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+
+<span class="n">SANDBOX_IMAGE</span> <span class="o">=</span> <span class="s2">&quot;python:3.11-slim&quot;</span>
+<span class="c1"># Dockerfile for the sandbox image would add no extra packages</span>
+<span class="c1"># and run as a non-root user, but we keep it simple here.</span>
+
+<span class="n">SANDBOX_RUNNER</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">import sys, json, traceback, signal, resource</span>
+
+<span class="s2"># Hard memory limit: 256 MB</span>
+<span class="s2">resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))</span>
+
+<span class="s2"># Read tasks from stdin until EOF</span>
+<span class="s2">for line in sys.stdin:</span>
+<span class="s2">    task = json.loads(line)</span>
+<span class="s2">    code = task[&quot;code&quot;]</span>
+<span class="s2">    tests = task[&quot;tests&quot;]</span>
+<span class="s2">    result = {&quot;passed&quot;: 0, &quot;total&quot;: 0, &quot;error&quot;: &quot;&quot;}</span>
+
+<span class="s2">    try:</span>
+<span class="s2">        exec_globals = </span><span class="si">{}</span>
+<span class="s2">        exec(compile(code, &quot;&lt;generated&gt;&quot;, &quot;exec&quot;), exec_globals)</span>
+<span class="s2">        exec(compile(tests, &quot;&lt;tests&gt;&quot;, &quot;exec&quot;), exec_globals)</span>
+<span class="s2">        fns = [v for k, v in exec_globals.items() if k.startswith(&quot;test_&quot;)]</span>
+<span class="s2">        result[&quot;total&quot;] = len(fns)</span>
+<span class="s2">        for fn in fns:</span>
+<span class="s2">            try:</span>
+<span class="s2">                fn()</span>
+<span class="s2">                result[&quot;passed&quot;] += 1</span>
+<span class="s2">            except Exception:</span>
+<span class="s2">                pass</span>
+<span class="s2">    except Exception:</span>
+<span class="s2">        result[&quot;error&quot;] = traceback.format_exc()[-500:]</span>
+<span class="s2">        result[&quot;total&quot;] = 1</span>
+
+<span class="s2">    print(json.dumps(result), flush=True)</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SandboxWorker</span><span class="p">:</span>
+    <span class="n">proc</span><span class="p">:</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">Popen</span>
+    <span class="n">lock</span><span class="p">:</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">)</span>
+    <span class="n">last_used</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SandboxPool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A pool of warm sandbox processes.</span>
+<span class="sd">    Thread-safe: acquire() blocks until a worker is free.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pool_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span> <span class="n">timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">timeout</span> <span class="o">=</span> <span class="n">timeout</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_available</span><span class="p">:</span> <span class="n">queue</span><span class="o">.</span><span class="n">Queue</span> <span class="o">=</span> <span class="n">queue</span><span class="o">.</span><span class="n">Queue</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_all_workers</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">pool_size</span><span class="p">):</span>
+            <span class="n">w</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_spawn</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_all_workers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">w</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_available</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">w</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_spawn</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SandboxWorker</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Start a sandbox process that reads JSON tasks from stdin.&quot;&quot;&quot;</span>
+        <span class="n">proc</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">Popen</span><span class="p">(</span>
+            <span class="p">[</span>
+                <span class="s2">&quot;docker&quot;</span><span class="p">,</span> <span class="s2">&quot;run&quot;</span><span class="p">,</span> <span class="s2">&quot;--rm&quot;</span><span class="p">,</span> <span class="s2">&quot;--interactive&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;--network=none&quot;</span><span class="p">,</span>           <span class="c1"># No network</span>
+                <span class="s2">&quot;--memory=256m&quot;</span><span class="p">,</span>            <span class="c1"># 256 MB RAM limit</span>
+                <span class="s2">&quot;--cpus=1&quot;</span><span class="p">,</span>                 <span class="c1"># 1 vCPU</span>
+                <span class="s2">&quot;--pids-limit=50&quot;</span><span class="p">,</span>          <span class="c1"># No fork bombs</span>
+                <span class="s2">&quot;--read-only&quot;</span><span class="p">,</span>              <span class="c1"># Read-only root filesystem</span>
+                <span class="s2">&quot;--tmpfs=/tmp:size=64m&quot;</span><span class="p">,</span>    <span class="c1"># Small writable /tmp</span>
+                <span class="n">SANDBOX_IMAGE</span><span class="p">,</span>
+                <span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="s2">&quot;-c&quot;</span><span class="p">,</span> <span class="n">SANDBOX_RUNNER</span><span class="p">,</span>
+            <span class="p">],</span>
+            <span class="n">stdin</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+            <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+            <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">DEVNULL</span><span class="p">,</span>
+            <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">SandboxWorker</span><span class="p">(</span><span class="n">proc</span><span class="o">=</span><span class="n">proc</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">code</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">tests</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Run code + tests in a sandbox. Blocks until a worker is available.</span>
+<span class="sd">        Returns {&quot;passed&quot;: int, &quot;total&quot;: int, &quot;error&quot;: str}.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">worker</span><span class="p">:</span> <span class="n">SandboxWorker</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_available</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mf">30.0</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">task</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="n">code</span><span class="p">,</span> <span class="s2">&quot;tests&quot;</span><span class="p">:</span> <span class="n">tests</span><span class="p">})</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="n">worker</span><span class="o">.</span><span class="n">proc</span><span class="o">.</span><span class="n">stdin</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+            <span class="n">worker</span><span class="o">.</span><span class="n">proc</span><span class="o">.</span><span class="n">stdin</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+            <span class="c1"># Read response with timeout</span>
+            <span class="n">worker</span><span class="o">.</span><span class="n">proc</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">_sock</span><span class="o">.</span><span class="n">settimeout</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">timeout</span><span class="p">)</span>
+            <span class="n">line</span> <span class="o">=</span> <span class="n">worker</span><span class="o">.</span><span class="n">proc</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">readline</span><span class="p">()</span>
+            <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="c1"># Worker is dead; replace it</span>
+            <span class="n">worker</span><span class="o">.</span><span class="n">proc</span><span class="o">.</span><span class="n">kill</span><span class="p">()</span>
+            <span class="n">worker</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_spawn</span><span class="p">()</span>
+            <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;passed&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)}</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">worker</span><span class="o">.</span><span class="n">last_used</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_available</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">worker</span><span class="p">)</span>  <span class="c1"># Return worker to pool</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Practical sandbox tuning</p>
+<p>For RLVR training at scale (e.g., 4096 rollout completions per training step), you typically need a pool of 64-256 sandbox workers per GPU node, each handling ~20 requests/second. The bottleneck shifts from process startup (eliminated by warm pools) to test suite I/O. Keep test suites small (under 1 KB) and use in-memory temp files rather than disk I/O.</p>
+</div>
+<h3 id="throughput-arithmetic">Throughput Arithmetic<a class="headerlink" href="#throughput-arithmetic" title="Permanent link">¶</a></h3>
+<div class="admonition example">
+<p class="admonition-title">Sandbox throughput sizing</p>
+<p>Suppose your training run generates 4096 completions per step, each requiring ~50 ms of sandbox execution (10 unit tests, each 5 ms), and a new step begins every 30 seconds.</p>
+<p>Required throughput: <span class="arithmatex">\(4096 / 30 \approx 137\)</span> completions/second.</p>
+<p>Per worker capacity: <span class="arithmatex">\(1000 \text{ ms} / 50 \text{ ms} = 20\)</span> completions/second.</p>
+<p>Workers needed: <span class="arithmatex">\(\lceil 137 / 20 \rceil = 7\)</span> workers.</p>
+<p>In practice you want <span class="arithmatex">\(2\text{–}3\times\)</span> headroom for variance and retries, so <strong>~20 sandbox workers</strong> suffices for this configuration. At 256 MB RAM each, that is 5 GB of sandbox overhead on the reward server — negligible compared to the GPU memory.</p>
+<p>If test suites are more expensive (e.g., compiling C++ or running integration tests at 2 seconds each), the same arithmetic gives ~820 workers, which requires a dedicated cluster of CPU machines, exactly the architecture used by competitive coding RL systems.</p>
+</div>
+<h2 id="llm-judge-rewards">LLM-Judge Rewards<a class="headerlink" href="#llm-judge-rewards" title="Permanent link">¶</a></h2>
+<p>For open-ended tasks where there is no crisp ground truth — writing quality, helpfulness, reasoning coherence — we need a second LLM to score completions. This is sometimes called RLAIF (RL from AI Feedback), covered in depth in <a href="../05-posttraining-alignment/11-constitutional-rlaif.html">Constitutional AI, RLAIF &amp; Self-Improvement</a>.</p>
+<h3 id="designing-a-judge-prompt">Designing a Judge Prompt<a class="headerlink" href="#designing-a-judge-prompt" title="Permanent link">¶</a></h3>
+<p>A good judge prompt:
+1. Specifies the evaluation criteria precisely (correctness, clarity, step-by-step validity).
+2. Uses a reference answer or rubric when available.
+3. Asks the judge to reason before scoring (chain-of-thought in the judge improves calibration).
+4. Outputs a structured response to make score extraction reliable.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">llm_judge.py — LLM-as-a-judge reward for open-ended tasks.</span>
+
+<span class="sd">Uses an OpenAI-compatible API. Replace with your preferred provider.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">openai</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+
+<span class="n">JUDGE_SYSTEM</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">You are an expert evaluator for mathematical reasoning and problem solving.</span>
+<span class="s2">You will be given a problem, a reference solution, and a model response.</span>
+<span class="s2">Your task is to evaluate the model response on a scale of 0 to 10.</span>
+
+<span class="s2">Evaluation criteria:</span>
+<span class="s2">- Correctness (5 pts): Is the final answer correct?</span>
+<span class="s2">- Reasoning quality (3 pts): Is the chain-of-thought valid, with each step justified?</span>
+<span class="s2">- Clarity (2 pts): Is the solution well-organized and readable?</span>
+
+<span class="s2">Output format:</span>
+<span class="s2">&lt;thinking&gt;</span>
+<span class="s2">[Your analysis of the response]</span>
+<span class="s2">&lt;/thinking&gt;</span>
+<span class="s2">&lt;score&gt;N&lt;/score&gt;</span>
+
+<span class="s2">Where N is an integer from 0 to 10.</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+
+<span class="n">JUDGE_USER_TEMPLATE</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">PROBLEM:</span>
+<span class="si">{problem}</span>
+
+<span class="s2">REFERENCE SOLUTION:</span>
+<span class="si">{reference}</span>
+
+<span class="s2">MODEL RESPONSE:</span>
+<span class="si">{response}</span>
+
+<span class="s2">Please evaluate the model response using the criteria above.</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">judge_single</span><span class="p">(</span>
+    <span class="n">problem</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">response</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">reference</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">judge_model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns a normalized reward in [0, 1] for a single (problem, response) pair.</span>
+<span class="sd">    Calls the judge LLM asynchronously.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">client</span> <span class="o">=</span> <span class="n">openai</span><span class="o">.</span><span class="n">AsyncOpenAI</span><span class="p">()</span>
+
+    <span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">JUDGE_SYSTEM</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">JUDGE_USER_TEMPLATE</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+            <span class="n">problem</span><span class="o">=</span><span class="n">problem</span><span class="p">,</span>
+            <span class="n">reference</span><span class="o">=</span><span class="n">reference</span><span class="p">,</span>
+            <span class="n">response</span><span class="o">=</span><span class="n">response</span><span class="p">,</span>
+        <span class="p">)},</span>
+    <span class="p">]</span>
+
+    <span class="n">resp</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">judge_model</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="n">messages</span><span class="p">,</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="n">temperature</span><span class="p">,</span>
+        <span class="n">max_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">text</span> <span class="o">=</span> <span class="n">resp</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;&lt;score&gt;(\d+(?:\.\d+)?)&lt;/score&gt;&quot;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="n">raw_score</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="k">return</span> <span class="nb">min</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">raw_score</span> <span class="o">/</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span> <span class="mf">1.0</span><span class="p">)</span>
+
+    <span class="c1"># Fallback: try to parse any integer at the end of the response</span>
+    <span class="n">nums</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\b(\d+)\b&quot;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">nums</span><span class="p">:</span>
+        <span class="n">raw</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">nums</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+        <span class="k">return</span> <span class="nb">min</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">raw</span> <span class="o">/</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span> <span class="mf">1.0</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="mf">0.5</span>  <span class="c1"># Uncertain — return neutral score</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">batch_judge</span><span class="p">(</span>
+    <span class="n">problems</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">responses</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">references</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">judge_model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+    <span class="n">concurrency</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Evaluate a batch of completions concurrently.</span>
+<span class="sd">    concurrency limits simultaneous API calls to avoid rate limits.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sem</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Semaphore</span><span class="p">(</span><span class="n">concurrency</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">bounded_judge</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">ref</span><span class="p">):</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">sem</span><span class="p">:</span>
+            <span class="k">return</span> <span class="k">await</span> <span class="n">judge_single</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">ref</span><span class="p">,</span> <span class="n">judge_model</span><span class="p">)</span>
+
+    <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">bounded_judge</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">ref</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">p</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">ref</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">problems</span><span class="p">,</span> <span class="n">responses</span><span class="p">,</span> <span class="n">references</span><span class="p">)</span>
+    <span class="p">]</span>
+    <span class="k">return</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="judge-calibration-and-positional-bias">Judge Calibration and Positional Bias<a class="headerlink" href="#judge-calibration-and-positional-bias" title="Permanent link">¶</a></h3>
+<p>LLM judges suffer from <strong>positional bias</strong> (they prefer whichever answer appears first), <strong>verbosity bias</strong> (longer responses score higher regardless of quality), and <strong>self-preference bias</strong> (a judge from the same family as the policy gives spuriously high scores). Mitigation strategies:</p>
+<ul>
+<li>Swap the order of responses in pairwise comparisons and average the scores.</li>
+<li>Use a judge from a different model family than the policy.</li>
+<li>Normalize scores within each prompt batch: <span class="arithmatex">\(\tilde{r}_i = (r_i - \mu_{\text{batch}}) / \sigma_{\text{batch}}\)</span>.</li>
+<li>Include a &ldquo;null&rdquo; baseline completion (e.g., &ldquo;I don&rsquo;t know&rdquo;) to anchor the scale.</li>
+</ul>
+<h2 id="reward-shaping-and-the-format-vs-correctness-tradeoff">Reward Shaping and the Format vs. Correctness Tradeoff<a class="headerlink" href="#reward-shaping-and-the-format-vs-correctness-tradeoff" title="Permanent link">¶</a></h2>
+<p>Raw binary rewards (correct/incorrect) create sparse gradients, especially early in training when the model rarely reaches the right answer. Reward shaping introduces auxiliary rewards to guide the model toward behaviors that are likely to lead to the correct answer.</p>
+<h3 id="format-rewards">Format Rewards<a class="headerlink" href="#format-rewards" title="Permanent link">¶</a></h3>
+<p>A common technique in RLVR is to give a small positive reward for using the expected output format (e.g., a <code>&lt;think&gt;...&lt;/think&gt;</code> reasoning block followed by a <code>\boxed{answer}</code>), even when the answer is wrong. This solves a cold-start problem: the model must first learn to produce structured output before it can receive meaningful correctness rewards.</p>
+<div class="arithmatex">\[
+r_{\text{total}} = r_{\text{correctness}} + \lambda_f \cdot r_{\text{format}}
+\]</div>
+<p>where <span class="arithmatex">\(r_{\text{format}} \in \{0, 1\}\)</span> indicates whether the output satisfies the format, and <span class="arithmatex">\(\lambda_f\)</span> is typically small (on the order of 0.1 to 0.2) to avoid the model gaming format at the expense of correctness.</p>
+<div class="admonition warning">
+<p class="admonition-title">Format reward gaming</p>
+<p>If <span class="arithmatex">\(\lambda_f\)</span> is too large, the model learns to produce syntactically correct but semantically empty responses. For example, it may always write <code>&lt;think&gt;Let me solve this step by step.&lt;/think&gt;\boxed{0}</code> — perfect format, always wrong answer, but nonzero reward. Monitor the correlation between format reward and correctness reward throughout training; if they decouple, reduce <span class="arithmatex">\(\lambda_f\)</span>.</p>
+</div>
+<h3 id="process-reward-models-prms">Process Reward Models (PRMs)<a class="headerlink" href="#process-reward-models-prms" title="Permanent link">¶</a></h3>
+<p>Instead of rewarding only the final answer, a Process Reward Model (PRM) assigns a reward to each step in the chain-of-thought. This is covered in depth in <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a>; here we focus on the infrastructure interface.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">prm_reward.py — step-level reward using a process reward model.</span>
+
+<span class="sd">The PRM is a separate model (often a smaller classifier fine-tuned</span>
+<span class="sd">on step-level correctness annotations) that scores each reasoning step.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoTokenizer</span><span class="p">,</span> <span class="n">AutoModelForSequenceClassification</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ProcessRewardModel</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Wraps a PRM that scores individual reasoning steps.</span>
+<span class="sd">    Input: a (problem, partial_solution_so_far) pair.</span>
+<span class="sd">    Output: a scalar score in [0, 1] for the most recent step.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForSequenceClassification</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+            <span class="n">model_name</span><span class="p">,</span> <span class="n">num_labels</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">device</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">score_steps</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">problem</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">steps</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Score each step in a chain-of-thought.</span>
+<span class="sd">        steps: list of individual reasoning steps (not cumulative).</span>
+<span class="sd">        Returns a list of scalar rewards, one per step.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="c1"># Build cumulative context for each step</span>
+        <span class="n">contexts</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">steps</span><span class="p">)):</span>
+            <span class="c1"># Include all steps up to and including step i</span>
+            <span class="n">partial</span> <span class="o">=</span> <span class="n">problem</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">steps</span><span class="p">[:</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">])</span>
+            <span class="n">contexts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">partial</span><span class="p">)</span>
+
+        <span class="c1"># Batch inference</span>
+        <span class="k">for</span> <span class="n">start</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">contexts</span><span class="p">),</span> <span class="n">batch_size</span><span class="p">):</span>
+            <span class="n">batch</span> <span class="o">=</span> <span class="n">contexts</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">start</span> <span class="o">+</span> <span class="n">batch_size</span><span class="p">]</span>
+            <span class="n">enc</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span>
+                <span class="n">batch</span><span class="p">,</span>
+                <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">,</span>
+                <span class="n">padding</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">truncation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">max_length</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span>
+            <span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">enc</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="c1"># Sigmoid to get probability of &quot;step is correct&quot;</span>
+            <span class="n">probs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">logits</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="nb">float</span><span class="p">):</span>
+                <span class="n">probs</span> <span class="o">=</span> <span class="p">[</span><span class="n">probs</span><span class="p">]</span>
+            <span class="n">scores</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">probs</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">scores</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">aggregate</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">step_scores</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span>
+        <span class="n">method</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;min&quot;</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Aggregate step scores into a single episode reward.</span>
+
+<span class="sd">        &#39;min&#39;: reward = min step score (weakest-link; used in Math-Shepherd)</span>
+<span class="sd">        &#39;last&#39;: reward = score of final step (common in practice)</span>
+<span class="sd">        &#39;mean&#39;: reward = mean of all step scores</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">step_scores</span><span class="p">:</span>
+            <span class="k">return</span> <span class="mf">0.0</span>
+        <span class="k">if</span> <span class="n">method</span> <span class="o">==</span> <span class="s2">&quot;min&quot;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">min</span><span class="p">(</span><span class="n">step_scores</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">method</span> <span class="o">==</span> <span class="s2">&quot;last&quot;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">step_scores</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="k">elif</span> <span class="n">method</span> <span class="o">==</span> <span class="s2">&quot;mean&quot;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="n">step_scores</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">step_scores</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown aggregation method: </span><span class="si">{</span><span class="n">method</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="multi-objective-and-weighted-rewards">Multi-Objective and Weighted Rewards<a class="headerlink" href="#multi-objective-and-weighted-rewards" title="Permanent link">¶</a></h2>
+<p>Most production RLVR runs combine multiple reward signals:</p>
+<table>
+<thead>
+<tr>
+<th>Signal</th>
+<th>Weight</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Correctness (rule-based)</td>
+<td>1.0</td>
+<td>Primary learning signal</td>
+</tr>
+<tr>
+<td>Format compliance</td>
+<td>0.1–0.2</td>
+<td>Cold-start / structure</td>
+</tr>
+<tr>
+<td>Reasoning length penalty</td>
+<td>-0.01 per token over limit</td>
+<td>Control verbosity</td>
+</tr>
+<tr>
+<td>Safety classifier</td>
+<td>-5.0 if flagged</td>
+<td>Hard constraint</td>
+</tr>
+<tr>
+<td>LLM judge (helpfulness)</td>
+<td>0.3</td>
+<td>Open-ended quality</td>
+</tr>
+</tbody>
+</table>
+<p>The weighted combination is:</p>
+<div class="arithmatex">\[
+r_{\text{total}} = \sum_{k} w_k \cdot r_k
+\]</div>
+<p>This is simple but has pitfalls. If reward magnitudes differ by orders of magnitude (e.g., correctness ∈ {0, 1} but a continuous fluency score ∈ [0, 100]), one term will dominate the gradient. Always normalize rewards to similar scales before combining.</p>
+<h3 id="reward-normalization-per-prompt">Reward Normalization Per Prompt<a class="headerlink" href="#reward-normalization-per-prompt" title="Permanent link">¶</a></h3>
+<p>A robust pattern used in practice is to normalize rewards within the batch of completions for a single prompt (a &ldquo;prompt group&rdquo;):</p>
+<div class="arithmatex">\[
+\tilde{r}_{i} = \frac{r_i - \mu_{\text{group}}}{\sigma_{\text{group}} + \epsilon}
+\]</div>
+<p>This is exactly the normalization used in GRPO (Group Relative Policy Optimization), discussed in <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>. It ensures that the advantage signal is zero-mean per prompt regardless of the absolute reward scale.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">reward_combiner.py — multi-objective reward combining and normalization.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">RewardComponent</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">fn</span><span class="p">:</span> <span class="n">Callable</span>                  <span class="c1"># (prompt, completion, metadata) -&gt; float</span>
+    <span class="n">weight</span><span class="p">:</span> <span class="nb">float</span>                 <span class="c1"># Relative importance</span>
+    <span class="n">clip_min</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="o">-</span><span class="mf">10.0</span>       <span class="c1"># Clip extreme values</span>
+    <span class="n">clip_max</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10.0</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MultiObjectiveReward</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Combines multiple reward signals, normalizes per group,</span>
+<span class="sd">    and returns the final scalar reward for each completion.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">components</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">RewardComponent</span><span class="p">]):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">components</span> <span class="o">=</span> <span class="n">components</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">compute</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">completions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">metadata</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+        <span class="n">normalize_per_group</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Returns (total_rewards, per_component_rewards).</span>
+
+<span class="sd">        Assumes each (prompt, completions) group has the same prompt</span>
+<span class="sd">        and completions are ordered: all completions for prompt 0,</span>
+<span class="sd">        then all for prompt 1, etc.</span>
+
+<span class="sd">        metadata: list of dicts with per-sample info (e.g., gold_answer).</span>
+<span class="sd">        normalize_per_group: apply Z-score normalization within groups.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">completions</span><span class="p">)</span>
+        <span class="n">component_rewards</span> <span class="o">=</span> <span class="p">{</span><span class="n">c</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">components</span><span class="p">}</span>
+
+        <span class="c1"># Evaluate each component</span>
+        <span class="k">for</span> <span class="n">comp</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">components</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">completion</span><span class="p">,</span> <span class="n">meta</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span>
+                <span class="nb">zip</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">completions</span><span class="p">,</span> <span class="n">metadata</span><span class="p">)</span>
+            <span class="p">):</span>
+                <span class="n">raw</span> <span class="o">=</span> <span class="n">comp</span><span class="o">.</span><span class="n">fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">completion</span><span class="p">,</span> <span class="n">meta</span><span class="p">)</span>
+                <span class="n">clipped</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">comp</span><span class="o">.</span><span class="n">clip_min</span><span class="p">,</span> <span class="n">comp</span><span class="o">.</span><span class="n">clip_max</span><span class="p">)</span>
+                <span class="n">component_rewards</span><span class="p">[</span><span class="n">comp</span><span class="o">.</span><span class="n">name</span><span class="p">][</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">clipped</span>
+
+        <span class="c1"># Weighted sum</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">comp</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">components</span><span class="p">:</span>
+            <span class="n">total</span> <span class="o">+=</span> <span class="n">comp</span><span class="o">.</span><span class="n">weight</span> <span class="o">*</span> <span class="n">component_rewards</span><span class="p">[</span><span class="n">comp</span><span class="o">.</span><span class="n">name</span><span class="p">]</span>
+
+        <span class="c1"># Normalize per group if requested</span>
+        <span class="k">if</span> <span class="n">normalize_per_group</span><span class="p">:</span>
+            <span class="c1"># Group by unique prompt (assumes they come in contiguous blocks)</span>
+            <span class="n">unique_prompts</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">seen</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prompts</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">p</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">seen</span><span class="p">:</span>
+                    <span class="n">seen</span><span class="p">[</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">unique_prompts</span><span class="p">)</span>
+                    <span class="n">unique_prompts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">prompt</span> <span class="ow">in</span> <span class="n">unique_prompts</span><span class="p">:</span>
+                <span class="n">idx</span> <span class="o">=</span> <span class="p">[</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">prompts</span><span class="p">)</span> <span class="k">if</span> <span class="n">p</span> <span class="o">==</span> <span class="n">prompt</span><span class="p">]</span>
+                <span class="n">group</span> <span class="o">=</span> <span class="n">total</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+                <span class="n">mu</span><span class="p">,</span> <span class="n">sigma</span> <span class="o">=</span> <span class="n">group</span><span class="o">.</span><span class="n">mean</span><span class="p">(),</span> <span class="n">group</span><span class="o">.</span><span class="n">std</span><span class="p">()</span>
+                <span class="n">total</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">group</span> <span class="o">-</span> <span class="n">mu</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">sigma</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">total</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">component_rewards</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+</code></pre></div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> In an RLVR training run for math reasoning, the model&rsquo;s correctness reward plateaus at 30% after 500 steps, but format reward is 100%. What are your next steps?</p>
+<p><strong>A:</strong> Several failure modes are consistent with this pattern:</p>
+<ol>
+<li>
+<p><strong>The format reward is too large relative to correctness.</strong> If <span class="arithmatex">\(\lambda_f = 0.5\)</span> and correctness rewards are sparse (0 or 1), the model may have found a local optimum where format reward alone gives a good expected return. Try reducing <span class="arithmatex">\(\lambda_f\)</span> to 0.05-0.1 and restarting.</p>
+</li>
+<li>
+<p><strong>The problem distribution is too hard.</strong> If the base model never produces correct answers during rollout (the oracle pass rate is near zero), there is no positive reward signal to latch onto. Solutions: use a warmer sampling temperature (e.g., 0.9 instead of 0.6) to increase exploration, curriculum with easier problems first, or start from a stronger SFT checkpoint.</p>
+</li>
+<li>
+<p><strong>The math verifier has bugs.</strong> Check the false-negative rate of your verifier on known-correct answers. A buggy normalizer that rejects <code>\frac{1}{2}</code> when the gold is <code>0.5</code> creates a phantom ceiling. Log verifier inputs/outputs during training.</p>
+</li>
+<li>
+<p><strong>KL penalty is too strong.</strong> If the KL coefficient against the reference policy is large, the policy cannot move far enough from the SFT model to find new correct solutions. Check the KL term in the loss; see <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>.</p>
+</li>
+</ol>
+</div>
+<h2 id="reward-server-architecture">Reward Server Architecture<a class="headerlink" href="#reward-server-architecture" title="Permanent link">¶</a></h2>
+<p>A reward server decouples reward computation from training, allowing:</p>
+<ul>
+<li>Independent scaling of reward workers (especially important when rewards involve expensive sandbox execution).</li>
+<li>Reward caching (identical (prompt, completion) pairs return cached results).</li>
+<li>Async reward computation to hide latency behind the next rollout batch.</li>
+</ul>
+<figure class="viz" id="fig-reward-server-arch">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 660 430" role="img" aria-label="Reward server internals: an incoming request queue feeds a router and LRU cache; the router fans out to three worker pools (Math Verifier x8, Code Runner sandbox x64, LLM Judge x32) based on task type; the LRU cache short-circuits duplicate requests via a dashed return arc.">
+<defs>
+  <marker id="rsa-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="rsa-arr-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#6d675d)"/>
+  </marker>
+</defs>
+<style>
+  #fig-reward-server-arch .lbl     { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-reward-server-arch .sub     { font: 400 10px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-reward-server-arch .sub-s   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-reward-server-arch .header  { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); letter-spacing: 0.08em; text-transform: uppercase; }
+  #fig-reward-server-arch .badge   { font: 700 9px var(--sans,sans-serif); }
+  #fig-reward-server-arch .edge-lbl { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-reward-server-arch .note    { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+
+  @keyframes rsa-req {
+    0%   { transform: translateX(0);     opacity: 0; }
+    4%   { opacity: 1; }
+    18%  { transform: translateX(112px); opacity: 1; }
+    22%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes rsa-route {
+    0%,20% { transform: translateX(0);    opacity: 0; }
+    23%    { opacity: 1; }
+    36%    { transform: translateX(102px); opacity: 1; }
+    40%    { opacity: 0; }
+    100%   { opacity: 0; }
+  }
+  @keyframes rsa-math {
+    0%,36%  { transform: translate(0,0);         opacity: 0; }
+    39%     { opacity: 1; }
+    54%     { transform: translate(-178px,126px); opacity: 1; }
+    58%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsa-code {
+    0%,55%  { transform: translate(0,0);      opacity: 0; }
+    58%     { opacity: 1; }
+    72%     { transform: translate(0,126px);   opacity: 1; }
+    76%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsa-judge {
+    0%,73%  { transform: translate(0,0);         opacity: 0; }
+    76%     { opacity: 1; }
+    88%     { transform: translate(178px,126px);  opacity: 1; }
+    92%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsa-cache-hit {
+    0%,40%  { opacity: 0; }
+    45%     { opacity: 0.9; }
+    55%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+
+  #fig-reward-server-arch .tok-req    { animation: rsa-req   6s ease-in-out infinite; }
+  #fig-reward-server-arch .tok-route  { animation: rsa-route 6s ease-in-out infinite; }
+  #fig-reward-server-arch .tok-math   { animation: rsa-math  6s ease-in-out infinite; }
+  #fig-reward-server-arch .tok-code   { animation: rsa-code  6s ease-in-out infinite; }
+  #fig-reward-server-arch .tok-judge  { animation: rsa-judge 6s ease-in-out infinite; }
+  #fig-reward-server-arch .cache-flash{ animation: rsa-cache-hit 6s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-reward-server-arch .tok-req,
+    #fig-reward-server-arch .tok-route,
+    #fig-reward-server-arch .tok-math,
+    #fig-reward-server-arch .tok-code,
+    #fig-reward-server-arch .tok-judge,
+    #fig-reward-server-arch .cache-flash { animation: none; opacity: 0; }
+  }
+</style>
+
+
+<rect x="8" y="8" width="644" height="414" rx="14"
+      fill="var(--surface,#f7f7fb)" stroke="var(--border-2,#d0d0da)" stroke-width="1.2"/>
+<text x="22" y="24" class="header">Reward Server (gRPC)</text>
+
+
+
+
+<rect x="28"  y="36" width="144" height="52" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="100" y="58" text-anchor="middle" class="lbl">Request Queue</text>
+<text x="100" y="74" text-anchor="middle" class="sub">(Redis)</text>
+
+<line x1="172" y1="62" x2="196" y2="62"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+
+
+<rect x="198" y="36" width="160" height="52" rx="7"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
+<text x="278" y="58" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Router</text>
+<text x="278" y="74" text-anchor="middle" class="sub-s">(task type)</text>
+
+<line x1="358" y1="62" x2="386" y2="62"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+
+
+<rect x="388" y="36" width="242" height="52" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="509" y="55" text-anchor="middle" class="lbl">LRU Cache</text>
+<text x="509" y="72" text-anchor="middle" class="sub">SHA256(prompt + completion)</text>
+
+
+<rect class="cache-flash" x="388" y="36" width="242" height="52" rx="7"
+      fill="var(--good,#2f9e6e)" fill-opacity="0.2" stroke="none" opacity="0"/>
+
+
+
+<path d="M 630 88 Q 630 110 329 110 Q 28 110 28 88"
+      fill="none"
+      stroke="var(--muted,#8a8a99)" stroke-width="1.2"
+      stroke-dasharray="5 3"
+      marker-end="url(#rsa-arr-m)"/>
+<text x="329" y="124" text-anchor="middle" class="note">cache hit -- return immediately (skip workers)</text>
+
+
+<circle class="tok-req"   cx="48"  cy="62" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+<circle class="tok-route" cx="198" cy="62" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+
+<line x1="278" y1="88" x2="278" y2="156"
+      stroke="var(--accent2,#3b6fd4)" stroke-width="1.5"/>
+<line x1="100" y1="156" x2="458" y2="156"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<line x1="100"  y1="156" x2="100"  y2="188"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+<line x1="278"  y1="156" x2="278"  y2="188"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+<line x1="458"  y1="156" x2="458"  y2="188"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+<text x="100"  y="150" text-anchor="middle" class="edge-lbl">math</text>
+<text x="278"  y="150" text-anchor="middle" class="edge-lbl">code</text>
+<text x="458"  y="150" text-anchor="middle" class="edge-lbl">judge</text>
+
+
+<circle class="tok-math"  cx="278" cy="142" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+<circle class="tok-code"  cx="278" cy="142" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+<circle class="tok-judge" cx="278" cy="142" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+
+
+
+<rect x="28"  y="194" width="144" height="46" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="22"  y="190" width="144" height="46" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="16"  y="188" width="144" height="46" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="88"  y="208" text-anchor="middle" class="lbl">Math Verifier</text>
+<text x="88"  y="224" text-anchor="middle" class="sub-s">Workers</text>
+<rect x="138" y="188" width="24" height="16" rx="4" fill="var(--border-2,#cfcfdb)"/>
+<text x="150" y="200" text-anchor="middle" class="badge" fill="var(--ink-soft,#45413a)">x8</text>
+
+
+<rect x="214" y="194" width="128" height="46" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="208" y="190" width="128" height="46" rx="6"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1"/>
+<rect x="202" y="188" width="128" height="46" rx="6"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
+<text x="266" y="206" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Code Runner</text>
+<text x="266" y="222" text-anchor="middle" class="sub-s" fill="var(--accent2,#3b6fd4)">Sandbox Pool</text>
+<rect x="316" y="188" width="28" height="16" rx="4" fill="var(--accent2,#3b6fd4)"/>
+<text x="330" y="200" text-anchor="middle" class="badge" fill="#fff">x64</text>
+
+
+<rect x="394" y="194" width="128" height="46" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="388" y="190" width="128" height="46" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="382" y="188" width="128" height="46" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="446" y="206" text-anchor="middle" class="lbl">LLM Judge</text>
+<text x="446" y="222" text-anchor="middle" class="sub-s">async API calls</text>
+<rect x="496" y="188" width="28" height="16" rx="4" fill="var(--border-2,#cfcfdb)"/>
+<text x="510" y="200" text-anchor="middle" class="badge" fill="var(--ink-soft,#45413a)">x32</text>
+
+
+<text x="88"  y="250" text-anchor="middle" class="sub-s">cheap, fast</text>
+<text x="266" y="250" text-anchor="middle" class="sub-s">expensive; size pool</text>
+<text x="446" y="250" text-anchor="middle" class="sub-s">async; rate-limited</text>
+
+
+<rect x="16" y="264" width="628" height="148" rx="8"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#d0d0da)" stroke-width="1"/>
+<text x="330" y="282" text-anchor="middle" class="lbl">How a request flows</text>
+
+<text x="28" y="300" class="note">1. Request enters Redis queue; Router dequeues it and reads task_type.</text>
+<text x="28" y="316" class="note">2. Router hashes SHA256(prompt+completion) and looks up LRU Cache.</text>
+<text x="28" y="332" class="note">   Cache hit: stored scalar returned immediately, skipping all workers.</text>
+<text x="28" y="348" class="note">3. Cache miss: request dispatched to matching pool (math / code / judge).</text>
+<text x="28" y="364" class="note">4. Code Runner pool (x64) is the bottleneck; size = rollout_rate / worker_rps.</text>
+<text x="28" y="380" class="note">5. LLM Judge calls are async, hiding API latency behind the next rollout batch.</text>
+<text x="28" y="396" class="note">6. Worker results written to cache on return; training loop receives the scalar.</text>
+
+</svg>
+<figcaption><b>Internal architecture of the gRPC reward server showing request routing, caching, and parallel worker pools.</b> A Redis queue decouples ingress from computation; the Router checks an LRU cache (SHA256-keyed) before dispatching — a cache hit returns immediately and skips all workers. On a miss, requests route to one of three sized pools; the Code Runner sandbox pool (x64) is the throughput-critical path and must be sized to match rollout rate.</figcaption>
+</figure>
+
+<p>Here is a minimal FastAPI reward server:</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">reward_server.py — minimal HTTP reward server for RL training.</span>
+
+<span class="sd">Deploy behind a load balancer; run multiple instances for throughput.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">lru_cache</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span><span class="p">,</span> <span class="n">HTTPException</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">math_verifier</span><span class="w"> </span><span class="kn">import</span> <span class="n">math_reward</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">code_verifier</span><span class="w"> </span><span class="kn">import</span> <span class="n">code_reward</span><span class="p">,</span> <span class="n">SandboxPool</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">llm_judge</span><span class="w"> </span><span class="kn">import</span> <span class="n">batch_judge</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">&quot;Reward Server&quot;</span><span class="p">)</span>
+
+<span class="c1"># Global sandbox pool — initialized once at startup</span>
+<span class="n">_sandbox_pool</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">SandboxPool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="c1"># Simple in-memory cache (use Redis in production)</span>
+<span class="n">_cache</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">on_event</span><span class="p">(</span><span class="s2">&quot;startup&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">startup</span><span class="p">():</span>
+    <span class="k">global</span> <span class="n">_sandbox_pool</span>
+    <span class="n">_sandbox_pool</span> <span class="o">=</span> <span class="n">SandboxPool</span><span class="p">(</span><span class="n">pool_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mf">10.0</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RewardRequest</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">task_type</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># &quot;math&quot;, &quot;code&quot;, &quot;judge&quot;</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">completion</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">metadata</span><span class="p">:</span> <span class="nb">dict</span>          <span class="c1"># gold_answer, test_suite, reference, etc.</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RewardResponse</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">reward</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">cached</span><span class="p">:</span> <span class="nb">bool</span>
+    <span class="n">breakdown</span><span class="p">:</span> <span class="nb">dict</span>         <span class="c1"># Per-component rewards for logging</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_cache_key</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="n">RewardRequest</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span>
+        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="n">req</span><span class="o">.</span><span class="n">task_type</span><span class="p">,</span>
+        <span class="s2">&quot;prompt&quot;</span><span class="p">:</span> <span class="n">req</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span>
+        <span class="s2">&quot;completion&quot;</span><span class="p">:</span> <span class="n">req</span><span class="o">.</span><span class="n">completion</span><span class="p">,</span>
+        <span class="s2">&quot;meta&quot;</span><span class="p">:</span> <span class="n">req</span><span class="o">.</span><span class="n">metadata</span><span class="p">,</span>
+    <span class="p">},</span> <span class="n">sort_keys</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">raw</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/reward&quot;</span><span class="p">,</span> <span class="n">response_model</span><span class="o">=</span><span class="n">RewardResponse</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">compute_reward</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="n">RewardRequest</span><span class="p">):</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">_cache_key</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">_cache</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">RewardResponse</span><span class="p">(</span><span class="n">reward</span><span class="o">=</span><span class="n">_cache</span><span class="p">[</span><span class="n">key</span><span class="p">],</span> <span class="n">cached</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">breakdown</span><span class="o">=</span><span class="p">{})</span>
+
+    <span class="n">breakdown</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="k">if</span> <span class="n">req</span><span class="o">.</span><span class="n">task_type</span> <span class="o">==</span> <span class="s2">&quot;math&quot;</span><span class="p">:</span>
+        <span class="n">gold</span> <span class="o">=</span> <span class="n">req</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;gold_answer&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">math_reward</span><span class="p">(</span><span class="n">req</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span> <span class="n">req</span><span class="o">.</span><span class="n">completion</span><span class="p">,</span> <span class="n">gold</span><span class="p">)</span>
+        <span class="n">breakdown</span><span class="p">[</span><span class="s2">&quot;correctness&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">r</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="n">r</span>
+
+    <span class="k">elif</span> <span class="n">req</span><span class="o">.</span><span class="n">task_type</span> <span class="o">==</span> <span class="s2">&quot;code&quot;</span><span class="p">:</span>
+        <span class="n">tests</span> <span class="o">=</span> <span class="n">req</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;test_suite&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">get_event_loop</span><span class="p">()</span><span class="o">.</span><span class="n">run_in_executor</span><span class="p">(</span>
+            <span class="kc">None</span><span class="p">,</span>  <span class="c1"># Default thread pool</span>
+            <span class="k">lambda</span><span class="p">:</span> <span class="n">code_reward</span><span class="p">(</span><span class="n">req</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span> <span class="n">req</span><span class="o">.</span><span class="n">completion</span><span class="p">,</span> <span class="n">tests</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">breakdown</span><span class="p">[</span><span class="s2">&quot;code_tests&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">r</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="n">r</span>
+
+    <span class="k">elif</span> <span class="n">req</span><span class="o">.</span><span class="n">task_type</span> <span class="o">==</span> <span class="s2">&quot;judge&quot;</span><span class="p">:</span>
+        <span class="n">reference</span> <span class="o">=</span> <span class="n">req</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;reference&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">rewards</span> <span class="o">=</span> <span class="k">await</span> <span class="n">batch_judge</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">req</span><span class="o">.</span><span class="n">prompt</span><span class="p">],</span> <span class="p">[</span><span class="n">req</span><span class="o">.</span><span class="n">completion</span><span class="p">],</span> <span class="p">[</span><span class="n">reference</span><span class="p">]</span>
+        <span class="p">)</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">rewards</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">breakdown</span><span class="p">[</span><span class="s2">&quot;llm_judge&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">r</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="n">r</span>
+
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">HTTPException</span><span class="p">(</span><span class="mi">400</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;Unknown task_type: </span><span class="si">{</span><span class="n">req</span><span class="o">.</span><span class="n">task_type</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">_cache</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">total</span>
+    <span class="k">return</span> <span class="n">RewardResponse</span><span class="p">(</span><span class="n">reward</span><span class="o">=</span><span class="n">total</span><span class="p">,</span> <span class="n">cached</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">breakdown</span><span class="o">=</span><span class="n">breakdown</span><span class="p">)</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/reward/batch&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">compute_rewards_batch</span><span class="p">(</span><span class="n">requests</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">RewardRequest</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Process a batch of reward requests concurrently.&quot;&quot;&quot;</span>
+    <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span><span class="n">compute_reward</span><span class="p">(</span><span class="n">req</span><span class="p">)</span> <span class="k">for</span> <span class="n">req</span> <span class="ow">in</span> <span class="n">requests</span><span class="p">]</span>
+    <span class="k">return</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="reward-hacking-and-mitigation">Reward Hacking and Mitigation<a class="headerlink" href="#reward-hacking-and-mitigation" title="Permanent link">¶</a></h2>
+<p>Reward hacking occurs when the model finds a high-reward policy that does not correspond to the intended behavior. This is covered extensively in <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>, but from an infrastructure perspective the key defenses are:</p>
+<p><strong>Adversarial testing of your verifier.</strong> Before training, run a fuzzer that generates edge-case strings (e.g., <code>\boxed{}</code>, <code>\boxed{\infty}</code>, extremely long LaTeX expressions, Unicode look-alikes for digits) and check that your verifier handles them correctly. A buggy verifier is itself a reward hacking surface.</p>
+<p><strong>Hold-out test suites.</strong> For code tasks, separate the visible test cases (used for reward) from hidden test cases (used for eval). This mirrors competitive programming practice. If the model achieves 90% on visible tests but 30% on hidden tests, it has overfit to the visible tests — reward hacking through test memorization.</p>
+<p><strong>Reward variance monitoring.</strong> Track <span class="arithmatex">\(\text{Var}(r)\)</span> within each prompt group over training. Healthy training shows decreasing variance as the model converges. A variance spike often indicates the model discovered a reward shortcut.</p>
+<p><strong>KL-constrained reward.</strong> Adding a KL penalty <span class="arithmatex">\(-\beta \cdot D_{\text{KL}}(\pi \| \pi_{\text{ref}})\)</span> to the reward limits how far the policy can deviate from the reference model. This is not a perfect defense, but it makes dramatic behavioral changes more expensive in reward terms. See <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>.</p>
+<h2 id="putting-it-together-a-complete-reward-pipeline">Putting It Together: A Complete Reward Pipeline<a class="headerlink" href="#putting-it-together-a-complete-reward-pipeline" title="Permanent link">¶</a></h2>
+<p>Here is how the components connect in a real RLVR system:</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">rl_reward_pipeline.py — end-to-end reward pipeline for a math RLVR run.</span>
+
+<span class="sd">This orchestrates: rollout → reward computation → advantage normalization.</span>
+<span class="sd">Intended to run on the CPU reward server, called from the training loop.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">NamedTuple</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RolloutBatch</span><span class="p">(</span><span class="n">NamedTuple</span><span class="p">):</span>
+    <span class="n">prompts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>            <span class="c1"># One per prompt group</span>
+    <span class="n">completions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span>  <span class="c1"># completions[i] = list of G completions for prompt i</span>
+    <span class="n">gold_answers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>       <span class="c1"># Reference answers for verifier</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RewardBatch</span><span class="p">(</span><span class="n">NamedTuple</span><span class="p">):</span>
+    <span class="n">rewards</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>           <span class="c1"># Shape (N,) flat — all completions</span>
+    <span class="n">advantages</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>        <span class="c1"># Shape (N,) after group normalization</span>
+    <span class="n">component_log</span><span class="p">:</span> <span class="nb">dict</span>           <span class="c1"># For logging / dashboards</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">compute_rewards_for_batch</span><span class="p">(</span>
+    <span class="n">batch</span><span class="p">:</span> <span class="n">RolloutBatch</span><span class="p">,</span>
+    <span class="n">format_lambda</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RewardBatch</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Main pipeline:</span>
+<span class="sd">    1. Compute correctness reward (rule-based math verifier)</span>
+<span class="sd">    2. Compute format reward</span>
+<span class="sd">    3. Combine with weights</span>
+<span class="sd">    4. Normalize per group to get advantages</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">math_verifier</span><span class="w"> </span><span class="kn">import</span> <span class="n">math_reward</span><span class="p">,</span> <span class="n">extract_answer_from_completion</span>
+
+    <span class="n">flat_prompts</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">flat_completions</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">flat_golds</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">group_ids</span> <span class="o">=</span> <span class="p">[]</span>  <span class="c1"># Which group each completion belongs to</span>
+
+    <span class="k">for</span> <span class="n">g</span><span class="p">,</span> <span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">comps</span><span class="p">,</span> <span class="n">gold</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span>
+        <span class="nb">zip</span><span class="p">(</span><span class="n">batch</span><span class="o">.</span><span class="n">prompts</span><span class="p">,</span> <span class="n">batch</span><span class="o">.</span><span class="n">completions</span><span class="p">,</span> <span class="n">batch</span><span class="o">.</span><span class="n">gold_answers</span><span class="p">)</span>
+    <span class="p">):</span>
+        <span class="k">for</span> <span class="n">comp</span> <span class="ow">in</span> <span class="n">comps</span><span class="p">:</span>
+            <span class="n">flat_prompts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+            <span class="n">flat_completions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">comp</span><span class="p">)</span>
+            <span class="n">flat_golds</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">gold</span><span class="p">)</span>
+            <span class="n">group_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">g</span><span class="p">)</span>
+
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">flat_completions</span><span class="p">)</span>
+    <span class="n">correctness</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+    <span class="n">format_r</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">comp</span><span class="p">,</span> <span class="n">gold</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span>
+        <span class="nb">zip</span><span class="p">(</span><span class="n">flat_prompts</span><span class="p">,</span> <span class="n">flat_completions</span><span class="p">,</span> <span class="n">flat_golds</span><span class="p">)</span>
+    <span class="p">):</span>
+        <span class="c1"># Format reward: 1 if \boxed{} is present, 0 otherwise</span>
+        <span class="n">has_boxed</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="nb">__import__</span><span class="p">(</span><span class="s2">&quot;re&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;</span><span class="se">\\</span><span class="s1">boxed\{&#39;</span><span class="p">,</span> <span class="n">comp</span><span class="p">))</span>
+        <span class="n">format_r</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">has_boxed</span> <span class="k">else</span> <span class="mf">0.0</span>
+        <span class="c1"># Correctness reward</span>
+        <span class="n">correctness</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">math_reward</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">comp</span><span class="p">,</span> <span class="n">gold</span><span class="p">)</span>
+
+    <span class="n">combined</span> <span class="o">=</span> <span class="n">correctness</span> <span class="o">+</span> <span class="n">format_lambda</span> <span class="o">*</span> <span class="n">format_r</span>
+
+    <span class="c1"># Normalize per group → advantages</span>
+    <span class="n">advantages</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+    <span class="n">num_groups</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">batch</span><span class="o">.</span><span class="n">prompts</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_groups</span><span class="p">):</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="p">[</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">gid</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">group_ids</span><span class="p">)</span> <span class="k">if</span> <span class="n">gid</span> <span class="o">==</span> <span class="n">g</span><span class="p">]</span>
+        <span class="n">group</span> <span class="o">=</span> <span class="n">combined</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+        <span class="n">mu</span><span class="p">,</span> <span class="n">sigma</span> <span class="o">=</span> <span class="n">group</span><span class="o">.</span><span class="n">mean</span><span class="p">(),</span> <span class="n">group</span><span class="o">.</span><span class="n">std</span><span class="p">()</span>
+        <span class="n">advantages</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">group</span> <span class="o">-</span> <span class="n">mu</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">sigma</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">RewardBatch</span><span class="p">(</span>
+        <span class="n">rewards</span><span class="o">=</span><span class="n">combined</span><span class="p">,</span>
+        <span class="n">advantages</span><span class="o">=</span><span class="n">advantages</span><span class="p">,</span>
+        <span class="n">component_log</span><span class="o">=</span><span class="p">{</span>
+            <span class="s2">&quot;correctness&quot;</span><span class="p">:</span> <span class="n">correctness</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span>
+            <span class="s2">&quot;format&quot;</span><span class="p">:</span> <span class="n">format_r</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span>
+        <span class="p">},</span>
+    <span class="p">)</span>
+</code></pre></div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Rule-based verifiers (math equivalence, code unit tests) are the gold standard for RLVR: deterministic, free at inference time, and hard to hack compared to learned reward models.</li>
+<li>Math verifiers must do symbolic/numeric normalization, not string equality. Sympy with a numeric fallback handles most competition math formats correctly.</li>
+<li>Code verifiers need sandboxed execution to prevent reward hacking via filesystem or process manipulation. Warm container or microVM pools eliminate per-sample startup overhead.</li>
+<li>LLM-judge rewards are necessary for open-ended tasks but introduce positional and verbosity bias; mitigate by swapping order, using cross-family judges, and normalizing within batches.</li>
+<li>Format rewards (small <span class="arithmatex">\(\lambda \approx 0.1\)</span>) solve the cold-start problem by encouraging structured output before correctness rewards become dense; too large a <span class="arithmatex">\(\lambda\)</span> invites gaming.</li>
+<li>Multi-objective rewards should be combined on similar scales and normalized per prompt group (GRPO-style) to produce zero-mean advantages independent of absolute reward magnitude.</li>
+<li>The reward server is a critical piece of RL infrastructure: decouple it from training, cache results, and size your sandbox pool to match rollout throughput (workers = throughput / per-worker capacity, plus 2-3x headroom).</li>
+<li>Monitor reward hacking via verifier fuzzing, hold-out test suites, and within-group reward variance throughout training.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Reward engineering for RLVR has matured rapidly since DeepSeek-R1 demonstrated that rule-based verifiers alone—without any learned reward model—can drive state-of-the-art reasoning. The active frontier now spans more robust symbolic verifiers, step-level process reward models that scale test-time compute, and production-grade sandboxing infrastructure for safe code execution at training throughput.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2305.20050">Lightman et al., <em>Let&rsquo;s Verify Step by Step</em> (2023)</a> — introduces process supervision (PRMs) and the PRM800K dataset; the paper that established step-level reward modeling as a research area.</li>
+<li><a href="https://arxiv.org/abs/2210.10760">Gao, Schulman &amp; Hilton, <em>Scaling Laws for Reward Model Overoptimization</em> (2022)</a> — characterizes how reward model overoptimization degrades true performance; foundational analysis for KL-constrained reward design.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI, <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em> (2025)</a> — canonical RLVR recipe using rule-based math and format verifiers without any learned reward model.</li>
+<li><a href="https://arxiv.org/abs/2312.08935">Wang et al., <em>Math-Shepherd: Verify and Reinforce LLMs Step-by-step without Human Annotations</em> (2023)</a> — automated PRM training via Monte Carlo rollouts, removing the need for human step-level labels.</li>
+<li><a href="https://arxiv.org/abs/2504.16828">Khalifa et al., <em>Process Reward Models That Think</em> (ThinkPRM, 2025)</a> — PRMs that generate verification chain-of-thought, outperforming LLM-as-a-Judge with only 1% of the process labels.</li>
+<li><a href="https://arxiv.org/abs/2306.05685">Zheng et al., <em>Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena</em> (2023)</a> — systematic analysis of positional, verbosity, and self-preference biases in LLM judges; standard reference for calibrating judge rewards.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/verl-project/verl">verl-project/verl</a> — flexible, high-throughput RL post-training framework (PPO, GRPO, DAPO) with pluggable reward functions; used to reproduce and extend DeepSeek-R1.</li>
+<li><a href="https://github.com/e2b-dev/E2B">e2b-dev/E2B</a> — open-source Firecracker-backed cloud sandbox SDK for safely executing AI-generated code; Python and TypeScript APIs.</li>
+<li><a href="https://github.com/openai/prm800k">openai/prm800k</a> — 800 K step-level correctness labels on MATH solutions plus the SymPy-based answer-grading logic from &ldquo;Let&rsquo;s Verify Step by Step.&rdquo;</li>
+<li><a href="https://github.com/opendilab/awesome-RLVR">opendilab/awesome-RLVR</a> — curated, actively updated reading list of RLVR papers, codebases, and tutorials (2024–2026).</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://lilianweng.github.io/posts/2024-11-28-reward-hacking/">Lilian Weng, <em>Reward Hacking in Reinforcement Learning</em> (Lil&rsquo;Log, 2024)</a> — comprehensive 37-minute survey of reward hacking failure modes in RL and LLMs, with mitigation strategies; essential reading before shipping a reward pipeline.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Lightman et al., <em>Let&rsquo;s Verify Step by Step</em> (OpenAI, 2023) — introduces process reward models (PRMs) for math reasoning and the PRM800K dataset.</li>
+<li>Wang et al., <em>Math-Shepherd: Verify and Reinforce LLMs Step-by-step without Human Annotations</em> (2023) — automated PRM training via Monte Carlo rollouts.</li>
+<li>DeepSeek-AI, <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em> (2025) — the canonical RLVR recipe with format + correctness rewards.</li>
+<li>Chen et al., <em>Evaluating Large Language Models Trained on Code</em> (OpenAI, 2021) — introduces HumanEval and the pass@k metric for code reward evaluation.</li>
+<li>Guo et al., <em>Deepseek-Coder: When the Large Language Model Meets Programming</em> (2024) — discusses code-execution reward pipelines at scale.</li>
+<li>Zheng et al., <em>Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena</em> (2023) — systematic analysis of LLM judge biases and calibration.</li>
+<li>Shen et al., <em>Loose lips sink ships: Mitigating Length Bias in Reinforcement Learning from Human Feedback</em> (2023) — reward shaping to control response length.</li>
+<li><code>google/evals</code>, <code>openai/evals</code> — open-source eval harness libraries with reward function implementations.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="07-colocated-vs-disaggregated.html"><span class="pn-label">← Previous</span><span class="pn-title">Colocated vs Disaggregated RL &amp; Weight Synchronization</span></a>
+<a class="next" href="09-advantage-kl-tricks.html"><span class="pn-label">Next →</span><span class="pn-title">Advantage Estimation, KL Control &amp; Stability Tricks</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-anatomy-of-a-reward-function">The Anatomy of a Reward Function</a></li>
+<li class="toc-l3"><a href="#reward-signal-flow">Reward Signal Flow</a></li>
+<li class="toc-l2"><a href="#rule-based-verifiers">Rule-Based Verifiers</a></li>
+<li class="toc-l3"><a href="#math-equivalence-checking">Math Equivalence Checking</a></li>
+<li class="toc-l3"><a href="#code-execution-verifiers">Code Execution Verifiers</a></li>
+<li class="toc-l2"><a href="#sandboxed-execution-security-isolation-throughput">Sandboxed Execution: Security, Isolation &amp;amp; Throughput</a></li>
+<li class="toc-l3"><a href="#sandbox-architectures">Sandbox Architectures</a></li>
+<li class="toc-l3"><a href="#building-a-sandboxed-execution-service">Building a Sandboxed Execution Service</a></li>
+<li class="toc-l3"><a href="#throughput-arithmetic">Throughput Arithmetic</a></li>
+<li class="toc-l2"><a href="#llm-judge-rewards">LLM-Judge Rewards</a></li>
+<li class="toc-l3"><a href="#designing-a-judge-prompt">Designing a Judge Prompt</a></li>
+<li class="toc-l3"><a href="#judge-calibration-and-positional-bias">Judge Calibration and Positional Bias</a></li>
+<li class="toc-l2"><a href="#reward-shaping-and-the-format-vs-correctness-tradeoff">Reward Shaping and the Format vs. Correctness Tradeoff</a></li>
+<li class="toc-l3"><a href="#format-rewards">Format Rewards</a></li>
+<li class="toc-l3"><a href="#process-reward-models-prms">Process Reward Models (PRMs)</a></li>
+<li class="toc-l2"><a href="#multi-objective-and-weighted-rewards">Multi-Objective and Weighted Rewards</a></li>
+<li class="toc-l3"><a href="#reward-normalization-per-prompt">Reward Normalization Per Prompt</a></li>
+<li class="toc-l2"><a href="#reward-server-architecture">Reward Server Architecture</a></li>
+<li class="toc-l2"><a href="#reward-hacking-and-mitigation">Reward Hacking and Mitigation</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-complete-reward-pipeline">Putting It Together: A Complete Reward Pipeline</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

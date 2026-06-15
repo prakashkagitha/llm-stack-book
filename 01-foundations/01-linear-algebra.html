@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linear Algebra for Deep Learning — The LLM Stack</title>
+<meta name="description" content="Vectors, matrices, tensors; matmul as the workhorse; rank, span, basis; eigen/SVD and why low-rank matters (LoRA preview); norms; matrix calculus identities use">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="active" href="01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part I — Mathematical &amp; Systems Foundations</div>
+<h1 id="11-linear-algebra-for-deep-learning">1.1 Linear Algebra for Deep Learning<a class="headerlink" href="#11-linear-algebra-for-deep-learning" title="Permanent link">¶</a></h1>
+<p>Linear algebra is the language deep learning is written in. Every forward pass through a neural network is a cascade of matrix multiplications. Every gradient update is a matrix-calculus identity. Every parameter-efficient fine-tuning technique — from LoRA to Adapters — exploits the geometric structure of high-dimensional weight matrices. If you skip this chapter, the rest of the book will feel like reading music without knowing what notes are.</p>
+<p>This chapter is both a refresher and a precision tool. We assume you have met vectors and matrices before; our job is to make the machinery feel mechanical and concrete, show you exactly which operations dominate in practice, and build the intuition for <em>why</em> low-rank structure shows up everywhere in modern LLMs. We will derive, not just state. We will compute, not just describe.</p>
+<p>Cross-references: <a href="../01-foundations/03-calculus-optimization.html">Calculus, Optimization &amp; Convexity</a> picks up matrix calculus in more detail; <a href="../01-foundations/06-neural-nets-from-scratch.html">Neural Networks From Scratch: MLPs &amp; Backprop</a> applies everything here to multi-layer networks; <a href="../01-foundations/07-autodiff-pytorch.html">Automatic Differentiation &amp; PyTorch Internals</a> shows how PyTorch tracks these gradients automatically; <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a> builds directly on the SVD and low-rank ideas developed below.</p>
+<hr />
+<h2 id="vectors-matrices-and-tensors">Vectors, Matrices, and Tensors<a class="headerlink" href="#vectors-matrices-and-tensors" title="Permanent link">¶</a></h2>
+<h3 id="vectors">Vectors<a class="headerlink" href="#vectors" title="Permanent link">¶</a></h3>
+<p>A <strong>vector</strong> <span class="arithmatex">\(\mathbf{v} \in \mathbb{R}^n\)</span> is an ordered list of <span class="arithmatex">\(n\)</span> real numbers. Geometrically it is an arrow from the origin; algebraically it is a column by convention:</p>
+<div class="arithmatex">\[
+\mathbf{v} = \begin{bmatrix} v_1 \\ v_2 \\ \vdots \\ v_n \end{bmatrix}
+\]</div>
+<p>The <strong>dot product</strong> (inner product) of two vectors is <span class="arithmatex">\(\mathbf{u} \cdot \mathbf{v} = \sum_{i=1}^n u_i v_i = \mathbf{u}^\top \mathbf{v}\)</span>. Its geometric interpretation: <span class="arithmatex">\(\mathbf{u}^\top \mathbf{v} = \|\mathbf{u}\| \|\mathbf{v}\| \cos\theta\)</span>, where <span class="arithmatex">\(\theta\)</span> is the angle between them. This identity underlies cosine similarity, which is the dominant similarity metric for embedding vectors in retrieval and attention.</p>
+<h3 id="matrices">Matrices<a class="headerlink" href="#matrices" title="Permanent link">¶</a></h3>
+<p>A <strong>matrix</strong> <span class="arithmatex">\(A \in \mathbb{R}^{m \times n}\)</span> has <span class="arithmatex">\(m\)</span> rows and <span class="arithmatex">\(n\)</span> columns. It is simultaneously:</p>
+<ol>
+<li>A rectangular array of numbers <span class="arithmatex">\(A_{ij}\)</span>.</li>
+<li>A linear map from <span class="arithmatex">\(\mathbb{R}^n\)</span> to <span class="arithmatex">\(\mathbb{R}^m\)</span>: <span class="arithmatex">\(\mathbf{y} = A\mathbf{x}\)</span>.</li>
+<li>A collection of <span class="arithmatex">\(n\)</span> column vectors, each in <span class="arithmatex">\(\mathbb{R}^m\)</span>.</li>
+</ol>
+<p>The <strong>transpose</strong> <span class="arithmatex">\(A^\top\)</span> has rows and columns swapped: <span class="arithmatex">\((A^\top)_{ij} = A_{ji}\)</span>.</p>
+<p>A <strong>symmetric</strong> matrix satisfies <span class="arithmatex">\(A = A^\top\)</span>; positive semi-definite (PSD) means <span class="arithmatex">\(\mathbf{x}^\top A \mathbf{x} \geq 0\)</span> for all <span class="arithmatex">\(\mathbf{x}\)</span>. Covariance matrices and Gram matrices are always PSD.</p>
+<h3 id="tensors">Tensors<a class="headerlink" href="#tensors" title="Permanent link">¶</a></h3>
+<p>In deep learning, <strong>tensor</strong> typically means a multi-dimensional array with a fixed shape. A 3-D tensor <span class="arithmatex">\(T \in \mathbb{R}^{B \times S \times D}\)</span> might represent a batch of <span class="arithmatex">\(B\)</span> sequences of length <span class="arithmatex">\(S\)</span>, each token encoded as a <span class="arithmatex">\(D\)</span>-dimensional vector. PyTorch <code>torch.Tensor</code> is the workhorse; NumPy <code>ndarray</code> is the CPU equivalent.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># ----- Vectors -----</span>
+<span class="n">v</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">])</span>          <span class="c1"># shape (3,)</span>
+<span class="n">u</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">4.0</span><span class="p">,</span> <span class="mf">5.0</span><span class="p">,</span> <span class="mf">6.0</span><span class="p">])</span>
+
+<span class="n">dot</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">u</span><span class="p">)</span>                        <span class="c1"># 1*4 + 2*5 + 3*6 = 32.0</span>
+<span class="n">cosine_sim</span> <span class="o">=</span> <span class="n">dot</span> <span class="o">/</span> <span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span> <span class="o">*</span> <span class="n">u</span><span class="o">.</span><span class="n">norm</span><span class="p">())</span>     <span class="c1"># ≈ 0.9746</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;dot=</span><span class="si">{</span><span class="n">dot</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">, cos_sim=</span><span class="si">{</span><span class="n">cosine_sim</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># ----- Matrices -----</span>
+<span class="n">A</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>   <span class="c1"># 4×3 matrix</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>      <span class="c1"># 3-vector</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">A</span> <span class="o">@</span> <span class="n">x</span>               <span class="c1"># matrix-vector product, shape (4,)</span>
+
+<span class="c1"># ----- 3-D Tensor (batch of sequences) -----</span>
+<span class="n">B</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">512</span>
+<span class="n">hidden_states</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>        <span class="c1"># typical transformer hidden states</span>
+
+<span class="c1"># Batch matrix multiply across the batch dimension</span>
+<span class="n">Q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span>   <span class="c1"># queries</span>
+<span class="n">K</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span>   <span class="c1"># keys</span>
+<span class="c1"># Compute all pairwise dot products: (B, S, S)</span>
+<span class="n">scores</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">bmm</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>    <span class="c1"># batch matmul</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Attention score tensor shape: </span><span class="si">{</span><span class="n">scores</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># (2, 8, 8)</span>
+</code></pre></div>
+<hr />
+<h2 id="matrix-multiplication-the-workhorse-operation">Matrix Multiplication: The Workhorse Operation<a class="headerlink" href="#matrix-multiplication-the-workhorse-operation" title="Permanent link">¶</a></h2>
+<h3 id="three-equivalent-views">Three equivalent views<a class="headerlink" href="#three-equivalent-views" title="Permanent link">¶</a></h3>
+<p>Given <span class="arithmatex">\(A \in \mathbb{R}^{m \times k}\)</span> and <span class="arithmatex">\(B \in \mathbb{R}^{k \times n}\)</span>, the product <span class="arithmatex">\(C = AB \in \mathbb{R}^{m \times n}\)</span> has:</p>
+<div class="arithmatex">\[
+C_{ij} = \sum_{p=1}^{k} A_{ip} B_{pj}
+\]</div>
+<p><strong>View 1 — Dot products.</strong> Entry <span class="arithmatex">\(C_{ij}\)</span> is the dot product of the <span class="arithmatex">\(i\)</span>-th row of <span class="arithmatex">\(A\)</span> and <span class="arithmatex">\(j\)</span>-th column of <span class="arithmatex">\(B\)</span>.</p>
+<p><strong>View 2 — Column combinations.</strong> The <span class="arithmatex">\(j\)</span>-th column of <span class="arithmatex">\(C\)</span> is <span class="arithmatex">\(A\)</span> times the <span class="arithmatex">\(j\)</span>-th column of <span class="arithmatex">\(B\)</span>: <span class="arithmatex">\(C_{:,j} = A \cdot B_{:,j}\)</span>. So <span class="arithmatex">\(C\)</span> expresses each column of <span class="arithmatex">\(B\)</span> as a linear combination of <span class="arithmatex">\(A\)</span>&rsquo;s columns.</p>
+<p><strong>View 3 — Outer products (rank-1 decomposition).</strong> <span class="arithmatex">\(C = \sum_{p=1}^k A_{:,p} \cdot B_{p,:}^\top\)</span>. Each term is a rank-1 matrix (column times row). This view is surprisingly important: low-rank approximations are truncated versions of this sum.</p>
+<h3 id="flop-count-and-why-it-matters">FLOP count and why it matters<a class="headerlink" href="#flop-count-and-why-it-matters" title="Permanent link">¶</a></h3>
+<p>Multiplying an <span class="arithmatex">\((m \times k)\)</span> matrix by a <span class="arithmatex">\((k \times n)\)</span> matrix costs <span class="arithmatex">\(2mkn\)</span> FLOPs (multiply-accumulate, factor of 2). For a transformer layer with hidden dim <span class="arithmatex">\(d = 4096\)</span>:</p>
+<ul>
+<li>A single linear projection <span class="arithmatex">\(W \in \mathbb{R}^{4096 \times 4096}\)</span> applied to a batch <span class="arithmatex">\(X \in \mathbb{R}^{B \times S \times 4096}\)</span> costs <span class="arithmatex">\(2 \cdot B \cdot S \cdot 4096^2 \approx 34 \times 10^9 \cdot B \cdot S\)</span> FLOPs.</li>
+<li>At batch size 1 and sequence length 512, that is roughly 17 GFLOPs per linear layer.</li>
+</ul>
+<p>Modern A100 GPUs deliver on the order of 312 TFLOPS in BF16. So in theory you can run hundreds of linear layers per second — but memory bandwidth is often the bottleneck, not raw FLOPs. See <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a> for the full story.</p>
+<h3 id="matrix-multiplication-in-numpy-and-pytorch">Matrix multiplication in NumPy and PyTorch<a class="headerlink" href="#matrix-multiplication-in-numpy-and-pytorch" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="c1"># Benchmark matmul on CPU vs GPU</span>
+<span class="n">A</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4096</span><span class="p">,</span> <span class="mi">4096</span><span class="p">)</span>
+<span class="n">B</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4096</span><span class="p">,</span> <span class="mi">4096</span><span class="p">)</span>
+
+<span class="c1"># CPU</span>
+<span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+<span class="n">C_cpu</span> <span class="o">=</span> <span class="n">A</span> <span class="o">@</span> <span class="n">B</span>
+<span class="n">t1</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;CPU matmul 4096×4096: </span><span class="si">{</span><span class="p">(</span><span class="n">t1</span><span class="o">-</span><span class="n">t0</span><span class="p">)</span><span class="o">*</span><span class="mi">1000</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> ms&quot;</span><span class="p">)</span>
+
+<span class="c1"># GPU (if available)</span>
+<span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
+    <span class="n">A_gpu</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+    <span class="n">B_gpu</span> <span class="o">=</span> <span class="n">B</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+    <span class="c1"># Warm up</span>
+    <span class="n">_</span> <span class="o">=</span> <span class="n">A_gpu</span> <span class="o">@</span> <span class="n">B_gpu</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="n">C_gpu</span> <span class="o">=</span> <span class="n">A_gpu</span> <span class="o">@</span> <span class="n">B_gpu</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">t1</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;GPU matmul 4096×4096 (BF16): </span><span class="si">{</span><span class="p">(</span><span class="n">t1</span><span class="o">-</span><span class="n">t0</span><span class="p">)</span><span class="o">*</span><span class="mi">1000</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ms&quot;</span><span class="p">)</span>
+
+<span class="c1"># Batched matmul — critical for transformer attention</span>
+<span class="c1"># Simulate multi-head attention: 32 heads, seq_len=512, head_dim=128</span>
+<span class="n">H</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="mi">128</span>
+<span class="n">Q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+<span class="n">K</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+<span class="c1"># Q @ K^T -&gt; (H, S, S) — scores for all heads at once</span>
+<span class="n">scores</span> <span class="o">=</span> <span class="n">Q</span> <span class="o">@</span> <span class="n">K</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># uses broadcasting/batched matmul</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Score shape: </span><span class="si">{</span><span class="n">scores</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># (32, 512, 512)</span>
+</code></pre></div>
+<hr />
+<h2 id="rank-span-basis-and-null-space">Rank, Span, Basis, and Null Space<a class="headerlink" href="#rank-span-basis-and-null-space" title="Permanent link">¶</a></h2>
+<h3 id="the-column-space-and-span">The column space and span<a class="headerlink" href="#the-column-space-and-span" title="Permanent link">¶</a></h3>
+<p>The <strong>column space</strong> (image) of <span class="arithmatex">\(A \in \mathbb{R}^{m \times n}\)</span> is <span class="arithmatex">\(\text{col}(A) = \{ A\mathbf{x} : \mathbf{x} \in \mathbb{R}^n \}\)</span>, the set of all linear combinations of <span class="arithmatex">\(A\)</span>&rsquo;s columns. This lives in <span class="arithmatex">\(\mathbb{R}^m\)</span>.</p>
+<p>The <strong>rank</strong> of <span class="arithmatex">\(A\)</span> is the dimension of its column space: <span class="arithmatex">\(\text{rank}(A) = \dim(\text{col}(A))\)</span>. Key facts:
+- <span class="arithmatex">\(\text{rank}(A) \leq \min(m, n)\)</span>. When equality holds, <span class="arithmatex">\(A\)</span> is <strong>full rank</strong>.
+- <span class="arithmatex">\(\text{rank}(A) = \text{rank}(A^\top)\)</span> — row rank equals column rank.
+- <span class="arithmatex">\(\text{rank}(AB) \leq \min(\text{rank}(A), \text{rank}(B))\)</span>.</p>
+<p>The <strong>null space</strong> (kernel) of <span class="arithmatex">\(A\)</span> is <span class="arithmatex">\(\ker(A) = \{\mathbf{x} : A\mathbf{x} = \mathbf{0}\}\)</span>. The <strong>rank-nullity theorem</strong> states:</p>
+<div class="arithmatex">\[
+\text{rank}(A) + \text{nullity}(A) = n
+\]</div>
+<h3 id="basis-and-linear-independence">Basis and linear independence<a class="headerlink" href="#basis-and-linear-independence" title="Permanent link">¶</a></h3>
+<p>A set of vectors <span class="arithmatex">\(\{\mathbf{b}_1, \ldots, \mathbf{b}_k\}\)</span> is <strong>linearly independent</strong> if no vector is a linear combination of the others. A <strong>basis</strong> for a subspace is a linearly independent set that spans the subspace. The <strong>standard basis</strong> in <span class="arithmatex">\(\mathbb{R}^n\)</span> is <span class="arithmatex">\(\{\mathbf{e}_1, \ldots, \mathbf{e}_n\}\)</span> where <span class="arithmatex">\(\mathbf{e}_i\)</span> has a 1 in position <span class="arithmatex">\(i\)</span> and 0 elsewhere.</p>
+<p>Why do ML engineers care? Because the rank of a weight matrix tells you about its <strong>effective dimensionality</strong> — how many truly independent directions the linear map uses. Empirically, the weight updates <span class="arithmatex">\(\Delta W\)</span> during fine-tuning tend to concentrate in a very low-dimensional subspace. This is the geometric intuition behind LoRA (see <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a>).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="c1"># Check rank empirically</span>
+<span class="n">W</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">768</span><span class="p">,</span> <span class="mi">768</span><span class="p">)</span>           <span class="c1"># full-rank weight matrix</span>
+<span class="n">rank_full</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">matrix_rank</span><span class="p">(</span><span class="n">W</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Random 768×768 rank: </span><span class="si">{</span><span class="n">rank_full</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># should be 768</span>
+
+<span class="c1"># Low-rank matrix: W = A @ B where A is 768×4 and B is 4×768</span>
+<span class="n">r</span> <span class="o">=</span> <span class="mi">4</span>
+<span class="n">A_lr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">768</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+<span class="n">B_lr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="mi">768</span><span class="p">)</span>
+<span class="n">W_lr</span> <span class="o">=</span> <span class="n">A_lr</span> <span class="o">@</span> <span class="n">B_lr</span>                      <span class="c1"># rank at most 4</span>
+<span class="n">rank_lr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">matrix_rank</span><span class="p">(</span><span class="n">W_lr</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Low-rank 768×768 (r=4) rank: </span><span class="si">{</span><span class="n">rank_lr</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 4</span>
+
+<span class="c1"># Memory comparison</span>
+<span class="n">params_full</span> <span class="o">=</span> <span class="mi">768</span> <span class="o">*</span> <span class="mi">768</span>          <span class="c1"># 589,824</span>
+<span class="n">params_lora</span> <span class="o">=</span> <span class="mi">768</span> <span class="o">*</span> <span class="n">r</span> <span class="o">+</span> <span class="n">r</span> <span class="o">*</span> <span class="mi">768</span>  <span class="c1"># 6,144  (99% reduction!)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Full: </span><span class="si">{</span><span class="n">params_full</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> params, LoRA r=4: </span><span class="si">{</span><span class="n">params_lora</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> params&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="eigendecomposition-and-the-singular-value-decomposition">Eigendecomposition and the Singular Value Decomposition<a class="headerlink" href="#eigendecomposition-and-the-singular-value-decomposition" title="Permanent link">¶</a></h2>
+<h3 id="eigenvalues-and-eigenvectors">Eigenvalues and eigenvectors<a class="headerlink" href="#eigenvalues-and-eigenvectors" title="Permanent link">¶</a></h3>
+<p>For a <strong>square</strong> matrix <span class="arithmatex">\(A \in \mathbb{R}^{n \times n}\)</span>, a vector <span class="arithmatex">\(\mathbf{v} \neq \mathbf{0}\)</span> is an <strong>eigenvector</strong> with <strong>eigenvalue</strong> <span class="arithmatex">\(\lambda\)</span> if:</p>
+<div class="arithmatex">\[
+A\mathbf{v} = \lambda \mathbf{v}
+\]</div>
+<p>Geometrically, <span class="arithmatex">\(A\)</span> does not rotate <span class="arithmatex">\(\mathbf{v}\)</span> — it only stretches it by <span class="arithmatex">\(\lambda\)</span>. If <span class="arithmatex">\(A\)</span> is symmetric, all eigenvalues are real and eigenvectors for distinct eigenvalues are orthogonal. The <strong>eigendecomposition</strong> is:</p>
+<div class="arithmatex">\[
+A = Q \Lambda Q^\top
+\]</div>
+<p>where <span class="arithmatex">\(Q\)</span> is orthogonal (its columns are eigenvectors) and <span class="arithmatex">\(\Lambda = \text{diag}(\lambda_1, \ldots, \lambda_n)\)</span>.</p>
+<p>Eigenvalues govern stability in optimization: the <strong>condition number</strong> <span class="arithmatex">\(\kappa(A) = \lambda_{\max} / \lambda_{\min}\)</span> measures how much the problem is ill-conditioned. Large condition numbers slow down gradient descent; this is part of why adaptive optimizers (Adam et al.) help — see <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a>.</p>
+<h3 id="the-singular-value-decomposition">The Singular Value Decomposition<a class="headerlink" href="#the-singular-value-decomposition" title="Permanent link">¶</a></h3>
+<p>The SVD works for <strong>any</strong> matrix <span class="arithmatex">\(A \in \mathbb{R}^{m \times n}\)</span>, not just square symmetric ones:</p>
+<div class="arithmatex">\[
+A = U \Sigma V^\top
+\]</div>
+<ul>
+<li><span class="arithmatex">\(U \in \mathbb{R}^{m \times m}\)</span>: orthogonal, columns are <strong>left singular vectors</strong>.</li>
+<li><span class="arithmatex">\(\Sigma \in \mathbb{R}^{m \times n}\)</span>: diagonal with non-negative <strong>singular values</strong> <span class="arithmatex">\(\sigma_1 \geq \sigma_2 \geq \cdots \geq 0\)</span>.</li>
+<li><span class="arithmatex">\(V \in \mathbb{R}^{n \times n}\)</span>: orthogonal, columns are <strong>right singular vectors</strong>.</li>
+</ul>
+<p>The <strong>economy (thin) SVD</strong> keeps only the <span class="arithmatex">\(r = \text{rank}(A)\)</span> non-zero singular values, giving <span class="arithmatex">\(U \in \mathbb{R}^{m \times r}\)</span>, <span class="arithmatex">\(\Sigma \in \mathbb{R}^{r \times r}\)</span>, <span class="arithmatex">\(V \in \mathbb{R}^{n \times r}\)</span>.</p>
+<h3 id="best-low-rank-approximation-the-eckart-young-theorem">Best low-rank approximation: the Eckart-Young theorem<a class="headerlink" href="#best-low-rank-approximation-the-eckart-young-theorem" title="Permanent link">¶</a></h3>
+<p><strong>Theorem (Eckart-Young, 1936).</strong> Among all rank-<span class="arithmatex">\(k\)</span> matrices, the one closest to <span class="arithmatex">\(A\)</span> in Frobenius norm is:</p>
+<div class="arithmatex">\[
+A_k = \sum_{i=1}^k \sigma_i \mathbf{u}_i \mathbf{v}_i^\top
+\]</div>
+<p>The approximation error is <span class="arithmatex">\(\|A - A_k\|_F^2 = \sum_{i=k+1}^r \sigma_i^2\)</span>. This is the theoretical foundation for LoRA: if the weight update <span class="arithmatex">\(\Delta W\)</span> has a rapidly decaying singular value spectrum, keeping only the top-<span class="arithmatex">\(r\)</span> components captures most of the information with far fewer parameters.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+
+<span class="c1"># Demonstrate SVD and low-rank approximation</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+<span class="c1"># Construct a matrix with known low-rank structure + noise</span>
+<span class="n">m</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">true_rank</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">8</span>
+<span class="n">U_true</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">true_rank</span><span class="p">)</span>
+<span class="n">V_true</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">true_rank</span><span class="p">)</span>
+<span class="n">W</span> <span class="o">=</span> <span class="n">U_true</span> <span class="o">@</span> <span class="n">V_true</span><span class="o">.</span><span class="n">T</span> <span class="o">+</span> <span class="mf">0.1</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>  <span class="c1"># rank-8 + noise</span>
+
+<span class="c1"># Full SVD</span>
+<span class="n">U</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">Vh</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">svd</span><span class="p">(</span><span class="n">W</span><span class="p">,</span> <span class="n">full_matrices</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="c1"># S is shape (min(m,n),), Vh is shape (min(m,n), n)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Singular values (first 12):&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">S</span><span class="p">[:</span><span class="mi">12</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span>
+<span class="c1"># Expected: 8 large values, then a cliff down to ~0.1 (noise floor)</span>
+
+<span class="c1"># Low-rank approximation at rank r</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">low_rank_approx</span><span class="p">(</span><span class="n">U</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">Vh</span><span class="p">,</span> <span class="n">r</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Reconstruct W using only the top-r singular components.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">U</span><span class="p">[:,</span> <span class="p">:</span><span class="n">r</span><span class="p">]</span> <span class="o">*</span> <span class="n">S</span><span class="p">[:</span><span class="n">r</span><span class="p">])</span> <span class="o">@</span> <span class="n">Vh</span><span class="p">[:</span><span class="n">r</span><span class="p">,</span> <span class="p">:]</span>
+
+<span class="c1"># Compare reconstruction errors</span>
+<span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">]:</span>
+    <span class="n">W_r</span> <span class="o">=</span> <span class="n">low_rank_approx</span><span class="p">(</span><span class="n">U</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">Vh</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+    <span class="n">rel_err</span> <span class="o">=</span> <span class="p">(</span><span class="n">W</span> <span class="o">-</span> <span class="n">W_r</span><span class="p">)</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span> <span class="o">/</span> <span class="n">W</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span>
+    <span class="n">n_params_full</span> <span class="o">=</span> <span class="n">m</span> <span class="o">*</span> <span class="n">n</span>           <span class="c1"># 65,536</span>
+    <span class="n">n_params_lr</span>   <span class="o">=</span> <span class="n">r</span> <span class="o">*</span> <span class="p">(</span><span class="n">m</span> <span class="o">+</span> <span class="n">n</span><span class="p">)</span>     <span class="c1"># e.g., 8*(256+256) = 4,096</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;rank-</span><span class="si">{</span><span class="n">r</span><span class="si">:</span><span class="s2">2d</span><span class="si">}</span><span class="s2">: rel_err=</span><span class="si">{</span><span class="n">rel_err</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;params=</span><span class="si">{</span><span class="n">n_params_lr</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> vs </span><span class="si">{</span><span class="n">n_params_full</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: SVD on a weight matrix</p>
+<p>Let <span class="arithmatex">\(W \in \mathbb{R}^{256 \times 256}\)</span> be a rank-8 matrix corrupted by Gaussian noise <span class="arithmatex">\(\sigma = 0.1\)</span>. Running the code above yields singular values approximately:</p>
+<div class="highlight"><pre><span></span><code>[12.8, 11.4, 10.9, 10.3, 9.7, 9.1, 8.8, 8.3, 0.1, 0.1, ...]
+</code></pre></div>
+<p>A rank-8 approximation achieves relative error of roughly 0.03 (3%), using only <span class="arithmatex">\(8 \times (256 + 256) = 4{,}096\)</span> parameters instead of <span class="arithmatex">\(256^2 = 65{,}536\)</span> — a 16× compression. A rank-16 approximation barely improves (the extra singular values are all noise), confirming that the information-carrying subspace truly has low dimension.</p>
+<p>In LoRA, we represent <span class="arithmatex">\(\Delta W \approx AB\)</span> where <span class="arithmatex">\(A \in \mathbb{R}^{d \times r}\)</span> and <span class="arithmatex">\(B \in \mathbb{R}^{r \times d}\)</span>. If <span class="arithmatex">\(\Delta W\)</span> has a similar fast-decaying spectrum (which empirical studies confirm it does), rank <span class="arithmatex">\(r \in \{4, 8, 16\}\)</span> captures most fine-tuning signal with a fraction of the parameters.</p>
+</div>
+<hr />
+<h2 id="norms-measuring-size-and-distance">Norms: Measuring Size and Distance<a class="headerlink" href="#norms-measuring-size-and-distance" title="Permanent link">¶</a></h2>
+<h3 id="vector-norms">Vector norms<a class="headerlink" href="#vector-norms" title="Permanent link">¶</a></h3>
+<p>The <strong><span class="arithmatex">\(\ell_p\)</span> norm</strong> of <span class="arithmatex">\(\mathbf{v} \in \mathbb{R}^n\)</span> is:</p>
+<div class="arithmatex">\[
+\|\mathbf{v}\|_p = \left(\sum_{i=1}^n |v_i|^p\right)^{1/p}
+\]</div>
+<p>The three most important instances:</p>
+<table>
+<thead>
+<tr>
+<th>Norm</th>
+<th>Formula</th>
+<th>Geometry</th>
+<th>Use in ML</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(\ell_1\)</span></td>
+<td>$\sum_i</td>
+<td>v_i</td>
+<td>$</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\ell_2\)</span></td>
+<td><span class="arithmatex">\(\sqrt{\sum_i v_i^2}\)</span></td>
+<td>Euclidean length</td>
+<td>Weight decay, gradient clipping</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\ell_\infty\)</span></td>
+<td>$\max_i</td>
+<td>v_i</td>
+<td>$</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Gradient clipping</strong> in transformer training (used universally) clips <span class="arithmatex">\(\mathbf{g} \leftarrow \mathbf{g} \cdot \min(1, \theta / \|\mathbf{g}\|_2)\)</span> where <span class="arithmatex">\(\theta\)</span> is typically <span class="arithmatex">\(1.0\)</span>. See <a href="../03-pretraining/11-training-stability.html">Training Stability, Loss Spikes &amp; Debugging Large Runs</a>.</p>
+<h3 id="matrix-norms">Matrix norms<a class="headerlink" href="#matrix-norms" title="Permanent link">¶</a></h3>
+<p>Three matrix norms appear repeatedly:</p>
+<p><strong>Frobenius norm</strong>: <span class="arithmatex">\(\|A\|_F = \sqrt{\sum_{i,j} A_{ij}^2} = \sqrt{\text{tr}(A^\top A)} = \sqrt{\sum_i \sigma_i^2}\)</span>. This is the natural <span class="arithmatex">\(\ell_2\)</span> norm on matrices viewed as flattened vectors.</p>
+<p><strong>Spectral norm</strong>: <span class="arithmatex">\(\|A\|_2 = \sigma_{\max}(A)\)</span>, the largest singular value. This is the operator norm — it measures the maximum amount <span class="arithmatex">\(A\)</span> can stretch a unit vector. Spectral normalization in GANs and Lipschitz regularization in transformers use this.</p>
+<p><strong>Nuclear norm</strong>: <span class="arithmatex">\(\|A\|_* = \sum_i \sigma_i\)</span>. The convex relaxation of rank; minimizing it promotes low-rank solutions.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="n">A</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span>
+
+<span class="c1"># Frobenius norm</span>
+<span class="n">frob</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">A</span><span class="p">,</span> <span class="nb">ord</span><span class="o">=</span><span class="s1">&#39;fro&#39;</span><span class="p">)</span>
+<span class="c1"># Equivalent: torch.sqrt((A**2).sum())</span>
+
+<span class="c1"># Spectral norm (largest singular value)</span>
+<span class="n">S</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">svdvals</span><span class="p">(</span><span class="n">A</span><span class="p">)</span>          <span class="c1"># sorted descending</span>
+<span class="n">spectral</span> <span class="o">=</span> <span class="n">S</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+<span class="c1"># Nuclear norm (sum of singular values)</span>
+<span class="n">nuclear</span> <span class="o">=</span> <span class="n">S</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Frobenius: </span><span class="si">{</span><span class="n">frob</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">, Spectral: </span><span class="si">{</span><span class="n">spectral</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">, Nuclear: </span><span class="si">{</span><span class="n">nuclear</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Weight decay uses Frobenius; AdamW adds lambda * W to the gradient</span>
+<span class="c1"># Spectral norm: PyTorch has torch.nn.utils.spectral_norm for Conv/Linear</span>
+</code></pre></div>
+<hr />
+<h2 id="matrix-calculus-for-backpropagation">Matrix Calculus for Backpropagation<a class="headerlink" href="#matrix-calculus-for-backpropagation" title="Permanent link">¶</a></h2>
+<p>This is where linear algebra meets gradient descent. Understanding matrix calculus identities is essential for implementing or debugging backprop by hand, and it is a common interview topic.</p>
+<h3 id="jacobians-and-gradients">Jacobians and gradients<a class="headerlink" href="#jacobians-and-gradients" title="Permanent link">¶</a></h3>
+<p>For a scalar function <span class="arithmatex">\(f: \mathbb{R}^n \to \mathbb{R}\)</span>, the <strong>gradient</strong> <span class="arithmatex">\(\nabla_{\mathbf{x}} f \in \mathbb{R}^n\)</span> has entries <span class="arithmatex">\((\nabla_{\mathbf{x}} f)_i = \partial f / \partial x_i\)</span>. We adopt the <strong>numerator layout</strong> convention (a row Jacobian becomes the transpose of the gradient column vector).</p>
+<p>For a vector function <span class="arithmatex">\(\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m\)</span>, the <strong>Jacobian</strong> <span class="arithmatex">\(J \in \mathbb{R}^{m \times n}\)</span> has <span class="arithmatex">\(J_{ij} = \partial f_i / \partial x_j\)</span>.</p>
+<h3 id="key-identities">Key identities<a class="headerlink" href="#key-identities" title="Permanent link">¶</a></h3>
+<p>Let <span class="arithmatex">\(A\)</span> be a constant matrix and <span class="arithmatex">\(\mathbf{x}\)</span> a vector of variables.</p>
+<div class="arithmatex">\[
+\frac{\partial}{\partial \mathbf{x}} (A\mathbf{x}) = A, \qquad \frac{\partial}{\partial \mathbf{x}} (\mathbf{x}^\top A \mathbf{x}) = (A + A^\top)\mathbf{x}
+\]</div>
+<p>For a scalar loss <span class="arithmatex">\(L\)</span>, if <span class="arithmatex">\(\mathbf{y} = A\mathbf{x}\)</span>, the chain rule gives:</p>
+<div class="arithmatex">\[
+\frac{\partial L}{\partial \mathbf{x}} = A^\top \frac{\partial L}{\partial \mathbf{y}}
+\]</div>
+<p>This is the <strong>transpose rule</strong> for linear maps: the backward pass through a matrix multiply uses the transposed matrix. This is the single most important identity in deep learning backpropagation.</p>
+<h3 id="gradient-of-a-linear-layer">Gradient of a linear layer<a class="headerlink" href="#gradient-of-a-linear-layer" title="Permanent link">¶</a></h3>
+<p>A linear layer computes <span class="arithmatex">\(Y = XW\)</span> where <span class="arithmatex">\(X \in \mathbb{R}^{B \times D_{\text{in}}}\)</span>, <span class="arithmatex">\(W \in \mathbb{R}^{D_{\text{in}} \times D_{\text{out}}}\)</span>, <span class="arithmatex">\(Y \in \mathbb{R}^{B \times D_{\text{out}}}\)</span>. Given <span class="arithmatex">\(\partial L / \partial Y\)</span>, what are <span class="arithmatex">\(\partial L / \partial W\)</span> and <span class="arithmatex">\(\partial L / \partial X\)</span>?</p>
+<p>Think of each row of <span class="arithmatex">\(X\)</span> as an input vector and each row of <span class="arithmatex">\(Y\)</span> as the corresponding output. Differentiating entry-by-entry and then collecting:</p>
+<div class="arithmatex">\[
+\frac{\partial L}{\partial W} = X^\top \frac{\partial L}{\partial Y}, \qquad \frac{\partial L}{\partial X} = \frac{\partial L}{\partial Y} W^\top
+\]</div>
+<p>This is the most important formula to have on the tip of your tongue. It says: to compute how the loss changes with respect to the weights, multiply the transposed input by the upstream gradient; to backprop to the inputs, multiply the upstream gradient by the transposed weight.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Derive the gradients of <span class="arithmatex">\(L = f(XW)\)</span> with respect to <span class="arithmatex">\(W\)</span> and <span class="arithmatex">\(X\)</span>, where <span class="arithmatex">\(X \in \mathbb{R}^{B \times D_{\text{in}}}\)</span>, <span class="arithmatex">\(W \in \mathbb{R}^{D_{\text{in}} \times D_{\text{out}}}\)</span>, and <span class="arithmatex">\(f\)</span> is any differentiable scalar loss on the output.</p>
+<p><strong>A:</strong> Let <span class="arithmatex">\(G = \partial L / \partial Y \in \mathbb{R}^{B \times D_{\text{out}}}\)</span> be the upstream gradient. By the chain rule on the bilinear map <span class="arithmatex">\(Y = XW\)</span>:</p>
+<ul>
+<li>For weight gradient: fixing <span class="arithmatex">\(X\)</span> constant and varying <span class="arithmatex">\(W\)</span> by <span class="arithmatex">\(\delta W\)</span>, we get <span class="arithmatex">\(\delta Y = X \delta W\)</span>, so <span class="arithmatex">\(\delta L = \text{tr}(G^\top X \delta W) = \text{tr}((X^\top G)^\top \delta W)\)</span>, giving <span class="arithmatex">\(\partial L / \partial W = X^\top G\)</span>.</li>
+<li>For input gradient: fixing <span class="arithmatex">\(W\)</span> constant and varying <span class="arithmatex">\(X\)</span> by <span class="arithmatex">\(\delta X\)</span>, we get <span class="arithmatex">\(\delta Y = \delta X \cdot W\)</span>, so <span class="arithmatex">\(\delta L = \text{tr}(G^\top \delta X W) = \text{tr}((G W^\top)^\top \delta X)\)</span>, giving <span class="arithmatex">\(\partial L / \partial X = G W^\top\)</span>.</li>
+</ul>
+<p>The shapes confirm the formulas: <span class="arithmatex">\(X^\top G\)</span> is <span class="arithmatex">\((D_{\text{in}} \times B)(B \times D_{\text{out}}) = D_{\text{in}} \times D_{\text{out}}\)</span> matching <span class="arithmatex">\(W\)</span>; <span class="arithmatex">\(G W^\top\)</span> is <span class="arithmatex">\((B \times D_{\text{out}})(D_{\text{out}} \times D_{\text{in}}) = B \times D_{\text{in}}\)</span> matching <span class="arithmatex">\(X\)</span>. Verify in PyTorch by comparing <code>.grad</code> to manual computation.</p>
+</div>
+<h3 id="manual-backprop-verification">Manual backprop verification<a class="headerlink" href="#manual-backprop-verification" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">B</span><span class="p">,</span> <span class="n">D_in</span><span class="p">,</span> <span class="n">D_out</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">6</span>
+
+<span class="c1"># Create inputs and weights with requires_grad</span>
+<span class="n">X</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">D_in</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">W</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">D_in</span><span class="p">,</span> <span class="n">D_out</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Forward</span>
+<span class="n">Y</span> <span class="o">=</span> <span class="n">X</span> <span class="o">@</span> <span class="n">W</span>                   <span class="c1"># shape (B, D_out)</span>
+<span class="n">L</span> <span class="o">=</span> <span class="n">Y</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>                 <span class="c1"># simple scalar loss: sum of all outputs</span>
+
+<span class="c1"># PyTorch autograd backward</span>
+<span class="n">L</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+<span class="c1"># Manual computation of gradients</span>
+<span class="c1"># dL/dY = ones(B, D_out) because L = sum(Y)</span>
+<span class="n">G</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">D_out</span><span class="p">)</span>    <span class="c1"># upstream gradient</span>
+
+<span class="c1"># Our derived formulas:</span>
+<span class="n">dL_dW_manual</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">G</span>      <span class="c1"># shape (D_in, D_out)  == X^T G</span>
+<span class="n">dL_dX_manual</span> <span class="o">=</span> <span class="n">G</span> <span class="o">@</span> <span class="n">W</span><span class="o">.</span><span class="n">T</span>      <span class="c1"># shape (B, D_in)       == G W^T</span>
+
+<span class="c1"># Compare with autograd</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;dL/dW matches:&quot;</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">W</span><span class="o">.</span><span class="n">grad</span><span class="p">,</span> <span class="n">dL_dW_manual</span><span class="p">))</span>  <span class="c1"># True</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;dL/dX matches:&quot;</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">X</span><span class="o">.</span><span class="n">grad</span><span class="p">,</span> <span class="n">dL_dX_manual</span><span class="p">))</span>  <span class="c1"># True</span>
+
+<span class="c1"># ---- Linear layer with bias: Y = XW + b ----</span>
+<span class="c1"># dL/db = G.sum(dim=0)   (sum over batch, same shape as b)</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">D_out</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">Y2</span> <span class="o">=</span> <span class="n">X</span> <span class="o">@</span> <span class="n">W</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">+</span> <span class="n">b</span>    <span class="c1"># use detached W to test only bias grad</span>
+<span class="n">L2</span> <span class="o">=</span> <span class="n">Y2</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+<span class="n">L2</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="n">G2</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">D_out</span><span class="p">)</span>
+<span class="n">dL_db_manual</span> <span class="o">=</span> <span class="n">G2</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;dL/db matches:&quot;</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">b</span><span class="o">.</span><span class="n">grad</span><span class="p">,</span> <span class="n">dL_db_manual</span><span class="p">))</span>  <span class="c1"># True</span>
+</code></pre></div>
+<h3 id="the-chain-rule-for-multi-layer-networks">The chain rule for multi-layer networks<a class="headerlink" href="#the-chain-rule-for-multi-layer-networks" title="Permanent link">¶</a></h3>
+<p>For a two-layer network <span class="arithmatex">\(L(f_2(f_1(\mathbf{x})))\)</span>, the chain rule stacks: gradients flow backward through <span class="arithmatex">\(f_2\)</span>, then through <span class="arithmatex">\(f_1\)</span>. Each layer&rsquo;s backward pass is a matrix multiply using its transposed weight. See <a href="../01-foundations/06-neural-nets-from-scratch.html">Neural Networks From Scratch: MLPs &amp; Backprop</a> for the full derivation.</p>
+<p>An important identity for softmax + cross-entropy (used everywhere in language models) is that the combined gradient is <span class="arithmatex">\(\hat{p} - p_{\text{true}}\)</span>, where <span class="arithmatex">\(\hat{p}\)</span> is the predicted probability and <span class="arithmatex">\(p_{\text{true}}\)</span> is the one-hot target. This beautiful cancellation arises from the Jacobian of softmax combined with the log-derivative of cross-entropy.</p>
+<hr />
+<h2 id="orthogonality-projections-and-change-of-basis">Orthogonality, Projections, and Change of Basis<a class="headerlink" href="#orthogonality-projections-and-change-of-basis" title="Permanent link">¶</a></h2>
+<h3 id="orthogonal-matrices">Orthogonal matrices<a class="headerlink" href="#orthogonal-matrices" title="Permanent link">¶</a></h3>
+<p>A matrix <span class="arithmatex">\(Q \in \mathbb{R}^{n \times n}\)</span> is <strong>orthogonal</strong> if <span class="arithmatex">\(Q^\top Q = Q Q^\top = I\)</span>. Its columns form an orthonormal basis: they are unit vectors, pairwise perpendicular. Key property: <span class="arithmatex">\(\|Q\mathbf{x}\|_2 = \|\mathbf{x}\|_2\)</span> — orthogonal matrices preserve lengths and angles. This is why the <span class="arithmatex">\(U\)</span> and <span class="arithmatex">\(V\)</span> factors in SVD do not distort the geometry of the data; only <span class="arithmatex">\(\Sigma\)</span> stretches.</p>
+<h3 id="projections">Projections<a class="headerlink" href="#projections" title="Permanent link">¶</a></h3>
+<p>The <strong>orthogonal projection</strong> of <span class="arithmatex">\(\mathbf{b}\)</span> onto the column space of <span class="arithmatex">\(A\)</span> is:</p>
+<div class="arithmatex">\[
+\hat{\mathbf{b}} = A(A^\top A)^{-1} A^\top \mathbf{b} = P_A \mathbf{b}
+\]</div>
+<p>where <span class="arithmatex">\(P_A = A(A^\top A)^{-1} A^\top\)</span> is the <strong>projection matrix</strong>. Properties: <span class="arithmatex">\(P_A^2 = P_A\)</span> (idempotent), <span class="arithmatex">\(P_A = P_A^\top\)</span> (symmetric).</p>
+<p>In neural networks, <strong>residual connections</strong> can be viewed geometrically as additive &ldquo;correction&rdquo; projections. The self-attention head projects queries and keys into a lower-dimensional subspace (head dimension <span class="arithmatex">\(d_h = d_{\text{model}} / H\)</span>) before computing dot-product similarity; this is a learned projection. See <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a>.</p>
+<h3 id="change-of-basis">Change of basis<a class="headerlink" href="#change-of-basis" title="Permanent link">¶</a></h3>
+<p>If <span class="arithmatex">\(Q\)</span> is orthogonal, then <span class="arithmatex">\(Q^\top A Q\)</span> represents <span class="arithmatex">\(A\)</span> in the basis defined by <span class="arithmatex">\(Q\)</span>&rsquo;s columns. The eigendecomposition <span class="arithmatex">\(A = Q\Lambda Q^\top\)</span> is exactly this: in the eigenbasis, <span class="arithmatex">\(A\)</span> acts as a simple scaling by <span class="arithmatex">\(\lambda_i\)</span> along each axis. The PCA (Principal Components Analysis) transformation is a change of basis to the eigenbasis of the data covariance matrix.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># Gram-Schmidt orthogonalization: produce an orthonormal basis</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gram_schmidt</span><span class="p">(</span><span class="n">V</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    V: (n, k) matrix of k linearly-independent vectors in R^n.</span>
+<span class="sd">    Returns Q: (n, k) matrix with orthonormal columns spanning col(V).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">Q</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">V</span><span class="o">.</span><span class="n">T</span><span class="p">:</span>               <span class="c1"># iterate over columns</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">q</span> <span class="ow">in</span> <span class="n">Q</span><span class="p">:</span>
+            <span class="n">v</span> <span class="o">=</span> <span class="n">v</span> <span class="o">-</span> <span class="p">(</span><span class="n">v</span> <span class="o">@</span> <span class="n">q</span><span class="p">)</span> <span class="o">*</span> <span class="n">q</span>  <span class="c1"># subtract projection onto previous basis vectors</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">v</span> <span class="o">/</span> <span class="n">v</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span>         <span class="c1"># normalize</span>
+        <span class="n">Q</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="n">V</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>           <span class="c1"># 4 random vectors in R^8</span>
+<span class="n">Q</span> <span class="o">=</span> <span class="n">gram_schmidt</span><span class="p">(</span><span class="n">V</span><span class="p">)</span>
+
+<span class="c1"># Verify orthonormality: Q^T Q should be identity</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Q^T Q =&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">((</span><span class="n">Q</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">Q</span><span class="p">)</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">decimals</span><span class="o">=</span><span class="mi">5</span><span class="p">))</span>  <span class="c1"># should be I_4</span>
+
+<span class="c1"># Projection matrix onto col(V)</span>
+<span class="n">P</span> <span class="o">=</span> <span class="n">Q</span> <span class="o">@</span> <span class="n">Q</span><span class="o">.</span><span class="n">T</span>                     <span class="c1"># (8, 8) projection matrix</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span>
+<span class="n">b_proj</span> <span class="o">=</span> <span class="n">P</span> <span class="o">@</span> <span class="n">b</span>
+<span class="c1"># b_proj should lie in the same 4-D subspace, and (b - b_proj) perp to it</span>
+<span class="n">residual</span> <span class="o">=</span> <span class="n">b</span> <span class="o">-</span> <span class="n">b_proj</span>
+<span class="k">for</span> <span class="n">q</span> <span class="ow">in</span> <span class="n">Q</span><span class="o">.</span><span class="n">T</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Residual · basis_vec = </span><span class="si">{</span><span class="p">(</span><span class="n">residual</span><span class="w"> </span><span class="o">@</span><span class="w"> </span><span class="n">q</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># ≈ 0</span>
+</code></pre></div>
+<hr />
+<h2 id="low-rank-approximations-and-the-lora-preview">Low-Rank Approximations and the LoRA Preview<a class="headerlink" href="#low-rank-approximations-and-the-lora-preview" title="Permanent link">¶</a></h2>
+<h3 id="why-weights-are-often-low-rank">Why weights are (often) low-rank<a class="headerlink" href="#why-weights-are-often-low-rank" title="Permanent link">¶</a></h3>
+<p>Several lines of evidence suggest that pretrained language model weights and their fine-tuning updates concentrate in low-dimensional subspaces:</p>
+<ol>
+<li><strong>Intrinsic dimensionality</strong> (Aghajanyan et al., 2021): fine-tuning can be reformulated as optimization in a very low-dimensional space with minimal loss in performance.</li>
+<li><strong>Spectral analysis of weight matrices</strong>: plotting the singular value spectrum of pretrained transformer weight matrices reveals a rapid drop — a handful of large singular values capturing most of the &ldquo;signal,&rdquo; followed by a long tail.</li>
+<li><strong>Linear mode connectivity</strong>: different fine-tuned models share much of their weight structure in the dominant singular directions.</li>
+</ol>
+<h3 id="lora-in-matrix-algebra-terms">LoRA in matrix algebra terms<a class="headerlink" href="#lora-in-matrix-algebra-terms" title="Permanent link">¶</a></h3>
+<p>LoRA (Hu et al., <em>LoRA: Low-Rank Adaptation of Large Language Models</em>, 2021) freezes the pretrained weights <span class="arithmatex">\(W_0 \in \mathbb{R}^{d \times d}\)</span> and adds a trainable low-rank perturbation:</p>
+<div class="arithmatex">\[
+W = W_0 + \Delta W = W_0 + BA
+\]</div>
+<p>where <span class="arithmatex">\(B \in \mathbb{R}^{d \times r}\)</span> and <span class="arithmatex">\(A \in \mathbb{R}^{r \times d}\)</span> with <span class="arithmatex">\(r \ll d\)</span>. During training, <span class="arithmatex">\(W_0\)</span> is frozen (no gradient computed); only <span class="arithmatex">\(A\)</span> and <span class="arithmatex">\(B\)</span> accumulate gradients.</p>
+<p>The forward pass for input <span class="arithmatex">\(\mathbf{x}\)</span> becomes:</p>
+<div class="arithmatex">\[
+\mathbf{y} = W_0 \mathbf{x} + B(A\mathbf{x}) = W_0 \mathbf{x} + \underbrace{B}_{\text{small}} \underbrace{(A\mathbf{x})}_{\text{rank-}r \text{ proj}}
+\]</div>
+<p>Parameter count: full fine-tune needs <span class="arithmatex">\(d^2\)</span> parameters; LoRA needs <span class="arithmatex">\(2dr\)</span>. For <span class="arithmatex">\(d = 4096\)</span>, <span class="arithmatex">\(r = 8\)</span>: full = 16.8M params; LoRA = 65.5K params — a 256× reduction.</p>
+<p>At initialization, <span class="arithmatex">\(A\)</span> is sampled from a Gaussian and <span class="arithmatex">\(B = 0\)</span>, so <span class="arithmatex">\(\Delta W = 0\)</span> and training begins from the pretrained solution.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LoRALinear</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A drop-in replacement for nn.Linear that adds a LoRA adapter.</span>
+<span class="sd">    The pretrained weight W0 is frozen; only A and B are trained.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">in_features</span><span class="p">,</span> <span class="n">out_features</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mi">16</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">in_features</span>  <span class="o">=</span> <span class="n">in_features</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">out_features</span> <span class="o">=</span> <span class="n">out_features</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rank</span>  <span class="o">=</span> <span class="n">rank</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">alpha</span> <span class="o">=</span> <span class="n">alpha</span>  <span class="c1"># scaling factor; effective LR is alpha/rank</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">=</span> <span class="n">alpha</span> <span class="o">/</span> <span class="n">rank</span>
+
+        <span class="c1"># Frozen pretrained weight (no gradient)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W0</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">out_features</span><span class="p">,</span> <span class="n">in_features</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.01</span><span class="p">,</span>
+            <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Low-rank trainable matrices</span>
+        <span class="c1"># A initialized with kaiming_uniform (standard for Linear); B = 0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">A</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">rank</span><span class="p">,</span> <span class="n">in_features</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">B</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">out_features</span><span class="p">,</span> <span class="n">rank</span><span class="p">))</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">kaiming_uniform_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">A</span><span class="p">,</span> <span class="n">a</span><span class="o">=</span><span class="mi">5</span><span class="o">**</span><span class="mf">0.5</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="c1"># Standard path: y = x W0^T</span>
+        <span class="n">y0</span> <span class="o">=</span> <span class="n">x</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">W0</span><span class="o">.</span><span class="n">T</span>
+
+        <span class="c1"># LoRA path: delta_y = x A^T B^T * scale</span>
+        <span class="c1"># = (x @ A^T) @ B^T  -- rank-r bottleneck</span>
+        <span class="n">delta</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">T</span><span class="p">)</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">B</span><span class="o">.</span><span class="n">T</span>
+        <span class="k">return</span> <span class="n">y0</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">*</span> <span class="n">delta</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">params_trainable</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">rank</span> <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">in_features</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">out_features</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">params_total_full_finetuning</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">in_features</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">out_features</span>
+
+
+<span class="c1"># Quick sanity check</span>
+<span class="n">d</span> <span class="o">=</span> <span class="mi">512</span>
+<span class="n">layer</span> <span class="o">=</span> <span class="n">LoRALinear</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>          <span class="c1"># batch=4, seq=16, d=512</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">layer</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output shape: </span><span class="si">{</span><span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># (4, 16, 512)</span>
+
+<span class="n">trainable</span>   <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">layer</span><span class="o">.</span><span class="n">parameters</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">)</span>
+<span class="n">total_equiv</span> <span class="o">=</span> <span class="n">layer</span><span class="o">.</span><span class="n">params_total_full_finetuning</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;LoRA trainable params: </span><span class="si">{</span><span class="n">trainable</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> vs full fine-tuning: </span><span class="si">{</span><span class="n">total_equiv</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># e.g. 8,192 vs 262,144 — about 32× reduction</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Connection to SVD initialization</p>
+<p>One can also initialize LoRA from the top-<span class="arithmatex">\(r\)</span> SVD of <span class="arithmatex">\(W_0\)</span>: set <span class="arithmatex">\(A = \Sigma_r^{1/2} V_r^\top\)</span> and <span class="arithmatex">\(B = U_r \Sigma_r^{1/2}\)</span>, so <span class="arithmatex">\(BA = U_r \Sigma_r V_r^\top = A_r\)</span> (the best rank-<span class="arithmatex">\(r\)</span> approximation). This starts LoRA from the most informative low-rank subspace and can improve convergence. Some variants (e.g., PiSSA) exploit exactly this idea.</p>
+</div>
+<hr />
+<h2 id="practical-computing-numerical-stability-and-efficient-operations">Practical Computing: Numerical Stability and Efficient Operations<a class="headerlink" href="#practical-computing-numerical-stability-and-efficient-operations" title="Permanent link">¶</a></h2>
+<h3 id="avoiding-explicit-inverses">Avoiding explicit inverses<a class="headerlink" href="#avoiding-explicit-inverses" title="Permanent link">¶</a></h3>
+<p>Never compute <span class="arithmatex">\(A^{-1}\)</span> and then multiply when you can instead solve <span class="arithmatex">\(Ax = b\)</span> directly. Matrix inversion is numerically unstable and costs <span class="arithmatex">\(O(n^3)\)</span> just like factorization, but without the numerical benefits of structured solvers. Use:</p>
+<ul>
+<li><code>torch.linalg.solve(A, b)</code> for <span class="arithmatex">\(A^{-1}b\)</span></li>
+<li><code>torch.linalg.lstsq(A, b)</code> for overdetermined systems</li>
+<li>Cholesky factorization when <span class="arithmatex">\(A\)</span> is PSD: <code>torch.linalg.cholesky(A)</code></li>
+</ul>
+<h3 id="einsum-notation">Einsum notation<a class="headerlink" href="#einsum-notation" title="Permanent link">¶</a></h3>
+<p>Einstein summation (<code>torch.einsum</code>) is the most general notation for tensor contractions. Every matrix multiplication, batch multiplication, outer product, and trace can be written as an einsum. It often compiles to efficient CUDA kernels.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="n">A</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+<span class="n">B</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>
+
+<span class="c1"># Standard matmul: C_ij = sum_k A_ik B_kj</span>
+<span class="n">C1</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;ik,kj-&gt;ij&#39;</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="p">)</span>          <span class="c1"># (3, 5)</span>
+<span class="n">C2</span> <span class="o">=</span> <span class="n">A</span> <span class="o">@</span> <span class="n">B</span>
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">C1</span><span class="p">,</span> <span class="n">C2</span><span class="p">)</span>
+
+<span class="c1"># Batch matmul: 32 heads, each (S, D) @ (D, S) -&gt; (S, S)</span>
+<span class="n">Q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">128</span><span class="p">)</span>   <span class="c1"># (heads, seq, dim)</span>
+<span class="n">K</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">128</span><span class="p">)</span>
+
+<span class="c1"># &quot;bhsd,bhtd-&gt;bhst&quot; — but for this case, use:</span>
+<span class="n">scores</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;hsd,htd-&gt;hst&#39;</span><span class="p">,</span> <span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">)</span>   <span class="c1"># (32, 64, 64) attention scores</span>
+
+<span class="c1"># Outer product: v_i w_j</span>
+<span class="n">v</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+<span class="n">w</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">7</span><span class="p">)</span>
+<span class="n">outer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;i,j-&gt;ij&#39;</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">w</span><span class="p">)</span>         <span class="c1"># (5, 7)</span>
+
+<span class="c1"># Trace: tr(A) = sum_i A_ii</span>
+<span class="n">sq</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="mi">6</span><span class="p">)</span>
+<span class="n">trace</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;ii-&gt;&#39;</span><span class="p">,</span> <span class="n">sq</span><span class="p">)</span>              <span class="c1"># scalar</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;trace: </span><span class="si">{</span><span class="n">trace</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, check: </span><span class="si">{</span><span class="n">sq</span><span class="o">.</span><span class="n">diagonal</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Frobenius inner product: &lt;A, B&gt;_F = tr(A^T B) = sum_{ij} A_{ij} B_{ij}</span>
+<span class="n">A2</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+<span class="n">B2</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+<span class="n">frob_inner</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s1">&#39;ij,ij-&gt;&#39;</span><span class="p">,</span> <span class="n">A2</span><span class="p">,</span> <span class="n">B2</span><span class="p">)</span>  <span class="c1"># same as (A2 * B2).sum()</span>
+</code></pre></div>
+<h3 id="memory-layout-contiguous-tensors">Memory layout: contiguous tensors<a class="headerlink" href="#memory-layout-contiguous-tensors" title="Permanent link">¶</a></h3>
+<p>PyTorch stores tensors in row-major (C-contiguous) order by default. After a <code>.transpose()</code> or <code>.permute()</code>, the tensor may become non-contiguous, causing performance regressions in subsequent operations. Call <code>.contiguous()</code> before passing to <code>@</code> or <code>F.linear</code> when in doubt.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># After transpose, tensor is non-contiguous</span>
+<span class="n">A</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">1024</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span>
+<span class="n">B</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">T</span>        <span class="c1"># logical transpose, but storage is not re-arranged</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">B</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">())</span>   <span class="c1"># False</span>
+
+<span class="c1"># Make contiguous (copies data, but subsequent ops are fast)</span>
+<span class="n">B_c</span> <span class="o">=</span> <span class="n">B</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">B_c</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">())</span> <span class="c1"># True</span>
+
+<span class="c1"># torch.linalg.svd and matmul accept non-contiguous but may be slower</span>
+<span class="c1"># In practice, after a permute in multi-head attention, call .contiguous():</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span>          <span class="c1"># (batch, heads, seq, dim)</span>
+<span class="n">x_perm</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>         <span class="c1"># (batch, seq, heads, dim)</span>
+<span class="n">x_cont</span> <span class="o">=</span> <span class="n">x_perm</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>           <span class="c1"># ensures efficient downstream matmul</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: implicit broadcasting with matmul</p>
+<p>PyTorch matmul (<code>@</code>) broadcasts over leading batch dimensions: if <span class="arithmatex">\(A\)</span> is <code>(B, M, K)</code> and <span class="arithmatex">\(B\)</span> is <code>(K, N)</code>, the result is <code>(B, M, N)</code>. This is useful but can silently hide shape bugs. Always print shapes when debugging unexpected gradient values. Use <code>torch.Size</code> assertions in production code to fail fast on mismatches.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Matrix multiplication is the fundamental operation of deep learning. Every linear layer, attention score, and projection is a matmul. Its FLOP cost is <span class="arithmatex">\(O(mnk)\)</span>; memory bandwidth, not raw FLOPs, is often the bottleneck.</li>
+<li>The SVD <span class="arithmatex">\(A = U\Sigma V^\top\)</span> decomposes any matrix into rotation, scaling, and rotation. The Eckart-Young theorem guarantees that truncating to the top-<span class="arithmatex">\(r\)</span> singular components gives the best rank-<span class="arithmatex">\(r\)</span> approximation in Frobenius norm.</li>
+<li>Low-rank structure is empirically pervasive in fine-tuning updates, enabling LoRA: replacing <span class="arithmatex">\(\Delta W\)</span> with <span class="arithmatex">\(BA\)</span> (where <span class="arithmatex">\(r \ll d\)</span>) compresses trainable parameters by orders of magnitude with minimal quality loss.</li>
+<li>The two most important backprop identities are <span class="arithmatex">\(\partial L / \partial W = X^\top G\)</span> and <span class="arithmatex">\(\partial L / \partial X = G W^\top\)</span>, where <span class="arithmatex">\(G\)</span> is the upstream gradient. Everything else in backprop follows from stacking these.</li>
+<li>Vector and matrix norms (<span class="arithmatex">\(\ell_2\)</span>, Frobenius, spectral) appear in regularization, gradient clipping, and Lipschitz analysis. Know which norm each technique uses.</li>
+<li>Orthogonal matrices preserve lengths and angles; <span class="arithmatex">\(U\)</span> and <span class="arithmatex">\(V\)</span> in the SVD are orthogonal. Orthogonality is why attention projection heads do not distort the embedding geometry.</li>
+<li>Einsum notation (<code>torch.einsum</code>) unifies all tensor contractions in a single API and often compiles to optimal CUDA kernels. Prefer it over manual reshapes when expressing complex multi-dimensional operations.</li>
+<li>Never compute explicit matrix inverses in code; use <code>torch.linalg.solve</code> or factorization routines for numerical stability.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Linear algebra for deep learning is a mature, stable field — the core tools (SVD, matmul, backprop identities) are decades old — but active research continues around efficient low-rank methods, randomised numerical linear algebra, and spectral analysis of trained networks. The resources below span bedrock theory through cutting-edge practice.</p>
+<p><strong>Textbooks &amp; courses</strong></p>
+<ul>
+<li><a href="https://ocw.mit.edu/courses/18-06-linear-algebra-spring-2010/">Gilbert Strang, MIT 18.06 Linear Algebra (OCW)</a> — Strang&rsquo;s legendary video lectures; chapters on eigenvalues and SVD are essential viewing for any ML practitioner.</li>
+<li><a href="https://www.deeplearningbook.org/contents/linear_algebra.html">Goodfellow, Bengio &amp; Courville, <em>Deep Learning</em> Ch. 2 — Linear Algebra</a> — The canonical ML-focused treatment, freely available online; covers exactly the notation and concepts used throughout this book.</li>
+<li><a href="https://github.com/fastai/numerical-linear-algebra">fast.ai: Computational Linear Algebra for Coders (fastai/numerical-linear-algebra)</a> — Rachel Thomas&rsquo;s hands-on Jupyter notebook course; bridges abstract theory and NumPy/PyTorch implementation with applications like SVD-based background removal and NMF topic modelling.</li>
+</ul>
+<p><strong>Visual explainers</strong></p>
+<ul>
+<li><a href="https://www.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab">3Blue1Brown — Essence of Linear Algebra (YouTube playlist)</a> — 16-video series with landmark geometric animations; the best visual intuition for linear transformations, eigenvectors, and the SVD available anywhere.</li>
+</ul>
+<p><strong>Foundational papers</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2106.09685">Hu et al., <em>LoRA: Low-Rank Adaptation of Large Language Models</em> (2021)</a> — The paper that brought low-rank matrix algebra to the centre of LLM fine-tuning; directly motivates the LoRA preview section above.</li>
+<li><a href="https://arxiv.org/abs/2012.13255">Aghajanyan et al., <em>Intrinsic Dimensionality Explains the Effectiveness of Language Model Fine-Tuning</em> (2020)</a> — Shows empirically that fine-tuning updates live in a surprisingly low-dimensional subspace, providing the theoretical underpinning for rank-deficient weight updates.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://docs.pytorch.org/docs/2.12/linalg.html">PyTorch <code>torch.linalg</code> documentation</a> — Official API reference for all linear algebra operations used in this chapter (SVD, norms, solvers, Cholesky); dispatches to cuBLAS/LAPACK under the hood.</li>
+</ul>
+<p><strong>Reference</strong></p>
+<ul>
+<li><a href="https://www.math.uwaterloo.ca/~hwolkowi/matrixcookbook.pdf">The Matrix Cookbook — Petersen &amp; Pedersen (2012)</a> — Dense desktop reference for matrix calculus identities; invaluable when deriving gradients of custom operations involving traces, inverses, or determinants.</li>
+</ul>
+</div>
+<hr />
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Gilbert Strang, <em>Introduction to Linear Algebra</em> (5<sup>th</sup> ed.)</strong> — The clearest introductory treatment of matrix factorizations; Chapter 6 on eigenvalues and Chapter 7 on SVD are essential.</li>
+<li><strong>Goodfellow, Bengio &amp; Courville, <em>Deep Learning</em> (2016), Chapter 2</strong> — The canonical ML textbook treatment of linear algebra; available freely online.</li>
+<li><strong>Hu et al., <em>LoRA: Low-Rank Adaptation of Large Language Models</em> (2021)</strong> — Original LoRA paper demonstrating that fine-tuning updates have low intrinsic rank; directly motivates Section 6 above.</li>
+<li><strong>Aghajanyan, Zettlemoyer &amp; Gupta, <em>Intrinsic Dimensionality Explains the Effectiveness of Language Model Fine-Tuning</em> (2021)</strong> — Shows that fine-tuning effective dimensionality is far smaller than parameter count.</li>
+<li><strong>NumPy <code>linalg</code> documentation</strong> and <strong>PyTorch <code>torch.linalg</code> documentation</strong> — Comprehensive API references for the operations in this chapter; check for dispatch to LAPACK / cuBLAS under the hood.</li>
+<li><strong>Matrix Cookbook (Petersen &amp; Pedersen)</strong> — A dense reference sheet of matrix calculus identities; useful as a lookup table for deriving gradients of custom operations.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="../00-frontmatter/00-preface.html"><span class="pn-label">← Previous</span><span class="pn-title">Preface: How to Read This Book &amp; The Map of the Stack</span></a>
+<a class="next" href="02-probability-information.html"><span class="pn-label">Next →</span><span class="pn-title">Probability, Statistics &amp; Information Theory</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#vectors-matrices-and-tensors">Vectors, Matrices, and Tensors</a></li>
+<li class="toc-l3"><a href="#vectors">Vectors</a></li>
+<li class="toc-l3"><a href="#matrices">Matrices</a></li>
+<li class="toc-l3"><a href="#tensors">Tensors</a></li>
+<li class="toc-l2"><a href="#matrix-multiplication-the-workhorse-operation">Matrix Multiplication: The Workhorse Operation</a></li>
+<li class="toc-l3"><a href="#three-equivalent-views">Three equivalent views</a></li>
+<li class="toc-l3"><a href="#flop-count-and-why-it-matters">FLOP count and why it matters</a></li>
+<li class="toc-l3"><a href="#matrix-multiplication-in-numpy-and-pytorch">Matrix multiplication in NumPy and PyTorch</a></li>
+<li class="toc-l2"><a href="#rank-span-basis-and-null-space">Rank, Span, Basis, and Null Space</a></li>
+<li class="toc-l3"><a href="#the-column-space-and-span">The column space and span</a></li>
+<li class="toc-l3"><a href="#basis-and-linear-independence">Basis and linear independence</a></li>
+<li class="toc-l2"><a href="#eigendecomposition-and-the-singular-value-decomposition">Eigendecomposition and the Singular Value Decomposition</a></li>
+<li class="toc-l3"><a href="#eigenvalues-and-eigenvectors">Eigenvalues and eigenvectors</a></li>
+<li class="toc-l3"><a href="#the-singular-value-decomposition">The Singular Value Decomposition</a></li>
+<li class="toc-l3"><a href="#best-low-rank-approximation-the-eckart-young-theorem">Best low-rank approximation: the Eckart-Young theorem</a></li>
+<li class="toc-l2"><a href="#norms-measuring-size-and-distance">Norms: Measuring Size and Distance</a></li>
+<li class="toc-l3"><a href="#vector-norms">Vector norms</a></li>
+<li class="toc-l3"><a href="#matrix-norms">Matrix norms</a></li>
+<li class="toc-l2"><a href="#matrix-calculus-for-backpropagation">Matrix Calculus for Backpropagation</a></li>
+<li class="toc-l3"><a href="#jacobians-and-gradients">Jacobians and gradients</a></li>
+<li class="toc-l3"><a href="#key-identities">Key identities</a></li>
+<li class="toc-l3"><a href="#gradient-of-a-linear-layer">Gradient of a linear layer</a></li>
+<li class="toc-l3"><a href="#manual-backprop-verification">Manual backprop verification</a></li>
+<li class="toc-l3"><a href="#the-chain-rule-for-multi-layer-networks">The chain rule for multi-layer networks</a></li>
+<li class="toc-l2"><a href="#orthogonality-projections-and-change-of-basis">Orthogonality, Projections, and Change of Basis</a></li>
+<li class="toc-l3"><a href="#orthogonal-matrices">Orthogonal matrices</a></li>
+<li class="toc-l3"><a href="#projections">Projections</a></li>
+<li class="toc-l3"><a href="#change-of-basis">Change of basis</a></li>
+<li class="toc-l2"><a href="#low-rank-approximations-and-the-lora-preview">Low-Rank Approximations and the LoRA Preview</a></li>
+<li class="toc-l3"><a href="#why-weights-are-often-low-rank">Why weights are (often) low-rank</a></li>
+<li class="toc-l3"><a href="#lora-in-matrix-algebra-terms">LoRA in matrix algebra terms</a></li>
+<li class="toc-l2"><a href="#practical-computing-numerical-stability-and-efficient-operations">Practical Computing: Numerical Stability and Efficient Operations</a></li>
+<li class="toc-l3"><a href="#avoiding-explicit-inverses">Avoiding explicit inverses</a></li>
+<li class="toc-l3"><a href="#einsum-notation">Einsum notation</a></li>
+<li class="toc-l3"><a href="#memory-layout-contiguous-tensors">Memory layout: contiguous tensors</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

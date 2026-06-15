@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks — The LLM Stack</title>
+<meta name="description" content="Generation load imbalance (variable-length rollouts), dynamic sampling/filtering (DAPO), over-long filtering, partial rollout, continuous batching in RL, replay">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="active" href="11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VI — RL Infrastructure (Deep Dive)</div>
+<h1 id="611-scaling-rl-throughput-load-balancing-the-latest-tricks">6.11 Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks<a class="headerlink" href="#611-scaling-rl-throughput-load-balancing-the-latest-tricks" title="Permanent link">¶</a></h1>
+<p>By now you have seen the <em>anatomy</em> of an RL-for-LLM system (<a href="../06-rl-infra/01-anatomy-rl-system.html">The Anatomy of an RL-for-LLM System</a>), the generation–training loop (<a href="../06-rl-infra/02-generation-training-loop.html">The Generation–Training Loop &amp; Rollout Engines</a>), and the controllers that orchestrate it (<a href="../06-rl-infra/04-verl.html">veRL: HybridFlow &amp; The Single-Controller Architecture</a>). This chapter is about a brutal, unglamorous fact: <strong>most of the wall-clock time in an RL run is spent waiting</strong>, and most of that waiting is <em>self-inflicted</em>. A GRPO step that should take 90 seconds takes 240 because seven of your eight rollout workers finished early and sat idle while one chewed through a 16,000-token chain-of-thought. Your H100s, which cost real money, idle at 30% MFU not because the math is hard but because the <em>schedule</em> is bad.</p>
+<p>Scaling RL is therefore overwhelmingly a problem of <strong>filling bubbles</strong>: keeping the generation engines saturated, keeping the gradient device busy, and not throwing away samples that cost you a forward pass to produce. On top of that scheduling substrate sits a second layer — a fast-moving body of <em>algorithmic</em> tricks (DAPO&rsquo;s dynamic sampling and clip-higher, Dr. GRPO&rsquo;s bias fixes, VAPO&rsquo;s value-model stabilization, length penalties and over-long filtering) that change <em>which</em> samples you keep and <em>how much</em> each token contributes to the loss. These two layers interact: dynamic sampling, for instance, is simultaneously a statistics fix and a throughput disaster if you implement it naively.</p>
+<p>We will treat them together because in practice you tune them together. We assume you know GRPO and the RLVR recipe (<a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>; <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a>) and continuous batching from the serving side (<a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>).</p>
+<h2 id="where-the-time-actually-goes-a-throughput-model">Where the time actually goes: a throughput model<a class="headerlink" href="#where-the-time-actually-goes-a-throughput-model" title="Permanent link">¶</a></h2>
+<p>Before optimizing anything, write down where the seconds go. A synchronous (on-policy) RL step has four phases that run <em>serially</em> in the simplest design:</p>
+<figure class="viz" id="fig-scalingrl-sync-step-phases">
+<svg viewBox="0 0 920 310" role="img" aria-label="One synchronous GRPO step: four serial phases—generation, weight sync, training, weight sync—with idle-GPU annotations showing training GPUs idle during generation and inference GPUs idle during training.">
+  <defs>
+    <marker id="ssp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#c2410c)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-scalingrl-sync-step-phases text { font-family: var(--sans, sans-serif); fill: var(--ink-soft, currentColor); }
+    #fig-scalingrl-sync-step-phases .title { font: 600 13px var(--sans, sans-serif); }
+    #fig-scalingrl-sync-step-phases .seg-label { font: 700 13px var(--sans, sans-serif); }
+    #fig-scalingrl-sync-step-phases .seg-sub { font: 400 11px var(--sans, sans-serif); fill: var(--ink-soft, currentColor); }
+    #fig-scalingrl-sync-step-phases .seg-pct { font: 400 10px var(--sans, sans-serif); fill: var(--muted, currentColor); }
+    #fig-scalingrl-sync-step-phases .idle-label { font: 600 11px var(--sans, sans-serif); fill: var(--warn, #c2410c); }
+    #fig-scalingrl-sync-step-phases .caption { font: 400 10.5px var(--sans, sans-serif); fill: var(--muted, currentColor); }
+    #fig-scalingrl-sync-step-phases .sync-label { font: 400 9px var(--sans, sans-serif); fill: var(--ink-soft, currentColor); }
+  </style>
+
+
+  <text x="460" y="28" text-anchor="middle" class="title">one RL step (synchronous GRPO)</text>
+
+
+  <rect x="40" y="55" width="480" height="90" rx="0"
+        fill="var(--surface-3, #eff6ff)" stroke="var(--border-2, #93c5fd)" stroke-width="1.5"/>
+
+  <rect x="40" y="55" width="6" height="90" rx="0" fill="var(--accent, #2563eb)"/>
+
+  <text x="285" y="90" text-anchor="middle" class="seg-label" fill="var(--accent, #2563eb)">GENERATION</text>
+  <text x="285" y="108" text-anchor="middle" class="seg-sub">(rollout)</text>
+  <text x="285" y="124" text-anchor="middle" class="seg-pct">~60–85%</text>
+
+
+  <rect x="520" y="55" width="55" height="90" rx="0"
+        fill="var(--surface, #f3f4f6)" stroke="var(--border-2, #d1d5db)" stroke-width="1.5"/>
+  <text x="547" y="82" text-anchor="middle" class="sync-label">weight</text>
+  <text x="547" y="94" text-anchor="middle" class="sync-label">-&gt; infer</text>
+  <text x="547" y="106" text-anchor="middle" class="sync-label">sync</text>
+
+
+  <rect x="575" y="55" width="245" height="90" rx="0"
+        fill="var(--surface-3, #f5f3ff)" stroke="var(--border-2, #a78bfa)" stroke-width="1.5"/>
+
+  <rect x="575" y="55" width="6" height="90" rx="0" fill="var(--accent-2, #7c3aed)"/>
+  <text x="697" y="90" text-anchor="middle" class="seg-label" fill="var(--accent-2, #7c3aed)">TRAINING</text>
+  <text x="697" y="108" text-anchor="middle" class="seg-sub">(fwd+bwd+opt)</text>
+  <text x="697" y="124" text-anchor="middle" class="seg-pct">~15–35%</text>
+
+
+  <rect x="820" y="55" width="55" height="90" rx="0"
+        fill="var(--surface, #f3f4f6)" stroke="var(--border-2, #d1d5db)" stroke-width="1.5"/>
+  <text x="847" y="82" text-anchor="middle" class="sync-label">weight</text>
+  <text x="847" y="94" text-anchor="middle" class="sync-label">-&gt; infer</text>
+  <text x="847" y="106" text-anchor="middle" class="sync-label">sync</text>
+
+
+  <line x1="40" y1="48" x2="828" y2="48" stroke="var(--border-2, #94a3b8)" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="838" y="44" class="seg-pct" text-anchor="start">time</text>
+  <path d="M864 40 L874 40 M870 37 L874 40 L870 43" fill="none" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+
+
+
+  <line x1="46" y1="178" x2="514" y2="178" stroke="var(--warn, #c2410c)" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <line x1="46" y1="168" x2="46" y2="188" stroke="var(--warn, #c2410c)" stroke-width="1.5"/>
+  <line x1="514" y1="168" x2="514" y2="188" stroke="var(--warn, #c2410c)" stroke-width="1.5"/>
+  <text x="280" y="200" text-anchor="middle" class="idle-label">idle train GPUs</text>
+
+
+  <line x1="581" y1="178" x2="814" y2="178" stroke="var(--warn, #c2410c)" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <line x1="581" y1="168" x2="581" y2="188" stroke="var(--warn, #c2410c)" stroke-width="1.5"/>
+  <line x1="814" y1="168" x2="814" y2="188" stroke="var(--warn, #c2410c)" stroke-width="1.5"/>
+  <text x="697" y="200" text-anchor="middle" class="idle-label">idle infer GPUs</text>
+
+
+  <text x="460" y="235" text-anchor="middle" class="caption">
+    Phases run serially; generation dominates wall-clock for reasoning workloads.
+  </text>
+</svg>
+<figcaption><b>Serial phases and the idle bubbles in one synchronous GRPO step.</b> Generation (60–85% of wall-clock) leaves the training fleet idle, while training (15–35%) leaves the inference fleet idle. The two dashed brackets mark the wasted time that the overlap and partial-rollout tricks in this chapter attack.</figcaption>
+</figure>
+
+<p>For reasoning workloads the generation phase dominates — frequently 70–85% of step time — because you generate long sequences autoregressively (memory-bandwidth bound, one token per forward pass) but train on them in a few large, compute-bound matmuls. So the single highest-leverage question in scaling RL is: <strong>what fraction of generation wall-clock is useful work?</strong></p>
+<p>Define, for a single generation phase processing a batch of <span class="arithmatex">\(N\)</span> prompts each sampled <span class="arithmatex">\(G\)</span> times (so <span class="arithmatex">\(B = NG\)</span> sequences):</p>
+<div class="arithmatex">\[
+T_{\text{gen}} \;=\; \underbrace{\max_{i} \, t_i}_{\text{slowest sequence}} \;+\; \underbrace{T_{\text{sched}}}_{\text{scheduling / KV churn}}
+\]</div>
+<p>The <span class="arithmatex">\(\max_i t_i\)</span> term is the killer. If sequence lengths <span class="arithmatex">\(L_i\)</span> are heavy-tailed (and reasoning-trace lengths absolutely are), the longest sequence can be <span class="arithmatex">\(5\)</span>–<span class="arithmatex">\(10\times\)</span> the median. Every other worker that drains its queue before the tail finishes contributes a <em>bubble</em>. Define generation efficiency as useful token-time over total token-time:</p>
+<div class="arithmatex">\[
+\eta_{\text{gen}} \;=\; \frac{\sum_{i=1}^{B} L_i}{B \cdot \max_i L_i}
+\]</div>
+<p>This is just <span class="arithmatex">\(\bar{L}/L_{\max}\)</span> — mean over max. If your mean trace is 2,000 tokens and one outlier hits 16,000, then <span class="arithmatex">\(\eta_{\text{gen}} \approx 0.125\)</span> for a batch that runs to completion as one unit on one engine. <em>That is an 8× slowdown from one sequence.</em> Everything in the load-balancing section below is an attack on this single ratio.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: why generation, not training, dominates</p>
+<p>A 7B model decoding one token does roughly <span class="arithmatex">\(2 \cdot 7\times10^9 \approx 1.4\times10^{10}\)</span> FLOPs but must read all 7B weights from HBM — it is bandwidth-bound and runs far below peak. Training on the same tokens packs them into dense matmuls that hit tensor cores near peak. So a token costs <em>far more wall-clock to generate than to train on</em>, even though the FLOP counts are comparable. This asymmetry is the entire reason RL-for-LLM infra looks the way it does. See <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>.</p>
+</div>
+<h2 id="generation-load-imbalance-continuous-batching-in-rl">Generation load imbalance &amp; continuous batching in RL<a class="headerlink" href="#generation-load-imbalance-continuous-batching-in-rl" title="Permanent link">¶</a></h2>
+<h3 id="the-problem-static-batching-wastes-the-tail">The problem: static batching wastes the tail<a class="headerlink" href="#the-problem-static-batching-wastes-the-tail" title="Permanent link">¶</a></h3>
+<p>The naive rollout loop hands each engine a fixed shard of prompts and waits for <em>all</em> of them. Inside a single engine, if it uses <strong>static batching</strong> — pad every sequence to the longest in the batch, run them lock-step — you pay <span class="arithmatex">\(B \cdot L_{\max}\)</span> token-forwards even though only <span class="arithmatex">\(\sum_i L_i\)</span> are real. With reasoning traces this is catastrophic.</p>
+<p><strong>Continuous batching</strong> (a.k.a. in-flight / iteration-level batching), the standard in vLLM and SGLang, fixes the <em>intra-engine</em> part: as soon as one sequence emits its EOS, its slot is freed and the next queued prompt is admitted <em>mid-step</em>. No padding to a global max; the engine processes a rolling population of active sequences sized to fit the KV-cache budget. Within one engine, <span class="arithmatex">\(\eta\)</span> recovers to near 1 as long as there is always more work queued.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Sketch of why continuous batching helps. Two regimes, same 8 prompts.</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="n">lengths</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">200</span><span class="p">,</span> <span class="mi">220</span><span class="p">,</span> <span class="mi">240</span><span class="p">,</span> <span class="mi">260</span><span class="p">,</span> <span class="mi">300</span><span class="p">,</span> <span class="mi">1800</span><span class="p">,</span> <span class="mi">320</span><span class="p">,</span> <span class="mi">280</span><span class="p">])</span>  <span class="c1"># one outlier</span>
+
+<span class="c1"># Static batching: every step processes ALL live slots padded to max length.</span>
+<span class="n">static_token_forwards</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">lengths</span><span class="p">)</span> <span class="o">*</span> <span class="n">lengths</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>           <span class="c1"># 8 * 1800</span>
+
+<span class="c1"># Continuous batching: a slot is freed at its own EOS; total real work only.</span>
+<span class="c1"># (Assume the engine always has the 8 in flight; freed slots stay idle here</span>
+<span class="c1">#  because there is nothing else queued -&gt; tail still hurts, but no padding.)</span>
+<span class="n">continuous_token_forwards</span> <span class="o">=</span> <span class="n">lengths</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">static_token_forwards</span><span class="p">)</span>      <span class="c1"># 14400</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">continuous_token_forwards</span><span class="p">)</span>  <span class="c1"># 3620  -&gt; ~4x less compute on the same batch</span>
+</code></pre></div>
+<p>But note the comment: continuous batching removes <em>padding</em> waste, not <em>tail</em> waste. If those 8 prompts are the entire batch and nothing else is queued, the engine still runs until the 1,800-token outlier finishes, with 7 idle slots. To kill the tail you must either (a) feed <em>more prompts than slots</em> so freed slots get refilled, or (b) stop the tail early, or &copy; overlap the tail with training. We will do all three.</p>
+<h3 id="lever-1-oversubscribe-the-engines">Lever 1: oversubscribe the engines<a class="headerlink" href="#lever-1-oversubscribe-the-engines" title="Permanent link">¶</a></h3>
+<p>The cleanest fix: make the generation batch <em>larger than the number of concurrent slots</em> and let continuous batching pull from the queue. If an engine holds 64 concurrent sequences but you give it 512 prompts to produce, the 7 freed slots from short sequences immediately admit new prompts, and the engine stays full until the queue drains. Now the only bubble is the <em>final</em> tail — the last few long sequences with no replacements. With a deep queue, <span class="arithmatex">\(\eta_{\text{gen}}\)</span> climbs from <span class="arithmatex">\(\bar L/L_{\max}\)</span> toward <span class="arithmatex">\(\approx 1 - (\text{slots}\cdot L_{\max})/\sum_i L_i\)</span>.</p>
+<p>In veRL/OpenRLHF this is just: don&rsquo;t shard prompts 1:1 to slots; pour the whole rollout batch into the inference pool and let the scheduler balance. The practical constraint is the <strong>KV-cache budget</strong> (<a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>): more concurrent long sequences need more cache pages.</p>
+<h3 id="lever-2-length-aware-dispatch-across-engines">Lever 2: length-aware dispatch across engines<a class="headerlink" href="#lever-2-length-aware-dispatch-across-engines" title="Permanent link">¶</a></h3>
+<p>When you have <span class="arithmatex">\(K\)</span> inference engines (data-parallel replicas of the policy), how you <em>partition</em> prompts across them matters. If you round-robin, one engine may by bad luck receive several outliers and become the straggler that gates the whole step. You cannot know lengths in advance, but you can balance <em>adaptively</em>: pull from a shared queue rather than pre-partitioning, so a fast engine that finishes its short sequences immediately grabs the next prompt. A shared global queue is strictly better than static per-engine assignment for heavy-tailed work — it is the classic &ldquo;single queue, many servers&rdquo; result from queueing theory.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Length-balanced greedy dispatch (LPT, &quot;longest processing time first&quot;) when</span>
+<span class="c1"># you DO have a length estimate (e.g., from a cheap length-predictor or from a</span>
+<span class="c1"># previous epoch&#39;s trace for the same prompt). Minimizes makespan = max load.</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">heapq</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">lpt_dispatch</span><span class="p">(</span><span class="n">prompt_len_estimates</span><span class="p">,</span> <span class="n">num_engines</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Assign prompts to engines to minimize the max per-engine total length.</span>
+<span class="sd">    prompt_len_estimates: list of (prompt_id, estimated_gen_len).&quot;&quot;&quot;</span>
+    <span class="c1"># Sort longest-first so big jobs are placed before small ones can imbalance.</span>
+    <span class="n">jobs</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">prompt_len_estimates</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="o">-</span><span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+    <span class="c1"># Min-heap of (current_load, engine_id); always feed the least-loaded engine.</span>
+    <span class="n">heap</span> <span class="o">=</span> <span class="p">[(</span><span class="mi">0</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_engines</span><span class="p">)]</span>
+    <span class="n">heapq</span><span class="o">.</span><span class="n">heapify</span><span class="p">(</span><span class="n">heap</span><span class="p">)</span>
+    <span class="n">assignment</span> <span class="o">=</span> <span class="p">{</span><span class="n">e</span><span class="p">:</span> <span class="p">[]</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_engines</span><span class="p">)}</span>
+    <span class="k">for</span> <span class="n">pid</span><span class="p">,</span> <span class="n">est</span> <span class="ow">in</span> <span class="n">jobs</span><span class="p">:</span>
+        <span class="n">load</span><span class="p">,</span> <span class="n">eng</span> <span class="o">=</span> <span class="n">heapq</span><span class="o">.</span><span class="n">heappop</span><span class="p">(</span><span class="n">heap</span><span class="p">)</span>
+        <span class="n">assignment</span><span class="p">[</span><span class="n">eng</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pid</span><span class="p">)</span>
+        <span class="n">heapq</span><span class="o">.</span><span class="n">heappush</span><span class="p">(</span><span class="n">heap</span><span class="p">,</span> <span class="p">(</span><span class="n">load</span> <span class="o">+</span> <span class="n">est</span><span class="p">,</span> <span class="n">eng</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">assignment</span>
+
+<span class="c1"># LPT is a 4/3-approximation to optimal makespan -- in practice near-perfect</span>
+<span class="c1"># balance when you have many small jobs and a few large ones.</span>
+</code></pre></div>
+<p>In on-policy RL you usually do <em>not</em> have length estimates, so the shared-queue (pull) model is the workhorse and LPT shows up only when you cache per-prompt length statistics across epochs.</p>
+<h3 id="lever-3-overlap-generation-with-training">Lever 3: overlap generation with training<a class="headerlink" href="#lever-3-overlap-generation-with-training" title="Permanent link">¶</a></h3>
+<p>Even a perfectly balanced generation phase leaves the <em>training</em> GPUs idle while it runs, and vice versa. The fix is to pipeline: while the trainer consumes batch <span class="arithmatex">\(t\)</span>, the rollout engines already generate batch <span class="arithmatex">\(t+1\)</span>. This is <strong>one-step-off-policy</strong> (sometimes &ldquo;staleness-1&rdquo;) RL — the data the trainer sees was produced by weights one update old. Empirically a staleness of 1–2 is harmless for GRPO-style objectives if you apply the importance-sampling correction (PPO&rsquo;s ratio handles exactly this; see <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>). This is the gateway to fully async RL.</p>
+<figure class="viz" id="fig-scalingrl-overlap-pipeline">
+<button class="viz-replay" type="button">&#x21bb; replay</button>
+<svg viewBox="0 0 960 420" role="img" aria-label="Two Gantt-style timelines: top panel shows synchronous serial scheduling where gen and train alternate with 50% idle time; bottom panel shows pipelined 1-step-off-policy scheduling where inference and training GPUs run in parallel with a one-step offset, each always busy.">
+  <defs>
+    <marker id="op-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#2563eb)"/>
+    </marker>
+    <marker id="op-dep-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#2563eb)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-scalingrl-overlap-pipeline text { font-family: var(--sans,sans-serif); fill: var(--ink-soft,currentColor); }
+    #fig-scalingrl-overlap-pipeline .panel-title { font: 700 13px var(--sans,sans-serif); }
+    #fig-scalingrl-overlap-pipeline .blk-lbl { font: 600 11px var(--sans,sans-serif); }
+    #fig-scalingrl-overlap-pipeline .lane-lbl { font: 600 11px var(--sans,sans-serif); }
+    #fig-scalingrl-overlap-pipeline .note { font: 400 10px var(--sans,sans-serif); fill: var(--muted,currentColor); }
+    #fig-scalingrl-overlap-pipeline .dep-lbl { font: 500 9.5px var(--sans,sans-serif); fill: var(--accent,#2563eb); }
+    #fig-scalingrl-overlap-pipeline .always-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+
+    /* Animation keyframes */
+    @keyframes op-cursor-sync {
+      0%   { transform: translateX(0px);   opacity: 1; }
+      45%  { transform: translateX(400px); opacity: 1; }
+      50%  { opacity: 0; }
+      100% { transform: translateX(400px); opacity: 0; }
+    }
+    @keyframes op-cursor-pipe {
+      0%   { transform: translateX(0px);   opacity: 1; }
+      45%  { transform: translateX(440px); opacity: 1; }
+      50%  { opacity: 0; }
+      100% { transform: translateX(440px); opacity: 0; }
+    }
+    @keyframes op-dep-arrow-appear {
+      0%, 34%  { opacity: 0; }
+      40%, 90% { opacity: 1; }
+      100%     { opacity: 0; }
+    }
+    @keyframes op-block-pulse {
+      0%, 25%  { opacity: 0.35; }
+      30%, 75% { opacity: 1; }
+      80%, 100%{ opacity: 0.35; }
+    }
+    #fig-scalingrl-overlap-pipeline .cursor-sync {
+      animation: op-cursor-sync 5s ease-in-out infinite;
+    }
+    #fig-scalingrl-overlap-pipeline .cursor-pipe {
+      animation: op-cursor-pipe 5s ease-in-out infinite;
+    }
+    #fig-scalingrl-overlap-pipeline .dep-anim {
+      animation: op-dep-arrow-appear 5s ease-in-out infinite;
+    }
+    #fig-scalingrl-overlap-pipeline .pulse-g0 {
+      animation: op-block-pulse 5s 0s ease-in-out infinite;
+    }
+    #fig-scalingrl-overlap-pipeline .pulse-t0 {
+      animation: op-block-pulse 5s 1.1s ease-in-out infinite;
+    }
+  </style>
+
+
+
+
+  <text x="120" y="28" class="panel-title">Synchronous (serial)</text>
+  <text x="690" y="28" text-anchor="end" class="note">both halves idle ~50% of the time</text>
+
+
+  <text x="110" y="80" text-anchor="end" class="lane-lbl">schedule</text>
+
+
+  <rect x="120" y="58" width="110" height="36" rx="4"
+        fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"
+        class="pulse-g0"/>
+  <text x="175" y="81" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">gen(0)</text>
+
+
+  <rect x="230" y="58" width="100" height="36" rx="4"
+        fill="var(--surface-3,#f5f3ff)" stroke="var(--accent-2,#7c3aed)" stroke-width="1.5"
+        class="pulse-t0"/>
+  <text x="280" y="81" text-anchor="middle" class="blk-lbl" fill="var(--accent-2,#7c3aed)">train(0)</text>
+
+
+  <rect x="330" y="58" width="110" height="36" rx="4"
+        fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+  <text x="385" y="81" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">gen(1)</text>
+
+
+  <rect x="440" y="58" width="100" height="36" rx="4"
+        fill="var(--surface-3,#f5f3ff)" stroke="var(--accent-2,#7c3aed)" stroke-width="1.5"/>
+  <text x="490" y="81" text-anchor="middle" class="blk-lbl" fill="var(--accent-2,#7c3aed)">train(1)</text>
+
+
+  <text x="558" y="81" class="note">...</text>
+
+
+  <line x1="120" y1="55" x2="120" y2="97"
+        stroke="var(--warn,#e0a106)" stroke-width="2" opacity="0.8"
+        class="cursor-sync"/>
+
+
+  <text x="175" y="108" text-anchor="middle" class="note" fill="var(--warn,#c2410c)">train idle</text>
+  <text x="280" y="108" text-anchor="middle" class="note" fill="var(--warn,#c2410c)">infer idle</text>
+  <text x="385" y="108" text-anchor="middle" class="note" fill="var(--warn,#c2410c)">train idle</text>
+  <text x="490" y="108" text-anchor="middle" class="note" fill="var(--warn,#c2410c)">infer idle</text>
+
+
+  <line x1="40" y1="128" x2="920" y2="128" stroke="var(--border-2,#e2e8f0)" stroke-width="1"/>
+
+
+
+
+  <text x="120" y="158" class="panel-title">Pipelined (1-step off-policy)</text>
+
+
+  <text x="110" y="222" text-anchor="end" class="lane-lbl">infer GPUs</text>
+
+
+  <rect x="120" y="200" width="110" height="36" rx="4"
+        fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.8"
+        class="pulse-g0"/>
+  <text x="175" y="223" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">gen(0)</text>
+
+
+  <rect x="230" y="200" width="110" height="36" rx="4"
+        fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+  <text x="285" y="223" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">gen(1)</text>
+
+
+  <rect x="340" y="200" width="110" height="36" rx="4"
+        fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+  <text x="395" y="223" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">gen(2)</text>
+
+
+  <rect x="450" y="200" width="110" height="36" rx="4"
+        fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+  <text x="505" y="223" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">gen(3)</text>
+
+  <text x="576" y="223" class="note">...</text>
+  <text x="620" y="223" class="always-lbl">always busy</text>
+
+
+  <text x="110" y="292" text-anchor="end" class="lane-lbl">train GPUs</text>
+
+
+  <rect x="230" y="270" width="100" height="36" rx="4"
+        fill="var(--surface-3,#f5f3ff)" stroke="var(--accent-2,#7c3aed)" stroke-width="1.8"
+        class="pulse-t0"/>
+  <text x="280" y="293" text-anchor="middle" class="blk-lbl" fill="var(--accent-2,#7c3aed)">train(0)</text>
+
+
+  <rect x="330" y="270" width="100" height="36" rx="4"
+        fill="var(--surface-3,#f5f3ff)" stroke="var(--accent-2,#7c3aed)" stroke-width="1.5"/>
+  <text x="380" y="293" text-anchor="middle" class="blk-lbl" fill="var(--accent-2,#7c3aed)">train(1)</text>
+
+
+  <rect x="430" y="270" width="100" height="36" rx="4"
+        fill="var(--surface-3,#f5f3ff)" stroke="var(--accent-2,#7c3aed)" stroke-width="1.5"/>
+  <text x="480" y="293" text-anchor="middle" class="blk-lbl" fill="var(--accent-2,#7c3aed)">train(2)</text>
+
+  <text x="542" y="293" class="note">...</text>
+  <text x="620" y="293" class="always-lbl">always busy</text>
+
+
+  <rect x="120" y="270" width="110" height="36" rx="4"
+        fill="none" stroke="var(--border-2,#e2e8f0)" stroke-width="1" stroke-dasharray="4 3" opacity="0.6"/>
+  <text x="175" y="293" text-anchor="middle" class="note" fill="var(--muted,currentColor)" opacity="0.7">startup</text>
+
+
+
+  <path d="M 230 236 C 230 252 230 258 230 270"
+        fill="none" stroke="var(--accent,#2563eb)" stroke-width="2"
+        marker-end="url(#op-dep-arrow)"
+        class="dep-anim"/>
+
+
+  <g class="dep-anim">
+    <text x="237" y="253" class="dep-lbl">consumes gen(0)</text>
+    <text x="237" y="265" class="dep-lbl">while gen(1) runs</text>
+  </g>
+
+
+  <line x1="120" y1="197" x2="120" y2="309"
+        stroke="var(--warn,#e0a106)" stroke-width="2" opacity="0.8"
+        class="cursor-pipe"/>
+
+
+  <text x="120" y="335" class="note">
+    Trainer consumes batch produced by weights one update old (staleness-1); IS ratio corrects for it.
+  </text>
+
+
+  <rect x="700" y="185" width="16" height="12" rx="2"
+        fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+  <text x="722" y="196" class="note">generation</text>
+  <rect x="700" y="203" width="16" height="12" rx="2"
+        fill="var(--surface-3,#f5f3ff)" stroke="var(--accent-2,#7c3aed)" stroke-width="1.5"/>
+  <text x="722" y="214" class="note">training</text>
+</svg>
+<figcaption><b>Synchronous scheduling wastes half the fleet; pipelining keeps both halves always busy.</b> In the serial schedule (top) each GPU fleet idles while the other runs, giving at most 50% utilization. The pipelined schedule (bottom) offsets the training lane by one slot so the trainer consumes batch <i>t</i> while the inference fleet generates batch <i>t+1</i> — at the cost of one step of staleness, which the importance-sampling ratio in PPO/GRPO corrects.</figcaption>
+</figure>
+
+<p>Fully async / disaggregated designs push this further — separate the inference and training fleets entirely and let them run continuously, reconciling via periodic weight broadcast. That is the subject of <a href="../06-rl-infra/06-prime-rl-async.html">Prime-RL, Async RL &amp; Decentralized Training</a> and <a href="../06-rl-infra/07-colocated-vs-disaggregated.html">Colocated vs Disaggregated RL &amp; Weight Synchronization</a>; here we just note that overlap is the <em>third and largest</em> lever against the bubble, and it is the one that turns a 50%-idle system into a ~90%-utilized one.</p>
+<h2 id="partial-rollout-dont-pay-for-the-tail-twice">Partial rollout: don&rsquo;t pay for the tail twice<a class="headerlink" href="#partial-rollout-dont-pay-for-the-tail-twice" title="Permanent link">¶</a></h2>
+<p>Overlap helps the <em>fleet</em> but a single 16k-token sequence still takes a long time to produce, and in a synchronous step it gates everything. <strong>Partial rollout</strong> (popularized by the Kimi k1.5 report and adopted widely) addresses the tail directly: cap how long any generation phase runs, <em>truncate the unfinished sequences mid-generation, save their KV state and partial text</em>, train on what completed, and <strong>resume the truncated sequences in the next rollout phase</strong> from where they left off.</p>
+<p>The trick is that a partially generated sequence is not wasted — it is a <em>checkpoint</em>. You amortize one very long trajectory across multiple RL steps instead of letting it stall a single step.</p>
+<figure class="viz" id="fig-scalingrl-partial-rollout">
+<button class="viz-replay" type="button">&#x21bb; replay</button>
+<svg viewBox="0 0 960 410" role="img" aria-label="Two timeline comparisons: top panel shows a single 16k-token outlier stalling all other workers; bottom panel shows partial rollout splitting that trace into four 4k-token phases across consecutive RL steps, each phase connected by a KV-stash resume arrow.">
+  <defs>
+    <marker id="pr-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#2563eb)"/>
+    </marker>
+    <marker id="pr-eos-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-scalingrl-partial-rollout text { font-family: var(--sans,sans-serif); fill: var(--ink-soft,currentColor); }
+    #fig-scalingrl-partial-rollout .panel-title { font: 700 13px var(--sans,sans-serif); }
+    #fig-scalingrl-partial-rollout .step-lbl { font: 600 11px var(--sans,sans-serif); }
+    #fig-scalingrl-partial-rollout .blk-lbl { font: 700 11px var(--sans,sans-serif); }
+    #fig-scalingrl-partial-rollout .annot { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,currentColor); }
+    #fig-scalingrl-partial-rollout .idle-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--warn,#c2410c); }
+    #fig-scalingrl-partial-rollout .note { font: 400 10px var(--sans,sans-serif); fill: var(--muted,currentColor); }
+    #fig-scalingrl-partial-rollout .eos-lbl { font: 700 10px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+
+    /* Animation: chunks appear one by one, then arrows fire */
+    @keyframes pr-appear { 0%,var(--t0) { opacity:0; } calc(var(--t0) + 5%), 95% { opacity:1; } 100% { opacity:0; } }
+    @keyframes pr-arrow-draw {
+      0%, var(--t0) { stroke-dashoffset: 60; opacity:0; }
+      calc(var(--t0) + 3%) { opacity:1; }
+      calc(var(--t0) + 8%), 95% { stroke-dashoffset: 0; opacity:1; }
+      100% { opacity:0; stroke-dashoffset:60; }
+    }
+
+    #fig-scalingrl-partial-rollout .chunk-k  { --t0: 15%; animation: pr-appear 7s ease-out infinite; }
+    #fig-scalingrl-partial-rollout .chunk-k1 { --t0: 30%; animation: pr-appear 7s ease-out infinite; }
+    #fig-scalingrl-partial-rollout .chunk-k2 { --t0: 48%; animation: pr-appear 7s ease-out infinite; }
+    #fig-scalingrl-partial-rollout .chunk-k3 { --t0: 63%; animation: pr-appear 7s ease-out infinite; }
+    #fig-scalingrl-partial-rollout .arr-k   { --t0: 25%; animation: pr-arrow-draw 7s ease-out infinite; stroke-dasharray:60; stroke-dashoffset:60; }
+    #fig-scalingrl-partial-rollout .arr-k1  { --t0: 43%; animation: pr-arrow-draw 7s ease-out infinite; stroke-dasharray:60; stroke-dashoffset:60; }
+    #fig-scalingrl-partial-rollout .arr-k2  { --t0: 58%; animation: pr-arrow-draw 7s ease-out infinite; stroke-dasharray:60; stroke-dashoffset:60; }
+  </style>
+
+
+
+
+  <text x="120" y="22" class="panel-title">Without partial rollout (tail gates the step)</text>
+
+
+  <text x="110" y="62" text-anchor="end" class="step-lbl">step k</text>
+
+
+  <rect x="120" y="44" width="780" height="32" rx="3"
+        fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+  <rect x="120" y="44" width="5" height="32" rx="0" fill="var(--accent,#2563eb)"/>
+  <text x="510" y="65" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">16k-token outlier</text>
+
+
+  <line x1="230" y1="88" x2="895" y2="88" stroke="var(--warn,#c2410c)" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <line x1="230" y1="82" x2="230" y2="94" stroke="var(--warn,#c2410c)" stroke-width="1.5"/>
+  <line x1="895" y1="82" x2="895" y2="94" stroke="var(--warn,#c2410c)" stroke-width="1.5"/>
+  <text x="562" y="104" text-anchor="middle" class="idle-lbl">all other workers idle for the last ~14k tokens</text>
+
+
+  <line x1="40" y1="118" x2="920" y2="118" stroke="var(--border-2,#e2e8f0)" stroke-width="1"/>
+
+
+
+
+  <text x="120" y="142" class="panel-title">With partial rollout (budget = 4k tokens/phase)</text>
+
+
+
+
+  <text x="110" y="192" text-anchor="end" class="step-lbl">step k</text>
+  <g class="chunk-k">
+    <rect x="120" y="172" width="170" height="32" rx="3"
+          fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+    <rect x="120" y="172" width="5" height="32" rx="0" fill="var(--accent,#2563eb)"/>
+    <text x="205" y="193" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">4k</text>
+    <text x="300" y="187" class="annot">truncate, stash KV+text</text>
+  </g>
+
+
+  <path d="M 290 204 C 290 218 120 218 120 222"
+        fill="none" stroke="var(--accent,#2563eb)" stroke-width="1.8"
+        marker-end="url(#pr-arrow)"
+        class="arr-k"/>
+
+
+  <text x="110" y="242" text-anchor="end" class="step-lbl">step k+1</text>
+  <g class="chunk-k1">
+    <rect x="120" y="222" width="170" height="32" rx="3"
+          fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+    <rect x="120" y="222" width="5" height="32" rx="0" fill="var(--accent,#2563eb)"/>
+    <text x="205" y="243" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">4k</text>
+    <text x="300" y="237" class="annot">resume, truncate again</text>
+  </g>
+
+
+  <path d="M 290 254 C 290 268 120 268 120 272"
+        fill="none" stroke="var(--accent,#2563eb)" stroke-width="1.8"
+        marker-end="url(#pr-arrow)"
+        class="arr-k1"/>
+
+
+  <text x="110" y="292" text-anchor="end" class="step-lbl">step k+2</text>
+  <g class="chunk-k2">
+    <rect x="120" y="272" width="170" height="32" rx="3"
+          fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+    <rect x="120" y="272" width="5" height="32" rx="0" fill="var(--accent,#2563eb)"/>
+    <text x="205" y="293" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">4k</text>
+    <text x="300" y="287" class="annot">resume</text>
+  </g>
+
+
+  <path d="M 290 304 C 290 318 120 318 120 322"
+        fill="none" stroke="var(--accent,#2563eb)" stroke-width="1.8"
+        marker-end="url(#pr-arrow)"
+        class="arr-k2"/>
+
+
+  <text x="110" y="342" text-anchor="end" class="step-lbl">step k+3</text>
+  <g class="chunk-k3">
+    <rect x="120" y="322" width="170" height="32" rx="3"
+          fill="var(--surface-3,#f0fdf4)" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+    <rect x="120" y="322" width="5" height="32" rx="0" fill="var(--good,#2f9e6e)"/>
+    <text x="205" y="343" text-anchor="middle" class="blk-lbl" fill="var(--good,#2f9e6e)">4k</text>
+
+    <rect x="296" y="326" width="30" height="16" rx="3" fill="var(--good,#2f9e6e)" opacity="0.9"/>
+    <text x="311" y="338" text-anchor="middle" class="eos-lbl" fill="white">EOS</text>
+    <text x="338" y="337" class="annot">resume -&gt; EOS, reward computed, full trajectory trained</text>
+  </g>
+
+
+  <text x="550" y="270" class="note">each resumed token tagged</text>
+  <text x="550" y="282" class="note">with behavior-policy logprob</text>
+  <text x="550" y="294" class="note">for IS correction</text>
+
+
+  <text x="480" y="385" text-anchor="middle" class="note">
+    Truncated sequence = checkpoint; amortize one long trace across steps rather than blocking one step.
+  </text>
+</svg>
+<figcaption><b>Partial rollout amortizes a long trace across multiple RL steps instead of blocking one.</b> Without it (top), a 16k-token outlier stalls every other worker for ~14k tokens. With a 4k-token budget per phase (bottom), the trace is truncated, its KV state stashed, and resumed next step — each 4k chunk completes alongside fresh short sequences, until EOS is reached at step k+3 and the full trajectory is trained. Per-token behavior log-probs are stored at each phase for importance-sampling correction.</figcaption>
+</figure>
+
+<p>The subtlety is <strong>off-policyness</strong>: a trajectory resumed at step <span class="arithmatex">\(k+3\)</span> has a prefix sampled by the weights at step <span class="arithmatex">\(k\)</span>. The continuation is on newer weights. This is exactly the partial-trajectory staleness async RL must handle, and you correct for it with the per-token importance ratio just as PPO does — each token is reweighted by <span class="arithmatex">\(\pi_{\text{new}}(a_t)/\pi_{\text{behavior}}(a_t)\)</span>. In practice you store, per resumed token, the log-prob under the <em>behavior</em> policy that produced it, and use that as the denominator. Partial rollout without that correction silently biases the gradient.</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">PartialTrajectory</span><span class="p">:</span>
+    <span class="n">prompt_ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>
+    <span class="n">generated_ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>          <span class="c1"># tokens emitted so far across phases</span>
+    <span class="n">behavior_logprobs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span>    <span class="c1"># per-token logprob under the policy that</span>
+                                      <span class="c1"># actually sampled each token (may differ</span>
+                                      <span class="c1"># across phases -&gt; needed for IS correction)</span>
+    <span class="n">kv_handle</span><span class="p">:</span> <span class="nb">object</span> <span class="o">|</span> <span class="kc">None</span>          <span class="c1"># opaque engine-side KV cache handle, or</span>
+                                      <span class="c1"># None if KV was dropped and must be re-prefilled</span>
+    <span class="n">done</span><span class="p">:</span> <span class="nb">bool</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_phase</span><span class="p">(</span><span class="n">engine</span><span class="p">,</span> <span class="n">trajs</span><span class="p">,</span> <span class="n">token_budget</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Generate up to `token_budget` new tokens per trajectory, then truncate.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">tr</span> <span class="ow">in</span> <span class="n">trajs</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">tr</span><span class="o">.</span><span class="n">done</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="c1"># Resume from saved KV if the engine kept it; else re-prefill the prefix.</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
+            <span class="n">prefix_ids</span><span class="o">=</span><span class="n">tr</span><span class="o">.</span><span class="n">prompt_ids</span> <span class="o">+</span> <span class="n">tr</span><span class="o">.</span><span class="n">generated_ids</span><span class="p">,</span>
+            <span class="n">kv_handle</span><span class="o">=</span><span class="n">tr</span><span class="o">.</span><span class="n">kv_handle</span><span class="p">,</span>
+            <span class="n">max_new_tokens</span><span class="o">=</span><span class="n">token_budget</span><span class="p">,</span>
+            <span class="n">return_logprobs</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">tr</span><span class="o">.</span><span class="n">generated_ids</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">token_ids</span><span class="p">)</span>
+        <span class="n">tr</span><span class="o">.</span><span class="n">behavior_logprobs</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">logprobs</span><span class="p">)</span>  <span class="c1"># tag with THIS phase&#39;s policy</span>
+        <span class="n">tr</span><span class="o">.</span><span class="n">kv_handle</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">kv_handle</span>
+        <span class="n">tr</span><span class="o">.</span><span class="n">done</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">hit_eos</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">tr</span><span class="o">.</span><span class="n">generated_ids</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">GLOBAL_MAX</span>
+    <span class="k">return</span> <span class="n">trajs</span>
+</code></pre></div>
+<p><strong>KV trade-off.</strong> You can either keep the truncated sequence&rsquo;s KV cache resident on the inference engine between phases (fast resume, but the KV pages sit pinned and reduce the slots available for fresh prompts) or drop it and re-prefill the prefix on resume (frees memory, costs a prefill). Prefix caching (<a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>) softens the re-prefill cost. The right choice depends on your KV pressure; under heavy oversubscription, dropping + re-prefill often wins because slots are the scarce resource.</p>
+<h2 id="dynamic-sampling-filtering-dapo-and-the-zero-gradient-problem">Dynamic sampling &amp; filtering: DAPO and the zero-gradient problem<a class="headerlink" href="#dynamic-sampling-filtering-dapo-and-the-zero-gradient-problem" title="Permanent link">¶</a></h2>
+<p>Now we shift from <em>infrastructure</em> throughput to <em>statistical</em> throughput — making each produced sample actually contribute signal. The flagship example is <strong>DAPO</strong> (Decoupled clip and Dynamic sAmpling Policy Optimization), an open recipe that stacks four ideas on GRPO. Two of them — dynamic sampling and over-long filtering — are squarely about the rollout/throughput layer, so we treat DAPO here.</p>
+<h3 id="why-grpo-wastes-whole-prompts">Why GRPO wastes whole prompts<a class="headerlink" href="#why-grpo-wastes-whole-prompts" title="Permanent link">¶</a></h3>
+<p>Recall GRPO computes a group-relative advantage by standardizing rewards <em>within</em> the <span class="arithmatex">\(G\)</span> samples for one prompt:</p>
+<div class="arithmatex">\[
+\hat A_{i} \;=\; \frac{r_i - \operatorname{mean}(\{r_j\}_{j=1}^{G})}{\operatorname{std}(\{r_j\}_{j=1}^{G})}
+\]</div>
+<p>Consider a verifiable-reward task where <span class="arithmatex">\(r \in \{0, 1\}\)</span>. If a prompt is <em>too easy</em>, all <span class="arithmatex">\(G\)</span> samples are correct: <span class="arithmatex">\(r = (1,1,\dots,1)\)</span>, so <span class="arithmatex">\(\operatorname{mean}=1\)</span>, every <span class="arithmatex">\(\hat A_i = 0\)</span>. If <em>too hard</em>, all are wrong: again every <span class="arithmatex">\(\hat A_i = 0\)</span>. <strong>A prompt with all-same rewards contributes exactly zero gradient.</strong> You paid <span class="arithmatex">\(G\)</span> full generations for it and got nothing. As training proceeds and the model masters the easy prompts, the <em>fraction of all-correct groups grows</em> — so the fraction of your rollout budget that is pure waste <em>increases over training</em>. This is the zero-gradient (or &ldquo;vanishing-advantage&rdquo;) problem, and it is a throughput problem dressed as a statistics problem.</p>
+<h3 id="dapos-dynamic-sampling-oversample-then-filter-to-a-full-effective-batch">DAPO&rsquo;s dynamic sampling: oversample, then filter to a full effective batch<a class="headerlink" href="#dapos-dynamic-sampling-oversample-then-filter-to-a-full-effective-batch" title="Permanent link">¶</a></h3>
+<p>DAPO&rsquo;s fix: <strong>keep sampling new prompts and discarding all-same-reward groups until you have a full batch of groups that actually have non-zero advantage variance.</strong> Concretely, set a target of <span class="arithmatex">\(N\)</span> &ldquo;useful&rdquo; prompt-groups per step; generate groups, drop any with <span class="arithmatex">\(\operatorname{std}(r)=0\)</span> (all correct or all wrong), and keep going until <span class="arithmatex">\(N\)</span> survive.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">dynamic_sampling_step</span><span class="p">(</span><span class="n">engine</span><span class="p">,</span> <span class="n">reward_fn</span><span class="p">,</span> <span class="n">prompts_iter</span><span class="p">,</span>
+                          <span class="n">target_groups</span><span class="p">,</span> <span class="n">G</span><span class="p">,</span> <span class="n">max_oversample_factor</span><span class="o">=</span><span class="mi">4</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return `target_groups` prompt-groups, each with non-degenerate rewards.</span>
+<span class="sd">    Oversamples to compensate for filtered-out all-same groups (DAPO-style).&quot;&quot;&quot;</span>
+    <span class="n">kept</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">generated_groups</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="n">kept</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">target_groups</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">generated_groups</span> <span class="o">&gt;=</span> <span class="n">max_oversample_factor</span> <span class="o">*</span> <span class="n">target_groups</span><span class="p">:</span>
+            <span class="c1"># Safety valve: if too many groups are degenerate, the curriculum</span>
+            <span class="c1"># is mismatched (model too strong/weak). Stop to avoid runaway cost.</span>
+            <span class="k">break</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">prompts_iter</span><span class="p">)</span>
+        <span class="n">completions</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">G</span><span class="p">)</span>            <span class="c1"># G samples</span>
+        <span class="n">rewards</span> <span class="o">=</span> <span class="p">[</span><span class="n">reward_fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">c</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">completions</span><span class="p">]</span>
+        <span class="n">generated_groups</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="c1"># Degenerate group =&gt; every group-relative advantage is 0 =&gt; no gradient.</span>
+        <span class="k">if</span> <span class="nb">min</span><span class="p">(</span><span class="n">rewards</span><span class="p">)</span> <span class="o">==</span> <span class="nb">max</span><span class="p">(</span><span class="n">rewards</span><span class="p">):</span>
+            <span class="k">continue</span>                                          <span class="c1"># discard, don&#39;t train</span>
+        <span class="n">kept</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">prompt</span><span class="p">,</span> <span class="n">completions</span><span class="p">,</span> <span class="n">rewards</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">kept</span>
+</code></pre></div>
+<p>The throughput consequence is double-edged. <em>Statistically</em> it is a huge win: every group in the batch now moves the policy. <em>Mechanically</em> it is dangerous — the oversampling factor is <strong>data-dependent and grows over training</strong>, so a naive synchronous implementation generates a variable, ballooning number of sequences per step and reintroduces tail bubbles plus unpredictable step times. The production fix is to run dynamic sampling <em>on top of</em> a continuous-batching, oversubscribed, async generation pool: keep a deep queue of prompts, generate continuously, filter on the fly, and snapshot a training batch the moment <span class="arithmatex">\(N\)</span> useful groups have accumulated — never blocking the generators. Filtering and throughput are thus coupled: dynamic sampling is only cheap if your generation layer is already async and oversubscribed.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: dynamic sampling on a synchronous engine</p>
+<p>If you bolt DAPO&rsquo;s dynamic sampling onto a synchronous &ldquo;generate-batch-then-train&rdquo; loop, your step time becomes a random variable that <em>increases</em> as the model improves (more groups get filtered, so you oversample more). You will see step times creep up and GPU utilization sag mid-run and blame the optimizer. The fix is architectural: dynamic sampling <em>requires</em> a decoupled, continuously-fed generation pool so the extra sampling overlaps training instead of serializing with it.</p>
+</div>
+<h3 id="over-long-filtering-length-control">Over-long filtering &amp; length control<a class="headerlink" href="#over-long-filtering-length-control" title="Permanent link">¶</a></h3>
+<p>The second DAPO throughput idea concerns <strong>truncated</strong> generations. If you cap generation at, say, 8k tokens and a sequence hits the cap without emitting EOS, what reward does it get? If you assign it the <em>task reward</em> (often 0 for an unfinished answer), you punish the model for a length-budget artifact and inject noise — the trajectory might have been on track to a correct answer. DAPO&rsquo;s <strong>over-long filtering</strong> simply <em>masks the loss</em> on sequences that were truncated by the length cap, so they neither reward nor penalize. A gentler variant is an <strong>over-long soft punishment</strong>: a small, length-graded penalty that ramps up as the sequence approaches the cap, nudging the model toward concision without the cliff of a hard zero.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">length_shaped_reward</span><span class="p">(</span><span class="n">task_reward</span><span class="p">,</span> <span class="n">gen_len</span><span class="p">,</span> <span class="n">soft_start</span><span class="p">,</span> <span class="n">hard_cap</span><span class="p">,</span> <span class="n">lam</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;DAPO-style soft overlong penalty.</span>
+<span class="sd">    No penalty below soft_start; linearly ramps to -lam at hard_cap.</span>
+<span class="sd">    Truncated (&gt;= hard_cap, no EOS) sequences are handled by masking elsewhere.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">gen_len</span> <span class="o">&lt;=</span> <span class="n">soft_start</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">task_reward</span>
+    <span class="k">if</span> <span class="n">gen_len</span> <span class="o">&gt;=</span> <span class="n">hard_cap</span><span class="p">:</span>
+        <span class="c1"># over-long: mask this trajectory&#39;s loss instead of training on noise</span>
+        <span class="k">return</span> <span class="kc">None</span>   <span class="c1"># sentinel -&gt; caller drops/masks it</span>
+    <span class="n">frac</span> <span class="o">=</span> <span class="p">(</span><span class="n">gen_len</span> <span class="o">-</span> <span class="n">soft_start</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">hard_cap</span> <span class="o">-</span> <span class="n">soft_start</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">task_reward</span> <span class="o">-</span> <span class="n">lam</span> <span class="o">*</span> <span class="n">frac</span>
+</code></pre></div>
+<p>Length control matters beyond throughput: unfiltered RLVR tends to make traces <em>longer and longer</em> (a known reward-coupled length bias), inflating your generation cost every step in a vicious loop — longer traces, slower rollouts, more tail, lower MFU. Explicit length shaping is partly a <em>cost-control</em> mechanism. We return to the length-bias <em>cause</em> in the next section, because Dr. GRPO argues part of it is an artifact of the loss normalization itself.</p>
+<h2 id="the-latest-algorithmic-tricks-dr-grpo-vapo-and-the-clip-family">The latest algorithmic tricks: Dr. GRPO, VAPO, and the clip family<a class="headerlink" href="#the-latest-algorithmic-tricks-dr-grpo-vapo-and-the-clip-family" title="Permanent link">¶</a></h2>
+<h3 id="dapos-other-two-clip-higher-and-token-level-loss">DAPO&rsquo;s other two: clip-higher and token-level loss<a class="headerlink" href="#dapos-other-two-clip-higher-and-token-level-loss" title="Permanent link">¶</a></h3>
+<p>The two DAPO ingredients we deferred are pure objective changes:</p>
+<ul>
+<li><strong>Clip-Higher (decoupled clipping).</strong> PPO/GRPO clip the importance ratio symmetrically to <span class="arithmatex">\([1-\varepsilon, 1+\varepsilon]\)</span>. DAPO observes this <em>suppresses exploration</em>: for a low-probability but promising token, the upside is capped at <span class="arithmatex">\(1+\varepsilon\)</span>, so the model can never aggressively up-weight a rare good token, and entropy collapses. DAPO <strong>decouples</strong> the bounds into <span class="arithmatex">\(\varepsilon_{\text{low}}\)</span> and <span class="arithmatex">\(\varepsilon_{\text{high}}\)</span> with <span class="arithmatex">\(\varepsilon_{\text{high}} &gt; \varepsilon_{\text{low}}\)</span> (e.g. raise the upper clip), giving rare-but-good tokens more room to grow while keeping the downside tight. The clipped surrogate becomes</li>
+</ul>
+<div class="arithmatex">\[
+\mathcal{L} = -\,\mathbb{E}\Big[\min\big(\rho_t \hat A_t,\; \operatorname{clip}(\rho_t,\, 1-\varepsilon_{\text{low}},\, 1+\varepsilon_{\text{high}})\,\hat A_t\big)\Big], \quad \rho_t = \frac{\pi_\theta(a_t)}{\pi_{\text{old}}(a_t)}
+\]</div>
+<ul>
+<li><strong>Token-level policy-gradient loss.</strong> GRPO as originally written averages the loss <em>per sequence first, then over sequences</em> — so every sequence gets equal weight regardless of length, which means tokens in long sequences are <em>down-weighted</em>. DAPO computes the loss as a flat <strong>mean over all tokens in the batch</strong>, giving each token equal weight. This couples directly to the length-normalization bug that Dr. GRPO formalizes next.</li>
+</ul>
+<h3 id="dr-grpo-removing-grpos-two-normalization-biases">Dr. GRPO: removing GRPO&rsquo;s two normalization biases<a class="headerlink" href="#dr-grpo-removing-grpos-two-normalization-biases" title="Permanent link">¶</a></h3>
+<p><strong>Dr. GRPO</strong> (&ldquo;GRPO Done Right&rdquo;) makes a sharp, surgical claim: vanilla GRPO contains two normalization terms that introduce <em>optimization bias</em>, and one of them directly causes the runaway-length pathology.</p>
+<ol>
+<li>
+<p><strong>Length normalization in the loss.</strong> GRPO divides each sequence&rsquo;s summed token loss by its length <span class="arithmatex">\(|o_i|\)</span>. Combined with the way advantages are shared across tokens, this makes the <em>per-token</em> gradient magnitude depend on sequence length: for a <em>negative</em>-advantage (wrong) trajectory, dividing by a larger length <em>shrinks the penalty per token</em> — so the model learns that making wrong answers <em>longer</em> reduces the per-token penalty. That is a direct gradient incentive to ramble when wrong. Dr. GRPO <strong>removes the length division</strong>, using a constant normalizer (or token-level mean) so per-token gradients are length-independent.</p>
+</li>
+<li>
+<p><strong>Standard-deviation normalization in the advantage.</strong> Dividing the group-relative advantage by <span class="arithmatex">\(\operatorname{std}(\{r_j\})\)</span> over-weights prompts that happen to have <em>low</em> reward variance (a small denominator inflates the advantage). This is a question-level difficulty bias. Dr. GRPO <strong>drops the std division</strong>, keeping only the mean-subtraction baseline:</p>
+</li>
+</ol>
+<div class="arithmatex">\[
+\hat A_i^{\text{Dr.GRPO}} = r_i - \operatorname{mean}(\{r_j\}_{j=1}^{G})
+\qquad\text{(no } /\operatorname{std}\text{, no } /|o_i|\text{)}
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">grpo_advantage</span><span class="p">(</span><span class="n">rewards</span><span class="p">):</span>                       <span class="c1"># rewards: (G,)</span>
+    <span class="n">mean</span> <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="n">std</span> <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">std</span><span class="p">()</span> <span class="o">+</span> <span class="mf">1e-6</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">rewards</span> <span class="o">-</span> <span class="n">mean</span><span class="p">)</span> <span class="o">/</span> <span class="n">std</span>                  <span class="c1"># vanilla GRPO</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dr_grpo_advantage</span><span class="p">(</span><span class="n">rewards</span><span class="p">):</span>                    <span class="c1"># Dr. GRPO: mean-only baseline</span>
+    <span class="k">return</span> <span class="n">rewards</span> <span class="o">-</span> <span class="n">rewards</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sequence_loss_vanilla</span><span class="p">(</span><span class="n">token_logp_ratio</span><span class="p">,</span> <span class="n">adv</span><span class="p">,</span> <span class="n">mask</span><span class="p">):</span>
+    <span class="c1"># per-sequence mean over tokens (divides by length) -&gt; length bias</span>
+    <span class="n">per_tok</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">token_logp_ratio</span> <span class="o">*</span> <span class="n">adv</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">*</span> <span class="n">mask</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">per_tok</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">token_loss_drgrpo</span><span class="p">(</span><span class="n">token_logp_ratio</span><span class="p">,</span> <span class="n">adv</span><span class="p">,</span> <span class="n">mask</span><span class="p">):</span>
+    <span class="c1"># flat mean over ALL valid tokens (no per-length division) -&gt; length-neutral</span>
+    <span class="n">per_tok</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">token_logp_ratio</span> <span class="o">*</span> <span class="n">adv</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">*</span> <span class="n">mask</span>
+    <span class="k">return</span> <span class="n">per_tok</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">/</span> <span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>
+<p>The two fixes interact with DAPO&rsquo;s token-level loss: both camps converge on &ldquo;don&rsquo;t normalize per-sequence length; treat tokens uniformly.&rdquo; If you take one practical lesson from this section, it is <strong>be deliberate about your loss normalizer</strong> — it is not a cosmetic constant, it encodes a length policy and a difficulty policy, and getting it wrong is a common silent cause of length blow-up and instability (<a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>).</p>
+<h3 id="vapo-making-the-value-model-work-for-long-cot">VAPO: making the value model work for long CoT<a class="headerlink" href="#vapo-making-the-value-model-work-for-long-cot" title="Permanent link">¶</a></h3>
+<p>GRPO/DAPO/Dr. GRPO are <strong>critic-free</strong> — they replace the learned value function with a group baseline (<a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>). <strong>VAPO</strong> (Value-model-based Augmented PPO) argues the opposite: a <em>well-tuned value model</em> gives lower-variance, per-token advantages that beat group baselines on long-chain reasoning — <em>if</em> you fix the things that usually make value models fail there. Its main ingredients are engineering hardening for the critic: a <strong>length-adaptive GAE</strong> <span class="arithmatex">\(\lambda\)</span> (the bias–variance knob of generalized advantage estimation must scale with sequence length, because a fixed <span class="arithmatex">\(\lambda\)</span> that works at 500 tokens over-smooths at 8,000), value-pretraining/warmup so the critic is not garbage at step 0 when it would otherwise inject huge advantage noise, and DAPO-style clip-higher and token-level losses layered on top. VAPO is the strongest evidence that critic-free is a <em>convenience</em>, not a law: with enough care the value model wins, at the cost of training and hosting a second network (more memory, another forward/backward) — a classic throughput-vs-sample-efficiency trade.</p>
+<p>The practical takeaway for <em>scaling</em>: critic-free (GRPO family) is cheaper per step and far simpler to host (no second model on the training GPUs), which is why it dominates open infra; value-based (VAPO/PPO) can be more <em>sample</em>-efficient but costs you memory and a second model to keep in sync. Pick based on whether your bottleneck is GPUs-per-step or samples-to-converge.</p>
+<h2 id="replay-curriculum-sample-reuse">Replay, curriculum &amp; sample reuse<a class="headerlink" href="#replay-curriculum-sample-reuse" title="Permanent link">¶</a></h2>
+<p>Two more levers raise <em>sample</em> efficiency — getting more learning per generated token, which is the ultimate throughput because generation is the expensive part.</p>
+<p><strong>Replay / sample reuse.</strong> On-policy purists generate fresh samples every step and throw them away. But each sample cost a generation; reusing it for <span class="arithmatex">\(k\)</span> minibatch passes (PPO epochs) amortizes that cost. The catch is staleness: after one gradient step the data is off-policy, so you <em>must</em> use the clipped importance ratio (which is exactly what PPO/GRPO already provide). A modest replay — 1–4 inner epochs over each rollout batch — is nearly free sample-efficiency. Go too far and the ratios drift outside the clip range, gradients get clipped to zero, and you waste compute on dead samples. A <strong>prioritized</strong> replay can preferentially revisit high-advantage-magnitude (most informative) trajectories.</p>
+<p><strong>Curriculum.</strong> Dynamic sampling already implements an <em>implicit</em> curriculum: it discards prompts that are all-correct (mastered) or all-wrong (hopeless), so the model trains on prompts in its <strong>zone of proximal development</strong> — those it gets right sometimes. You can make this explicit: bin prompts by historical pass-rate, schedule from easy to hard, or up-sample prompts near the 50% success boundary where group-relative advantage variance (hence gradient signal) is maximized. For a Bernoulli group with success probability <span class="arithmatex">\(p\)</span>, the reward variance is <span class="arithmatex">\(p(1-p)\)</span>, maximized at <span class="arithmatex">\(p=0.5\)</span> — so a prompt the model solves half the time gives the strongest learning signal, and one it never or always solves gives none. Curriculum is just steering the rollout budget toward <span class="arithmatex">\(p \approx 0.5\)</span>.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">informativeness</span><span class="p">(</span><span class="n">pass_rate</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Expected per-group reward variance for Bernoulli reward; gradient signal</span>
+<span class="sd">    peaks at pass_rate = 0.5 and vanishes at 0 or 1 (the DAPO-filtered cases).&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">pass_rate</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">pass_rate</span><span class="p">)</span>
+
+<span class="c1"># Schedule rollout budget proportional to informativeness (a soft curriculum).</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">allocate_budget</span><span class="p">(</span><span class="n">prompt_pass_rates</span><span class="p">,</span> <span class="n">total_budget</span><span class="p">):</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="p">{</span><span class="n">pid</span><span class="p">:</span> <span class="n">informativeness</span><span class="p">(</span><span class="n">pr</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-3</span> <span class="k">for</span> <span class="n">pid</span><span class="p">,</span> <span class="n">pr</span> <span class="ow">in</span> <span class="n">prompt_pass_rates</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">w</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">pid</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">total_budget</span> <span class="o">*</span> <span class="n">wi</span> <span class="o">/</span> <span class="n">z</span><span class="p">)</span> <span class="k">for</span> <span class="n">pid</span><span class="p">,</span> <span class="n">wi</span> <span class="ow">in</span> <span class="n">w</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+</code></pre></div>
+<p>This unifies the chapter&rsquo;s two halves: the <em>infra</em> trick (dynamic sampling) and the <em>learning</em> trick (curriculum) are the same idea — <strong>spend generation on prompts that move the policy</strong> — viewed from throughput and from statistics respectively.</p>
+<h2 id="a-worked-throughput-example">A worked throughput example<a class="headerlink" href="#a-worked-throughput-example" title="Permanent link">¶</a></h2>
+<div class="admonition example">
+<p class="admonition-title">Worked example: filling the bubble on an 8×H100 GRPO step</p>
+<p>Setup: GRPO on a 7B reasoning model. Per step we want <span class="arithmatex">\(N = 256\)</span> useful prompt-groups, <span class="arithmatex">\(G = 8\)</span> samples each, so the target is <span class="arithmatex">\(256 \times 8 = 2{,}048\)</span> trained sequences. Inference fleet: 4 H100s running vLLM (the other 4 train, colocated time-sliced). Trace lengths are heavy-tailed: median 1,500 tokens, mean 2,200, max outliers ~14,000. Assume an effective decode rate of ~2,500 tokens/s per H100 at this batch concurrency.</p>
+<p><strong>Baseline — static-ish synchronous, no oversubscription, no filtering.</strong>
+Generation runs until the longest of 2,048 sequences finishes. With per-engine concurrency = 512 and 4 engines, the engines drain to the tail. Effective generation efficiency <span class="arithmatex">\(\eta_{\text{gen}} = \bar L / L_{\max} = 2200 / 14000 \approx 0.157\)</span>. Real token-work <span class="arithmatex">\(= 2048 \times 2200 = 4.5\text{M}\)</span> tokens, but the phase runs as if <span class="arithmatex">\(2048 \times 14000 = 28.7\text{M}\)</span> token-times across the fleet. At <span class="arithmatex">\(4 \times 2500 = 10{,}000\)</span> tok/s fleet decode, the <em>wall-clock</em> is gated by the tail engine: roughly <span class="arithmatex">\(14000 / 2500 \approx 5.6\)</span> s just to drain the outlier, plus the bulk <span class="arithmatex">\(\approx 4.5\text{M}/10{,}000 = 450\)</span> s for real work — but because the tail engine cannot parallelize one sequence, total <span class="arithmatex">\(\approx 450 / \eta_{\text{effective}}\)</span>. Take a measured stand-in: <strong>generation ≈ 200 s</strong>, training ≈ 60 s, <strong>step ≈ 260 s</strong>, train GPUs idle during all 200 s of generation.</p>
+<p><strong>+ Continuous batching &amp; oversubscription (Lever 1).</strong> Deep queue keeps all engines full until the final tail. Bubble shrinks to the last handful of long sequences: generation ≈ <strong>120 s</strong> (≈1.7× faster).</p>
+<p><strong>+ Overlap generation with training (Lever 3, 1-step off-policy).</strong> Training&rsquo;s 60 s now hides <em>inside</em> the next generation phase. Effective step ≈ <span class="arithmatex">\(\max(120, 60) =\)</span> <strong>120 s</strong>, and train GPUs go from 23% to ~100% busy.</p>
+<p><strong>+ Partial rollout, 4k budget/phase (tail control).</strong> The 14k outliers no longer gate a step; they amortize across ~4 phases. Per-phase generation drops to ≈ <strong>80 s</strong>. Step ≈ 80 s.</p>
+<p><strong>+ Dynamic sampling (DAPO).</strong> Statistically, suppose 35% of groups are all-correct/all-wrong and contribute zero gradient. Without filtering you <em>trained</em> on 2,048 sequences but only <span class="arithmatex">\(0.65 \times 2048 \approx 1{,}331\)</span> carried signal — your <em>effective</em> useful throughput was 65% of nominal. With dynamic sampling you oversample ~1.54× to refill the batch with useful groups; because generation is already async+oversubscribed, the extra sampling overlaps and costs little wall-clock, so you now deliver <strong>2,048 fully-useful groups</strong> in ≈ <strong>95 s</strong>.</p>
+<p>Net: <strong>260 s → ~95 s per step (≈2.7× wall-clock)</strong>, <em>and</em> every trained sample now moves the policy — the <em>learning-per-step</em> improved on top of the speedup. The single biggest win was overlap (Lever 3); the single biggest <em>quality</em> win was dynamic sampling.</p>
+</div>
+<h2 id="putting-it-together-a-state-of-the-art-recipe">Putting it together: a state-of-the-art recipe<a class="headerlink" href="#putting-it-together-a-state-of-the-art-recipe" title="Permanent link">¶</a></h2>
+<p>The 2024–2026 open-source consensus stack for scaling RL on reasoning models looks roughly like this — note how throughput tricks and algorithmic tricks interleave:</p>
+<figure class="viz" id="fig-scalingrl-sota-recipe-stack">
+<svg viewBox="0 0 980 700" role="img" aria-label="State-of-the-art scaling-RL recipe: three stacked layers—Generation, Sample Selection, and Objective—each containing technique rows with bracket tags. An interleave cue on the left margin shows the layers interact.">
+  <style>
+    #fig-scalingrl-sota-recipe-stack text { font-family: var(--sans,sans-serif); fill: var(--ink-soft,currentColor); }
+    #fig-scalingrl-sota-recipe-stack .layer-title { font: 700 14px var(--sans,sans-serif); fill: white; }
+    #fig-scalingrl-sota-recipe-stack .layer-sub { font: 400 10.5px var(--sans,sans-serif); fill: rgba(255,255,255,0.82); }
+    #fig-scalingrl-sota-recipe-stack .row-text { font: 400 11.5px var(--sans,sans-serif); }
+    #fig-scalingrl-sota-recipe-stack .tag { font: 500 9.5px var(--mono,monospace); fill: var(--muted,currentColor); }
+    #fig-scalingrl-sota-recipe-stack .interleave { font: 500 9px var(--sans,sans-serif); fill: var(--muted,currentColor); }
+    #fig-scalingrl-sota-recipe-stack .fig-caption-text { font: 400 10px var(--sans,sans-serif); fill: var(--muted,currentColor); }
+  </style>
+
+
+
+
+
+  <rect x="50" y="18" width="880" height="205" rx="8"
+        fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+
+  <rect x="50" y="18" width="880" height="38" rx="8" fill="var(--accent,#2563eb)"/>
+  <rect x="50" y="40" width="880" height="16" fill="var(--accent,#2563eb)"/>
+  <text x="70" y="41" class="layer-title">GENERATION LAYER</text>
+  <text x="300" y="41" class="layer-sub">(where ~75% of wall-clock lives)</text>
+
+
+
+  <rect x="60" y="60" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#bfdbfe)" stroke-width="0.8"/>
+  <text x="72" y="76" class="row-text">vLLM / SGLang engines with continuous batching</text>
+  <rect x="770" y="62" width="140" height="18" rx="3" fill="var(--surface,rgba(37,99,235,0.08))" stroke="var(--border-2,#bfdbfe)" stroke-width="0.8"/>
+  <text x="840" y="75" text-anchor="middle" class="tag">[intra-engine eta -&gt; 1]</text>
+
+
+  <rect x="60" y="87" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#bfdbfe)" stroke-width="0.8"/>
+  <text x="72" y="103" class="row-text">Oversubscribe: deep prompt queue &gt;&gt; concurrent slots</text>
+  <rect x="810" y="89" width="100" height="18" rx="3" fill="var(--surface,rgba(37,99,235,0.08))" stroke="var(--border-2,#bfdbfe)" stroke-width="0.8"/>
+  <text x="860" y="102" text-anchor="middle" class="tag">[Lever 1]</text>
+
+
+  <rect x="60" y="114" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#bfdbfe)" stroke-width="0.8"/>
+  <text x="72" y="130" class="row-text">Shared pull-queue across engines, not static shards</text>
+  <rect x="810" y="116" width="100" height="18" rx="3" fill="var(--surface,rgba(37,99,235,0.08))" stroke="var(--border-2,#bfdbfe)" stroke-width="0.8"/>
+  <text x="860" y="129" text-anchor="middle" class="tag">[Lever 2]</text>
+
+
+  <rect x="60" y="141" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#bfdbfe)" stroke-width="0.8"/>
+  <text x="72" y="157" class="row-text">Partial rollout with KV stash / re-prefill</text>
+  <rect x="790" y="143" width="120" height="18" rx="3" fill="var(--surface,rgba(37,99,235,0.08))" stroke="var(--border-2,#bfdbfe)" stroke-width="0.8"/>
+  <text x="850" y="156" text-anchor="middle" class="tag">[tail control]</text>
+
+
+  <rect x="60" y="168" width="858" height="23" rx="3" fill="var(--surface-3,#dbeafe)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+  <text x="72" y="184" class="row-text" font-weight="600">Async / 1-step-off-policy overlap with training</text>
+  <rect x="748" y="170" width="162" height="18" rx="3" fill="var(--accent,rgba(37,99,235,0.18))" stroke="var(--accent,#2563eb)" stroke-width="1"/>
+  <text x="829" y="183" text-anchor="middle" class="tag" fill="var(--accent,#2563eb)">[Lever 3, biggest win]</text>
+
+
+  <rect x="60" y="195" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#bfdbfe)" stroke-width="0.8"/>
+  <text x="72" y="211" class="row-text">Disaggregated fleet for large scale (see 6.6 / 6.7)</text>
+  <rect x="829" y="197" width="81" height="18" rx="3" fill="var(--surface,rgba(37,99,235,0.08))" stroke="var(--border-2,#bfdbfe)" stroke-width="0.8"/>
+  <text x="869" y="210" text-anchor="middle" class="tag">[scale]</text>
+
+
+
+
+
+
+
+
+
+  <rect x="50" y="236" width="880" height="140" rx="8"
+        fill="var(--surface-3,#f5f3ff)" stroke="var(--accent-2,#7c3aed)" stroke-width="1.5"/>
+
+  <rect x="50" y="236" width="880" height="38" rx="8" fill="var(--accent-2,#7c3aed)"/>
+  <rect x="50" y="258" width="880" height="16" fill="var(--accent-2,#7c3aed)"/>
+  <text x="70" y="259" class="layer-title">SAMPLE SELECTION LAYER</text>
+  <text x="340" y="259" class="layer-sub">(spend generation where it counts)</text>
+
+
+  <rect x="60" y="278" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#ddd6fe)" stroke-width="0.8"/>
+  <text x="72" y="294" class="row-text">Dynamic sampling: drop all-same-reward groups (DAPO)</text>
+  <rect x="775" y="280" width="135" height="18" rx="3" fill="var(--surface,rgba(124,58,237,0.08))" stroke="var(--border-2,#ddd6fe)" stroke-width="0.8"/>
+  <text x="842" y="293" text-anchor="middle" class="tag">[zero-gradient fix]</text>
+
+
+  <rect x="60" y="305" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#ddd6fe)" stroke-width="0.8"/>
+  <text x="72" y="321" class="row-text">Over-long filtering / soft length penalty (DAPO)</text>
+  <rect x="797" y="307" width="113" height="18" rx="3" fill="var(--surface,rgba(124,58,237,0.08))" stroke="var(--border-2,#ddd6fe)" stroke-width="0.8"/>
+  <text x="853" y="320" text-anchor="middle" class="tag">[length/cost]</text>
+
+
+  <rect x="60" y="332" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#ddd6fe)" stroke-width="0.8"/>
+  <text x="72" y="348" class="row-text">Implicit / explicit curriculum toward pass-rate ~0.5</text>
+  <rect x="787" y="334" width="123" height="18" rx="3" fill="var(--surface,rgba(124,58,237,0.08))" stroke="var(--border-2,#ddd6fe)" stroke-width="0.8"/>
+  <text x="848" y="347" text-anchor="middle" class="tag">[max signal p(1-p)]</text>
+
+
+  <rect x="60" y="359" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#ddd6fe)" stroke-width="0.8"/>
+  <text x="72" y="375" class="row-text">Modest replay (1-4 PPO epochs) with clipped IS ratio</text>
+  <rect x="793" y="361" width="117" height="18" rx="3" fill="var(--surface,rgba(124,58,237,0.08))" stroke="var(--border-2,#ddd6fe)" stroke-width="0.8"/>
+  <text x="851" y="374" text-anchor="middle" class="tag">[sample reuse]</text>
+
+
+
+
+  <line x1="28" y1="382" x2="28" y2="410" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" stroke-dasharray="3 2"/>
+
+
+
+
+  <rect x="50" y="392" width="880" height="175" rx="8"
+        fill="var(--surface-3,#ecfeff)" stroke="var(--accent-2,#0891b2)" stroke-width="1.5"/>
+
+  <rect x="50" y="392" width="880" height="38" rx="8" fill="var(--accent-2,#0891b2)"/>
+  <rect x="50" y="414" width="880" height="16" fill="var(--accent-2,#0891b2)"/>
+  <text x="70" y="415" class="layer-title">OBJECTIVE LAYER</text>
+  <text x="258" y="415" class="layer-sub">(each token, correctly weighted)</text>
+
+
+  <rect x="60" y="434" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#a5f3fc)" stroke-width="0.8"/>
+  <text x="72" y="450" class="row-text">Token-level loss, not per-sequence mean (DAPO / Dr. GRPO)</text>
+  <rect x="797" y="436" width="113" height="18" rx="3" fill="var(--surface,rgba(8,145,178,0.08))" stroke="var(--border-2,#a5f3fc)" stroke-width="0.8"/>
+  <text x="853" y="449" text-anchor="middle" class="tag">[length-neutral]</text>
+
+
+  <rect x="60" y="461" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#a5f3fc)" stroke-width="0.8"/>
+  <text x="72" y="477" class="row-text">Drop length-norm and std-norm biases (Dr. GRPO)</text>
+  <rect x="825" y="463" width="85" height="18" rx="3" fill="var(--surface,rgba(8,145,178,0.08))" stroke="var(--border-2,#a5f3fc)" stroke-width="0.8"/>
+  <text x="867" y="476" text-anchor="middle" class="tag">[debias]</text>
+
+
+  <rect x="60" y="488" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#a5f3fc)" stroke-width="0.8"/>
+  <text x="72" y="504" class="row-text">Decoupled clip-higher for exploration (DAPO)</text>
+  <rect x="825" y="490" width="85" height="18" rx="3" fill="var(--surface,rgba(8,145,178,0.08))" stroke="var(--border-2,#a5f3fc)" stroke-width="0.8"/>
+  <text x="867" y="503" text-anchor="middle" class="tag">[entropy]</text>
+
+
+  <rect x="60" y="515" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#a5f3fc)" stroke-width="0.8"/>
+  <text x="72" y="531" class="row-text">Optional value model w/ length-adaptive GAE + warmup (VAPO)</text>
+  <rect x="797" y="517" width="113" height="18" rx="3" fill="var(--surface,rgba(8,145,178,0.08))" stroke="var(--border-2,#a5f3fc)" stroke-width="0.8"/>
+  <text x="853" y="530" text-anchor="middle" class="tag">[critic option]</text>
+
+
+  <rect x="60" y="542" width="858" height="23" rx="3" fill="var(--surface,rgba(255,255,255,0.4))" stroke="var(--border-2,#a5f3fc)" stroke-width="0.8"/>
+  <text x="72" y="558" class="row-text">KL control as needed (see 6.9)</text>
+  <rect x="825" y="544" width="85" height="18" rx="3" fill="var(--surface,rgba(8,145,178,0.08))" stroke="var(--border-2,#a5f3fc)" stroke-width="0.8"/>
+  <text x="867" y="557" text-anchor="middle" class="tag">[stability]</text>
+
+
+
+
+  <defs>
+    <marker id="rss-up" viewBox="0 0 8 8" refX="4" refY="7" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0 8 L4 0 L8 8 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+    <marker id="rss-dn" viewBox="0 0 8 8" refX="4" refY="1" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0 0 L4 8 L8 0 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+  </defs>
+  <line x1="28" y1="55" x2="28" y2="570"
+        stroke="var(--border-2,#94a3b8)" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="18" y="320" text-anchor="middle" fill="var(--muted,currentColor)"
+        font="400 8.5px var(--sans,sans-serif)"
+        transform="rotate(-90,18,320)">throughput &lt;-&gt; algorithmic interleave</text>
+
+
+  <text x="490" y="590" text-anchor="middle" font="400 10px var(--sans,sans-serif)" fill="var(--muted,currentColor)">
+    Bold border = chapter's single biggest win. Lever 3 (overlap) unlocks the full throughput stack.
+  </text>
+</svg>
+<figcaption><b>Three interleaved layers of the 2024-2026 open-source scaling-RL recipe.</b> The Generation layer eliminates idle bubbles through continuous batching, oversubscription, shared queues, and overlap (Lever 3, highlighted, is the single biggest win). The Sample Selection layer ensures every generated sequence carries gradient signal. The Objective layer removes normalization biases and preserves exploration — with the layers interacting: dynamic sampling is only cheap when the generation layer is already async.</figcaption>
+</figure>
+
+<p>The meta-point: <strong>throughput in RL is won by overlap and by not wasting samples, not by faster kernels.</strong> Kernel-level speedups (FlashAttention, FP8, CUDA graphs — Part IV) matter, but they shave the <em>useful</em> work; the order-of-magnitude wins come from eliminating bubbles (overlap, oversubscription, partial rollout) and from eliminating <em>useless</em> work (dynamic sampling, over-long filtering, curriculum). Get the scheduling right first.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: instrument the bubble before you optimize</p>
+<p>Log, per step: total generated tokens, <span class="arithmatex">\(\bar L\)</span>, <span class="arithmatex">\(L_{\max}\)</span>, <span class="arithmatex">\(\eta_{\text{gen}} = \bar L/L_{\max}\)</span>, the fraction of degenerate (all-same-reward) groups, train-GPU idle %, and infer-GPU idle %. These six numbers tell you <em>which</em> lever to pull. High <span class="arithmatex">\(L_{\max}/\bar L\)</span> → partial rollout. High train-GPU idle → overlap. High degenerate-group fraction → dynamic sampling. Most teams optimize blind; a one-screen dashboard of these is worth a week of guesswork.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Your GRPO run on reasoning data gets only ~30% GPU utilization and step time keeps creeping up as training proceeds. Walk me through diagnosing and fixing it.</p>
+<p><strong>A:</strong> Two distinct symptoms. (1) <em>Low utilization</em> is almost always generation-side bubbles. In a synchronous loop the training GPUs idle during generation and vice versa, and within generation a heavy-tailed length distribution means most workers finish early and idle waiting on the longest trace. I&rsquo;d measure <span class="arithmatex">\(\eta_{\text{gen}} = \bar L / L_{\max}\)</span> and the train/infer idle percentages. Fixes in order of impact: overlap generation with training (1-step off-policy pipelining) so neither fleet idles; oversubscribe the inference engines with a deep prompt queue feeding continuous batching so freed slots refill; and partial rollout to cap how long any single trace gates a step. (2) <em>Step time creeping up over training</em> is the signature of dynamic sampling on a synchronous engine: as the model improves, more prompt-groups become all-correct (zero advantage variance), so DAPO-style filtering discards more and the oversampling factor grows — each step generates more sequences. The fix isn&rsquo;t to drop dynamic sampling (you need it, or you train on zero-gradient batches) but to make generation async and oversubscribed so the extra sampling overlaps training instead of serializing. I&rsquo;d also check loss normalization — per-sequence length normalization (vanilla GRPO) incentivizes longer wrong answers, inflating <span class="arithmatex">\(L_{\max}\)</span> over time and feeding the bubble; switching to a token-level loss (Dr. GRPO / DAPO) removes that length-blowup driver.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>The dominant cost in RL-for-LLM is generation, and the dominant waste is the bubble</strong> — idle GPUs from heavy-tailed sequence lengths and from serializing generation against training. Optimize the <em>schedule</em> before the kernels.</li>
+<li><strong><span class="arithmatex">\(\eta_{\text{gen}} = \bar L / L_{\max}\)</span></strong> is the one number to watch; a single 8× outlier trace can cut a run-to-completion batch&rsquo;s efficiency to ~12%.</li>
+<li><strong>Three levers fill the bubble:</strong> oversubscribe engines + continuous batching (refill freed slots), length-aware/shared-queue dispatch (no straggler engine), and overlap generation with training via 1-step off-policy pipelining (the biggest single win).</li>
+<li><strong>Partial rollout</strong> caps the tail by truncating long traces, stashing their KV/text, and resuming next phase — but you must importance-correct for the per-token behavior policy.</li>
+<li><strong>DAPO&rsquo;s dynamic sampling</strong> discards all-same-reward groups (zero gradient) and oversamples to a full <em>useful</em> batch — a statistics fix that is only cheap on an async, oversubscribed generation layer.</li>
+<li><strong>Dr. GRPO</strong> removes two silent biases: per-sequence length normalization (which incentivizes longer wrong answers) and std-normalization of the advantage (which over-weights low-variance prompts). Be deliberate about your loss normalizer.</li>
+<li><strong>DAPO&rsquo;s clip-higher</strong> decouples the PPO clip bounds to preserve exploration; <strong>VAPO</strong> shows a hardened value model (length-adaptive GAE, warmup) can beat critic-free RL at the cost of a second network.</li>
+<li><strong>Curriculum and dynamic sampling are the same idea</strong> — spend the rollout budget on prompts near pass-rate 0.5, where reward variance <span class="arithmatex">\(p(1-p)\)</span> and thus gradient signal is maximal.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Scaling RL for LLMs is a fast-moving engineering discipline where the biggest wins come from eliminating generation bubbles (overlap, oversubscription, partial rollout) and from eliminating useless samples (dynamic sampling, curriculum). The 2025 open-source ecosystem has largely converged on DAPO-style dynamic sampling and token-level loss normalization as standard practice, while value-based methods (VAPO) and fully-async disaggregated fleets represent the frontier.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI, <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em> (2025)</a> — introduced GRPO and large-scale RLVR, the baseline that all tricks in this chapter build upon.</li>
+<li><a href="https://arxiv.org/abs/2409.19256">Sheng et al., <em>HybridFlow: A Flexible and Efficient RLHF Framework</em> (2024)</a> — the veRL paper; describes 3D-HybridEngine, hybrid single/multi-controller design, and 1.5–20× throughput gains over prior systems.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2503.14476">Yu et al., <em>DAPO: An Open-Source LLM Reinforcement Learning System at Scale</em> (2025)</a> — dynamic sampling, clip-higher, token-level loss, and over-long filtering; 50 pts on AIME 2024 with Qwen2.5-32B.</li>
+<li><a href="https://arxiv.org/abs/2503.20783">Liu et al., <em>Understanding R1-Zero-Like Training: A Critical Perspective</em> / Dr. GRPO (2025)</a> — identifies length-normalization and std-normalization biases in GRPO; simple fix prevents runaway trace length.</li>
+<li><a href="https://arxiv.org/abs/2504.05118">Yue et al., <em>VAPO: Efficient and Reliable Reinforcement Learning for Advanced Reasoning Tasks</em> (2025)</a> — first value-model-based RL framework to outperform critic-free methods on long-CoT; length-adaptive GAE and critic warm-up are key.</li>
+<li><a href="https://arxiv.org/abs/2501.12599">Kimi Team, <em>Kimi k1.5: Scaling Reinforcement Learning with LLMs</em> (2025)</a> — introduces partial rollout (truncate-and-resume) and long-context RL scaling to 128k tokens.</li>
+<li><a href="https://arxiv.org/abs/2410.18252">Noukhovitch et al., <em>Asynchronous RLHF: Faster and More Efficient Off-Policy RL for Language Models</em> (ICLR 2025)</a> — formal treatment of overlapping generation and training; ~40–70% wall-clock speedup with provably small staleness cost.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/verl-project/verl">verl-project/verl</a> — production-grade flexible RL post-training framework; supports GRPO, PPO, FSDP/Megatron-LM, vLLM/SGLang, scales to 671B parameters.</li>
+<li><a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF/OpenRLHF</a> — Ray + vLLM distributed RLHF framework; supports PPO, GRPO, RLOO, REINFORCE++ with multi-turn and VLM training.</li>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — high-throughput LLM serving engine widely used as the rollout backend in RL stacks; RadixAttention, continuous batching, CUDA graphs.</li>
+<li><a href="https://github.com/PrimeIntellect-ai/prime-rl">PrimeIntellect-ai/prime-rl</a> — fully async RL framework for agentic training; scales to 1000+ GPUs with FSDP2 + vLLM and FP8 inference.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Yu et al., <em>DAPO: An Open-Source LLM Reinforcement Learning System at Scale</em> — dynamic sampling, clip-higher, token-level loss, over-long filtering.</li>
+<li>Liu et al., <em>Understanding R1-Zero-Like Training: A Critical Perspective</em> (Dr. GRPO) — the length- and std-normalization bias analysis and fixes.</li>
+<li>Yue et al., <em>VAPO: Efficient and Reliable Reinforcement Learning for Advanced Reasoning Tasks</em> — value-model-based long-CoT RL with length-adaptive GAE.</li>
+<li>Kimi Team, <em>Kimi k1.5: Scaling Reinforcement Learning with LLMs</em> — partial rollout and long-context RL infrastructure.</li>
+<li>DeepSeek-AI, <em>DeepSeekMath</em> (GRPO) and <em>DeepSeek-R1</em> — the group-relative baseline and the RLVR reasoning recipe these tricks build on.</li>
+<li>Schulman et al., <em>Proximal Policy Optimization Algorithms</em> and <em>High-Dimensional Continuous Control Using Generalized Advantage Estimation (GAE)</em> — the clipping and advantage machinery underneath.</li>
+<li>The <strong>veRL (HybridFlow)</strong> and <strong>OpenRLHF</strong> repositories — production implementations of oversubscription, continuous batching, and async overlap for RL.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="10-agentic-multiturn-rl.html"><span class="pn-label">← Previous</span><span class="pn-title">Agentic &amp; Multi-Turn RL</span></a>
+<a class="next" href="12-rl-data-curriculum-replay.html"><span class="pn-label">Next →</span><span class="pn-title">RL Data, Curriculum &amp; Replay Management</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#where-the-time-actually-goes-a-throughput-model">Where the time actually goes: a throughput model</a></li>
+<li class="toc-l2"><a href="#generation-load-imbalance-continuous-batching-in-rl">Generation load imbalance &amp;amp; continuous batching in RL</a></li>
+<li class="toc-l3"><a href="#the-problem-static-batching-wastes-the-tail">The problem: static batching wastes the tail</a></li>
+<li class="toc-l3"><a href="#lever-1-oversubscribe-the-engines">Lever 1: oversubscribe the engines</a></li>
+<li class="toc-l3"><a href="#lever-2-length-aware-dispatch-across-engines">Lever 2: length-aware dispatch across engines</a></li>
+<li class="toc-l3"><a href="#lever-3-overlap-generation-with-training">Lever 3: overlap generation with training</a></li>
+<li class="toc-l2"><a href="#partial-rollout-dont-pay-for-the-tail-twice">Partial rollout: don&amp;rsquo;t pay for the tail twice</a></li>
+<li class="toc-l2"><a href="#dynamic-sampling-filtering-dapo-and-the-zero-gradient-problem">Dynamic sampling &amp;amp; filtering: DAPO and the zero-gradient problem</a></li>
+<li class="toc-l3"><a href="#why-grpo-wastes-whole-prompts">Why GRPO wastes whole prompts</a></li>
+<li class="toc-l3"><a href="#dapos-dynamic-sampling-oversample-then-filter-to-a-full-effective-batch">DAPO&amp;rsquo;s dynamic sampling: oversample, then filter to a full effective batch</a></li>
+<li class="toc-l3"><a href="#over-long-filtering-length-control">Over-long filtering &amp;amp; length control</a></li>
+<li class="toc-l2"><a href="#the-latest-algorithmic-tricks-dr-grpo-vapo-and-the-clip-family">The latest algorithmic tricks: Dr. GRPO, VAPO, and the clip family</a></li>
+<li class="toc-l3"><a href="#dapos-other-two-clip-higher-and-token-level-loss">DAPO&amp;rsquo;s other two: clip-higher and token-level loss</a></li>
+<li class="toc-l3"><a href="#dr-grpo-removing-grpos-two-normalization-biases">Dr. GRPO: removing GRPO&amp;rsquo;s two normalization biases</a></li>
+<li class="toc-l3"><a href="#vapo-making-the-value-model-work-for-long-cot">VAPO: making the value model work for long CoT</a></li>
+<li class="toc-l2"><a href="#replay-curriculum-sample-reuse">Replay, curriculum &amp;amp; sample reuse</a></li>
+<li class="toc-l2"><a href="#a-worked-throughput-example">A worked throughput example</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-state-of-the-art-recipe">Putting it together: a state-of-the-art recipe</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Supervised Fine-Tuning &amp; Instruction Tuning — The LLM Stack</title>
+<meta name="description" content="From base to instruct; SFT objective, instruction datasets (FLAN, Alpaca, ShareGPT, OpenHermes), data quality &gt; quantity (LIMA), the three-stage recipe (SFT-&gt;pr">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="active" href="01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part V — Post-Training &amp; Alignment</div>
+<h1 id="51-supervised-fine-tuning-instruction-tuning">5.1 Supervised Fine-Tuning &amp; Instruction Tuning<a class="headerlink" href="#51-supervised-fine-tuning-instruction-tuning" title="Permanent link">¶</a></h1>
+<p>A freshly pretrained language model is a remarkable thing: it has absorbed syntax, facts, reasoning patterns, and writing styles from hundreds of billions of tokens of text. And yet if you give it the prompt &ldquo;Explain quantum entanglement to a 10-year-old,&rdquo; a raw base model is just as likely to continue the sentence with another question, an unrelated anecdote, or a bibliographic citation as it is to produce a helpful explanation. The model has learned <em>language</em>; it has not learned to be <em>helpful</em>.</p>
+<p>This is the problem supervised fine-tuning (SFT) solves. SFT teaches the model to follow instructions, adopt a conversational format, and suppress unhelpful completions — all by showing it examples of the behavior we want. In this chapter we work through the mechanics of SFT from first principles: the objective, the data, the full-versus-partial finetuning spectrum, the risk of catastrophic forgetting, and the three-stage post-training recipe that is now standard across frontier labs. We include a complete, runnable SFT training loop.</p>
+<p>SFT is the first stage of the alignment pipeline. It is followed by preference learning (<a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>) and optionally by policy-optimization steps (<a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a> and <a href="../05-posttraining-alignment/07-dpo-and-variants.html">Direct Preference Optimization &amp; Its Variants</a>). But none of those later stages work well without a solid SFT foundation.</p>
+<h2 id="why-base-models-need-fine-tuning">Why Base Models Need Fine-Tuning<a class="headerlink" href="#why-base-models-need-fine-tuning" title="Permanent link">¶</a></h2>
+<p>Pretraining (see <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a>) optimizes for next-token prediction over a diverse web corpus. The model learns to mimic the statistical properties of text — including plenty of text that continues questions with more questions, lists instructions without following them, or meanders off-topic. It has no concept of a &ldquo;user&rdquo; who wants something useful.</p>
+<p>The gap between a base model and a useful assistant has three dimensions:</p>
+<ol>
+<li><strong>Format mismatch.</strong> Users send instructions; the internet mostly contains prose, code, and documents. The model hasn&rsquo;t been rewarded for recognizing and following an imperative sentence.</li>
+<li><strong>Behavior mismatch.</strong> Even when the model &ldquo;knows&rdquo; an answer, it may produce the answer embedded in a Wikipedia-style article rather than as a direct reply.</li>
+<li><strong>Value mismatch.</strong> Base models generate whatever is most probable; a helpful assistant should refuse harmful requests, acknowledge uncertainty, and exhibit certain social norms.</li>
+</ol>
+<p>SFT addresses the first two problems by maximum-likelihood training on high-quality (instruction, response) pairs. It partially addresses the third; the remainder is the job of RLHF/DPO.</p>
+<h2 id="the-sft-objective">The SFT Objective<a class="headerlink" href="#the-sft-objective" title="Permanent link">¶</a></h2>
+<p>Given a dataset <span class="arithmatex">\(\mathcal{D} = \{(x_i, y_i)\}_{i=1}^{N}\)</span> where <span class="arithmatex">\(x_i\)</span> is an instruction (prompt) and <span class="arithmatex">\(y_i\)</span> is the target response, SFT fine-tunes the pretrained model <span class="arithmatex">\(\theta\)</span> by minimizing the standard negative log-likelihood, but <em>only over the response tokens</em>:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{SFT}(\theta) = -\sum_{i=1}^{N} \sum_{t=1}^{|y_i|} \log p_\theta\!\left(y_i^{(t)} \mid x_i, y_i^{(&lt;t)}\right)
+\]</div>
+<p>This is identical to the pretraining causal language-modeling loss, with one critical difference: the loss mask. Tokens belonging to the instruction <span class="arithmatex">\(x_i\)</span> are masked out (weight zero); only the response <span class="arithmatex">\(y_i\)</span> tokens contribute to the gradient. The model is trained to predict what a good assistant would say, not to re-predict the instruction it just received.</p>
+<p>The concatenated sequence seen by the transformer is:</p>
+<p><figure class="viz" id="fig-sft-loss-mask-sequence">
+<svg viewBox="0 0 820 260" role="img" aria-label="Response-only loss masking: the token sequence [BOS] system-prompt user-turn assistant-response [EOS] where BOS, system prompt and user turn are masked (loss weight 0) and assistant response plus EOS are supervised (loss weight 1).">
+<defs>
+  <marker id="lm-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--muted,#6d675d)"/>
+  </marker>
+</defs></p>
+<style>
+  #fig-sft-loss-mask-sequence text { fill: currentColor; }
+  #fig-sft-loss-mask-sequence .lbl  { font: 600 12px var(--mono,monospace); }
+  #fig-sft-loss-mask-sequence .cap  { font: 500 11px var(--sans,sans-serif); }
+  #fig-sft-loss-mask-sequence .sub  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-sft-loss-mask-sequence .leg  { font: 500 11px var(--sans,sans-serif); }
+  #fig-sft-loss-mask-sequence .ann  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-sft-loss-mask-sequence .boundary { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+</style>
+
+<p><rect x="42" y="30" width="68" height="44" rx="6"
+      fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="76" y="57" text-anchor="middle" class="lbl" fill="var(--muted,#6d675d)">[BOS]</text></p>
+<p><rect x="110" y="30" width="152" height="44" rx="0"
+      fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="186" y="57" text-anchor="middle" class="lbl" fill="var(--muted,#6d675d)">&lt;system prompt&gt;</text></p>
+<p><rect x="262" y="30" width="142" height="44" rx="0"
+      fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="333" y="57" text-anchor="middle" class="lbl" fill="var(--muted,#6d675d)">&lt;user turn&gt;</text></p>
+<p><rect x="404" y="30" width="186" height="44" rx="0"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.13" stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+<text x="497" y="57" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">&lt;assistant response&gt;</text></p>
+<p><rect x="590" y="30" width="68" height="44" rx="6"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.13" stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+<text x="624" y="57" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">[EOS]</text></p>
+<p><path d="M 46 100 L 46 110 L 400 110 L 400 100"
+      fill="none" stroke="var(--muted,#6d675d)" stroke-width="1.5"/>
+<line x1="223" y1="110" x2="223" y2="120" stroke="var(--muted,#6d675d)" stroke-width="1.5"/>
+<text x="180" y="135" text-anchor="middle" class="cap" fill="var(--muted,#6d675d)">mask = 0  (no gradient)</text>
+<text x="180" y="150" text-anchor="middle" class="sub" fill="var(--muted,#6d675d)">prompt / instruction tokens</text></p>
+<p><path d="M 408 100 L 408 110 L 654 110 L 654 100"
+      fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+<line x1="531" y1="110" x2="531" y2="120" stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+<text x="531" y="135" text-anchor="middle" class="cap" fill="var(--accent2,#3b82f6)">mask = 1  (gradient)</text>
+<text x="531" y="150" text-anchor="middle" class="sub" fill="var(--accent2,#3b82f6)">response tokens</text></p>
+<p><line x1="404" y1="74" x2="404" y2="90" stroke="var(--muted,#6d675d)" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#lm-arrow)"/>
+<text x="406" y="86" class="ann" fill="var(--muted,#6d675d)">loss starts here</text></p>
+<p><rect x="470" y="165" width="14" height="14" rx="3"
+      fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.2"/>
+<text x="490" y="177" class="leg" fill="var(--muted,#6d675d)">Masked (loss weight 0)</text></p>
+<p><rect x="470" y="186" width="14" height="14" rx="3"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.18" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<text x="490" y="198" class="leg" fill="var(--accent2,#3b82f6)">Supervised (loss weight 1)</text></p>
+<p></svg></p>
+<figcaption><b>Response-only loss masking in the SFT sequence.</b> The transformer sees one flat token sequence, but the cross-entropy loss is applied only to the assistant-response and [EOS] spans (mask = 1). Instruction tokens — [BOS], system prompt, and user turn — are masked out (mask = 0), so gradients flow only from the model's own replies, concentrating learning on reply quality rather than input reconstruction.</figcaption>
+</figure>
+<p>The exact chat template varies by model family — see <a href="../05-posttraining-alignment/02-chat-templates-packing.html">Chat Templates, Data Formatting &amp; Sequence Packing</a> for the full treatment of tokenization and formatting.</p>
+<h3 id="why-not-train-on-the-full-sequence">Why Not Train on the Full Sequence?<a class="headerlink" href="#why-not-train-on-the-full-sequence" title="Permanent link">¶</a></h3>
+<p>A natural question: why mask the instruction? In principle, training on the full sequence also works — and some practitioners do it. But there are two reasons to prefer response-only supervision:</p>
+<ul>
+<li><strong>Signal concentration.</strong> Instructions are often short; responses are longer. Response-only supervision gives the optimizer a cleaner gradient signal that specifically rewards good reply quality rather than re-encoding the input.</li>
+<li><strong>Prompt contamination.</strong> If the model is penalized for &ldquo;wrong&rdquo; instruction tokens, it may learn to prefer certain prompt phrasings over others in ways that generalize poorly.</li>
+</ul>
+<p>In practice, the difference is small for well-formatted data but response masking is the standard convention.</p>
+<h2 id="instruction-datasets-a-field-guide">Instruction Datasets: A Field Guide<a class="headerlink" href="#instruction-datasets-a-field-guide" title="Permanent link">¶</a></h2>
+<p>The quality of SFT output depends overwhelmingly on the data. Here we survey the landmark datasets that shaped how the field thinks about instruction tuning.</p>
+<h3 id="flan-finetuned-language-models-are-zero-shot-learners-wei-et-al-2021">FLAN (Finetuned Language Models Are Zero-Shot Learners, Wei et al., 2021)<a class="headerlink" href="#flan-finetuned-language-models-are-zero-shot-learners-wei-et-al-2021" title="Permanent link">¶</a></h3>
+<p>FLAN was among the first large-scale demonstrations that instruction tuning dramatically improves zero-shot task performance. It took 62 existing NLP benchmark datasets (sentiment, QA, translation, commonsense, etc.) and reformulated each as a set of natural-language instruction templates: for example, a sentiment classification sample might be phrased as &ldquo;Does this review express a positive or negative opinion? Review: &hellip;&rdquo; followed by the label as the response.</p>
+<p>The key insight from FLAN: task diversity matters enormously. A model finetuned on many task types generalizes to held-out tasks; a model finetuned on a narrow set does not. The follow-on FLAN-T5 and FLAN-v2 scaled this to thousands of task mixtures.</p>
+<h3 id="alpaca-taori-et-al-stanford-2023">Alpaca (Taori et al., Stanford, 2023)<a class="headerlink" href="#alpaca-taori-et-al-stanford-2023" title="Permanent link">¶</a></h3>
+<p>Alpaca made instruction tuning accessible to the broader research community. The data generation method is now iconic: feed 175 seed instruction-response pairs to a capable API model (text-davinci-003) and prompt it to generate 52,000 more using a self-instruct procedure. Fine-tune LLaMA-7B on the result. The fine-tuned model followed instructions surprisingly well, demonstrating that even a small model benefits enormously from instruction tuning.</p>
+<p>Alpaca revealed two things: (1) you can synthesize instruction data cheaply using a stronger teacher; and (2) even 52k examples is enough to meaningfully shift model behavior if the examples are diverse.</p>
+<div class="admonition warning">
+<p class="admonition-title">Data quality is a moving target</p>
+<p>Alpaca data is known to contain factual errors and repetitive patterns introduced by the teacher model. Several studies found that training on cleaner subsets of 5–10k examples outperformed the full 52k set. This foreshadows LIMA.</p>
+</div>
+<h3 id="sharegpt-openhermes">ShareGPT &amp; OpenHermes<a class="headerlink" href="#sharegpt-openhermes" title="Permanent link">¶</a></h3>
+<p>ShareGPT is a crowd-sourced corpus of real ChatGPT conversations shared voluntarily by users. Unlike Alpaca&rsquo;s single-turn format, ShareGPT contains multi-turn dialogues with genuine diversity of topic and user intent. This makes it much better at teaching the model how to handle follow-up questions, clarifications, and context accumulation.</p>
+<p>OpenHermes (Teknium, 2023) is a curated blend of high-quality synthetic conversations from multiple sources: code exercises, reasoning problems, creative writing, roleplay, and factual Q&amp;A. It demonstrated that careful curation and blending of several source datasets — even with no human annotation — can produce a very capable SFT model.</p>
+<h3 id="lima-less-is-more-for-alignment-zhou-et-al-2023">LIMA: Less Is More for Alignment (Zhou et al., 2023)<a class="headerlink" href="#lima-less-is-more-for-alignment-zhou-et-al-2023" title="Permanent link">¶</a></h3>
+<p>LIMA is possibly the most important alignment paper for practitioners. The authors curated exactly 1,000 high-quality prompt-response pairs — drawn from Stack Exchange, wikiHow, and Reddit, plus some hand-written examples — and fine-tuned a LLaMA-65B model on nothing else.</p>
+<p>The result outperformed SFT models trained on hundreds of thousands of examples in human preference studies. The conclusion: <strong>data quality dominates data quantity</strong>. A model that has absorbed vast knowledge during pretraining needs only a relatively small number of well-structured demonstrations to learn the format and style of helpful responses. The alignment tax for SFT is surprisingly cheap — if the data is good.</p>
+<p>The LIMA hypothesis is sometimes called the <em>superficial alignment hypothesis</em>: the core &ldquo;knowledge&rdquo; of the model lives in the pretraining weights; SFT teaches the model to <em>access and present</em> that knowledge in the right format.</p>
+<div class="admonition note">
+<p class="admonition-title">Implications for practitioners</p>
+<p>Before scaling your SFT dataset to millions of examples, invest heavily in data quality metrics: deduplication, response length distribution, instruction diversity, and human spot-checking. Starting with 1–5k meticulously verified examples often beats starting with 100k noisy ones.</p>
+</div>
+<h2 id="data-quality-quantity-practical-data-engineering">Data Quality &gt; Quantity: Practical Data Engineering<a class="headerlink" href="#data-quality-quantity-practical-data-engineering" title="Permanent link">¶</a></h2>
+<p>Given the LIMA insight, how do you build high-quality SFT data in practice?</p>
+<p><strong>Instruction diversity.</strong> Cluster your instructions (e.g., by embedding them with a sentence encoder) and measure coverage. An instruction dataset that is 70% &ldquo;write a Python function to&hellip;&rdquo; is not diverse and will produce a lopsided model.</p>
+<p><strong>Response quality filters.</strong> Use heuristics (minimum length, no refusal boilerplate, no truncations) and reward model scoring. If you already have a reward model (chapter <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>), filter to the top-scoring responses per instruction cluster.</p>
+<p><strong>Format consistency.</strong> All examples should follow the same chat template. Mixed templates in a training batch cause the model to learn an inconsistent format.</p>
+<p><strong>Deduplication.</strong> Near-duplicate instructions with slightly different phrasings inflate dataset size while contributing almost no new learning signal. Min-hash or embedding-based deduplication is standard; see <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a>.</p>
+<p><strong>Long-tail coverage.</strong> Ensure examples cover rare but important topics: safety refusals, citations/uncertainty, multi-hop reasoning, code debugging. These are underrepresented in organic data but disproportionately important for the model&rsquo;s edge-case behavior.</p>
+<h3 id="comparing-key-sft-datasets">Comparing Key SFT Datasets<a class="headerlink" href="#comparing-key-sft-datasets" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Dataset</th>
+<th>Size</th>
+<th>Source</th>
+<th>Multi-turn</th>
+<th>Key property</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FLAN</td>
+<td>~100k+</td>
+<td>NLP benchmarks, templated</td>
+<td>No</td>
+<td>Task diversity</td>
+</tr>
+<tr>
+<td>Alpaca</td>
+<td>52k</td>
+<td>GPT-3 self-instruct</td>
+<td>No</td>
+<td>Cheap synthesis</td>
+</tr>
+<tr>
+<td>ShareGPT</td>
+<td>~70k</td>
+<td>Real ChatGPT conversations</td>
+<td>Yes</td>
+<td>Authentic multi-turn</td>
+</tr>
+<tr>
+<td>OpenHermes</td>
+<td>~900k</td>
+<td>Multi-source synthetic blend</td>
+<td>Yes</td>
+<td>Quality curation at scale</td>
+</tr>
+<tr>
+<td>LIMA</td>
+<td>1k</td>
+<td>Human curated</td>
+<td>No</td>
+<td>Quality &gt; quantity demo</td>
+</tr>
+</tbody>
+</table>
+<h2 id="the-three-stage-post-training-recipe">The Three-Stage Post-Training Recipe<a class="headerlink" href="#the-three-stage-post-training-recipe" title="Permanent link">¶</a></h2>
+<p>Modern instruction-following models are not trained in one step. The standard recipe, used across frontier labs, involves three stages:</p>
+<figure class="viz" id="fig-sft-three-stage-posttraining-recipe">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 820 490" role="img" aria-label="Three-stage post-training pipeline: Stage 1 SFT turns a base model into the SFT model; Stage 2 reward modeling uses the SFT model plus preference data to build a reward model; Stage 3 RL alignment uses the SFT model plus reward model to produce the aligned model. Dotted lines show the SFT model being reused in stages 2 and 3, and the reward model reused in stage 3.">
+<defs>
+  <marker id="tp-arr"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#6d675d)"/>
+  </marker>
+  <marker id="tp-blue"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+  <marker id="tp-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--warn,#e0a106)"/>
+  </marker>
+</defs>
+<style>
+  #fig-sft-three-stage-posttraining-recipe text  { fill: currentColor; }
+  #fig-sft-three-stage-posttraining-recipe .stg  { font: 700 12px var(--sans,sans-serif); }
+  #fig-sft-three-stage-posttraining-recipe .nlbl { font: 600 11px var(--sans,sans-serif); }
+  #fig-sft-three-stage-posttraining-recipe .slbl { font: 600 9.5px var(--sans,sans-serif); }
+  #fig-sft-three-stage-posttraining-recipe .albl { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-sft-three-stage-posttraining-recipe .clbl { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-sft-three-stage-posttraining-recipe .plus { font: 700 13px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-sft-three-stage-posttraining-recipe .rlbl { font: 500 8px var(--sans,sans-serif); }
+  #fig-sft-three-stage-posttraining-recipe .optl { font: italic 9px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-sft-three-stage-posttraining-recipe .legl { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+
+  @keyframes tp-gblue  { 0%,100%{stroke-width:2; stroke-opacity:1} 50%{stroke-width:3.5; stroke-opacity:1} }
+  @keyframes tp-ggreen { 0%,100%{stroke-width:2; stroke-opacity:1} 50%{stroke-width:3.5; stroke-opacity:1} }
+  @keyframes tp-fi  { from{opacity:0} to{opacity:1} }
+  @keyframes tp-da  { from{stroke-dashoffset:240} to{stroke-dashoffset:0} }
+  @keyframes tp-do  { from{stroke-dashoffset:120} to{stroke-dashoffset:0} }
+
+  .s1       { animation: tp-fi .4s ease .1s both; }
+  .s1arr    { stroke-dasharray:240; stroke-dashoffset:240; animation: tp-da .7s ease .5s forwards; }
+  .s1out    { animation: tp-fi .4s ease 1.2s both; }
+  .s1glow   { animation: tp-gblue 1.6s ease 1.5s 3; }
+  .rc12     { stroke-dasharray:6 4; stroke-dashoffset:120; animation: tp-do .5s ease 2.2s forwards; }
+  .rc13     { stroke-dasharray:6 4; stroke-dashoffset:120; animation: tp-do .5s ease 2.3s forwards; }
+  .rl12     { opacity:0; animation: tp-fi .3s ease 2.7s both; }
+  .rl13     { opacity:0; animation: tp-fi .3s ease 2.9s both; }
+  .s2       { opacity:0; animation: tp-fi .4s ease 3.0s both; }
+  .s2arr    { stroke-dasharray:240; stroke-dashoffset:240; animation: tp-da .7s ease 3.4s forwards; }
+  .s2out    { opacity:0; animation: tp-fi .4s ease 4.1s both; }
+  .rc23     { stroke-dasharray:6 4; stroke-dashoffset:120; animation: tp-do .5s ease 4.5s forwards; }
+  .rl23     { opacity:0; animation: tp-fi .3s ease 5.0s both; }
+  .s3       { opacity:0; animation: tp-fi .4s ease 5.1s both; }
+  .s3arr    { stroke-dasharray:240; stroke-dashoffset:240; animation: tp-da .7s ease 5.5s forwards; }
+  .s3out    { opacity:0; animation: tp-fi .4s ease 6.2s both; }
+  .s3glow   { animation: tp-ggreen 1.6s ease 6.4s 3; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-sft-three-stage-posttraining-recipe * {
+      animation: none !important;
+      opacity: 1 !important;
+      stroke-dashoffset: 0 !important;
+    }
+  }
+</style>
+
+
+
+
+<rect class="s1" x="14" y="14" width="500" height="134" rx="8"
+      fill="var(--surface-3,#ece7da)" fill-opacity=".55"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text class="stg s1" x="44" y="34" fill="var(--ink-soft,#45413a)">Stage 1 &#x2014; Supervised Fine-Tuning (SFT)</text>
+
+<g class="s1">
+  <rect x="44" y="44" width="96" height="46" rx="6"
+        fill="var(--surface,#ffffff)" fill-opacity=".9"
+        stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+  <text x="92" y="63" text-anchor="middle" class="nlbl" fill="var(--ink-soft,#45413a)">Base</text>
+  <text x="92" y="78" text-anchor="middle" class="nlbl" fill="var(--ink-soft,#45413a)">model</text>
+</g>
+
+
+<text class="albl s1" x="211" y="57" text-anchor="middle">NLL fine-tune</text>
+<line class="s1arr" x1="142" y1="67" x2="280" y2="67"
+      stroke="var(--muted,#6d675d)" stroke-width="1.8" marker-end="url(#tp-arr)"/>
+
+
+<g class="s1out">
+  <rect class="s1glow" x="284" y="44" width="100" height="46" rx="6"
+        fill="var(--accent2,#3b82f6)" fill-opacity=".13"
+        stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+  <text x="334" y="63" text-anchor="middle" class="nlbl" fill="var(--accent2,#3b82f6)">SFT</text>
+  <text x="334" y="78" text-anchor="middle" class="nlbl" fill="var(--accent2,#3b82f6)">model</text>
+</g>
+
+<text class="clbl s1" x="44" y="110">Objective: NLL on instruction&#x2013;response pairs</text>
+<text class="clbl s1" x="44" y="124">Teaches: format, basic instruction following</text>
+
+
+
+<path class="rc12"
+      d="M 284 67 H 22 V 226 H 44"
+      fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"
+      marker-end="url(#tp-blue)"/>
+<text class="rlbl rl12" x="10" y="154" text-anchor="middle"
+      fill="var(--accent2,#3b82f6)" transform="rotate(-90 10 154)">reused</text>
+
+
+<path class="rc13"
+      d="M 22 148 V 372 H 44"
+      fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"
+      stroke-dasharray="6 4" marker-end="url(#tp-blue)"/>
+<text class="rlbl rl13" x="10" y="266" text-anchor="middle"
+      fill="var(--accent2,#3b82f6)" transform="rotate(-90 10 266)">reused</text>
+
+
+<rect class="s2" x="14" y="162" width="500" height="134" rx="8"
+      fill="var(--surface-3,#ece7da)" fill-opacity=".30"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="6 3"/>
+<text class="stg s2" x="44" y="182" fill="var(--ink-soft,#45413a)">Stage 2 &#x2014; Reward Modeling (RM)</text>
+<text class="optl s2" x="44" y="196">[optional &#x2014; skipped by DPO]</text>
+
+<g class="s2">
+  <rect x="44" y="206" width="72" height="40" rx="5"
+        fill="var(--accent2,#3b82f6)" fill-opacity=".10"
+        stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+  <text x="80" y="222" text-anchor="middle" class="slbl" fill="var(--accent2,#3b82f6)">SFT</text>
+  <text x="80" y="234" text-anchor="middle" class="slbl" fill="var(--accent2,#3b82f6)">model</text>
+</g>
+<text class="plus s2" x="122" y="231">+</text>
+<g class="s2">
+  <rect x="134" y="206" width="72" height="40" rx="5"
+        fill="var(--surface,#ffffff)" fill-opacity=".9"
+        stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+  <text x="170" y="222" text-anchor="middle" class="slbl" fill="var(--ink-soft,#45413a)">preference</text>
+  <text x="170" y="234" text-anchor="middle" class="slbl" fill="var(--ink-soft,#45413a)">data</text>
+</g>
+
+
+<text class="albl s2" x="245" y="220" text-anchor="middle">rank pairs</text>
+<line class="s2arr" x1="210" y1="226" x2="280" y2="226"
+      stroke="var(--muted,#6d675d)" stroke-width="1.8" marker-end="url(#tp-arr)"/>
+
+<g class="s2out">
+  <rect x="284" y="206" width="100" height="40" rx="6"
+        fill="var(--warn,#e0a106)" fill-opacity=".13"
+        stroke="var(--warn,#e0a106)" stroke-width="2"/>
+  <text x="334" y="222" text-anchor="middle" class="nlbl" fill="var(--warn,#e0a106)">Reward</text>
+  <text x="334" y="238" text-anchor="middle" class="nlbl" fill="var(--warn,#e0a106)">model</text>
+</g>
+
+<text class="clbl s2" x="44" y="264">Objective: rank preferred over rejected responses</text>
+<text class="clbl s2" x="44" y="278">Teaches: human preferences</text>
+
+
+<path class="rc23"
+      d="M 384 226 H 398 V 372 H 384"
+      fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.5"
+      stroke-dasharray="6 4" marker-end="url(#tp-amber)"/>
+<text class="rlbl rl23" x="410" y="306" text-anchor="middle"
+      fill="var(--warn,#e0a106)" transform="rotate(90 410 306)">reused</text>
+
+
+<rect class="s3" x="14" y="310" width="500" height="134" rx="8"
+      fill="var(--surface-3,#ece7da)" fill-opacity=".55"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text class="stg s3" x="44" y="330" fill="var(--ink-soft,#45413a)">Stage 3 &#x2014; RL Alignment (PPO / DPO / GRPO)</text>
+
+<g class="s3">
+  <rect x="44" y="340" width="72" height="40" rx="5"
+        fill="var(--accent2,#3b82f6)" fill-opacity=".10"
+        stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+  <text x="80" y="356" text-anchor="middle" class="slbl" fill="var(--accent2,#3b82f6)">SFT</text>
+  <text x="80" y="368" text-anchor="middle" class="slbl" fill="var(--accent2,#3b82f6)">model</text>
+</g>
+<text class="plus s3" x="122" y="365">+</text>
+<g class="s3">
+  <rect x="134" y="340" width="72" height="40" rx="5"
+        fill="var(--warn,#e0a106)" fill-opacity=".10"
+        stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="170" y="356" text-anchor="middle" class="slbl" fill="var(--warn,#e0a106)">Reward</text>
+  <text x="170" y="368" text-anchor="middle" class="slbl" fill="var(--warn,#e0a106)">model</text>
+</g>
+
+
+<text class="albl s3" x="245" y="351" text-anchor="middle">RL optimize</text>
+<line class="s3arr" x1="210" y1="360" x2="280" y2="360"
+      stroke="var(--muted,#6d675d)" stroke-width="1.8" marker-end="url(#tp-arr)"/>
+
+<g class="s3out">
+  <rect class="s3glow" x="284" y="340" width="100" height="40" rx="6"
+        fill="var(--good,#2f9e6e)" fill-opacity=".13"
+        stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <text x="334" y="356" text-anchor="middle" class="nlbl" fill="var(--good,#2f9e6e)">Aligned</text>
+  <text x="334" y="372" text-anchor="middle" class="nlbl" fill="var(--good,#2f9e6e)">model</text>
+</g>
+
+<text class="clbl s3" x="44" y="406">Objective: maximize expected reward</text>
+<text class="clbl s3" x="44" y="420">Teaches: nuanced helpfulness, safety, style</text>
+
+
+<text class="stg" x="524" y="32" fill="var(--ink-soft,#45413a)">Legend</text>
+
+<rect x="524" y="42"  width="11" height="11" rx="2"
+      fill="var(--surface,#ffffff)" fill-opacity=".9" stroke="var(--v-stroke,#45413a)" stroke-width="1.2"/>
+<text x="540" y="52"  class="legl">Base / data nodes</text>
+
+<rect x="524" y="60"  width="11" height="11" rx="2"
+      fill="var(--accent2,#3b82f6)" fill-opacity=".18" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+<text x="540" y="70"  class="legl">SFT model (pivot artifact)</text>
+
+<rect x="524" y="78"  width="11" height="11" rx="2"
+      fill="var(--warn,#e0a106)" fill-opacity=".18" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+<text x="540" y="88"  class="legl">Reward model</text>
+
+<rect x="524" y="96"  width="11" height="11" rx="2"
+      fill="var(--good,#2f9e6e)" fill-opacity=".18" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+<text x="540" y="106" class="legl">Aligned model (end goal)</text>
+
+<line x1="524" y1="121" x2="535" y2="121" stroke="var(--accent2,#3b82f6)" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="540" y="125" class="legl">SFT reuse path</text>
+
+<line x1="524" y1="138" x2="535" y2="138" stroke="var(--warn,#e0a106)" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="540" y="142" class="legl">RM reuse path</text>
+
+
+<rect x="524" y="310" width="278" height="80" rx="6"
+      fill="var(--surface-3,#ece7da)" fill-opacity=".5"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="5 3"/>
+<text x="536" y="330" class="optl">DPO variant: skips Stage 2 entirely.</text>
+<text x="536" y="346" class="optl">Pipeline: Stage 1 -&gt; Stage 3 directly.</text>
+<text x="536" y="362" class="optl">Preferences folded into Stage 3 loss.</text>
+<text x="536" y="378" class="optl">No explicit reward model needed.</text>
+
+</svg>
+<figcaption><b>The three-stage post-training recipe: SFT &#x2192; Reward Modeling &#x2192; RL Alignment.</b> The SFT model (blue) is the pivotal shared artifact &#x2014; it seeds the reward model in Stage 2 and provides the behavioral prior in Stage 3. Dotted connectors show both reuse paths explicitly. DPO collapses Stages 2 and 3, skipping explicit reward model training entirely.</figcaption>
+</figure>
+
+<p>SFT is indispensable as Stage 1 because:</p>
+<ul>
+<li>It gives the RL algorithm a strong behavioral prior to start from. RL optimization on a raw base model is extremely sample-inefficient and unstable — the policy space is too large.</li>
+<li>The SFT model already speaks the right &ldquo;language&rdquo; (instruction-following format), so the reward model can produce meaningful gradients from day one.</li>
+<li>Some tasks (code generation, structured output) are almost entirely learned in SFT; RL fine-tunes the margins.</li>
+</ul>
+<p>The SFT → RM → RL pipeline is covered in depth in <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a> and <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>. DPO skips the explicit RM step; see <a href="../05-posttraining-alignment/07-dpo-and-variants.html">Direct Preference Optimization &amp; Its Variants</a>.</p>
+<h2 id="full-fine-tuning-vs-parameter-efficient-fine-tuning">Full Fine-Tuning vs. Parameter-Efficient Fine-Tuning<a class="headerlink" href="#full-fine-tuning-vs-parameter-efficient-fine-tuning" title="Permanent link">¶</a></h2>
+<p>When fine-tuning a pretrained model, you have a spectrum of choices about which parameters to update.</p>
+<h3 id="full-fine-tuning">Full Fine-Tuning<a class="headerlink" href="#full-fine-tuning" title="Permanent link">¶</a></h3>
+<p>All <span class="arithmatex">\(N\)</span> parameters of the model are updated by gradient descent. For a 7B-parameter model in float32, the parameters alone require ~28 GB. Full fine-tuning additionally needs optimizer states: AdamW maintains a first and second moment per parameter, adding another ~56 GB for a total of ~84 GB at float32 — or ~42 GB at bf16/float32 mixed precision. This typically requires multiple high-memory GPUs.</p>
+<p>Full fine-tuning gives the model the most flexibility to adapt, and it is the preferred choice when:
+- You have abundant compute.
+- You are doing domain adaptation that requires broad weight updates (e.g., medical notes for a model trained only on general web text).
+- The target distribution differs substantially from pretraining.</p>
+<h3 id="parameter-efficient-fine-tuning-peft">Parameter-Efficient Fine-Tuning (PEFT)<a class="headerlink" href="#parameter-efficient-fine-tuning-peft" title="Permanent link">¶</a></h3>
+<p>PEFT methods freeze most model weights and train only a small adapter. The canonical method is LoRA (Low-Rank Adaptation, Hu et al., 2021): for a weight matrix <span class="arithmatex">\(W \in \mathbb{R}^{d \times k}\)</span>, learn a low-rank update <span class="arithmatex">\(\Delta W = AB\)</span> where <span class="arithmatex">\(A \in \mathbb{R}^{d \times r}\)</span>, <span class="arithmatex">\(B \in \mathbb{R}^{r \times k}\)</span>, and rank <span class="arithmatex">\(r \ll \min(d, k)\)</span>.</p>
+<p>The modified forward pass is:</p>
+<div class="arithmatex">\[
+h = W x + \Delta W x = W x + A B x
+\]</div>
+<p>with <span class="arithmatex">\(B\)</span> initialized to zero so that <span class="arithmatex">\(\Delta W = 0\)</span> at the start of training. During inference the adapter can be merged back: <span class="arithmatex">\(W' = W + AB\)</span>, adding zero latency overhead.</p>
+<p>LoRA at rank <span class="arithmatex">\(r=16\)</span> on a 7B model trains roughly 0.5–1% of parameters, reducing memory requirements dramatically. QLoRA (Dettmers et al., 2023) additionally quantizes the frozen base model weights to 4-bit NF4, enabling SFT of 7B models on a single consumer GPU.</p>
+<p>See <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a> for the full PEFT treatment. For this chapter we focus on the SFT objective and data pipeline, which are identical whether you use full fine-tuning or LoRA — the only difference is which parameters receive gradients.</p>
+<div class="admonition example">
+<p class="admonition-title">Memory budget: 7B full fine-tuning vs. QLoRA</p>
+<p>Consider a 7B-parameter model. Parameters have roughly 7 × 10⁹ entries.</p>
+<p><strong>Full fine-tuning (bf16 params + fp32 optimizer states):</strong>
+- Model weights: 7B × 2 bytes = 14 GB
+- Gradients (fp32): 7B × 4 bytes = 28 GB
+- AdamW m₁ + m₂ (fp32): 7B × 2 × 4 bytes = 56 GB
+- Activations (sequence length 2048, batch 4): ~12–20 GB depending on architecture
+- <strong>Total: ~110–120 GB</strong> → requires 2–4 × 80 GB A100s</p>
+<p><strong>QLoRA (4-bit frozen base + fp32 LoRA adapters, r=64):</strong>
+- Quantized base: 7B × 0.5 bytes ≈ 3.5 GB
+- LoRA trainable params ≈ 80M × 4 bytes ≈ 0.3 GB
+- AdamW states for LoRA ≈ 0.6 GB
+- Activations: ~4–8 GB
+- <strong>Total: ~10–15 GB</strong> → fits on a single 24 GB RTX 3090 or 4090</p>
+</div>
+<h2 id="catastrophic-forgetting">Catastrophic Forgetting<a class="headerlink" href="#catastrophic-forgetting" title="Permanent link">¶</a></h2>
+<p>One of the central risks of fine-tuning a pretrained model is catastrophic forgetting (CF): updating weights to improve performance on the target task can degrade performance on other tasks the model previously handled well. The weights that encode general knowledge are overwritten by the gradient updates for the specific SFT distribution.</p>
+<h3 id="why-it-happens">Why It Happens<a class="headerlink" href="#why-it-happens" title="Permanent link">¶</a></h3>
+<p>During pretraining, the model&rsquo;s weights settle into a configuration that is jointly optimal for a huge variety of tasks. SFT data is a narrow sample of that space. If the learning rate is too large, or the SFT distribution is too far from the pretraining distribution, gradient descent will &ldquo;forget&rdquo; the pretraining solution in favor of the fine-tuning target.</p>
+<p>The phenomenon is well-studied in continual learning: when a neural network is trained sequentially on task A then task B, performance on task A degrades roughly in proportion to the distance between the loss landscapes of A and B.</p>
+<h3 id="mitigation-strategies">Mitigation Strategies<a class="headerlink" href="#mitigation-strategies" title="Permanent link">¶</a></h3>
+<p><strong>Low learning rate.</strong> SFT learning rates are typically one to two orders of magnitude below pretraining rates. If pretraining used a peak LR of <span class="arithmatex">\(3 \times 10^{-4}\)</span>, SFT might use <span class="arithmatex">\(1 \times 10^{-5}\)</span> to <span class="arithmatex">\(5 \times 10^{-5}\)</span>. This limits the step size of weight updates, preserving most of the pretrained knowledge.</p>
+<p><strong>Short training (1–3 epochs).</strong> Running SFT for many epochs on a small dataset causes the model to overfit the SFT distribution and forget pretraining. One to three epochs over a well-curated dataset is the standard.</p>
+<p><strong>Small dataset advantage.</strong> Counter-intuitively, training on a <em>smaller</em> high-quality dataset (LIMA-style) for fewer steps causes less forgetting than training on a large noisy dataset for many steps.</p>
+<p><strong>Data mixing.</strong> Blending a small fraction (5–10%) of pretraining data back into the SFT mix preserves general capabilities. This is sometimes called replay or data mixing and is common in practice.</p>
+<p><strong>LoRA/PEFT.</strong> Because LoRA freezes the base weights, it is structurally immune to overwriting pretrained knowledge. The base model&rsquo;s general knowledge is perfectly preserved; only the low-rank adapter changes. This is a major practical advantage of PEFT beyond just memory efficiency.</p>
+<p><strong>Elastic Weight Consolidation (EWC, Kirkpatrick et al., 2017).</strong> Adds a penalty term to the loss that discourages changes to parameters that were important for previous tasks, weighted by the Fisher information matrix. Rarely used in LLM SFT today (too expensive to compute exactly) but conceptually important.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re fine-tuning a 7B instruction model on 50,000 domain-specific Q&amp;A pairs for a medical assistant. After fine-tuning, users report that the model can no longer do basic arithmetic and has lost some of its general conversational ability. What went wrong, and how would you fix it?</p>
+<p><strong>A:</strong> This is classic catastrophic forgetting. Several things likely went wrong: (1) the learning rate was too high, causing large weight updates that overwrote general-capability weights; (2) training ran for too many epochs, overfitting the medical distribution; and (3) there was no data mixing to maintain coverage of general tasks.</p>
+<p>To fix it: reduce the learning rate to around 1×10⁻⁵, train for 1–2 epochs maximum, and add a data mix — include 5–10% of a general instruction dataset (e.g., ShareGPT or FLAN subset) alongside the medical data. Alternatively, switch to LoRA/QLoRA, which freezes the base weights and prevents forgetting structurally. Evaluate on a held-out general benchmark (e.g., MMLU or MT-Bench) alongside the domain-specific eval to track both capabilities simultaneously.</p>
+</div>
+<h2 id="a-complete-sft-training-loop">A Complete SFT Training Loop<a class="headerlink" href="#a-complete-sft-training-loop" title="Permanent link">¶</a></h2>
+<p>Below is a from-scratch SFT training loop in PyTorch using the HuggingFace <code>transformers</code> and <code>datasets</code> libraries. It implements: response-only loss masking, gradient accumulation, learning rate warmup and cosine decay, checkpoint saving, and W&amp;B logging hooks.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">sft_train.py — A production-quality SFT training loop.</span>
+<span class="sd">Trains a causal language model on (instruction, response) pairs</span>
+<span class="sd">with response-only loss masking.</span>
+
+<span class="sd">Usage:</span>
+<span class="sd">    python sft_train.py \</span>
+<span class="sd">        --model_name meta-llama/Llama-2-7b-hf \</span>
+<span class="sd">        --dataset_path ./data/sft_data.jsonl \</span>
+<span class="sd">        --output_dir ./checkpoints/sft_run1 \</span>
+<span class="sd">        --num_epochs 3 \</span>
+<span class="sd">        --batch_size 4 \</span>
+<span class="sd">        --grad_accum_steps 8 \</span>
+<span class="sd">        --lr 2e-5</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.data</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataLoader</span><span class="p">,</span> <span class="n">Dataset</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">AutoModelForCausalLM</span><span class="p">,</span>
+    <span class="n">AutoTokenizer</span><span class="p">,</span>
+    <span class="n">get_cosine_schedule_with_warmup</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">datasets</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 1. Dataset class with response-only loss masking</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">IGNORE_INDEX</span> <span class="o">=</span> <span class="o">-</span><span class="mi">100</span>  <span class="c1"># PyTorch CrossEntropyLoss ignores this label index</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">InstructionDataset</span><span class="p">(</span><span class="n">Dataset</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Loads JSONL with fields {&quot;instruction&quot;: str, &quot;response&quot;: str}.</span>
+<span class="sd">    Tokenizes and builds input_ids + labels where instruction tokens</span>
+<span class="sd">    are masked (IGNORE_INDEX) so only response tokens incur loss.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">data_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">tokenizer</span><span class="p">,</span>
+        <span class="n">max_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2048</span><span class="p">,</span>
+        <span class="n">system_prompt</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;You are a helpful assistant.&quot;</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span> <span class="o">=</span> <span class="n">tokenizer</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_length</span> <span class="o">=</span> <span class="n">max_length</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">system_prompt</span> <span class="o">=</span> <span class="n">system_prompt</span>
+
+        <span class="c1"># Load raw data</span>
+        <span class="n">raw</span> <span class="o">=</span> <span class="n">datasets</span><span class="o">.</span><span class="n">load_dataset</span><span class="p">(</span><span class="s2">&quot;json&quot;</span><span class="p">,</span> <span class="n">data_files</span><span class="o">=</span><span class="n">data_path</span><span class="p">,</span> <span class="n">split</span><span class="o">=</span><span class="s2">&quot;train&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">samples</span> <span class="o">=</span> <span class="p">[</span><span class="n">row</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">raw</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_format</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">instruction</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">response</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Build the full sequence and compute a label tensor where</span>
+<span class="sd">        all tokens except the response are set to IGNORE_INDEX.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Construct the prompt (instruction side) using a simple template.</span>
+        <span class="c1"># In production, replace with the model&#39;s official chat template.</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;&lt;s&gt;[INST] &lt;&lt;SYS&gt;&gt;</span><span class="se">\n</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">system_prompt</span><span class="si">}</span><span class="se">\n</span><span class="s2">&lt;&lt;/SYS&gt;&gt;</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">instruction</span><span class="si">}</span><span class="s2"> [/INST] &quot;</span>
+        <span class="p">)</span>
+        <span class="n">full_text</span> <span class="o">=</span> <span class="n">prompt</span> <span class="o">+</span> <span class="n">response</span> <span class="o">+</span> <span class="s2">&quot;&lt;/s&gt;&quot;</span>
+
+        <span class="c1"># Tokenize the full sequence</span>
+        <span class="n">full_enc</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span>
+            <span class="n">full_text</span><span class="p">,</span>
+            <span class="n">max_length</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">max_length</span><span class="p">,</span>
+            <span class="n">truncation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">padding</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">input_ids</span> <span class="o">=</span> <span class="n">full_enc</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># shape: (L,)</span>
+
+        <span class="c1"># Tokenize the prompt only to find where the response starts.</span>
+        <span class="c1"># add_special_tokens=False to avoid a duplicate BOS.</span>
+        <span class="n">prompt_enc</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span>
+            <span class="n">prompt</span><span class="p">,</span>
+            <span class="n">add_special_tokens</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">prompt_len</span> <span class="o">=</span> <span class="n">prompt_enc</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+        <span class="c1"># Build labels: IGNORE_INDEX for prompt, token id for response</span>
+        <span class="n">labels</span> <span class="o">=</span> <span class="n">input_ids</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+        <span class="n">labels</span><span class="p">[:</span><span class="n">prompt_len</span><span class="p">]</span> <span class="o">=</span> <span class="n">IGNORE_INDEX</span>  <span class="c1"># mask the instruction tokens</span>
+
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;input_ids&quot;</span><span class="p">:</span> <span class="n">input_ids</span><span class="p">,</span> <span class="s2">&quot;labels&quot;</span><span class="p">:</span> <span class="n">labels</span><span class="p">}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">samples</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">idx</span><span class="p">):</span>
+        <span class="n">row</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">samples</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_format</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">&quot;instruction&quot;</span><span class="p">],</span> <span class="n">row</span><span class="p">[</span><span class="s2">&quot;response&quot;</span><span class="p">])</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">collate_fn</span><span class="p">(</span><span class="n">batch</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">],</span> <span class="n">pad_token_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Pads a batch to the longest sequence in the batch.</span>
+<span class="sd">    Pads input_ids with pad_token_id, labels with IGNORE_INDEX.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">max_len</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">batch</span><span class="p">)</span>
+
+    <span class="n">input_ids_padded</span><span class="p">,</span> <span class="n">labels_padded</span><span class="p">,</span> <span class="n">attention_mask</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">batch</span><span class="p">:</span>
+        <span class="n">L</span> <span class="o">=</span> <span class="n">item</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">pad_len</span> <span class="o">=</span> <span class="n">max_len</span> <span class="o">-</span> <span class="n">L</span>
+
+        <span class="c1"># Right-pad input_ids</span>
+        <span class="n">input_ids_padded</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="n">F</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">item</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">],</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">pad_len</span><span class="p">),</span> <span class="n">value</span><span class="o">=</span><span class="n">pad_token_id</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="c1"># Right-pad labels with IGNORE_INDEX so padding doesn&#39;t contribute loss</span>
+        <span class="n">labels_padded</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="n">F</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">item</span><span class="p">[</span><span class="s2">&quot;labels&quot;</span><span class="p">],</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">pad_len</span><span class="p">),</span> <span class="n">value</span><span class="o">=</span><span class="n">IGNORE_INDEX</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="c1"># Attention mask: 1 for real tokens, 0 for padding</span>
+        <span class="n">attention_mask</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">L</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">),</span>
+                       <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">pad_len</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)])</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;input_ids&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">input_ids_padded</span><span class="p">),</span>
+        <span class="s2">&quot;labels&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">labels_padded</span><span class="p">),</span>
+        <span class="s2">&quot;attention_mask&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">attention_mask</span><span class="p">),</span>
+    <span class="p">}</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 2. Loss function with explicit response masking</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_sft_loss</span><span class="p">(</span><span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">labels</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute the causal language modeling loss over response tokens only.</span>
+<span class="sd">    logits: (B, L, V)</span>
+<span class="sd">    labels: (B, L) with IGNORE_INDEX for prompt tokens</span>
+
+<span class="sd">    Standard next-token prediction: predict token t from context 0..t-1.</span>
+<span class="sd">    We shift logits left by one and labels right by one.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Shift so that token i predicts token i+1</span>
+    <span class="n">shift_logits</span> <span class="o">=</span> <span class="n">logits</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>   <span class="c1"># (B, L-1, V)</span>
+    <span class="n">shift_labels</span> <span class="o">=</span> <span class="n">labels</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>         <span class="c1"># (B, L-1)</span>
+
+    <span class="c1"># Flatten for cross-entropy; ignore_index silently skips masked positions</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span>
+        <span class="n">shift_logits</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">shift_logits</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)),</span>
+        <span class="n">shift_labels</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span>
+        <span class="n">ignore_index</span><span class="o">=</span><span class="n">IGNORE_INDEX</span><span class="p">,</span>
+        <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;mean&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">loss</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 3. Training loop</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">train</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Training on: </span><span class="si">{</span><span class="n">device</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># ---- Load model and tokenizer ----</span>
+    <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">model_name</span><span class="p">,</span> <span class="n">use_fast</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># LLaMA-style models don&#39;t have a pad token; use EOS</span>
+        <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">eos_token</span>
+
+    <span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+        <span class="n">args</span><span class="o">.</span><span class="n">model_name</span><span class="p">,</span>
+        <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>  <span class="c1"># use bf16 to save ~50% memory vs fp32</span>
+        <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>           <span class="c1"># auto-shards across available GPUs</span>
+    <span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">use_cache</span> <span class="o">=</span> <span class="kc">False</span>   <span class="c1"># disable KV-cache during training</span>
+
+    <span class="c1"># ---- Build dataset and dataloader ----</span>
+    <span class="n">dataset</span> <span class="o">=</span> <span class="n">InstructionDataset</span><span class="p">(</span>
+        <span class="n">data_path</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">dataset_path</span><span class="p">,</span>
+        <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">max_seq_len</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">dataloader</span> <span class="o">=</span> <span class="n">DataLoader</span><span class="p">(</span>
+        <span class="n">dataset</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">batch_size</span><span class="p">,</span>
+        <span class="n">shuffle</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">num_workers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+        <span class="n">pin_memory</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">collate_fn</span><span class="o">=</span><span class="k">lambda</span> <span class="n">b</span><span class="p">:</span> <span class="n">collate_fn</span><span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># ---- Optimizer and LR scheduler ----</span>
+    <span class="c1"># Weight decay is typically applied only to weight matrices, not biases/norms</span>
+    <span class="n">no_decay</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;bias&quot;</span><span class="p">,</span> <span class="s2">&quot;layer_norm.weight&quot;</span><span class="p">,</span> <span class="s2">&quot;layernorm.weight&quot;</span><span class="p">]</span>
+    <span class="n">optimizer_grouped_params</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">n</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">()</span>
+                       <span class="k">if</span> <span class="ow">not</span> <span class="nb">any</span><span class="p">(</span><span class="n">nd</span> <span class="ow">in</span> <span class="n">n</span> <span class="k">for</span> <span class="n">nd</span> <span class="ow">in</span> <span class="n">no_decay</span><span class="p">)],</span>
+            <span class="s2">&quot;weight_decay&quot;</span><span class="p">:</span> <span class="n">args</span><span class="o">.</span><span class="n">weight_decay</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">n</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">()</span>
+                       <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">nd</span> <span class="ow">in</span> <span class="n">n</span> <span class="k">for</span> <span class="n">nd</span> <span class="ow">in</span> <span class="n">no_decay</span><span class="p">)],</span>
+            <span class="s2">&quot;weight_decay&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">]</span>
+    <span class="n">optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">optimizer_grouped_params</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">lr</span><span class="p">)</span>
+
+    <span class="n">total_steps</span> <span class="o">=</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">dataloader</span><span class="p">)</span> <span class="o">//</span> <span class="n">args</span><span class="o">.</span><span class="n">grad_accum_steps</span><span class="p">)</span> <span class="o">*</span> <span class="n">args</span><span class="o">.</span><span class="n">num_epochs</span>
+    <span class="n">warmup_steps</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="mf">0.03</span> <span class="o">*</span> <span class="n">total_steps</span><span class="p">)</span>  <span class="c1"># 3% warmup, a common heuristic</span>
+
+    <span class="n">scheduler</span> <span class="o">=</span> <span class="n">get_cosine_schedule_with_warmup</span><span class="p">(</span>
+        <span class="n">optimizer</span><span class="p">,</span>
+        <span class="n">num_warmup_steps</span><span class="o">=</span><span class="n">warmup_steps</span><span class="p">,</span>
+        <span class="n">num_training_steps</span><span class="o">=</span><span class="n">total_steps</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># ---- Training ----</span>
+    <span class="n">global_step</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+
+    <span class="k">for</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">num_epochs</span><span class="p">):</span>
+        <span class="n">running_loss</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+        <span class="k">for</span> <span class="n">step</span><span class="p">,</span> <span class="n">batch</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">dataloader</span><span class="p">):</span>
+            <span class="c1"># Move batch to device</span>
+            <span class="n">input_ids</span> <span class="o">=</span> <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">labels</span> <span class="o">=</span> <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;labels&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">attention_mask</span> <span class="o">=</span> <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+            <span class="c1"># Forward pass</span>
+            <span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span>
+                <span class="n">input_ids</span><span class="o">=</span><span class="n">input_ids</span><span class="p">,</span>
+                <span class="n">attention_mask</span><span class="o">=</span><span class="n">attention_mask</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">logits</span>  <span class="c1"># (B, L, V)</span>
+
+            <span class="c1"># Compute response-only loss</span>
+            <span class="n">loss</span> <span class="o">=</span> <span class="n">compute_sft_loss</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
+
+            <span class="c1"># Scale loss for gradient accumulation</span>
+            <span class="n">loss</span> <span class="o">=</span> <span class="n">loss</span> <span class="o">/</span> <span class="n">args</span><span class="o">.</span><span class="n">grad_accum_steps</span>
+            <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+            <span class="n">running_loss</span> <span class="o">+=</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+            <span class="c1"># Optimizer step every grad_accum_steps mini-batches</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">step</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="n">args</span><span class="o">.</span><span class="n">grad_accum_steps</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="c1"># Gradient clipping: prevents exploding gradients</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">max_norm</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+
+                <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+                <span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+                <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+
+                <span class="n">global_step</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">avg_loss</span> <span class="o">=</span> <span class="n">running_loss</span>
+                <span class="n">running_loss</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+                <span class="k">if</span> <span class="n">global_step</span> <span class="o">%</span> <span class="mi">10</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">lr_now</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">get_last_lr</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+                    <span class="nb">print</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;Epoch </span><span class="si">{</span><span class="n">epoch</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">num_epochs</span><span class="si">}</span><span class="s2"> | &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;Step </span><span class="si">{</span><span class="n">global_step</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">total_steps</span><span class="si">}</span><span class="s2"> | &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;Loss: </span><span class="si">{</span><span class="n">avg_loss</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> | LR: </span><span class="si">{</span><span class="n">lr_now</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span>
+                    <span class="p">)</span>
+
+        <span class="c1"># ---- Save checkpoint after each epoch ----</span>
+        <span class="n">ckpt_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">output_dir</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;epoch_</span><span class="si">{</span><span class="n">epoch</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">ckpt_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">save_pretrained</span><span class="p">(</span><span class="n">ckpt_path</span><span class="p">)</span>
+        <span class="n">tokenizer</span><span class="o">.</span><span class="n">save_pretrained</span><span class="p">(</span><span class="n">ckpt_path</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Checkpoint saved to </span><span class="si">{</span><span class="n">ckpt_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Training complete.&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 4. Argument parsing</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">()</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--model_name&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--dataset_path&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--output_dir&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">&quot;./checkpoints&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--num_epochs&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--batch_size&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--grad_accum_steps&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--lr&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mf">2e-5</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--weight_decay&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--max_seq_len&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">2048</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">train</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="key-implementation-notes">Key Implementation Notes<a class="headerlink" href="#key-implementation-notes" title="Permanent link">¶</a></h3>
+<p><strong>Gradient accumulation.</strong> With <code>batch_size=4</code> and <code>grad_accum_steps=8</code>, the effective batch size is 32. Accumulation is critical for SFT because (a) individual examples vary widely in length, and (b) a larger effective batch reduces gradient noise, which matters for a small dataset.</p>
+<p><strong>BF16 training.</strong> We use <code>torch_dtype=torch.bfloat16</code> for the model. BF16 has the same dynamic range as float32 (8 exponent bits) but less precision (7 mantissa bits vs. 23). This is the preferred format for SFT on modern GPUs with bf16 tensor cores — see <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a>.</p>
+<p><strong>Gradient clipping.</strong> <code>clip_grad_norm_(max_norm=1.0)</code> is standard. SFT on a small dataset can produce occasional large gradients (long responses, unusual tokens), and clipping prevents loss spikes.</p>
+<p><strong>Disabling the KV cache.</strong> <code>model.config.use_cache = False</code> is required during training; the KV cache is only useful during autoregressive inference.</p>
+<div class="admonition example">
+<p class="admonition-title">Computing effective batch size and tokens per second</p>
+<p>Suppose we train a 7B model on a dataset of 10,000 examples with an average length of 512 tokens. We use:
+- Physical batch size: 4 sequences
+- Gradient accumulation: 8 steps
+- Effective batch size: 4 × 8 = 32 sequences = 32 × 512 ≈ 16,384 tokens per optimizer step</p>
+<p>Total tokens in the dataset: 10,000 × 512 = 5,120,000 tokens.
+For 3 epochs: 15,360,000 total tokens processed.</p>
+<p>On a single A100 80GB GPU, a 7B model in bf16 achieves roughly 10,000–20,000 tokens/second during forward+backward (very roughly). At 15,000 tokens/second: ~1,024 seconds ≈ 17 minutes per epoch, or about 51 minutes for 3 epochs. (Real numbers depend heavily on sequence packing efficiency — see <a href="../05-posttraining-alignment/02-chat-templates-packing.html">Chat Templates, Data Formatting &amp; Sequence Packing</a>.)</p>
+<p>Number of optimizer steps ≈ 15,360,000 / 16,384 ≈ 937 steps.
+With warmup_steps = 3% × 937 ≈ 28 warmup steps, the learning rate climbs linearly for the first 28 steps then follows a cosine decay.</p>
+</div>
+<h2 id="evaluating-sft-models">Evaluating SFT Models<a class="headerlink" href="#evaluating-sft-models" title="Permanent link">¶</a></h2>
+<p>Evaluating instruction-following quality is genuinely hard. There is no single-number metric that captures all the dimensions we care about. The standard suite includes:</p>
+<p><strong>MT-Bench (Zheng et al., 2023).</strong> An 80-question multi-turn benchmark covering reasoning, math, coding, writing, and roleplay. Answers are scored by a judge LLM (typically GPT-4 or a reward model) on a 1–10 scale. MT-Bench is widely reported and gives a good first-pass quality signal.</p>
+<p><strong>AlpacaEval.</strong> A single-turn benchmark that compares model responses to a reference (GPT-4 or Davinci-003) using win-rate from an LLM judge. Quick to run, good for iteration.</p>
+<p><strong>MMLU (Hendrycks et al.).</strong> Multiple-choice knowledge benchmark across 57 subjects. Good for measuring whether SFT caused catastrophic forgetting on knowledge tasks — an MMLU drop post-SFT signals over-training.</p>
+<p><strong>Perplexity on a held-out pretraining slice.</strong> A quick internal signal: if perplexity on general web text rises sharply after SFT, the model has drifted too far from the pretraining distribution.</p>
+<p><strong>Human preference evaluation.</strong> The gold standard. Present pairs of model outputs to annotators and collect preference votes. Slow and expensive, but essential for production models.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>Run MT-Bench and MMLU every checkpoint. Set an MMLU floor — for example, require that MMLU accuracy does not drop by more than 1.5 percentage points from the base model baseline. This catches catastrophic forgetting early without requiring human evaluators.</p>
+</div>
+<h2 id="common-pitfalls-and-best-practices">Common Pitfalls and Best Practices<a class="headerlink" href="#common-pitfalls-and-best-practices" title="Permanent link">¶</a></h2>
+<p><strong>Overfitting short responses.</strong> If many of your training examples are short, the model will learn to produce short responses even when length is appropriate. Ensure your dataset has a healthy distribution of response lengths.</p>
+<p><strong>Assistant prefix contamination.</strong> Some tokenizers and templates include an &ldquo;Assistant:&rdquo; prefix in the prompt. If this is tokenized inconsistently (sometimes included in the instruction mask, sometimes in the response labels), the model will produce garbage outputs at inference. Always verify your mask boundaries explicitly by printing token IDs alongside labels.</p>
+<p><strong>Data ordering.</strong> Shuffling the dataset is essential. If you accidentally train epoch 1 on simple examples and epoch 2 on complex ones, the model will appear to &ldquo;learn&rdquo; during epoch 1 but regress during epoch 2. Use <code>shuffle=True</code> in the DataLoader.</p>
+<p><strong>Tokenizer mismatch.</strong> Always use the same tokenizer and special tokens that the base model was pretrained with. Replacing the tokenizer or adding new special tokens requires embedding re-initialization and substantially more training.</p>
+<p><strong>Chat template parity.</strong> At inference time, apply exactly the same chat template you used at training time. A common mistake is training with the LLaMA-2 Alpaca template but inferring with the LLaMA-2 Chat template — the model will produce incoherent outputs.</p>
+<div class="admonition warning">
+<p class="admonition-title">The length bias trap</p>
+<p>SFT on a dataset where &ldquo;correct&rdquo; responses are consistently long will produce a model that gives verbose answers even when brevity is preferred. This is a form of shortcut learning: the model learns that long responses reduce training loss (because long responses contain more plausible next tokens). Prefer a response length distribution that matches your target use case, and consider length-normalizing your loss.</p>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Instruction tuning has matured into a well-understood first stage of the post-training pipeline: the field has converged on response-only loss masking, curated data over raw quantity (the LIMA finding), and parameter-efficient adapters (LoRA/QLoRA) as the default compute strategy. Current frontier work focuses on data curation at scale, verifiable-reward RL layered on top of SFT, and fully open replication of the entire post-training stack.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2109.01652">Wei et al., <em>Finetuned Language Models Are Zero-Shot Learners</em> (FLAN, 2022)</a> — the paper that established instruction tuning as a general paradigm, showing task diversity drives zero-shot generalization.</li>
+<li><a href="https://arxiv.org/abs/2212.10560">Wang et al., <em>Self-Instruct: Aligning Language Models with Self-Generated Instructions</em> (2023)</a> — the bootstrap recipe behind Alpaca and countless derivative datasets: use the model itself to generate training data.</li>
+<li><a href="https://arxiv.org/abs/2305.11206">Zhou et al., <em>LIMA: Less Is More for Alignment</em> (2023)</a> — 1,000 carefully curated examples beat hundreds of thousands of noisy ones; introduced the superficial alignment hypothesis.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2210.11416">Chung et al., <em>Scaling Instruction-Finetuned Language Models</em> (FLAN-T5/v2, 2024)</a> — systematic study of how task count, model scale, and chain-of-thought data interact during instruction tuning.</li>
+<li><a href="https://arxiv.org/abs/2304.12244">Xu et al., <em>WizardLM: Empowering Large Language Models to Follow Complex Instructions</em> (2024)</a> — Evol-Instruct: automatically rewrite seed instructions to progressively higher complexity, improving instruction-following on hard tasks.</li>
+<li><a href="https://arxiv.org/abs/2411.15124">Lambert et al., <em>Tulu 3: Pushing Frontiers in Open Language Model Post-Training</em> (2024)</a> — fully open SFT → DPO → RLVR recipe from AllenAI that matches or exceeds proprietary fine-tuned models; includes training data, code, and evals.</li>
+<li><a href="https://arxiv.org/abs/2306.05685">Zheng et al., <em>Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena</em> (2023)</a> — introduced MT-Bench, the standard multi-turn benchmark for evaluating instruction-tuned models.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/huggingface/trl">huggingface/trl</a> — HuggingFace&rsquo;s post-training library; <code>SFTTrainer</code> is the most-used one-stop SFT entry point in the ecosystem.</li>
+<li><a href="https://github.com/hiyouga/LLaMA-Factory">hiyouga/LLaMA-Factory</a> — unified fine-tuning of 100+ LLMs with a web UI; supports SFT, DPO, GRPO, LoRA, QLoRA, and full fine-tuning (ACL 2024).</li>
+<li><a href="https://github.com/OpenAccess-AI-Collective/axolotl">OpenAccess-AI-Collective/axolotl</a> — YAML-driven fine-tuning framework with Flash Attention, sequence parallelism, and multi-GPU support; popular for research runs.</li>
+<li><a href="https://github.com/allenai/open-instruct">allenai/open-instruct</a> — AllenAI&rsquo;s fully open post-training codebase backing the Tulu series; covers SFT, DPO, and RLVR end-to-end.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Wei et al., &ldquo;Finetuned Language Models Are Zero-Shot Learners&rdquo; (FLAN), ICLR 2022.</li>
+<li>Taori et al., &ldquo;Alpaca: A Strong, Replicable Instruction-Following Model,&rdquo; Stanford CRFM blog, 2023.</li>
+<li>Chung et al., &ldquo;Scaling Instruction-Finetuned Language Models&rdquo; (FLAN-T5/FLAN-v2), JMLR 2024.</li>
+<li>Zhou et al., &ldquo;LIMA: Less Is More for Alignment,&rdquo; NeurIPS 2023.</li>
+<li>Hu et al., &ldquo;LoRA: Low-Rank Adaptation of Large Language Models,&rdquo; ICLR 2022.</li>
+<li>Wang et al., &ldquo;Self-Instruct: Aligning Language Models with Self-Generated Instructions,&rdquo; ACL 2023.</li>
+<li>Dettmers et al., &ldquo;QLoRA: Efficient Finetuning of Quantized LLMs,&rdquo; NeurIPS 2023.</li>
+<li>Kirkpatrick et al., &ldquo;Overcoming catastrophic forgetting in neural networks&rdquo; (EWC), PNAS 2017.</li>
+<li>OpenHermes-2.5 dataset and model by Teknium, available on HuggingFace Hub, 2023.</li>
+</ul>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>SFT converts a base model into an instruction follower by training on (instruction, response) pairs with <strong>response-only loss masking</strong> — the model is only penalized for poor replies, not for re-predicting the input.</li>
+<li>The SFT objective is identical to pretraining NLL; the only changes are data format and the loss mask.</li>
+<li><strong>Data quality dominates data quantity</strong> (the LIMA finding): 1k high-quality examples often outperforms 100k noisy ones because the base model already contains the knowledge; SFT teaches access and format.</li>
+<li>Landmark datasets — FLAN, Alpaca, ShareGPT, OpenHermes — each introduced a key insight: task diversity, cheap synthesis, multi-turn realism, and quality curation respectively.</li>
+<li>SFT is Stage 1 of the three-stage recipe: SFT → Reward Modeling → RL alignment. A strong SFT model is a prerequisite for stable and effective RLHF/DPO.</li>
+<li><strong>Catastrophic forgetting</strong> is the main risk: mitigate with low learning rates (~1–5 × 10⁻⁵), short training (1–3 epochs), data mixing, and/or LoRA.</li>
+<li>LoRA/QLoRA freeze base weights structurally, preventing forgetting and reducing GPU memory from ~120 GB (full 7B) to ~12–15 GB — enabling SFT on a single consumer GPU.</li>
+<li>Always evaluate SFT models on both a capability benchmark (MT-Bench) and a forgetting probe (MMLU delta from base) simultaneously.</li>
+<li>At inference time, apply exactly the chat template used during training — template mismatch is the most common cause of degraded SFT model outputs in production.</li>
+</ul>
+</div>
+<nav class="page-nav">
+<a class="prev" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="pn-label">← Previous</span><span class="pn-title">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</span></a>
+<a class="next" href="02-chat-templates-packing.html"><span class="pn-label">Next →</span><span class="pn-title">Chat Templates, Data Formatting &amp; Sequence Packing</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-base-models-need-fine-tuning">Why Base Models Need Fine-Tuning</a></li>
+<li class="toc-l2"><a href="#the-sft-objective">The SFT Objective</a></li>
+<li class="toc-l3"><a href="#why-not-train-on-the-full-sequence">Why Not Train on the Full Sequence?</a></li>
+<li class="toc-l2"><a href="#instruction-datasets-a-field-guide">Instruction Datasets: A Field Guide</a></li>
+<li class="toc-l3"><a href="#flan-finetuned-language-models-are-zero-shot-learners-wei-et-al-2021">FLAN (Finetuned Language Models Are Zero-Shot Learners, Wei et al., 2021)</a></li>
+<li class="toc-l3"><a href="#alpaca-taori-et-al-stanford-2023">Alpaca (Taori et al., Stanford, 2023)</a></li>
+<li class="toc-l3"><a href="#sharegpt-openhermes">ShareGPT &amp;amp; OpenHermes</a></li>
+<li class="toc-l3"><a href="#lima-less-is-more-for-alignment-zhou-et-al-2023">LIMA: Less Is More for Alignment (Zhou et al., 2023)</a></li>
+<li class="toc-l2"><a href="#data-quality-quantity-practical-data-engineering">Data Quality &amp;gt; Quantity: Practical Data Engineering</a></li>
+<li class="toc-l3"><a href="#comparing-key-sft-datasets">Comparing Key SFT Datasets</a></li>
+<li class="toc-l2"><a href="#the-three-stage-post-training-recipe">The Three-Stage Post-Training Recipe</a></li>
+<li class="toc-l2"><a href="#full-fine-tuning-vs-parameter-efficient-fine-tuning">Full Fine-Tuning vs. Parameter-Efficient Fine-Tuning</a></li>
+<li class="toc-l3"><a href="#full-fine-tuning">Full Fine-Tuning</a></li>
+<li class="toc-l3"><a href="#parameter-efficient-fine-tuning-peft">Parameter-Efficient Fine-Tuning (PEFT)</a></li>
+<li class="toc-l2"><a href="#catastrophic-forgetting">Catastrophic Forgetting</a></li>
+<li class="toc-l3"><a href="#why-it-happens">Why It Happens</a></li>
+<li class="toc-l3"><a href="#mitigation-strategies">Mitigation Strategies</a></li>
+<li class="toc-l2"><a href="#a-complete-sft-training-loop">A Complete SFT Training Loop</a></li>
+<li class="toc-l3"><a href="#key-implementation-notes">Key Implementation Notes</a></li>
+<li class="toc-l2"><a href="#evaluating-sft-models">Evaluating SFT Models</a></li>
+<li class="toc-l2"><a href="#common-pitfalls-and-best-practices">Common Pitfalls and Best Practices</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

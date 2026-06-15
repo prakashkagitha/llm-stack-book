@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Context Engineering &amp; Management — The LLM Stack</title>
+<meta name="description" content="The context window as the scarce resource: what to put in it, retrieval vs stuffing, compaction/summarization, context rot, lost-in-the-middle, structured conte">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="active" href="04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VIII — Agents &amp; Harness Engineering</div>
+<h1 id="84-context-engineering-management">8.4 Context Engineering &amp; Management<a class="headerlink" href="#84-context-engineering-management" title="Permanent link">¶</a></h1>
+<p>A frontier model is, in one sense, a pure function: tokens in, a probability distribution over the next token out. Everything the model &ldquo;knows&rdquo; about your task in this moment — the user&rsquo;s goal, the files it has read, the tool outputs it has seen, the plan it is following — must be encoded as tokens inside a single finite buffer called the <strong>context window</strong>. The model has no other working memory. When the window fills, something must be dropped, and what you drop determines what the agent forgets.</p>
+<p>This is why context is the scarce resource of agentic systems, and why <strong>context engineering</strong> — the discipline of deciding what goes into the window, in what form, in what order, and for how long — has become as load-bearing as the prompt itself. An agent that runs for fifty turns will assemble its context fifty times. If each assembly is sloppy, errors compound: stale file contents mislead edits, redundant tool output crowds out the plan, and the model&rsquo;s accuracy decays long before it hits the hard token limit.</p>
+<p>In <a href="../08-agents-harness/02-agentic-loop.html">The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a> we built the control flow of an agent; in <a href="../08-agents-harness/03-harness-coding-agent.html">Harness Engineering: Building a Coding Agent</a> we built the scaffolding around it. This chapter is about the <em>substance</em> that flows through that scaffolding: the context. We will treat the window as a memory hierarchy to be managed, quantify how performance degrades as it fills, and build the concrete machinery — token budgeting, retrieval, compaction, structured external memory, and prompt caching — that keeps a long-running agent coherent and cheap.</p>
+<h2 id="the-context-window-as-a-scarce-resource">The Context Window as a Scarce Resource<a class="headerlink" href="#the-context-window-as-a-scarce-resource" title="Permanent link">¶</a></h2>
+<h3 id="what-actually-lives-in-the-window">What actually lives in the window<a class="headerlink" href="#what-actually-lives-in-the-window" title="Permanent link">¶</a></h3>
+<p>At any decode step, the model sees a flat sequence of tokens. In an agent, that sequence is <em>assembled</em> from logically distinct sources. A useful mental model is a stack of segments:</p>
+<div class="highlight"><pre><span></span><code>+-----------------------------------------------------------+
+|  SYSTEM PROMPT      role, rules, output format  (static)  |  &lt;- cache-friendly
++-----------------------------------------------------------+
+|  TOOL DEFINITIONS   JSON schemas for callable tools       |  &lt;- cache-friendly
++-----------------------------------------------------------+
+|  RETRIEVED CONTEXT  docs, code, RAG chunks    (per-task)  |
++-----------------------------------------------------------+
+|  CONVERSATION       user msgs, assistant msgs, tool calls |  &lt;- grows every turn
+|     ...             tool results (often huge)             |
++-----------------------------------------------------------+
+|  SCRATCHPAD / PLAN  the agent&#39;s own working notes         |
++-----------------------------------------------------------+
+|  CURRENT QUERY      the immediate instruction             |  &lt;- highest salience
++-----------------------------------------------------------+
+</code></pre></div>
+<p>Every one of these competes for the same budget. A modern model might advertise a 200K-token window, but that headline number is a <em>capacity</em>, not a <em>recommendation</em>. Three separate costs push you to use far less than the maximum:</p>
+<ol>
+<li><strong>Quality.</strong> Accuracy degrades as the window fills (Sections on context rot and lost-in-the-middle below). The useful window is smaller than the advertised window.</li>
+<li><strong>Latency.</strong> Prefill is roughly linear in input length, and attention is quadratic in sequence length; a 150K-token prompt can take seconds to prefill before the first token streams. See <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>.</li>
+<li><strong>Money.</strong> You pay per input token, every turn. A 50-turn agent that carries a 100K context pays for that 100K <em>fifty times</em> unless caching intervenes.</li>
+</ol>
+<h3 id="the-cost-arithmetic-of-a-naive-agent">The cost arithmetic of a naive agent<a class="headerlink" href="#the-cost-arithmetic-of-a-naive-agent" title="Permanent link">¶</a></h3>
+<p>Consider an agent that appends everything and never prunes. Let turn <span class="arithmatex">\(t\)</span> add <span class="arithmatex">\(a_t\)</span> new tokens (the assistant message plus any tool result). The prompt length at turn <span class="arithmatex">\(t\)</span> is the running sum of everything before it:</p>
+<div class="arithmatex">\[
+L_t = L_0 + \sum_{i=1}^{t} a_i
+\]</div>
+<p>The total <em>input</em> tokens billed across an <span class="arithmatex">\(N\)</span>-turn run is the sum of every prefix:</p>
+<div class="arithmatex">\[
+T_{\text{in}} = \sum_{t=1}^{N} L_t = \sum_{t=1}^{N}\left(L_0 + \sum_{i=1}^{t} a_i\right)
+\]</div>
+<p>If every turn adds a constant <span class="arithmatex">\(a\)</span> tokens and <span class="arithmatex">\(L_0\)</span> is small, this is <span class="arithmatex">\(\sum_{t=1}^N a t \approx \tfrac{1}{2} a N^2\)</span>. <strong>Naive context accumulation is quadratic in the number of turns.</strong> This single fact is the reason every serious agent harness has a context-management strategy. Halving <span class="arithmatex">\(a\)</span> (the per-turn footprint) quarters your bill; capping <span class="arithmatex">\(L_t\)</span> at a ceiling <span class="arithmatex">\(C\)</span> turns the quadratic back into a linear <span class="arithmatex">\(O(NC)\)</span>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: the cost of not pruning</p>
+<p>An agent runs for <span class="arithmatex">\(N = 40\)</span> turns. Each turn the model reads a file or runs a command whose output averages <span class="arithmatex">\(a = 2{,}500\)</span> tokens; the system prompt and tools are <span class="arithmatex">\(L_0 = 3{,}000\)</span> tokens. Input is priced at USD 3 per million tokens, output (assume 400 tokens/turn) at USD 15 per million.</p>
+<p>Naive accumulation. Prompt length at turn <span class="arithmatex">\(t\)</span> is <span class="arithmatex">\(L_t \approx 3000 + 2500\,t\)</span>. Total input billed:</p>
+<div class="arithmatex">\[
+T_{\text{in}} = \sum_{t=1}^{40}(3000 + 2500\,t) = 40\cdot3000 + 2500\cdot\frac{40\cdot41}{2} = 120{,}000 + 2{,}050{,}000 = 2.17\text{M tokens}
+\]</div>
+<p>Input cost: $2.17 \times 3 = $ <strong>USD 6.51</strong>. Output adds <span class="arithmatex">\(40 \times 400 = 16{,}000\)</span> tokens <span class="arithmatex">\(\to\)</span> USD 0.24. Total ≈ <strong>USD 6.75</strong> for one task.</p>
+<p>Now cap the context at <span class="arithmatex">\(C = 20{,}000\)</span> tokens via compaction (Section below). Once <span class="arithmatex">\(L_t\)</span> hits the cap it stays there, so <span class="arithmatex">\(T_{\text{in}} \approx 12\cdot(3000+2500t)|_{\text{ramp}} + 28\cdot20000 \approx 100{,}000 + 560{,}000 = 0.66\text{M}\)</span>. Input cost drops to ≈ <strong>USD 1.98</strong> — a 3× saving, <em>before</em> prompt caching, which can take another 5–10× off the cacheable prefix.</p>
+<p>The lesson: the agent that thinks about its context is not just smarter, it is dramatically cheaper.</p>
+</div>
+<h2 id="context-rot-lost-in-the-middle-position-effects">Context Rot, Lost-in-the-Middle &amp; Position Effects<a class="headerlink" href="#context-rot-lost-in-the-middle-position-effects" title="Permanent link">¶</a></h2>
+<p>A bigger window does not mean a model uses all of it equally. Two empirical phenomena dominate practical context engineering.</p>
+<h3 id="lost-in-the-middle">Lost-in-the-middle<a class="headerlink" href="#lost-in-the-middle" title="Permanent link">¶</a></h3>
+<p>When relevant information is placed in the <em>middle</em> of a long context, retrieval accuracy is systematically worse than when the same information sits at the <strong>beginning</strong> or <strong>end</strong>. The accuracy-versus-position curve is U-shaped: strong at the edges, sagging in the middle. This was characterized by Liu et al. in <em>Lost in the Middle: How Language Models Use Long Contexts</em> (2023) and has held up across model generations, even as absolute scores improved.</p>
+<p>The causes are several and reinforcing. Causal attention plus the softmax give early tokens an outsized influence (they are attended to by every later position, and &ldquo;attention sinks&rdquo; frequently form on the first tokens). Recency from positional encodings and the autoregressive objective privileges the most recent tokens. RoPE-based long-context extension (see <a href="../03-pretraining/13-long-context-pretraining.html">Long-Context Pretraining &amp; Context Extension</a>) can attenuate long-range signal. The middle gets neither edge advantage.</p>
+<p>The engineering consequence is direct and actionable: <strong>place the most important material at the start or the very end of the window, never buried in the middle.</strong> When you stuff <span class="arithmatex">\(k\)</span> retrieved documents, put the highest-scoring ones at the boundaries.</p>
+<h3 id="context-rot">Context rot<a class="headerlink" href="#context-rot" title="Permanent link">¶</a></h3>
+<p>&ldquo;Context rot&rdquo; is the broader, more recent observation that model performance on a fixed task <strong>degrades as irrelevant or merely long context is added</strong>, even when the needle is present and the model can in principle find it. It is not only about position; it is about <em>distractors</em> and <em>length itself</em>. Adding 80K tokens of plausible-but-irrelevant code to a debugging prompt makes the model worse at the bug, because every distractor token is something attention can be pulled toward, and every extra token dilutes the signal-to-noise ratio.</p>
+<p>A clean way to think about it: a long context increases the chance that some span looks locally more relevant to the next token than the span you actually care about. The model is doing soft retrieval over its own context at every step; more haystack means more chances to grab hay.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># A &quot;needle in a haystack&quot; harness to MEASURE rot/position effects for your stack.</span>
+<span class="c1"># Run this against your own model+prompt; do not trust generic claims.</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_haystack</span><span class="p">(</span><span class="n">needle</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">filler_tokens</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+                   <span class="n">total_tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">needle_frac</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Embed `needle` at a fractional depth in a haystack of `total_tokens`.</span>
+
+<span class="sd">    needle_frac=0.0 -&gt; needle at start, 0.5 -&gt; middle, 1.0 -&gt; end.</span>
+<span class="sd">    `filler_tokens` is a large pool of irrelevant words to pad with.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">n_pad</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">total_tokens</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">needle</span><span class="o">.</span><span class="n">split</span><span class="p">()))</span>
+    <span class="n">insert_at</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">n_pad</span> <span class="o">*</span> <span class="n">needle_frac</span><span class="p">)</span>
+    <span class="n">body</span> <span class="o">=</span> <span class="p">[</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">filler_tokens</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_pad</span><span class="p">)]</span>
+    <span class="n">words</span> <span class="o">=</span> <span class="n">body</span><span class="p">[:</span><span class="n">insert_at</span><span class="p">]</span> <span class="o">+</span> <span class="n">needle</span><span class="o">.</span><span class="n">split</span><span class="p">()</span> <span class="o">+</span> <span class="n">body</span><span class="p">[</span><span class="n">insert_at</span><span class="p">:]</span>
+    <span class="k">return</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">words</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">eval_grid</span><span class="p">(</span><span class="n">call_model</span><span class="p">,</span> <span class="n">needle</span><span class="p">,</span> <span class="n">question</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span>
+              <span class="n">lengths</span><span class="o">=</span><span class="p">(</span><span class="mi">2000</span><span class="p">,</span> <span class="mi">8000</span><span class="p">,</span> <span class="mi">32000</span><span class="p">,</span> <span class="mi">128000</span><span class="p">),</span>
+              <span class="n">depths</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.75</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+              <span class="n">filler_pool</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">trials</span><span class="o">=</span><span class="mi">3</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Sweep (length x depth). Returns accuracy per cell.</span>
+<span class="sd">    `call_model(prompt) -&gt; str`. We score by substring match on `expected`.&quot;&quot;&quot;</span>
+    <span class="n">filler_pool</span> <span class="o">=</span> <span class="n">filler_pool</span> <span class="ow">or</span> <span class="p">[</span><span class="s2">&quot;the&quot;</span><span class="p">,</span><span class="s2">&quot;system&quot;</span><span class="p">,</span><span class="s2">&quot;logs&quot;</span><span class="p">,</span><span class="s2">&quot;report&quot;</span><span class="p">,</span><span class="s2">&quot;value&quot;</span><span class="p">,</span>
+                                  <span class="s2">&quot;module&quot;</span><span class="p">,</span><span class="s2">&quot;request&quot;</span><span class="p">,</span><span class="s2">&quot;status&quot;</span><span class="p">,</span><span class="s2">&quot;cache&quot;</span><span class="p">,</span><span class="s2">&quot;node&quot;</span><span class="p">]</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">L</span> <span class="ow">in</span> <span class="n">lengths</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">depths</span><span class="p">:</span>
+            <span class="n">hits</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">trials</span><span class="p">):</span>
+                <span class="n">hay</span> <span class="o">=</span> <span class="n">build_haystack</span><span class="p">(</span><span class="n">needle</span><span class="p">,</span> <span class="n">filler_pool</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+                <span class="n">prompt</span> <span class="o">=</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Read the following text and answer the question.</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+                          <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">hay</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Question: </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="se">\n</span><span class="s2">Answer:&quot;</span><span class="p">)</span>
+                <span class="n">out</span> <span class="o">=</span> <span class="n">call_model</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+                <span class="n">hits</span> <span class="o">+=</span> <span class="nb">int</span><span class="p">(</span><span class="n">expected</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="n">out</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span>
+            <span class="n">results</span><span class="p">[(</span><span class="n">L</span><span class="p">,</span> <span class="n">d</span><span class="p">)]</span> <span class="o">=</span> <span class="n">hits</span> <span class="o">/</span> <span class="n">trials</span>
+    <span class="k">return</span> <span class="n">results</span>
+
+<span class="c1"># Reading the result grid you will typically see:</span>
+<span class="c1">#   - accuracy falling as L grows (context rot),</span>
+<span class="c1">#   - within a row, a dip around d=0.5 (lost-in-the-middle).</span>
+<span class="c1"># Use it to choose YOUR effective window, not the advertised one.</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>Treat the advertised window as a hardware spec and your <em>effective</em> window as a measured quantity. Run the grid above on your actual model + system prompt and pick the length at which accuracy is still acceptable (say ≥ 95% of the short-context score). Budget to <em>that</em> number. For many production setups in 2024–2026 the effective window is a fraction — often a quarter to a half — of the advertised maximum for retrieval-style tasks.</p>
+</div>
+<h2 id="retrieval-vs-stuffing-choosing-what-goes-in">Retrieval vs Stuffing: Choosing What Goes In<a class="headerlink" href="#retrieval-vs-stuffing-choosing-what-goes-in" title="Permanent link">¶</a></h2>
+<p>The first decision in context engineering is binary per piece of information: <strong>include it now, or fetch it on demand?</strong> Stuffing means putting everything potentially relevant into the prompt up front. Retrieval means keeping a large corpus <em>outside</em> the window and pulling in only what the current step needs.</p>
+<h3 id="the-trade-off">The trade-off<a class="headerlink" href="#the-trade-off" title="Permanent link">¶</a></h3>
+<p>Stuffing is simple, has zero retrieval latency, and never &ldquo;misses&rdquo; — if the answer is in the corpus and the corpus fits, the answer is in the window. But it pays the full quality/latency/cost penalty of a long context on <em>every</em> turn, and it falls off a cliff when the corpus exceeds the window.</p>
+<p>Retrieval keeps the window small and the per-turn cost low, and it scales to corpora of millions of tokens. But it adds a retrieval component that can miss (the relevant chunk is not in the top-<span class="arithmatex">\(k\)</span>), it adds latency for the lookup, and it requires infrastructure: embeddings, an index, chunking, reranking. The full machinery is the subject of Part IX — see <a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a> and <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a>. Here we care about the <em>decision</em>.</p>
+<p>A simple rule of thumb in terms of corpus size <span class="arithmatex">\(S\)</span> (tokens) and effective window <span class="arithmatex">\(W_{\text{eff}}\)</span>:</p>
+<ul>
+<li><span class="arithmatex">\(S \ll W_{\text{eff}}\)</span> and information is reused every turn → <strong>stuff</strong> (e.g., the file currently being edited, the active plan).</li>
+<li><span class="arithmatex">\(S \gg W_{\text{eff}}\)</span>, or any single query touches only a small slice → <strong>retrieve</strong> (e.g., a 2M-line codebase, a documentation set, prior conversations).</li>
+<li>In between, or when recall matters more than cost → <strong>hybrid</strong>: stuff a small curated core, retrieve the long tail.</li>
+</ul>
+<h3 id="agentic-retrieval-let-the-model-fetch">Agentic retrieval: let the model fetch<a class="headerlink" href="#agentic-retrieval-let-the-model-fetch" title="Permanent link">¶</a></h3>
+<p>The most powerful pattern for agents is to expose retrieval <em>as a tool</em> rather than pre-stuffing. The model decides what it needs and when. This is &ldquo;just-in-time&rdquo; context: instead of front-loading 50 files, give the agent <code>grep</code>, <code>read_file</code>, and <code>search_docs</code> tools (see <a href="../08-agents-harness/01-tool-use-function-calling.html">Tool Use &amp; Function Calling</a>) and let it pull exactly the lines it needs. This keeps the window lean and lets the agent&rsquo;s own reasoning act as the relevance function — often better than a static embedding similarity.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Just-in-time context via tools. The agent pulls minimal slices on demand</span>
+<span class="c1"># instead of us pre-stuffing whole files. Note that we return *windows*</span>
+<span class="c1"># around hits, not whole files, to protect the budget.</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span><span class="o">,</span><span class="w"> </span><span class="nn">re</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">grep_tool</span><span class="p">(</span><span class="n">pattern</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;.&quot;</span><span class="p">,</span> <span class="n">max_hits</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">20</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return file:line: matches. Cheap to put in context; points the agent</span>
+<span class="sd">    at *where* to look without dumping whole files.&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">&quot;grep&quot;</span><span class="p">,</span> <span class="s2">&quot;-rni&quot;</span><span class="p">,</span> <span class="n">pattern</span><span class="p">,</span> <span class="n">path</span><span class="p">],</span>
+                             <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="n">stdout</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;grep error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()[:</span><span class="n">max_hits</span><span class="p">]</span>
+    <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span> <span class="k">if</span> <span class="n">lines</span> <span class="k">else</span> <span class="s2">&quot;(no matches)&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">read_window</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">center_line</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">radius</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">40</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Read only lines [center-radius, center+radius]. Returning a 80-line</span>
+<span class="sd">    window instead of a 4000-line file is the difference between a 600-token</span>
+<span class="sd">    and a 30000-token tool result.&quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">lines</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">readlines</span><span class="p">()</span>
+    <span class="n">lo</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">center_line</span> <span class="o">-</span> <span class="n">radius</span><span class="p">)</span>
+    <span class="n">hi</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">lines</span><span class="p">),</span> <span class="n">center_line</span> <span class="o">+</span> <span class="n">radius</span><span class="p">)</span>
+    <span class="n">body</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="si">:</span><span class="s2">&gt;5</span><span class="si">}</span><span class="s2"> | </span><span class="si">{</span><span class="n">lines</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">lo</span><span class="p">,</span> <span class="n">hi</span><span class="p">))</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;# </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2"> lines </span><span class="si">{</span><span class="n">lo</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">hi</span><span class="si">}</span><span class="se">\n</span><span class="si">{</span><span class="n">body</span><span class="si">}</span><span class="s2">&quot;</span>
+
+<span class="c1"># The agent&#39;s loop: grep to localize, read_window to inspect, then act.</span>
+<span class="c1"># At no point does a whole 4000-line file enter the context.</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: dumping whole tool outputs</p>
+<p>The single most common way agents blow their context budget is by piping raw, unbounded tool output straight into the window: an entire file, a 5,000-line <code>pytest</code> log, a directory listing of 10,000 entries, a full HTTP response body. <em>Always</em> bound tool results — head/tail, truncate with an explicit <code>[... 4,213 lines elided ...]</code> marker, or summarize — before they re-enter the context. A tool wrapper that caps every result at, say, 2,000 tokens and tells the model how to fetch more is worth more than a cleverer prompt.</p>
+</div>
+<h2 id="token-budgeting-allocating-the-window">Token Budgeting: Allocating the Window<a class="headerlink" href="#token-budgeting-allocating-the-window" title="Permanent link">¶</a></h2>
+<p>Once you accept that the effective window is finite and precious, you manage it like a memory allocator. Give each segment a <strong>budget</strong>, enforce it, and have an eviction policy for overflow.</p>
+<h3 id="a-budget-model">A budget model<a class="headerlink" href="#a-budget-model" title="Permanent link">¶</a></h3>
+<p>Partition the effective window <span class="arithmatex">\(W_{\text{eff}}\)</span> into segments with target fractions that sum to (less than) one, leaving headroom for the model&rsquo;s own output:</p>
+<div class="arithmatex">\[
+W_{\text{eff}} = b_{\text{sys}} + b_{\text{tools}} + b_{\text{retrieved}} + b_{\text{history}} + b_{\text{scratch}} + b_{\text{output}}
+\]</div>
+<p>The system prompt and tool schemas are fixed and small; retrieval, history, and scratchpad are the elastic segments you actively manage. A concrete starting split for a 32K <em>effective</em> budget on a coding agent might be: 2K system+tools, 8K retrieved code, 16K conversation history, 2K scratchpad, leaving 4K for the response.</p>
+<h3 id="a-concrete-budget-manager">A concrete budget manager<a class="headerlink" href="#a-concrete-budget-manager" title="Permanent link">¶</a></h3>
+<p>You need an accurate token count, not a character heuristic, because over-counting wastes budget and under-counting causes hard API failures. Use the model&rsquo;s real tokenizer (see <a href="../02-transformer/01-tokenization.html">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a>).</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># A budget manager that assembles a prompt under a hard token ceiling.</span>
+<span class="c1"># It counts with the REAL tokenizer and enforces per-segment caps,</span>
+<span class="c1"># evicting from the middle of history (oldest-but-not-first) on overflow.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">tiktoken</span>
+    <span class="n">_enc</span> <span class="o">=</span> <span class="n">tiktoken</span><span class="o">.</span><span class="n">get_encoding</span><span class="p">(</span><span class="s2">&quot;cl100k_base&quot;</span><span class="p">)</span>  <span class="c1"># stand-in tokenizer</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">ntok</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">_enc</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">s</span><span class="p">))</span>
+<span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+    <span class="c1"># Fallback heuristic ~4 chars/token; ONLY for environments without tiktoken.</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">ntok</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">//</span> <span class="mi">4</span><span class="p">)</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Segment</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">budget</span><span class="p">:</span> <span class="nb">int</span>                 <span class="c1"># max tokens this segment may occupy</span>
+    <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">pinned</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>  <span class="c1"># never-evict flags</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">pin</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">text</span><span class="p">);</span> <span class="bp">self</span><span class="o">.</span><span class="n">pinned</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pin</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">tokens</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="n">ntok</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">items</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fit</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Evict UNPINNED items, oldest first, until under budget.</span>
+<span class="sd">        Keeps pinned items (e.g., the system prompt, the current task).&quot;&quot;&quot;</span>
+        <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span><span class="p">()</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">budget</span><span class="p">:</span>
+            <span class="c1"># find oldest unpinned item to drop</span>
+            <span class="n">idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pinned</span><span class="p">)</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">p</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">break</span>  <span class="c1"># everything pinned; nothing legal to drop</span>
+            <span class="n">dropped</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">items</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">idx</span><span class="p">);</span> <span class="bp">self</span><span class="o">.</span><span class="n">pinned</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">idx</span><span class="p">)</span>
+            <span class="c1"># leave a breadcrumb so the model knows something was removed</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">items</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;[elided </span><span class="si">{</span><span class="n">ntok</span><span class="p">(</span><span class="n">dropped</span><span class="p">)</span><span class="si">}</span><span class="s2"> tokens]&quot;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">pinned</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ContextBuilder</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">w_eff</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">output_reserve</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4000</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">w_eff</span> <span class="o">=</span> <span class="n">w_eff</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">output_reserve</span> <span class="o">=</span> <span class="n">output_reserve</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">segments</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Segment</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">segment</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">budget</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Segment</span><span class="p">:</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="n">Segment</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">budget</span><span class="p">);</span> <span class="bp">self</span><span class="o">.</span><span class="n">segments</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">s</span><span class="p">);</span> <span class="k">return</span> <span class="n">s</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">build</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="c1"># 1) enforce per-segment budgets</span>
+        <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">segments</span><span class="p">:</span>
+            <span class="n">s</span><span class="o">.</span><span class="n">fit</span><span class="p">()</span>
+        <span class="c1"># 2) enforce the GLOBAL ceiling: if total still too big,</span>
+        <span class="c1">#    squeeze the largest elastic segment further.</span>
+        <span class="n">ceiling</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">w_eff</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">output_reserve</span>
+        <span class="k">while</span> <span class="nb">sum</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">tokens</span><span class="p">()</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">segments</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">ceiling</span><span class="p">:</span>
+            <span class="n">big</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">segments</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">s</span><span class="p">:</span> <span class="n">s</span><span class="o">.</span><span class="n">tokens</span><span class="p">())</span>
+            <span class="n">big</span><span class="o">.</span><span class="n">budget</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">big</span><span class="o">.</span><span class="n">budget</span> <span class="o">*</span> <span class="mf">0.85</span><span class="p">)</span>   <span class="c1"># tighten and re-fit</span>
+            <span class="n">big</span><span class="o">.</span><span class="n">fit</span><span class="p">()</span>
+            <span class="k">if</span> <span class="nb">all</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">tokens</span><span class="p">()</span> <span class="o">&lt;=</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">segments</span><span class="p">):</span>
+                <span class="k">break</span>
+        <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">items</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">segments</span><span class="p">)</span>
+
+<span class="c1"># --- usage ---------------------------------------------------------------</span>
+<span class="n">cb</span> <span class="o">=</span> <span class="n">ContextBuilder</span><span class="p">(</span><span class="n">w_eff</span><span class="o">=</span><span class="mi">32_000</span><span class="p">,</span> <span class="n">output_reserve</span><span class="o">=</span><span class="mi">4000</span><span class="p">)</span>
+<span class="n">sys_seg</span>   <span class="o">=</span> <span class="n">cb</span><span class="o">.</span><span class="n">segment</span><span class="p">(</span><span class="s2">&quot;system&quot;</span><span class="p">,</span>    <span class="n">budget</span><span class="o">=</span><span class="mi">2_000</span><span class="p">)</span>
+<span class="n">ret_seg</span>   <span class="o">=</span> <span class="n">cb</span><span class="o">.</span><span class="n">segment</span><span class="p">(</span><span class="s2">&quot;retrieved&quot;</span><span class="p">,</span> <span class="n">budget</span><span class="o">=</span><span class="mi">8_000</span><span class="p">)</span>
+<span class="n">hist_seg</span>  <span class="o">=</span> <span class="n">cb</span><span class="o">.</span><span class="n">segment</span><span class="p">(</span><span class="s2">&quot;history&quot;</span><span class="p">,</span>   <span class="n">budget</span><span class="o">=</span><span class="mi">16_000</span><span class="p">)</span>
+<span class="n">task_seg</span>  <span class="o">=</span> <span class="n">cb</span><span class="o">.</span><span class="n">segment</span><span class="p">(</span><span class="s2">&quot;task&quot;</span><span class="p">,</span>      <span class="n">budget</span><span class="o">=</span><span class="mi">2_000</span><span class="p">)</span>
+
+<span class="n">sys_seg</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;You are a coding agent. Follow the plan. Be terse.&quot;</span><span class="p">,</span> <span class="n">pin</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">ret_seg</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">read_window</span><span class="p">(</span><span class="s2">&quot;server.py&quot;</span><span class="p">,</span> <span class="mi">120</span><span class="p">))</span>           <span class="c1"># only the relevant slice</span>
+<span class="k">for</span> <span class="n">turn</span> <span class="ow">in</span> <span class="p">[]:</span>  <span class="c1"># ... append conversation turns here ...</span>
+    <span class="n">hist_seg</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">turn</span><span class="p">)</span>
+<span class="n">task_seg</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;Fix the off-by-one in pagination.&quot;</span><span class="p">,</span> <span class="n">pin</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">prompt</span> <span class="o">=</span> <span class="n">cb</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;assembled </span><span class="si">{</span><span class="n">ntok</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span><span class="si">}</span><span class="s2"> tokens (ceiling </span><span class="si">{</span><span class="mi">32_000</span><span class="o">-</span><span class="mi">4000</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The key design choices: per-segment caps prevent any one source (usually tool output or history) from cannibalizing the rest; <em>pinning</em> protects the load-bearing pieces (system prompt, current task, the active file); eviction leaves an explicit breadcrumb so the model knows context was removed rather than silently hallucinating continuity; and a global ceiling backstop guarantees you never exceed the API&rsquo;s hard limit.</p>
+<h2 id="compaction-summarization">Compaction &amp; Summarization<a class="headerlink" href="#compaction-summarization" title="Permanent link">¶</a></h2>
+<p>When eviction is too lossy — you do not want to simply <em>drop</em> the last 30 turns of a debugging session — you <strong>compact</strong>: replace a long span of low-density context with a short, high-density summary that preserves the decisions and facts the agent still needs.</p>
+<h3 id="when-to-compact">When to compact<a class="headerlink" href="#when-to-compact" title="Permanent link">¶</a></h3>
+<p>Trigger compaction when the conversation segment crosses a high-water mark, e.g. 75% of its budget. Do not wait for the hard limit; compaction itself costs a model call and you want headroom to absorb the next few turns.</p>
+<h3 id="what-to-preserve">What to preserve<a class="headerlink" href="#what-to-preserve" title="Permanent link">¶</a></h3>
+<p>A good agent summary is not a prose recap; it is a <strong>structured state snapshot</strong>. The art is choosing what is <em>durable</em> (must survive) versus <em>ephemeral</em> (safe to drop):</p>
+<ul>
+<li><strong>Durable:</strong> the original goal; decisions made and <em>why</em>; files/functions modified and their current state; constraints discovered (&ldquo;the API rate-limits at 10 rps&rdquo;); open TODOs; the current hypothesis.</li>
+<li><strong>Ephemeral:</strong> raw tool output already acted upon; superseded plans; verbose reasoning that led to a conclusion already recorded; failed attempts whose lesson is captured in a single line.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Compaction: collapse old turns into a structured snapshot via a model call.</span>
+<span class="c1"># The summary is itself a context artifact, so we constrain its length hard.</span>
+<span class="n">COMPACTION_PROMPT</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">You are compacting an agent&#39;s working memory. Produce a STRUCTURED state </span><span class="se">\</span>
+<span class="s2">snapshot under </span><span class="si">{max_tokens}</span><span class="s2"> tokens. Preserve only what is needed to CONTINUE </span><span class="se">\</span>
+<span class="s2">the task. Use exactly these sections; omit a section if empty.</span>
+
+<span class="s2">## Goal</span>
+<span class="s2">&lt;the user&#39;s original objective, one or two sentences&gt;</span>
+<span class="s2">## Decisions</span>
+<span class="s2">&lt;bulleted: decision -&gt; rationale&gt;</span>
+<span class="s2">## Files changed</span>
+<span class="s2">&lt;path: what changed and current state&gt;</span>
+<span class="s2">## Constraints discovered</span>
+<span class="s2">&lt;bulleted facts that constrain future actions&gt;</span>
+<span class="s2">## Open TODOs</span>
+<span class="s2">&lt;ordered, actionable&gt;</span>
+<span class="s2">## Current hypothesis / next step</span>
+<span class="s2">&lt;one short paragraph&gt;</span>
+
+<span class="s2">Do NOT include raw logs, superseded plans, or verbose reasoning.</span>
+<span class="s2">--- CONVERSATION TO COMPACT ---</span>
+<span class="si">{history}</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compact</span><span class="p">(</span><span class="n">call_model</span><span class="p">,</span> <span class="n">turns</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1200</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">history</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">turns</span><span class="p">)</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="n">COMPACTION_PROMPT</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">max_tokens</span><span class="o">=</span><span class="n">max_tokens</span><span class="p">,</span> <span class="n">history</span><span class="o">=</span><span class="n">history</span><span class="p">)</span>
+    <span class="n">summary</span> <span class="o">=</span> <span class="n">call_model</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+    <span class="c1"># Hard-trim as a safety net in case the model over-runs.</span>
+    <span class="n">toks</span> <span class="o">=</span> <span class="n">_enc</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">summary</span><span class="p">)[:</span> <span class="n">max_tokens</span><span class="p">]</span> <span class="k">if</span> <span class="s1">&#39;tiktoken&#39;</span> <span class="ow">in</span> <span class="nb">dir</span><span class="p">()</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="k">return</span> <span class="n">_enc</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">toks</span><span class="p">)</span> <span class="k">if</span> <span class="n">toks</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">summary</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">maybe_compact</span><span class="p">(</span><span class="n">hist_seg</span><span class="p">:</span> <span class="s2">&quot;Segment&quot;</span><span class="p">,</span> <span class="n">call_model</span><span class="p">,</span> <span class="n">keep_recent</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">6</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;If history exceeds 75% of budget, compact everything except the most</span>
+<span class="sd">    recent `keep_recent` turns (recency is high-value; never summarize it).&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">hist_seg</span><span class="o">.</span><span class="n">tokens</span><span class="p">()</span> <span class="o">&lt;</span> <span class="mf">0.75</span> <span class="o">*</span> <span class="n">hist_seg</span><span class="o">.</span><span class="n">budget</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="n">old</span><span class="p">,</span> <span class="n">recent</span> <span class="o">=</span> <span class="n">hist_seg</span><span class="o">.</span><span class="n">items</span><span class="p">[:</span><span class="o">-</span><span class="n">keep_recent</span><span class="p">],</span> <span class="n">hist_seg</span><span class="o">.</span><span class="n">items</span><span class="p">[</span><span class="o">-</span><span class="n">keep_recent</span><span class="p">:]</span>
+    <span class="n">snapshot</span> <span class="o">=</span> <span class="n">compact</span><span class="p">(</span><span class="n">call_model</span><span class="p">,</span> <span class="n">old</span><span class="p">)</span>
+    <span class="c1"># Replace the old span with one pinned snapshot; keep recent verbatim.</span>
+    <span class="n">hist_seg</span><span class="o">.</span><span class="n">items</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;## COMPACTED STATE</span><span class="se">\n</span><span class="si">{</span><span class="n">snapshot</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span> <span class="o">+</span> <span class="n">recent</span>
+    <span class="n">hist_seg</span><span class="o">.</span><span class="n">pinned</span> <span class="o">=</span> <span class="p">[</span><span class="kc">True</span><span class="p">]</span> <span class="o">+</span> <span class="p">[</span><span class="kc">False</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">recent</span><span class="p">)</span>
+</code></pre></div>
+<p>Two subtleties make or break compaction in practice. First, <strong>never compact the most recent turns</strong> — recency is exactly where the model&rsquo;s attention is strongest and where the immediate task state lives; summarizing it throws away your best signal. Keep the last few turns verbatim and compact only the older tail. Second, <strong>compaction is lossy and compounding</strong>: summaries of summaries drift. Mitigate by anchoring durable facts in <em>external</em> storage (next section) that is regenerated from ground truth rather than re-summarized, so the snapshot can be partly rebuilt from files on disk rather than from prior summaries.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: compaction vs. truncation vs. eviction</p>
+<p>Three different operations, often conflated. <strong>Truncation</strong> cuts tokens by position (drop the oldest N) — cheap, zero model calls, maximally lossy. <strong>Eviction</strong> drops whole semantic items (a tool result, a turn) under a policy — cheap, semantically aware, still lossy. <strong>Compaction</strong> replaces a span with a model-generated summary — costs a model call, preserves the most information per token, but introduces drift. Mature harnesses use all three: evict obviously-dead items continuously, truncate over-long single results immediately, and compact the conversation periodically.</p>
+</div>
+<h2 id="structured-external-context-files-scratchpads-state">Structured External Context: Files, Scratchpads &amp; State<a class="headerlink" href="#structured-external-context-files-scratchpads-state" title="Permanent link">¶</a></h2>
+<p>The deepest idea in modern context engineering is that <strong>the context window should not be the agent&rsquo;s only memory.</strong> Treat the window as fast, small, volatile RAM, and treat the file system (or a database, or a structured store) as slow, large, durable disk. The agent reads relevant state into the window when it needs it and writes durable state back out — exactly the memory hierarchy from <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>, one level up.</p>
+<h3 id="the-scratchpad-plan-file">The scratchpad / plan file<a class="headerlink" href="#the-scratchpad-plan-file" title="Permanent link">¶</a></h3>
+<p>Give the agent a persistent <strong>scratchpad</strong> — often literally a file like <code>PLAN.md</code> or <code>TODO.md</code> — that it owns and updates. This externalizes working memory so it survives compaction, and it gives the model a stable, re-readable anchor for the task structure. The pattern: the agent writes its plan to a file, and at the top of each turn the <em>current</em> plan file is read back into a small pinned segment. Compaction can wipe the conversation history, but the plan persists on disk.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># An externalized scratchpad. The plan lives on disk, NOT only in the window.</span>
+<span class="c1"># Each turn we re-read the (small) current plan into a pinned segment, so it</span>
+<span class="c1"># survives compaction and the model always sees an up-to-date task structure.</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">os</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Scratchpad</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="s2">&quot;PLAN.md&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">=</span> <span class="n">path</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_write</span><span class="p">({</span><span class="s2">&quot;goal&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;todos&quot;</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">&quot;notes&quot;</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">&quot;done&quot;</span><span class="p">:</span> <span class="p">[]})</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_write</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span><span class="p">:</span> <span class="nb">dict</span><span class="p">):</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;# PLAN</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;## Goal</span><span class="se">\n</span><span class="si">{</span><span class="n">state</span><span class="p">[</span><span class="s1">&#39;goal&#39;</span><span class="p">]</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;## TODO</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- [ ] </span><span class="si">{</span><span class="n">t</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;todos&quot;</span><span class="p">]))</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">## Done</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- [x] </span><span class="si">{</span><span class="n">d</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;done&quot;</span><span class="p">]))</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">## Notes</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;notes&quot;</span><span class="p">]))</span>
+            <span class="c1"># Keep a machine-readable mirror for reliable parsing.</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">+</span> <span class="s2">&quot;.json&quot;</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+                <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">g</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">state</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">+</span> <span class="s2">&quot;.json&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Small, dense view to pin into context every turn.&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+    <span class="c1"># Tool surface the agent calls:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_goal</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">goal</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">();</span> <span class="n">s</span><span class="p">[</span><span class="s2">&quot;goal&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">goal</span><span class="p">;</span> <span class="bp">self</span><span class="o">.</span><span class="n">_write</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_todo</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">();</span> <span class="n">s</span><span class="p">[</span><span class="s2">&quot;todos&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">item</span><span class="p">);</span> <span class="bp">self</span><span class="o">.</span><span class="n">_write</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">complete</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">s</span><span class="p">[</span><span class="s2">&quot;todos&quot;</span><span class="p">]:</span>
+            <span class="n">s</span><span class="p">[</span><span class="s2">&quot;todos&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">item</span><span class="p">);</span> <span class="n">s</span><span class="p">[</span><span class="s2">&quot;done&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">item</span><span class="p">);</span> <span class="bp">self</span><span class="o">.</span><span class="n">_write</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">note</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">();</span> <span class="n">s</span><span class="p">[</span><span class="s2">&quot;notes&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">text</span><span class="p">);</span> <span class="bp">self</span><span class="o">.</span><span class="n">_write</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+
+<span class="c1"># Each turn:</span>
+<span class="c1">#   plan_seg.items = [pad.render()]; plan_seg.pinned = [True]</span>
+<span class="c1"># The plan is ~300 tokens, always fresh, and immune to history compaction.</span>
+</code></pre></div>
+<p>This &ldquo;model as an operating system&rdquo; framing — context window as RAM, external store as disk, with the agent paging state in and out — is the conceptual core of agent memory systems generally, which we develop fully in <a href="../08-agents-harness/05-agent-memory.html">Memory Systems for Agents</a>. The distinction worth holding here: the <em>scratchpad</em> is short-lived per-task working memory; <em>memory systems</em> (vector stores of past episodes, user preferences, learned facts) are long-lived cross-task memory. Both are forms of externalized context.</p>
+<h3 id="sub-agents-as-context-isolation">Sub-agents as context isolation<a class="headerlink" href="#sub-agents-as-context-isolation" title="Permanent link">¶</a></h3>
+<p>A complementary technique: spin up a <strong>sub-agent</strong> with its own fresh context window to handle a bounded subtask (e.g., &ldquo;find every call site of <code>deprecated_fn</code>&rdquo;), and return only its <em>conclusion</em> to the parent. The verbose exploration — dozens of <code>grep</code> and <code>read</code> results — happens in the sub-agent&rsquo;s window and is discarded; the parent&rsquo;s window receives a clean two-line answer. This is context engineering via decomposition, and it is why multi-agent decomposition (see <a href="../08-agents-harness/07-multi-agent-systems.html">Multi-Agent Systems &amp; Orchestration</a>) is as much a context-management strategy as a capability strategy.</p>
+<h2 id="prompt-caching-for-agents">Prompt Caching for Agents<a class="headerlink" href="#prompt-caching-for-agents" title="Permanent link">¶</a></h2>
+<p>Even with a tight context, a long-running agent re-sends a large, <em>identical</em> prefix on every turn: the system prompt, the tool definitions, and the unchanged head of the conversation. <strong>Prompt caching</strong> lets the inference server reuse the previously computed KV cache for that prefix instead of re-prefilling it, turning repeated input tokens from full price into a steep discount (often on the order of 10× cheaper for cache hits) and cutting time-to-first-token dramatically. The serving mechanism is covered in <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a> and SGLang&rsquo;s <a href="../07-inference-serving/04-sglang-radixattention.html">RadixAttention</a>; here we focus on <em>structuring context to maximize hits</em>.</p>
+<h3 id="the-one-rule-keep-the-prefix-byte-stable">The one rule: keep the prefix byte-stable<a class="headerlink" href="#the-one-rule-keep-the-prefix-byte-stable" title="Permanent link">¶</a></h3>
+<p>Prefix caching matches the <strong>longest common prefix</strong> of the new request against cached entries. The cache hit ends at the <em>first byte that differs</em>. Therefore: order your context from <strong>most stable to least stable</strong>, and never mutate an earlier segment if you can avoid it.</p>
+<div class="highlight"><pre><span></span><code>GOOD ordering (stable prefix -&gt; cache hit on the whole gray region):
+
+[ system prompt ][ tool schemas ][ retrieved (stable) ][ history ... ][ new turn ]
+ ^---------------- cached prefix (reused) --------------^^-- new tokens, prefilled --
+
+BAD: a timestamp or turn-counter near the TOP invalidates EVERYTHING after it:
+
+[ &quot;It is 14:32:07. &quot; ][ system prompt ][ tools ] ...   &lt;- cache miss every turn
+  ^ changes each call -&gt; longest common prefix is ~0 -&gt; you pay full price always
+</code></pre></div>
+<p>Common cache-busting mistakes, all fixable: putting the current timestamp, a random request ID, or a per-turn counter at the <em>top</em> of the system prompt; reordering tool definitions between calls (serialize them in a fixed, sorted order); rewriting earlier conversation turns during compaction in a way that changes their bytes (instead, compact into a <em>new</em> trailing segment and only occasionally rebuild). Move all volatile content to the <em>end</em>, just before the model&rsquo;s turn.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Assemble an agent request that is prefix-cache friendly (Anthropic-style</span>
+<span class="c1"># cache_control shown; the principle is identical for vLLM/SGLang auto-prefix).</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">build_cached_request</span><span class="p">(</span><span class="n">system</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+                         <span class="n">stable_context</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">history</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+                         <span class="n">current_turn</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+    <span class="c1"># Tools serialized in a FIXED order so bytes never shift between calls.</span>
+    <span class="n">tools_sorted</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">tools</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">t</span><span class="p">:</span> <span class="n">t</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">])</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;claude-style-model&quot;</span><span class="p">,</span>
+        <span class="c1"># System + tools: the most stable block. Mark a cache breakpoint at</span>
+        <span class="c1"># its end so this large prefix is reused on every subsequent turn.</span>
+        <span class="s2">&quot;system&quot;</span><span class="p">:</span> <span class="p">[</span>
+            <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">system</span><span class="p">},</span>
+            <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">stable_context</span><span class="p">,</span>
+             <span class="s2">&quot;cache_control&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;ephemeral&quot;</span><span class="p">}},</span>  <span class="c1"># &lt;- cache up to here</span>
+        <span class="p">],</span>
+        <span class="s2">&quot;tools&quot;</span><span class="p">:</span> <span class="n">tools_sorted</span><span class="p">,</span>
+        <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="n">history</span> <span class="o">+</span> <span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">current_turn</span><span class="p">}],</span>
+        <span class="c1"># Volatile bits (timestamp, nonce) go INSIDE current_turn, at the end,</span>
+        <span class="c1"># so they never invalidate the cached prefix above.</span>
+    <span class="p">}</span>
+</code></pre></div>
+<h3 id="the-interaction-with-compaction">The interaction with compaction<a class="headerlink" href="#the-interaction-with-compaction" title="Permanent link">¶</a></h3>
+<p>There is a real tension: <strong>compaction rewrites the prefix, which busts the cache.</strong> Right after a compaction, the next request is a full cache miss because the conversation head changed. This is fine — you compact precisely because the old context was too expensive to keep re-sending — but it means you should not compact <em>too eagerly</em>. Each compaction trades a one-time cache-miss prefill (and a summarization call) for cheaper subsequent turns. Compact when the projected savings over the next several turns exceed that one-time cost, not on every turn.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: caching math for an agent turn</p>
+<p>An agent carries a stable prefix of <span class="arithmatex">\(P = 12{,}000\)</span> tokens (system + tools + pinned plan) and adds <span class="arithmatex">\(\Delta = 1{,}500\)</span> new tokens per turn. Input is USD 3/M uncached; cached reads are USD 0.30/M (10× off); cache <em>writes</em> cost USD 3.75/M (a 25% surcharge, paid once when the prefix is first cached).</p>
+<p>Without caching, every turn prefills <span class="arithmatex">\(P + \Delta = 13{,}500\)</span> tokens at full price: $13{,}500 \times 3/\text{M} = $ USD 0.0405 per turn.</p>
+<p>With caching: turn 1 writes the prefix ($12{,}000 \times 3.75/\text{M} = $ USD 0.045) plus <span class="arithmatex">\(1{,}500\)</span> new at full price (USD 0.0045) = USD 0.0495. Turns 2+: read the cached <span class="arithmatex">\(12{,}000\)</span> at the discount ($12{,}000 \times 0.30/\text{M} = $ USD 0.0036) plus <span class="arithmatex">\(1{,}500\)</span> new at full price (USD 0.0045) = <strong>USD 0.0081 per turn</strong> — a 5× reduction on every steady-state turn. Over a 40-turn run: naive ≈ USD 1.62, cached ≈ USD 0.049 (write) + 39 × 0.0081 ≈ <strong>USD 0.37</strong>. Caching is the highest-leverage single change you can make to agent economics, which is why prefix stability is worth engineering for.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Your coding agent works great on short tasks but its answers get noticeably worse and its bill explodes on long, multi-file refactors. Walk me through how you would diagnose and fix this.</p>
+<p><strong>A:</strong> Two coupled problems — degrading quality and exploding cost — both rooted in unmanaged context. For <em>cost</em>, naive accumulation is <span class="arithmatex">\(O(N^2)\)</span> in turns: the agent re-sends a growing prompt every step. I would first instrument per-turn input token counts to confirm the quadratic ramp, then (a) cap each tool result (truncate logs/files, return only relevant windows), (b) add a context cap with periodic compaction to flatten the growth to <span class="arithmatex">\(O(NC)\)</span>, and &copy; order context most-stable-first and enable prompt caching so the unchanged prefix bills at ~10× discount. For <em>quality</em>, the long context is causing context rot and lost-in-the-middle: distractor tokens dilute attention and the relevant code may be buried mid-window. I would measure the effective window with a needle-in-haystack sweep, then move to just-in-time retrieval (grep/read tools instead of pre-stuffing files), place the current task and active file at the very end of the prompt, and externalize the plan to a <code>PLAN.md</code> that is re-read each turn so it survives compaction. The unifying principle: treat the window as scarce RAM — put in the minimum high-signal context, page the rest in on demand, and keep the prefix stable for caching.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The context window is the agent&rsquo;s <em>only</em> working memory and the scarce resource of the whole system; engineering what enters it, in what form and order, matters as much as the prompt.</li>
+<li>Naive context accumulation is <span class="arithmatex">\(O(N^2)\)</span> in turns and quietly dominates cost; capping context and compacting flattens it to <span class="arithmatex">\(O(NC)\)</span>.</li>
+<li>The <em>effective</em> window is smaller than the <em>advertised</em> window: context rot (long/distracting context degrades quality) and lost-in-the-middle (U-shaped position accuracy) are real and measurable — sweep them on your own stack.</li>
+<li>Place the most important content at the start or the very end of the window; never bury it in the middle.</li>
+<li>Prefer just-in-time retrieval (tools that grep/read minimal slices) over stuffing whole files; always bound tool outputs before they re-enter context.</li>
+<li>Budget the window per segment, pin load-bearing pieces (system prompt, current task, active plan), and evict/truncate/compact in that order of increasing cost.</li>
+<li>Externalize durable state to files/scratchpads (RAM-vs-disk): the plan survives compaction and can be rebuilt from ground truth rather than from lossy summaries.</li>
+<li>Structure context most-stable-first and keep the prefix byte-stable so prompt caching gives a ~10× discount on the repeated prefix; compact deliberately, since it busts the cache.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Context engineering — the discipline of deciding what enters the LLM&rsquo;s finite window, in what form, and when — crystallised as a named practice in mid-2025 and is now the central skill for building reliable, cost-efficient long-running agents. Techniques such as structured compaction, just-in-time retrieval, budget management, and prefix-stable caching have all seen first-party API support and rigorous empirical study.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2307.03172">Liu et al., <em>Lost in the Middle: How Language Models Use Long Contexts</em> (2023)</a> — the canonical measurement of U-shaped position accuracy in long contexts; motivates placing critical content at window boundaries.</li>
+<li><a href="https://arxiv.org/abs/2310.08560">Packer et al., <em>MemGPT: Towards LLMs as Operating Systems</em> (2023)</a> — introduced the RAM-vs-disk framing: the context window as volatile fast memory, external storage as slow durable memory, with OS-style paging between them.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2601.06007">Lumer et al., <em>Don&rsquo;t Break the Cache: An Evaluation of Prompt Caching for Long-Horizon Agentic Tasks</em> (2026)</a> — rigorous measurement showing prefix caching cuts API cost 41–80% and TTFT 13–31% across providers on multi-turn agentic benchmarks; quantifies the compaction–cache-miss trade-off.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/gkamradt/LLMTest_NeedleInAHaystack">gkamradt/LLMTest_NeedleInAHaystack</a> — the standard harness for sweeping context length × needle depth to measure your model&rsquo;s effective window; widely adopted by Anthropic, Google, and OpenAI.</li>
+<li><a href="https://github.com/nelson-liu/lost-in-the-middle">nelson-liu/lost-in-the-middle</a> — code and data from the Lost-in-the-Middle paper; multi-doc QA and key-value retrieval benchmarks for position-effect evaluation.</li>
+<li><a href="https://github.com/mem0ai/mem0">mem0ai/mem0</a> — 57 k-star universal memory layer for agents; provides managed persistent memory that offloads long-term context from the window to an external store.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">Anthropic Engineering, <em>Effective context engineering for AI agents</em> (Sep 2025)</a> — Anthropic&rsquo;s practitioner guide: compaction triggers, tool-result clearing, scratchpad patterns, and multi-agent isolation as context strategy.</li>
+<li><a href="https://platform.claude.com/cookbook/tool-use-context-engineering-context-engineering-tools">Anthropic Cookbook, <em>Context engineering: memory, compaction, and tool clearing</em> (Mar 2026)</a> — runnable code comparing the three first-party context primitives (compaction, tool-result clearing, memory tool) on a realistic long-running research agent.</li>
+<li><a href="https://claude.com/blog/prompt-caching">Anthropic, <em>Prompt caching</em> (claude.com)</a> — the announcement and economics of prefix caching in Claude: up to 90% cost reduction and 85% latency reduction for stable-prefix agent turns.</li>
+<li><a href="https://simonwillison.net/2025/jun/27/context-engineering/">Simon Willison, <em>Context engineering</em> (Jun 2025)</a> — a lucid 5-minute read on why &ldquo;context engineering&rdquo; displaced &ldquo;prompt engineering&rdquo; as the right framing for this discipline, with pointers to Karpathy and Lütke&rsquo;s formulations.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Liu, Lin, Hewitt, et al., <em>Lost in the Middle: How Language Models Use Long Contexts</em> (2023) — the canonical study of position effects in long contexts.</li>
+<li><em>Lin et al. / &ldquo;Needle in a Haystack&rdquo;</em> evaluation methodology (Greg Kamradt&rsquo;s NIAH harness) — the practical recipe for measuring effective context length.</li>
+<li>Anthropic engineering, <em>Prompt caching</em> and <em>Effective context engineering for AI agents</em> — vendor guidance on cache-friendly structuring and just-in-time context.</li>
+<li>Packer et al., <em>MemGPT: Towards LLMs as Operating Systems</em> (2023) — the RAM-vs-disk framing of context as a managed memory hierarchy.</li>
+<li>Zheng et al., <em>SGLang: Efficient Execution of Structured Language Model Programs</em> (RadixAttention) — automatic prefix sharing as a serving-side complement to context engineering.</li>
+<li>Lewis et al., <em>Retrieval-Augmented Generation</em> (2020) — the retrieval-vs-stuffing foundation; pairs with Part IX of this book.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="03-harness-coding-agent.html"><span class="pn-label">← Previous</span><span class="pn-title">Harness Engineering: Building a Coding Agent</span></a>
+<a class="next" href="05-agent-memory.html"><span class="pn-label">Next →</span><span class="pn-title">Memory Systems for Agents</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-context-window-as-a-scarce-resource">The Context Window as a Scarce Resource</a></li>
+<li class="toc-l3"><a href="#what-actually-lives-in-the-window">What actually lives in the window</a></li>
+<li class="toc-l3"><a href="#the-cost-arithmetic-of-a-naive-agent">The cost arithmetic of a naive agent</a></li>
+<li class="toc-l2"><a href="#context-rot-lost-in-the-middle-position-effects">Context Rot, Lost-in-the-Middle &amp;amp; Position Effects</a></li>
+<li class="toc-l3"><a href="#lost-in-the-middle">Lost-in-the-middle</a></li>
+<li class="toc-l3"><a href="#context-rot">Context rot</a></li>
+<li class="toc-l2"><a href="#retrieval-vs-stuffing-choosing-what-goes-in">Retrieval vs Stuffing: Choosing What Goes In</a></li>
+<li class="toc-l3"><a href="#the-trade-off">The trade-off</a></li>
+<li class="toc-l3"><a href="#agentic-retrieval-let-the-model-fetch">Agentic retrieval: let the model fetch</a></li>
+<li class="toc-l2"><a href="#token-budgeting-allocating-the-window">Token Budgeting: Allocating the Window</a></li>
+<li class="toc-l3"><a href="#a-budget-model">A budget model</a></li>
+<li class="toc-l3"><a href="#a-concrete-budget-manager">A concrete budget manager</a></li>
+<li class="toc-l2"><a href="#compaction-summarization">Compaction &amp;amp; Summarization</a></li>
+<li class="toc-l3"><a href="#when-to-compact">When to compact</a></li>
+<li class="toc-l3"><a href="#what-to-preserve">What to preserve</a></li>
+<li class="toc-l2"><a href="#structured-external-context-files-scratchpads-state">Structured External Context: Files, Scratchpads &amp;amp; State</a></li>
+<li class="toc-l3"><a href="#the-scratchpad-plan-file">The scratchpad / plan file</a></li>
+<li class="toc-l3"><a href="#sub-agents-as-context-isolation">Sub-agents as context isolation</a></li>
+<li class="toc-l2"><a href="#prompt-caching-for-agents">Prompt Caching for Agents</a></li>
+<li class="toc-l3"><a href="#the-one-rule-keep-the-prefix-byte-stable">The one rule: keep the prefix byte-stable</a></li>
+<li class="toc-l3"><a href="#the-interaction-with-compaction">The interaction with compaction</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

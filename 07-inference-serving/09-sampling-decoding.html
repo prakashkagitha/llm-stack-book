@@ -1,0 +1,1472 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sampling Strategies &amp; Decoding Algorithms — The LLM Stack</title>
+<meta name="description" content="Greedy, temperature, top-k, top-p/nucleus, min-p, typical, repetition/frequency penalties, beam search, contrastive/DoLa, the bias-diversity tradeoff; logit pro">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="active" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="79-sampling-strategies-decoding-algorithms">7.9 Sampling Strategies &amp; Decoding Algorithms<a class="headerlink" href="#79-sampling-strategies-decoding-algorithms" title="Permanent link">¶</a></h1>
+<p>Every token an LLM produces is chosen by a <em>decoding algorithm</em> — a procedure that converts the raw logit vector from the final transformer layer into a discrete token. The choice of algorithm is not a minor implementation detail. It governs the fundamental tradeoff between diversity and fidelity: too deterministic, and the model parrots its training distribution; too stochastic, and it drifts into incoherence. This chapter covers that tradeoff with precision — from the mathematics of each algorithm to production-grade implementation tricks.</p>
+<p>We assume you have read about the autoregressive decoding loop in <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a> and that you understand how <a href="../07-inference-serving/06-speculative-decoding.html">Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a> interacts with the sampling step. We also touch on connections to RL fine-tuning discussed in <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>.</p>
+<h2 id="the-probability-pipeline-logits-to-token">The Probability Pipeline: Logits to Token<a class="headerlink" href="#the-probability-pipeline-logits-to-token" title="Permanent link">¶</a></h2>
+<p>The model outputs a real-valued vector <span class="arithmatex">\(\mathbf{z} \in \mathbb{R}^{|V|}\)</span> called <em>logits</em>, where <span class="arithmatex">\(|V|\)</span> is the vocabulary size (32,000 for LLaMA-2, 128,256 for LLaMA-3). The pipeline from logits to a sampled token is:</p>
+<div class="arithmatex">\[
+\mathbf{z} \xrightarrow{\text{processors}} \mathbf{z}' \xrightarrow{\text{softmax}} \mathbf{p} \xrightarrow{\text{sampler}} t \in \{0,\ldots,|V|-1\}
+\]</div>
+<p><em>Logit processors</em> transform the raw logits before the softmax — applying temperature scaling, vocabulary filtering, or penalty terms. The <em>sampler</em> draws from the resulting distribution. This separation is important: processors compose and stack, while the sampler is usually just a multinomial draw.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sample_token</span><span class="p">(</span>
+    <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>          <span class="c1"># shape: (vocab_size,), raw model outputs</span>
+    <span class="n">processors</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="s2">&quot;LogitProcessor&quot;</span><span class="p">],</span>
+    <span class="n">do_sample</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Apply a list of logit processors in sequence, then sample one token.</span>
+<span class="sd">    Returns the integer token id.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>  <span class="c1"># always upcast to fp32 for numerical safety</span>
+
+    <span class="k">for</span> <span class="n">proc</span> <span class="ow">in</span> <span class="n">processors</span><span class="p">:</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">proc</span><span class="p">(</span><span class="n">logits</span><span class="p">)</span>        <span class="c1"># each processor modifies logits in-place or returns a new tensor</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">do_sample</span><span class="p">:</span>
+        <span class="c1"># greedy: just the argmax</span>
+        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">logits</span><span class="o">.</span><span class="n">argmax</span><span class="p">())</span>
+
+    <span class="c1"># convert to probabilities and sample</span>
+    <span class="n">probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">multinomial</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="n">num_samples</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>
+</code></pre></div>
+<p>Everything in this chapter is a specialisation of this loop. Let&rsquo;s build each piece.</p>
+<h2 id="greedy-decoding-and-its-failure-modes">Greedy Decoding and Its Failure Modes<a class="headerlink" href="#greedy-decoding-and-its-failure-modes" title="Permanent link">¶</a></h2>
+<p>Greedy decoding picks the most probable token at every step:</p>
+<div class="arithmatex">\[
+t_i = \arg\max_{t} P(t \mid t_{&lt;i}, \mathbf{x})
+\]</div>
+<p>It is deterministic, fast, and <em>not</em> equivalent to finding the most probable sequence. The globally most probable sequence — the <em>maximum a posteriori</em> (MAP) sequence — requires an exponential search, because token choices interact: the best next token often forecloses the best continuation.</p>
+<p>In practice, greedy decoding produces repetitive, low-entropy text. Once the model writes &ldquo;The cat sat on the&rdquo;, it assigns high probability to &ldquo;mat&rdquo;, which then makes &ldquo;mat mat mat&rdquo; the greedy continuation. This is not a defect in the model; it is a consequence of choosing the locally optimal token at each step without lookahead.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">greedy_decode</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">,</span>
+    <span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># (1, seq_len)</span>
+    <span class="n">max_new_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100</span><span class="p">,</span>
+    <span class="n">eos_token_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Minimal greedy decode loop.&quot;&quot;&quot;</span>
+    <span class="n">generated</span> <span class="o">=</span> <span class="n">input_ids</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_new_tokens</span><span class="p">):</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">generated</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span><span class="p">[:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span>   <span class="c1"># (1, vocab)</span>
+        <span class="n">next_token</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># (1, 1)</span>
+        <span class="n">generated</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">generated</span><span class="p">,</span> <span class="n">next_token</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">next_token</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">==</span> <span class="n">eos_token_id</span><span class="p">:</span>
+            <span class="k">break</span>
+    <span class="k">return</span> <span class="n">generated</span>
+</code></pre></div>
+<p>Use greedy when: (a) you need exact reproducibility, (b) the task has a single correct answer and the model is well-calibrated (e.g., code completion with high-temperature training), or &copy; you are the draft model in speculative decoding and the verifier handles stochasticity.</p>
+<h2 id="temperature-scaling">Temperature Scaling<a class="headerlink" href="#temperature-scaling" title="Permanent link">¶</a></h2>
+<p>Temperature <span class="arithmatex">\(T &gt; 0\)</span> is the single most important hyperparameter in decoding. It divides every logit by <span class="arithmatex">\(T\)</span> before the softmax:</p>
+<div class="arithmatex">\[
+P_T(t) = \frac{\exp(z_t / T)}{\sum_{t'} \exp(z_{t'} / T)}
+\]</div>
+<ul>
+<li><span class="arithmatex">\(T \to 0\)</span>: distribution collapses to a point mass at the argmax (greedy).</li>
+<li><span class="arithmatex">\(T = 1\)</span>: the model&rsquo;s trained distribution, unchanged.</li>
+<li><span class="arithmatex">\(T \to \infty\)</span>: distribution becomes uniform over the vocabulary.</li>
+</ul>
+<p>Dividing by <span class="arithmatex">\(T &lt; 1\)</span> <em>sharpens</em> the distribution (amplifies differences between logits); dividing by <span class="arithmatex">\(T &gt; 1\)</span> <em>flattens</em> it (suppresses differences).</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TemperatureProcessor</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="n">temperature</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;Temperature must be positive&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">temperature</span> <span class="o">=</span> <span class="n">temperature</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Dividing logits by T is equivalent to multiplying log-probs by 1/T,</span>
+        <span class="c1"># which is exactly the &quot;softmax temperature&quot; formulation.</span>
+        <span class="k">return</span> <span class="n">logits</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">temperature</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: feeling the temperature</p>
+<p>Suppose the top two logits are <span class="arithmatex">\(z_A = 5.0\)</span> and <span class="arithmatex">\(z_B = 4.0\)</span> (all others much smaller).</p>
+<p>At <strong><span class="arithmatex">\(T = 1\)</span></strong>:
+$<span class="arithmatex">\(p_A = \frac{e^5}{e^5 + e^4} = \frac{148.4}{148.4 + 54.6} \approx 0.731, \quad p_B \approx 0.269\)</span>$</p>
+<p>At <strong><span class="arithmatex">\(T = 0.5\)</span></strong> (sharpen):
+$<span class="arithmatex">\(p_A = \frac{e^{10}}{e^{10} + e^{8}} \approx \frac{22026}{22026 + 2981} \approx 0.881, \quad p_B \approx 0.119\)</span>$</p>
+<p>At <strong><span class="arithmatex">\(T = 2\)</span></strong> (flatten):
+$<span class="arithmatex">\(p_A = \frac{e^{2.5}}{e^{2.5} + e^{2}} \approx \frac{12.18}{12.18 + 7.39} \approx 0.622, \quad p_B \approx 0.378\)</span>$</p>
+<p>At <span class="arithmatex">\(T = 0.5\)</span>, the model is roughly 7.4× more likely to pick <span class="arithmatex">\(A\)</span> than <span class="arithmatex">\(B\)</span>; at <span class="arithmatex">\(T = 2\)</span>, only 1.6× more likely. A small change in temperature creates large changes in practice.</p>
+</div>
+<h3 id="temperature-and-the-training-distribution">Temperature and the Training Distribution<a class="headerlink" href="#temperature-and-the-training-distribution" title="Permanent link">¶</a></h3>
+<p>A crucial subtlety: the model was trained with teacher-forcing at <span class="arithmatex">\(T = 1\)</span>. When you use <span class="arithmatex">\(T &lt; 1\)</span> at inference, you are sampling from a distribution that is <em>sharper</em> than what the model saw during training. This is usually fine — the probabilities just become more concentrated. When you use <span class="arithmatex">\(T &gt; 1\)</span>, you are sampling tokens the model considers unlikely, which can produce creative but also hallucinated or incoherent text.</p>
+<p>Temperature interacts deeply with RL fine-tuning (see <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>). During PPO rollouts, the <em>policy temperature</em> determines exploration; a too-cold policy underfits the reward landscape, a too-hot policy produces garbage completions that confuse the reward model. Similarly, distillation objectives (see <a href="../05-posttraining-alignment/12-distillation-compression.html">Distillation, Model Compression &amp; Knowledge Transfer</a>) often match <em>soft targets</em> — temperature-scaled probability distributions — from the teacher, where a higher temperature exposes the &ldquo;dark knowledge&rdquo; in the teacher&rsquo;s off-peak probabilities.</p>
+<h2 id="top-k-sampling">Top-k Sampling<a class="headerlink" href="#top-k-sampling" title="Permanent link">¶</a></h2>
+<p>Top-k sampling restricts the vocabulary to the <span class="arithmatex">\(k\)</span> tokens with the highest logits before sampling:</p>
+<div class="arithmatex">\[
+\text{TopK}(\mathbf{z}, k): \text{set } z_t = -\infty \text{ for all } t \notin \text{Top}k(\mathbf{z})
+\]</div>
+<p>Setting logits to <span class="arithmatex">\(-\infty\)</span> ensures those tokens get zero probability after softmax. This prevents the long tail of improbable tokens from polluting the distribution.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TopKProcessor</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="n">top_k</span> <span class="o">&gt;=</span> <span class="mi">1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">top_k</span> <span class="o">=</span> <span class="n">top_k</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># kth_val is the minimum value among the top-k</span>
+        <span class="n">kth_val</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">top_k</span><span class="p">)</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="c1"># Mask everything below the threshold</span>
+        <span class="k">return</span> <span class="n">logits</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">logits</span> <span class="o">&lt;</span> <span class="n">kth_val</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>
+</code></pre></div>
+<p><strong>Limitation:</strong> <span class="arithmatex">\(k\)</span> is absolute. With <span class="arithmatex">\(k = 50\)</span>, you always consider 50 tokens whether the distribution is tight (one token dominates) or flat (many tokens are reasonable). Top-p addresses this.</p>
+<h2 id="top-p-nucleus-sampling">Top-p / Nucleus Sampling<a class="headerlink" href="#top-p-nucleus-sampling" title="Permanent link">¶</a></h2>
+<p>Holtzman et al. (&ldquo;The Curious Case of Neural Text Degeneration&rdquo;, 2020) introduced <em>nucleus sampling</em>: sample from the smallest set of tokens whose cumulative probability exceeds <span class="arithmatex">\(p\)</span>.</p>
+<div class="arithmatex">\[
+V_p = \min S \subseteq V \;\text{ s.t. }\; \sum_{t \in S} P(t) \geq p
+\]</div>
+<p>Tokens outside <span class="arithmatex">\(V_p\)</span> are suppressed. The nucleus adapts: when the model is confident (the top token alone has probability 0.9), the nucleus is tiny; when the model is uncertain (probability spread over many tokens), the nucleus expands.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TopPProcessor</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">top_p</span><span class="p">:</span> <span class="nb">float</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="mi">0</span> <span class="o">&lt;</span> <span class="n">top_p</span> <span class="o">&lt;=</span> <span class="mf">1.0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">top_p</span> <span class="o">=</span> <span class="n">top_p</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Sort logits descending to build cumulative sum</span>
+        <span class="n">sorted_logits</span><span class="p">,</span> <span class="n">sorted_indices</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">descending</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">sorted_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">cumulative_probs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># Remove tokens once cumulative probability exceeds top_p.</span>
+        <span class="c1"># We shift by one so the token that crosses the threshold is kept.</span>
+        <span class="n">remove_mask</span> <span class="o">=</span> <span class="n">cumulative_probs</span> <span class="o">-</span> <span class="n">probs</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">top_p</span>
+        <span class="n">sorted_logits</span><span class="p">[</span><span class="n">remove_mask</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">)</span>
+
+        <span class="c1"># Scatter back to original token ordering</span>
+        <span class="n">logits_filtered</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full_like</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>
+        <span class="n">logits_filtered</span><span class="o">.</span><span class="n">scatter_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">sorted_indices</span><span class="p">,</span> <span class="n">sorted_logits</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">logits_filtered</span>
+</code></pre></div>
+<p>A typical production default is <code>top_p=0.9</code> with <code>temperature=0.8</code>. Note that top-k and top-p <em>compose</em>: apply top-k first to cut the long tail cheaply, then apply top-p for adaptive nucleus selection.</p>
+<h2 id="min-p-sampling">Min-p Sampling<a class="headerlink" href="#min-p-sampling" title="Permanent link">¶</a></h2>
+<p>Min-p (Nguyen et al., 2023) takes a different angle: instead of keeping a top fraction by mass, it keeps all tokens whose probability is at least <span class="arithmatex">\(p_{\min}\)</span> times the <em>maximum</em> token probability:</p>
+<div class="arithmatex">\[
+V_{\min\text{-}p} = \{t : P(t) \geq p_{\min} \cdot \max_{t'} P(t')\}
+\]</div>
+<p>This scales the threshold relative to the peak, so it automatically tightens when the model is confident and loosens when it is uncertain — similar to top-p, but parameterised differently and often producing smoother behaviour at extreme temperatures.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MinPProcessor</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">min_p</span><span class="p">:</span> <span class="nb">float</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="mi">0</span> <span class="o">&lt;</span> <span class="n">min_p</span> <span class="o">&lt;</span> <span class="mf">1.0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">min_p</span> <span class="o">=</span> <span class="n">min_p</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="c1"># Absolute threshold: min_p * p_max</span>
+        <span class="n">threshold</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">min_p</span> <span class="o">*</span> <span class="n">probs</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">probs</span> <span class="o">&lt;</span> <span class="n">threshold</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">logits</span>
+</code></pre></div>
+<h2 id="typical-sampling">Typical Sampling<a class="headerlink" href="#typical-sampling" title="Permanent link">¶</a></h2>
+<p>Meister et al. (&ldquo;Typical Decoding for Natural Language Generation&rdquo;, 2023) approach diversity from an information-theoretic angle. They observe that human text is <em>typically</em> drawn from the centre of the entropy distribution: tokens whose surprisal <span class="arithmatex">\(-\log P(t)\)</span> is close to the conditional entropy <span class="arithmatex">\(H = -\sum_t P(t) \log P(t)\)</span>.</p>
+<p>Define the <em>typicality</em> of token <span class="arithmatex">\(t\)</span>:</p>
+<div class="arithmatex">\[
+|\!-\!\log P(t) - H| \leq \delta
+\]</div>
+<p>Typical sampling keeps only tokens satisfying this condition, discarding both the most probable (low surprisal, repetitive) and the least probable (high surprisal, incoherent).</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TypicalProcessor</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mass</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.9</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Keep the smallest set of &#39;typical&#39; tokens covering `mass` probability.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mass</span> <span class="o">=</span> <span class="n">mass</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">neg_log_probs</span> <span class="o">=</span> <span class="o">-</span><span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">probs</span> <span class="o">+</span> <span class="mf">1e-10</span><span class="p">)</span>
+
+        <span class="c1"># Conditional entropy (expected surprisal)</span>
+        <span class="n">H</span> <span class="o">=</span> <span class="p">(</span><span class="n">probs</span> <span class="o">*</span> <span class="n">neg_log_probs</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+        <span class="c1"># Typicality: distance of each token&#39;s surprisal from entropy</span>
+        <span class="n">typicality</span> <span class="o">=</span> <span class="p">(</span><span class="n">neg_log_probs</span> <span class="o">-</span> <span class="n">H</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span>
+
+        <span class="c1"># Sort by typicality (most typical first), then take the nucleus covering `mass`</span>
+        <span class="n">sorted_typicality</span><span class="p">,</span> <span class="n">sorted_indices</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">typicality</span><span class="p">)</span>
+        <span class="n">sorted_probs</span> <span class="o">=</span> <span class="n">probs</span><span class="p">[</span><span class="n">sorted_indices</span><span class="p">]</span>
+        <span class="n">cumsum</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">sorted_probs</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">remove_mask</span> <span class="o">=</span> <span class="n">cumsum</span> <span class="o">-</span> <span class="n">sorted_probs</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">mass</span>
+
+        <span class="n">sorted_logits</span> <span class="o">=</span> <span class="n">logits</span><span class="p">[</span><span class="n">sorted_indices</span><span class="p">]</span>
+        <span class="n">sorted_logits</span><span class="p">[</span><span class="n">remove_mask</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">)</span>
+
+        <span class="n">logits_filtered</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full_like</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>
+        <span class="n">logits_filtered</span><span class="o">.</span><span class="n">scatter_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">sorted_indices</span><span class="p">,</span> <span class="n">sorted_logits</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">logits_filtered</span>
+</code></pre></div>
+<h2 id="repetition-and-frequency-penalties">Repetition and Frequency Penalties<a class="headerlink" href="#repetition-and-frequency-penalties" title="Permanent link">¶</a></h2>
+<p>Even with good sampling, models can fall into repetitive loops. Two complementary penalties address this.</p>
+<p><strong>Repetition penalty</strong> (Keskar et al., &ldquo;CTRL&rdquo;, 2019) discounts any token that has already appeared in the context:</p>
+<div class="arithmatex">\[
+z'_t = \begin{cases} z_t / \theta &amp; \text{if } t \in \text{context}, \; z_t &gt; 0 \\ z_t \cdot \theta &amp; \text{if } t \in \text{context}, \; z_t &lt; 0 \end{cases}
+\]</div>
+<p>for penalty <span class="arithmatex">\(\theta &gt; 1\)</span>. This reduces the probability of repeated tokens without suppressing them entirely.</p>
+<p><strong>Frequency penalty</strong> (used in OpenAI&rsquo;s API) subtracts a penalty proportional to how many times the token has appeared:</p>
+<div class="arithmatex">\[
+z'_t = z_t - \alpha \cdot \text{count}(t, \text{context})
+\]</div>
+<p><strong>Presence penalty</strong> is a simpler binary version — subtract a fixed <span class="arithmatex">\(\beta\)</span> if the token appears at all:</p>
+<div class="arithmatex">\[
+z'_t = z_t - \beta \cdot \mathbf{1}[t \in \text{context}]
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">RepetitionPenaltyProcessor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Multiplicative repetition penalty (CTRL-style).</span>
+<span class="sd">    theta &gt; 1 reduces repetition; theta = 1 is no-op.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">penalty</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="n">penalty</span> <span class="o">&gt;=</span> <span class="mf">1.0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">penalty</span> <span class="o">=</span> <span class="n">penalty</span>
+        <span class="c1"># Track unique tokens seen in the context</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">seen</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">input_ids</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span><span class="o">.</span><span class="n">tolist</span><span class="p">())</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">token_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">seen</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">logits</span><span class="p">[</span><span class="n">token_id</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">logits</span><span class="p">[</span><span class="n">token_id</span><span class="p">]</span> <span class="o">/=</span> <span class="bp">self</span><span class="o">.</span><span class="n">penalty</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">logits</span><span class="p">[</span><span class="n">token_id</span><span class="p">]</span> <span class="o">*=</span> <span class="bp">self</span><span class="o">.</span><span class="n">penalty</span>
+        <span class="k">return</span> <span class="n">logits</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">FrequencyPenaltyProcessor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Additive frequency penalty: subtract alpha * count(t).</span>
+<span class="sd">    Also supports presence penalty (binary).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">frequency_penalty</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">presence_penalty</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">frequency_penalty</span> <span class="o">=</span> <span class="n">frequency_penalty</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">presence_penalty</span> <span class="o">=</span> <span class="n">presence_penalty</span>
+        <span class="c1"># Count occurrences of each token in context</span>
+        <span class="n">token_list</span> <span class="o">=</span> <span class="n">input_ids</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">counts</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="n">token_list</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">token_id</span><span class="p">,</span> <span class="n">count</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">counts</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">logits</span><span class="p">[</span><span class="n">token_id</span><span class="p">]</span> <span class="o">-=</span> <span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">frequency_penalty</span> <span class="o">*</span> <span class="n">count</span>
+                <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">presence_penalty</span>
+            <span class="p">)</span>
+        <span class="k">return</span> <span class="n">logits</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Penalty interaction with temperature</p>
+<p>Repetition penalties are applied to logits <em>before</em> temperature scaling in most implementations (HuggingFace <code>transformers</code> applies them in the order: repetition penalty → temperature → top-k → top-p). If you change that order, the effective penalty magnitude changes. Always check the order in your stack.</p>
+</div>
+<h2 id="beam-search">Beam Search<a class="headerlink" href="#beam-search" title="Permanent link">¶</a></h2>
+<p>Beam search maintains a <em>beam</em> of <span class="arithmatex">\(B\)</span> partial hypotheses, expanding each at every step and keeping only the top-<span class="arithmatex">\(B\)</span> by cumulative log-probability:</p>
+<div class="arithmatex">\[
+\text{score}(t_{1:n}) = \frac{1}{n^\alpha} \sum_{i=1}^n \log P(t_i \mid t_{&lt;i})
+\]</div>
+<p>The length normalization exponent <span class="arithmatex">\(\alpha\)</span> (typically 0.6–0.8) prevents the beam from preferring shorter sequences.</p>
+<p><figure class="viz" id="fig-sampling-beam-search-tree">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 900 560" role="img" aria-label="Beam search with beam size 2: from BOS at step 0, candidates fan out at each step, top-2 are kept and the rest pruned, until the highest-scoring complete hypothesis is output.">
+<defs>
+  <marker id="sbst-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+  <marker id="sbst-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+  </marker></p>
+<p><g id="sbst-rarr">
+    <path d="M0 0 L11 0 M7 -3 L11 0 L7 3" fill="none"
+          stroke="var(--muted,#64748b)" stroke-width="1.3"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</defs></p>
+<style>
+  #fig-sampling-beam-search-tree .col-hdr  { font: 700 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-beam-search-tree .node-lbl { font: 600 11px var(--mono,monospace); fill: var(--ink-soft,#334155); }
+  #fig-sampling-beam-search-tree .cap      { font: italic 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-beam-search-tree .score    { font: 400 9.5px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-sampling-beam-search-tree .leg      { font: 500 10px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-sampling-beam-search-tree .out-lbl  { font: 700 12px var(--sans,sans-serif); fill: #fff; }
+  #fig-sampling-beam-search-tree .prune-x  { font: bold 13px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  /* ── Animation ── */
+  /* step1-cands: opacity 0 -> 1 after 0.5s */
+  #fig-sampling-beam-search-tree .s1c {
+    animation: bst-in 7s ease-in-out infinite; animation-delay: 0.5s;
+  }
+  /* step1-prune: appear then fade to 0.22 */
+  #fig-sampling-beam-search-tree .s1p {
+    animation: bst-prune 7s ease-in-out infinite; animation-delay: 1.4s;
+  }
+  /* step1-kept: pulse accent after prune */
+  #fig-sampling-beam-search-tree .s1k {
+    animation: bst-in 7s ease-in-out infinite; animation-delay: 1.4s;
+  }
+  /* step2 candidates */
+  #fig-sampling-beam-search-tree .s2c {
+    animation: bst-in 7s ease-in-out infinite; animation-delay: 2.4s;
+  }
+  #fig-sampling-beam-search-tree .s2p {
+    animation: bst-prune 7s ease-in-out infinite; animation-delay: 3.2s;
+  }
+  #fig-sampling-beam-search-tree .s2k {
+    animation: bst-in 7s ease-in-out infinite; animation-delay: 3.2s;
+  }
+  /* output node */
+  #fig-sampling-beam-search-tree .out {
+    animation: bst-in 7s ease-in-out infinite; animation-delay: 4.4s;
+  }
+  @keyframes bst-in {
+    0%   { opacity: 0; }
+    6%   { opacity: 1; }
+    88%  { opacity: 1; }
+    96%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes bst-prune {
+    0%    { opacity: 1; }
+    10%   { opacity: 0.22; }
+    88%   { opacity: 0.22; }
+    96%   { opacity: 0; }
+    100%  { opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-sampling-beam-search-tree .s1c,
+    #fig-sampling-beam-search-tree .s1k,
+    #fig-sampling-beam-search-tree .s2c,
+    #fig-sampling-beam-search-tree .s2k,
+    #fig-sampling-beam-search-tree .out  { animation: none; opacity: 1; }
+    #fig-sampling-beam-search-tree .s1p,
+    #fig-sampling-beam-search-tree .s2p  { animation: none; opacity: 0.22; }
+  }
+</style>
+
+<p><text x="88"  y="22" text-anchor="middle" class="col-hdr">Step 0</text>
+<text x="258" y="22" text-anchor="middle" class="col-hdr">Step 1</text>
+<text x="480" y="22" text-anchor="middle" class="col-hdr">Step 2</text>
+<text x="700" y="22" text-anchor="middle" class="col-hdr">&hellip; EOS / Output</text></p>
+<p><line x1="170" y1="30" x2="170" y2="460" stroke="var(--border-2,#94a3b8)" stroke-width="0.5" stroke-dasharray="3 4" opacity="0.35"/>
+<line x1="380" y1="30" x2="380" y2="460" stroke="var(--border-2,#94a3b8)" stroke-width="0.5" stroke-dasharray="3 4" opacity="0.35"/>
+<line x1="600" y1="30" x2="600" y2="460" stroke="var(--border-2,#94a3b8)" stroke-width="0.5" stroke-dasharray="3 4" opacity="0.35"/></p>
+<p><rect x="30" y="198" width="116" height="34" rx="7"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<text x="88" y="220" text-anchor="middle" class="node-lbl">[BOS]</text></p>
+<p><g class="s1c"></p>
+<p><line x1="146" y1="215" x2="186" y2="97" stroke="var(--border-2,#94a3b8)" stroke-width="1" marker-end="url(#sbst-arr)"/>
+  <rect x="182" y="80"  width="152" height="32" rx="7"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="258" y="101" text-anchor="middle" class="node-lbl">[BOS, the]</text></p>
+<p><line x1="146" y1="215" x2="186" y2="191" stroke="var(--border-2,#94a3b8)" stroke-width="1" marker-end="url(#sbst-arr)"/>
+  <rect x="182" y="175" width="152" height="32" rx="7"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="258" y="196" text-anchor="middle" class="node-lbl">[BOS, a]</text></p>
+<p><line x1="146" y1="215" x2="186" y2="276" stroke="var(--border-2,#94a3b8)" stroke-width="1" marker-end="url(#sbst-arr)"/>
+  <rect x="182" y="260" width="152" height="32" rx="7"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="258" y="281" text-anchor="middle" class="node-lbl">[BOS, cat]</text></p>
+<p><line x1="146" y1="215" x2="186" y2="356" stroke="var(--border-2,#94a3b8)" stroke-width="1" marker-end="url(#sbst-arr)"/>
+  <rect x="182" y="340" width="152" height="32" rx="7"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="258" y="361" text-anchor="middle" class="node-lbl">[BOS, dog]</text>
+</g></p>
+<p><g class="s1p" stroke="var(--muted,#94a3b8)" stroke-width="1.8" stroke-linecap="round">
+  <path d="M339 271 L349 281 M349 271 L339 281"/>
+  <path d="M339 351 L349 361 M349 351 L339 361"/>
+</g></p>
+<p><g class="s1k">
+  <rect x="182" y="80"  width="152" height="32" rx="7"
+        fill="var(--accent,#6366f1)" fill-opacity="0.13"
+        stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="258" y="101" text-anchor="middle" class="node-lbl" fill="var(--accent,#6366f1)">[BOS, the]</text>
+  <rect x="182" y="175" width="152" height="32" rx="7"
+        fill="var(--accent,#6366f1)" fill-opacity="0.13"
+        stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="258" y="196" text-anchor="middle" class="node-lbl" fill="var(--accent,#6366f1)">[BOS, a]</text>
+</g></p>
+<p><text x="262" y="402" text-anchor="middle" class="cap">expand each beam to B&#xD7;V,</text>
+<text x="262" y="415" text-anchor="middle" class="cap">keep top-B by score</text></p>
+<p><g class="s2c"></p>
+<p><line x1="334" y1="96"  x2="400" y2="82"  stroke="var(--border-2,#94a3b8)" stroke-width="1" marker-end="url(#sbst-arr)"/>
+  <rect x="396" y="66"  width="172" height="32" rx="7"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="482" y="87" text-anchor="middle" class="node-lbl">[BOS, the, cat]</text></p>
+<p><line x1="334" y1="104" x2="400" y2="156" stroke="var(--border-2,#94a3b8)" stroke-width="1" marker-end="url(#sbst-arr)"/>
+  <rect x="396" y="142" width="172" height="32" rx="7"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="482" y="163" text-anchor="middle" class="node-lbl">[BOS, the, dog]</text></p>
+<p><line x1="334" y1="193" x2="400" y2="248" stroke="var(--border-2,#94a3b8)" stroke-width="1" marker-end="url(#sbst-arr)"/>
+  <rect x="396" y="234" width="172" height="32" rx="7"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="482" y="255" text-anchor="middle" class="node-lbl">[BOS, a, cat]</text></p>
+<p><line x1="334" y1="201" x2="400" y2="320" stroke="var(--border-2,#94a3b8)" stroke-width="1" marker-end="url(#sbst-arr)"/>
+  <rect x="396" y="306" width="172" height="32" rx="7"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="482" y="327" text-anchor="middle" class="node-lbl">[BOS, a, the]</text>
+</g></p>
+<p><g class="s2p" stroke="var(--muted,#94a3b8)" stroke-width="1.8" stroke-linecap="round">
+  <path d="M573 153 L583 163 M583 153 L573 163"/>
+  <path d="M573 316 L583 326 M583 316 L573 326"/>
+</g></p>
+<p><g class="s2k">
+  <rect x="396" y="66"  width="172" height="32" rx="7"
+        fill="var(--accent,#6366f1)" fill-opacity="0.13"
+        stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="482" y="87" text-anchor="middle" class="node-lbl" fill="var(--accent,#6366f1)">[BOS, the, cat]</text></p>
+<p><rect x="396" y="234" width="172" height="32" rx="7"
+        fill="var(--accent,#6366f1)" fill-opacity="0.13"
+        stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="482" y="255" text-anchor="middle" class="node-lbl" fill="var(--accent,#6366f1)">[BOS, a, cat]</text>
+</g></p>
+<p><text x="482" y="402" text-anchor="middle" class="cap">expand B beams,</text>
+<text x="482" y="415" text-anchor="middle" class="cap">keep top-B again</text></p>
+<p><g class="s2k">
+  <line x1="568" y1="82"  x2="612" y2="82"  stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#sbst-arr)"/>
+  <line x1="568" y1="250" x2="612" y2="250" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#sbst-arr)"/>
+</g></p>
+<p><g fill="var(--muted,#94a3b8)">
+  <circle cx="622" cy="158" r="2"/>
+  <circle cx="622" cy="167" r="2"/>
+  <circle cx="622" cy="176" r="2"/>
+</g></p>
+<p><g class="out">
+  <line x1="700" y1="168" x2="700" y2="286" stroke="var(--accent,#6366f1)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#sbst-arr-acc)"/>
+  <rect x="626" y="290" width="202" height="44" rx="8"
+        fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="727" y="309" text-anchor="middle" class="out-lbl">best hypothesis</text>
+  <text x="727" y="325" text-anchor="middle" style="font:500 9.5px var(--sans,sans-serif); fill:#e0e7ff;">highest length-normalized log-prob</text>
+</g></p>
+<p><text x="727" y="353" text-anchor="middle" class="cap">highest-scoring complete</text>
+<text x="727" y="366" text-anchor="middle" class="cap">hypothesis returned</text></p>
+<p><text x="727" y="402" text-anchor="middle" class="score">score = (1/n^a) &#xB7; sum log P(t_i | t_&lt;i)</text>
+<text x="727" y="416" text-anchor="middle" class="score">length-normalized,  a ~ 0.6-0.8</text></p>
+<p><rect x="30"  y="450" width="14" height="14" rx="3"
+      fill="var(--accent,#6366f1)" fill-opacity="0.14"
+      stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+<text x="50"  y="462" class="leg">kept (top-B)</text></p>
+<p><rect x="190" y="450" width="14" height="14" rx="3"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" stroke-dasharray="3 2"/>
+<text x="210" y="462" class="leg" style="fill:var(--muted,#64748b);">pruned</text></p>
+<p><rect x="330" y="450" width="14" height="14" rx="3"
+      fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="350" y="462" class="leg">output (best complete hypothesis)</text></p>
+<p></svg></p>
+<figcaption><b>Beam search (B=2) expands all beams then prunes to the top-B at every step.</b> From the root [BOS], four candidates are scored; only the top-2 are kept (highlighted) while the rest are pruned (&#10005;). The same expand-and-prune loop repeats until EOS or max length. The final output is the surviving hypothesis with the highest length-normalized log-probability (exponent a ~ 0.6-0.8 prevents the beam from preferring shorter sequences).</figcaption>
+</figure>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">heapq</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tuple</span>
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">order</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">BeamHypothesis</span><span class="p">:</span>
+    <span class="n">score</span><span class="p">:</span> <span class="nb">float</span>          <span class="c1"># negative log-prob (min-heap)</span>
+    <span class="n">tokens</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">compare</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">beam_search</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">,</span>
+    <span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>     <span class="c1"># (1, prefix_len)</span>
+    <span class="n">beam_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+    <span class="n">max_new_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100</span><span class="p">,</span>
+    <span class="n">eos_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span>
+    <span class="n">length_alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.6</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Minimal beam search. Returns the best sequence as a list of token ids.</span>
+<span class="sd">    NB: production implementations use KV-cache for each beam; this toy</span>
+<span class="sd">    version re-encodes each step for clarity.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">prefix</span> <span class="o">=</span> <span class="n">input_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+    <span class="c1"># heap items: (neg_score, token_list)</span>
+    <span class="n">active_beams</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">[(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">prefix</span><span class="p">[:])]</span>
+    <span class="n">finished</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_new_tokens</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">active_beams</span><span class="p">:</span>
+            <span class="k">break</span>
+        <span class="n">candidates</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">neg_score</span><span class="p">,</span> <span class="n">tokens</span> <span class="ow">in</span> <span class="n">active_beams</span><span class="p">:</span>
+            <span class="n">ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">tokens</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)</span>
+            <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+                <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span>   <span class="c1"># (vocab,)</span>
+            <span class="n">log_probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+            <span class="c1"># Expand: consider all tokens in the vocabulary</span>
+            <span class="n">topk_logprob</span><span class="p">,</span> <span class="n">topk_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">log_probs</span><span class="p">,</span> <span class="n">beam_size</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">lp</span><span class="p">,</span> <span class="n">tid</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">topk_logprob</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span> <span class="n">topk_ids</span><span class="o">.</span><span class="n">tolist</span><span class="p">()):</span>
+                <span class="n">new_tokens</span> <span class="o">=</span> <span class="n">tokens</span> <span class="o">+</span> <span class="p">[</span><span class="n">tid</span><span class="p">]</span>
+                <span class="n">new_neg_score</span> <span class="o">=</span> <span class="n">neg_score</span> <span class="o">-</span> <span class="n">lp</span>   <span class="c1"># minimise negative log-prob</span>
+                <span class="k">if</span> <span class="n">tid</span> <span class="o">==</span> <span class="n">eos_id</span><span class="p">:</span>
+                    <span class="c1"># Normalise by length</span>
+                    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">new_tokens</span><span class="p">)</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">prefix</span><span class="p">)</span>
+                    <span class="n">normalised</span> <span class="o">=</span> <span class="n">new_neg_score</span> <span class="o">/</span> <span class="p">(</span><span class="n">n</span> <span class="o">**</span> <span class="n">length_alpha</span><span class="p">)</span>
+                    <span class="n">finished</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">normalised</span><span class="p">,</span> <span class="n">new_tokens</span><span class="p">))</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">candidates</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">new_neg_score</span><span class="p">,</span> <span class="n">new_tokens</span><span class="p">))</span>
+
+        <span class="c1"># Keep the best beam_size active hypotheses</span>
+        <span class="n">candidates</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="n">active_beams</span> <span class="o">=</span> <span class="n">candidates</span><span class="p">[:</span><span class="n">beam_size</span><span class="p">]</span>
+
+    <span class="c1"># Fall back to active beams if none finished</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">finished</span><span class="p">:</span>
+        <span class="n">n_prefix</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">prefix</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">neg_score</span><span class="p">,</span> <span class="n">tokens</span> <span class="ow">in</span> <span class="n">active_beams</span><span class="p">:</span>
+            <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span> <span class="o">-</span> <span class="n">n_prefix</span>
+            <span class="n">normalised</span> <span class="o">=</span> <span class="n">neg_score</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="n">length_alpha</span>
+            <span class="n">finished</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">normalised</span><span class="p">,</span> <span class="n">tokens</span><span class="p">))</span>
+
+    <span class="n">finished</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">finished</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span>   <span class="c1"># best hypothesis</span>
+</code></pre></div>
+<p><strong>When to use beam search:</strong> summarisation, machine translation, and tasks where the output has a clear quality metric. For open-ended generation, beam search amplifies repetition and produces bland text — sampling is better. For structured generation (see <a href="../07-inference-serving/10-structured-generation.html">Structured &amp; Constrained Generation</a>), beam search is often combined with constraint masks.</p>
+<p><strong>Diverse beam search</strong> (Vijayakumar et al., 2018) adds a dissimilarity penalty between beams, encouraging them to explore different branches — useful when you want <span class="arithmatex">\(N\)</span>-best diverse outputs.</p>
+<h2 id="contrastive-decoding-and-dola">Contrastive Decoding and DoLa<a class="headerlink" href="#contrastive-decoding-and-dola" title="Permanent link">¶</a></h2>
+<p>Two recent methods depart from purely probability-based selection.</p>
+<h3 id="contrastive-decoding">Contrastive Decoding<a class="headerlink" href="#contrastive-decoding" title="Permanent link">¶</a></h3>
+<p>Li et al. (&ldquo;Contrastive Decoding&rdquo;, 2023) observe that an <em>amateur</em> model (smaller, weaker) and the <em>expert</em> model (the LLM) assign high probability to the same fluent but factually incorrect completions. The contrastive score subtracts the amateur&rsquo;s log-probability from the expert&rsquo;s:</p>
+<div class="arithmatex">\[
+\text{CD}(t) = \log P_{\text{expert}}(t) - \log P_{\text{amateur}}(t)
+\]</div>
+<p>Tokens that the expert prefers over the amateur are amplified; tokens both models agree on (fluency) but the expert is unsure about are suppressed. In practice, the amateur is often the same model at a smaller context window or with its early layers.</p>
+<h3 id="dola-decoding-by-contrasting-layers">DoLa (Decoding by Contrasting Layers)<a class="headerlink" href="#dola-decoding-by-contrasting-layers" title="Permanent link">¶</a></h3>
+<p>Chuang et al. (&ldquo;DoLa: Decoding by Contrasting Layers Improves Factuality in Large Language Models&rdquo;, 2023) push this idea inside a single model. The observation: factual knowledge is represented in the later transformer layers, while surface-level fluency is settled earlier. DoLa computes:</p>
+<div class="arithmatex">\[
+J(t) = \text{JSD}\!\left(P_{\text{final}}(\cdot) \;\|\; P_{\text{premature}}(\cdot)\right)
+\]</div>
+<p>to select the premature layer that diverges most from the final layer, then uses:</p>
+<div class="arithmatex">\[
+\text{DoLa}(t) = \log P_{\text{final}}(t) - \log P_{\text{premature}}(t)
+\]</div>
+<p>as the decoding score. This amplifies tokens the final (knowledge-rich) layers prefer over intermediate layers, reducing hallucination without an external model.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">dola_logits</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">,</span>
+    <span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">premature_layer</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>         <span class="c1"># e.g. layer 16 in a 32-layer model</span>
+    <span class="n">final_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>        <span class="c1"># -1 = last layer</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>           <span class="c1"># mixing coefficient</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute DoLa-adjusted logits by contrasting the final layer</span>
+<span class="sd">    against a premature intermediate layer.</span>
+
+<span class="sd">    The model must expose intermediate hidden states, e.g. via</span>
+<span class="sd">    output_hidden_states=True in HuggingFace.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span>
+            <span class="n">input_ids</span><span class="p">,</span>
+            <span class="n">output_hidden_states</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="n">hidden_states</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">hidden_states</span>   <span class="c1"># tuple of (batch, seq, d_model)</span>
+
+    <span class="c1"># Project intermediate hidden state through the LM head</span>
+    <span class="n">lm_head</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">lm_head</span>
+    <span class="n">premature_logits</span> <span class="o">=</span> <span class="n">lm_head</span><span class="p">(</span><span class="n">hidden_states</span><span class="p">[</span><span class="n">premature_layer</span><span class="p">][:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:])</span>
+    <span class="n">final_logits</span>     <span class="o">=</span> <span class="n">lm_head</span><span class="p">(</span><span class="n">hidden_states</span><span class="p">[</span><span class="n">final_layer</span><span class="p">][:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:])</span>
+
+    <span class="c1"># Contrastive combination</span>
+    <span class="n">dola_log_probs</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">final_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="o">-</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">premature_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">dola_log_probs</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="the-bias-diversity-tradeoff">The Bias-Diversity Tradeoff<a class="headerlink" href="#the-bias-diversity-tradeoff" title="Permanent link">¶</a></h2>
+<p>Every decoding choice sits on a single underlying tradeoff surface. Let us make it concrete.</p>
+<p><strong>Diversity</strong> refers to the entropy or variety of the generated text — how many different continuations the sampler would produce for the same prompt. <strong>Bias</strong> refers to the systematic difference between the decoded distribution and the model&rsquo;s true distribution.</p>
+<p>Greedy decoding has zero variance (perfectly reproducible) but extreme bias — it always picks the mode, ignoring the full shape of the distribution. Uniform sampling has maximum diversity but ignores everything the model learned. Temperature is the most direct knob on this axis.</p>
+<figure class="viz" id="fig-sampling-bias-diversity-axis">
+<svg viewBox="0 0 820 310" role="img" aria-label="A horizontal spectrum showing decoding strategies from left (Greedy, high bias, deterministic) to right (uniform, low bias, stochastic), with top-k, top-p, and typical sampling in between.">
+<defs>
+  <linearGradient id="sbda-grad" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="var(--accent,#6366f1)" stop-opacity="0.9"/>
+    <stop offset="100%" stop-color="var(--accent,#6366f1)" stop-opacity="0.15"/>
+  </linearGradient>
+  <marker id="sbda-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+</defs>
+<style>
+  #fig-sampling-bias-diversity-axis .title-lbl  { font: 700 14px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-sampling-bias-diversity-axis .pill-lbl   { font: 600 12px var(--mono,monospace); fill: var(--ink-soft,#334155); }
+  #fig-sampling-bias-diversity-axis .ann        { font: 600 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-bias-diversity-axis .ann-sm     { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-bias-diversity-axis .zone-lbl   { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-bias-diversity-axis .bias-tag   { font: 600 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+</style>
+
+
+<rect x="100" y="112" width="210" height="56" rx="6"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="none"/>
+<rect x="530" y="112" width="180" height="56" rx="6"
+      fill="var(--accent,#6366f1)" fill-opacity="0.04" stroke="none"/>
+
+
+<text x="205" y="104" text-anchor="middle" class="zone-lbl">more deterministic</text>
+<text x="620" y="104" text-anchor="middle" class="zone-lbl">more stochastic</text>
+
+
+<text x="404" y="78" text-anchor="middle" class="title-lbl">Diversity</text>
+<path d="M442 74 L458 74 M453 70 L458 74 L453 78" fill="none"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.8"
+      stroke-linecap="round" stroke-linejoin="round"/>
+
+
+<line x1="100" y1="148" x2="718" y2="148"
+      stroke="var(--border-2,#94a3b8)" stroke-width="3.5" marker-end="url(#sbda-arrow)"/>
+<line x1="100" y1="148" x2="718" y2="148"
+      stroke="url(#sbda-grad)" stroke-width="3.5" marker-end="url(#sbda-arrow)"/>
+
+
+<text x="96" y="144" text-anchor="end" class="bias-tag">Bias</text>
+<path d="M44 140 L60 140 M49 136 L44 140 L49 144" fill="none"
+      stroke="var(--muted,#64748b)" stroke-width="1.6"
+      stroke-linecap="round" stroke-linejoin="round"/>
+
+
+
+
+<line x1="130" y1="130" x2="130" y2="148" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<rect x="90"  y="112" width="80" height="26" rx="13"
+      fill="var(--accent,#6366f1)" fill-opacity="0.18"
+      stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+<text x="130" y="130" text-anchor="middle" class="pill-lbl">Greedy</text>
+
+
+<line x1="270" y1="133" x2="270" y2="148" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="234" y="115" width="72" height="24" rx="12"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<text x="270" y="131" text-anchor="middle" class="pill-lbl">top-k</text>
+
+
+<line x1="410" y1="133" x2="410" y2="148" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="374" y="115" width="72" height="24" rx="12"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<text x="410" y="131" text-anchor="middle" class="pill-lbl">top-p</text>
+
+
+<line x1="550" y1="133" x2="550" y2="148" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="511" y="115" width="78" height="24" rx="12"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<text x="550" y="131" text-anchor="middle" class="pill-lbl">typical</text>
+
+
+<line x1="690" y1="130" x2="690" y2="148" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<rect x="648" y="112" width="84" height="26" rx="13"
+      fill="var(--accent,#6366f1)" fill-opacity="0.12"
+      stroke="var(--border-2,#94a3b8)" stroke-width="1.8"/>
+<text x="690" y="130" text-anchor="middle" class="pill-lbl">uniform</text>
+
+
+<line x1="130" y1="158" x2="130" y2="172" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="2 2"/>
+<path d="M104 186 L109 179 L114 186" fill="none"
+      stroke="var(--muted,#64748b)" stroke-width="1.6"
+      stroke-linecap="round" stroke-linejoin="round"/>
+<text x="120" y="187" text-anchor="start" class="ann">High bias</text>
+<text x="130" y="202" text-anchor="middle" class="ann-sm">systematic, repetitive</text>
+<text x="130" y="216" text-anchor="middle" class="ann-sm">(always the mode;</text>
+<text x="130" y="230" text-anchor="middle" class="ann-sm">zero variance)</text>
+
+
+<line x1="690" y1="158" x2="690" y2="172" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="2 2"/>
+<path d="M664 180 L669 187 L674 180" fill="none"
+      stroke="var(--muted,#64748b)" stroke-width="1.6"
+      stroke-linecap="round" stroke-linejoin="round"/>
+<text x="680" y="187" text-anchor="start" class="ann">Low bias</text>
+<text x="690" y="202" text-anchor="middle" class="ann-sm">but incoherent output</text>
+<text x="690" y="216" text-anchor="middle" class="ann-sm">(ignores what the</text>
+<text x="690" y="230" text-anchor="middle" class="ann-sm">model learned)</text>
+
+</svg>
+<figcaption><b>The bias-diversity tradeoff spectrum for decoding strategies.</b> Greedy decoding (left) has maximum bias and zero variance — it always reproduces the mode. Uniform sampling (right) has minimum bias but ignores the model's learned distribution entirely. Top-k, top-p, and typical sampling occupy intermediate positions; the optimal choice shifts left for precise tasks and right for creative ones.</figcaption>
+</figure>
+
+<p>The ideal point depends on the task:</p>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Typical choice</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Code completion, factual QA</td>
+<td>Low temperature (0.1–0.5), greedy or small top-p</td>
+</tr>
+<tr>
+<td>Chat, instruction following</td>
+<td>Temperature 0.7–1.0, top-p 0.9</td>
+</tr>
+<tr>
+<td>Creative writing, brainstorming</td>
+<td>Temperature 1.0–1.3, top-p 0.95 or min-p</td>
+</tr>
+<tr>
+<td>RL rollouts (exploration)</td>
+<td>Temperature 0.9–1.2, no truncation</td>
+</tr>
+<tr>
+<td>Distillation soft targets</td>
+<td>Temperature 2.0–5.0, no truncation</td>
+</tr>
+</tbody>
+</table>
+<p>One important empirical finding: for most instruction-tuned models, the training process implicitly calibrates the output distribution for temperature around 0.7–1.0. Going significantly below 0.3 causes the model to confidently hallucinate because the distribution was not trained to be sharp; going above 1.5 on instruction models often causes grammatical collapse.</p>
+<h2 id="logit-processor-pipelines-in-practice">Logit Processor Pipelines in Practice<a class="headerlink" href="#logit-processor-pipelines-in-practice" title="Permanent link">¶</a></h2>
+<p>Production systems (HuggingFace Transformers, vLLM, SGLang) implement logit processing as a composable pipeline. The full processing order typically is:</p>
+<figure class="viz" id="fig-sampling-logit-pipeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 820 760" role="img" aria-label="The logit-processor pipeline: raw logits flow top-to-bottom through temperature, repetition penalty, frequency penalty, top-k, top-p, min-p filters, forced tokens, and finally softmax plus sampling to produce a token.">
+<defs>
+  <marker id="slp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" class="v-stroke" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+  <marker id="slp-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+</defs>
+<style>
+  #fig-sampling-logit-pipeline .node-lbl { font: 600 13px var(--mono,monospace); }
+  #fig-sampling-logit-pipeline .node-sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-logit-pipeline .ann { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-logit-pipeline .group-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#64748b); writing-mode: tb; }
+  #fig-sampling-logit-pipeline .step-lbl { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-logit-pipeline .final-lbl { font: 700 13px var(--sans,sans-serif); fill: #fff; }
+  #fig-sampling-logit-pipeline .compose-ann { font: italic 9px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-logit-pipeline text { fill: var(--ink-soft,#334155); }
+  /* animated pill traveling down */
+  #fig-sampling-logit-pipeline .token-pill {
+    animation: slp-travel 4s ease-in-out infinite;
+    animation-delay: 0.5s;
+  }
+  @keyframes slp-travel {
+    0%   { transform: translateY(0px);   opacity: 1; }
+    85%  { transform: translateY(580px); opacity: 1; }
+    90%  { transform: translateY(580px); opacity: 0; }
+    100% { transform: translateY(0px);   opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-sampling-logit-pipeline .token-pill { animation: none; opacity: 0; }
+    #fig-sampling-logit-pipeline [data-anim] { opacity: 1 !important; }
+  }
+  /* stage pulse animations */
+  #fig-sampling-logit-pipeline .pulse-1 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 0.7s; }
+  #fig-sampling-logit-pipeline .pulse-2 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 1.1s; }
+  #fig-sampling-logit-pipeline .pulse-3 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 1.5s; }
+  #fig-sampling-logit-pipeline .pulse-4 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 1.9s; }
+  #fig-sampling-logit-pipeline .pulse-5 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 2.3s; }
+  #fig-sampling-logit-pipeline .pulse-6 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 2.7s; }
+  #fig-sampling-logit-pipeline .pulse-7 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 3.1s; }
+  @keyframes slp-pulse {
+    0%   { fill-opacity: 0; }
+    5%   { fill-opacity: 0.35; }
+    15%  { fill-opacity: 0; }
+    100% { fill-opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-sampling-logit-pipeline .pulse-1,
+    #fig-sampling-logit-pipeline .pulse-2,
+    #fig-sampling-logit-pipeline .pulse-3,
+    #fig-sampling-logit-pipeline .pulse-4,
+    #fig-sampling-logit-pipeline .pulse-5,
+    #fig-sampling-logit-pipeline .pulse-6,
+    #fig-sampling-logit-pipeline .pulse-7 { animation: none; fill-opacity: 0; }
+  }
+  /* drop tick fade-out for filter nodes */
+  #fig-sampling-logit-pipeline .drop-tick {
+    animation: slp-drop 4s ease-in-out infinite;
+  }
+  #fig-sampling-logit-pipeline .drop-tk4 { animation-delay: 1.9s; }
+  #fig-sampling-logit-pipeline .drop-tk5 { animation-delay: 2.3s; }
+  #fig-sampling-logit-pipeline .drop-tk6 { animation-delay: 2.7s; }
+  @keyframes slp-drop {
+    0%   { opacity: 0; transform: translateX(0); }
+    5%   { opacity: 0.7; transform: translateX(0); }
+    25%  { opacity: 0; transform: translateX(18px); }
+    100% { opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-sampling-logit-pipeline .drop-tick { animation: none; opacity: 0; }
+  }
+</style>
+
+
+
+<rect x="52" y="118" width="378" height="188" rx="8"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="none"/>
+
+<rect x="52" y="312" width="378" height="192" rx="8"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="none"/>
+
+<rect x="52" y="510" width="378" height="66" rx="8"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="none"/>
+
+
+<text x="42" y="240" text-anchor="middle" class="group-lbl" transform="rotate(-90,42,220)">logit transforms</text>
+<text x="42" y="430" text-anchor="middle" class="group-lbl" transform="rotate(-90,42,408)">vocab truncation</text>
+<text x="42" y="555" text-anchor="middle" class="group-lbl" transform="rotate(-90,42,543)">constraints</text>
+
+
+
+
+<rect x="170" y="30" width="380" height="52" rx="8"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<text x="360" y="52" text-anchor="middle" class="node-lbl">raw logits  z in R^|V|</text>
+<text x="360" y="71" text-anchor="middle" class="node-sub">final transformer layer output</text>
+
+<rect x="170" y="30" width="380" height="52" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-1" stroke="none"/>
+
+
+<line x1="360" y1="82" x2="360" y2="115" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="118" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="118" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-1" stroke="none"/>
+<text x="360" y="143" text-anchor="middle" class="node-lbl">[temperature]  z / T</text>
+
+<text x="558" y="143" text-anchor="start" class="ann">scale all logits</text>
+
+
+<line x1="360" y1="164" x2="360" y2="182" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="185" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="185" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-2" stroke="none"/>
+<text x="360" y="210" text-anchor="middle" class="node-lbl">[repetition penalty]</text>
+<text x="558" y="203" text-anchor="start" class="ann">discount seen tokens</text>
+<text x="558" y="218" text-anchor="start" class="ann">(z/theta if z&gt;0, z*theta if z&lt;0)</text>
+
+
+<line x1="360" y1="231" x2="360" y2="249" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="252" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="252" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-3" stroke="none"/>
+<text x="360" y="277" text-anchor="middle" class="node-lbl">[frequency penalty]</text>
+<text x="558" y="277" text-anchor="start" class="ann">subtract alpha*count(t)</text>
+
+
+<line x1="360" y1="298" x2="360" y2="310" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="313" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="313" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-4" stroke="none"/>
+<text x="360" y="338" text-anchor="middle" class="node-lbl">[top-k filter]</text>
+<text x="558" y="338" text-anchor="start" class="ann">zero out below k-th largest logit</text>
+
+<g class="drop-tick drop-tk4">
+  <text x="556" y="355" style="font:10px var(--mono,monospace); fill:var(--muted,#64748b)">-inf x3</text>
+</g>
+
+
+<line x1="360" y1="359" x2="360" y2="377" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+<text x="374" y="371" text-anchor="start" class="compose-ann">(composes)</text>
+
+
+
+<rect x="170" y="380" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="380" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-5" stroke="none"/>
+<text x="360" y="405" text-anchor="middle" class="node-lbl">[top-p filter]</text>
+<text x="558" y="405" text-anchor="start" class="ann">zero out below cum. mass p</text>
+<g class="drop-tick drop-tk5">
+  <text x="556" y="422" style="font:10px var(--mono,monospace); fill:var(--muted,#64748b)">-inf x5</text>
+</g>
+
+
+<line x1="360" y1="426" x2="360" y2="444" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+<text x="374" y="438" text-anchor="start" class="compose-ann">(composes)</text>
+
+
+
+<rect x="170" y="447" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="447" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-6" stroke="none"/>
+<text x="360" y="472" text-anchor="middle" class="node-lbl">[min-p filter]</text>
+<text x="558" y="472" text-anchor="start" class="ann">zero out below p_min * p_max</text>
+<g class="drop-tick drop-tk6">
+  <text x="556" y="489" style="font:10px var(--mono,monospace); fill:var(--muted,#64748b)">-inf x2</text>
+</g>
+
+
+<line x1="360" y1="493" x2="360" y2="508" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="511" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="511" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-7" stroke="none"/>
+<text x="360" y="536" text-anchor="middle" class="node-lbl">[forced tokens]</text>
+<text x="558" y="536" text-anchor="start" class="ann">lock positions to specific tokens</text>
+
+
+<line x1="360" y1="557" x2="360" y2="575" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="578" width="380" height="56" rx="8"
+      fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="360" y="601" text-anchor="middle" class="final-lbl">softmax + sample</text>
+<text x="360" y="622" text-anchor="middle" style="font:500 11px var(--sans,sans-serif); fill:#e0e7ff;">draw from multinomial  ->  token t</text>
+
+
+<g class="token-pill" style="transform-origin: 130px 56px;">
+  <rect x="107" y="46" width="34" height="20" rx="10"
+        fill="var(--accent,#6366f1)" fill-opacity="0.9" stroke="none"/>
+  <text x="124" y="60" text-anchor="middle"
+        style="font:700 10px var(--mono,monospace); fill:#fff;">z</text>
+</g>
+
+</svg>
+<figcaption><b>The logit-processor pipeline processes a single logit vector sequentially.</b> Raw logits enter at the top and are first scaled (temperature, repetition/frequency penalties), then vocabulary-truncated (top-k, top-p, min-p each composing on the already-masked vector), then optionally constrained (forced tokens), and finally converted to a probability distribution from which a single token is sampled. The order of operations matters: penalties run before truncation so that penalized tokens can still be trimmed.</figcaption>
+</figure>
+
+<p>Below is a composable, HuggingFace-compatible <code>LogitsProcessor</code> implementation:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">LogitsProcessor</span><span class="p">,</span> <span class="n">LogitsProcessorList</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">CompositeLogitsProcessor</span><span class="p">(</span><span class="n">LogitsProcessor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A single LogitsProcessor that applies a pipeline of sub-processors,</span>
+<span class="sd">    each expecting (input_ids, scores) -&gt; scores.</span>
+<span class="sd">    This follows the HuggingFace LogitsProcessor protocol.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">processors</span><span class="p">:</span> <span class="nb">list</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">processors</span> <span class="o">=</span> <span class="n">processors</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">LongTensor</span><span class="p">,</span>     <span class="c1"># (batch, seq_len)</span>
+        <span class="n">scores</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">,</span>       <span class="c1"># (batch, vocab_size)</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">proc</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">processors</span><span class="p">:</span>
+            <span class="n">scores</span> <span class="o">=</span> <span class="n">proc</span><span class="p">(</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">scores</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">scores</span>
+
+
+<span class="c1"># Example: build a typical production pipeline</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">build_logits_processor_list</span><span class="p">(</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.8</span><span class="p">,</span>
+    <span class="n">repetition_penalty</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.1</span><span class="p">,</span>
+    <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">50</span><span class="p">,</span>
+    <span class="n">top_p</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.9</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LogitsProcessorList</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+        <span class="n">TemperatureLogitsWarper</span><span class="p">,</span>
+        <span class="n">RepetitionPenaltyLogitsProcessor</span><span class="p">,</span>
+        <span class="n">TopKLogitsWarper</span><span class="p">,</span>
+        <span class="n">TopPLogitsWarper</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">procs</span> <span class="o">=</span> <span class="n">LogitsProcessorList</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">repetition_penalty</span> <span class="o">!=</span> <span class="mf">1.0</span><span class="p">:</span>
+        <span class="n">procs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">RepetitionPenaltyLogitsProcessor</span><span class="p">(</span><span class="n">penalty</span><span class="o">=</span><span class="n">repetition_penalty</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">temperature</span> <span class="o">!=</span> <span class="mf">1.0</span><span class="p">:</span>
+        <span class="n">procs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">TemperatureLogitsWarper</span><span class="p">(</span><span class="n">temperature</span><span class="o">=</span><span class="n">temperature</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">top_k</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">procs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">TopKLogitsWarper</span><span class="p">(</span><span class="n">top_k</span><span class="o">=</span><span class="n">top_k</span><span class="p">,</span> <span class="n">min_tokens_to_keep</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">top_p</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">:</span>
+        <span class="n">procs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">TopPLogitsWarper</span><span class="p">(</span><span class="n">top_p</span><span class="o">=</span><span class="n">top_p</span><span class="p">,</span> <span class="n">min_tokens_to_keep</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">procs</span>
+</code></pre></div>
+<p>The <code>min_tokens_to_keep=1</code> argument is critical: it prevents cases where the filter masks <em>all</em> tokens (which would cause a nan after softmax), by always keeping at least the top token.</p>
+<h3 id="custom-logit-processors">Custom Logit Processors<a class="headerlink" href="#custom-logit-processors" title="Permanent link">¶</a></h3>
+<p>Custom processors enable powerful behaviours:</p>
+<ul>
+<li><strong>Grammar enforcement</strong>: mask all tokens incompatible with a context-free grammar at the current parser state (see <a href="../07-inference-serving/10-structured-generation.html">Structured &amp; Constrained Generation</a>).</li>
+<li><strong>Watermarking</strong>: John Kirchenbauer et al. (&ldquo;A Watermark for Large Language Models&rdquo;, 2023) add a small positive bias to a randomly chosen half of the vocabulary, seeded by the previous token. This creates a statistically detectable fingerprint in the output.</li>
+<li><strong>Token healing</strong>: vLLM&rsquo;s token healing re-processes the last token of the prompt to avoid boundary artefacts when the prompt ends mid-token.</li>
+<li><strong>Vocabulary bias</strong>: force specific tokens (e.g., &ldquo;yes&rdquo;/&rdquo;no&rdquo; for classification prompts) by setting all other logits to <span class="arithmatex">\(-\infty\)</span>.</li>
+</ul>
+<h2 id="temperature-and-rldistillation-interactions">Temperature and RL/Distillation Interactions<a class="headerlink" href="#temperature-and-rldistillation-interactions" title="Permanent link">¶</a></h2>
+<p>This section connects decoding to training, two topics that interact subtly.</p>
+<h3 id="policy-temperature-in-rl-fine-tuning">Policy Temperature in RL Fine-Tuning<a class="headerlink" href="#policy-temperature-in-rl-fine-tuning" title="Permanent link">¶</a></h3>
+<p>During PPO (see <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>), the policy generates rollouts. The sampling temperature during rollout generation serves as an <em>exploration</em> parameter:</p>
+<ul>
+<li>Low <span class="arithmatex">\(T\)</span>: the policy stays close to the current mode, producing similar completions. Good for exploiting known-good strategies.</li>
+<li>High <span class="arithmatex">\(T\)</span>: the policy explores more, which may discover high-reward completions but also floods the reward model with low-quality samples.</li>
+</ul>
+<p>The KL penalty term in PPO (<span class="arithmatex">\(\beta \cdot D_{\text{KL}}(\pi \| \pi_{\text{ref}})\)</span>) is computed between the policy logits and reference model logits at <span class="arithmatex">\(T = 1\)</span>. If you sample rollouts at <span class="arithmatex">\(T \ne 1\)</span> but compute the KL at <span class="arithmatex">\(T = 1\)</span>, you are optimising a different objective than the one you are generating samples from. Most correct implementations compute both log-probabilities at <span class="arithmatex">\(T = 1\)</span> (or consistently at the same <span class="arithmatex">\(T\)</span>). See <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a> for details.</p>
+<h3 id="knowledge-distillation-and-soft-targets">Knowledge Distillation and Soft Targets<a class="headerlink" href="#knowledge-distillation-and-soft-targets" title="Permanent link">¶</a></h3>
+<p>Hinton et al. (&ldquo;Distilling the Knowledge in a Neural Network&rdquo;, 2015) showed that training a student on soft targets from a teacher at temperature <span class="arithmatex">\(T &gt; 1\)</span> transfers more information than one-hot labels. The teacher&rsquo;s distribution at high temperature exposes similarities between classes (or tokens) — its &ldquo;dark knowledge&rdquo;.</p>
+<p>For LLM distillation, we match:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{distill}} = \sum_t D_{\text{KL}}\!\left(P_T^{\text{teacher}}(t) \;\|\; P_T^{\text{student}}(t)\right) \cdot T^2
+\]</div>
+<p>The <span class="arithmatex">\(T^2\)</span> factor re-scales the gradient to have the same magnitude regardless of temperature (since softmax gradients scale as <span class="arithmatex">\(1/T^2\)</span> when divided by <span class="arithmatex">\(T\)</span>). In practice, temperatures of 2–5 are common for token-level distillation.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Your LLM is generating repetitive, low-quality text even with <code>top_p=0.9</code> and <code>temperature=0.8</code>. What levers would you pull, in what order, and why?</p>
+<p><strong>A:</strong> Start with diagnosis. Check if the repetition is in the prompt (prompt-induced looping) or model-induced (a distributional artifact). Then:</p>
+<ol>
+<li><strong>Add repetition penalty</strong> (<span class="arithmatex">\(\theta \approx 1.1\)</span>–<span class="arithmatex">\(1.3\)</span>): this directly discounts already-seen tokens, breaking loops without changing the overall distribution shape.</li>
+<li><strong>Increase temperature slightly</strong> (to 0.9–1.0): if the model is stuck in a high-probability mode, raising <span class="arithmatex">\(T\)</span> flattens the distribution and allows it to escape.</li>
+<li><strong>Switch from top-k to top-p</strong> or <strong>add min-p</strong>: top-k with a small <span class="arithmatex">\(k\)</span> can be too restrictive, locking the model into a few tokens. Top-p adapts to the distribution shape.</li>
+<li><strong>Check for context length issues</strong>: if the context is very long, the model may be anchored by repetition in the context itself. Truncating or re-formatting the prompt often helps.</li>
+<li><strong>Add frequency penalty</strong> on top of repetition penalty to penalise <em>how often</em> tokens appear, not just <em>whether</em> they appeared.</li>
+<li><strong>Inspect the base model&rsquo;s training data</strong>: some models have been trained on data with repetitive patterns; repetition at inference may be a training artifact that inference-time tuning cannot fully fix — fine-tuning on higher-quality data is the real solution.</li>
+</ol>
+</div>
+<h2 id="putting-it-all-together-a-production-sampler">Putting It All Together: A Production Sampler<a class="headerlink" href="#putting-it-all-together-a-production-sampler" title="Permanent link">¶</a></h2>
+<p>Here is a complete, self-contained sampler that combines all the techniques above:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ProductionSampler</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A complete, composable sampler implementing:</span>
+<span class="sd">      - Temperature scaling</span>
+<span class="sd">      - Repetition penalty (CTRL-style)</span>
+<span class="sd">      - Frequency + presence penalties (OpenAI-style)</span>
+<span class="sd">      - Top-k filtering</span>
+<span class="sd">      - Top-p (nucleus) filtering</span>
+<span class="sd">      - Min-p filtering</span>
+<span class="sd">      - Greedy fallback</span>
+
+<span class="sd">    Usage:</span>
+<span class="sd">        sampler = ProductionSampler(temperature=0.8, top_p=0.9, rep_penalty=1.1)</span>
+<span class="sd">        next_token = sampler(logits, context_ids)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+        <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>                  <span class="c1"># 0 = disabled</span>
+        <span class="n">top_p</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>              <span class="c1"># 1.0 = disabled</span>
+        <span class="n">min_p</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>              <span class="c1"># 0.0 = disabled</span>
+        <span class="n">repetition_penalty</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span> <span class="c1"># 1.0 = disabled</span>
+        <span class="n">frequency_penalty</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+        <span class="n">presence_penalty</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+        <span class="n">do_sample</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">temperature</span> <span class="o">=</span> <span class="n">temperature</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">top_k</span> <span class="o">=</span> <span class="n">top_k</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">top_p</span> <span class="o">=</span> <span class="n">top_p</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">min_p</span> <span class="o">=</span> <span class="n">min_p</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">repetition_penalty</span> <span class="o">=</span> <span class="n">repetition_penalty</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">frequency_penalty</span> <span class="o">=</span> <span class="n">frequency_penalty</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">presence_penalty</span> <span class="o">=</span> <span class="n">presence_penalty</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">do_sample</span> <span class="o">=</span> <span class="n">do_sample</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>            <span class="c1"># (vocab_size,) raw logits</span>
+        <span class="n">context_ids</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+        <span class="c1"># 1. Repetition penalty (multiplicative)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">repetition_penalty</span> <span class="o">!=</span> <span class="mf">1.0</span> <span class="ow">and</span> <span class="n">context_ids</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">tid</span> <span class="ow">in</span> <span class="nb">set</span><span class="p">(</span><span class="n">context_ids</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">logits</span><span class="p">[</span><span class="n">tid</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">logits</span><span class="p">[</span><span class="n">tid</span><span class="p">]</span> <span class="o">/=</span> <span class="bp">self</span><span class="o">.</span><span class="n">repetition_penalty</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">logits</span><span class="p">[</span><span class="n">tid</span><span class="p">]</span> <span class="o">*=</span> <span class="bp">self</span><span class="o">.</span><span class="n">repetition_penalty</span>
+
+        <span class="c1"># 2. Frequency + presence penalties (additive)</span>
+        <span class="k">if</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">frequency_penalty</span> <span class="o">!=</span> <span class="mf">0.0</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">presence_penalty</span> <span class="o">!=</span> <span class="mf">0.0</span><span class="p">)</span> <span class="ow">and</span> <span class="n">context_ids</span><span class="p">:</span>
+            <span class="n">counts</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="n">context_ids</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">tid</span><span class="p">,</span> <span class="n">cnt</span> <span class="ow">in</span> <span class="n">counts</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="n">logits</span><span class="p">[</span><span class="n">tid</span><span class="p">]</span> <span class="o">-=</span> <span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">frequency_penalty</span> <span class="o">*</span> <span class="n">cnt</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">presence_penalty</span>
+                <span class="p">)</span>
+
+        <span class="c1"># 3. Temperature scaling</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">temperature</span> <span class="o">!=</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="n">logits</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">temperature</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">do_sample</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">logits</span><span class="o">.</span><span class="n">argmax</span><span class="p">())</span>
+
+        <span class="c1"># 4. Top-k filter</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">top_k</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">kth</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">top_k</span><span class="p">,</span> <span class="n">logits</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)))</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">logits</span> <span class="o">&lt;</span> <span class="n">kth</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>
+
+        <span class="c1"># 5. Top-p (nucleus) filter</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">top_p</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="n">sorted_logits</span><span class="p">,</span> <span class="n">sorted_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">descending</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="n">probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">sorted_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">cumprobs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">remove</span> <span class="o">=</span> <span class="n">cumprobs</span> <span class="o">-</span> <span class="n">probs</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">top_p</span>
+            <span class="n">sorted_logits</span><span class="p">[</span><span class="n">remove</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">)</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full_like</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>
+            <span class="n">logits</span><span class="o">.</span><span class="n">scatter_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">sorted_idx</span><span class="p">,</span> <span class="n">sorted_logits</span><span class="p">)</span>
+
+        <span class="c1"># 6. Min-p filter</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">min_p</span> <span class="o">&gt;</span> <span class="mf">0.0</span><span class="p">:</span>
+            <span class="n">probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">threshold</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">min_p</span> <span class="o">*</span> <span class="n">probs</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">probs</span> <span class="o">&lt;</span> <span class="n">threshold</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">))</span>
+
+        <span class="c1"># 7. Safety: ensure at least one valid token</span>
+        <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">logits</span> <span class="o">==</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">)):</span>
+            <span class="c1"># Fallback: revert to the temperature-scaled greedy token</span>
+            <span class="k">return</span> <span class="nb">int</span><span class="p">((</span><span class="n">logits</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">fill_</span><span class="p">(</span><span class="mf">1.0</span><span class="p">))</span><span class="o">.</span><span class="n">argmax</span><span class="p">())</span>
+
+        <span class="c1"># 8. Sample</span>
+        <span class="n">probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">multinomial</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="n">num_samples</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>
+
+
+<span class="c1"># ── Quick test ────────────────────────────────────────────────────────────────</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+    <span class="n">vocab_size</span> <span class="o">=</span> <span class="mi">32_000</span>
+
+    <span class="c1"># Simulate a logit vector with a clear peak at token 7</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">vocab_size</span><span class="p">)</span> <span class="o">*</span> <span class="mf">2.0</span>
+    <span class="n">logits</span><span class="p">[</span><span class="mi">7</span><span class="p">]</span> <span class="o">=</span> <span class="mf">10.0</span>
+
+    <span class="n">sampler</span> <span class="o">=</span> <span class="n">ProductionSampler</span><span class="p">(</span><span class="n">temperature</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">top_p</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span> <span class="n">repetition_penalty</span><span class="o">=</span><span class="mf">1.1</span><span class="p">)</span>
+    <span class="n">context</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">42</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">7</span><span class="p">]</span>        <span class="c1"># token 7 has appeared 3 times</span>
+
+    <span class="n">counts</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000</span><span class="p">):</span>
+        <span class="n">t</span> <span class="o">=</span> <span class="n">sampler</span><span class="p">(</span><span class="n">logits</span><span class="o">.</span><span class="n">clone</span><span class="p">(),</span> <span class="n">context</span><span class="p">)</span>
+        <span class="n">counts</span><span class="p">[</span><span class="n">t</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="c1"># With repetition penalty, token 7 should appear less than greedy would predict</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Token 7 selected </span><span class="si">{</span><span class="n">counts</span><span class="p">[</span><span class="mi">7</span><span class="p">]</span><span class="si">}</span><span class="s2"> / 1000 times with rep_penalty=1.1&quot;</span><span class="p">)</span>
+    <span class="n">greedy_sampler</span> <span class="o">=</span> <span class="n">ProductionSampler</span><span class="p">(</span><span class="n">temperature</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">top_p</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span> <span class="n">repetition_penalty</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">counts_nopenalty</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000</span><span class="p">):</span>
+        <span class="n">t</span> <span class="o">=</span> <span class="n">greedy_sampler</span><span class="p">(</span><span class="n">logits</span><span class="o">.</span><span class="n">clone</span><span class="p">(),</span> <span class="n">context</span><span class="p">)</span>
+        <span class="n">counts_nopenalty</span><span class="p">[</span><span class="n">t</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Token 7 selected </span><span class="si">{</span><span class="n">counts_nopenalty</span><span class="p">[</span><span class="mi">7</span><span class="p">]</span><span class="si">}</span><span class="s2"> / 1000 times without penalty&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Every decoding strategy converts raw logits to a token via a pipeline of <em>logit processors</em> (transforms) followed by a <em>sampler</em> (multinomial draw or argmax). Processors compose; their order matters.</li>
+<li><strong>Greedy decoding</strong> is deterministic but finds the locally optimal token, not the globally most probable sequence. It causes repetitive, low-entropy text.</li>
+<li><strong>Temperature</strong> is the master dial: dividing logits by <span class="arithmatex">\(T &lt; 1\)</span> sharpens the distribution (less diverse, higher confidence); <span class="arithmatex">\(T &gt; 1\)</span> flattens it (more diverse, potentially incoherent). Models are calibrated for <span class="arithmatex">\(T \approx 1\)</span>.</li>
+<li><strong>Top-k</strong> cuts the long tail with a fixed count; <strong>top-p</strong> (nucleus) adapts to the distribution shape by cutting by cumulative mass — typically superior. <strong>Min-p</strong> cuts relative to the peak probability.</li>
+<li><strong>Repetition penalty</strong> discounts logits for previously seen tokens; <strong>frequency penalty</strong> discounts proportional to count. Both prevent loops; both interact with temperature (apply penalty before temperature scaling).</li>
+<li><strong>Beam search</strong> improves quality for structured tasks (translation, summarisation) but produces bland, repetitive text for open-ended generation. Use <span class="arithmatex">\(B = 4\)</span>–<span class="arithmatex">\(8\)</span> with length normalisation.</li>
+<li><strong>Contrastive decoding</strong> and <strong>DoLa</strong> improve factuality by subtracting a less-knowledgeable model&rsquo;s (or layer&rsquo;s) probability distribution, amplifying the expert signal.</li>
+<li>During <strong>RL fine-tuning</strong>, sampling temperature controls exploration. Compute KL divergences at the <em>same</em> temperature as the rollout to keep the objective consistent.</li>
+<li>In <strong>distillation</strong>, high-temperature soft targets expose &ldquo;dark knowledge&rdquo; — the teacher&rsquo;s inter-token similarity structure — and should be scaled by <span class="arithmatex">\(T^2\)</span> to maintain gradient magnitude.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Sampling and decoding research has evolved from simple greedy/beam baselines into a rich family of adaptive, factuality-aware, and watermarking-capable methods. The current frontier focuses on dynamic truncation (min-p, typical sampling), contrastive layer-based decoding to reduce hallucinations, and inference-efficient alternatives that maintain or improve output quality.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1904.09751">Holtzman et al., <em>The Curious Case of Neural Text Degeneration</em> (2020)</a> — introduced nucleus (top-p) sampling and the degeneration analysis that defines the diversity–coherence tradeoff.</li>
+<li><a href="https://arxiv.org/abs/2202.00666">Meister et al., <em>Locally Typical Sampling</em> (2022)</a> — information-theoretic framing of sampling; keep tokens whose surprisal is close to the conditional entropy.</li>
+<li><a href="https://arxiv.org/abs/2210.15097">Li et al., <em>Contrastive Decoding: Open-ended Text Generation as Optimization</em> (ACL 2023)</a> — expert-minus-amateur log-prob scoring eliminates repetition without any additional training.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2309.03883">Chuang et al., <em>DoLa: Decoding by Contrasting Layers Improves Factuality in LLMs</em> (ICLR 2024)</a> — single-model contrastive decoding using early vs. final layers to suppress hallucinations; +12–17 pp on TruthfulQA.</li>
+<li><a href="https://arxiv.org/abs/2407.01082">Nguyen et al., <em>Turning Up the Heat: Min-p Sampling for Creative and Coherent LLM Outputs</em> (ICLR 2025)</a> — dynamic threshold scaled to the peak probability; balances quality and creativity at high temperatures.</li>
+<li><a href="https://arxiv.org/abs/2301.10226">Kirchenbauer et al., <em>A Watermark for Large Language Models</em> (ICML 2023)</a> — logit-level &ldquo;green/red list&rdquo; watermarking detectable from short spans without model access.</li>
+<li><a href="https://arxiv.org/abs/2402.06925">Shi et al., <em>A Thorough Examination of Decoding Methods in the Era of LLMs</em> (EMNLP 2024)</a> — broad empirical comparison of greedy, beam, top-k, top-p, typical, and contrastive decoding across tasks and model sizes.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm</a> — production inference engine; implements the full logit-processor pipeline (temperature, top-k, top-p, min-p, penalties) with PagedAttention and continuous batching.</li>
+<li><a href="https://github.com/voidism/DoLa">voidism/DoLa</a> — official reference implementation of layer-contrastive decoding, compatible with LLaMA-family models.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/blog/how-to-generate">Patrick von Platen, <em>How to generate text: using different decoding methods for language generation with Transformers</em> (HuggingFace Blog, 2020/2023)</a> — hands-on walkthrough of greedy, beam search, top-k, and nucleus sampling with code.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Holtzman et al., &ldquo;The Curious Case of Neural Text Degeneration&rdquo; (ICLR 2020) — introduced nucleus (top-p) sampling and the analysis of degenerate modes.</li>
+<li>Meister et al., &ldquo;Typical Decoding for Natural Language Generation&rdquo; (ACL 2023) — information-theoretic motivation for typical sampling.</li>
+<li>Keskar et al., &ldquo;CTRL: A Conditional Transformer Language Model for Controllable Generation&rdquo; (2019) — introduced the repetition penalty.</li>
+<li>Li et al., &ldquo;Contrastive Decoding: Open-ended Text Generation as Optimization&rdquo; (ACL 2023) — expert vs. amateur contrastive scores.</li>
+<li>Chuang et al., &ldquo;DoLa: Decoding by Contrasting Layers Improves Factuality in Large Language Models&rdquo; (ICLR 2024) — layer-contrastive decoding for hallucination reduction.</li>
+<li>Vijayakumar et al., &ldquo;Diverse Beam Search: Decoding Diverse Solutions from Neural Sequence Models&rdquo; (AAAI 2018) — diversity-encouraging beam search.</li>
+<li>Kirchenbauer et al., &ldquo;A Watermark for Large Language Models&rdquo; (ICML 2023) — logit-based watermarking via vocabulary partitioning.</li>
+<li>Hinton et al., &ldquo;Distilling the Knowledge in a Neural Network&rdquo; (NeurIPS 2015 Workshop) — foundational work on temperature-scaled soft targets.</li>
+<li>HuggingFace <code>transformers</code> — <code>src/transformers/generation/logits_process.py</code> is the canonical reference implementation of every processor discussed here.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="08-disaggregated-chunked-prefill.html"><span class="pn-label">← Previous</span><span class="pn-title">Disaggregated Prefill/Decode &amp; Chunked Prefill</span></a>
+<a class="next" href="10-structured-generation.html"><span class="pn-label">Next →</span><span class="pn-title">Structured &amp; Constrained Generation</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-probability-pipeline-logits-to-token">The Probability Pipeline: Logits to Token</a></li>
+<li class="toc-l2"><a href="#greedy-decoding-and-its-failure-modes">Greedy Decoding and Its Failure Modes</a></li>
+<li class="toc-l2"><a href="#temperature-scaling">Temperature Scaling</a></li>
+<li class="toc-l3"><a href="#temperature-and-the-training-distribution">Temperature and the Training Distribution</a></li>
+<li class="toc-l2"><a href="#top-k-sampling">Top-k Sampling</a></li>
+<li class="toc-l2"><a href="#top-p-nucleus-sampling">Top-p / Nucleus Sampling</a></li>
+<li class="toc-l2"><a href="#min-p-sampling">Min-p Sampling</a></li>
+<li class="toc-l2"><a href="#typical-sampling">Typical Sampling</a></li>
+<li class="toc-l2"><a href="#repetition-and-frequency-penalties">Repetition and Frequency Penalties</a></li>
+<li class="toc-l2"><a href="#beam-search">Beam Search</a></li>
+<li class="toc-l2"><a href="#contrastive-decoding-and-dola">Contrastive Decoding and DoLa</a></li>
+<li class="toc-l3"><a href="#contrastive-decoding">Contrastive Decoding</a></li>
+<li class="toc-l3"><a href="#dola-decoding-by-contrasting-layers">DoLa (Decoding by Contrasting Layers)</a></li>
+<li class="toc-l2"><a href="#the-bias-diversity-tradeoff">The Bias-Diversity Tradeoff</a></li>
+<li class="toc-l2"><a href="#logit-processor-pipelines-in-practice">Logit Processor Pipelines in Practice</a></li>
+<li class="toc-l3"><a href="#custom-logit-processors">Custom Logit Processors</a></li>
+<li class="toc-l2"><a href="#temperature-and-rldistillation-interactions">Temperature and RL/Distillation Interactions</a></li>
+<li class="toc-l3"><a href="#policy-temperature-in-rl-fine-tuning">Policy Temperature in RL Fine-Tuning</a></li>
+<li class="toc-l3"><a href="#knowledge-distillation-and-soft-targets">Knowledge Distillation and Soft Targets</a></li>
+<li class="toc-l2"><a href="#putting-it-all-together-a-production-sampler">Putting It All Together: A Production Sampler</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

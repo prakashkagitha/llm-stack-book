@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Mixing, Domain Weighting &amp; Curriculum — The LLM Stack</title>
+<meta name="description" content="Choosing the proportions of each data source (web, code, math, books, multilingual) and scheduling them over training. Proxy-model methods (DoReMi/Group-DRO), o">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="active" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="314-data-mixing-domain-weighting-curriculum">3.14 Data Mixing, Domain Weighting &amp; Curriculum<a class="headerlink" href="#314-data-mixing-domain-weighting-curriculum" title="Permanent link">¶</a></h1>
+<p>Two teams are handed the same compute budget, the same architecture, and access to the same pile of raw tokens: a few trillion tokens of web text, a few hundred billion of code, tens of billions of math, some books, and a multilingual long tail. Team A throws everything into one shuffled stream in proportion to how much of each they happen to have on disk. Team B spends a week deciding <em>what fraction of each batch</em> should be web, code, math, books, and other languages — and then schedules those fractions to change as training proceeds. At the end, Team B&rsquo;s model is meaningfully better at coding and reasoning, no worse at general language, and used the exact same number of FLOPs.</p>
+<p>That gap is the subject of this chapter. Once you have cleaned and deduplicated your corpus (see <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a>) and decided how big a model your budget supports (see <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>), you still face a deceptively deep optimization: the <strong>data mixture</strong>. What proportion of each domain do you sample? Do you upsample a small high-quality source or just deduplicate harder? Do you keep the mixture fixed, or change it over training — easy-to-hard curricula, context-window ramps, a high-quality &ldquo;annealing&rdquo; phase near the end? These choices routinely move benchmark scores by amounts that would otherwise cost you a 2x model-size increase.</p>
+<p>We will develop the topic in four movements: (1) the <strong>mixing problem</strong> itself — what a mixture is, why it matters, and the upsampling-vs-dedup trade-off; (2) <strong>how to choose weights</strong> — manual ablations, and the proxy-model methods DoReMi and Group-DRO that learn weights automatically; (3) a <strong>from-scratch DoReMi-style reweighting toy</strong> you can run; and (4) <strong>scheduling over time</strong> — curriculum, context-length ramps, and mid-training annealing. The data pipeline that produces these domains is covered in <a href="../03-pretraining/01-pretraining-data.html">Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a>; here we assume the domains exist and ask how to <em>blend</em> them.</p>
+<hr />
+<h2 id="the-mixing-problem-what-a-mixture-is-and-why-it-matters">The Mixing Problem: What a Mixture Is and Why It Matters<a class="headerlink" href="#the-mixing-problem-what-a-mixture-is-and-why-it-matters" title="Permanent link">¶</a></h2>
+<h3 id="domains-weights-and-the-sampling-distribution">Domains, weights, and the sampling distribution<a class="headerlink" href="#domains-weights-and-the-sampling-distribution" title="Permanent link">¶</a></h3>
+<p>Partition your corpus into <span class="arithmatex">\(k\)</span> <strong>domains</strong> (also called <em>groups</em> or <em>sources</em>) <span class="arithmatex">\(\mathcal{D}_1, \dots, \mathcal{D}_k\)</span> — for example web, code, math, books, encyclopedic, and a multilingual bucket. Each domain <span class="arithmatex">\(i\)</span> has a natural size <span class="arithmatex">\(n_i\)</span> (its token count after cleaning). A <strong>mixture</strong> is a probability vector</p>
+<div class="arithmatex">\[
+w = (w_1, \dots, w_k), \qquad w_i \ge 0, \qquad \sum_{i=1}^{k} w_i = 1,
+\]</div>
+<p>where <span class="arithmatex">\(w_i\)</span> is the probability that the <em>next token drawn for a training batch</em> comes from domain <span class="arithmatex">\(i\)</span>. Equivalently, over a run of <span class="arithmatex">\(D\)</span> total tokens, domain <span class="arithmatex">\(i\)</span> contributes <span class="arithmatex">\(w_i D\)</span> tokens of gradient signal. The mixture is a knob entirely separate from how much data you <em>have</em>: you can set <span class="arithmatex">\(w_{\text{code}} = 0.20\)</span> even if code is only 5% of your corpus, by <strong>upsampling</strong> (revisiting code tokens multiple times), or set <span class="arithmatex">\(w_{\text{web}} = 0.40\)</span> even though web is 80% of your corpus, by <strong>downsampling</strong> (skipping most web tokens).</p>
+<p>Define the <strong>natural</strong> or <strong>proportional</strong> mixture as <span class="arithmatex">\(w_i^{\text{nat}} = n_i / \sum_j n_j\)</span> — sample each token uniformly from the pool. Team A above used <span class="arithmatex">\(w^{\text{nat}}\)</span>. The central empirical fact of this chapter is that <span class="arithmatex">\(w^{\text{nat}}\)</span> is almost never optimal. Why? Because the loss you actually care about is not &ldquo;loss on the corpus you happen to have&rdquo;; it is loss on a <em>target distribution</em> of downstream uses, which weights code, math, and reasoning far more heavily than their raw token counts.</p>
+<h3 id="the-effective-epochs-view">The effective-epochs view<a class="headerlink" href="#the-effective-epochs-view" title="Permanent link">¶</a></h3>
+<p>The cleanest way to think about a mixture is in terms of <strong>epochs per domain</strong>. If domain <span class="arithmatex">\(i\)</span> has <span class="arithmatex">\(n_i\)</span> unique tokens and you allocate it <span class="arithmatex">\(w_i D\)</span> training tokens, then domain <span class="arithmatex">\(i\)</span> is seen for</p>
+<div class="arithmatex">\[
+e_i = \frac{w_i D}{n_i}
+\]</div>
+<p>epochs. A small high-quality domain (say 20 B tokens of curated math) inside a 2 T-token run with <span class="arithmatex">\(w_{\text{math}} = 0.05\)</span> is seen <span class="arithmatex">\(e_{\text{math}} = (0.05 \times 2{,}000\text{B}) / 20\text{B} = 5\)</span> times. Meanwhile web, with 4 T unique tokens and <span class="arithmatex">\(w_{\text{web}} = 0.6\)</span>, is seen <span class="arithmatex">\(e_{\text{web}} = (0.6 \times 2{,}000) / 4{,}000 = 0.3\)</span> epochs — less than once. This asymmetry is the crux of every mixing decision: <strong>upweighting a small domain forces you to repeat it</strong>, and repetition has a cost. Past roughly 4 epochs of a domain, returns to repeated data decay sharply, and past a dozen or so, repeated data can actively hurt (memorization, reduced generalization). The Muennighoff et al. <em>&ldquo;Scaling Data-Constrained Language Models&rdquo;</em> work quantified this: repeated tokens are worth progressively less than fresh ones, with the value of an epoch decaying roughly geometrically.</p>
+<p>So a mixture choice is implicitly an <strong>epoch-budget choice</strong>. You are deciding, for each domain, &ldquo;how many times is it worth re-reading this?&rdquo;</p>
+<figure class="viz" id="fig-mixing-epoch-budget-tree">
+<svg viewBox="0 0 880 360" role="img" aria-label="A single token budget D fans out into five domain allocations. Web (huge pool) is downsampled to fewer than 1 epoch; code and books see roughly 1-2 epochs; math (small pool) requires 2-6 epochs of upsampling; multilingual varies by language.">
+<style>
+  #fig-mixing-epoch-budget-tree text { fill: var(--ink-soft, #45413a); }
+  #fig-mixing-epoch-budget-tree .lbl  { font: 700 13px var(--sans,sans-serif); }
+  #fig-mixing-epoch-budget-tree .sub  { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-mixing-epoch-budget-tree .reg  { font: 500 11.5px var(--mono,monospace); }
+  #fig-mixing-epoch-budget-tree .root-lbl     { font: 700 13px var(--sans,sans-serif); fill: #ffffff; }
+  #fig-mixing-epoch-budget-tree .root-formula { font: 600 12px var(--mono,monospace); fill: #ffffff; }
+  #fig-mixing-epoch-budget-tree .leg  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+</style>
+<defs>
+  <marker id="meb-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L8 5 L0 9 z" fill="var(--muted,#6d675d)"/>
+  </marker>
+</defs>
+
+
+<rect x="12" y="140" width="186" height="72" rx="10"
+      fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="105" y="167" text-anchor="middle" class="root-lbl">Token budget</text>
+<text x="105" y="188" text-anchor="middle" class="root-formula">D = sum w_i * D</text>
+
+
+<line x1="198" y1="176" x2="252" y2="176" stroke="var(--muted,#6d675d)" stroke-width="1.8"/>
+<line x1="252" y1="50"  x2="252" y2="312" stroke="var(--muted,#6d675d)" stroke-width="1.8"/>
+
+
+<line x1="252" y1="56" x2="276" y2="56" stroke="var(--muted,#6d675d)" stroke-width="1.5" marker-end="url(#meb-arr)"/>
+<rect x="276" y="32" width="592" height="48" rx="7"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<text x="292" y="52" class="lbl">web</text>
+<text x="292" y="68" class="sub">huge pool</text>
+<text x="428" y="50" class="reg" fill="var(--accent2,#3b82f6)">e_i &lt; 1</text>
+<text x="488" y="50" class="reg">  (downsample — see each token &lt;1x)</text>
+
+
+<line x1="252" y1="120" x2="276" y2="120" stroke="var(--muted,#6d675d)" stroke-width="1.5" marker-end="url(#meb-arr)"/>
+<rect x="276" y="96" width="592" height="48" rx="7"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<text x="292" y="116" class="lbl">code</text>
+<text x="292" y="132" class="sub">medium pool</text>
+<text x="428" y="114" class="reg" fill="var(--muted,#6d675d)">e_i ~ 1-2</text>
+<text x="497" y="114" class="reg">  (roughly one pass)</text>
+
+
+<line x1="252" y1="184" x2="276" y2="184" stroke="var(--muted,#6d675d)" stroke-width="1.5" marker-end="url(#meb-arr)"/>
+<rect x="276" y="160" width="592" height="48" rx="7"
+      fill="var(--warn,#e0a106)" fill-opacity="0.16" stroke="var(--warn,#d97706)" stroke-width="2"/>
+<text x="292" y="180" class="lbl">math</text>
+<text x="292" y="196" class="sub">small pool</text>
+<text x="428" y="178" class="reg" fill="var(--warn,#d97706)">e_i ~ 2-6</text>
+<text x="496" y="178" class="reg">  (upsample — repeat several times)</text>
+
+
+<line x1="252" y1="248" x2="276" y2="248" stroke="var(--muted,#6d675d)" stroke-width="1.5" marker-end="url(#meb-arr)"/>
+<rect x="276" y="224" width="592" height="48" rx="7"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<text x="292" y="244" class="lbl">books</text>
+<text x="292" y="260" class="sub">small pool</text>
+<text x="428" y="242" class="reg" fill="var(--muted,#6d675d)">e_i ~ 1-4</text>
+
+
+<line x1="252" y1="312" x2="276" y2="312" stroke="var(--muted,#6d675d)" stroke-width="1.5" marker-end="url(#meb-arr)"/>
+<rect x="276" y="288" width="592" height="48" rx="7"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<text x="292" y="308" class="lbl">multi</text>
+<text x="292" y="324" class="sub">long tail</text>
+<text x="428" y="306" class="reg" fill="var(--muted,#6d675d)">e_i varies by language</text>
+
+
+<rect x="600" y="7" width="11" height="11" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<text x="615" y="17" class="leg">downsample</text>
+<rect x="706" y="7" width="11" height="11" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.16" stroke="var(--warn,#d97706)" stroke-width="1.5"/>
+<text x="721" y="17" class="leg">upsample</text>
+</svg>
+<figcaption><b>One token budget fans out into per-domain epoch regimes.</b> The single training budget D is split by mixture weights w_i; each domain's pool size determines whether it is downsampled (web, fewer than 1 pass), consumed roughly once (code, books), or repeated multiple times (math, 2–6 epochs). Math is flagged in amber because repetition past roughly 4 epochs risks memorisation and reduced generalisation.</figcaption>
+</figure>
+
+<h3 id="upsampling-vs-deduplication-the-trade-off">Upsampling vs. deduplication: the trade-off<a class="headerlink" href="#upsampling-vs-deduplication-the-trade-off" title="Permanent link">¶</a></h3>
+<p>A subtle but important interaction: <strong>upsampling and deduplication push in opposite directions on the same axis — how many times a token is effectively seen.</strong></p>
+<ul>
+<li><strong>Deduplication</strong> (covered in <a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a>) removes <em>near-duplicate</em> documents so the model does not waste capacity memorizing boilerplate and does not silently see the same passage 50 times. It <em>reduces</em> effective epochs on duplicated content.</li>
+<li><strong>Upsampling</strong> deliberately <em>increases</em> effective epochs on a chosen domain.</li>
+</ul>
+<p>The trap is doing both blindly: if you under-deduplicate web and then also upsample a small domain, you can end up with a model that has seen the upsampled domain 5x (intended) but also seen the most common web boilerplate 50x (unintended). The principled recipe is: <strong>deduplicate aggressively first, to make &ldquo;one epoch&rdquo; mean one genuine pass over unique content; then upsample deliberately, with full visibility into the resulting epoch counts.</strong> Deduplication makes the epoch math honest; upsampling spends that honest budget where it helps.</p>
+<p>There is also a quality-vs-quantity tension. Suppose you have a small, very high-quality math set. You can:</p>
+<ol>
+<li><strong>Upsample</strong> it (repeat it, raising <span class="arithmatex">\(e_{\text{math}}\)</span>) — risks memorization but injects more high-quality gradient signal.</li>
+<li><strong>Leave it at one epoch</strong> and accept its small weight — safe but under-uses a great source.</li>
+<li><strong>Generate synthetic data</strong> in its style to enlarge the <em>unique</em> pool (see <a href="../03-pretraining/15-synthetic-data.html">Synthetic Data for Pre- and Post-Training</a>) — best of both worlds when feasible, since fresh unique tokens beat repeats.</li>
+</ol>
+<p>A common modern practice is a hybrid: upsample high-quality small domains to 2–4 epochs (where repetition is still net-positive), and use synthetic generation rather than pushing past ~4–6 epochs.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: upsampling before deduplicating</p>
+<p>If you upsample a domain that still contains internal near-duplicates, you multiply the duplication. A 3x upsample of a set that already contains 4x internal duplication of some passages yields 12 effective views of those passages — enough to trigger verbatim memorization (a privacy and generalization problem; see <a href="../13-interp-safety-gov/03-privacy-memorization-dp.html">Privacy, Memorization &amp; Differential Privacy for LLMs</a>). Always deduplicate <em>within</em> a domain before deciding its upsample factor.</p>
+</div>
+<h3 id="why-the-mixture-is-not-separable-from-everything-else">Why the mixture is not separable from everything else<a class="headerlink" href="#why-the-mixture-is-not-separable-from-everything-else" title="Permanent link">¶</a></h3>
+<p>Two important couplings make mixing harder than &ldquo;tune five numbers once&rdquo;:</p>
+<ul>
+<li><strong>Mixture interacts with model scale.</strong> The <em>optimal</em> mixture is not scale-invariant. Small models are capacity-limited and benefit from a &ldquo;cleaner,&rdquo; narrower diet; large models can absorb a more diverse, heavier-tailed mixture and turn it into capability. A mixture tuned on a 100 M-parameter proxy may be subtly wrong for a 70 B target. This is the central risk of all proxy-based methods, and we return to it below.</li>
+<li><strong>Mixture interacts with the schedule.</strong> A <em>fixed</em> mixture is a special case of a <em>schedule</em>. As we will see in the curriculum section, the best results often come from changing <span class="arithmatex">\(w\)</span> over time — e.g., more diverse/noisier data early, then concentrating high-quality math/code/instruction-like data in a final annealing phase.</li>
+</ul>
+<hr />
+<h2 id="choosing-the-weights-i-manual-ablations-and-the-target-loss-view">Choosing the Weights I: Manual Ablations and the Target-Loss View<a class="headerlink" href="#choosing-the-weights-i-manual-ablations-and-the-target-loss-view" title="Permanent link">¶</a></h2>
+<h3 id="the-objective-minimize-a-target-weighted-loss">The objective: minimize a target-weighted loss<a class="headerlink" href="#the-objective-minimize-a-target-weighted-loss" title="Permanent link">¶</a></h3>
+<p>Make the goal explicit. You have a <strong>target distribution</strong> over domains <span class="arithmatex">\(p^{\star} = (p_1^{\star}, \dots, p_k^{\star})\)</span> encoding how much you <em>care</em> about each — perhaps uniform over domains (every domain equally important), or skewed toward code/math if that is your product, or matched to a downstream eval suite. Your true objective is to minimize the target-weighted held-out loss:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{target}}(\theta) = \sum_{i=1}^{k} p_i^{\star} \, \ell_i(\theta), \qquad \ell_i(\theta) = \mathbb{E}_{x \sim \mathcal{D}_i}\big[-\log p_\theta(x)\big],
+\]</div>
+<p>where <span class="arithmatex">\(\ell_i\)</span> is the per-domain held-out cross-entropy (in nats/token; see <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a>). Crucially, the <em>training</em> mixture <span class="arithmatex">\(w\)</span> is a separate object from the <em>target</em> weights <span class="arithmatex">\(p^{\star}\)</span>. You choose <span class="arithmatex">\(w\)</span> — the sampling distribution — to minimize <span class="arithmatex">\(\mathcal{L}_{\text{target}}\)</span>. Setting <span class="arithmatex">\(w = p^{\star}\)</span> is the naive guess, and it is usually wrong: domains differ in difficulty and in how much they transfer to one another, so the training weights that minimize a target loss are generally <em>not</em> equal to the target weights themselves. Easy domains need less weight to reach low loss; hard or high-transfer domains may deserve more.</p>
+<h3 id="manual-mixture-ablations-the-workhorse">Manual mixture ablations: the workhorse<a class="headerlink" href="#manual-mixture-ablations-the-workhorse" title="Permanent link">¶</a></h3>
+<p>Before any fancy method, the industry standard is <strong>mixture ablation at small scale</strong>: train many small models (say 100 M–1 B parameters, for a few billion tokens each) under different candidate mixtures, evaluate each on a fixed held-out suite, and pick the winner — then <em>scale it up</em> and hope the ranking holds. The Llama, GPT-3, and Gopher reports all describe variants of this. The procedure:</p>
+<ol>
+<li><strong>Fix a proxy scale</strong> small enough to run dozens of configs cheaply but large enough to be predictive (a few hundred million parameters is typical).</li>
+<li><strong>Define a small set of candidate mixtures</strong> — e.g., a grid or a few hand-designed points: &ldquo;web-heavy,&rdquo; &ldquo;code-heavy,&rdquo; &ldquo;balanced,&rdquo; &ldquo;math-upsampled.&rdquo;</li>
+<li><strong>Train one proxy per mixture</strong> for a fixed token budget.</li>
+<li><strong>Evaluate</strong> each on per-domain held-out loss and on a basket of downstream tasks.</li>
+<li><strong>Pick</strong> the mixture optimizing your target metric, then <strong>scale</strong>, ideally re-checking the ranking at one intermediate scale.</li>
+</ol>
+<p>This works and is robust, but it is expensive (cost grows linearly in the number of mixtures tried) and it explores only the handful of points you thought to try. It also bakes in the scale-transfer assumption. The methods in the next section automate the search and, in DoReMi&rsquo;s case, find the weights with a <em>single</em> extra proxy run instead of a grid.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: setting weights from an epoch budget</p>
+<p>You have a 1 T-token training budget and these cleaned, deduplicated pools: web 3 T, code 250 B, math 30 B, books 80 B, multilingual 400 B (total 3.76 T unique tokens). You decide on these target epoch counts based on quality and repetition tolerance: web 0.25 epochs (it is plentiful and lower-value per token), code 1.5, math 4, books 2, multilingual 0.6.</p>
+<p>Tokens allocated per domain <span class="arithmatex">\(= e_i \times n_i\)</span>:</p>
+<ul>
+<li>web: <span class="arithmatex">\(0.25 \times 3000 = 750\)</span> B</li>
+<li>code: <span class="arithmatex">\(1.5 \times 250 = 375\)</span> B</li>
+<li>math: <span class="arithmatex">\(4 \times 30 = 120\)</span> B</li>
+<li>books: <span class="arithmatex">\(2 \times 80 = 160\)</span> B</li>
+<li>multilingual: <span class="arithmatex">\(0.6 \times 400 = 240\)</span> B</li>
+</ul>
+<p>Total <span class="arithmatex">\(= 1645\)</span> B, but our budget is 1000 B. So normalize: scale every allocation by <span class="arithmatex">\(1000/1645 = 0.608\)</span>. The resulting <strong>mixture weights</strong> <span class="arithmatex">\(w_i = (\text{alloc}_i \times 0.608)/1000\)</span>:</p>
+<ul>
+<li>web: <span class="arithmatex">\(0.456\)</span>, code: <span class="arithmatex">\(0.228\)</span>, math: <span class="arithmatex">\(0.073\)</span>, books: <span class="arithmatex">\(0.097\)</span>, multilingual: <span class="arithmatex">\(0.146\)</span>.</li>
+</ul>
+<p>Sanity check: they sum to <span class="arithmatex">\(1.0\)</span>. Note code, at 6.6% of unique tokens, gets <strong>22.8%</strong> of training weight — a 3.4x upweight — while web, 80% of unique tokens, gets only 45.6%. The realized epochs after normalization are <span class="arithmatex">\(0.608\times\)</span> the targets: web 0.15, code 0.91, math 2.4, books 1.2, multilingual 0.36 — all comfortably under the danger zone for repetition. This back-of-envelope is exactly how practitioners turn &ldquo;how much do I trust each source and how often can I repeat it&rdquo; into concrete sampling probabilities.</p>
+</div>
+<hr />
+<h2 id="choosing-the-weights-ii-proxy-model-methods-doremi-group-dro">Choosing the Weights II: Proxy-Model Methods (DoReMi &amp; Group-DRO)<a class="headerlink" href="#choosing-the-weights-ii-proxy-model-methods-doremi-group-dro" title="Permanent link">¶</a></h2>
+<p>Manual ablation searches a few points. <strong>DoReMi</strong> (Domain Reweighting with Minimax Optimization; Xie et al., 2023) instead <em>learns</em> a mixture in one shot, using a small <strong>reference model</strong> and a small <strong>proxy model</strong>, then transfers the learned weights to the large target run. It is built on <strong>Group Distributionally Robust Optimization (Group-DRO)</strong>, so we develop that first.</p>
+<h3 id="distributionally-robust-optimization-in-one-paragraph">Distributionally Robust Optimization in one paragraph<a class="headerlink" href="#distributionally-robust-optimization-in-one-paragraph" title="Permanent link">¶</a></h3>
+<p>Ordinary empirical risk minimization (ERM) minimizes the <em>average</em> loss over the training distribution. <strong>DRO</strong> instead minimizes the <em>worst-case</em> loss over a set of distributions — it is risk-averse, optimizing for the hardest reweighting an adversary could pick. In the <strong>group</strong> version, the adversary is restricted to reweighting the <span class="arithmatex">\(k\)</span> domains:</p>
+<div class="arithmatex">\[
+\min_{\theta} \; \max_{w \in \Delta_k} \; \sum_{i=1}^{k} w_i \, \ell_i(\theta),
+\]</div>
+<p>where <span class="arithmatex">\(\Delta_k\)</span> is the probability simplex over domains. The inner <span class="arithmatex">\(\max\)</span> puts all weight on whichever domain currently has the highest loss; the outer <span class="arithmatex">\(\min\)</span> trains <span class="arithmatex">\(\theta\)</span> to bring that worst domain down. The fixed point is a model that is <em>uniformly good across domains</em> — no domain is left behind. This is exactly the property we want from a pretraining mixture: do not let math or low-resource languages collapse just because they are small.</p>
+<h3 id="the-doremi-trick-excess-loss-not-raw-loss">The DoReMi trick: excess loss, not raw loss<a class="headerlink" href="#the-doremi-trick-excess-loss-not-raw-loss" title="Permanent link">¶</a></h3>
+<p>A naive Group-DRO objective has a problem for pretraining: some domains are <em>intrinsically harder</em> (higher irreducible entropy) than others. The adversary would dump all weight on the hardest-to-model domain forever (e.g., noisy multilingual text), regardless of whether more weight actually <em>helps</em>. DoReMi&rsquo;s key idea is to measure each domain not by raw loss but by <strong>excess loss</strong> relative to a fixed <strong>reference model</strong> trained once on the natural mixture:</p>
+<div class="arithmatex">\[
+\text{excess}_i(\theta) = \underbrace{\ell_i(\theta)}_{\text{proxy loss on domain } i} - \underbrace{\ell_i(\theta_{\text{ref}})}_{\text{reference loss on domain } i}.
+\]</div>
+<p>Excess loss answers a sharper question: <em>&ldquo;On which domain is the proxy still far from what&rsquo;s achievable?&rdquo;</em> A domain with high irreducible entropy will have high loss for <em>both</em> proxy and reference, so its excess is small once the proxy catches up — the adversary stops over-investing in it. A domain where the proxy lags the reference (lots of headroom) gets upweighted. DoReMi clamps excess at zero (you cannot do better than reference &ldquo;for free&rdquo;) and uses it to drive the weights.</p>
+<h3 id="the-algorithm">The algorithm<a class="headerlink" href="#the-algorithm" title="Permanent link">¶</a></h3>
+<p>DoReMi runs three steps:</p>
+<ol>
+<li><strong>Train a reference model</strong> <span class="arithmatex">\(\theta_{\text{ref}}\)</span> (small, e.g. 280 M) on the natural mixture <span class="arithmatex">\(w^{\text{nat}}\)</span>. Record its per-domain losses <span class="arithmatex">\(\ell_i(\theta_{\text{ref}})\)</span>. (Used only to define the excess-loss baseline.)</li>
+<li><strong>Train a proxy model</strong> <span class="arithmatex">\(\theta\)</span> of the <em>same small size</em> with <strong>online Group-DRO</strong>: at each step, evaluate the proxy&rsquo;s per-domain excess loss, multiplicatively update domain weights toward high-excess domains, and use those weights to draw the next batch. Average the weights over all steps to get <span class="arithmatex">\(\bar{w}\)</span>.</li>
+<li><strong>Train the large target model</strong> on the <em>fixed</em> averaged mixture <span class="arithmatex">\(\bar{w}\)</span> from step 2. The expensive run uses a static mixture; all the adaptivity happened cheaply in the proxy.</li>
+</ol>
+<p>The online update in step 2 is <strong>exponentiated gradient ascent</strong> on the weights (multiplicative weights / Hedge). Let <span class="arithmatex">\(\lambda_i^{(t)}\)</span> be the clamped excess loss of domain <span class="arithmatex">\(i\)</span> at step <span class="arithmatex">\(t\)</span>. The weight update with step size <span class="arithmatex">\(\eta\)</span> is</p>
+<div class="arithmatex">\[
+\tilde{w}_i^{(t+1)} = w_i^{(t)} \exp\!\big(\eta \, \lambda_i^{(t)}\big), \qquad w_i^{(t+1)} = (1-c)\,\frac{\tilde{w}_i^{(t+1)}}{\sum_j \tilde{w}_j^{(t+1)}} + c\,\frac{1}{k},
+\]</div>
+<p>where the renormalization keeps <span class="arithmatex">\(w^{(t+1)}\)</span> on the simplex and the small <strong>smoothing</strong> constant <span class="arithmatex">\(c\)</span> (mixing in the uniform distribution) guarantees every domain keeps a floor of weight so it is never starved to zero. The proxy parameters <span class="arithmatex">\(\theta\)</span> are trained <em>normally</em> (minimizing weighted loss) while the weights chase the excess — a two-player game whose averaged weights are the output.</p>
+<figure class="viz" id="fig-doremi-reference-proxy-loop">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-doremi-reference-proxy-loop text { fill: var(--ink-soft,#45413a); }
+  #fig-doremi-reference-proxy-loop .ttl { font: 700 12px var(--sans,sans-serif); }
+  #fig-doremi-reference-proxy-loop .sub { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-doremi-reference-proxy-loop .frm { font: 500 10.5px var(--mono,monospace); }
+  #fig-doremi-reference-proxy-loop .edlbl { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-doremi-reference-proxy-loop .wlbl  { font: 400 10px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+  #fig-doremi-reference-proxy-loop .wlbl2 { font: 400 10px var(--sans,sans-serif); fill: var(--warn,#d97706); }
+  #fig-doremi-reference-proxy-loop .white { fill: #ffffff; }
+
+  #fig-doremi-reference-proxy-loop .flow-fwd {
+    stroke-dasharray: 8 5;
+    animation: drl-fwd 2s linear infinite;
+  }
+  #fig-doremi-reference-proxy-loop .flow-rev {
+    stroke-dasharray: 8 5;
+    animation: drl-rev 2s linear infinite;
+  }
+  @keyframes drl-fwd { to { stroke-dashoffset: -52; } }
+  @keyframes drl-rev { to { stroke-dashoffset:  52; } }
+
+  #fig-doremi-reference-proxy-loop .pulse-box {
+    animation: drl-pulse 2.5s ease-in-out infinite;
+  }
+  @keyframes drl-pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+</style>
+<svg viewBox="0 0 860 500" role="img"
+     aria-label="DoReMi pipeline: reference model computes per-domain baseline losses; excess loss equals proxy loss minus reference loss, clamped at zero; proxy model and multiplicative-weights vector play an iterative min-max game; the averaged weights w-bar train the large target model.">
+<defs>
+  <marker id="drl-a"  viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 1L8 5L0 9z" fill="var(--muted,#6d675d)"/></marker>
+  <marker id="drl-ab" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 1L8 5L0 9z" fill="var(--accent,#6366f1)"/></marker>
+  <marker id="drl-aw" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 1L8 5L0 9z" fill="var(--warn,#d97706)"/></marker>
+</defs>
+
+<rect x="20" y="34" width="232" height="86" rx="8"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<text x="136" y="58"  text-anchor="middle" class="ttl">reference model</text>
+<text x="136" y="74"  text-anchor="middle" class="frm">theta_ref</text>
+<text x="136" y="91"  text-anchor="middle" class="sub">trained once on natural mix w_nat</text>
+<text x="136" y="106" text-anchor="middle" class="sub">(supplies baseline losses only)</text>
+
+<line x1="252" y1="77" x2="488" y2="77"
+      stroke="var(--muted,#6d675d)" stroke-width="1.5" marker-end="url(#drl-a)"/>
+<text x="370" y="69" text-anchor="middle" class="edlbl">per-domain losses l_i(theta_ref)</text>
+
+<rect x="490" y="34" width="350" height="86" rx="8" class="pulse-box"
+      fill="var(--warn,#e0a106)" fill-opacity="0.16" stroke="var(--warn,#d97706)" stroke-width="2"/>
+<text x="665" y="58"  text-anchor="middle" class="ttl" fill="var(--warn,#d97706)">excess loss</text>
+<text x="665" y="76"  text-anchor="middle" class="frm">lambda_i = l_i(theta) - l_i(theta_ref)</text>
+<text x="665" y="93"  text-anchor="middle" class="sub">clamped at 0 (cannot beat reference for free)</text>
+<text x="665" y="108" text-anchor="middle" class="sub">measures closeable headroom per domain</text>
+
+<line x1="665" y1="120" x2="665" y2="205"
+      stroke="var(--warn,#d97706)" stroke-width="1.5" stroke-dasharray="5 3"
+      marker-end="url(#drl-aw)"/>
+<text x="677" y="167" class="wlbl2">drives max step</text>
+
+<rect x="20" y="210" width="232" height="94" rx="8"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="136" y="234" text-anchor="middle" class="ttl" fill="var(--accent,#6366f1)">proxy model  theta</text>
+<text x="136" y="252" text-anchor="middle" class="sub">(same small size as reference)</text>
+<text x="136" y="268" text-anchor="middle" class="sub">minimizes weighted loss</text>
+<text x="136" y="284" text-anchor="middle" class="sub">(the min player)</text>
+
+<rect x="490" y="210" width="350" height="94" rx="8"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="665" y="232" text-anchor="middle" class="ttl" fill="var(--accent,#6366f1)">multiplicative weights  (Hedge)</text>
+<text x="665" y="250" text-anchor="middle" class="frm">w_i := w_i * exp(eta * lambda_i)</text>
+<text x="665" y="267" text-anchor="middle" class="frm">renorm + uniform floor c</text>
+<text x="665" y="283" text-anchor="middle" class="sub">upweights domains where proxy lags ref</text>
+<text x="665" y="297" text-anchor="middle" class="sub">(the max player)</text>
+
+<path d="M252 230 Q371 192 490 230"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="2"
+      class="flow-fwd" marker-end="url(#drl-ab)"/>
+<text x="371" y="190" text-anchor="middle" class="wlbl">per-domain excess lambda_i</text>
+
+<path d="M490 284 Q371 322 252 284"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="2"
+      class="flow-rev" marker-end="url(#drl-ab)"/>
+<text x="371" y="336" text-anchor="middle" class="wlbl">weighted batch ~ w^(t)</text>
+
+<line x1="136" y1="304" x2="136" y2="374"
+      stroke="var(--muted,#6d675d)" stroke-width="1.5" marker-end="url(#drl-a)"/>
+<text x="151" y="358" class="edlbl">average w over all steps --&gt; w-bar (frozen)</text>
+
+<rect x="127" y="376" width="430" height="80" rx="10"
+      fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="342" y="401" text-anchor="middle" class="ttl white">TARGET large model</text>
+<text x="342" y="419" text-anchor="middle" class="frm white">trained on FIXED mixture  w-bar</text>
+<text x="342" y="435" text-anchor="middle" class="sub white">expensive run -- all adaptivity happened cheaply in the proxy</text>
+<text x="342" y="449" text-anchor="middle" class="sub white">reference + proxy are both small; only target is large</text>
+
+<text x="430" y="484" text-anchor="middle" class="edlbl">Band 1: reference (once)  |  Band 2: proxy game (iterated, cheap)  |  Band 3: target run (static w-bar)</text>
+
+</svg>
+<figcaption><b>DoReMi: three-stage pipeline from natural mixture to optimised weights.</b> The reference model (Band 1) is trained once on the natural mixture and anchors the excess-loss signal; the proxy model and Hedge weight vector (Band 2) run an iterative min-max game — animated arrows show weighted-batch draws feeding the proxy and per-domain excess lambda_i updating the weights; the time-averaged w-bar is frozen for the large, expensive target run (Band 3), which never needs to adapt online.</figcaption>
+</figure>
+
+<p>The payoff: DoReMi reports faster convergence to a given loss and better downstream performance than the natural mixture, found with one small reference + one small proxy run — far cheaper than a grid of full-size ablations. The reported weights also transfer across an order of magnitude of scale reasonably well, though, as noted, transfer is not perfect and is the method&rsquo;s main caveat.</p>
+<h3 id="online-adaptive-mixing-during-the-real-run">Online / adaptive mixing during the real run<a class="headerlink" href="#online-adaptive-mixing-during-the-real-run" title="Permanent link">¶</a></h3>
+<p>DoReMi freezes the mixture for the target run. An alternative is to keep adapting <em>during</em> the large run — <strong>online data mixing</strong>. The appeal is that the optimal mixture genuinely changes over training (a model that has mastered easy web text may benefit from shifting weight to math later). The risk is instability and the cost of computing per-domain signals on the fly. Practical online schemes (e.g., Albalak et al.&rsquo;s <em>Online Data Mixing</em>, and bandit-style approaches) treat each domain as an arm of a multi-armed bandit and use a reward signal — typically the <em>rate of loss decrease</em> on that domain (its learning <em>velocity</em>) — to shift weight toward domains where the model is currently learning fastest, while a smoothing/exploration term keeps every domain sampled. This connects directly to RL-style curriculum (see <a href="../06-rl-infra/12-rl-data-curriculum-replay.html">RL Data, Curriculum &amp; Replay Management</a>), where the same &ldquo;train on what you&rsquo;re learning from right now&rdquo; intuition drives sample selection.</p>
+<div class="admonition note">
+<p class="admonition-title">Group-DRO vs. online bandit mixing — same family, different reward</p>
+<p>Both treat domains as the thing to reweight and both use multiplicative-weights updates. The difference is the signal: <strong>DoReMi&rsquo;s Group-DRO uses excess loss (a level)</strong> — &ldquo;how far is this domain from achievable?&rdquo; — and is run on a cheap proxy to produce a static target mixture. <strong>Online bandit mixing uses loss velocity (a derivative)</strong> — &ldquo;where am I improving fastest right now?&rdquo; — and is run during the real training. Excess loss says &ldquo;fix what&rsquo;s broken&rdquo;; velocity says &ldquo;ride what&rsquo;s working.&rdquo; They can disagree: a domain can have high excess loss yet near-zero velocity (stuck), in which case more weight wastes compute.</p>
+</div>
+<hr />
+<h2 id="a-doremi-style-reweighting-toy-you-can-run">A DoReMi-Style Reweighting Toy You Can Run<a class="headerlink" href="#a-doremi-style-reweighting-toy-you-can-run" title="Permanent link">¶</a></h2>
+<p>Let us make all of this concrete with a small, self-contained simulation. We will <em>not</em> train real transformers — that would obscure the mechanism. Instead we model each domain&rsquo;s loss with a realistic <strong>learning curve</strong>: per-domain loss falls as a power law in the number of tokens that domain has received, toward a domain-specific floor. This captures the two things that matter for mixing — domains have different floors (difficulty) and different learning rates (transfer/headroom) — and lets us watch the Group-DRO weights respond. The same multiplicative-weights loop transfers directly to a real proxy run; only the loss source changes.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="c1"># -----------------------------------------------------------------------------</span>
+<span class="c1"># 1. Define k domains. Each has:</span>
+<span class="c1">#    - floor:  irreducible loss (entropy of that domain&#39;s text), in nats/token</span>
+<span class="c1">#    - rate:   power-law exponent for how fast loss falls with tokens seen</span>
+<span class="c1">#    - scale:  loss = floor + scale * (tokens_seen + 1)^(-rate)</span>
+<span class="c1">#    Domains differ in BOTH difficulty (floor) and headroom/speed (scale,rate).</span>
+<span class="c1"># -----------------------------------------------------------------------------</span>
+<span class="n">domains</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;web&quot;</span><span class="p">,</span> <span class="s2">&quot;code&quot;</span><span class="p">,</span> <span class="s2">&quot;math&quot;</span><span class="p">,</span> <span class="s2">&quot;books&quot;</span><span class="p">,</span> <span class="s2">&quot;multi&quot;</span><span class="p">]</span>
+<span class="n">floor</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">1.70</span><span class="p">,</span> <span class="mf">1.10</span><span class="p">,</span> <span class="mf">1.55</span><span class="p">,</span> <span class="mf">1.80</span><span class="p">,</span> <span class="mf">2.30</span><span class="p">])</span>   <span class="c1"># math &amp; multi are &quot;hard&quot;</span>
+<span class="n">scale</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">3.5</span><span class="p">,</span> <span class="mf">4.0</span><span class="p">,</span> <span class="mf">1.8</span><span class="p">,</span> <span class="mf">2.2</span><span class="p">])</span>        <span class="c1"># code &amp; math have big headroom</span>
+<span class="n">rate</span>  <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.32</span><span class="p">,</span> <span class="mf">0.28</span><span class="p">,</span> <span class="mf">0.22</span><span class="p">,</span> <span class="mf">0.30</span><span class="p">,</span> <span class="mf">0.18</span><span class="p">])</span>   <span class="c1"># math &amp; multi learn slowly</span>
+<span class="n">k</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">domains</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">domain_loss</span><span class="p">(</span><span class="n">tokens_seen</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Per-domain held-out loss given cumulative tokens seen in that domain.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">floor</span> <span class="o">+</span> <span class="n">scale</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">power</span><span class="p">(</span><span class="n">tokens_seen</span> <span class="o">+</span> <span class="mf">1.0</span><span class="p">,</span> <span class="o">-</span><span class="n">rate</span><span class="p">)</span>
+
+<span class="c1"># -----------------------------------------------------------------------------</span>
+<span class="c1"># 2. Reference model: train once on the NATURAL mixture (proportional to pool</span>
+<span class="c1">#    sizes), then read off its per-domain loss. This defines the excess-loss</span>
+<span class="c1">#    baseline. We simulate &quot;training&quot; simply by accumulating tokens per domain.</span>
+<span class="c1"># -----------------------------------------------------------------------------</span>
+<span class="n">pool</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">3000.</span><span class="p">,</span> <span class="mf">250.</span><span class="p">,</span> <span class="mf">30.</span><span class="p">,</span> <span class="mf">80.</span><span class="p">,</span> <span class="mf">400.</span><span class="p">])</span>     <span class="c1"># unique tokens (in B), illustrative</span>
+<span class="n">w_nat</span> <span class="o">=</span> <span class="n">pool</span> <span class="o">/</span> <span class="n">pool</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>                          <span class="c1"># natural mixture</span>
+<span class="n">REF_TOKENS</span> <span class="o">=</span> <span class="mf">5.0e4</span>                                 <span class="c1"># arbitrary proxy-scale token units</span>
+
+<span class="n">ref_tokens_per_domain</span> <span class="o">=</span> <span class="n">w_nat</span> <span class="o">*</span> <span class="n">REF_TOKENS</span>
+<span class="n">ref_loss</span> <span class="o">=</span> <span class="n">domain_loss</span><span class="p">(</span><span class="n">ref_tokens_per_domain</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;natural mixture  :&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">w_nat</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;reference loss   :&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">ref_loss</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+
+<span class="c1"># -----------------------------------------------------------------------------</span>
+<span class="c1"># 3. Proxy model with online Group-DRO (DoReMi step 2).</span>
+<span class="c1">#    - w:        current sampling weights over domains (the adversary&#39;s play)</span>
+<span class="c1">#    - seen:     cumulative tokens per domain (the proxy&#39;s &quot;knowledge&quot;)</span>
+<span class="c1">#    Each step we draw a batch split by w, accumulate tokens, recompute the</span>
+<span class="c1">#    proxy&#39;s per-domain loss, form CLAMPED excess loss vs the reference, and</span>
+<span class="c1">#    apply an exponentiated-gradient (multiplicative-weights) update to w.</span>
+<span class="c1"># -----------------------------------------------------------------------------</span>
+<span class="n">STEPS</span>        <span class="o">=</span> <span class="mi">4000</span>
+<span class="n">BATCH_TOKENS</span> <span class="o">=</span> <span class="mf">10.0</span>          <span class="c1"># tokens added per step (proxy-scale units)</span>
+<span class="n">ETA</span>          <span class="o">=</span> <span class="mf">1.0</span>           <span class="c1"># weight learning rate (exp-gradient step size)</span>
+<span class="n">SMOOTH_C</span>     <span class="o">=</span> <span class="mf">0.05</span>          <span class="c1"># uniform smoothing -&gt; every domain keeps a floor weight</span>
+
+<span class="n">w</span>    <span class="o">=</span> <span class="n">w_nat</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>          <span class="c1"># start from the natural mixture</span>
+<span class="n">seen</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>           <span class="c1"># proxy has seen nothing yet</span>
+<span class="n">w_history</span> <span class="o">=</span> <span class="p">[]</span>
+
+<span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">STEPS</span><span class="p">):</span>
+    <span class="c1"># (a) Draw this step&#39;s batch according to current weights and &quot;train&quot;:</span>
+    <span class="c1">#     allocate BATCH_TOKENS across domains in proportion to w.</span>
+    <span class="n">seen</span> <span class="o">+=</span> <span class="n">w</span> <span class="o">*</span> <span class="n">BATCH_TOKENS</span>
+
+    <span class="c1"># (b) Proxy&#39;s current per-domain loss and CLAMPED excess loss vs reference.</span>
+    <span class="n">proxy_loss</span> <span class="o">=</span> <span class="n">domain_loss</span><span class="p">(</span><span class="n">seen</span><span class="p">)</span>
+    <span class="n">excess</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">proxy_loss</span> <span class="o">-</span> <span class="n">ref_loss</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>   <span class="c1"># cannot beat ref &quot;for free&quot;</span>
+
+    <span class="c1"># (c) Exponentiated-gradient ascent on weights toward high-excess domains.</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">w</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">ETA</span> <span class="o">*</span> <span class="n">excess</span><span class="p">)</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">w</span> <span class="o">/</span> <span class="n">w</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>                                   <span class="c1"># back onto the simplex</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">SMOOTH_C</span><span class="p">)</span> <span class="o">*</span> <span class="n">w</span> <span class="o">+</span> <span class="n">SMOOTH_C</span> <span class="o">/</span> <span class="n">k</span>           <span class="c1"># uniform smoothing (floor)</span>
+
+    <span class="n">w_history</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">w</span><span class="o">.</span><span class="n">copy</span><span class="p">())</span>
+
+<span class="n">w_bar</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">w_history</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>   <span class="c1"># DoReMi outputs the AVERAGED weights</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">final-step weights:&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;AVERAGED weights  :&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">w_bar</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;vs natural        :&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">w_nat</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;upweight factor   :&quot;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">w_bar</span> <span class="o">/</span> <span class="n">w_nat</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+</code></pre></div>
+<p>Running this prints something like:</p>
+<div class="highlight"><pre><span></span><code>natural mixture  : [0.798 0.066 0.008 0.021 0.106]
+reference loss   : [1.767 1.461 2.621 2.022 2.77 ]
+final-step weights: [0.305 0.174 0.174 0.174 0.174]
+AVERAGED weights  : [0.361 0.172 0.133 0.136 0.198]
+vs natural        : [0.798 0.066 0.008 0.021 0.106]
+upweight factor   : [ 0.45  2.59 16.62  6.4   1.86]
+</code></pre></div>
+<p>Read the result. The natural mixture is 80% web; DoReMi-style reweighting collapses web from 80% to ~36% and dramatically upweights the small high-headroom domains — code ~2.6x, math ~17x, books ~6x. This is exactly the qualitative behavior reported for real DoReMi: it pulls weight <em>out</em> of the abundant, lower-headroom domain (web) and <em>into</em> domains where the proxy still has the most room to improve relative to the reference. The math domain, despite a high floor (it is genuinely hard), gets heavily upweighted because its <em>excess</em> — the gap the proxy can still close — is large. Note the multilingual domain, which has the highest floor <em>and</em> the slowest rate (small headroom relative to its difficulty), is upweighted only modestly: high raw loss alone does not earn weight; <strong>closeable</strong> loss does. That separation is the entire reason DoReMi uses excess loss instead of raw loss.</p>
+<p>Two experiments to build intuition (left as exercises you can run in seconds):</p>
+<ul>
+<li><strong>Set <code>ref_loss = 0</code></strong> (i.e., use <em>raw</em> loss instead of excess). You will see the adversary dump weight onto <code>multi</code>, the highest-floor domain, and refuse to leave — illustrating exactly the pathology excess loss was invented to fix.</li>
+<li><strong>Sweep <code>SMOOTH_C</code> from <code>0.0</code> to <code>0.3</code>.</strong> At <code>0.0</code>, weights can drive a domain&rsquo;s effective weight toward zero (starvation); larger values keep every domain alive but blur the signal. The DoReMi default lives near the small end.</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: validate proxy weights at one intermediate scale</p>
+<p>Because the optimal mixture drifts with scale, do not blindly ship proxy-derived weights to your 70 B run. Run <em>one</em> confirmatory training at an intermediate scale (e.g., 1–7 B for a few hundred billion tokens) comparing the proxy weights against the natural mixture and one hand-tuned alternative. If the proxy weights win there too, scale with confidence; if the ranking flips, your proxy was too small to be predictive — increase it. This single check is far cheaper than discovering the problem at full scale.</p>
+</div>
+<hr />
+<h2 id="scheduling-over-time-curriculum-context-ramps-annealing">Scheduling Over Time: Curriculum, Context Ramps &amp; Annealing<a class="headerlink" href="#scheduling-over-time-curriculum-context-ramps-annealing" title="Permanent link">¶</a></h2>
+<p>So far <span class="arithmatex">\(w\)</span> has been a single fixed vector. But the <em>order</em> in which a model sees data, and <em>when</em> it sees the best data, matters too. We now let the mixture be a function of training progress, <span class="arithmatex">\(w(t)\)</span>, and consider three orthogonal scheduling axes: difficulty (curriculum), sequence length (context ramp), and quality (annealing/mid-training).</p>
+<h3 id="curriculum-learning-easy-to-hard">Curriculum learning: easy-to-hard<a class="headerlink" href="#curriculum-learning-easy-to-hard" title="Permanent link">¶</a></h3>
+<p><strong>Curriculum learning</strong> (Bengio et al., 2009) orders examples from easy to hard, mirroring how humans learn. For LLM pretraining the evidence is genuinely mixed — large transformers on shuffled data are remarkably robust, and a naive curriculum often yields little — but specific, <em>targeted</em> curricula do help. The practical recipes that survive contact with reality:</p>
+<ul>
+<li><strong>Length-based difficulty:</strong> start with shorter or simpler documents, introduce longer/denser ones later. This overlaps with the context ramp below.</li>
+<li><strong>Quality/complexity-based:</strong> introduce highly technical content (dense math, advanced code) after the model has basic linguistic competence, so it does not waste early capacity on tokens it cannot yet model. This is the curriculum intuition behind putting hard reasoning data later in training.</li>
+<li><strong>Skill-staged for code/math:</strong> in domains with a natural difficulty gradient (e.g., basic syntax → algorithms → competition problems), staging by difficulty can outperform a uniform shuffle.</li>
+</ul>
+<p>The mechanism, when it works: early in training the model&rsquo;s gradients on very hard examples are high-variance and poorly aligned (it lacks the prerequisites), so those tokens are inefficiently used. Delaying them spends early compute on tokens with cleaner learning signal. The risk: a <em>too-narrow</em> early diet can cause the model to over-specialize and then struggle to adapt (a mild form of the loss-of-plasticity problem; see <a href="../03-pretraining/16-continual-pretraining.html">Continual &amp; Domain-Adaptive Pretraining</a>).</p>
+<div class="admonition warning">
+<p class="admonition-title">Curriculum is not free lunch for pretraining</p>
+<p>Many published &ldquo;curriculum helps&rdquo; results fail to replicate at scale or vanish once the baseline is a well-shuffled, well-mixed corpus. Treat curriculum as a <em>targeted</em> tool — most valuable for context-length scheduling and for the high-quality annealing phase below — rather than a universal &ldquo;sort everything by difficulty&rdquo; prescription. The robust wins are at the <em>boundaries</em> of training (length ramps, final-phase quality), not in fine-grained per-example ordering of the bulk.</p>
+</div>
+<h3 id="context-window-scheduling">Context-window scheduling<a class="headerlink" href="#context-window-scheduling" title="Permanent link">¶</a></h3>
+<p>Training directly at long context (e.g., 128 K tokens) from step one is wasteful: attention cost grows with sequence length (quadratically for vanilla attention), most early learning needs only local context, and long-document data is scarce. The dominant recipe is a <strong>context-length ramp</strong>: train the bulk of the run at a short context (e.g., 4 K), then <em>extend</em> to long context in a final phase with appropriate positional-encoding adjustments (RoPE base/theta scaling, etc.). This is a curriculum over <em>sequence length</em>, and it is one of the few curricula with near-universal adoption. Because it is a deep topic of its own — RoPE scaling, position interpolation, data selection for the long phase — we treat it fully in <a href="../03-pretraining/13-long-context-pretraining.html">Long-Context Pretraining &amp; Context Extension</a>. For mixing purposes, the key point is that the <em>mixture itself changes</em> in the long-context phase: you upweight naturally long documents (books, repositories, multi-turn transcripts) because they are the only sources that exercise long-range dependencies.</p>
+<h3 id="mid-training-and-annealing-save-the-best-for-last">Mid-training and annealing: save the best for last<a class="headerlink" href="#mid-training-and-annealing-save-the-best-for-last" title="Permanent link">¶</a></h3>
+<p>The single most impactful scheduling idea in modern pretraining is the <strong>high-quality annealing phase</strong> (sometimes called <em>mid-training</em> or the <em>cooldown</em> phase). The recipe, popularized by the MiniCPM team&rsquo;s analysis and adopted widely (Llama 3, OLMo, and others describe variants):</p>
+<ol>
+<li>Train the vast majority of tokens on a broad, web-heavy mixture with a roughly constant (or slowly decaying) learning rate.</li>
+<li>In the <strong>final fraction</strong> of training (often the last ~10–20% of tokens), simultaneously <strong>(a) decay the learning rate sharply toward zero</strong> and <strong>(b) shift the data mixture toward the highest-quality, most target-relevant data</strong> — curated math, code, textbooks, instruction-formatted and reasoning-heavy data.</li>
+</ol>
+<p>The interaction between the two is the whole point. <strong>Data seen while the learning rate is high and falling fastest has the largest, most lasting effect on the final weights</strong>, because those late steps with a decaying LR are where the model settles into its final basin. Putting your best, most capability-dense data exactly there — when each gradient step still moves the weights but the model is no longer being yanked around — imprints those capabilities most strongly. The MiniCPM &ldquo;Warmup-Stable-Decay&rdquo; (WSD) schedule makes this explicit: a long stable-LR phase on the broad mixture, then a short decay phase on upweighted high-quality data. It also has a delicious practical benefit: because the stable phase uses a constant LR, you can <em>branch</em> multiple annealing experiments from a single stable checkpoint and try different final mixtures cheaply, instead of re-running from scratch.</p>
+<figure class="viz" id="fig-mixing-wsd-anneal-schedule">
+<svg viewBox="0 0 760 380" role="img" aria-label="Warmup-Stable-Decay LR schedule: a long flat stable phase with a broad web-heavy mixture, then a sharp decay where the mixture shifts to upweight math, code, and textbooks. A vertical dashed line marks the boundary where the LR knee and the mixture flip coincide.">
+<style>
+  #fig-mixing-wsd-anneal-schedule text { fill: var(--ink-soft, #45413a); }
+  #fig-mixing-wsd-anneal-schedule .lbl  { font: 600 13px var(--sans,sans-serif); }
+  #fig-mixing-wsd-anneal-schedule .sub  { font: 400 11px var(--sans,sans-serif); }
+  #fig-mixing-wsd-anneal-schedule .tiny { font: 400 10px var(--sans,sans-serif); }
+  #fig-mixing-wsd-anneal-schedule .axis-lbl { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-mixing-wsd-anneal-schedule .phase-lbl { font: 600 12px var(--sans,sans-serif); }
+  #fig-mixing-wsd-anneal-schedule .callout { font: 700 11.5px var(--sans,sans-serif); fill: var(--accent,#4f7cff); }
+  #fig-mixing-wsd-anneal-schedule .seg-lbl { font: 600 10px var(--sans,sans-serif); }
+</style>
+<defs>
+  <marker id="wsd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="wsd-arrow-accent" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="90">
+    <path d="M5 0 L10 10 L0 10 z" fill="var(--accent,#4f7cff)"/>
+  </marker>
+</defs>
+
+
+<text x="50" y="120" text-anchor="middle" class="axis-lbl" font-weight="700" font-size="13">LR</text>
+
+
+<line x1="70" y1="190" x2="700" y2="190" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#wsd-arrow)"/>
+
+<text x="650" y="207" text-anchor="middle" class="axis-lbl">tokens</text>
+
+
+<line x1="70" y1="190" x2="70" y2="45" stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+
+
+<line x1="520" y1="40" x2="520" y2="340" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-dasharray="5 4" opacity="0.35"/>
+
+
+
+
+
+<polyline
+  points="70,175 110,62 520,62"
+  fill="none"
+  stroke="var(--accent,#4f7cff)"
+  stroke-width="3"
+  stroke-linejoin="round"
+  stroke-linecap="round"/>
+
+<path d="M520,62 Q585,75 660,180"
+  fill="none"
+  stroke="var(--accent,#4f7cff)"
+  stroke-width="3"
+  stroke-linecap="round"/>
+
+
+<line x1="110" y1="190" x2="110" y2="195" stroke="var(--ink-soft,#45413a)" stroke-width="1"/>
+<text x="90" y="206" class="tiny" fill="var(--muted,#6d675d)" text-anchor="middle">warmup</text>
+
+
+
+<text x="310" y="90" text-anchor="middle" class="phase-lbl" fill="var(--ink-soft,#45413a)">stable phase</text>
+<text x="310" y="106" text-anchor="middle" class="sub" fill="var(--muted,#6d675d)">(broad web-heavy mix)</text>
+
+
+<text x="598" y="90" text-anchor="middle" class="phase-lbl" fill="var(--ink-soft,#45413a)">decay</text>
+<text x="598" y="106" text-anchor="middle" class="phase-lbl" fill="var(--ink-soft,#45413a)">phase</text>
+
+
+<text x="520" y="35" text-anchor="middle" class="tiny" fill="var(--muted,#6d675d)">LR knee</text>
+
+
+
+<text x="68" y="228" class="axis-lbl" font-weight="700">mix:</text>
+
+
+
+
+
+
+
+
+<rect x="110" y="235" width="246" height="36" rx="3"
+  fill="var(--surface,#f5f4f2)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<text x="233" y="258" text-anchor="middle" class="seg-lbl" fill="var(--ink-soft,#45413a)">web 60</text>
+
+
+<rect x="356" y="235" width="82" height="36" rx="0"
+  fill="var(--accent,#4f7cff)" fill-opacity="0.2" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<text x="397" y="258" text-anchor="middle" class="seg-lbl" fill="var(--ink-soft,#45413a)">code 20</text>
+
+
+<rect x="438" y="235" width="21" height="36" rx="0"
+  fill="var(--accent,#4f7cff)" fill-opacity="0.6" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+
+<line x1="448" y1="235" x2="448" y2="222" stroke="var(--muted,#6d675d)" stroke-width="0.8"/>
+<text x="448" y="217" text-anchor="middle" class="tiny" fill="var(--ink-soft,#45413a)">math 5</text>
+
+
+<rect x="459" y="235" width="61" height="36" rx="0"
+  fill="var(--surface,#f5f4f2)" fill-opacity="0.5" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="489" y="258" text-anchor="middle" class="seg-lbl" fill="var(--muted,#6d675d)">…</text>
+
+
+
+
+
+
+
+
+<rect x="520" y="235" width="43" height="36" rx="3"
+  fill="var(--accent,#4f7cff)" fill-opacity="0.55" stroke="var(--accent,#4f7cff)" stroke-width="1.5"/>
+<text x="541" y="252" text-anchor="middle" class="tiny">math</text>
+<text x="541" y="265" text-anchor="middle" class="tiny">25</text>
+
+
+<rect x="563" y="235" width="43" height="36" rx="0"
+  fill="var(--accent,#4f7cff)" fill-opacity="0.25" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<text x="584" y="252" text-anchor="middle" class="tiny">code</text>
+<text x="584" y="265" text-anchor="middle" class="tiny">25</text>
+
+
+<rect x="606" y="235" width="34" height="36" rx="0"
+  fill="var(--accent2,#3b82f6)" fill-opacity="0.25" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<text x="623" y="250" text-anchor="middle" style="font:400 8px var(--sans,sans-serif);">text-</text>
+<text x="623" y="259" text-anchor="middle" style="font:400 8px var(--sans,sans-serif);">books</text>
+<text x="623" y="268" text-anchor="middle" style="font:400 8px var(--sans,sans-serif);">20</text>
+
+
+<rect x="640" y="235" width="50" height="36" rx="0"
+  fill="var(--surface,#f5f4f2)" fill-opacity="0.5" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="665" y="258" text-anchor="middle" class="seg-lbl" fill="var(--muted,#6d675d)">…</text>
+
+
+
+<polygon points="520,305 513,320 527,320" fill="var(--accent,#4f7cff)"/>
+
+<text x="520" y="340" text-anchor="middle" class="callout">upweight best data exactly as LR decays</text>
+
+</svg>
+<figcaption><b>Warmup-Stable-Decay: data quality shifts exactly as the learning rate decays.</b> The LR curve sits flat across the long stable phase (broad web-heavy mixture), then decays sharply toward zero at the anneal boundary. The mixture flips at exactly that knee — math and code dominate the anneal bar versus the tiny slices they occupied in stable training — because low-LR late steps leave the deepest, most lasting imprint on the final weights.</figcaption>
+</figure>
+
+<p>This connects naturally to the boundary between pretraining and post-training: the annealing-phase mixture often <em>resembles</em> instruction/SFT data (see <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a>), and a strong annealing phase reduces how much later fine-tuning is needed. It also overlaps with continual pretraining for domain adaptation (see <a href="../03-pretraining/16-continual-pretraining.html">Continual &amp; Domain-Adaptive Pretraining</a>).</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: how much does annealing &lsquo;cost&rsquo; in the mixture?</p>
+<p>A 2 T-token run reserves its final 15% (300 B tokens) for annealing. During the stable 1.7 T phase the mixture is web-heavy: math gets <span class="arithmatex">\(w_{\text{math}}=0.04\)</span>, so it sees <span class="arithmatex">\(0.04 \times 1700 = 68\)</span> B math tokens. During the 300 B annealing phase the team raises <span class="arithmatex">\(w_{\text{math}}\)</span> to <span class="arithmatex">\(0.25\)</span>, adding <span class="arithmatex">\(0.25 \times 300 = 75\)</span> B more math tokens — <strong>more math in the final 15% than in the entire first 85%.</strong> With only 30 B unique math tokens, total math exposure is <span class="arithmatex">\((68+75)/30 \approx 4.8\)</span> epochs, most of it concentrated late when the LR is decaying and each token leaves the deepest imprint. The lesson: annealing is not just &ldquo;a bit more quality data&rdquo; — it can <em>dominate</em> a small domain&rsquo;s effective exposure and place that exposure at the most influential point in the schedule. Plan your epoch budget (the danger zone near ~4–6 epochs) with the annealing contribution included, or you will silently over-repeat your best data.</p>
+</div>
+<h3 id="putting-the-schedule-together">Putting the schedule together<a class="headerlink" href="#putting-the-schedule-together" title="Permanent link">¶</a></h3>
+<p>A modern end-to-end pretraining schedule, combining all three axes, looks like:</p>
+<figure class="viz" id="fig-mixing-end-to-end-schedule-phases">
+<svg viewBox="0 0 860 420" role="img" aria-label="Four-phase end-to-end pretraining schedule shown as a horizontal timeline. Phase widths are proportional to token fractions: warmup ~1%, stable bulk ~75%, long-context ~7%, anneal/decay ~17%. Each phase shows its context length, LR behavior, and mixture emphasis across four stacked lanes.">
+<style>
+  #fig-mixing-end-to-end-schedule-phases text { fill: var(--ink-soft,#45413a); }
+  #fig-mixing-end-to-end-schedule-phases .lbl  { font: 700 12px var(--sans,sans-serif); }
+  #fig-mixing-end-to-end-schedule-phases .sub  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-mixing-end-to-end-schedule-phases .tiny { font: 400 9.5px var(--sans,sans-serif); }
+  #fig-mixing-end-to-end-schedule-phases .row-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-mixing-end-to-end-schedule-phases .ctx-badge { font: 700 12px var(--sans,sans-serif); }
+  #fig-mixing-end-to-end-schedule-phases .lr-lbl { font: 500 9px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-mixing-end-to-end-schedule-phases .mix-text { font: 400 9.5px var(--sans,sans-serif); }
+</style>
+<defs>
+  <marker id="ete-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+</defs>
+
+
+
+
+
+
+<text x="55" y="108" text-anchor="end" class="row-lbl">phase</text>
+<text x="55" y="162" text-anchor="end" class="row-lbl">context</text>
+<text x="55" y="240" text-anchor="end" class="row-lbl">LR</text>
+<text x="55" y="340" text-anchor="end" class="row-lbl">mixture</text>
+
+
+
+
+
+
+<rect x="60" y="70" width="40" height="55" rx="4"
+  fill="var(--surface,#f5f4f2)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+
+<text x="80" y="62" text-anchor="middle" class="tiny" fill="var(--ink-soft,#45413a)">warmup</text>
+<line x1="80" y1="64" x2="80" y2="70" stroke="var(--muted,#6d675d)" stroke-width="0.8"/>
+<text x="80" y="104" text-anchor="middle" class="sub">~1%</text>
+
+
+<rect x="100" y="70" width="470" height="55" rx="4"
+  fill="var(--surface,#f5f4f2)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<text x="335" y="97" text-anchor="middle" class="lbl">stable (bulk)</text>
+<text x="335" y="113" text-anchor="middle" class="sub">~70–80%</text>
+
+
+<rect x="570" y="70" width="50" height="55" rx="4"
+  fill="var(--accent,#4f7cff)" fill-opacity="0.15" stroke="var(--accent,#4f7cff)" stroke-width="1.5"/>
+<text x="595" y="93" text-anchor="middle" style="font:700 9px var(--sans,sans-serif);" fill="var(--accent,#4f7cff)">long-</text>
+<text x="595" y="105" text-anchor="middle" style="font:700 9px var(--sans,sans-serif);" fill="var(--accent,#4f7cff)">context</text>
+<text x="595" y="117" text-anchor="middle" class="sub" fill="var(--accent,#4f7cff)">~5–10%</text>
+
+
+<rect x="620" y="70" width="195" height="55" rx="4"
+  fill="var(--accent,#4f7cff)" fill-opacity="0.22" stroke="var(--accent,#4f7cff)" stroke-width="2"/>
+<text x="717" y="97" text-anchor="middle" class="lbl" fill="var(--accent,#4f7cff)">anneal/decay</text>
+<text x="717" y="113" text-anchor="middle" class="sub" fill="var(--accent,#4f7cff)">~10–20%</text>
+
+
+
+
+<line x1="100" y1="65" x2="100" y2="395" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" opacity="0.5"/>
+<line x1="570" y1="65" x2="570" y2="395" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" opacity="0.5"/>
+<line x1="620" y1="65" x2="620" y2="395" stroke="var(--accent,#4f7cff)" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.5"/>
+
+
+
+
+
+
+<rect x="63" y="137" width="34" height="22" rx="3"
+  fill="var(--surface,#f5f4f2)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<text x="80" y="153" text-anchor="middle" class="ctx-badge" style="font:600 10px var(--mono,monospace);">4K</text>
+
+
+<rect x="290" y="137" width="34" height="22" rx="3"
+  fill="var(--surface,#f5f4f2)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<text x="307" y="153" text-anchor="middle" class="ctx-badge" style="font:600 10px var(--mono,monospace);">4K</text>
+
+
+<rect x="566" y="133" width="58" height="26" rx="4"
+  fill="var(--accent,#4f7cff)" stroke="var(--accent,#4f7cff)" stroke-width="1.5"/>
+<text x="595" y="151" text-anchor="middle" class="ctx-badge" fill="#ffffff" style="font:800 13px var(--mono,monospace);">128K</text>
+
+
+<rect x="688" y="136" width="60" height="22" rx="3"
+  fill="var(--accent,#4f7cff)" fill-opacity="0.18" stroke="var(--accent,#4f7cff)" stroke-width="1"/>
+<text x="718" y="152" text-anchor="middle" style="font:600 9.5px var(--mono,monospace);" fill="var(--accent,#4f7cff)">4K–128K</text>
+
+
+<polyline points="555,170 568,170 568,160 595,160"
+  fill="none" stroke="var(--accent,#4f7cff)" stroke-width="1.5" stroke-dasharray="2 2" opacity="0.7"/>
+
+
+
+
+
+
+<polyline
+  points="60,272 100,205 570,205 620,205"
+  fill="none"
+  stroke="var(--accent,#4f7cff)"
+  stroke-width="2.5"
+  stroke-linejoin="round"
+  stroke-linecap="round"/>
+
+<path d="M620,205 Q710,215 815,272"
+  fill="none"
+  stroke="var(--accent,#4f7cff)"
+  stroke-width="2.5"
+  stroke-linecap="round"/>
+
+
+<text x="80" y="288" text-anchor="middle" class="lr-lbl">0 -&gt; peak</text>
+<text x="335" y="288" text-anchor="middle" class="lr-lbl">constant</text>
+<text x="595" y="288" text-anchor="middle" class="lr-lbl">constant -&gt;</text>
+<text x="717" y="288" text-anchor="middle" class="lr-lbl" fill="var(--accent,#4f7cff)">decay -&gt; ~0</text>
+
+
+
+
+
+
+<rect x="62" y="302" width="36" height="82" rx="3"
+  fill="var(--surface,#f5f4f2)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<text x="80" y="322" text-anchor="middle" style="font:400 8px var(--sans,sans-serif);" fill="var(--ink-soft,#45413a)">broad</text>
+<text x="80" y="334" text-anchor="middle" style="font:400 8px var(--sans,sans-serif);" fill="var(--ink-soft,#45413a)">nat.</text>
+<text x="80" y="346" text-anchor="middle" style="font:400 8px var(--sans,sans-serif);" fill="var(--ink-soft,#45413a)">ish</text>
+
+
+<rect x="102" y="302" width="466" height="82" rx="3"
+  fill="var(--surface,#f5f4f2)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+<text x="335" y="340" text-anchor="middle" class="mix-text" fill="var(--ink-soft,#45413a)">broad, web-heavy, deduped</text>
+
+
+<rect x="572" y="302" width="46" height="82" rx="3"
+  fill="var(--accent,#4f7cff)" fill-opacity="0.1" stroke="var(--accent,#4f7cff)" stroke-width="1"/>
+<text x="595" y="317" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif);" fill="var(--accent,#4f7cff)">upweight</text>
+<text x="595" y="329" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif);" fill="var(--accent,#4f7cff)">long docs</text>
+<text x="595" y="341" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif);" fill="var(--accent,#4f7cff)">(books,</text>
+<text x="595" y="353" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif);" fill="var(--accent,#4f7cff)">repos)</text>
+
+
+<rect x="622" y="302" width="191" height="82" rx="3"
+  fill="var(--accent,#4f7cff)" fill-opacity="0.15" stroke="var(--accent,#4f7cff)" stroke-width="1.5"/>
+<text x="717" y="318" text-anchor="middle" class="mix-text" fill="var(--accent,#4f7cff)">upweight math, code,</text>
+<text x="717" y="331" text-anchor="middle" class="mix-text" fill="var(--accent,#4f7cff)">textbooks, reasoning,</text>
+<text x="717" y="344" text-anchor="middle" class="mix-text" fill="var(--accent,#4f7cff)">instruction-like data</text>
+
+
+
+
+<text x="437" y="25" text-anchor="middle" class="sub" fill="var(--muted,#6d675d)">training tokens (left to right)</text>
+
+</svg>
+<figcaption><b>An end-to-end pretraining schedule across four phases: fraction, context, LR, and mixture.</b> Phase widths are proportional to token fractions — stable training dominates (~75%), while long-context (~7%) and anneal/decay (~17%) are short but distinctive. The 128K context badge and the anneal LR decay share the accent color, linking the two phases with the most distinctive settings. Mixture emphasis (bottom lane) shifts from broad web-heavy in stable to high-quality math/code/textbooks in anneal, exactly when the LR is settling toward zero.</figcaption>
+</figure>
+
+<p>Each phase is a different <span class="arithmatex">\(w(t)\)</span>, a different context length, and a different point on the LR schedule (see <a href="../03-pretraining/10-lr-schedules-hparams.html">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a>). The art of pretraining data is, in large part, the art of designing this table — and then validating it with the proxy and intermediate-scale checks from earlier in the chapter.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re told a new pretraining run will reserve the last 10% of tokens for a &ldquo;high-quality annealing phase&rdquo; with a sharp learning-rate decay. A colleague proposes simply upsampling that same high-quality data uniformly across the <em>entire</em> run instead, arguing it&rsquo;s &ldquo;the same total exposure, less complexity.&rdquo; Why might the annealing approach still win, and what&rsquo;s the main risk you&rsquo;d flag?</p>
+<p><strong>A:</strong> They are <em>not</em> equivalent even at equal total exposure, because the <strong>effect of data depends on when it&rsquo;s seen relative to the learning-rate schedule</strong>. Late steps, where the LR is decaying toward zero, are where the model settles into its final weights; gradients there produce the most lasting changes and are not subsequently washed out. Concentrating the best, most capability-dense data exactly in that window imprints those capabilities most strongly — the empirical basis for WSD/annealing schedules. Spreading the same data uniformly dilutes it across early high-LR steps whose contributions are largely overwritten later. The annealing approach also enables cheap experimentation: branch several decay runs from one stable checkpoint. The main risk to flag is <strong>over-repetition / overfitting of the small high-quality set</strong>: because annealing concentrates a small domain&rsquo;s exposure (and may push it past ~4–6 effective epochs at the most impactful moment), you can memorize it or narrow the model. Mitigate by counting epochs <em>including</em> the annealing contribution, capping repetition, and supplementing with fresh synthetic data rather than re-reading the same tokens.</p>
+</div>
+<hr />
+<h2 id="bringing-it-together-a-mixing-scheduling-playbook">Bringing It Together: A Mixing &amp; Scheduling Playbook<a class="headerlink" href="#bringing-it-together-a-mixing-scheduling-playbook" title="Permanent link">¶</a></h2>
+<p>The decisions in this chapter compose into a repeatable workflow:</p>
+<ol>
+<li><strong>Partition and deduplicate.</strong> Define domains; deduplicate <em>within</em> each so &ldquo;one epoch&rdquo; is honest (<a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a>).</li>
+<li><strong>Set a target distribution</strong> <span class="arithmatex">\(p^{\star}\)</span> reflecting what you care about downstream — not what you happen to have.</li>
+<li><strong>Find base weights.</strong> Either run manual mixture ablations at a proxy scale, or run a DoReMi-style reference+proxy pass to get <span class="arithmatex">\(\bar{w}\)</span> via excess-loss Group-DRO.</li>
+<li><strong>Convert to an epoch budget</strong> and check no domain exceeds the repetition danger zone (~4–6 epochs); upsample small high-value domains, downsample abundant low-value ones.</li>
+<li><strong>Validate at one intermediate scale</strong> before committing the full run.</li>
+<li><strong>Design the schedule</strong> <span class="arithmatex">\(w(t)\)</span>: broad stable phase, optional online velocity-based nudges, a long-context phase that upweights long documents, and a final annealing phase that concentrates the highest-quality data as the LR decays.</li>
+<li><strong>Account for annealing in the epoch math</strong> so your best small domains are not silently over-repeated.</li>
+</ol>
+<p>Get these right and you buy capability gains that would otherwise cost a substantial model-size increase — at zero extra FLOPs. Data mixing is one of the highest-leverage, lowest-cost levers in the entire pretraining stack.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>A <strong>mixture</strong> is a sampling distribution <span class="arithmatex">\(w\)</span> over domains; the natural (proportional) mixture is almost never optimal because you care about a <em>target</em> distribution of downstream uses, not raw token counts.</li>
+<li>Mixing is fundamentally an <strong>epoch-budget</strong> decision: <span class="arithmatex">\(e_i = w_i D / n_i\)</span>. <strong>Deduplicate first</strong> (to make epochs honest), <strong>then upsample deliberately</strong> (small high-value domains to ~2–4 epochs; beyond ~4–6, returns to repeated data decay and memorization rises).</li>
+<li>The <strong>training</strong> mixture <span class="arithmatex">\(w\)</span> is a separate object from the <strong>target</strong> weights <span class="arithmatex">\(p^{\star}\)</span>; setting <span class="arithmatex">\(w=p^{\star}\)</span> is usually suboptimal because domains differ in difficulty and transfer.</li>
+<li><strong>Manual ablations</strong> at a proxy scale are the robust workhorse; <strong>DoReMi</strong> automates this with a reference + proxy run using <strong>Group-DRO on excess loss</strong> (closeable loss, not raw loss) to avoid over-investing in intrinsically hard domains.</li>
+<li><strong>Online/adaptive mixing</strong> uses loss <em>velocity</em> (&ldquo;ride what&rsquo;s improving&rdquo;) rather than DoReMi&rsquo;s excess-loss <em>level</em> (&ldquo;fix what&rsquo;s broken&rdquo;); both use multiplicative-weights updates with smoothing to avoid starving any domain.</li>
+<li>The optimal mixture <strong>drifts with model scale and with training progress</strong> — always validate proxy-derived weights at an intermediate scale before the full run.</li>
+<li><strong>Annealing / mid-training</strong> is the highest-impact schedule trick: in the final ~10–20% of tokens, decay the LR sharply <em>and</em> shift the mixture to the best, most target-relevant data — late, low-LR steps imprint capabilities most strongly (the WSD recipe).</li>
+<li><strong>Context-length ramps</strong> are a near-universal curriculum over sequence length; the mixture upweights long documents in the long-context phase.</li>
+<li>Count epochs <strong>including the annealing contribution</strong> — annealing can dominate a small domain&rsquo;s total exposure and silently push it into the over-repetition zone.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Data mixing and curriculum design remain active research areas in 2026. Automated mixture-optimization methods (DoReMi, DoGE, RegMix) have largely supplanted manual grid search at proxy scale, while annealing-phase schedules are now near-universal in frontier pretraining runs. The open challenge is reliable scale-transfer: mixture weights learned on small proxies still shift in non-trivial ways at 70B+.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1911.08731">Sagawa, Koh, Hashimoto, Liang, <em>Distributionally Robust Neural Networks for Group Shifts</em> (2020)</a> — the Group-DRO minimax optimization framework that DoReMi builds on.</li>
+<li><a href="https://arxiv.org/abs/2305.16264">Muennighoff et al., <em>Scaling Data-Constrained Language Models</em> (2023)</a> — quantifies how repeated tokens lose value; establishes the ~4-epoch threshold and geometric decay of repeat utility.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2305.10429">Xie et al., <em>DoReMi: Optimizing Data Mixtures Speeds Up Language Model Pretraining</em> (2023)</a> — reference + proxy excess-loss Group-DRO method; finds mixture weights with a single extra small run, reaching 8B baseline accuracy 2.6x faster.</li>
+<li><a href="https://arxiv.org/abs/2310.15393">Fan, Pagliardini, Jaggi, <em>DoGE: Domain Reweighting with Generalization Estimation</em> (2023)</a> — alternative proxy-model approach using generalization estimation rather than excess loss.</li>
+<li><a href="https://arxiv.org/abs/2312.02406">Albalak, Pan, Raffel, Wang, <em>Efficient Online Data Mixing For Language Model Pre-Training</em> (2023)</a> — bandit-style (EXP3) adaptive mixing during training; reaches final perplexity with 19% fewer steps.</li>
+<li><a href="https://arxiv.org/abs/2407.01492">Liu et al., <em>RegMix: Data Mixture as Regression for Language Model Pre-training</em> (2024)</a> — frames mixture selection as regression over small proxy runs; ICLR 2025 Spotlight; matches or beats DoReMi at 10% of its FLOPs.</li>
+<li><a href="https://arxiv.org/abs/2404.06395">Hu et al., <em>MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies</em> (2024)</a> — introduces the Warmup-Stable-Decay (WSD) schedule enabling cheap branched annealing experiments from a single stable checkpoint.</li>
+<li><a href="https://arxiv.org/abs/2501.00656">OLMo Team, <em>OLMo 2</em> (2025)</a> — fully open model with detailed documentation of two-stage pretraining, domain-weighted annealing, and the Dolmino high-quality annealing mix.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/sangmichaelxie/doremi">sangmichaelxie/doremi</a> — official PyTorch DoReMi implementation with HuggingFace Trainer integration and a fast domain-weighted dataloader.</li>
+<li><a href="https://github.com/sail-sg/regmix">sail-sg/regmix</a> — RegMix code for generating mixture configs, training proxy models, and fitting the regression predictor.</li>
+<li><a href="https://github.com/huggingface/datablations">huggingface/datablations</a> — code and experiments from &ldquo;Scaling Data-Constrained Language Models&rdquo;; useful for studying epoch-repetition tradeoffs.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://crfm.stanford.edu/2023/09/14/doremi">Stanford CRFM: DoReMi blog post (2023)</a> — accessible walkthrough of the DoReMi algorithm with practical guidance on running the proxy pipeline.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Xie, Pham, Dong, et al., <em>DoReMi: Optimizing Data Mixtures Speeds Up Language Model Pretraining</em> (2023) — the reference/proxy excess-loss Group-DRO method central to this chapter.</li>
+<li>Sagawa, Koh, Hashimoto, Liang, <em>Distributionally Robust Neural Networks for Group Shifts</em> (Group-DRO, 2020) — the optimization framework DoReMi builds on.</li>
+<li>Muennighoff, Rush, et al., <em>Scaling Data-Constrained Language Models</em> (2023) — the value of repeated tokens and the limits of upsampling.</li>
+<li>Albalak et al., <em>Online Data Mixing for Language Model Pre-training</em> — bandit-style adaptive mixing during the real run.</li>
+<li>Hu et al. (MiniCPM), <em>MiniCPM: Unveiling the Potential of Small Language Models</em> — the Warmup-Stable-Decay schedule and the high-quality annealing phase.</li>
+<li>Bengio, Louradour, Collobert, Weston, <em>Curriculum Learning</em> (2009) — the original easy-to-hard framing.</li>
+<li>Gao et al., <em>The Pile</em> — an early explicit, documented domain-weighted pretraining mixture.</li>
+<li>The Llama, Gopher, and OLMo technical reports — real-world descriptions of mixture ablations, annealing, and data-schedule design at frontier scale.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="13-long-context-pretraining.html"><span class="pn-label">← Previous</span><span class="pn-title">Long-Context Pretraining &amp; Context Extension</span></a>
+<a class="next" href="15-synthetic-data.html"><span class="pn-label">Next →</span><span class="pn-title">Synthetic Data for Pre- and Post-Training</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-mixing-problem-what-a-mixture-is-and-why-it-matters">The Mixing Problem: What a Mixture Is and Why It Matters</a></li>
+<li class="toc-l3"><a href="#domains-weights-and-the-sampling-distribution">Domains, weights, and the sampling distribution</a></li>
+<li class="toc-l3"><a href="#the-effective-epochs-view">The effective-epochs view</a></li>
+<li class="toc-l3"><a href="#upsampling-vs-deduplication-the-trade-off">Upsampling vs. deduplication: the trade-off</a></li>
+<li class="toc-l3"><a href="#why-the-mixture-is-not-separable-from-everything-else">Why the mixture is not separable from everything else</a></li>
+<li class="toc-l2"><a href="#choosing-the-weights-i-manual-ablations-and-the-target-loss-view">Choosing the Weights I: Manual Ablations and the Target-Loss View</a></li>
+<li class="toc-l3"><a href="#the-objective-minimize-a-target-weighted-loss">The objective: minimize a target-weighted loss</a></li>
+<li class="toc-l3"><a href="#manual-mixture-ablations-the-workhorse">Manual mixture ablations: the workhorse</a></li>
+<li class="toc-l2"><a href="#choosing-the-weights-ii-proxy-model-methods-doremi-group-dro">Choosing the Weights II: Proxy-Model Methods (DoReMi &amp;amp; Group-DRO)</a></li>
+<li class="toc-l3"><a href="#distributionally-robust-optimization-in-one-paragraph">Distributionally Robust Optimization in one paragraph</a></li>
+<li class="toc-l3"><a href="#the-doremi-trick-excess-loss-not-raw-loss">The DoReMi trick: excess loss, not raw loss</a></li>
+<li class="toc-l3"><a href="#the-algorithm">The algorithm</a></li>
+<li class="toc-l3"><a href="#online-adaptive-mixing-during-the-real-run">Online / adaptive mixing during the real run</a></li>
+<li class="toc-l2"><a href="#a-doremi-style-reweighting-toy-you-can-run">A DoReMi-Style Reweighting Toy You Can Run</a></li>
+<li class="toc-l2"><a href="#scheduling-over-time-curriculum-context-ramps-annealing">Scheduling Over Time: Curriculum, Context Ramps &amp;amp; Annealing</a></li>
+<li class="toc-l3"><a href="#curriculum-learning-easy-to-hard">Curriculum learning: easy-to-hard</a></li>
+<li class="toc-l3"><a href="#context-window-scheduling">Context-window scheduling</a></li>
+<li class="toc-l3"><a href="#mid-training-and-annealing-save-the-best-for-last">Mid-training and annealing: save the best for last</a></li>
+<li class="toc-l3"><a href="#putting-the-schedule-together">Putting the schedule together</a></li>
+<li class="toc-l2"><a href="#bringing-it-together-a-mixing-scheduling-playbook">Bringing It Together: A Mixing &amp;amp; Scheduling Playbook</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

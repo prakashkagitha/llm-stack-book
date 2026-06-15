@@ -1,0 +1,2050 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio, Speech &amp; Multimodal Fusion — The LLM Stack</title>
+<meta name="description" content="Audio tokenization (codecs, Whisper encoder), ASR/TTS, speech LLMs, audio-in/audio-out, real-time/streaming, any-to-any fusion; the multimodal token-stream view">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="active" href="03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part X — Multimodal &amp; Generative Frontiers</div>
+<h1 id="103-audio-speech-multimodal-fusion">10.3 Audio, Speech &amp; Multimodal Fusion<a class="headerlink" href="#103-audio-speech-multimodal-fusion" title="Permanent link">¶</a></h1>
+<p>Audio is the oldest natural interface between humans and machines, yet it only recently became a first-class citizen in the LLM stack. The shift happened for a simple reason: once you can convert raw audio waveforms into a stream of discrete tokens, a standard transformer can treat speech, music, and environmental sound exactly like text. This chapter traces that conversion path end to end — from raw PCM samples to codec tokens, from Whisper-style encoders to native speech LLMs, and finally to the any-to-any multimodal systems that can receive audio in and emit audio out within a single forward pass.</p>
+<p>Related chapters you should keep open while reading this one:
+- <a href="../02-transformer/01-tokenization.html">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a> — the text-side analogue of audio tokenization.
+- <a href="../10-multimodal-and-arch/01-vision-transformers.html">Vision Transformers &amp; Image Encoders</a> — vision uses the same &ldquo;patch embedding then attention&rdquo; skeleton.
+- <a href="../10-multimodal-and-arch/02-vision-language-models.html">Vision-Language Models</a> — cross-modal projection strategies directly apply to audio-language models.
+- <a href="../10-multimodal-and-arch/05-unified-any-to-any.html">Unified &amp; Any-to-Any Models</a> — where speech, vision, and text converge.
+- <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a> — streaming latency constraints matter acutely for speech output.</p>
+<h2 id="audio-fundamentals-what-the-model-actually-sees">Audio Fundamentals: What the Model Actually Sees<a class="headerlink" href="#audio-fundamentals-what-the-model-actually-sees" title="Permanent link">¶</a></h2>
+<p>Before we discuss tokenization strategies, we need to understand the raw signal and the two classical representations that bridge waveforms to machine learning.</p>
+<h3 id="pulse-code-modulation-and-the-waveform">Pulse-Code Modulation and the Waveform<a class="headerlink" href="#pulse-code-modulation-and-the-waveform" title="Permanent link">¶</a></h3>
+<p>A digital audio signal is a sequence of amplitude samples taken at a fixed sample rate <span class="arithmatex">\(f_s\)</span>. Common values are 8 kHz (telephony), 16 kHz (speech models), and 44.1 kHz (music). A 10-second clip at 16 kHz produces 160,000 scalar values — one float per sample. Passing these directly to an attention layer would be impractical: even at 16 kHz the sequence length dwarfs typical text contexts.</p>
+<h3 id="the-mel-spectrogram">The Mel Spectrogram<a class="headerlink" href="#the-mel-spectrogram" title="Permanent link">¶</a></h3>
+<p>The standard preprocessing step compresses a waveform into a 2-D time-frequency representation. Given a short-time Fourier transform (STFT) with window size <span class="arithmatex">\(N\)</span> and hop <span class="arithmatex">\(H\)</span>:</p>
+<div class="arithmatex">\[
+X[k, t] = \sum_{n=0}^{N-1} x[n + tH]\, w[n]\, e^{-j 2\pi k n / N}
+\]</div>
+<p>The power spectrogram <span class="arithmatex">\(|X[k,t]|^2\)</span> is then mapped through a bank of <span class="arithmatex">\(M\)</span> triangular Mel-scale filter banks. Mel frequency approximates the logarithmic frequency resolution of the human cochlea:</p>
+<div class="arithmatex">\[
+m = 2595 \log_{10}\!\left(1 + \frac{f}{700}\right)
+\]</div>
+<p>The output is an <span class="arithmatex">\(M \times T\)</span> matrix — typically <span class="arithmatex">\(M=80\)</span> or <span class="arithmatex">\(M=128\)</span> Mel bins and <span class="arithmatex">\(T\)</span> frames at roughly 10 ms per frame. A 10-second clip at 16 kHz with 25 ms windows, 10 ms hop, and 80 Mel bins yields an <span class="arithmatex">\(80 \times 1000\)</span> matrix: 200<span class="arithmatex">\(\times\)</span> shorter than the raw waveform while retaining virtually all speech-discriminative information.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torchaudio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torchaudio.transforms</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">T</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_mel_spectrogram</span><span class="p">(</span>
+    <span class="n">waveform</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># shape: (1, num_samples)</span>
+    <span class="n">sample_rate</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16000</span><span class="p">,</span>
+    <span class="n">n_mels</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">80</span><span class="p">,</span>
+    <span class="n">n_fft</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">400</span><span class="p">,</span>          <span class="c1"># 25 ms window at 16 kHz</span>
+    <span class="n">hop_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">160</span><span class="p">,</span>     <span class="c1"># 10 ms hop at 16 kHz</span>
+    <span class="n">f_min</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">f_max</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">8000.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns a log-Mel spectrogram of shape (n_mels, time_frames).</span>
+
+<span class="sd">    At 16 kHz and hop_length=160, each frame = 10 ms, so</span>
+<span class="sd">    a 10-second clip produces ~1000 frames.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">mel_transform</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">MelSpectrogram</span><span class="p">(</span>
+        <span class="n">sample_rate</span><span class="o">=</span><span class="n">sample_rate</span><span class="p">,</span>
+        <span class="n">n_fft</span><span class="o">=</span><span class="n">n_fft</span><span class="p">,</span>
+        <span class="n">hop_length</span><span class="o">=</span><span class="n">hop_length</span><span class="p">,</span>
+        <span class="n">n_mels</span><span class="o">=</span><span class="n">n_mels</span><span class="p">,</span>
+        <span class="n">f_min</span><span class="o">=</span><span class="n">f_min</span><span class="p">,</span>
+        <span class="n">f_max</span><span class="o">=</span><span class="n">f_max</span><span class="p">,</span>
+        <span class="n">power</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span>               <span class="c1"># power spectrogram</span>
+    <span class="p">)</span>
+    <span class="n">mel</span> <span class="o">=</span> <span class="n">mel_transform</span><span class="p">(</span><span class="n">waveform</span><span class="p">)</span>          <span class="c1"># (1, n_mels, T)</span>
+    <span class="c1"># Log-compress: clamp avoids log(0)</span>
+    <span class="n">log_mel</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">mel</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-9</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">log_mel</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>              <span class="c1"># (n_mels, T)</span>
+
+<span class="c1"># Quick sanity check</span>
+<span class="n">wav</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">160000</span><span class="p">)</span>   <span class="c1"># 10 seconds, 16 kHz</span>
+<span class="n">spec</span> <span class="o">=</span> <span class="n">compute_mel_spectrogram</span><span class="p">(</span><span class="n">wav</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>  <span class="c1"># torch.Size([80, 1001])</span>
+</code></pre></div>
+<h2 id="audio-tokenization-discrete-codes-from-continuous-sound">Audio Tokenization: Discrete Codes from Continuous Sound<a class="headerlink" href="#audio-tokenization-discrete-codes-from-continuous-sound" title="Permanent link">¶</a></h2>
+<p>The Mel spectrogram is continuous — it is a suitable input for a convolutional or transformer encoder, but not for autoregressive next-token prediction over a vocabulary. Audio tokenization solves this by learning a finite codebook of audio &ldquo;words.&rdquo;</p>
+<h3 id="neural-audio-codecs">Neural Audio Codecs<a class="headerlink" href="#neural-audio-codecs" title="Permanent link">¶</a></h3>
+<p>A neural audio codec uses a convolutional encoder, a residual vector quantizer (RVQ), and a decoder trained end-to-end to reconstruct audio from discrete codes. The landmark systems are EnCodec (Défossez et al., 2022) and SoundStream (Zeghidour et al., 2021).</p>
+<p><strong>Residual Vector Quantization (RVQ).</strong> A single vector quantizer replaces each encoder frame <span class="arithmatex">\(\mathbf{z}_t \in \mathbb{R}^D\)</span> with its nearest codebook entry <span class="arithmatex">\(\mathbf{e}_{i^*}\)</span> where <span class="arithmatex">\(i^* = \arg\min_i \|\mathbf{z}_t - \mathbf{e}_i\|_2\)</span>. The residual <span class="arithmatex">\(\mathbf{r}_t = \mathbf{z}_t - \mathbf{e}_{i^*}\)</span> is then quantized by a second codebook, and so on for <span class="arithmatex">\(K\)</span> levels:</p>
+<div class="arithmatex">\[
+\hat{\mathbf{z}}_t = \sum_{k=1}^{K} \mathbf{e}^{(k)}_{i^*_k}, \quad \text{with } \mathbf{r}^{(1)}_t = \mathbf{z}_t, \; \mathbf{r}^{(k+1)}_t = \mathbf{r}^{(k)}_t - \mathbf{e}^{(k)}_{i^{*(k)}}
+\]</div>
+<p>The result is <span class="arithmatex">\(K\)</span> integer indices per time step, each drawn from a codebook of size <span class="arithmatex">\(C\)</span> (typically <span class="arithmatex">\(C=1024\)</span>). EnCodec at 24 kHz with 8 RVQ levels and a stride of 320 samples per frame produces approximately 75 frames/second, with each frame represented as 8 integers — 600 tokens/second.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Minimal RVQ forward pass (illustrative, not the full EnCodec architecture)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">VectorQuantizer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">codebook_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="c1"># Codebook entries are learnable embeddings</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">codebook</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">codebook_size</span><span class="p">,</span> <span class="n">dim</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">z</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        z: (B, T, D)</span>
+<span class="sd">        Returns quantized tensor and indices.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="n">z</span><span class="o">.</span><span class="n">shape</span>
+        <span class="c1"># Flatten to (B*T, D) for distance computation</span>
+        <span class="n">flat</span> <span class="o">=</span> <span class="n">z</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+        <span class="c1"># ||z - e||^2 = ||z||^2 + ||e||^2 - 2 z·e</span>
+        <span class="n">dist</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">flat</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">flat</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">codebook</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">T</span>
+            <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">codebook</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">indices</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>            <span class="c1"># (B*T,)</span>
+        <span class="n">quantized</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">codebook</span><span class="p">(</span><span class="n">indices</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+        <span class="c1"># Straight-through estimator: gradients flow through z unchanged</span>
+        <span class="n">quantized_st</span> <span class="o">=</span> <span class="n">z</span> <span class="o">+</span> <span class="p">(</span><span class="n">quantized</span> <span class="o">-</span> <span class="n">z</span><span class="p">)</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">quantized_st</span><span class="p">,</span> <span class="n">indices</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ResidualVQ</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num_levels</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">codebook_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">levels</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">([</span>
+            <span class="n">VectorQuantizer</span><span class="p">(</span><span class="n">codebook_size</span><span class="p">,</span> <span class="n">dim</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_levels</span><span class="p">)</span>
+        <span class="p">])</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">z</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        z: (B, T, D)</span>
+<span class="sd">        Returns: list of index tensors, one per RVQ level.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">residual</span> <span class="o">=</span> <span class="n">z</span>
+        <span class="n">all_indices</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">vq</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">levels</span><span class="p">:</span>
+            <span class="n">quantized</span><span class="p">,</span> <span class="n">indices</span> <span class="o">=</span> <span class="n">vq</span><span class="p">(</span><span class="n">residual</span><span class="p">)</span>
+            <span class="n">residual</span> <span class="o">=</span> <span class="n">residual</span> <span class="o">-</span> <span class="n">quantized</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>  <span class="c1"># compute residual</span>
+            <span class="n">all_indices</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">indices</span><span class="p">)</span>              <span class="c1"># (B, T) per level</span>
+        <span class="k">return</span> <span class="n">all_indices</span>  <span class="c1"># K tensors each (B, T)</span>
+</code></pre></div>
+<h3 id="token-rate-and-sequence-length">Token Rate and Sequence Length<a class="headerlink" href="#token-rate-and-sequence-length" title="Permanent link">¶</a></h3>
+<div class="admonition example">
+<p class="admonition-title">Worked example: token budget for 30 s of speech</p>
+<p>EnCodec at 24 kHz with stride 320 and 8 RVQ levels:</p>
+<ul>
+<li>Frames per second: <span class="arithmatex">\(24000 / 320 = 75\)</span> frames/s</li>
+<li>Tokens per second (flat interleave): <span class="arithmatex">\(75 \times 8 = 600\)</span> tokens/s</li>
+<li>30-second utterance: <span class="arithmatex">\(30 \times 600 = 18{,}000\)</span> tokens</li>
+</ul>
+<p>Compare to text: a typical spoken utterance at 130 words/min for 30 s is <span class="arithmatex">\(\approx 65\)</span> words, or roughly 90 BPE tokens.</p>
+<p>The codec produces <strong>200× more tokens than the transcript</strong>. This is the core engineering tension: faithful audio reconstruction demands high token density, but LLM context windows are finite. Real systems use one of three mitigations:
+1. Use only the coarsest 1–2 RVQ levels for modeling semantics (the rest are predicted in parallel or recovered by a separate decoder).
+2. Use a higher compression codec (e.g., DAC at lower bitrates).
+3. Encode audio as a continuous vector sequence (Whisper-style) instead of discrete tokens, and quantize only for generation.</p>
+</div>
+<h3 id="codec-token-interleaving-patterns">Codec Token Interleaving Patterns<a class="headerlink" href="#codec-token-interleaving-patterns" title="Permanent link">¶</a></h3>
+<p>When flattening <span class="arithmatex">\(K\)</span> RVQ levels into a 1-D token stream, there are two main strategies:</p>
+<figure class="viz" id="fig-audio-rvq-interleave-patterns">
+<svg viewBox="0 0 860 450" role="img" aria-label="RVQ token interleaving patterns: Panel A shows the Flattened scheme emitting all levels for each timestep sequentially; Panel B shows the Delay pattern used in AudioLM and VALL-E where level k is delayed by k-1 steps, forming a staircase grid.">
+<defs>
+  <marker id="rvq-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6aa9ff)" class="v-accent"/>
+  </marker>
+  <marker id="rvq-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#978f83)" class="v-muted"/>
+  </marker>
+</defs>
+<style>
+  #fig-audio-rvq-interleave-patterns text { fill: var(--ink-soft,#45413a); font: 400 12px var(--sans,sans-serif); }
+  #fig-audio-rvq-interleave-patterns .title { font: 600 13px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-audio-rvq-interleave-patterns .heading { font: 700 12px var(--sans,sans-serif); }
+  #fig-audio-rvq-interleave-patterns .small { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+  #fig-audio-rvq-interleave-patterns .mono { font: 400 10px var(--mono,monospace); }
+  #fig-audio-rvq-interleave-patterns .caption { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+</style>
+
+
+<text x="430" y="22" text-anchor="middle" class="title">RVQ Levels L1–L3 over Time Steps t0–t3</text>
+
+
+
+<rect x="20" y="34" width="820" height="26" rx="4" fill="var(--accent,#6aa9ff)" fill-opacity="0.18" stroke="var(--accent,#6aa9ff)" stroke-width="1.2"/>
+<text x="430" y="51" text-anchor="middle" class="heading" fill="var(--accent,#c15b39)">Panel A — Flattened: emit all levels of t before advancing</text>
+
+
+
+
+
+<line x1="74" y1="76" x2="242" y2="76" stroke="var(--muted,#978f83)" stroke-width="1" stroke-dasharray="2 2"/>
+<text x="158" y="72" text-anchor="middle" class="small">t0</text>
+
+<line x1="242" y1="76" x2="410" y2="76" stroke="var(--muted,#978f83)" stroke-width="1" stroke-dasharray="2 2"/>
+<text x="326" y="72" text-anchor="middle" class="small">t1</text>
+
+<line x1="410" y1="76" x2="578" y2="76" stroke="var(--muted,#978f83)" stroke-width="1" stroke-dasharray="2 2"/>
+<text x="494" y="72" text-anchor="middle" class="small">t2</text>
+
+<line x1="578" y1="76" x2="746" y2="76" stroke="var(--muted,#978f83)" stroke-width="1" stroke-dasharray="2 2"/>
+<text x="662" y="72" text-anchor="middle" class="small">t3</text>
+
+<line x1="74" y1="76" x2="74" y2="84" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<line x1="242" y1="76" x2="242" y2="84" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<line x1="410" y1="76" x2="410" y2="84" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<line x1="578" y1="76" x2="578" y2="84" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<line x1="746" y1="76" x2="746" y2="84" stroke="var(--muted,#978f83)" stroke-width="1"/>
+
+
+
+
+
+<rect x="74" y="88" width="52" height="44" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="100" y="115" text-anchor="middle" class="mono">L1_t0</text>
+<rect x="130" y="88" width="52" height="44" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.55" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<text x="156" y="115" text-anchor="middle" class="mono">L2_t0</text>
+<rect x="186" y="88" width="52" height="44" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.28" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<text x="212" y="115" text-anchor="middle" class="mono">L3_t0</text>
+
+<line x1="242" y1="84" x2="242" y2="136" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+
+<rect x="242" y="88" width="52" height="44" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="268" y="115" text-anchor="middle" class="mono">L1_t1</text>
+<rect x="298" y="88" width="52" height="44" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.55" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<text x="324" y="115" text-anchor="middle" class="mono">L2_t1</text>
+<rect x="354" y="88" width="52" height="44" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.28" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<text x="380" y="115" text-anchor="middle" class="mono">L3_t1</text>
+
+<line x1="410" y1="84" x2="410" y2="136" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+
+<rect x="410" y="88" width="52" height="44" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="436" y="115" text-anchor="middle" class="mono">L1_t2</text>
+<rect x="466" y="88" width="52" height="44" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.55" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<text x="492" y="115" text-anchor="middle" class="mono">L2_t2</text>
+<rect x="522" y="88" width="52" height="44" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.28" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<text x="548" y="115" text-anchor="middle" class="mono">L3_t2</text>
+
+<line x1="578" y1="84" x2="578" y2="136" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+
+<rect x="578" y="88" width="52" height="44" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="604" y="115" text-anchor="middle" class="mono">L1_t3</text>
+<rect x="634" y="88" width="52" height="44" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.55" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<text x="660" y="115" text-anchor="middle" class="mono">L2_t3</text>
+<rect x="690" y="88" width="52" height="44" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.28" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<text x="716" y="115" text-anchor="middle" class="mono">L3_t3</text>
+
+
+<line x1="74" y1="150" x2="746" y2="150" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#rvq-arrow)"/>
+<text x="410" y="166" text-anchor="middle" class="caption">autoregressive emission order</text>
+
+
+<text x="430" y="187" text-anchor="middle" class="caption">Each timestep fully resolved before next — no level can look ahead.</text>
+
+
+<rect x="760" y="88" width="14" height="14" rx="2" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1"/>
+<text x="778" y="100" class="small" fill="var(--ink-soft,#45413a)">L1</text>
+<rect x="760" y="108" width="14" height="14" rx="2" fill="var(--accent-2,#ec9069)" fill-opacity="0.55" stroke="var(--accent-2,#ec9069)" stroke-width="1"/>
+<text x="778" y="120" class="small" fill="var(--ink-soft,#45413a)">L2</text>
+<rect x="760" y="128" width="14" height="14" rx="2" fill="var(--accent-2,#ec9069)" fill-opacity="0.28" stroke="var(--accent-2,#ec9069)" stroke-width="1"/>
+<text x="778" y="140" class="small" fill="var(--ink-soft,#45413a)">L3</text>
+
+
+
+<rect x="20" y="202" width="820" height="26" rx="4" fill="var(--accent-2,#ec9069)" fill-opacity="0.18" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<text x="430" y="219" text-anchor="middle" class="heading" fill="var(--accent-2,#b04e2d)">Panel B — Delay Pattern (AudioLM / VALL-E): level k delayed by (k-1) steps</text>
+
+
+
+
+<text x="148" y="244" text-anchor="middle" class="small">t0</text>
+<text x="258" y="244" text-anchor="middle" class="small">t1</text>
+<text x="368" y="244" text-anchor="middle" class="small">t2</text>
+<text x="478" y="244" text-anchor="middle" class="small">t3</text>
+<text x="588" y="244" text-anchor="middle" class="small">t4</text>
+<text x="698" y="244" text-anchor="middle" class="small">t5</text>
+
+
+<text x="38" y="280" text-anchor="middle" class="small" fill="var(--muted,#978f83)">L1</text>
+<text x="38" y="330" text-anchor="middle" class="small" fill="var(--muted,#978f83)">L2</text>
+<text x="38" y="380" text-anchor="middle" class="small" fill="var(--muted,#978f83)">L3</text>
+
+
+<rect x="103" y="253" width="90" height="46" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="148" y="281" text-anchor="middle" class="mono">L1_t0</text>
+<rect x="213" y="253" width="90" height="46" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="258" y="281" text-anchor="middle" class="mono">L1_t1</text>
+<rect x="323" y="253" width="90" height="46" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="368" y="281" text-anchor="middle" class="mono">L1_t2</text>
+<rect x="433" y="253" width="90" height="46" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="478" y="281" text-anchor="middle" class="mono">L1_t3</text>
+<rect x="543" y="253" width="90" height="46" rx="5" fill="none" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="588" y="281" text-anchor="middle" class="mono" fill="var(--muted,#978f83)">···</text>
+<rect x="653" y="253" width="90" height="46" rx="5" fill="none" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="698" y="281" text-anchor="middle" class="mono" fill="var(--muted,#978f83)">···</text>
+
+
+<rect x="103" y="303" width="90" height="46" rx="5" fill="none" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="4 3"/>
+<rect x="213" y="303" width="90" height="46" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.55" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<text x="258" y="331" text-anchor="middle" class="mono">L2_t1</text>
+<rect x="323" y="303" width="90" height="46" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.55" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<text x="368" y="331" text-anchor="middle" class="mono">L2_t2</text>
+<rect x="433" y="303" width="90" height="46" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.55" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<text x="478" y="331" text-anchor="middle" class="mono">L2_t3</text>
+<rect x="543" y="303" width="90" height="46" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.55" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<text x="588" y="331" text-anchor="middle" class="mono">L2_t4</text>
+<rect x="653" y="303" width="90" height="46" rx="5" fill="none" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="698" y="331" text-anchor="middle" class="mono" fill="var(--muted,#978f83)">···</text>
+
+
+<rect x="103" y="353" width="90" height="46" rx="5" fill="none" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="4 3"/>
+<rect x="213" y="353" width="90" height="46" rx="5" fill="none" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="4 3"/>
+<rect x="323" y="353" width="90" height="46" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.28" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<text x="368" y="381" text-anchor="middle" class="mono">L3_t2</text>
+<rect x="433" y="353" width="90" height="46" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.28" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<text x="478" y="381" text-anchor="middle" class="mono">L3_t3</text>
+<rect x="543" y="353" width="90" height="46" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.28" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<text x="588" y="381" text-anchor="middle" class="mono">L3_t4</text>
+<rect x="653" y="353" width="90" height="46" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.28" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<text x="698" y="381" text-anchor="middle" class="mono">L3_t5</text>
+
+
+
+<line x1="193" y1="253" x2="303" y2="303" stroke="var(--accent,#6aa9ff)" stroke-width="1.5" stroke-dasharray="5 3" opacity="0.7"/>
+<line x1="303" y1="303" x2="413" y2="353" stroke="var(--accent,#6aa9ff)" stroke-width="1.5" stroke-dasharray="5 3" opacity="0.7"/>
+<text x="200" y="414" class="caption" fill="var(--muted,#978f83)">each level conditions on all PAST timesteps only</text>
+
+
+
+<text x="148" y="326" text-anchor="middle" class="small" fill="var(--muted,#978f83)">delay = 1 step</text>
+<line x1="173" y1="299" x2="218" y2="320" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="3 2" marker-end="url(#rvq-arrow-muted)"/>
+
+<text x="203" y="376" text-anchor="middle" class="small" fill="var(--muted,#978f83)">delay = 2 steps</text>
+<line x1="173" y1="349" x2="328" y2="370" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="3 2" marker-end="url(#rvq-arrow-muted)"/>
+
+
+<text x="430" y="436" text-anchor="middle" class="caption">Level 1 = coarse semantics; levels 2-3 refine acoustic detail.</text>
+
+</svg>
+<figcaption><b>Two RVQ flattening strategies for 3 levels × 4 time steps.</b> The Flattened scheme (Panel A) emits all K levels for each timestep before advancing, producing a simple interleaved tape. The Delay pattern (Panel B) staggers level k by k−1 steps, forming a staircase where each level sees only past timesteps — enabling the autoregressive model to condition higher-fidelity levels on all prior context without lookahead.</figcaption>
+</figure>
+
+<p>The delay pattern (used in AudioLM, VALL-E, and related systems) allows the autoregressive model to condition each level on all previous time steps, limiting temporal lookahead. Level 1 alone captures coarse semantics; levels 2–8 refine acoustic detail.</p>
+<h2 id="whisper-the-encoder-only-path-to-asr">Whisper: The Encoder-Only Path to ASR<a class="headerlink" href="#whisper-the-encoder-only-path-to-asr" title="Permanent link">¶</a></h2>
+<p>Whisper (Radford et al., OpenAI, 2022) is the de facto standard for Automatic Speech Recognition (ASR) — recognition of speech as text. It takes a different philosophy from codec-based models: rather than discretizing audio into tokens for generation, it encodes a fixed 30-second window of log-Mel features into continuous hidden states and decodes with a standard text autoregressive decoder.</p>
+<h3 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-whisper-encoder-decoder-pipeline">
+<svg viewBox="0 0 760 580" role="img" aria-label="Whisper ASR pipeline: waveform through STFT and Mel filterbank yields log-Mel spectrogram, two Conv1d layers compress 3000 frames to 1500, N encoder transformer blocks produce hidden states, cross-attention feeds M decoder transformer blocks that emit text token logits.">
+<defs>
+  <marker id="wh-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6aa9ff)"/>
+  </marker>
+  <marker id="wh-arrow-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#978f83)"/>
+  </marker>
+</defs>
+<style>
+  #fig-whisper-encoder-decoder-pipeline text { fill: var(--ink-soft,#45413a); font: 400 11px var(--sans,sans-serif); }
+  #fig-whisper-encoder-decoder-pipeline .lbl  { font: 600 11px var(--sans,sans-serif); }
+  #fig-whisper-encoder-decoder-pipeline .note { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+  #fig-whisper-encoder-decoder-pipeline .step { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+</style>
+
+
+
+
+<rect x="44" y="16" width="312" height="42" rx="7" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.2"/>
+<text x="200" y="41" text-anchor="middle" class="lbl">Waveform — 16 kHz, up to 30 s</text>
+
+<text x="370" y="33" class="note">25 ms window,</text>
+<text x="370" y="46" class="note">10 ms hop</text>
+
+<line x1="200" y1="58" x2="200" y2="78" stroke="var(--accent,#6aa9ff)" stroke-width="1.5" marker-end="url(#wh-arrow)"/>
+<text x="210" y="73" class="step">STFT + Mel filterbank</text>
+
+
+<rect x="44" y="80" width="312" height="42" rx="7" class="v-fill" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="200" y="105" text-anchor="middle" class="lbl">Log-Mel — 80 bins × 3000 frames</text>
+
+<line x1="200" y1="122" x2="200" y2="142" stroke="var(--accent,#6aa9ff)" stroke-width="1.5" marker-end="url(#wh-arrow)"/>
+<text x="210" y="137" class="step">2× Conv1d (stride 1, then stride 2)</text>
+
+
+<rect x="44" y="144" width="312" height="42" rx="7" class="v-fill" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="200" y="169" text-anchor="middle" class="lbl">1500 frames — temporal res. halved</text>
+
+<text x="370" y="165" class="note">3000 to 1500</text>
+
+<line x1="200" y1="186" x2="200" y2="206" stroke="var(--accent,#6aa9ff)" stroke-width="1.5" marker-end="url(#wh-arrow)"/>
+<text x="210" y="201" class="step">sinusoidal + learned positional enc.</text>
+
+
+<rect x="24" y="208" width="352" height="66" rx="8" fill="var(--accent,#6aa9ff)" fill-opacity="0.14" stroke="var(--accent,#6aa9ff)" stroke-width="2"/>
+<text x="200" y="235" text-anchor="middle" class="lbl">N × Transformer ENCODER blocks</text>
+<text x="200" y="252" text-anchor="middle" class="note">(self-attention over 1500 fixed positions)</text>
+
+<text x="390" y="222" class="note">fixed 30 s window;</text>
+<text x="390" y="235" class="note">silence padded/masked</text>
+
+
+
+<line x1="200" y1="274" x2="200" y2="316" stroke="var(--accent,#6aa9ff)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<line x1="200" y1="316" x2="490" y2="316" stroke="var(--accent,#6aa9ff)" stroke-width="2" stroke-dasharray="6 3"/>
+<line x1="490" y1="316" x2="490" y2="348" stroke="var(--accent,#6aa9ff)" stroke-width="2" marker-end="url(#wh-arrow)"/>
+<text x="340" y="308" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)" style="font:700 10px var(--sans,sans-serif)">Cross-attention: KV from encoder</text>
+
+
+
+
+<rect x="394" y="350" width="312" height="66" rx="8" fill="var(--accent-2,#ec9069)" fill-opacity="0.14" stroke="var(--accent-2,#ec9069)" stroke-width="2"/>
+<text x="550" y="378" text-anchor="middle" class="lbl">M × Transformer DECODER blocks</text>
+<text x="550" y="396" text-anchor="middle" class="note">(masked self-attn, autoregressive)</text>
+
+
+<line x1="550" y1="416" x2="550" y2="436" stroke="var(--accent,#6aa9ff)" stroke-width="1.5" marker-end="url(#wh-arrow)"/>
+<text x="560" y="430" class="step">project to vocab</text>
+
+
+<rect x="394" y="440" width="312" height="42" rx="7" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.2"/>
+<text x="550" y="462" text-anchor="middle" class="lbl">Text token logits</text>
+<text x="550" y="478" text-anchor="middle" class="note">multilingual BPE — 51,865 tokens</text>
+<text x="400" y="498" class="note">prev tokens autoregressed as input each step</text>
+
+
+<text x="200" y="520" text-anchor="middle" class="note">Encoder: fixed 1500-frame context</text>
+<text x="550" y="520" text-anchor="middle" class="note">Decoder: autoregressive generation</text>
+
+</svg>
+<figcaption><b>Whisper encoder-decoder ASR pipeline.</b> A 30-second log-Mel spectrogram (80 bins × 3000 frames) is halved to 1500 frames by two strided Conv1d layers, then encoded by N transformer blocks. Those encoder hidden states supply keys and values for cross-attention in M transformer decoder blocks, which autoregressively generate a multilingual BPE transcript. The always-padded 30 s encoder context is the key simplicity/waste tradeoff in Whisper's design.</figcaption>
+</figure>
+
+<p>The convolutional front-end halves the temporal resolution from 3000 to 1500 frames. Each encoder block applies self-attention over these 1500 positions — note that this is always a fixed-length context regardless of actual utterance duration (silence is padded/masked). The decoder autoregressively generates transcript tokens with cross-attention back to encoder states.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Using OpenAI&#39;s whisper library for transcription</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">whisper</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">transcribe_with_whisper</span><span class="p">(</span><span class="n">audio_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">model_size</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;large-v3&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Load Whisper and transcribe an audio file.</span>
+<span class="sd">    model_size: tiny | base | small | medium | large-v3</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">whisper</span><span class="o">.</span><span class="n">load_model</span><span class="p">(</span><span class="n">model_size</span><span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+    <span class="c1"># whisper.load_audio handles resampling to 16 kHz mono</span>
+    <span class="n">audio</span> <span class="o">=</span> <span class="n">whisper</span><span class="o">.</span><span class="n">load_audio</span><span class="p">(</span><span class="n">audio_path</span><span class="p">)</span>
+    <span class="n">audio</span> <span class="o">=</span> <span class="n">whisper</span><span class="o">.</span><span class="n">pad_or_trim</span><span class="p">(</span><span class="n">audio</span><span class="p">)</span>  <span class="c1"># pad/trim to exactly 30 s</span>
+
+    <span class="c1"># Compute log-Mel spectrogram on the same device as the model</span>
+    <span class="n">mel</span> <span class="o">=</span> <span class="n">whisper</span><span class="o">.</span><span class="n">log_mel_spectrogram</span><span class="p">(</span><span class="n">audio</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>  <span class="c1"># (80, 3000)</span>
+
+    <span class="c1"># Detect language (optional)</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">probs</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">detect_language</span><span class="p">(</span><span class="n">mel</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+    <span class="n">lang</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="n">probs</span><span class="o">.</span><span class="n">get</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Detected language: </span><span class="si">{</span><span class="n">lang</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Decode with greedy or beam search</span>
+    <span class="n">options</span> <span class="o">=</span> <span class="n">whisper</span><span class="o">.</span><span class="n">DecodingOptions</span><span class="p">(</span><span class="n">language</span><span class="o">=</span><span class="n">lang</span><span class="p">,</span> <span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">whisper</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">mel</span><span class="p">,</span> <span class="n">options</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">text</span>
+
+<span class="c1"># Example:</span>
+<span class="c1"># text = transcribe_with_whisper(&quot;interview.wav&quot;, model_size=&quot;base&quot;)</span>
+</code></pre></div>
+<h3 id="whisper-as-a-feature-extractor">Whisper as a Feature Extractor<a class="headerlink" href="#whisper-as-a-feature-extractor" title="Permanent link">¶</a></h3>
+<p>For downstream tasks — speech LLMs, speaker diarization, voice cloning — we often want encoder hidden states rather than the text output. The encoder&rsquo;s final hidden states are rich acoustic representations that have been used in place of (or alongside) codec tokens.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">whisper</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">whisper.model</span><span class="w"> </span><span class="kn">import</span> <span class="n">AudioEncoder</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_whisper_features</span><span class="p">(</span>
+    <span class="n">mel</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># (batch, 80, 3000) on GPU</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">whisper</span><span class="o">.</span><span class="n">Whisper</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Return encoder hidden states: (batch, 1500, encoder_dim).</span>
+<span class="sd">    For whisper-large-v3, encoder_dim = 1280.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="c1"># model.encoder is a standard TransformerEncoder</span>
+        <span class="n">hidden</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">encoder</span><span class="p">(</span><span class="n">mel</span><span class="p">)</span>   <span class="c1"># (B, 1500, D)</span>
+    <span class="k">return</span> <span class="n">hidden</span>
+</code></pre></div>
+<h2 id="text-to-speech-neural-vocoders-and-codec-based-tts">Text-to-Speech: Neural Vocoders and Codec-Based TTS<a class="headerlink" href="#text-to-speech-neural-vocoders-and-codec-based-tts" title="Permanent link">¶</a></h2>
+<p>Text-to-Speech (TTS) synthesis has converged on two paradigms in the LLM era: (1) neural vocoder pipelines and (2) codec LM pipelines.</p>
+<h3 id="neural-vocoder-pipelines">Neural Vocoder Pipelines<a class="headerlink" href="#neural-vocoder-pipelines" title="Permanent link">¶</a></h3>
+<p>Classic neural TTS decomposes the problem:</p>
+<figure class="viz" id="fig-tts-vocoder-pipeline">
+<svg viewBox="0 0 880 220" role="img" aria-label="Neural TTS pipeline: Text input feeds into an Acoustic model (e.g. FastSpeech2) which produces a Mel spectrogram, then a Vocoder (e.g. HiFi-GAN) converts it to a Waveform output.">
+<defs>
+  <marker id="tts-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6aa9ff)" class="v-accent"/>
+  </marker>
+</defs>
+<style>
+  #fig-tts-vocoder-pipeline text { fill: var(--ink-soft,#45413a); font: 400 12px var(--sans,sans-serif); }
+  #fig-tts-vocoder-pipeline .lbl { font: 700 13px var(--sans,sans-serif); }
+  #fig-tts-vocoder-pipeline .sub { font: italic 10px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+  #fig-tts-vocoder-pipeline .cap { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+</style>
+
+
+<rect x="24" y="72" width="110" height="60" rx="28" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.5"/>
+<text x="79" y="107" text-anchor="middle" class="lbl">Text</text>
+
+
+<line x1="134" y1="102" x2="186" y2="102" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#tts-arrow)"/>
+
+
+<rect x="188" y="70" width="160" height="64" rx="8" fill="var(--accent,#6aa9ff)" fill-opacity="0.22" stroke="var(--accent,#6aa9ff)" stroke-width="1.8"/>
+<text x="268" y="100" text-anchor="middle" class="lbl">Acoustic model</text>
+<text x="268" y="122" text-anchor="middle" class="sub">e.g., FastSpeech2</text>
+
+
+<line x1="348" y1="102" x2="400" y2="102" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#tts-arrow)"/>
+
+
+<rect x="402" y="66" width="158" height="72" rx="8" class="v-fill" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="481" y="95" text-anchor="middle" class="lbl">Mel spectrogram</text>
+
+<g transform="translate(440,102)">
+  <rect x="0"  y="0" width="6" height="20" fill="var(--accent,#6aa9ff)" fill-opacity="0.30"/>
+  <rect x="8"  y="4" width="6" height="16" fill="var(--accent,#6aa9ff)" fill-opacity="0.50"/>
+  <rect x="16" y="2" width="6" height="18" fill="var(--accent,#6aa9ff)" fill-opacity="0.70"/>
+  <rect x="24" y="6" width="6" height="14" fill="var(--accent,#6aa9ff)" fill-opacity="0.55"/>
+  <rect x="32" y="8" width="6" height="12" fill="var(--accent,#6aa9ff)" fill-opacity="0.40"/>
+  <rect x="40" y="3" width="6" height="17" fill="var(--accent,#6aa9ff)" fill-opacity="0.65"/>
+  <rect x="48" y="10" width="6" height="10" fill="var(--accent,#6aa9ff)" fill-opacity="0.35"/>
+  <rect x="56" y="1" width="6" height="19" fill="var(--accent,#6aa9ff)" fill-opacity="0.80"/>
+  <rect x="64" y="5" width="6" height="15" fill="var(--accent,#6aa9ff)" fill-opacity="0.50"/>
+</g>
+
+
+<line x1="560" y1="102" x2="612" y2="102" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#tts-arrow)"/>
+
+
+<rect x="614" y="70" width="140" height="64" rx="8" fill="var(--accent,#6aa9ff)" fill-opacity="0.22" stroke="var(--accent,#6aa9ff)" stroke-width="1.8"/>
+<text x="684" y="100" text-anchor="middle" class="lbl">Vocoder</text>
+<text x="684" y="122" text-anchor="middle" class="sub">e.g., HiFi-GAN</text>
+
+
+<line x1="754" y1="102" x2="792" y2="102" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#tts-arrow)"/>
+
+
+<rect x="794" y="72" width="84" height="60" rx="28" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.5"/>
+<text x="836" y="107" text-anchor="middle" class="lbl" style="font-size:12px">Waveform</text>
+
+
+<text x="440" y="180" text-anchor="middle" class="cap">Classic neural TTS decomposes synthesis into acoustic modeling then waveform generation.</text>
+
+</svg>
+<figcaption><b>Neural vocoder TTS pipeline: Text → Acoustic model → Mel spectrogram → Vocoder → Waveform.</b> The acoustic model (e.g., FastSpeech2) maps text to a mel spectrogram capturing timing and pitch; the vocoder (e.g., HiFi-GAN) then inverts that spectrogram to a high-fidelity audio waveform. This two-stage decomposition separates linguistic modeling from acoustic rendering.</figcaption>
+</figure>
+
+<p>HiFi-GAN (Kong et al., 2020) is a GAN-based vocoder trained to invert Mel spectrograms to waveforms with high perceptual quality. The generator is a series of transposed convolutions with multi-receptive-field fusion (MRF) blocks. Training uses a combination of multi-period and multi-scale discriminators.</p>
+<h3 id="codec-lm-pipelines-vall-e-and-relatives">Codec LM Pipelines: VALL-E and Relatives<a class="headerlink" href="#codec-lm-pipelines-vall-e-and-relatives" title="Permanent link">¶</a></h3>
+<p>VALL-E (Wang et al., Microsoft, 2023) reframes TTS as a language modeling problem over codec tokens. Given a 3-second acoustic prompt and a text transcript, VALL-E:</p>
+<ol>
+<li><strong>Predicts coarse tokens (AR stage):</strong> Autoregressively models EnCodec level-1 tokens conditioned on text BPE tokens and the acoustic prompt. This captures prosody and speaker identity.</li>
+<li><strong>Predicts fine tokens (NAR stage):</strong> Non-autoregressively predicts RVQ levels 2–8 conditioned on level 1 and all other context. This fills in acoustic detail in <span class="arithmatex">\(O(1)\)</span> parallel steps.</li>
+</ol>
+<p>The conceptual architecture:</p>
+<figure class="viz" id="fig-valle-ar-nar-architecture">
+<svg viewBox="0 0 820 660" role="img" aria-label="VALL-E architecture: text tokens and a 3-second acoustic prompt feed an AR decoder that produces coarse level-1 speech codec tokens, then a NAR decoder fills RVQ levels 2-8 in parallel, then the EnCodec decoder synthesizes the waveform.">
+<defs>
+  <marker id="ve-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6aa9ff)" class="v-accent"/>
+  </marker>
+  <marker id="ve-arrow-s" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#978f83)"/>
+  </marker>
+</defs>
+<style>
+  #fig-valle-ar-nar-architecture text { fill: var(--ink-soft,#45413a); font: 400 12px var(--sans,sans-serif); }
+  #fig-valle-ar-nar-architecture .lbl { font: 700 12px var(--sans,sans-serif); }
+  #fig-valle-ar-nar-architecture .small { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+  #fig-valle-ar-nar-architecture .mono { font: 400 10px var(--mono,monospace); fill: var(--muted,#978f83); }
+  #fig-valle-ar-nar-architecture .bandlbl { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#978f83); letter-spacing:1px; }
+</style>
+
+
+<text x="8" y="44" class="bandlbl">CONDITIONING</text>
+
+<line x1="0" y1="50" x2="820" y2="50" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+
+
+<rect x="16" y="56" width="310" height="60" rx="7" class="v-fill" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="171" y="80" text-anchor="middle" class="lbl">Text tokens: [BOS, t1, t2, …, tN, EOS]</text>
+<text x="171" y="97" text-anchor="middle" class="small">text encoder (standard LLM)</text>
+
+
+<rect x="344" y="56" width="310" height="60" rx="7" class="v-fill" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="499" y="78" text-anchor="middle" class="lbl">Prompt codec: [c1_1 … c1_P]</text>
+<text x="499" y="96" text-anchor="middle" class="small">3 s @ 75 fps = 225 coarse codes</text>
+
+
+<line x1="171" y1="116" x2="340" y2="170" stroke="var(--accent,#6aa9ff)" stroke-width="1.6" marker-end="url(#ve-arrow)"/>
+<line x1="499" y1="116" x2="360" y2="170" stroke="var(--accent,#6aa9ff)" stroke-width="1.6" marker-end="url(#ve-arrow)"/>
+
+
+<line x1="0" y1="175" x2="820" y2="175" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="8" y="188" class="bandlbl">AR STAGE</text>
+
+
+<rect x="100" y="192" width="200" height="66" rx="8" fill="var(--accent,#6aa9ff)" fill-opacity="0.22" stroke="var(--accent,#6aa9ff)" stroke-width="2"/>
+<text x="200" y="223" text-anchor="middle" class="lbl">AR decoder</text>
+<text x="200" y="242" text-anchor="middle" class="small">autoregressive, sequential</text>
+
+
+<path d="M 300 218 Q 332 208 332 225 Q 332 242 300 238" fill="none" stroke="var(--muted,#978f83)" stroke-width="1.2" marker-end="url(#ve-arrow-s)"/>
+
+
+<text x="380" y="205" class="small">speech COARSE codes — level 1</text>
+<text x="380" y="218" class="small">(prosody + speaker identity)</text>
+
+<g>
+  <rect x="380" y="226" width="34" height="24" rx="3" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.2"/>
+  <text x="397" y="243" text-anchor="middle" style="font:400 8px var(--mono,monospace);fill:var(--ink-soft,#45413a)">c1_1</text>
+  <rect x="418" y="226" width="34" height="24" rx="3" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.2"/>
+  <text x="435" y="243" text-anchor="middle" style="font:400 8px var(--mono,monospace);fill:var(--ink-soft,#45413a)">c1_2</text>
+  <rect x="456" y="226" width="34" height="24" rx="3" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.2"/>
+  <text x="473" y="243" text-anchor="middle" style="font:400 8px var(--mono,monospace);fill:var(--ink-soft,#45413a)">c1_3</text>
+  <rect x="494" y="226" width="22" height="24" rx="3" fill="none" stroke="var(--muted,#978f83)" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="505" y="243" text-anchor="middle" style="font:400 8px var(--mono,monospace);fill:var(--muted,#978f83)">…</text>
+  <rect x="520" y="226" width="34" height="24" rx="3" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.2"/>
+  <text x="537" y="243" text-anchor="middle" style="font:400 8px var(--mono,monospace);fill:var(--ink-soft,#45413a)">c1_S</text>
+</g>
+
+
+<line x1="340" y1="260" x2="340" y2="305" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#ve-arrow)"/>
+<text x="348" y="287" class="small">condition on level-1 + all context</text>
+
+
+<line x1="0" y1="308" x2="820" y2="308" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="8" y="322" class="bandlbl">NAR STAGE</text>
+
+
+<rect x="100" y="326" width="200" height="66" rx="8" fill="var(--accent-2,#ec9069)" fill-opacity="0.18" stroke="var(--accent-2,#ec9069)" stroke-width="2"/>
+<text x="200" y="357" text-anchor="middle" class="lbl">NAR decoder</text>
+<text x="200" y="376" text-anchor="middle" class="small">non-autoregressive, parallel</text>
+
+
+<line x1="312" y1="340" x2="356" y2="340" stroke="var(--muted,#978f83)" stroke-width="1.2" marker-end="url(#ve-arrow-s)"/>
+<line x1="312" y1="352" x2="356" y2="352" stroke="var(--muted,#978f83)" stroke-width="1.2" marker-end="url(#ve-arrow-s)"/>
+<line x1="312" y1="364" x2="356" y2="364" stroke="var(--muted,#978f83)" stroke-width="1.2" marker-end="url(#ve-arrow-s)"/>
+<text x="362" y="344" class="small">parallel</text>
+<text x="362" y="357" class="small">steps</text>
+
+
+<text x="420" y="330" class="small">FINE levels 2–8 — O(1) parallel steps</text>
+<g>
+
+  <rect x="420" y="334" width="30" height="16" rx="2" fill="var(--accent-2,#ec9069)" fill-opacity="0.55" stroke="var(--accent-2,#ec9069)" stroke-width="1"/>
+  <text x="435" y="346" text-anchor="middle" style="font:400 7px var(--mono,monospace);fill:var(--ink-soft,#45413a)">c2_1</text>
+  <rect x="454" y="334" width="30" height="16" rx="2" fill="var(--accent-2,#ec9069)" fill-opacity="0.55" stroke="var(--accent-2,#ec9069)" stroke-width="1"/>
+  <text x="469" y="346" text-anchor="middle" style="font:400 7px var(--mono,monospace);fill:var(--ink-soft,#45413a)">c2_2</text>
+  <text x="490" y="346" class="small">…</text>
+
+  <rect x="420" y="352" width="30" height="16" rx="2" fill="var(--accent-2,#ec9069)" fill-opacity="0.40" stroke="var(--accent-2,#ec9069)" stroke-width="1"/>
+  <text x="435" y="364" text-anchor="middle" style="font:400 7px var(--mono,monospace);fill:var(--ink-soft,#45413a)">c3_1</text>
+  <rect x="454" y="352" width="30" height="16" rx="2" fill="var(--accent-2,#ec9069)" fill-opacity="0.40" stroke="var(--accent-2,#ec9069)" stroke-width="1"/>
+  <text x="469" y="364" text-anchor="middle" style="font:400 7px var(--mono,monospace);fill:var(--ink-soft,#45413a)">c3_2</text>
+
+  <text x="430" y="386" class="small">levels 4–8 …</text>
+</g>
+
+
+<line x1="340" y1="395" x2="340" y2="438" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#ve-arrow)"/>
+
+
+<line x1="0" y1="440" x2="820" y2="440" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="8" y="453" class="bandlbl">SYNTHESIS</text>
+
+
+<rect x="180" y="458" width="200" height="48" rx="7" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.5"/>
+<text x="280" y="486" text-anchor="middle" class="lbl">EnCodec decoder</text>
+
+
+<line x1="380" y1="482" x2="444" y2="482" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#ve-arrow)"/>
+
+
+<rect x="446" y="462" width="96" height="40" rx="20" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.5"/>
+<text x="494" y="487" text-anchor="middle" class="lbl">Waveform</text>
+
+
+<rect x="80" y="558" width="660" height="88" rx="6" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1" stroke-dasharray="4 2"/>
+<text x="410" y="576" text-anchor="middle" class="small" style="font:700 10px var(--sans,sans-serif);fill:var(--ink-soft,#45413a)">Key insight</text>
+<text x="410" y="592" text-anchor="middle" class="small">Level-1 = WHAT is said + HOW (prosody, speaker identity);</text>
+<text x="410" y="607" text-anchor="middle" class="small">higher levels = acoustic rendering quality.</text>
+<text x="410" y="622" text-anchor="middle" class="small">This decomposition separates semantic control from acoustic fidelity.</text>
+
+</svg>
+<figcaption><b>VALL-E two-stage codec-LM TTS architecture.</b> Text tokens and a 3-second acoustic prompt condition an autoregressive (AR) decoder that predicts level-1 (coarse) EnCodec tokens capturing prosody and speaker identity. A non-autoregressive (NAR) decoder then fills RVQ levels 2–8 in a single parallel pass, adding acoustic detail. The EnCodec decoder synthesizes the final waveform from all 8 code levels.</figcaption>
+</figure>
+
+<p>The key insight: level-1 tokens determine <em>what</em> is said and <em>how</em> (prosody, speaker style); higher levels determine the acoustic rendering quality. This decomposition separates semantic control from acoustic fidelity.</p>
+<h2 id="speech-language-models-audio-in-audio-out">Speech Language Models: Audio-In, Audio-Out<a class="headerlink" href="#speech-language-models-audio-in-audio-out" title="Permanent link">¶</a></h2>
+<p>The logical endpoint of audio tokenization is a model that accepts and emits audio tokens natively — no ASR transcription step, no TTS synthesis step, just raw audio tokens flowing through a standard transformer. We call these &ldquo;speech LMs&rdquo; or &ldquo;audio LLMs.&rdquo;</p>
+<h3 id="speechtokenizer-dspin-and-semantic-acoustic-disentanglement">SpeechTokenizer, dSPIN, and Semantic-Acoustic Disentanglement<a class="headerlink" href="#speechtokenizer-dspin-and-semantic-acoustic-disentanglement" title="Permanent link">¶</a></h3>
+<p>A pure codec tokenizer conflates semantic content with acoustic style in its first RVQ level. SpeechTokenizer (Zhang et al., 2023) addresses this by training the first codebook to align with HuBERT semantic features (see below), forcing it to capture <em>what was said</em> while higher levels capture <em>how it was said</em>.</p>
+<p>The training objective adds a distillation term:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{reconstruct}} + \lambda \cdot \mathcal{L}_{\text{semantic}}
+\]</div>
+<p>where <span class="arithmatex">\(\mathcal{L}_{\text{semantic}}\)</span> encourages VQ level-1 outputs to match HuBERT&rsquo;s discrete pseudo-labels. This disentanglement makes level-1 tokens a drop-in replacement for text tokens in a speech LM.</p>
+<h3 id="hubert-self-supervised-acoustic-units">HuBERT: Self-Supervised Acoustic Units<a class="headerlink" href="#hubert-self-supervised-acoustic-units" title="Permanent link">¶</a></h3>
+<p>HuBERT (Hsu et al., Facebook AI Research, 2021) is a BERT-style masked prediction model for speech. It uses k-means clusters of MFCC or previous-iteration HuBERT features as &ldquo;pseudo-labels&rdquo; and trains a transformer encoder to predict the cluster assignments of masked frames. The result is a rich contextual representation of speech that has been widely used as:
+- Discrete token targets for speech LMs
+- Features for speech-text joint embedding spaces
+- Semantic units for zero-shot TTS</p>
+<h3 id="the-audiopalm-and-moshi-architectures">The AudioPaLM and Moshi Architectures<a class="headerlink" href="#the-audiopalm-and-moshi-architectures" title="Permanent link">¶</a></h3>
+<p><strong>AudioPaLM</strong> (Rubenstein et al., Google, 2023) interleaves audio tokens and text tokens in the same token stream fed to a pre-trained PaLM language model. Audio tokens use a separate embedding table; text and audio share the same positional encoding and transformer blocks. This enables a single model to perform ASR, TTS, and speech-to-speech translation in a unified framework.</p>
+<p><strong>Moshi</strong> (Défossez et al., Kyutai, 2024) goes further: it is designed for real-time full-duplex spoken dialogue, meaning the model continuously emits audio while simultaneously listening. It uses two parallel audio token streams — one for the system&rsquo;s voice and one for the user&rsquo;s voice — processed by separate depth-transformers at each time step, plus a shared inner &ldquo;language model&rdquo; operating at a slower rate. This hierarchical temporal structure enables sub-200 ms response latency in practice.</p>
+<figure class="viz" id="fig-moshi-temporal-hierarchy">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 940 600" role="img" aria-label="Moshi temporal hierarchy: System and User audio codec streams at 75fps share coarse L1 tokens; an Inner LM fires once per codec step consuming L1 from both streams and predicting the next system L1; a Depth transformer then fills fine levels L2-L8 per step. An animated playhead sweeps left to right showing the causal streaming process.">
+<defs>
+  <marker id="mo-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6aa9ff)" class="v-accent"/>
+  </marker>
+  <marker id="mo-arrow-s" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#978f83)"/>
+  </marker>
+</defs>
+<style>
+  #fig-moshi-temporal-hierarchy text { fill: var(--ink-soft,#45413a); font: 400 11px var(--sans,sans-serif); }
+  #fig-moshi-temporal-hierarchy .lbl { font: 700 11px var(--sans,sans-serif); }
+  #fig-moshi-temporal-hierarchy .small { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+  #fig-moshi-temporal-hierarchy .lanelbl { font: 700 10px var(--sans,sans-serif); letter-spacing:0.5px; }
+  #fig-moshi-temporal-hierarchy .mono { font: 400 9px var(--mono,monospace); }
+
+  /* Playhead animation */
+  #fig-moshi-temporal-hierarchy #mo-playhead {
+    animation: mo-sweep 4s ease-in-out infinite;
+  }
+  @keyframes mo-sweep {
+    0%   { transform: translateX(0); opacity: 0.9; }
+    80%  { transform: translateX(440px); opacity: 0.9; }
+    90%  { transform: translateX(440px); opacity: 0; }
+    91%  { transform: translateX(0); opacity: 0; }
+    100% { transform: translateX(0); opacity: 0.9; }
+  }
+
+  /* L1 system cells pulse as playhead hits them */
+  #fig-moshi-temporal-hierarchy .mo-sys-l1 {
+    animation: mo-sys-pulse 4s ease-in-out infinite;
+  }
+  #fig-moshi-temporal-hierarchy .mo-user-l1 {
+    animation: mo-user-pulse 4s ease-in-out infinite;
+  }
+  #fig-moshi-temporal-hierarchy .mo-ilm-node {
+    animation: mo-ilm-pulse 4s ease-in-out infinite;
+  }
+  #fig-moshi-temporal-hierarchy .mo-fine-cells {
+    animation: mo-fine-pulse 4s ease-in-out infinite;
+  }
+  @keyframes mo-sys-pulse {
+    0%, 5%, 100%  { fill-opacity: 0.25; }
+    15%, 25% { fill-opacity: 0.75; }
+  }
+  @keyframes mo-user-pulse {
+    0%, 8%, 100%  { fill-opacity: 0.25; }
+    18%, 28% { fill-opacity: 0.70; }
+  }
+  @keyframes mo-ilm-pulse {
+    0%, 20%, 100% { fill-opacity: 0.15; }
+    28%, 40% { fill-opacity: 0.65; }
+  }
+  @keyframes mo-fine-pulse {
+    0%, 38%, 100% { fill-opacity: 0.12; }
+    45%, 58% { fill-opacity: 0.55; }
+  }
+</style>
+
+
+<line x1="150" y1="38" x2="860" y2="38" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5" marker-end="url(#mo-arrow)"/>
+<text x="150" y="32" class="small">time axis</text>
+
+<g class="small">
+  <text x="210" y="55" text-anchor="middle">t1</text>
+  <text x="320" y="55" text-anchor="middle">t2</text>
+  <text x="430" y="55" text-anchor="middle">t3</text>
+  <text x="540" y="55" text-anchor="middle">t4</text>
+  <text x="650" y="55" text-anchor="middle">t5</text>
+  <text x="760" y="55" text-anchor="middle">t6</text>
+</g>
+<g stroke="var(--border-2,#d8d1c0)" stroke-width="1">
+  <line x1="210" y1="36" x2="210" y2="560"/>
+  <line x1="320" y1="36" x2="320" y2="560"/>
+  <line x1="430" y1="36" x2="430" y2="560"/>
+  <line x1="540" y1="36" x2="540" y2="560"/>
+  <line x1="650" y1="36" x2="650" y2="560"/>
+  <line x1="760" y1="36" x2="760" y2="560"/>
+</g>
+
+
+<text x="8" y="102" class="lanelbl" fill="var(--accent,#c15b39)">System audio codec (75 fps, 8 levels)</text>
+
+
+<text x="148" y="128" text-anchor="end" class="small">L1</text>
+<g class="mo-sys-l1">
+  <rect x="176" y="110" width="68" height="32" rx="4" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+  <text x="210" y="130" text-anchor="middle" class="mono">s1</text>
+  <rect x="286" y="110" width="68" height="32" rx="4" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+  <text x="320" y="130" text-anchor="middle" class="mono">s2</text>
+  <rect x="396" y="110" width="68" height="32" rx="4" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+  <text x="430" y="130" text-anchor="middle" class="mono">s3</text>
+  <rect x="506" y="110" width="68" height="32" rx="4" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+  <text x="540" y="130" text-anchor="middle" class="mono">s4</text>
+  <rect x="616" y="110" width="68" height="32" rx="4" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+  <text x="650" y="130" text-anchor="middle" class="mono">s5</text>
+  <rect x="726" y="110" width="68" height="32" rx="4" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+  <text x="760" y="130" text-anchor="middle" class="mono">s6</text>
+</g>
+<text x="808" y="130" class="small">coarse</text>
+
+
+<text x="148" y="162" text-anchor="end" class="small">L2..8</text>
+<g class="mo-fine-cells">
+  <rect x="176" y="148" width="68" height="22" rx="3" fill="var(--accent-2,#ec9069)" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+  <text x="210" y="163" text-anchor="middle" class="mono">f1</text>
+  <rect x="286" y="148" width="68" height="22" rx="3" fill="var(--accent-2,#ec9069)" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+  <text x="320" y="163" text-anchor="middle" class="mono">f2</text>
+  <rect x="396" y="148" width="68" height="22" rx="3" fill="var(--accent-2,#ec9069)" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+  <text x="430" y="163" text-anchor="middle" class="mono">f3</text>
+  <rect x="506" y="148" width="68" height="22" rx="3" fill="var(--accent-2,#ec9069)" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+  <text x="540" y="163" text-anchor="middle" class="mono">f4</text>
+  <rect x="616" y="148" width="68" height="22" rx="3" fill="var(--accent-2,#ec9069)" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+  <text x="650" y="163" text-anchor="middle" class="mono">f5</text>
+  <rect x="726" y="148" width="68" height="22" rx="3" fill="var(--accent-2,#ec9069)" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+  <text x="760" y="163" text-anchor="middle" class="mono">f6</text>
+</g>
+<text x="808" y="163" class="small">fine L2..8</text>
+
+
+<rect x="0" y="188" width="940" height="1" fill="var(--border-2,#d8d1c0)"/>
+<text x="8" y="210" class="lanelbl" fill="var(--accent-2,#3b82f6)">User audio codec (75 fps, 8 levels)</text>
+<text x="148" y="235" text-anchor="end" class="small">L1</text>
+<g class="mo-user-l1">
+  <rect x="176" y="218" width="68" height="32" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.35" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="210" y="238" text-anchor="middle" class="mono">u1</text>
+  <rect x="286" y="218" width="68" height="32" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.35" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="320" y="238" text-anchor="middle" class="mono">u2</text>
+  <rect x="396" y="218" width="68" height="32" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.35" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="430" y="238" text-anchor="middle" class="mono">u3</text>
+  <rect x="506" y="218" width="68" height="32" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.35" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="540" y="238" text-anchor="middle" class="mono">u4</text>
+  <rect x="616" y="218" width="68" height="32" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.35" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="650" y="238" text-anchor="middle" class="mono">u5</text>
+  <rect x="726" y="218" width="68" height="32" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.35" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="760" y="238" text-anchor="middle" class="mono">u6</text>
+</g>
+<text x="808" y="238" class="small">user L1</text>
+
+
+<rect x="0" y="262" width="940" height="1" fill="var(--border-2,#d8d1c0)"/>
+<text x="8" y="285" class="lanelbl" fill="var(--accent,#c15b39)">Inner LM (1 step per codec step, ~13 ms/step)</text>
+
+
+<g class="mo-ilm-node">
+  <circle cx="210" cy="320" r="22" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.8"/>
+  <text x="210" y="325" text-anchor="middle" class="mono">LM1</text>
+  <circle cx="320" cy="320" r="22" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.8"/>
+  <text x="320" y="325" text-anchor="middle" class="mono">LM2</text>
+  <circle cx="430" cy="320" r="22" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.8"/>
+  <text x="430" y="325" text-anchor="middle" class="mono">LM3</text>
+  <circle cx="540" cy="320" r="22" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.8"/>
+  <text x="540" y="325" text-anchor="middle" class="mono">LM4</text>
+  <circle cx="650" cy="320" r="22" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.8"/>
+  <text x="650" y="325" text-anchor="middle" class="mono">LM5</text>
+  <circle cx="760" cy="320" r="22" fill="var(--accent,#6aa9ff)" stroke="var(--accent,#6aa9ff)" stroke-width="1.8"/>
+  <text x="760" y="325" text-anchor="middle" class="mono">LM6</text>
+</g>
+
+
+<line x1="210" y1="142" x2="210" y2="296" stroke="var(--muted,#978f83)" stroke-width="1.1" stroke-dasharray="3 2" marker-end="url(#mo-arrow-s)"/>
+<line x1="210" y1="250" x2="210" y2="296" stroke="var(--accent2,#3b82f6)" stroke-width="1.1" stroke-dasharray="3 2" marker-end="url(#mo-arrow-s)"/>
+<text x="238" y="304" class="small">takes L1 from both streams</text>
+
+
+<line x1="232" y1="320" x2="298" y2="320" stroke="var(--accent,#6aa9ff)" stroke-width="1.3" marker-end="url(#mo-arrow)"/>
+<line x1="342" y1="320" x2="408" y2="320" stroke="var(--accent,#6aa9ff)" stroke-width="1.3" marker-end="url(#mo-arrow)"/>
+<line x1="452" y1="320" x2="518" y2="320" stroke="var(--accent,#6aa9ff)" stroke-width="1.3" marker-end="url(#mo-arrow)"/>
+<line x1="562" y1="320" x2="628" y2="320" stroke="var(--accent,#6aa9ff)" stroke-width="1.3" marker-end="url(#mo-arrow)"/>
+<line x1="672" y1="320" x2="738" y2="320" stroke="var(--accent,#6aa9ff)" stroke-width="1.3" marker-end="url(#mo-arrow)"/>
+<text x="800" y="315" class="small">next</text>
+<text x="800" y="328" class="small">sys L1</text>
+
+
+<text x="400" y="358" text-anchor="middle" class="small" fill="var(--accent,#c15b39)">attends to PAST codec frames only -- enables real-time streaming</text>
+
+
+<rect x="0" y="370" width="940" height="1" fill="var(--border-2,#d8d1c0)"/>
+<text x="8" y="390" class="lanelbl" fill="var(--accent-2,#b04e2d)">Depth transformer (per inner-LM step, AR-predicts L2..L8)</text>
+
+
+<g class="mo-fine-cells">
+  <rect x="182" y="402" width="56" height="14" rx="2" fill="var(--accent-2,#ec9069)" stroke="var(--accent-2,#ec9069)" stroke-width="1"/>
+  <text x="210" y="413" text-anchor="middle" class="mono">L2</text>
+  <rect x="182" y="418" width="56" height="14" rx="2" fill="var(--accent-2,#ec9069)" stroke="var(--accent-2,#ec9069)" stroke-width="1" fill-opacity="0.85"/>
+  <text x="210" y="429" text-anchor="middle" class="mono">L3</text>
+  <rect x="182" y="434" width="56" height="14" rx="2" fill="var(--accent-2,#ec9069)" stroke="var(--accent-2,#ec9069)" stroke-width="1" fill-opacity="0.70"/>
+  <text x="210" y="445" text-anchor="middle" class="mono">L4</text>
+  <rect x="182" y="450" width="56" height="14" rx="2" fill="var(--accent-2,#ec9069)" stroke="var(--accent-2,#ec9069)" stroke-width="1" fill-opacity="0.55"/>
+  <text x="210" y="461" text-anchor="middle" class="mono">L5</text>
+  <rect x="182" y="466" width="56" height="14" rx="2" fill="var(--accent-2,#ec9069)" stroke="var(--accent-2,#ec9069)" stroke-width="1" fill-opacity="0.40"/>
+  <text x="210" y="477" text-anchor="middle" class="mono">L6-8</text>
+</g>
+
+<line x1="240" y1="409" x2="252" y2="409" stroke="var(--muted,#978f83)" stroke-width="1" marker-end="url(#mo-arrow-s)"/>
+<text x="255" y="414" class="small">AR-fills</text>
+<text x="255" y="427" class="small">L2..L8</text>
+<text x="255" y="440" class="small">per step</text>
+
+
+<line x1="210" y1="342" x2="210" y2="400" stroke="var(--muted,#978f83)" stroke-width="1.2" stroke-dasharray="3 2" marker-end="url(#mo-arrow-s)"/>
+
+
+<rect x="20" y="490" width="900" height="46" rx="5" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1" stroke-dasharray="4 2"/>
+<text x="470" y="509" text-anchor="middle" class="small">Inner LM runs causally on coarse L1; depth transformer fills fine levels per frame.</text>
+<text x="470" y="526" text-anchor="middle" class="small">This hierarchical design enables sub-200 ms response latency.</text>
+
+
+<g id="mo-playhead">
+  <line x1="210" y1="38" x2="210" y2="560" stroke="var(--accent,#6aa9ff)" stroke-width="2" opacity="0.5" stroke-dasharray="5 3"/>
+</g>
+
+</svg>
+<figcaption><b>Moshi temporal hierarchy: Inner LM + Depth transformer enable real-time full-duplex speech.</b> At each codec step (~13 ms), the Inner LM takes coarse L1 tokens from both the system and user audio streams (animated playhead), predicts the next system L1, then the Depth transformer autoregressively fills fine levels L2–L8. The causal constraint — attending only to past frames — makes the entire pipeline streamable with sub-200 ms latency.</figcaption>
+</figure>
+
+<p>The crucial engineering decision in Moshi: <strong>the inner LM runs causally</strong> — it only attends to past codec frames, enabling real-time streaming. The depth transformer runs separately per frame, keeping per-step latency bounded.</p>
+<h2 id="real-time-streaming-and-latency-budgets">Real-Time Streaming and Latency Budgets<a class="headerlink" href="#real-time-streaming-and-latency-budgets" title="Permanent link">¶</a></h2>
+<p>Speech interfaces have tight latency requirements. A phone conversation feels natural below about 200 ms round-trip delay. For a voice assistant the target is typically under 500 ms from end-of-speech to first audio output.</p>
+<h3 id="the-latency-decomposition">The Latency Decomposition<a class="headerlink" href="#the-latency-decomposition" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-latency-budget-decomposition">
+<svg viewBox="0 0 820 400" role="img" aria-label="Voice pipeline latency budget: Row A shows cascade ASR-LLM-TTS pipeline totaling 300-900ms with LLM TTFT as bottleneck; Row B shows speech LM pipeline skipping ASR and TTS, collapsing to 150-300ms.">
+<defs>
+  <marker id="lb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#978f83)"/>
+  </marker>
+  <pattern id="lb-hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+    <line x1="0" y1="0" x2="0" y2="6" stroke="var(--muted,#978f83)" stroke-width="1.5" opacity="0.4"/>
+  </pattern>
+</defs>
+<style>
+  #fig-latency-budget-decomposition text { fill: var(--ink-soft,#45413a); font: 400 10px var(--sans,sans-serif); }
+  #fig-latency-budget-decomposition .lbl  { font: 600 10px var(--sans,sans-serif); }
+  #fig-latency-budget-decomposition .note { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+  #fig-latency-budget-decomposition .tot  { font: 700 10px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+</style>
+
+
+<text x="410" y="20" text-anchor="middle" style="font:700 12px var(--sans,sans-serif);fill:var(--ink-soft,#45413a)">Voice Pipeline Latency Budget</text>
+
+
+
+<line x1="130" y1="320" x2="774" y2="320" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+<g class="note">
+  <line x1="130" y1="318" x2="130" y2="324" stroke="var(--muted,#978f83)" stroke-width="1"/>
+  <text x="130" y="336" text-anchor="middle">0</text>
+  <line x1="210" y1="318" x2="210" y2="324" stroke="var(--muted,#978f83)" stroke-width="1"/>
+  <text x="210" y="336" text-anchor="middle">100</text>
+  <line x1="290" y1="318" x2="290" y2="324" stroke="var(--muted,#978f83)" stroke-width="1"/>
+  <text x="290" y="336" text-anchor="middle">200</text>
+  <line x1="370" y1="318" x2="370" y2="324" stroke="var(--muted,#978f83)" stroke-width="1"/>
+  <text x="370" y="336" text-anchor="middle">300</text>
+  <line x1="450" y1="318" x2="450" y2="324" stroke="var(--muted,#978f83)" stroke-width="1"/>
+  <text x="450" y="336" text-anchor="middle">400</text>
+  <line x1="530" y1="318" x2="530" y2="324" stroke="var(--muted,#978f83)" stroke-width="1"/>
+  <text x="530" y="336" text-anchor="middle">500</text>
+  <line x1="610" y1="318" x2="610" y2="324" stroke="var(--muted,#978f83)" stroke-width="1"/>
+  <text x="610" y="336" text-anchor="middle">600</text>
+  <line x1="690" y1="318" x2="690" y2="324" stroke="var(--muted,#978f83)" stroke-width="1"/>
+  <text x="690" y="336" text-anchor="middle">700</text>
+  <line x1="770" y1="318" x2="770" y2="324" stroke="var(--muted,#978f83)" stroke-width="1"/>
+  <text x="770" y="336" text-anchor="middle">800</text>
+</g>
+<text x="450" y="355" text-anchor="middle" class="note">latency (ms)</text>
+
+
+<text x="124" y="80" text-anchor="end" class="lbl">Row A:</text>
+<text x="124" y="94" text-anchor="end" class="note">Cascade</text>
+<text x="124" y="107" text-anchor="end" class="note">ASR -&gt; LLM -&gt; TTS</text>
+
+<text x="124" y="212" text-anchor="end" class="lbl">Row B:</text>
+<text x="124" y="226" text-anchor="end" class="note">Speech LM</text>
+<text x="124" y="239" text-anchor="end" class="note">(no ASR/TTS)</text>
+
+
+
+<rect x="130" y="56" width="40" height="44" rx="2" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<rect x="170" y="56" width="40" height="44" rx="2" fill="url(#lb-hatch)" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<text x="150" y="81" text-anchor="middle" class="lbl">VAD</text>
+<text x="150" y="114" text-anchor="middle" class="note">50–100 ms</text>
+
+
+<rect x="210" y="56" width="80" height="44" rx="2" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<rect x="290" y="56" width="80" height="44" rx="2" fill="url(#lb-hatch)" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<text x="250" y="81" text-anchor="middle" class="lbl">ASR</text>
+<text x="250" y="114" text-anchor="middle" class="note">100–200 ms</text>
+
+
+<rect x="370" y="52" width="80"  height="52" rx="2" fill="var(--accent,#6aa9ff)" fill-opacity="0.22" stroke="var(--accent,#6aa9ff)" stroke-width="2"/>
+<rect x="450" y="52" width="240" height="52" rx="2" fill="url(#lb-hatch)"  stroke="var(--accent,#6aa9ff)" stroke-width="2"/>
+
+<text x="490" y="74" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">LLM TTFT  100–500 ms</text>
+<text x="530" y="91" text-anchor="middle" style="font:700 9px var(--sans,sans-serif);fill:var(--accent,#c15b39)">&lt;&lt; the bottleneck</text>
+
+
+<rect x="690" y="56" width="40" height="44" rx="2" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<rect x="730" y="56" width="40" height="44" rx="2" fill="url(#lb-hatch)" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<text x="710" y="81" text-anchor="middle" class="lbl">TTS</text>
+<text x="710" y="114" text-anchor="middle" class="note">50–100 ms</text>
+
+
+<text x="773" y="72" class="tot" style="font:700 9px var(--sans,sans-serif);fill:var(--muted,#978f83)">Total:</text>
+<text x="773" y="84" class="tot" style="font:700 9px var(--sans,sans-serif);fill:var(--muted,#978f83)">300-900ms</text>
+
+
+
+<rect x="130" y="188" width="40" height="44" rx="2" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<rect x="170" y="188" width="40" height="44" rx="2" fill="url(#lb-hatch)" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<text x="150" y="213" text-anchor="middle" class="lbl">VAD</text>
+
+
+<rect x="210" y="184" width="80"  height="52" rx="2" fill="var(--accent,#6aa9ff)" fill-opacity="0.22" stroke="var(--accent,#6aa9ff)" stroke-width="2"/>
+<rect x="290" y="184" width="80"  height="52" rx="2" fill="url(#lb-hatch)"  stroke="var(--accent,#6aa9ff)" stroke-width="2"/>
+<text x="250" y="206" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">LLM audio</text>
+<text x="250" y="220" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">TTFT</text>
+<text x="250" y="250" text-anchor="middle" class="note">100–200 ms</text>
+
+
+<rect x="370" y="188" width="24" height="44" rx="2" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<rect x="394" y="188" width="40" height="44" rx="2" fill="url(#lb-hatch)" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<text x="382" y="213" text-anchor="middle" class="lbl">dec.</text>
+<text x="382" y="246" text-anchor="middle" class="note">30–80 ms</text>
+
+
+<text x="446" y="204" class="tot">Total: 150–300 ms</text>
+
+
+<line x1="450" y1="108" x2="450" y2="182" stroke="var(--muted,#978f83)" stroke-width="1.2" marker-end="url(#lb-arrow)"/>
+<text x="462" y="136" class="note">removing ASR + TTS</text>
+<text x="462" y="150" class="note">collapses the budget</text>
+
+
+<rect x="560" y="258" width="11" height="11" rx="1" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<text x="575" y="269" class="note">min value (solid)</text>
+<rect x="560" y="276" width="11" height="11" rx="1" fill="url(#lb-hatch)" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<text x="575" y="287" class="note">range extension (hatched)</text>
+<rect x="560" y="294" width="11" height="11" rx="1" fill="var(--accent,#6aa9ff)" fill-opacity="0.30" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="575" y="305" class="note">LLM TTFT — bottleneck</text>
+
+</svg>
+<figcaption><b>Voice pipeline latency budget: cascade vs. speech-LM.</b> Row A (cascade: ASR → LLM → TTS) stacks VAD + ASR + LLM TTFT + TTS for a total of 300–900 ms; the LLM first-token latency dominates with the widest range. Row B (native speech LM) skips ASR and TTS entirely, cutting the budget to ~150–300 ms. Solid segments show minimum values; hatched extensions show the additional worst-case overhead.</figcaption>
+</figure>
+
+<p>For speech LMs that skip the ASR/TTS steps, the budget collapses to:</p>
+<div class="highlight"><pre><span></span><code>VAD + LLM audio-token TTFT + codec decode ≈ 150–300 ms
+</code></pre></div>
+<h3 id="streaming-architectures">Streaming Architectures<a class="headerlink" href="#streaming-architectures" title="Permanent link">¶</a></h3>
+<p>The standard approach to low-latency TTS uses chunk-by-chunk generation: the LM produces audio codec tokens in small batches (e.g., 25 tokens = ~333 ms of audio at 75 fps), which are decoded and streamed to the audio output device while generation continues.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">queue</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Iterator</span><span class="p">,</span> <span class="n">AsyncIterator</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">StreamingTTSPipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Minimal sketch of a streaming codec-LM TTS pipeline.</span>
+<span class="sd">    The LM generates codec tokens; a separate thread decodes and plays.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">lm</span><span class="p">,</span> <span class="n">codec_decoder</span><span class="p">,</span> <span class="n">chunk_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">25</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        lm: a language model that yields codec token ids one at a time</span>
+<span class="sd">        codec_decoder: converts a buffer of codec tokens → waveform chunk</span>
+<span class="sd">        chunk_size: number of codec frames per audio chunk (25 ≈ 333 ms)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lm</span> <span class="o">=</span> <span class="n">lm</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">codec_decoder</span> <span class="o">=</span> <span class="n">codec_decoder</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">chunk_size</span> <span class="o">=</span> <span class="n">chunk_size</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">generate_tokens</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text_tokens</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Iterator</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Yields one codec frame (a list of K RVQ token ids) at a time.</span>
+<span class="sd">        This is a generator — the LM samples one step at a time.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># (In practice: call lm.generate() with streaming enabled)</span>
+        <span class="k">for</span> <span class="n">frame_tokens</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">lm</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="n">text_tokens</span><span class="p">):</span>
+            <span class="k">yield</span> <span class="n">frame_tokens</span>  <span class="c1"># list of K ints, one per RVQ level</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="n">audio_queue</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Queue</span><span class="p">()</span>
+        <span class="n">text_tokens</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">lm</span><span class="o">.</span><span class="n">tokenize</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">producer</span><span class="p">():</span>
+            <span class="n">buffer</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">frame</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">generate_tokens</span><span class="p">(</span><span class="n">text_tokens</span><span class="p">):</span>
+                <span class="n">buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">frame</span><span class="p">)</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">buffer</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">chunk_size</span><span class="p">:</span>
+                    <span class="c1"># Decode chunk_size codec frames to waveform</span>
+                    <span class="n">waveform</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">codec_decoder</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">buffer</span><span class="p">)</span>
+                    <span class="k">await</span> <span class="n">audio_queue</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">waveform</span><span class="p">)</span>
+                    <span class="n">buffer</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="c1"># Flush remainder</span>
+            <span class="k">if</span> <span class="n">buffer</span><span class="p">:</span>
+                <span class="n">waveform</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">codec_decoder</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">buffer</span><span class="p">)</span>
+                <span class="k">await</span> <span class="n">audio_queue</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">waveform</span><span class="p">)</span>
+            <span class="k">await</span> <span class="n">audio_queue</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>  <span class="c1"># sentinel</span>
+
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">consumer</span><span class="p">():</span>
+            <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+                <span class="n">waveform</span> <span class="o">=</span> <span class="k">await</span> <span class="n">audio_queue</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">waveform</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="k">break</span>
+                <span class="c1"># In a real system: write to audio output device</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[audio] playing </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">waveform</span><span class="p">)</span><span class="o">/</span><span class="mi">24000</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s chunk&quot;</span><span class="p">)</span>
+
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="n">producer</span><span class="p">(),</span> <span class="n">consumer</span><span class="p">())</span>
+</code></pre></div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are designing a voice assistant that must respond within 400 ms. The LLM backbone typically has a 300 ms time-to-first-token. How do you architect the audio pipeline to meet the latency target, and what tradeoffs are involved?</p>
+<p><strong>A:</strong> The core idea is to overlap as much work as possible:</p>
+<ol>
+<li><strong>End-of-speech detection (VAD):</strong> Use a lightweight model (e.g., Silero VAD, ~1 ms) running continuously. Begin the LLM prefill as soon as VAD fires — do not wait for the ASR transcript.</li>
+<li><strong>Streaming ASR or direct audio input:</strong> If using ASR + LLM, pipeline them: send partial ASR hypotheses to the LLM as a speculative prefix (a &ldquo;beam speculation&rdquo; trick). If using an audio-LLM (Whisper encoder → LLM), the encoder runs in ~50 ms on a GPU for short utterances.</li>
+<li><strong>Speculative first-chunk TTS:</strong> As soon as the LLM emits its first ~20 tokens (a fraction of a second), start TTS synthesis of that prefix while the rest generates. Many responses start with short filler tokens (&ldquo;Sure,&rdquo; &ldquo;Of course,&rdquo;) which can be pre-synthesized.</li>
+<li><strong>On-device vs. server:</strong> Moving VAD and even the TTS vocoder on-device eliminates the network round-trip for the audio output path (~30–80 ms saved).</li>
+<li><strong>Tradeoffs:</strong> Speculative prefixes can be wrong (the LLM may back-track), causing an awkward audio gap. Pre-synthesized fillers can feel robotic. Using direct audio-in/audio-out avoids ASR/TTS latency but requires a larger, more expensive model.</li>
+</ol>
+<p>For a typical deployment: VAD (10 ms) + audio encoder (50 ms) + LLM TTFT (200 ms, optimized with continuous batching and FlashAttention) + first-chunk codec decode (30 ms) = 290 ms — achievable on a single A100.</p>
+</div>
+<h2 id="the-multimodal-token-stream-view">The Multimodal Token-Stream View<a class="headerlink" href="#the-multimodal-token-stream-view" title="Permanent link">¶</a></h2>
+<p>The cleanest conceptual model of audio-language fusion treats all modalities as <strong>token sequences</strong> feeding into a shared autoregressive transformer. Different modalities get different embedding tables and, potentially, different positional encodings, but share all transformer weights.</p>
+<figure class="viz" id="fig-multimodal-shared-token-stream">
+<svg viewBox="0 0 940 360" role="img" aria-label="Unified multimodal token stream: 11 positions with BOS, 5 audio tokens, 3 text tokens, then 2 audio tokens, all sharing one vocabulary split between text BPE indices 0-50264 and audio codec indices 50265-51288.">
+<defs>
+  <marker id="ms-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#978f83)"/>
+  </marker>
+</defs>
+<style>
+  #fig-multimodal-shared-token-stream text { fill: var(--ink-soft,#45413a); font: 400 11px var(--sans,sans-serif); }
+  #fig-multimodal-shared-token-stream .lbl { font: 700 11px var(--sans,sans-serif); }
+  #fig-multimodal-shared-token-stream .small { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+  #fig-multimodal-shared-token-stream .mono { font: 400 9px var(--mono,monospace); }
+  #fig-multimodal-shared-token-stream .voclab { font: 600 11px var(--sans,sans-serif); }
+</style>
+
+
+<text x="470" y="16" text-anchor="middle" style="font:700 13px var(--sans,sans-serif);fill:var(--ink-soft,#45413a)">Unified Multimodal Token Stream</text>
+
+<g transform="translate(0,26)">
+
+
+<g class="small">
+  <text x="69"  y="38" text-anchor="middle">0</text>
+  <text x="147" y="38" text-anchor="middle">1</text>
+  <text x="225" y="38" text-anchor="middle">2</text>
+  <text x="303" y="38" text-anchor="middle">3</text>
+  <text x="381" y="38" text-anchor="middle">4</text>
+  <text x="459" y="38" text-anchor="middle">5</text>
+  <text x="537" y="38" text-anchor="middle">6</text>
+  <text x="615" y="38" text-anchor="middle">7</text>
+  <text x="693" y="38" text-anchor="middle">8</text>
+  <text x="771" y="38" text-anchor="middle">9</text>
+  <text x="849" y="38" text-anchor="middle">10</text>
+</g>
+
+
+
+<rect x="30"  y="44" width="78" height="50" rx="5" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.5"/>
+<text x="69"  y="73" text-anchor="middle" class="lbl">BOS</text>
+
+
+<rect x="108" y="44" width="78" height="50" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.30" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="147" y="73" text-anchor="middle" class="mono">AU</text>
+<rect x="186" y="44" width="78" height="50" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.30" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="225" y="73" text-anchor="middle" class="mono">AU</text>
+<rect x="264" y="44" width="78" height="50" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.30" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="303" y="73" text-anchor="middle" class="mono">AU</text>
+<rect x="342" y="44" width="78" height="50" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.30" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="381" y="73" text-anchor="middle" class="mono">AU</text>
+<rect x="420" y="44" width="78" height="50" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.30" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="459" y="73" text-anchor="middle" class="mono">AU</text>
+
+
+<rect x="498" y="44" width="78" height="50" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.30" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<text x="537" y="73" text-anchor="middle" class="mono">TXT</text>
+<rect x="576" y="44" width="78" height="50" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.30" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<text x="615" y="73" text-anchor="middle" class="mono">TXT</text>
+<rect x="654" y="44" width="78" height="50" rx="5" fill="var(--accent-2,#ec9069)" fill-opacity="0.30" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<text x="693" y="73" text-anchor="middle" class="mono">TXT</text>
+
+
+<rect x="732" y="44" width="78" height="50" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.30" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="771" y="73" text-anchor="middle" class="mono">AU</text>
+<rect x="810" y="44" width="78" height="50" rx="5" fill="var(--accent,#6aa9ff)" fill-opacity="0.30" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="849" y="73" text-anchor="middle" class="mono">AU</text>
+
+
+<g class="small">
+  <text x="69"  y="110" text-anchor="middle">sys</text>
+  <text x="147" y="110" text-anchor="middle">aud</text>
+  <text x="225" y="110" text-anchor="middle">aud</text>
+  <text x="303" y="110" text-anchor="middle">aud</text>
+  <text x="381" y="110" text-anchor="middle">aud</text>
+  <text x="459" y="110" text-anchor="middle">aud</text>
+  <text x="537" y="110" text-anchor="middle">txt</text>
+  <text x="615" y="110" text-anchor="middle">txt</text>
+  <text x="693" y="110" text-anchor="middle">txt</text>
+  <text x="771" y="110" text-anchor="middle">aud</text>
+  <text x="849" y="110" text-anchor="middle">aud</text>
+</g>
+
+
+
+<line x1="108" y1="28" x2="486" y2="28" stroke="var(--accent,#6aa9ff)" stroke-width="1.2"/>
+<line x1="108" y1="28" x2="108" y2="34" stroke="var(--accent,#6aa9ff)" stroke-width="1.2"/>
+<line x1="486" y1="28" x2="486" y2="34" stroke="var(--accent,#6aa9ff)" stroke-width="1.2"/>
+<text x="297" y="26" text-anchor="middle" class="small" fill="var(--accent,#c15b39)">user speaks (audio in)</text>
+
+
+<line x1="498" y1="28" x2="732" y2="28" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<line x1="498" y1="28" x2="498" y2="34" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<line x1="732" y1="28" x2="732" y2="34" stroke="var(--accent-2,#ec9069)" stroke-width="1.2"/>
+<text x="615" y="26" text-anchor="middle" class="small" fill="var(--accent-2,#b04e2d)">model text response</text>
+
+
+<line x1="732" y1="16" x2="888" y2="16" stroke="var(--accent,#6aa9ff)" stroke-width="1.2"/>
+<line x1="732" y1="16" x2="732" y2="34" stroke="var(--accent,#6aa9ff)" stroke-width="1.2"/>
+<line x1="888" y1="16" x2="888" y2="34" stroke="var(--accent,#6aa9ff)" stroke-width="1.2"/>
+<text x="810" y="14" text-anchor="middle" class="small" fill="var(--accent,#c15b39)">model audio out</text>
+
+
+<text x="470" y="140" text-anchor="middle" style="font:600 11px var(--sans,sans-serif);fill:var(--muted,#978f83)">Shared Vocabulary</text>
+
+
+
+
+<rect x="30"  y="150" width="666" height="32" rx="0" fill="var(--accent-2,#ec9069)" fill-opacity="0.22" stroke="var(--accent-2,#ec9069)" stroke-width="1.5"/>
+<rect x="696" y="150" width="192" height="32" rx="0" fill="var(--accent,#6aa9ff)" fill-opacity="0.22" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+
+<text x="363" y="169" text-anchor="middle" class="voclab">Text BPE — indices 0–50264</text>
+<text x="792" y="169" text-anchor="middle" class="voclab" style="font:600 10px var(--sans,sans-serif)">Audio codec — 50265–51288</text>
+
+
+
+<line x1="615" y1="120" x2="615" y2="148" stroke="var(--accent-2,#ec9069)" stroke-width="1.2" stroke-dasharray="3 2" marker-end="url(#ms-arrow)"/>
+
+<line x1="771" y1="120" x2="771" y2="148" stroke="var(--accent,#6aa9ff)" stroke-width="1.2" stroke-dasharray="3 2" marker-end="url(#ms-arrow)"/>
+
+
+<text x="470" y="210" text-anchor="middle" class="small" fill="var(--muted,#978f83)">One transformer, one positional encoding; modality is just which vocab slice the id falls in.</text>
+<text x="470" y="224" text-anchor="middle" class="small" fill="var(--muted,#978f83)">Output softmax spans the whole space.</text>
+</g>
+
+</svg>
+<figcaption><b>Unified multimodal token stream: audio (AU) and text (TXT) tokens share one sequence and one vocabulary.</b> Positions 1–5 carry audio codec tokens from the user's speech input; positions 6–8 hold text BPE tokens; positions 9–10 continue with audio output tokens. Each token's identity determines its modality — audio IDs fall in the 50265–51288 slice while text IDs fall in 0–50264 — but all share the same transformer weights and positional encoding.</figcaption>
+</figure>
+
+<h3 id="projection-and-alignment-strategies">Projection and Alignment Strategies<a class="headerlink" href="#projection-and-alignment-strategies" title="Permanent link">¶</a></h3>
+<p>For <em>encoder-decoder</em> style audio fusion (e.g., Whisper encoder + LLM decoder):</p>
+<ol>
+<li><strong>Linear projection:</strong> A single learnable <span class="arithmatex">\(D_{\text{audio}} \to D_{\text{LLM}}\)</span> matrix maps audio encoder states directly to the LLM&rsquo;s embedding space. Fast and effective for well-aligned modalities.</li>
+<li><strong>Q-Former (borrowed from BLIP-2):</strong> A small cross-attention module with <span class="arithmatex">\(N\)</span> learnable query tokens extracts a compressed, fixed-length summary of the audio, then passes these <span class="arithmatex">\(N\)</span> vectors to the LLM. Reduces the token count regardless of audio length.</li>
+<li><strong>Perceiver resampler:</strong> A more flexible version of Q-Former with a learned set of latent vectors attending to audio frames, used in Flamingo-style architectures.</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">AudioQFormer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Minimal Q-Former: compress variable-length audio features to</span>
+<span class="sd">    a fixed set of N query tokens via cross-attention.</span>
+<span class="sd">    Used to bridge an audio encoder (e.g., Whisper) to an LLM.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">n_queries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span>    <span class="c1"># number of output tokens fed to LLM</span>
+        <span class="n">audio_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1280</span><span class="p">,</span>  <span class="c1"># Whisper-large encoder dim</span>
+        <span class="n">llm_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4096</span><span class="p">,</span>    <span class="c1"># LLM embedding dim</span>
+        <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span>
+        <span class="n">n_layers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="c1"># Learnable query tokens — these become the LLM input</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">queries</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">n_queries</span><span class="p">,</span> <span class="n">llm_dim</span><span class="p">))</span>
+        <span class="c1"># Cross-attention layers: queries attend to audio features</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cross_attn_layers</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">([</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">MultiheadAttention</span><span class="p">(</span>
+                <span class="n">embed_dim</span><span class="o">=</span><span class="n">llm_dim</span><span class="p">,</span>
+                <span class="n">num_heads</span><span class="o">=</span><span class="n">n_heads</span><span class="p">,</span>
+                <span class="n">kdim</span><span class="o">=</span><span class="n">audio_dim</span><span class="p">,</span>
+                <span class="n">vdim</span><span class="o">=</span><span class="n">audio_dim</span><span class="p">,</span>
+                <span class="n">batch_first</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_layers</span><span class="p">)</span>
+        <span class="p">])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norms</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">([</span><span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">llm_dim</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_layers</span><span class="p">)])</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">audio_features</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        audio_features: (B, T_audio, audio_dim) — e.g., Whisper encoder output</span>
+<span class="sd">        Returns: (B, n_queries, llm_dim) — fixed-length token sequence for LLM</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">B</span> <span class="o">=</span> <span class="n">audio_features</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># (B, N, llm_dim)</span>
+
+        <span class="k">for</span> <span class="n">cross_attn</span><span class="p">,</span> <span class="n">norm</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cross_attn_layers</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">norms</span><span class="p">):</span>
+            <span class="c1"># Cross-attend: queries (Q) attend to audio features (K, V)</span>
+            <span class="n">attended</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cross_attn</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">audio_features</span><span class="p">,</span> <span class="n">audio_features</span><span class="p">)</span>
+            <span class="n">q</span> <span class="o">=</span> <span class="n">norm</span><span class="p">(</span><span class="n">q</span> <span class="o">+</span> <span class="n">attended</span><span class="p">)</span>           <span class="c1"># residual + layer norm</span>
+
+        <span class="k">return</span> <span class="n">q</span>  <span class="c1"># (B, 32, 4096) — drop into LLM as prefix tokens</span>
+</code></pre></div>
+<h3 id="handling-variable-length-audio-in-a-batch">Handling Variable-Length Audio in a Batch<a class="headerlink" href="#handling-variable-length-audio-in-a-batch" title="Permanent link">¶</a></h3>
+<p>One practical challenge is batching audio inputs of different lengths. There are two strategies:</p>
+<ul>
+<li><strong>Fixed-length window (Whisper style):</strong> Pad or truncate every input to 30 s. Simple and avoids dynamic shapes. The downside: short utterances waste compute; long ones are truncated.</li>
+<li><strong>Dynamic chunking:</strong> Split long audio into overlapping 30-second chunks, process each independently, then concatenate encoder outputs before passing to the LLM. Must handle boundary artifacts.</li>
+</ul>
+<h2 id="multimodal-fusion-audio-vision-text">Multimodal Fusion: Audio + Vision + Text<a class="headerlink" href="#multimodal-fusion-audio-vision-text" title="Permanent link">¶</a></h2>
+<p>Full multimodal systems must fuse audio, visual, and text streams. The architectures converge on a unified pattern: each modality has a dedicated encoder, a modality-specific projection/adapter, and a shared LLM backbone that receives all modalities as token sequences.</p>
+<figure class="viz" id="fig-unified-avl-fusion-architecture">
+<svg viewBox="0 0 1000 460" role="img" aria-label="Unified audio-vision-language model: Audio lane with Whisper encoder and linear projection, Vision lane with ViT encoder and Q-Former, Text lane passing directly, all three merge into a shared LLM backbone that emits output tokens.">
+<defs>
+  <marker id="avl-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6aa9ff)" class="v-accent"/>
+  </marker>
+  <marker id="avl-arrow-s" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#978f83)"/>
+  </marker>
+</defs>
+<style>
+  #fig-unified-avl-fusion-architecture text { fill: var(--ink-soft,#45413a); font: 400 11px var(--sans,sans-serif); }
+  #fig-unified-avl-fusion-architecture .lbl { font: 700 11px var(--sans,sans-serif); }
+  #fig-unified-avl-fusion-architecture .small { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+  #fig-unified-avl-fusion-architecture .lanelbl { font: 700 10px var(--sans,sans-serif); fill: var(--muted,#978f83); letter-spacing:0.5px; }
+</style>
+
+
+<text x="8" y="108" class="lanelbl">AUDIO</text>
+<text x="8" y="240" class="lanelbl">VISION</text>
+<text x="8" y="370" class="lanelbl">TEXT</text>
+
+
+
+<rect x="60" y="84" width="90" height="46" rx="22" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.3"/>
+<text x="105" y="111" text-anchor="middle" class="lbl">[waveform]</text>
+
+<line x1="150" y1="107" x2="192" y2="107" stroke="var(--accent,#6aa9ff)" stroke-width="1.6" marker-end="url(#avl-arrow)"/>
+
+<rect x="194" y="84" width="130" height="46" rx="6" class="v-fill" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="259" y="108" text-anchor="middle" class="lbl">Whisper encoder</text>
+<text x="259" y="122" text-anchor="middle" class="small">modality encoder</text>
+
+<line x1="324" y1="107" x2="366" y2="107" stroke="var(--accent,#6aa9ff)" stroke-width="1.6" marker-end="url(#avl-arrow)"/>
+
+<rect x="368" y="84" width="120" height="46" rx="6" fill="var(--accent-2,#ec9069)" fill-opacity="0.22" stroke="var(--accent-2,#ec9069)" stroke-width="1.8"/>
+<text x="428" y="108" text-anchor="middle" class="lbl">linear projection</text>
+<text x="428" y="122" text-anchor="middle" class="small">trainable adapter</text>
+
+<line x1="488" y1="107" x2="570" y2="107" stroke="var(--accent,#6aa9ff)" stroke-width="1.4" stroke-dasharray="4 2"/>
+<line x1="570" y1="107" x2="570" y2="230" stroke="var(--accent,#6aa9ff)" stroke-width="1.4"/>
+
+
+
+<rect x="60" y="216" width="90" height="46" rx="22" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.3"/>
+<text x="105" y="244" text-anchor="middle" class="lbl">[image]</text>
+
+<line x1="150" y1="239" x2="192" y2="239" stroke="var(--accent,#6aa9ff)" stroke-width="1.6" marker-end="url(#avl-arrow)"/>
+
+<rect x="194" y="216" width="130" height="46" rx="6" class="v-fill" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="259" y="240" text-anchor="middle" class="lbl">ViT encoder</text>
+<text x="259" y="254" text-anchor="middle" class="small">modality encoder</text>
+
+<line x1="324" y1="239" x2="366" y2="239" stroke="var(--accent,#6aa9ff)" stroke-width="1.6" marker-end="url(#avl-arrow)"/>
+
+<rect x="368" y="216" width="120" height="46" rx="6" fill="var(--accent-2,#ec9069)" fill-opacity="0.22" stroke="var(--accent-2,#ec9069)" stroke-width="1.8"/>
+<text x="428" y="240" text-anchor="middle" class="lbl">Q-Former</text>
+<text x="428" y="254" text-anchor="middle" class="small">trainable adapter</text>
+
+<line x1="488" y1="239" x2="570" y2="239" stroke="var(--accent,#6aa9ff)" stroke-width="1.4" stroke-dasharray="4 2"/>
+
+
+
+<rect x="60" y="345" width="90" height="46" rx="22" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.3"/>
+<text x="105" y="372" text-anchor="middle" class="lbl">[tokens]</text>
+
+<line x1="150" y1="368" x2="570" y2="368" stroke="var(--muted,#978f83)" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#avl-arrow-s)"/>
+<text x="360" y="394" text-anchor="middle" class="small">(no encoder needed — text already tokenized)</text>
+
+<text x="280" y="362" text-anchor="middle" class="small">skips encoder</text>
+
+
+<line x1="570" y1="107" x2="570" y2="368" stroke="var(--accent,#6aa9ff)" stroke-width="2"/>
+<line x1="570" y1="368" x2="610" y2="230" stroke="var(--accent,#6aa9ff)" stroke-width="2" marker-end="url(#avl-arrow)"/>
+
+
+<text x="500" y="200" class="small">prefix of soft</text>
+<text x="500" y="213" class="small">tokens per</text>
+<text x="500" y="226" class="small">modality</text>
+
+
+<rect x="612" y="100" width="240" height="290" rx="10" fill="var(--accent,#6aa9ff)" fill-opacity="0.18" stroke="var(--accent,#6aa9ff)" stroke-width="2.5"/>
+<text x="732" y="218" text-anchor="middle" class="lbl">LLM backbone</text>
+<text x="732" y="236" text-anchor="middle" class="small">(shared transformer weights)</text>
+<text x="732" y="252" text-anchor="middle" class="small">unrestricted self-attention</text>
+<text x="732" y="268" text-anchor="middle" class="small">across all tokens</text>
+
+<text x="620" y="305" class="small">self-attention lets LLM</text>
+<text x="620" y="319" class="small">cross-attend audio &lt;-&gt; vision &lt;-&gt; text</text>
+
+
+<line x1="852" y1="245" x2="888" y2="245" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#avl-arrow)"/>
+<rect x="890" y="223" width="100" height="44" rx="22" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.3"/>
+<text x="940" y="249" text-anchor="middle" class="small">[output tokens]</text>
+
+</svg>
+<figcaption><b>Unified audio-vision-language model architecture.</b> Each modality follows its own encoder-plus-adapter lane — audio through Whisper + linear projection, vision through ViT + Q-Former — while text tokens flow directly into the merge bus. All three converge as token sequences into a shared LLM backbone whose unrestricted self-attention allows cross-modal reasoning across audio, visual, and textual context simultaneously.</figcaption>
+</figure>
+
+<p>The LLM backbone sees a prefix of &ldquo;soft tokens&rdquo; from each modality adapter, followed by text tokens forming the instruction or dialogue. Self-attention is unrestricted across all tokens, allowing the LLM to cross-attend between audio and visual context.</p>
+<h3 id="audiocaps-librispeech-and-evaluation">AudioCaps, LibriSpeech, and Evaluation<a class="headerlink" href="#audiocaps-librispeech-and-evaluation" title="Permanent link">¶</a></h3>
+<p>Multimodal audio models are evaluated on:</p>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Dataset</th>
+<th>Metric</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ASR</td>
+<td>LibriSpeech</td>
+<td>WER (word error rate)</td>
+</tr>
+<tr>
+<td>Audio captioning</td>
+<td>AudioCaps</td>
+<td>CIDEr, METEOR</td>
+</tr>
+<tr>
+<td>Speech translation</td>
+<td>CoVoST-2</td>
+<td>BLEU</td>
+</tr>
+<tr>
+<td>Zero-shot TTS similarity</td>
+<td>LibriSpeech test-clean</td>
+<td>SECS (speaker cosine sim)</td>
+</tr>
+<tr>
+<td>Speech emotion recognition</td>
+<td>IEMOCAP</td>
+<td>Weighted accuracy</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall</p>
+<p>When fine-tuning an audio-LLM end-to-end, the audio encoder&rsquo;s early layers can catastrophically forget their pre-trained acoustic representations if the learning rate is too high. Standard practice: use a much lower learning rate for the encoder (e.g., 1e-5) than for the projection and LLM layers (e.g., 1e-4), or freeze the encoder entirely for the first few thousand steps.</p>
+</div>
+<h3 id="audio-tokens-in-a-shared-vocabulary">Audio Tokens in a Shared Vocabulary<a class="headerlink" href="#audio-tokens-in-a-shared-vocabulary" title="Permanent link">¶</a></h3>
+<p>When audio codec tokens and text BPE tokens share a single vocabulary table, the LLM must simultaneously learn to predict audio continuation (&ldquo;what sound comes next?&rdquo;) and text continuation (&ldquo;what word comes next?&rdquo;). A critical design choice is <strong>vocabulary partitioning</strong>: audio tokens occupy a contiguous slice of the vocab (e.g., indices 50265–51288 for a 1024-code codec), so the output head&rsquo;s softmax operates over a larger space.</p>
+<p>The cross-entropy loss during training typically applies different weights to audio vs. text tokens, since audio token sequences are much longer and can dominate the gradient signal:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">multimodal_cross_entropy</span><span class="p">(</span>
+    <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>    <span class="c1"># (B, T, vocab_size)</span>
+    <span class="n">targets</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># (B, T) integer targets</span>
+    <span class="n">token_type</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="c1"># (B, T) — 0=text, 1=audio</span>
+    <span class="n">audio_weight</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Weighted cross-entropy that down-weights audio tokens.</span>
+<span class="sd">    Without weighting, 600 audio tokens/s vs ~3 text tokens/s</span>
+<span class="sd">    means audio dominates the loss 200:1, degrading text quality.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">flat_logits</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+    <span class="n">flat_targets</span> <span class="o">=</span> <span class="n">targets</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">flat_type</span> <span class="o">=</span> <span class="n">token_type</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># Per-token loss (no reduction)</span>
+    <span class="n">loss_per_token</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span>
+        <span class="n">flat_logits</span><span class="p">,</span> <span class="n">flat_targets</span><span class="p">,</span> <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;none&quot;</span>
+    <span class="p">)</span>  <span class="c1"># (B*T,)</span>
+
+    <span class="c1"># Weight mask: text tokens get weight 1.0, audio tokens get audio_weight</span>
+    <span class="n">weights</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">flat_type</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span>
+                          <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">loss_per_token</span><span class="p">),</span>
+                          <span class="n">torch</span><span class="o">.</span><span class="n">full_like</span><span class="p">(</span><span class="n">loss_per_token</span><span class="p">,</span> <span class="n">audio_weight</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="p">(</span><span class="n">loss_per_token</span> <span class="o">*</span> <span class="n">weights</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">/</span> <span class="n">weights</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+</code></pre></div>
+<h2 id="any-to-any-audio-generation-music-environmental-sound-and-voice">Any-to-Any Audio Generation: Music, Environmental Sound, and Voice<a class="headerlink" href="#any-to-any-audio-generation-music-environmental-sound-and-voice" title="Permanent link">¶</a></h2>
+<p>Beyond speech, audio LLMs can model music and environmental sound by replacing the speech-specific encoder with a general-purpose codec (EnCodec or DAC) and training on diverse audio datasets.</p>
+<h3 id="musicgen">MusicGen<a class="headerlink" href="#musicgen" title="Permanent link">¶</a></h3>
+<p>MusicGen (Copet et al., Meta AI, 2023) is an autoregressive transformer trained on EnCodec tokens from licensed music. It uses a <strong>codebook interleaving</strong> technique: instead of the delay pattern, it uses a &ldquo;codebook per time step&rdquo; approach where all <span class="arithmatex">\(K\)</span> levels for time step <span class="arithmatex">\(t\)</span> are modeled jointly in a single forward pass using a small depth transformer, before advancing to step <span class="arithmatex">\(t+1\)</span>. This avoids the exponential search space of fully autoregressive RVQ and keeps generation tractable.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">audiocraft.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">MusicGen</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">soundfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sf</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">generate_music</span><span class="p">(</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">duration_seconds</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10.0</span><span class="p">,</span>
+    <span class="n">model_size</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;small&quot;</span>   <span class="c1"># small | medium | large | melody</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Generate music conditioned on a text description.</span>
+<span class="sd">    Returns float32 audio at 32 kHz.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">MusicGen</span><span class="o">.</span><span class="n">get_pretrained</span><span class="p">(</span><span class="n">model_size</span><span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">set_generation_params</span><span class="p">(</span><span class="n">duration</span><span class="o">=</span><span class="n">duration_seconds</span><span class="p">)</span>
+
+    <span class="c1"># Condition on text description</span>
+    <span class="n">wav</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">generate</span><span class="p">([</span><span class="n">description</span><span class="p">])</span>   <span class="c1"># (1, 1, T) float tensor</span>
+    <span class="n">audio</span> <span class="o">=</span> <span class="n">wav</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>       <span class="c1"># (T,) float32 at 32 kHz</span>
+    <span class="k">return</span> <span class="n">audio</span>
+
+<span class="c1"># Example (requires audiocraft installed):</span>
+<span class="c1"># audio = generate_music(&quot;upbeat jazz piano with drums, 120 BPM&quot;, duration_seconds=15)</span>
+<span class="c1"># sf.write(&quot;output.wav&quot;, audio, 32000)</span>
+</code></pre></div>
+<h3 id="audiolm-the-hierarchical-approach">AudioLM: The Hierarchical Approach<a class="headerlink" href="#audiolm-the-hierarchical-approach" title="Permanent link">¶</a></h3>
+<p>AudioLM (Borsos et al., Google, 2022) pioneered the hierarchical two-stage approach specifically for long-form audio generation:</p>
+<ol>
+<li><strong>Semantic modeling:</strong> An autoregressive LM over k-means clusters of w2v-BERT features (semantic tokens). This captures long-range structure — melody, prosody, content — with a compact ~50 token/s rate.</li>
+<li><strong>Acoustic modeling:</strong> Two coarse-to-fine codec LMs that condition on semantic tokens and progressively generate EnCodec tokens at increasing bitrate.</li>
+</ol>
+<p>The key insight: semantic tokens are far more compressible than acoustic tokens. A 30-second clip requires only ~1,500 semantic tokens but ~18,000 EnCodec tokens. By modeling semantics first, the LM can plan global structure before committing to acoustic details.</p>
+<div class="admonition note">
+<p class="admonition-title">Connection to language modeling</p>
+<p>The AudioLM hierarchy mirrors the byte-pair encoding intuition in <a href="../02-transformer/01-tokenization.html">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a>: coarser representations capture structure; finer representations capture surface form. The same trade-off appears throughout the stack — from BPE merges to RVQ levels.</p>
+</div>
+<h2 id="key-design-patterns-and-engineering-considerations">Key Design Patterns and Engineering Considerations<a class="headerlink" href="#key-design-patterns-and-engineering-considerations" title="Permanent link">¶</a></h2>
+<h3 id="positional-encoding-for-audio">Positional Encoding for Audio<a class="headerlink" href="#positional-encoding-for-audio" title="Permanent link">¶</a></h3>
+<p>Audio frames have a meaningful temporal ordering at multiple time scales: within-word phoneme sequences (10–100 ms), prosodic phrases (0.5–5 s), and discourse structure (&gt;5 s). Standard RoPE or learned absolute positional embeddings work at the token level. When mixing audio and text tokens in the same sequence, the positional encoding must remain monotone across modality boundaries — a common source of subtle bugs.</p>
+<h3 id="speaker-and-style-conditioning">Speaker and Style Conditioning<a class="headerlink" href="#speaker-and-style-conditioning" title="Permanent link">¶</a></h3>
+<p>Zero-shot TTS requires the model to clone a speaker&rsquo;s voice from a brief prompt without fine-tuning. The two dominant approaches are:</p>
+<ol>
+<li><strong>Acoustic prompt prefix:</strong> Prepend the acoustic prompt&rsquo;s codec tokens directly to the context (VALL-E style). The LM learns to match the style of its prefix.</li>
+<li><strong>Speaker embedding injection:</strong> Encode the prompt with an independent speaker encoder (e.g., d-vector or x-vector), and add the speaker embedding to every token&rsquo;s residual stream.</li>
+</ol>
+<h3 id="data-efficiency-and-pretraining-strategies">Data Efficiency and Pretraining Strategies<a class="headerlink" href="#data-efficiency-and-pretraining-strategies" title="Permanent link">¶</a></h3>
+<p>High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce. State-of-the-art systems use:</p>
+<ul>
+<li><strong>Semi-supervised pretraining:</strong> Pretrain the audio encoder on large unlabeled audio corpora (HuBERT, wav2vec 2.0), then fine-tune the full pipeline on smaller paired data.</li>
+<li><strong>Pseudo-labeling:</strong> Run a large ASR system on unlabeled audio to generate transcript &ldquo;labels,&rdquo; then train a smaller model on the pseudo-labeled corpus.</li>
+<li><strong>Cross-modal transfer:</strong> Initialize the audio LM from a strong text LLM checkpoint, freeze the LLM, and train only the audio adapter initially. The LLM&rsquo;s linguistic priors transfer even without audio pretraining.</li>
+</ul>
+<figure class="viz" id="fig-audio-llm-transfer-curriculum">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 1040 480" role="img" aria-label="Audio-LLM transfer learning curriculum: 4 steps showing progressive unfreezing. Step 1 pre-trains audio encoder alone. Step 2 trains projection adapter with encoder and LLM frozen. Step 3 jointly fine-tunes encoder, adapter, and LLM with LoRA. Step 4 applies RLHF preference tuning.">
+<defs>
+  <marker id="tc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6aa9ff)" class="v-accent"/>
+  </marker>
+
+  <symbol id="tc-lock" viewBox="0 0 14 16">
+    <rect x="2" y="7" width="10" height="8" rx="2" fill="none" stroke="var(--muted,#978f83)" stroke-width="1.5"/>
+    <path d="M4 7V5a3 3 0 1 1 6 0v2" fill="none" stroke="var(--muted,#978f83)" stroke-width="1.5"/>
+  </symbol>
+</defs>
+<style>
+  #fig-audio-llm-transfer-curriculum text { fill: var(--ink-soft,#45413a); font: 400 10.5px var(--sans,sans-serif); }
+  #fig-audio-llm-transfer-curriculum .lbl { font: 700 11px var(--sans,sans-serif); }
+  #fig-audio-llm-transfer-curriculum .small { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+  #fig-audio-llm-transfer-curriculum .cardtitle { font: 700 11px var(--sans,sans-serif); }
+  #fig-audio-llm-transfer-curriculum .rowlbl { font: 600 9px var(--sans,sans-serif); fill: var(--muted,#978f83); text-transform:uppercase; letter-spacing:0.5px; }
+
+  /* Card highlight animation */
+  #fig-audio-llm-transfer-curriculum .tc-card { transition: opacity 0.3s; }
+
+  #fig-audio-llm-transfer-curriculum #tc-card-1 { animation: tc-hl 6s ease-in-out infinite; }
+  #fig-audio-llm-transfer-curriculum #tc-card-2 { animation: tc-hl 6s ease-in-out 1.5s infinite; }
+  #fig-audio-llm-transfer-curriculum #tc-card-3 { animation: tc-hl 6s ease-in-out 3s infinite; }
+  #fig-audio-llm-transfer-curriculum #tc-card-4 { animation: tc-hl 6s ease-in-out 4.5s infinite; }
+  @keyframes tc-hl {
+    0%,14%,100% { filter: brightness(1); }
+    16%,30%     { filter: brightness(1.3); }
+  }
+
+  /* Trainable block highlight */
+  #fig-audio-llm-transfer-curriculum .tc-trainable { opacity: 0.3; }
+  #fig-audio-llm-transfer-curriculum #tc-enc1 { animation: tc-light 6s ease-in-out infinite; }
+  #fig-audio-llm-transfer-curriculum #tc-adp2 { animation: tc-light 6s ease-in-out 1.5s infinite; }
+  #fig-audio-llm-transfer-curriculum #tc-enc3, #fig-audio-llm-transfer-curriculum #tc-adp3, #fig-audio-llm-transfer-curriculum #tc-llm3 { animation: tc-light 6s ease-in-out 3s infinite; }
+  #fig-audio-llm-transfer-curriculum #tc-rlhf4 { animation: tc-light 6s ease-in-out 4.5s infinite; }
+  @keyframes tc-light {
+    0%,14%,100% { opacity: 0.25; }
+    16%,30%     { opacity: 0.95; }
+  }
+</style>
+
+
+<text x="520" y="22" text-anchor="middle" style="font:700 13px var(--sans,sans-serif);fill:var(--ink-soft,#45413a)">Audio-LLM Transfer Learning Curriculum</text>
+
+
+<g id="tc-card-1" class="tc-card">
+
+  <rect x="16" y="34" width="228" height="330" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+
+  <rect x="16" y="34" width="228" height="30" rx="8" fill="var(--accent,#6aa9ff)" fill-opacity="0.30"/>
+  <rect x="16" y="52" width="228" height="12" fill="var(--accent,#6aa9ff)" fill-opacity="0.30"/>
+  <text x="130" y="54" text-anchor="middle" class="cardtitle">Step 1</text>
+  <text x="130" y="72" text-anchor="middle" class="small">Pre-train audio encoder alone</text>
+
+
+
+  <rect id="tc-enc1" x="36" y="86" width="186" height="36" rx="4" fill="var(--accent,#6aa9ff)" fill-opacity="0.25" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" class="tc-trainable"/>
+  <text x="130" y="108" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Audio Encoder</text>
+
+  <rect x="36" y="130" width="186" height="30" rx="4" fill="none" stroke="var(--muted,#978f83)" stroke-width="1" stroke-dasharray="4 2"/>
+  <text x="130" y="150" text-anchor="middle" class="small">Adapter (not yet present)</text>
+
+  <rect x="36" y="168" width="186" height="30" rx="4" fill="none" stroke="var(--muted,#978f83)" stroke-width="1" stroke-dasharray="4 2"/>
+  <text x="130" y="188" text-anchor="middle" class="small">LLM (not yet connected)</text>
+
+
+  <text x="36" y="220" class="rowlbl">Data:</text>
+  <text x="36" y="234" class="small">~1B unlabeled audio frames</text>
+  <text x="36" y="247" class="small">(HuBERT-style self-supervised)</text>
+
+  <text x="36" y="270" class="rowlbl">Loss:</text>
+  <text x="36" y="284" class="small">masked-unit prediction</text>
+</g>
+
+
+<line x1="244" y1="198" x2="268" y2="198" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#tc-arrow)"/>
+
+
+<g id="tc-card-2" class="tc-card">
+  <rect x="270" y="34" width="228" height="330" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <rect x="270" y="34" width="228" height="30" rx="8" fill="var(--accent,#6aa9ff)" fill-opacity="0.30"/>
+  <rect x="270" y="52" width="228" height="12" fill="var(--accent,#6aa9ff)" fill-opacity="0.30"/>
+  <text x="384" y="54" text-anchor="middle" class="cardtitle">Step 2</text>
+  <text x="384" y="72" text-anchor="middle" class="small">Train projection adapter</text>
+
+
+  <rect x="290" y="86" width="186" height="36" rx="4" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.2"/>
+  <text x="384" y="108" text-anchor="middle" class="small">Audio Encoder (frozen)</text>
+  <use href="#tc-lock" x="457" y="89" width="14" height="16" stroke="var(--muted,#978f83)"/>
+
+  <rect id="tc-adp2" x="290" y="130" width="186" height="30" rx="4" fill="var(--accent,#6aa9ff)" fill-opacity="0.25" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" class="tc-trainable"/>
+  <text x="384" y="149" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Adapter (trainable)</text>
+
+  <rect x="290" y="168" width="186" height="30" rx="4" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.2"/>
+  <text x="384" y="188" text-anchor="middle" class="small">LLM (frozen)</text>
+  <use href="#tc-lock" x="457" y="170" width="14" height="16" stroke="var(--muted,#978f83)"/>
+
+  <text x="290" y="220" class="rowlbl">Data:</text>
+  <text x="290" y="234" class="small">~1000 h paired speech-text</text>
+  <text x="290" y="247" class="small">(LibriSpeech, GigaSpeech)</text>
+  <text x="290" y="270" class="rowlbl">Loss:</text>
+  <text x="290" y="284" class="small">ASR cross-entropy (text tokens only)</text>
+</g>
+
+
+<line x1="498" y1="198" x2="522" y2="198" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#tc-arrow)"/>
+
+
+<g id="tc-card-3" class="tc-card">
+  <rect x="524" y="34" width="228" height="330" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <rect x="524" y="34" width="228" height="30" rx="8" fill="var(--accent,#6aa9ff)" fill-opacity="0.30"/>
+  <rect x="524" y="52" width="228" height="12" fill="var(--accent,#6aa9ff)" fill-opacity="0.30"/>
+  <text x="638" y="54" text-anchor="middle" class="cardtitle">Step 3</text>
+  <text x="638" y="72" text-anchor="middle" class="small">Joint fine-tune (+ LLM LoRA)</text>
+
+
+  <rect id="tc-enc3" x="544" y="86" width="186" height="36" rx="4" fill="var(--accent,#6aa9ff)" fill-opacity="0.25" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" class="tc-trainable"/>
+  <text x="638" y="108" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Audio Encoder</text>
+
+  <rect id="tc-adp3" x="544" y="130" width="186" height="30" rx="4" fill="var(--accent,#6aa9ff)" fill-opacity="0.25" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" class="tc-trainable"/>
+  <text x="638" y="149" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Adapter</text>
+
+  <rect id="tc-llm3" x="544" y="168" width="186" height="36" rx="4" fill="var(--accent,#6aa9ff)" fill-opacity="0.25" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" class="tc-trainable"/>
+  <text x="638" y="186" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">LLM + LoRA</text>
+  <text x="638" y="198" text-anchor="middle" class="small">LoRA adapters only</text>
+
+  <text x="544" y="228" class="rowlbl">Data:</text>
+  <text x="544" y="242" class="small">mixed speech/text instruction data</text>
+  <text x="544" y="270" class="rowlbl">Loss:</text>
+  <text x="544" y="284" class="small">multimodal cross-entropy</text>
+  <text x="544" y="297" class="small">(text + audio tokens)</text>
+</g>
+
+
+<line x1="752" y1="198" x2="776" y2="198" stroke="var(--accent,#6aa9ff)" stroke-width="1.8" marker-end="url(#tc-arrow)"/>
+
+
+<g id="tc-card-4" class="tc-card">
+  <rect x="778" y="34" width="246" height="330" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <rect x="778" y="34" width="246" height="30" rx="8" fill="var(--accent,#6aa9ff)" fill-opacity="0.30"/>
+  <rect x="778" y="52" width="246" height="12" fill="var(--accent,#6aa9ff)" fill-opacity="0.30"/>
+  <text x="901" y="54" text-anchor="middle" class="cardtitle">Step 4</text>
+  <text x="901" y="72" text-anchor="middle" class="small">RLHF / preference tuning</text>
+
+
+  <rect id="tc-rlhf4" x="798" y="86" width="206" height="118" rx="6" fill="var(--good,#2f9e6e)" fill-opacity="0.15" stroke="var(--good,#2f9e6e)" stroke-width="1.8" stroke-dasharray="5 2" class="tc-trainable"/>
+  <text x="901" y="134" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Full model stack</text>
+  <text x="901" y="151" text-anchor="middle" class="small">preference / RLHF</text>
+  <text x="901" y="165" text-anchor="middle" class="small">optimization</text>
+  <text x="901" y="179" text-anchor="middle" class="small">over all components</text>
+
+  <text x="798" y="228" class="rowlbl">Data:</text>
+  <text x="798" y="242" class="small">preference pairs for voice</text>
+  <text x="798" y="255" class="small">quality / naturalness</text>
+  <text x="798" y="270" class="rowlbl">Loss:</text>
+  <text x="798" y="284" class="small">RLHF reward signal</text>
+</g>
+
+
+<rect x="20" y="390" width="14" height="14" rx="2" fill="var(--accent,#6aa9ff)" fill-opacity="0.55" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="38" y="402" class="small" fill="var(--ink-soft,#45413a)">trainable (lit)</text>
+<rect x="130" y="390" width="14" height="14" rx="2" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1"/>
+<text x="148" y="402" class="small" fill="var(--ink-soft,#45413a)">frozen (muted + lock)</text>
+<rect x="270" y="390" width="14" height="14" rx="2" fill="var(--good,#2f9e6e)" fill-opacity="0.25" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+<text x="288" y="402" class="small" fill="var(--ink-soft,#45413a)">RLHF / preference badge</text>
+
+</svg>
+<figcaption><b>Four-step transfer learning curriculum for an audio-LLM, showing progressive unfreezing.</b> Step 1 pre-trains the audio encoder alone with self-supervised masked prediction. Step 2 trains only the projection adapter while keeping the encoder and LLM frozen. Step 3 jointly fine-tunes all components (encoder, adapter, and LLM via LoRA) on mixed multimodal instruction data. Step 4 applies RLHF preference tuning for voice quality and naturalness. Each card lights up in sequence in the animation to emphasize the unfreezing progression.</figcaption>
+</figure>
+
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>When debugging a speech LM, always check word error rate on a standard ASR benchmark (e.g., LibriSpeech test-clean) throughout training. A sudden spike in WER indicates that the model has lost its speech understanding capability — often caused by a learning rate that is too high for the audio encoder, or by an accidental change in the audio preprocessing pipeline (normalization, resampling).</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Audio is made machine-learnable as either continuous Mel spectrograms (for encoder models like Whisper) or discrete codec tokens via Residual Vector Quantization (for generative models like VALL-E, AudioLM, MusicGen).</li>
+<li>Neural audio codecs (EnCodec, SoundStream) compress audio to ~75 frames/second with 8 RVQ levels, producing approximately 600 tokens/second — far more than text, creating a fundamental token-budget tension.</li>
+<li>Whisper&rsquo;s encoder-decoder architecture treats ASR as a standard seq2seq problem over log-Mel features, making it easy to reuse as an audio feature extractor for downstream LLMs via linear projection or Q-Former adapters.</li>
+<li>Speech LMs (AudioPaLM, Moshi) bypass the ASR/TTS pipeline by treating audio tokens and text tokens as interchangeable elements of a unified sequence, enabling lower latency and richer parallelism.</li>
+<li>Real-time full-duplex dialogue (Moshi-style) requires a hierarchical temporal architecture: a slow inner LM operating on coarse semantic tokens, and fast depth transformers producing fine acoustic tokens per step.</li>
+<li>The multimodal token-stream view — each modality contributing tokens to a shared sequence — is the dominant abstraction, requiring only modality-specific encoders and projection adapters on top of a frozen or lightly fine-tuned LLM.</li>
+<li>Audio token sequences are 200× longer than equivalent text, necessitating weighted loss, hierarchical generation, or compressed representations (Q-Former) to prevent the LLM from being overwhelmed by acoustic detail.</li>
+<li>For production voice systems, the latency budget is roughly VAD (50 ms) + audio encoder (50 ms) + LLM TTFT (200 ms) + first-chunk decode (30 ms) ≈ 330 ms — achievable on a single modern GPU with optimized inference.</li>
+<li>Transfer learning and semi-supervised pretraining (HuBERT, wav2vec 2.0, pseudo-labeling) are essential because high-quality paired audio-text data is scarce relative to the scale of text-only corpora.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Audio-language research has converged on a unified paradigm: neural audio codecs (RVQ-based) tokenize sound into discrete sequences that a shared transformer processes alongside text, enabling end-to-end speech-in/speech-out systems with sub-200 ms latency. The field moved rapidly from cascade pipelines (ASR → LLM → TTS) to native audio LLMs like Moshi and VALL-E 2 that operate directly on codec tokens.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2210.13438">Défossez et al., <em>High Fidelity Neural Audio Compression</em> (2022)</a> — EnCodec: the RVQ-based neural codec that became the standard tokenizer for audio LLMs.</li>
+<li><a href="https://arxiv.org/abs/2212.04356">Radford et al., <em>Robust Speech Recognition via Large-Scale Weak Supervision</em> (2022)</a> — Whisper: weak-supervision ASR trained on 680 k hours, the default encoder for audio-LLM pipelines.</li>
+<li><a href="https://arxiv.org/abs/2106.07447">Hsu et al., <em>HuBERT: Self-Supervised Speech Representation Learning</em> (2021)</a> — masked-prediction pre-training that yields semantic speech units used widely as discrete targets.</li>
+<li><a href="https://arxiv.org/abs/2209.03143">Borsos et al., <em>AudioLM: a Language Modeling Approach to Audio Generation</em> (2022)</a> — introduced the hierarchical semantic-then-acoustic two-stage generation framework.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2301.02111">Wang et al., <em>VALL-E: Neural Codec Language Models are Zero-Shot Text to Speech Synthesizers</em> (2023)</a> — reframes TTS as AR + NAR codec-token prediction with only a 3-second speaker prompt.</li>
+<li><a href="https://arxiv.org/abs/2406.05370">Chen et al., <em>VALL-E 2: Human Parity Zero-Shot TTS</em> (2024)</a> — repetition-aware sampling and grouped code modeling push TTS to claimed human parity on LibriSpeech.</li>
+<li><a href="https://arxiv.org/abs/2410.00037">Défossez et al., <em>Moshi: a speech-text foundation model for real-time dialogue</em> (2024)</a> — first full-duplex spoken dialogue LLM with ~160 ms theoretical latency via dual audio streams.</li>
+<li><a href="https://arxiv.org/abs/2306.12925">Rubenstein et al., <em>AudioPaLM: A Large Language Model That Can Speak and Listen</em> (2023)</a> — interleaves audio and text tokens in a single PaLM-2 backbone for ASR, TTS, and speech translation.</li>
+<li><a href="https://arxiv.org/abs/2311.00430">Gandhi et al., <em>Distil-Whisper: Robust Knowledge Distillation via Large-Scale Pseudo Labelling</em> (2023)</a> — 6× faster, 50% smaller distilled Whisper within 1% WER; practical choice for low-latency pipelines.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/facebookresearch/audiocraft">facebookresearch/audiocraft</a> — Meta&rsquo;s library for MusicGen, AudioGen, and EnCodec; includes training code and pretrained checkpoints.</li>
+<li><a href="https://github.com/openai/whisper">openai/whisper</a> — official Whisper inference library with all model sizes (tiny → large-v3) under MIT license.</li>
+<li><a href="https://github.com/kyutai-labs/moshi">kyutai-labs/moshi</a> — full-duplex spoken dialogue framework with the Mimi streaming codec and pretrained Moshi weights.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>SoundStream:</strong> Zeghidour et al., &ldquo;SoundStream: An End-to-End Neural Audio Codec,&rdquo; <em>IEEE/ACM Transactions on Audio, Speech, and Language Processing</em>, 2022.</li>
+<li><strong>EnCodec:</strong> Défossez et al., &ldquo;High Fidelity Neural Audio Compression,&rdquo; arXiv 2210.13438, 2022.</li>
+<li><strong>Whisper:</strong> Radford et al., &ldquo;Robust Speech Recognition via Large-Scale Weak Supervision,&rdquo; OpenAI technical report, 2022.</li>
+<li><strong>HuBERT:</strong> Hsu et al., &ldquo;HuBERT: Self-Supervised Speech Representation Learning by Masked Prediction of Hidden Units,&rdquo; <em>TASLP</em>, 2021.</li>
+<li><strong>VALL-E:</strong> Wang et al., &ldquo;Neural Codec Language Models are Zero-Shot Text to Speech Synthesizers,&rdquo; arXiv 2301.02111, 2023.</li>
+<li><strong>AudioLM:</strong> Borsos et al., &ldquo;AudioLM: a Language Modeling Approach to Audio Generation,&rdquo; <em>TASLP</em>, 2023.</li>
+<li><strong>MusicGen:</strong> Copet et al., &ldquo;Simple and Controllable Music Generation,&rdquo; <em>NeurIPS</em>, 2023.</li>
+<li><strong>AudioPaLM:</strong> Rubenstein et al., &ldquo;AudioPaLM: A Large Language Model That Can Speak and Listen,&rdquo; arXiv 2306.12925, 2023.</li>
+<li><strong>Moshi:</strong> Défossez et al., &ldquo;Moshi: a speech-text foundation model for real-time dialogue,&rdquo; Kyutai technical report, 2024.</li>
+<li><strong>SpeechTokenizer:</strong> Zhang et al., &ldquo;SpeechTokenizer: Unified Speech Tokenizer for Speech Language Models,&rdquo; arXiv 2308.16692, 2023.</li>
+<li><strong>HiFi-GAN:</strong> Kong et al., &ldquo;HiFi-GAN: Generative Adversarial Networks for Efficient and High Fidelity Speech Synthesis,&rdquo; <em>NeurIPS</em>, 2020.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-vision-language-models.html"><span class="pn-label">← Previous</span><span class="pn-title">Vision-Language Models</span></a>
+<a class="next" href="04-diffusion-generative.html"><span class="pn-label">Next →</span><span class="pn-title">Diffusion Models &amp; Generative Modeling (Breadth)</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#audio-fundamentals-what-the-model-actually-sees">Audio Fundamentals: What the Model Actually Sees</a></li>
+<li class="toc-l3"><a href="#pulse-code-modulation-and-the-waveform">Pulse-Code Modulation and the Waveform</a></li>
+<li class="toc-l3"><a href="#the-mel-spectrogram">The Mel Spectrogram</a></li>
+<li class="toc-l2"><a href="#audio-tokenization-discrete-codes-from-continuous-sound">Audio Tokenization: Discrete Codes from Continuous Sound</a></li>
+<li class="toc-l3"><a href="#neural-audio-codecs">Neural Audio Codecs</a></li>
+<li class="toc-l3"><a href="#token-rate-and-sequence-length">Token Rate and Sequence Length</a></li>
+<li class="toc-l3"><a href="#codec-token-interleaving-patterns">Codec Token Interleaving Patterns</a></li>
+<li class="toc-l2"><a href="#whisper-the-encoder-only-path-to-asr">Whisper: The Encoder-Only Path to ASR</a></li>
+<li class="toc-l3"><a href="#architecture">Architecture</a></li>
+<li class="toc-l3"><a href="#whisper-as-a-feature-extractor">Whisper as a Feature Extractor</a></li>
+<li class="toc-l2"><a href="#text-to-speech-neural-vocoders-and-codec-based-tts">Text-to-Speech: Neural Vocoders and Codec-Based TTS</a></li>
+<li class="toc-l3"><a href="#neural-vocoder-pipelines">Neural Vocoder Pipelines</a></li>
+<li class="toc-l3"><a href="#codec-lm-pipelines-vall-e-and-relatives">Codec LM Pipelines: VALL-E and Relatives</a></li>
+<li class="toc-l2"><a href="#speech-language-models-audio-in-audio-out">Speech Language Models: Audio-In, Audio-Out</a></li>
+<li class="toc-l3"><a href="#speechtokenizer-dspin-and-semantic-acoustic-disentanglement">SpeechTokenizer, dSPIN, and Semantic-Acoustic Disentanglement</a></li>
+<li class="toc-l3"><a href="#hubert-self-supervised-acoustic-units">HuBERT: Self-Supervised Acoustic Units</a></li>
+<li class="toc-l3"><a href="#the-audiopalm-and-moshi-architectures">The AudioPaLM and Moshi Architectures</a></li>
+<li class="toc-l2"><a href="#real-time-streaming-and-latency-budgets">Real-Time Streaming and Latency Budgets</a></li>
+<li class="toc-l3"><a href="#the-latency-decomposition">The Latency Decomposition</a></li>
+<li class="toc-l3"><a href="#streaming-architectures">Streaming Architectures</a></li>
+<li class="toc-l2"><a href="#the-multimodal-token-stream-view">The Multimodal Token-Stream View</a></li>
+<li class="toc-l3"><a href="#projection-and-alignment-strategies">Projection and Alignment Strategies</a></li>
+<li class="toc-l3"><a href="#handling-variable-length-audio-in-a-batch">Handling Variable-Length Audio in a Batch</a></li>
+<li class="toc-l2"><a href="#multimodal-fusion-audio-vision-text">Multimodal Fusion: Audio + Vision + Text</a></li>
+<li class="toc-l3"><a href="#audiocaps-librispeech-and-evaluation">AudioCaps, LibriSpeech, and Evaluation</a></li>
+<li class="toc-l3"><a href="#audio-tokens-in-a-shared-vocabulary">Audio Tokens in a Shared Vocabulary</a></li>
+<li class="toc-l2"><a href="#any-to-any-audio-generation-music-environmental-sound-and-voice">Any-to-Any Audio Generation: Music, Environmental Sound, and Voice</a></li>
+<li class="toc-l3"><a href="#musicgen">MusicGen</a></li>
+<li class="toc-l3"><a href="#audiolm-the-hierarchical-approach">AudioLM: The Hierarchical Approach</a></li>
+<li class="toc-l2"><a href="#key-design-patterns-and-engineering-considerations">Key Design Patterns and Engineering Considerations</a></li>
+<li class="toc-l3"><a href="#positional-encoding-for-audio">Positional Encoding for Audio</a></li>
+<li class="toc-l3"><a href="#speaker-and-style-conditioning">Speaker and Style Conditioning</a></li>
+<li class="toc-l3"><a href="#data-efficiency-and-pretraining-strategies">Data Efficiency and Pretraining Strategies</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

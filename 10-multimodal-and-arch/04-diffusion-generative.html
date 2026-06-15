@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diffusion Models &amp; Generative Modeling (Breadth) — The LLM Stack</title>
+<meta name="description" content="Diffusion (forward/reverse process, DDPM, score matching, classifier-free guidance, latent diffusion), flow matching, comparison with autoregressive; diffusion ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="active" href="04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part X — Multimodal &amp; Generative Frontiers</div>
+<h1 id="104-diffusion-models-generative-modeling-breadth">10.4 Diffusion Models &amp; Generative Modeling (Breadth)<a class="headerlink" href="#104-diffusion-models-generative-modeling-breadth" title="Permanent link">¶</a></h1>
+<p>Generative modeling is the art of learning a distribution <span class="arithmatex">\(p_\theta(\mathbf{x})\)</span> from data and then sampling from it. For a decade, the dominant paradigms were variational autoencoders (VAEs), generative adversarial networks (GANs), and autoregressive models. Diffusion models — arriving in earnest around 2020 with Ho et al.&rsquo;s DDPM — quietly displaced GANs as the state of the art for image synthesis, and by 2024 they underpin nearly every major text-to-image and text-to-video system (Stable Diffusion, DALL-E, Imagen, Sora). As an LLM engineer you will encounter diffusion-based image encoders as vision backbone components (see <a href="../10-multimodal-and-arch/01-vision-transformers.html">Vision Transformers &amp; Image Encoders</a>), diffusion-based image/video generation coupled to language models (see <a href="../10-multimodal-and-arch/02-vision-language-models.html">Vision-Language Models</a>), and even diffusion applied to <em>text tokens</em> as a competitor to autoregressive LLMs. This chapter gives you the conceptual and mathematical toolkit to reason about all of these.</p>
+<h2 id="why-diffusion-motivation-and-context">Why Diffusion? Motivation and Context<a class="headerlink" href="#why-diffusion-motivation-and-context" title="Permanent link">¶</a></h2>
+<p>Before diffusion, GANs produced sharp images but were notoriously difficult to train (mode collapse, training instability) and did not yield a tractable likelihood. Normalizing flows gave exact likelihoods but required architectures with constrained Jacobians. VAEs optimized a lower bound on likelihood and tended to produce blurry samples. Autoregressive models like PixelCNN and later GPT-style models over image tokens gave tractable likelihoods and stable training, but sequential generation over millions of pixels was slow.</p>
+<p>Diffusion models offered a different trade-off: training is stable (just regression), likelihoods are tractable (or at least well-bounded), samples are high quality, and the generation process is <em>iterative</em> — you can trade compute for quality at inference time. The cost is that sampling requires many forward passes (typically 20–1000 steps) rather than one. Subsequent work on fast samplers (DDIM, DPM-Solver, flow matching) has compressed this to a handful of steps, eroding the main disadvantage.</p>
+<p>For an LLM engineer the key insight is that the same attention-heavy U-Net or Transformer architecture used in diffusion is related to the architectures you already understand, and the conditioning mechanisms used to inject text prompts into image generation are direct siblings of cross-attention in encoder-decoder LLMs (see <a href="../02-transformer/08-architecture-variants.html">Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a>).</p>
+<h2 id="the-forward-process-gradually-destroying-data">The Forward Process: Gradually Destroying Data<a class="headerlink" href="#the-forward-process-gradually-destroying-data" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-diffusion">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 308" role="img" aria-label="Diffusion models: a fixed forward process gradually adds Gaussian noise to data over T steps until it becomes pure noise, and a learned reverse process denoises step by step back to a clean sample.">
+  <defs>
+    <marker id="dz-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+    <pattern id="dz-noise" width="5" height="5" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1.2" r="0.8" fill="currentColor"/>
+      <circle cx="3.6" cy="2.7" r="0.8" fill="currentColor"/>
+      <circle cx="2.1" cy="4.2" r="0.8" fill="currentColor"/>
+    </pattern>
+    <clipPath id="dz-c0"><rect x="40"  y="96" width="76" height="76" rx="8"/></clipPath>
+    <clipPath id="dz-c1"><rect x="188" y="96" width="76" height="76" rx="8"/></clipPath>
+    <clipPath id="dz-c2"><rect x="336" y="96" width="76" height="76" rx="8"/></clipPath>
+    <clipPath id="dz-c3"><rect x="484" y="96" width="76" height="76" rx="8"/></clipPath>
+    <clipPath id="dz-c4"><rect x="604" y="96" width="76" height="76" rx="8"/></clipPath>
+  </defs>
+  <style>
+    #fig-diffusion text{ fill:var(--ink-soft); }
+    #fig-diffusion .lbl{ font:600 13px var(--sans,sans-serif); }
+    #fig-diffusion .sub{ font:500 11px var(--mono,monospace); fill:var(--muted); }
+    #fig-diffusion .tiny{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-diffusion .noise{ color:var(--ink-soft); }
+  </style>
+
+
+  <g data-anim="1">
+    <text x="360" y="26" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">Forward process — fixed, adds Gaussian noise</text>
+    <line x1="40" y1="44" x2="680" y2="44" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#dz-arrow)"/>
+    <text x="360" y="60" text-anchor="middle" class="sub">q(xₜ | xₜ₋₁) = N( √(1−βₜ)·xₜ₋₁ , βₜ I )</text>
+  </g>
+
+
+  <g data-anim="2">
+
+    <g clip-path="url(#dz-c0)">
+      <rect x="40" y="96" width="76" height="76" class="v-fill"/>
+      <g opacity="1"><circle cx="96" cy="118" r="11" fill="var(--warn,#e0a106)"/>
+        <polygon points="48,164 78,120 108,164" fill="var(--good,#2f9e6e)" opacity="0.8"/></g>
+      <rect x="40" y="96" width="76" height="76" class="noise" fill="url(#dz-noise)" opacity="0"/>
+    </g>
+    <rect x="40" y="96" width="76" height="76" rx="8" fill="none" class="v-stroke" stroke-width="1.3"/>
+
+    <g clip-path="url(#dz-c1)">
+      <rect x="188" y="96" width="76" height="76" class="v-fill"/>
+      <g opacity="0.66"><circle cx="244" cy="118" r="11" fill="var(--warn,#e0a106)"/>
+        <polygon points="196,164 226,120 256,164" fill="var(--good,#2f9e6e)" opacity="0.8"/></g>
+      <rect x="188" y="96" width="76" height="76" class="noise" fill="url(#dz-noise)" opacity="0.34"/>
+    </g>
+    <rect x="188" y="96" width="76" height="76" rx="8" fill="none" class="v-stroke" stroke-width="1.3"/>
+
+    <g clip-path="url(#dz-c2)">
+      <rect x="336" y="96" width="76" height="76" class="v-fill"/>
+      <g opacity="0.38"><circle cx="392" cy="118" r="11" fill="var(--warn,#e0a106)"/>
+        <polygon points="344,164 374,120 404,164" fill="var(--good,#2f9e6e)" opacity="0.8"/></g>
+      <rect x="336" y="96" width="76" height="76" class="noise" fill="url(#dz-noise)" opacity="0.62"/>
+    </g>
+    <rect x="336" y="96" width="76" height="76" rx="8" fill="none" class="v-stroke" stroke-width="1.3"/>
+
+    <g clip-path="url(#dz-c3)">
+      <rect x="484" y="96" width="76" height="76" class="v-fill"/>
+      <g opacity="0.15"><circle cx="540" cy="118" r="11" fill="var(--warn,#e0a106)"/>
+        <polygon points="492,164 522,120 552,164" fill="var(--good,#2f9e6e)" opacity="0.8"/></g>
+      <rect x="484" y="96" width="76" height="76" class="noise" fill="url(#dz-noise)" opacity="0.85"/>
+    </g>
+    <rect x="484" y="96" width="76" height="76" rx="8" fill="none" class="v-stroke" stroke-width="1.3"/>
+
+    <g clip-path="url(#dz-c4)">
+      <rect x="604" y="96" width="76" height="76" class="v-fill"/>
+      <rect x="604" y="96" width="76" height="76" class="noise" fill="url(#dz-noise)" opacity="1"/>
+    </g>
+    <rect x="604" y="96" width="76" height="76" rx="8" fill="none" class="v-stroke" stroke-width="1.3"/>
+
+
+    <text x="78"  y="187" text-anchor="middle" class="tiny">x₀ · data</text>
+    <text x="226" y="187" text-anchor="middle" class="tiny">x₁</text>
+    <text x="374" y="187" text-anchor="middle" class="tiny">xₜ</text>
+    <text x="522" y="187" text-anchor="middle" class="tiny">x_{T−1}</text>
+    <text x="642" y="187" text-anchor="middle" class="tiny">x_T · N(0, I)</text>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="680" y1="212" x2="40" y2="212" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#dz-arrow)"/>
+    <text x="360" y="232" text-anchor="middle" class="lbl" fill="var(--accent)">Reverse process — learned denoiser pθ removes a little noise each step</text>
+    <text x="360" y="250" text-anchor="middle" class="sub">pθ(xₜ₋₁ | xₜ) = N( μθ(xₜ, t) , Σθ )   —   train εθ to predict the added noise</text>
+  </g>
+
+  <g data-anim="4">
+    <text x="360" y="286" text-anchor="middle" class="tiny">Sampling = run the reverse chain from pure noise (right) back to a clean sample.</text>
+  </g>
+</svg>
+<figcaption><b>Diffusion: destroy structure on a schedule, then learn to rebuild it.</b> The <b>forward</b> process is a fixed Markov chain that adds a little Gaussian noise at each of T steps until the image is indistinguishable from <span class="v-mono">N(0, I)</span>. The <b>reverse</b> process is a neural network <span class="v-mono">εθ</span> trained to predict (and subtract) that noise, so sampling means starting from pure noise and denoising step by step into a fresh sample.</figcaption>
+</figure>
+
+<p>The central idea of a diffusion model is to define a <em>forward</em> Markov chain that gradually adds Gaussian noise to a data sample until it becomes indistinguishable from pure noise, then train a neural network to <em>reverse</em> that process.</p>
+<h3 id="formal-definition">Formal Definition<a class="headerlink" href="#formal-definition" title="Permanent link">¶</a></h3>
+<p>Let <span class="arithmatex">\(\mathbf{x}_0 \sim q(\mathbf{x}_0)\)</span> be a sample from the data distribution. The forward process defines a chain of latent variables <span class="arithmatex">\(\mathbf{x}_1, \mathbf{x}_2, \ldots, \mathbf{x}_T\)</span> via:</p>
+<div class="arithmatex">\[
+q(\mathbf{x}_t \mid \mathbf{x}_{t-1}) = \mathcal{N}(\mathbf{x}_t;\; \sqrt{1-\beta_t}\,\mathbf{x}_{t-1},\; \beta_t \mathbf{I})
+\]</div>
+<p>where <span class="arithmatex">\(\{\beta_t\}_{t=1}^T\)</span> is a <em>noise schedule</em> — a sequence of small positive scalars, typically increasing from something like <span class="arithmatex">\(\beta_1 = 10^{-4}\)</span> to <span class="arithmatex">\(\beta_T = 0.02\)</span> (linear schedule) or following a cosine schedule (Nichol &amp; Dhariwal).</p>
+<p>The magic is that there is a <em>closed-form</em> marginal for any timestep <span class="arithmatex">\(t\)</span> directly from <span class="arithmatex">\(\mathbf{x}_0\)</span>. Define <span class="arithmatex">\(\alpha_t = 1 - \beta_t\)</span> and <span class="arithmatex">\(\bar{\alpha}_t = \prod_{s=1}^t \alpha_s\)</span>. Then:</p>
+<div class="arithmatex">\[
+q(\mathbf{x}_t \mid \mathbf{x}_0) = \mathcal{N}(\mathbf{x}_t;\; \sqrt{\bar{\alpha}_t}\,\mathbf{x}_0,\; (1 - \bar{\alpha}_t)\,\mathbf{I})
+\]</div>
+<p>Equivalently, we can sample <span class="arithmatex">\(\mathbf{x}_t\)</span> in one shot:</p>
+<div class="arithmatex">\[
+\mathbf{x}_t = \sqrt{\bar{\alpha}_t}\,\mathbf{x}_0 + \sqrt{1-\bar{\alpha}_t}\,\boldsymbol{\epsilon}, \quad \boldsymbol{\epsilon} \sim \mathcal{N}(\mathbf{0},\mathbf{I})
+\]</div>
+<p>This is the <em>reparameterization</em> that makes training efficient: we can jump to any noise level without stepping through all intermediate <span class="arithmatex">\(t\)</span>.</p>
+<p>As <span class="arithmatex">\(t \to T\)</span>, <span class="arithmatex">\(\bar{\alpha}_T \approx 0\)</span>, so <span class="arithmatex">\(\mathbf{x}_T \approx \mathcal{N}(\mathbf{0}, \mathbf{I})\)</span> regardless of the original data. The schedule is designed to guarantee this.</p>
+<h3 id="noise-schedules">Noise Schedules<a class="headerlink" href="#noise-schedules" title="Permanent link">¶</a></h3>
+<p>Three common schedules:</p>
+<table>
+<thead>
+<tr>
+<th>Schedule</th>
+<th><span class="arithmatex">\(\bar{\alpha}_t\)</span></th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Linear</td>
+<td>Linear from 1 to <span class="arithmatex">\(\approx 0\)</span></td>
+<td>DDPM default; can be too aggressive for high-res</td>
+</tr>
+<tr>
+<td>Cosine (Nichol &amp; Dhariwal)</td>
+<td><span class="arithmatex">\(\cos^2\!\left(\frac{t/T + s}{1+s}\cdot\frac{\pi}{2}\right)\)</span></td>
+<td>Smoother; stays noisy less at end</td>
+</tr>
+<tr>
+<td>Flow matching (linear interpolant)</td>
+<td><span class="arithmatex">\(1 - t/T\)</span></td>
+<td>Used in rectified flow; simpler</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Noise Levels</p>
+<p>Suppose <span class="arithmatex">\(T = 1000\)</span> and we use a linear schedule with <span class="arithmatex">\(\beta_1 = 10^{-4}\)</span> and <span class="arithmatex">\(\beta_{1000} = 0.02\)</span>. At step <span class="arithmatex">\(t=500\)</span>:</p>
+<div class="arithmatex">\[\bar{\alpha}_{500} = \prod_{s=1}^{500} (1 - \beta_s) \approx \exp\!\left(-\sum_{s=1}^{500}\beta_s\right)\]</div>
+<p>With a linear schedule, <span class="arithmatex">\(\beta_s \approx 10^{-4} + (s-1)\cdot\frac{0.02-10^{-4}}{999}\)</span>. The sum <span class="arithmatex">\(\sum_{s=1}^{500}\beta_s \approx \frac{500}{2}(10^{-4} + 0.01) \approx 2.525\)</span>, giving <span class="arithmatex">\(\bar{\alpha}_{500} \approx e^{-2.525} \approx 0.08\)</span>.</p>
+<p>So at <span class="arithmatex">\(t=500\)</span> we have: <span class="arithmatex">\(\mathbf{x}_{500} = \sqrt{0.08}\,\mathbf{x}_0 + \sqrt{0.92}\,\boldsymbol{\epsilon} \approx 0.283\,\mathbf{x}_0 + 0.959\,\boldsymbol{\epsilon}\)</span>.</p>
+<p>The signal-to-noise ratio (SNR) is <span class="arithmatex">\(\text{SNR}(500) = \bar{\alpha}_t/(1-\bar{\alpha}_t) \approx 0.08/0.92 \approx 0.087\)</span> — the sample is dominated by noise. At <span class="arithmatex">\(t=100\)</span>, <span class="arithmatex">\(\bar{\alpha}_{100} \approx e^{-0.505} \approx 0.60\)</span>, SNR <span class="arithmatex">\(\approx 1.5\)</span> — still mostly signal. This asymmetry is why the cosine schedule was proposed: the linear schedule destroys structure too quickly at early steps.</p>
+</div>
+<h2 id="the-reverse-process-and-training-objective-ddpm">The Reverse Process and Training Objective (DDPM)<a class="headerlink" href="#the-reverse-process-and-training-objective-ddpm" title="Permanent link">¶</a></h2>
+<p>The generative model tries to learn the reverse of the forward process:</p>
+<div class="arithmatex">\[
+p_\theta(\mathbf{x}_{t-1} \mid \mathbf{x}_t) = \mathcal{N}(\mathbf{x}_{t-1};\; \boldsymbol{\mu}_\theta(\mathbf{x}_t, t),\; \sigma_t^2 \mathbf{I})
+\]</div>
+<p>We want to maximize the likelihood <span class="arithmatex">\(p_\theta(\mathbf{x}_0)\)</span> of the data. The variational lower bound (ELBO) gives a tractable training objective. After several algebraic manipulations, Ho et al. showed that the dominant term is:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{simple} = \mathbb{E}_{t,\mathbf{x}_0,\boldsymbol{\epsilon}}\!\left[\left\|\boldsymbol{\epsilon} - \boldsymbol{\epsilon}_\theta\!\left(\sqrt{\bar{\alpha}_t}\mathbf{x}_0 + \sqrt{1-\bar{\alpha}_t}\boldsymbol{\epsilon},\; t\right)\right\|^2\right]
+\]</div>
+<p>This is just mean-squared-error between the true noise <span class="arithmatex">\(\boldsymbol{\epsilon}\)</span> and the neural network&rsquo;s <em>prediction of that noise</em> <span class="arithmatex">\(\boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t)\)</span>. The simplicity is striking: we sample a random timestep, corrupt a training example, and ask the network to guess the noise. Training is stable because it is regression throughout.</p>
+<p>Given the predicted noise, the mean of the reverse step is:</p>
+<div class="arithmatex">\[
+\boldsymbol{\mu}_\theta(\mathbf{x}_t, t) = \frac{1}{\sqrt{\alpha_t}}\!\left(\mathbf{x}_t - \frac{\beta_t}{\sqrt{1-\bar{\alpha}_t}}\boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t)\right)
+\]</div>
+<p>Alternatively, the network can be parameterized to predict <span class="arithmatex">\(\mathbf{x}_0\)</span> directly (<span class="arithmatex">\(\mathbf{x}\)</span>-prediction) or the score function <span class="arithmatex">\(\nabla_{\mathbf{x}_t}\log q(\mathbf{x}_t)\)</span> — all three are mathematically equivalent via reparameterization.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="c1"># ------------------------------------------------------------------ #</span>
+<span class="c1">#  Minimal DDPM: forward process + training loss                      #</span>
+<span class="c1"># ------------------------------------------------------------------ #</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">make_linear_schedule</span><span class="p">(</span><span class="n">T</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">beta_start</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-4</span><span class="p">,</span> <span class="n">beta_end</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.02</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return betas, alphas_bar for a linear noise schedule.&quot;&quot;&quot;</span>
+    <span class="n">betas</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="n">beta_start</span><span class="p">,</span> <span class="n">beta_end</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span>   <span class="c1"># (T,)</span>
+    <span class="n">alphas</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">betas</span>                               <span class="c1"># (T,)</span>
+    <span class="n">alphas_bar</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cumprod</span><span class="p">(</span><span class="n">alphas</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>          <span class="c1"># (T,)  ā_t</span>
+    <span class="k">return</span> <span class="n">betas</span><span class="p">,</span> <span class="n">alphas</span><span class="p">,</span> <span class="n">alphas_bar</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">q_sample</span><span class="p">(</span><span class="n">x0</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">alphas_bar</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Sample x_t from q(x_t | x_0) in one shot using the reparameterization:</span>
+<span class="sd">        x_t = sqrt(ā_t) * x0 + sqrt(1 - ā_t) * eps</span>
+<span class="sd">    Args:</span>
+<span class="sd">        x0:        (B, C, H, W) clean images in [-1, 1]</span>
+<span class="sd">        t:         (B,)         integer timesteps</span>
+<span class="sd">        alphas_bar:(T,)         precomputed ā_t values</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        x_t, eps   both (B, C, H, W)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">eps</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">x0</span><span class="p">)</span>
+    <span class="c1"># gather ā_t for each sample in the batch</span>
+    <span class="n">ab</span> <span class="o">=</span> <span class="n">alphas_bar</span><span class="p">[</span><span class="n">t</span><span class="p">]</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>   <span class="c1"># broadcast over C,H,W</span>
+    <span class="n">x_t</span> <span class="o">=</span> <span class="n">ab</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span> <span class="o">*</span> <span class="n">x0</span> <span class="o">+</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">ab</span><span class="p">)</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span> <span class="o">*</span> <span class="n">eps</span>
+    <span class="k">return</span> <span class="n">x_t</span><span class="p">,</span> <span class="n">eps</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">ddpm_loss</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">x0</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">alphas_bar</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Simple DDPM training loss: L_simple = E[||eps - eps_theta(x_t, t)||^2].</span>
+<span class="sd">    model: a U-Net that takes (x_t, t) and predicts noise eps_hat.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span> <span class="o">=</span> <span class="n">x0</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="n">alphas_bar</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="c1"># sample a random timestep for each item in the batch</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="p">(</span><span class="n">B</span><span class="p">,),</span> <span class="n">device</span><span class="o">=</span><span class="n">x0</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">x_t</span><span class="p">,</span> <span class="n">eps</span> <span class="o">=</span> <span class="n">q_sample</span><span class="p">(</span><span class="n">x0</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">alphas_bar</span><span class="p">)</span>
+    <span class="c1"># predict the noise; model typically also takes a time embedding</span>
+    <span class="n">eps_hat</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x_t</span><span class="p">,</span> <span class="n">t</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">eps</span> <span class="o">-</span> <span class="n">eps_hat</span><span class="p">)</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+
+<span class="c1"># ------------------------------------------------------------------ #</span>
+<span class="c1">#  DDPM Reverse Sampler                                               #</span>
+<span class="c1"># ------------------------------------------------------------------ #</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">ddpm_sample</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">shape</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">,</span>
+                <span class="n">betas</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">alphas</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+                <span class="n">alphas_bar</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cpu&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Ancestral sampling: start from Gaussian noise, iteratively denoise.</span>
+<span class="sd">    Returns x_0 after T reverse steps.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="n">betas</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>   <span class="c1"># x_T ~ N(0, I)</span>
+
+    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">reversed</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">T</span><span class="p">)):</span>
+        <span class="n">t_batch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],),</span> <span class="n">t</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)</span>
+        <span class="n">eps_hat</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">t_batch</span><span class="p">)</span>
+
+        <span class="c1"># Compute mean of reverse step</span>
+        <span class="n">alpha_t</span>  <span class="o">=</span> <span class="n">alphas</span><span class="p">[</span><span class="n">t</span><span class="p">]</span>
+        <span class="n">ab_t</span>     <span class="o">=</span> <span class="n">alphas_bar</span><span class="p">[</span><span class="n">t</span><span class="p">]</span>
+        <span class="n">beta_t</span>   <span class="o">=</span> <span class="n">betas</span><span class="p">[</span><span class="n">t</span><span class="p">]</span>
+
+        <span class="c1"># mu_theta = (x_t - beta_t / sqrt(1 - ab_t) * eps_hat) / sqrt(alpha_t)</span>
+        <span class="n">coeff</span> <span class="o">=</span> <span class="n">beta_t</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">ab_t</span><span class="p">)</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>
+        <span class="n">mean</span>  <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">-</span> <span class="n">coeff</span> <span class="o">*</span> <span class="n">eps_hat</span><span class="p">)</span> <span class="o">/</span> <span class="n">alpha_t</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">t</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="c1"># Variance: the simple choice is just beta_t I</span>
+            <span class="n">noise</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">mean</span> <span class="o">+</span> <span class="n">beta_t</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span> <span class="o">*</span> <span class="n">noise</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">mean</span>   <span class="c1"># no noise at final step</span>
+
+    <span class="k">return</span> <span class="n">x</span>
+</code></pre></div>
+<h2 id="score-matching-and-the-connection-to-sdes">Score Matching and the Connection to SDEs<a class="headerlink" href="#score-matching-and-the-connection-to-sdes" title="Permanent link">¶</a></h2>
+<p>A complementary view, developed by Song et al. and earlier Hyvärinen, frames diffusion as <em>score matching</em>. The <em>score</em> of a distribution is:</p>
+<div class="arithmatex">\[
+\mathbf{s}(\mathbf{x}) = \nabla_\mathbf{x} \log p(\mathbf{x})
+\]</div>
+<p>It is a vector field pointing toward higher-density regions. If we know the score, we can use <em>Langevin dynamics</em> to draw samples:</p>
+<div class="arithmatex">\[
+\mathbf{x}_{k+1} = \mathbf{x}_k + \eta\, \nabla_\mathbf{x} \log p(\mathbf{x}_k) + \sqrt{2\eta}\,\boldsymbol{\epsilon}_k
+\]</div>
+<p>Training a network <span class="arithmatex">\(\mathbf{s}_\theta \approx \nabla_\mathbf{x} \log p(\mathbf{x})\)</span> is called <em>score matching</em>. Ho et al.&rsquo;s noise prediction is equivalent: the score of the noisy distribution relates to the noise predictor as:</p>
+<div class="arithmatex">\[
+\nabla_{\mathbf{x}_t} \log q(\mathbf{x}_t \mid \mathbf{x}_0) = -\frac{\boldsymbol{\epsilon}}{\sqrt{1 - \bar{\alpha}_t}}
+\]</div>
+<p>Song et al. (Score SDE) generalized the whole framework to <em>stochastic differential equations</em> (SDEs). The forward process is an SDE:</p>
+<div class="arithmatex">\[
+d\mathbf{x} = \mathbf{f}(\mathbf{x}, t)\,dt + g(t)\,d\mathbf{w}
+\]</div>
+<p>and the reverse is also an SDE whose drift term depends on the score:</p>
+<div class="arithmatex">\[
+d\mathbf{x} = \left[\mathbf{f}(\mathbf{x}, t) - g(t)^2 \nabla_\mathbf{x} \log p_t(\mathbf{x})\right]dt + g(t)\,d\bar{\mathbf{w}}
+\]</div>
+<p>This unifies DDPM, SMLD (denoising score matching with multiple noise levels), and continuous-time variants under a single formalism and enables the ODE sampler that DDIM exploits.</p>
+<h3 id="ddim-deterministic-sampling">DDIM: Deterministic Sampling<a class="headerlink" href="#ddim-deterministic-sampling" title="Permanent link">¶</a></h3>
+<p>Denoising Diffusion Implicit Models (Song et al., DDIM) derived a <em>non-Markovian</em> inference process that shares the same marginals as DDPM but allows a deterministic (ODE-based) trajectory. The update becomes:</p>
+<div class="arithmatex">\[
+\mathbf{x}_{t-1} = \sqrt{\bar{\alpha}_{t-1}}\underbrace{\frac{\mathbf{x}_t - \sqrt{1-\bar{\alpha}_t}\,\boldsymbol{\epsilon}_\theta}{\sqrt{\bar{\alpha}_t}}}_{\text{predicted }\mathbf{x}_0} + \sqrt{1-\bar{\alpha}_{t-1} - \sigma_t^2}\,\boldsymbol{\epsilon}_\theta + \sigma_t\,\boldsymbol{\epsilon}
+\]</div>
+<p>Setting <span class="arithmatex">\(\sigma_t = 0\)</span> makes the process fully deterministic: you can think of it as Euler integration of the <em>probability flow ODE</em>. DDIM allows <em>subsampling</em> — you can skip timesteps and use, say, 50 steps instead of 1000 with minimal quality loss, giving a 20× speedup.</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">ddim_sample</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">shape</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">,</span> <span class="n">alphas_bar</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+                <span class="n">num_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">50</span><span class="p">,</span> <span class="n">eta</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cpu&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    DDIM sampler.  eta=0 =&gt; deterministic; eta=1 =&gt; DDPM-like stochastic.</span>
+<span class="sd">    Uses a uniform sub-sequence of timesteps.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="n">alphas_bar</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="c1"># Select a uniform subsequence: e.g., [980, 960, ..., 20, 0]</span>
+    <span class="n">step_size</span> <span class="o">=</span> <span class="n">T</span> <span class="o">//</span> <span class="n">num_steps</span>
+    <span class="n">timesteps</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">reversed</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">step_size</span><span class="p">)))</span>  <span class="c1"># [T-1, ..., 0]</span>
+
+    <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">timesteps</span><span class="p">):</span>
+        <span class="n">t_prev</span> <span class="o">=</span> <span class="n">timesteps</span><span class="p">[</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">timesteps</span><span class="p">)</span> <span class="k">else</span> <span class="o">-</span><span class="mi">1</span>
+
+        <span class="n">t_batch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],),</span> <span class="n">t</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">eps_hat</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">t_batch</span><span class="p">)</span>
+
+        <span class="n">ab_t</span>    <span class="o">=</span> <span class="n">alphas_bar</span><span class="p">[</span><span class="n">t</span><span class="p">]</span>
+        <span class="n">ab_prev</span> <span class="o">=</span> <span class="n">alphas_bar</span><span class="p">[</span><span class="n">t_prev</span><span class="p">]</span> <span class="k">if</span> <span class="n">t_prev</span> <span class="o">&gt;=</span> <span class="mi">0</span> <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+
+        <span class="c1"># Predict x0 from current x_t and predicted noise</span>
+        <span class="n">x0_pred</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">-</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">ab_t</span><span class="p">)</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span> <span class="o">*</span> <span class="n">eps_hat</span><span class="p">)</span> <span class="o">/</span> <span class="n">ab_t</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>
+        <span class="n">x0_pred</span> <span class="o">=</span> <span class="n">x0_pred</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>  <span class="c1"># optional clamping</span>
+
+        <span class="c1"># Direction pointing to x_t</span>
+        <span class="n">sigma_t</span> <span class="o">=</span> <span class="n">eta</span> <span class="o">*</span> <span class="p">((</span><span class="mi">1</span> <span class="o">-</span> <span class="n">ab_prev</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">ab_t</span><span class="p">))</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">ab_t</span> <span class="o">/</span> <span class="n">ab_prev</span><span class="p">)</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>
+        <span class="n">dir_xt</span>  <span class="o">=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">ab_prev</span> <span class="o">-</span> <span class="n">sigma_t</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span> <span class="o">*</span> <span class="n">eps_hat</span>
+
+        <span class="n">noise</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">if</span> <span class="n">eta</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">t_prev</span> <span class="o">&gt;=</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+        <span class="n">x</span>       <span class="o">=</span> <span class="n">ab_prev</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span> <span class="o">*</span> <span class="n">x0_pred</span> <span class="o">+</span> <span class="n">dir_xt</span> <span class="o">+</span> <span class="n">sigma_t</span> <span class="o">*</span> <span class="n">noise</span>
+
+    <span class="k">return</span> <span class="n">x</span>
+</code></pre></div>
+<h2 id="classifier-guidance-and-classifier-free-guidance">Classifier Guidance and Classifier-Free Guidance<a class="headerlink" href="#classifier-guidance-and-classifier-free-guidance" title="Permanent link">¶</a></h2>
+<p>Unconditional diffusion models generate beautiful images from pure noise. To generate <em>specific</em> content — &ldquo;a photo of a cat wearing a hat&rdquo; — we need to condition on a signal. Two approaches dominate.</p>
+<h3 id="classifier-guidance">Classifier Guidance<a class="headerlink" href="#classifier-guidance" title="Permanent link">¶</a></h3>
+<p>Dhariwal &amp; Nichol showed that if you have a classifier <span class="arithmatex">\(p_\phi(y \mid \mathbf{x}_t)\)</span> trained on noisy images, you can steer the reverse diffusion using:</p>
+<div class="arithmatex">\[
+\tilde{\boldsymbol{\epsilon}}_\theta(\mathbf{x}_t, t, y) = \boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t) - \sqrt{1-\bar{\alpha}_t}\,\gamma\,\nabla_{\mathbf{x}_t}\log p_\phi(y \mid \mathbf{x}_t)
+\]</div>
+<p>The guidance scale <span class="arithmatex">\(\gamma &gt; 0\)</span> amplifies the classifier signal. Larger <span class="arithmatex">\(\gamma\)</span> yields more class-faithful but less diverse samples.</p>
+<h3 id="classifier-free-guidance-cfg">Classifier-Free Guidance (CFG)<a class="headerlink" href="#classifier-free-guidance-cfg" title="Permanent link">¶</a></h3>
+<p>CFG (Ho &amp; Salimans) eliminated the need for a separate classifier. During training, the conditioning signal <span class="arithmatex">\(\mathbf{c}\)</span> (e.g., a text embedding) is randomly dropped with some probability <span class="arithmatex">\(p_\text{drop}\)</span> (typically 10–20%), replacing it with a null token <span class="arithmatex">\(\emptyset\)</span>. At inference, predictions from the <em>conditional</em> and <em>unconditional</em> models are interpolated:</p>
+<div class="arithmatex">\[
+\tilde{\boldsymbol{\epsilon}}_\theta(\mathbf{x}_t, t, \mathbf{c}) = \boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t, \emptyset) + w\,\left[\boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t, \mathbf{c}) - \boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t, \emptyset)\right]
+\]</div>
+<p>where <span class="arithmatex">\(w\)</span> is the guidance scale (common values: 3–15). Larger <span class="arithmatex">\(w\)</span> increases adherence to the prompt at the cost of sample diversity and can cause over-saturation. CFG doubles the number of forward passes per step but requires no separate classifier.</p>
+<p>Intuitively, <span class="arithmatex">\(w=0\)</span> is unconditioned, <span class="arithmatex">\(w=1\)</span> is the pure conditional model, and <span class="arithmatex">\(w&gt;1\)</span> <em>extrapolates</em> beyond the conditional distribution, sharpening the conditioning signal. This extrapolation is why CFG boosts both quality and prompt adherence simultaneously, and also why it can produce slightly unrealistic outputs at large guidance scales.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A colleague proposes increasing the classifier-free guidance scale from 7 to 20 to get better text alignment in a text-to-image model. What are the trade-offs, and what would you recommend instead?</p>
+<p><strong>A:</strong> Increasing CFG scale <span class="arithmatex">\(w\)</span> amplifies the gradient of <span class="arithmatex">\(\log p(\mathbf{c}|\mathbf{x})\)</span> beyond the data manifold, so the model extrapolates aggressively. The result is sharper conditioning but lower sample diversity, mode collapse onto over-saturated outputs (vivid colors, hard edges), and artifacts (over-sharpened edges, unnatural saturation). At <span class="arithmatex">\(w=20\)</span> the generated images often look &ldquo;AI-ish&rdquo; with blown-out highlights. Better options: (1) use <em>dynamic thresholding</em> (Saharia et al., Imagen), which clips the predicted <span class="arithmatex">\(\mathbf{x}_0\)</span> percentile-wise instead of naively clamping, preserving saturation; (2) use <em>AutoGuidance</em> or <em>Perturbed-Attention Guidance</em> which degrade the negative sample more gracefully; (3) fine-tune the text encoder or add an adapter rather than cranking CFG; (4) try a lower <span class="arithmatex">\(w\)</span> with more denoising steps. I&rsquo;d stay at <span class="arithmatex">\(w \leq 12\)</span> and apply dynamic thresholding.</p>
+</div>
+<h2 id="latent-diffusion-and-stable-diffusion">Latent Diffusion and Stable Diffusion<a class="headerlink" href="#latent-diffusion-and-stable-diffusion" title="Permanent link">¶</a></h2>
+<p>Running diffusion in pixel space for high-resolution images is computationally prohibitive: 1000 steps × a 512×512×3 U-Net forward pass is expensive. Rombach et al. proposed <em>Latent Diffusion Models</em> (LDMs), the architecture underlying Stable Diffusion.</p>
+<h3 id="architecture-overview">Architecture Overview<a class="headerlink" href="#architecture-overview" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-diffgen-latent-diffusion-pipeline">
+<style>
+  #fig-diffgen-latent-diffusion-pipeline .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-diffgen-latent-diffusion-pipeline .lbl-sm { font: 500 11.5px var(--sans,sans-serif); }
+  #fig-diffgen-latent-diffusion-pipeline .lbl-xs { font: 400 10px var(--sans,sans-serif); }
+  #fig-diffgen-latent-diffusion-pipeline .mono { font: 500 10.5px var(--mono,monospace); }
+  #fig-diffgen-latent-diffusion-pipeline text { fill: var(--ink-soft, #222); }
+  #fig-diffgen-latent-diffusion-pipeline .muted { fill: var(--muted, #666); }
+</style>
+<svg viewBox="0 0 860 660" role="img" aria-label="Latent Diffusion pipeline: text prompt through CLIP/T5 encoder conditions a U-Net denoiser via cross-attention; raw 512x512 image through VAE encoder yields 64x64x4 latent that feeds the denoiser; after 1000 denoising steps the latent is decoded by the VAE back to a 512x512 generated image.">
+  <defs>
+    <marker id="ldp-arrow" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#444)"/>
+    </marker>
+    <marker id="ldp-arrow-cond" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#c25)"/>
+    </marker>
+  </defs>
+
+
+  <rect x="195" y="245" width="470" height="278" rx="12"
+        fill="var(--accent,#2a7)" fill-opacity="0.06"
+        stroke="var(--accent,#2a7)" stroke-width="1.5" stroke-dasharray="6 4"/>
+
+  <text x="205" y="512" text-anchor="start" class="lbl-xs muted">latent space (64x64x4)</text>
+
+
+
+
+  <rect x="22" y="48" width="165" height="56" rx="7"
+        fill="var(--surface,#f5f5f5)" stroke="var(--border-2,#888)" stroke-width="1.5"/>
+  <text x="104" y="71" text-anchor="middle" class="lbl">Raw image</text>
+  <text x="104" y="89" text-anchor="middle" class="mono">512x512x3</text>
+
+
+  <line x1="104" y1="104" x2="104" y2="140"
+        stroke="var(--ink-soft,#444)" stroke-width="1.5" marker-end="url(#ldp-arrow)"/>
+
+
+  <rect x="22" y="141" width="165" height="56" rx="7"
+        fill="var(--surface-3,#eef3f8)" stroke="var(--border-2,#888)" stroke-width="1.5"/>
+  <text x="104" y="164" text-anchor="middle" class="lbl">VAE Encoder</text>
+  <text x="104" y="182" text-anchor="middle" class="lbl-xs muted">(downsample 8x)</text>
+
+
+  <line x1="104" y1="197" x2="104" y2="248"
+        stroke="var(--ink-soft,#444)" stroke-width="1.5" marker-end="url(#ldp-arrow)"/>
+
+
+  <rect x="22" y="249" width="165" height="56" rx="7"
+        fill="var(--surface,#e8f0e8)" stroke="var(--accent,#2a7)" stroke-width="1.5"/>
+  <text x="104" y="272" text-anchor="middle" class="lbl">Latent z</text>
+  <text x="104" y="290" text-anchor="middle" class="mono">R^(64x64x4)</text>
+
+
+  <text x="22" y="318" text-anchor="start" class="lbl-xs muted">48x fewer values</text>
+  <text x="22" y="331" text-anchor="start" class="lbl-xs muted">(786,432 -> 16,384)</text>
+
+
+  <polyline points="187,290 250,290 305,335"
+        fill="none" stroke="var(--ink-soft,#444)" stroke-width="1.5" marker-end="url(#ldp-arrow)"/>
+  <text x="196" y="283" text-anchor="start" class="lbl-xs muted">noisy latent x_t</text>
+
+
+
+
+  <rect x="575" y="28" width="180" height="48" rx="7"
+        fill="var(--surface,#f5f5f5)" stroke="var(--border-2,#888)" stroke-width="1.5"/>
+  <text x="665" y="51" text-anchor="middle" class="lbl">Text prompt</text>
+  <text x="665" y="67" text-anchor="middle" class="lbl-xs muted">"a photo of a cat..."</text>
+
+
+  <line x1="665" y1="76" x2="665" y2="110"
+        stroke="var(--accent-2,#c25)" stroke-width="1.5" marker-end="url(#ldp-arrow-cond)"/>
+
+
+  <rect x="575" y="111" width="180" height="56" rx="7"
+        fill="var(--surface,#fff0ee)" stroke="var(--accent-2,#c25)" stroke-width="1.8"/>
+  <text x="665" y="134" text-anchor="middle" class="lbl" style="fill:var(--accent-2,#c25)">CLIP / T5</text>
+  <text x="665" y="153" text-anchor="middle" class="lbl-sm" style="fill:var(--accent-2,#c25)">Text Encoder</text>
+
+
+  <path d="M 620 167 C 600 225, 580 260, 610 290"
+        fill="none" stroke="var(--accent-2,#c25)" stroke-width="1.8"
+        stroke-dasharray="5 3" marker-end="url(#ldp-arrow-cond)"/>
+
+
+  <text x="575" y="195" text-anchor="start" class="lbl-xs" style="fill:var(--accent-2,#c25)">cross-attention:</text>
+  <text x="575" y="208" text-anchor="start" class="lbl-xs" style="fill:var(--accent-2,#c25)">keys/values from</text>
+  <text x="575" y="221" text-anchor="start" class="lbl-xs" style="fill:var(--accent-2,#c25)">text embeddings</text>
+
+
+
+
+  <path d="M 400 275 C 435 250, 465 250, 455 275"
+        fill="none" stroke="var(--accent,#2a7)" stroke-width="1.4"
+        stroke-dasharray="4 3" marker-end="url(#ldp-arrow)"/>
+  <text x="428" y="245" text-anchor="middle" class="lbl-xs muted">iterative loop</text>
+
+
+  <rect x="305" y="275" width="300" height="130" rx="10"
+        fill="var(--surface,#f0f7f2)" stroke="var(--accent,#2a7)" stroke-width="2.5"/>
+  <text x="455" y="302" text-anchor="middle" class="lbl" style="fill:var(--accent,#2a7)">U-Net / Transformer</text>
+  <text x="455" y="318" text-anchor="middle" class="lbl" style="fill:var(--accent,#2a7)">Denoiser</text>
+  <text x="455" y="338" text-anchor="middle" class="lbl-sm">(~1000 steps of diffusion</text>
+  <text x="455" y="353" text-anchor="middle" class="lbl-sm">in latent space)</text>
+  <text x="455" y="365" text-anchor="middle" class="lbl-xs muted">queries from spatial features</text>
+  <text x="455" y="378" text-anchor="middle" class="lbl-xs muted">keys/values from text embeddings</text>
+
+
+
+
+  <line x1="455" y1="405" x2="455" y2="427"
+        stroke="var(--ink-soft,#444)" stroke-width="1.5" marker-end="url(#ldp-arrow)"/>
+
+
+  <rect x="345" y="428" width="220" height="56" rx="7"
+        fill="var(--surface,#e8f0e8)" stroke="var(--accent,#2a7)" stroke-width="1.5"/>
+  <text x="455" y="451" text-anchor="middle" class="lbl">Denoised latent z-hat_0</text>
+  <text x="455" y="469" text-anchor="middle" class="mono">(64x64x4)</text>
+
+
+  <line x1="455" y1="484" x2="455" y2="516"
+        stroke="var(--ink-soft,#444)" stroke-width="1.5" marker-end="url(#ldp-arrow)"/>
+
+
+  <rect x="345" y="517" width="220" height="56" rx="7"
+        fill="var(--surface-3,#eef3f8)" stroke="var(--border-2,#888)" stroke-width="1.5"/>
+  <text x="455" y="540" text-anchor="middle" class="lbl">VAE Decoder</text>
+  <text x="455" y="558" text-anchor="middle" class="lbl-xs muted">(upsample 8x)</text>
+
+
+  <line x1="455" y1="573" x2="455" y2="606"
+        stroke="var(--ink-soft,#444)" stroke-width="1.5" marker-end="url(#ldp-arrow)"/>
+
+
+  <rect x="345" y="607" width="220" height="44" rx="7"
+        fill="var(--surface,#f5f5f5)" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <text x="455" y="626" text-anchor="middle" class="lbl" style="fill:var(--good,#2f9e6e)">Generated image</text>
+  <text x="455" y="644" text-anchor="middle" class="mono" style="fill:var(--good,#2f9e6e)">512x512x3</text>
+
+</svg>
+<figcaption><b>Latent Diffusion (Stable Diffusion) runs the full diffusion process in a compressed VAE latent space, not pixel space.</b> A VAE encoder compresses the input 48x (512x512x3 to 64x64x4), a U-Net/Transformer denoiser iteratively denoises the latent over ~1000 steps while cross-attending to CLIP/T5 text embeddings, and a VAE decoder upsamples the clean latent back to a 512x512 image — cutting per-step compute by roughly 64x compared to pixel-space diffusion.</figcaption>
+</figure>
+
+<p>The key insight is that the <em>perceptual</em> information in an image lives in a much lower-dimensional space. The VAE compresses 512×512×3 = 786,432 values to 64×64×4 = 16,384 values — a 48× reduction. Diffusion then runs on this compact latent space, reducing compute by roughly <span class="arithmatex">\(8^2 = 64\times\)</span> per forward pass (since attention scales quadratically with spatial resolution).</p>
+<h3 id="u-net-denoiser-architecture">U-Net Denoiser Architecture<a class="headerlink" href="#u-net-denoiser-architecture" title="Permanent link">¶</a></h3>
+<p>The denoiser in most LDMs is a U-Net with:
+- Convolutional downsampling/upsampling backbone
+- Residual blocks (ResNet-style) at each resolution
+- Self-attention layers (at lower resolutions, where sequences are short enough)
+- Cross-attention layers for text conditioning: queries from spatial features, keys/values from text embeddings</p>
+<p>The DiT (Diffusion Transformer, Peebles &amp; Xie) replaced the U-Net entirely with a Vision Transformer (ViT) operating on latent patches, conditioning on timestep and text through adaptive layer norm. DiT scales predictably with model size and is used in Stable Diffusion 3, Flux, and Sora-like systems.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SinusoidalTimeEmbedding</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Encode scalar timestep t into a D-dimensional embedding.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dim</span> <span class="o">=</span> <span class="n">dim</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># t: (B,)  integer timesteps</span>
+        <span class="n">half</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dim</span> <span class="o">//</span> <span class="mi">2</span>
+        <span class="n">freqs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span>
+            <span class="o">-</span><span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mi">10000</span><span class="p">)</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">half</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">t</span><span class="o">.</span><span class="n">device</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">half</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="p">)</span>  <span class="c1"># (half,)</span>
+        <span class="n">args</span> <span class="o">=</span> <span class="n">t</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">*</span> <span class="n">freqs</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:]</span>  <span class="c1"># (B, half)</span>
+        <span class="n">emb</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">args</span><span class="o">.</span><span class="n">sin</span><span class="p">(),</span> <span class="n">args</span><span class="o">.</span><span class="n">cos</span><span class="p">()],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B, dim)</span>
+        <span class="k">return</span> <span class="n">emb</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ResBlock</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;ResNet block with time-step conditioning via AdaGN or addition.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">channels</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">time_emb_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">GroupNorm</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="n">channels</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">conv1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Conv2d</span><span class="p">(</span><span class="n">channels</span><span class="p">,</span> <span class="n">channels</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">norm2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">GroupNorm</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="n">channels</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">conv2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Conv2d</span><span class="p">(</span><span class="n">channels</span><span class="p">,</span> <span class="n">channels</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="c1"># project time embedding to channel-wise scale + shift</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">time_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">time_emb_dim</span><span class="p">,</span> <span class="n">channels</span> <span class="o">*</span> <span class="mi">2</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">t_emb</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># t_emb: (B, time_emb_dim)</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">conv1</span><span class="p">(</span><span class="n">F</span><span class="o">.</span><span class="n">silu</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">norm1</span><span class="p">(</span><span class="n">x</span><span class="p">)))</span>
+        <span class="c1"># inject time via scale + shift (AdaGN-style)</span>
+        <span class="n">scale</span><span class="p">,</span> <span class="n">shift</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">time_proj</span><span class="p">(</span><span class="n">F</span><span class="o">.</span><span class="n">silu</span><span class="p">(</span><span class="n">t_emb</span><span class="p">))</span><span class="o">.</span><span class="n">chunk</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="n">h</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">scale</span><span class="p">[:,</span> <span class="p">:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">])</span> <span class="o">+</span> <span class="n">shift</span><span class="p">[:,</span> <span class="p">:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">conv2</span><span class="p">(</span><span class="n">F</span><span class="o">.</span><span class="n">silu</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">norm2</span><span class="p">(</span><span class="n">h</span><span class="p">)))</span>
+        <span class="k">return</span> <span class="n">x</span> <span class="o">+</span> <span class="n">h</span>   <span class="c1"># residual connection</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TinyUNet</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Minimal 2-level U-Net denoiser for illustration.</span>
+<span class="sd">    Accepts (x_t, t) and returns predicted noise eps_hat.</span>
+<span class="sd">    In production: multiple levels, attention, cross-attention for conditioning.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">in_channels</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span> <span class="n">base_ch</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">64</span><span class="p">,</span> <span class="n">time_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">256</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">time_emb</span>  <span class="o">=</span> <span class="n">SinusoidalTimeEmbedding</span><span class="p">(</span><span class="n">time_dim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">time_mlp</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">time_dim</span><span class="p">,</span> <span class="n">time_dim</span> <span class="o">*</span> <span class="mi">4</span><span class="p">),</span> <span class="n">nn</span><span class="o">.</span><span class="n">SiLU</span><span class="p">(),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">time_dim</span> <span class="o">*</span> <span class="mi">4</span><span class="p">,</span> <span class="n">time_dim</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">enc1</span> <span class="o">=</span> <span class="n">ResBlock</span><span class="p">(</span><span class="n">base_ch</span><span class="p">,</span> <span class="n">time_dim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">enc2</span> <span class="o">=</span> <span class="n">ResBlock</span><span class="p">(</span><span class="n">base_ch</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="n">time_dim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mid</span>  <span class="o">=</span> <span class="n">ResBlock</span><span class="p">(</span><span class="n">base_ch</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="n">time_dim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dec1</span> <span class="o">=</span> <span class="n">ResBlock</span><span class="p">(</span><span class="n">base_ch</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="n">time_dim</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dec2</span> <span class="o">=</span> <span class="n">ResBlock</span><span class="p">(</span><span class="n">base_ch</span><span class="p">,</span> <span class="n">time_dim</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">in_proj</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Conv2d</span><span class="p">(</span><span class="n">in_channels</span><span class="p">,</span> <span class="n">base_ch</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">down</span>     <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Conv2d</span><span class="p">(</span><span class="n">base_ch</span><span class="p">,</span> <span class="n">base_ch</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">up</span>       <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ConvTranspose2d</span><span class="p">(</span><span class="n">base_ch</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="n">base_ch</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">out_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Conv2d</span><span class="p">(</span><span class="n">base_ch</span><span class="p">,</span> <span class="n">in_channels</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">t_emb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">time_mlp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">time_emb</span><span class="p">(</span><span class="n">t</span><span class="p">))</span>   <span class="c1"># (B, time_dim)</span>
+        <span class="n">h1</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">enc1</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">in_proj</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">t_emb</span><span class="p">)</span>    <span class="c1"># (B, C, H, W)</span>
+        <span class="n">h2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">enc2</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">down</span><span class="p">(</span><span class="n">h1</span><span class="p">),</span> <span class="n">t_emb</span><span class="p">)</span>      <span class="c1"># (B, 2C, H/2, W/2)</span>
+        <span class="n">h2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mid</span><span class="p">(</span><span class="n">h2</span><span class="p">,</span> <span class="n">t_emb</span><span class="p">)</span>
+        <span class="n">h</span>  <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dec1</span><span class="p">(</span><span class="n">h2</span><span class="p">,</span> <span class="n">t_emb</span><span class="p">)</span>
+        <span class="n">h</span>  <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dec2</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">up</span><span class="p">(</span><span class="n">h</span><span class="p">)</span> <span class="o">+</span> <span class="n">h1</span><span class="p">,</span> <span class="n">t_emb</span><span class="p">)</span>    <span class="c1"># skip connection</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">out_proj</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="flow-matching-a-cleaner-generalization">Flow Matching: A Cleaner Generalization<a class="headerlink" href="#flow-matching-a-cleaner-generalization" title="Permanent link">¶</a></h2>
+<p>Flow matching (Lipman et al.; Liu et al., <em>Flow Straight and Fast</em>; Albergo &amp; Vanden-Eijnden) is a simpler and more general framework that subsumes diffusion but removes the requirement for a Markov chain.</p>
+<h3 id="the-idea">The Idea<a class="headerlink" href="#the-idea" title="Permanent link">¶</a></h3>
+<p>Define a probability path <span class="arithmatex">\(p_t\)</span> interpolating between noise <span class="arithmatex">\(p_0 = \mathcal{N}(\mathbf{0},\mathbf{I})\)</span> at <span class="arithmatex">\(t=0\)</span> and data <span class="arithmatex">\(p_1\)</span> at <span class="arithmatex">\(t=1\)</span>. A <em>velocity field</em> <span class="arithmatex">\(\mathbf{v}_t(\mathbf{x})\)</span> generates this path via the continuity equation (a.k.a. transport equation):</p>
+<div class="arithmatex">\[
+\frac{\partial p_t}{\partial t} + \nabla \cdot (p_t \mathbf{v}_t) = 0
+\]</div>
+<p>We train a neural network <span class="arithmatex">\(\mathbf{v}_\theta(\mathbf{x}, t)\)</span> to match this field. The training objective for <em>conditional flow matching</em> (CFM) is:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{CFM} = \mathbb{E}_{t,\mathbf{x}_0,\mathbf{x}_1}\!\left[\left\|\mathbf{v}_\theta(\mathbf{x}_t, t) - (\mathbf{x}_1 - \mathbf{x}_0)\right\|^2\right]
+\]</div>
+<p>where <span class="arithmatex">\(\mathbf{x}_t = (1-t)\mathbf{x}_0 + t\,\mathbf{x}_1\)</span> is the straight-line interpolant between a noise sample <span class="arithmatex">\(\mathbf{x}_0\)</span> and data sample <span class="arithmatex">\(\mathbf{x}_1\)</span>. The target velocity is simply <span class="arithmatex">\(\mathbf{x}_1 - \mathbf{x}_0\)</span> — constant along each path.</p>
+<p>This is <em>Rectified Flow</em> (Liu et al.) in discrete language: training pairs are <span class="arithmatex">\((x_0^\text{noise}, x_1^\text{data})\)</span>, the path is a straight line, and the network learns to predict the direction. At inference, solving the ODE from <span class="arithmatex">\(t=0\)</span> to <span class="arithmatex">\(t=1\)</span> recovers a generated sample.</p>
+<h3 id="why-flow-matching-wins-in-practice">Why Flow Matching Wins in Practice<a class="headerlink" href="#why-flow-matching-wins-in-practice" title="Permanent link">¶</a></h3>
+<ol>
+<li><strong>Fewer steps</strong>: Straight-line paths need fewer integration steps. Diffusion paths are curved (the noise-added marginals trace complex curves), requiring many small steps. Flow matching paths are linear, so a 4-step Euler solver often suffices.</li>
+<li><strong>Simpler math</strong>: No SDE formalism, no noise schedule, no <span class="arithmatex">\(\bar{\alpha}_t\)</span> product.</li>
+<li><strong>Exact likelihood</strong>: Since the velocity field defines an ODE, the change-of-variables formula gives an exact log-likelihood (though it requires ODE integration).</li>
+<li><strong>Flexible couplings</strong>: You are not restricted to <span class="arithmatex">\(\mathcal{N}(\mathbf{0},\mathbf{I})\)</span> as <span class="arithmatex">\(p_0\)</span>; you can use a learned prior or a distribution related to the task.</li>
+</ol>
+<p>Flow matching is now the backbone of Stable Diffusion 3, Flux.1, and many audio generation models.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">flow_matching_loss</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">x1</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Conditional flow matching training step (Rectified Flow variant).</span>
+<span class="sd">    x1: (B, C, H, W)  clean data samples (e.g., images)</span>
+<span class="sd">    model: predicts velocity field v(x_t, t)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span> <span class="o">=</span> <span class="n">x1</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="c1"># Sample noise from N(0, I)</span>
+    <span class="n">x0</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">x1</span><span class="p">)</span>
+    <span class="c1"># Sample a uniform time t in [0, 1]</span>
+    <span class="n">t</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x1</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="c1"># Interpolate: x_t = (1 - t) * x0 + t * x1</span>
+    <span class="n">t_broadcast</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">x_t</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">t_broadcast</span><span class="p">)</span> <span class="o">*</span> <span class="n">x0</span> <span class="o">+</span> <span class="n">t_broadcast</span> <span class="o">*</span> <span class="n">x1</span>
+    <span class="c1"># Target velocity: dx_t/dt = x1 - x0  (constant along path)</span>
+    <span class="n">target_v</span> <span class="o">=</span> <span class="n">x1</span> <span class="o">-</span> <span class="n">x0</span>
+    <span class="c1"># Predict velocity</span>
+    <span class="n">v_hat</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x_t</span><span class="p">,</span> <span class="n">t</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">v_hat</span> <span class="o">-</span> <span class="n">target_v</span><span class="p">)</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">flow_matching_sample</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">shape</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">,</span>
+                         <span class="n">num_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cpu&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Euler ODE integration from t=0 (noise) to t=1 (data).</span>
+<span class="sd">    With straight-line paths, even 4-8 steps is often enough.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">dt</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">num_steps</span>
+    <span class="n">ts</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">dt</span><span class="p">,</span> <span class="n">num_steps</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">t_val</span> <span class="ow">in</span> <span class="n">ts</span><span class="p">:</span>
+        <span class="n">t_batch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],),</span> <span class="n">t_val</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">t_batch</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="n">v</span> <span class="o">*</span> <span class="n">dt</span>   <span class="c1"># Euler step</span>
+
+    <span class="k">return</span> <span class="n">x</span>
+</code></pre></div>
+<h2 id="diffusion-language-models">Diffusion Language Models<a class="headerlink" href="#diffusion-language-models" title="Permanent link">¶</a></h2>
+<p>The success of diffusion in continuous domains (images, audio) raises a natural question: can it work for <em>discrete</em> text? After all, text lives on a finite vocabulary, not a Gaussian manifold.</p>
+<h3 id="challenges">Challenges<a class="headerlink" href="#challenges" title="Permanent link">¶</a></h3>
+<ol>
+<li><strong>Discrete space</strong>: Adding Gaussian noise to a token index produces a float, not a token. Standard Gaussian diffusion does not apply directly.</li>
+<li><strong>Non-continuous interpolation</strong>: There is no obvious straight-line path between the token &ldquo;cat&rdquo; and &ldquo;dog.&rdquo;</li>
+<li><strong>Mask-based diffusion</strong>: One approach (Austin et al., D3PM; Chang et al., MaskGIT; Ye et al., MDLM) replaces noise corruption with <em>masking</em>: the forward process randomly masks tokens, and the reverse process predicts the masked tokens (much like masked language modeling). This is called <em>absorbing diffusion</em>.</li>
+<li><strong>Embedding-space diffusion</strong>: Another approach (Lovelace et al., Genie; Lin &amp; Han, CDCD) runs diffusion in the continuous embedding space, then decodes. The challenge is round-trip fidelity: denoised embeddings may not correspond to any real token.</li>
+</ol>
+<h3 id="masked-diffusion-language-models">Masked Diffusion Language Models<a class="headerlink" href="#masked-diffusion-language-models" title="Permanent link">¶</a></h3>
+<p>The most practical approach uses masking as the noise process:</p>
+<div class="arithmatex">\[
+q(\mathbf{x}_t \mid \mathbf{x}_0) : \text{independently mask each token with probability } \gamma(t)
+\]</div>
+<p>The neural network (typically a Transformer) predicts all unmasked tokens simultaneously given context, similar to BERT&rsquo;s masked language modeling but repeated iteratively. During generation:</p>
+<ol>
+<li>Start with all tokens masked.</li>
+<li>Predict token probabilities for all positions.</li>
+<li>Unmask the most confident subset.</li>
+<li>Repeat until all tokens are unmasked.</li>
+</ol>
+<p>This gives parallel generation, a key advantage over autoregressive models which generate strictly left-to-right. Models like MDLM and Plaid operate this way and can generate text of length <span class="arithmatex">\(L\)</span> in <span class="arithmatex">\(O(K)\)</span> passes for a fixed <span class="arithmatex">\(K\)</span> (e.g., 10) rather than <span class="arithmatex">\(O(L)\)</span> autoregressive steps.</p>
+<h3 id="comparison-to-autoregressive-generation">Comparison to Autoregressive Generation<a class="headerlink" href="#comparison-to-autoregressive-generation" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Autoregressive (AR)</th>
+<th>Diffusion / Masked</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Generation order</td>
+<td>Strict left-to-right</td>
+<td>Any order / parallel</td>
+</tr>
+<tr>
+<td>Steps required</td>
+<td><span class="arithmatex">\(L\)</span> (one per token)</td>
+<td><span class="arithmatex">\(K \ll L\)</span> passes</td>
+</tr>
+<tr>
+<td>Conditional probability</td>
+<td>Exact <span class="arithmatex">\(p(x_i \mid x_{&lt;i})\)</span></td>
+<td>Approximate</td>
+</tr>
+<tr>
+<td>Revision / editing</td>
+<td>Hard (requires resampling)</td>
+<td>Natural: re-mask and regenerate</td>
+</tr>
+<tr>
+<td>Long-range coherence</td>
+<td>Strong (attention over all previous)</td>
+<td>Weaker (depends on architecture)</td>
+</tr>
+<tr>
+<td>Current quality</td>
+<td>Best for NLU/NLG tasks</td>
+<td>Competitive on shorter sequences</td>
+</tr>
+<tr>
+<td>Controllability</td>
+<td>Via prompting</td>
+<td>Easier arbitrary-region infilling</td>
+</tr>
+</tbody>
+</table>
+<p>Diffusion LMs remain competitive with AR on unconditional text generation and controlled infilling, but for tasks requiring long-range consistency (e.g., long-form reasoning), autoregressive models still hold an edge. However, diffusion&rsquo;s native support for infilling makes it attractive for code editing, style transfer, and constrained generation scenarios (see <a href="../07-inference-serving/10-structured-generation.html">Structured &amp; Constrained Generation</a>).</p>
+<h2 id="relevance-for-llm-engineers">Relevance for LLM Engineers<a class="headerlink" href="#relevance-for-llm-engineers" title="Permanent link">¶</a></h2>
+<p>Why should an engineer focused on language models care about diffusion?</p>
+<p><strong>1. Vision-language architectures.</strong> Multimodal LLMs increasingly pair a language model with a diffusion decoder for image generation (e.g., Gemini&rsquo;s image output, or LLaVA-style models with SDXL as a decoder). Understanding the conditioning interface — how CLIP or T5 text embeddings are fed as cross-attention keys/values into the denoiser — is necessary to build and debug these systems (see <a href="../10-multimodal-and-arch/02-vision-language-models.html">Vision-Language Models</a>).</p>
+<p><strong>2. Reward models and RLHF for diffusion.</strong> Just as LLMs are fine-tuned with RLHF (see <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>), diffusion models are fine-tuned with reinforcement learning from human feedback using reward gradients backpropagated through the sampling chain (DDPO, ReFL). The policy gradient machinery is the same; the action space is the denoised image.</p>
+<p><strong>3. Diffusion as a generative backend.</strong> Systems like Stable Diffusion serve as compute-heavy generation backends; LLM engineers writing serving stacks need to reason about the inference throughput of iterative samplers, batch sizing across steps, and caching of the text encoder (which runs once per prompt rather than once per step).</p>
+<p><strong>4. Score functions and energy-based intuitions.</strong> The score function <span class="arithmatex">\(\nabla_\mathbf{x} \log p(\mathbf{x})\)</span> and the energy-based model perspective appear in contrastive learning losses, noise-contrastive estimation (the NCE loss used in word2vec), and the connection between reward models and energy-based models in RLHF. Diffusion gives you a concrete, visual intuition for these abstract objects.</p>
+<p><strong>5. Interview breadth.</strong> Google ML interviews frequently test &ldquo;ML breadth&rdquo; questions that span generative models. You need to be able to describe the DDPM training objective, CFG, and how latent diffusion differs from pixel diffusion in roughly two minutes each.</p>
+<div class="admonition note">
+<p class="admonition-title">Diffusion vs. AR: A Unifying Lens</p>
+<p>Both diffusion and autoregressive models define a factored generative process: AR factorizes as a chain of conditionals over tokens, while diffusion factorizes as a chain of conditionals over noise levels. The network in both cases is a Transformer whose job is to approximate a conditional distribution. The difference lies in <em>what</em> is being conditioned on: in AR, conditioning is on previous tokens; in diffusion, conditioning is on a noisy version of the output and a timestep. Flow matching makes this even cleaner: the network learns a vector field interpolating between two distributions.</p>
+</div>
+<h2 id="key-mathematical-connections-summary-table">Key Mathematical Connections (Summary Table)<a class="headerlink" href="#key-mathematical-connections-summary-table" title="Permanent link">¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>Formula / object</th>
+<th>Intuition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Forward marginal</td>
+<td><span class="arithmatex">\(q(\mathbf{x}_t\mid\mathbf{x}_0) = \mathcal{N}(\sqrt{\bar\alpha_t}\mathbf{x}_0, (1-\bar\alpha_t)\mathbf{I})\)</span></td>
+<td>Jump to any noise level in one shot</td>
+</tr>
+<tr>
+<td>Training loss</td>
+<td><span class="arithmatex">\(\mathbb{E}\|\boldsymbol\epsilon - \boldsymbol\epsilon_\theta(\mathbf{x}_t,t)\|^2\)</span></td>
+<td>Just regression on the added noise</td>
+</tr>
+<tr>
+<td>Score</td>
+<td><span class="arithmatex">\(\nabla_{\mathbf{x}_t}\log q(\mathbf{x}_t) = -\boldsymbol\epsilon/\sqrt{1-\bar\alpha_t}\)</span></td>
+<td>Score and noise predictor are the same thing</td>
+</tr>
+<tr>
+<td>CFG formula</td>
+<td><span class="arithmatex">\((1-w)\boldsymbol\epsilon_\emptyset + w\,\boldsymbol\epsilon_\mathbf{c}\)</span> (with <span class="arithmatex">\(w&gt;1\)</span> extrapolating)</td>
+<td>Steering toward condition</td>
+</tr>
+<tr>
+<td>DDIM ODE step</td>
+<td>Euler step on probability flow ODE</td>
+<td>Makes sampling deterministic and subsampable</td>
+</tr>
+<tr>
+<td>Flow matching loss</td>
+<td><span class="arithmatex">\(\mathbb{E}\|\mathbf{v}_\theta(\mathbf{x}_t,t) - (\mathbf{x}_1-\mathbf{x}_0)\|^2\)</span></td>
+<td>Predict straight-line velocity</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition example">
+<p class="admonition-title">End-to-End Magnitude Check: Stable Diffusion Inference</p>
+<p>Consider Stable Diffusion XL (SDXL) generating a 1024×1024 image:</p>
+<ul>
+<li>VAE compresses to latent <span class="arithmatex">\(128\times128\times4\)</span> (8× downsampling). Latent has <span class="arithmatex">\(128\times128\times4=65{,}536\)</span> values.</li>
+<li>The U-Net denoiser has roughly 2.6B parameters (SDXL). Each step requires two forward passes with CFG.</li>
+<li>At 20 DDIM steps: <span class="arithmatex">\(20 \times 2 = 40\)</span> U-Net forward passes total.</li>
+<li>At float16, a single U-Net pass on a 1024×1024 latent requires on the order of 1.5–2 TFLOPs. Total for 40 passes: <span class="arithmatex">\(\sim60\)</span>–80 TFLOPs.</li>
+<li>On an A100 (312 TFLOPS fp16): <span class="arithmatex">\(\approx 0.2\)</span>–<span class="arithmatex">\(0.25\)</span> seconds compute; actual wall time with memory I/O is roughly 1–3 seconds on a single A100.</li>
+<li>Compare to pixel-space diffusion at the same resolution: the U-Net would operate on <span class="arithmatex">\(1024\times1024\times3\)</span> activations, roughly 64× larger spatial volume, making each step <span class="arithmatex">\(\sim\)</span>64× more expensive — latent diffusion&rsquo;s entire raison d&rsquo;être.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Diffusion and flow-matching models are the dominant paradigm for image and video generation: the field has moved from DDPM&rsquo;s 1000-step pixel-space sampling to rectified-flow transformers (SD3, Flux.1) that produce state-of-the-art images in fewer than 10 steps, while masked-diffusion language models now offer a competitive parallel alternative to autoregressive text generation.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2006.11239">Ho et al., <em>Denoising Diffusion Probabilistic Models</em> (2020)</a> — the DDPM paper that launched the modern diffusion era; introduces the simplified noise-prediction loss.</li>
+<li><a href="https://arxiv.org/abs/2011.13456">Song et al., <em>Score-Based Generative Modeling through SDEs</em> (2021)</a> — unifies DDPM and score matching under a continuous SDE/ODE framework, enabling the probability-flow ODE used by DDIM and later samplers.</li>
+<li><a href="https://arxiv.org/abs/2010.02502">Song et al., <em>Denoising Diffusion Implicit Models</em> (2021)</a> — reformulates sampling as ODE integration; enables deterministic generation and 10–50× step reduction.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2105.05233">Dhariwal &amp; Nichol, <em>Diffusion Models Beat GANs on Image Synthesis</em> (2021)</a> — introduces classifier guidance and the improved U-Net architecture that made diffusion models the quality leader.</li>
+<li><a href="https://arxiv.org/abs/2112.10752">Rombach et al., <em>High-Resolution Image Synthesis with Latent Diffusion Models</em> (2022)</a> — latent diffusion / Stable Diffusion; shows 64× compute savings by running diffusion in VAE latent space.</li>
+<li><a href="https://arxiv.org/abs/2212.09748">Peebles &amp; Xie, <em>Scalable Diffusion Models with Transformers</em> (DiT, 2023)</a> — replaces the U-Net with a ViT operating on latent patches; the architecture behind Sora and SD3.</li>
+<li><a href="https://arxiv.org/abs/2210.02747">Lipman et al., <em>Flow Matching for Generative Modeling</em> (2023)</a> — simulation-free training of continuous normalizing flows; the theoretical basis for modern straight-path samplers.</li>
+<li><a href="https://arxiv.org/abs/2209.03003">Liu et al., <em>Flow Straight and Fast: Rectified Flow</em> (2023)</a> — straight-line interpolant between noise and data; backbone of SD3 and Flux.1.</li>
+<li><a href="https://arxiv.org/abs/2403.03206">Esser et al., <em>Scaling Rectified Flow Transformers for High-Resolution Image Synthesis</em> (2024)</a> — the Stable Diffusion 3 paper; combines DiT with rectified flow and multimodal attention for state-of-the-art text-to-image quality.</li>
+<li><a href="https://arxiv.org/abs/2406.07524">Sahoo et al., <em>Simple and Effective Masked Diffusion Language Models</em> (NeurIPS 2024)</a> — MDLM: shows masked-discrete diffusion matches autoregressive perplexity on standard benchmarks, powering parallel text generation.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/black-forest-labs/flux">black-forest-labs/flux</a> — official inference code for FLUX.1 [dev/schnell], a 12B-parameter rectified-flow transformer; the current open-weight state of the art for text-to-image.</li>
+<li><a href="https://github.com/huggingface/diffusers">huggingface/diffusers</a> — the standard PyTorch library for diffusion pipelines (SDXL, SD3, Flux, video models); includes schedulers, LoRA, and quantization support.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://lilianweng.github.io/posts/2021-07-11-diffusion-models/">Lilian Weng, <em>What are Diffusion Models?</em> (updated 2024)</a> — the canonical long-form tutorial covering DDPM through latent diffusion, flow matching, and consistency models with clean notation.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Ho, Jain &amp; Abbeel, <em>Denoising Diffusion Probabilistic Models</em> (NeurIPS 2020) — the foundational DDPM paper.</li>
+<li>Song, Meng &amp; Ermon, <em>Denoising Diffusion Implicit Models</em> (ICLR 2021) — DDIM, deterministic sampling.</li>
+<li>Song, Sohl-Dickstein, Kingma, Kumar, Ermon &amp; Poole, <em>Score-Based Generative Modeling through Stochastic Differential Equations</em> (ICLR 2021) — the SDE unification.</li>
+<li>Dhariwal &amp; Nichol, <em>Diffusion Models Beat GANs on Image Synthesis</em> (NeurIPS 2021) — classifier guidance, improved U-Net.</li>
+<li>Ho &amp; Salimans, <em>Classifier-Free Diffusion Guidance</em> (NeurIPS Workshop 2021) — CFG.</li>
+<li>Rombach, Blattmann, Lorenz, Esser &amp; Ommer, <em>High-Resolution Image Synthesis with Latent Diffusion Models</em> (CVPR 2022) — latent diffusion / Stable Diffusion.</li>
+<li>Lipman, Chen, Ben-Hamu, Nickel &amp; Le, <em>Flow Matching for Generative Modeling</em> (ICLR 2023) — conditional flow matching.</li>
+<li>Liu, Gong &amp; Liu, <em>Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow</em> (ICLR 2023) — rectified flow.</li>
+<li>Peebles &amp; Xie, <em>Scalable Diffusion Models with Transformers</em> (DiT, ICCV 2023) — Transformer denoiser, used in Sora-like systems.</li>
+<li>Austin, Johnson, Ho, Tarlow &amp; van den Berg, <em>Structured Denoising Diffusion Models in Discrete State-Spaces</em> (D3PM, NeurIPS 2021) — diffusion over discrete tokens.</li>
+<li>Saharia et al., <em>Photorealistic Text-to-Image Diffusion Models with Deep Language Understanding</em> (Imagen, NeurIPS 2022) — dynamic thresholding and cascaded diffusion.</li>
+</ul>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Diffusion models define a forward noising process with a closed-form marginal <span class="arithmatex">\(q(\mathbf{x}_t|\mathbf{x}_0) = \mathcal{N}(\sqrt{\bar\alpha_t}\mathbf{x}_0,(1-\bar\alpha_t)\mathbf{I})\)</span>, enabling any timestep to be sampled in one shot.</li>
+<li>The DDPM training objective reduces to simple noise-prediction regression: <span class="arithmatex">\(\mathbb{E}\|\boldsymbol\epsilon - \boldsymbol\epsilon_\theta(\mathbf{x}_t,t)\|^2\)</span>. Stability comes from regression; no adversarial training required.</li>
+<li>Score matching and diffusion are equivalent: the noise predictor <span class="arithmatex">\(\boldsymbol\epsilon_\theta\)</span> is a re-scaled score function of the noisy distribution.</li>
+<li>DDIM reformulates sampling as ODE integration, enabling deterministic, subsampable trajectories (20–50 steps instead of 1000).</li>
+<li>Classifier-free guidance (CFG) steers generation by extrapolating beyond the conditional model: <span class="arithmatex">\(\tilde{\boldsymbol\epsilon} = \boldsymbol\epsilon_\emptyset + w(\boldsymbol\epsilon_\mathbf{c} - \boldsymbol\epsilon_\emptyset)\)</span> with <span class="arithmatex">\(w&gt;1\)</span>. Higher <span class="arithmatex">\(w\)</span> improves prompt adherence but risks over-saturation.</li>
+<li>Latent diffusion (Stable Diffusion) runs the diffusion process in the compressed latent space of a VAE, reducing spatial resolution 8× and compute <span class="arithmatex">\(\sim\)</span>64× versus pixel space.</li>
+<li>Flow matching (Rectified Flow, CFM) is a cleaner framework: train the network to predict the straight-line velocity <span class="arithmatex">\(\mathbf{x}_1 - \mathbf{x}_0\)</span>; requires fewer ODE steps and is now the backbone of SD3 and Flux.</li>
+<li>Diffusion LMs apply masking as the noise process and generate text in parallel (all positions at once), offering an alternative to strict left-to-right autoregressive generation with natural infilling support.</li>
+<li>As an LLM engineer you need diffusion literacy for multimodal architectures, RLHF-for-diffusion, serving system design, and breadth interview questions.</li>
+</ul>
+</div>
+<nav class="page-nav">
+<a class="prev" href="03-audio-speech-multimodal.html"><span class="pn-label">← Previous</span><span class="pn-title">Audio, Speech &amp; Multimodal Fusion</span></a>
+<a class="next" href="05-unified-any-to-any.html"><span class="pn-label">Next →</span><span class="pn-title">Unified &amp; Any-to-Any Models</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-diffusion-motivation-and-context">Why Diffusion? Motivation and Context</a></li>
+<li class="toc-l2"><a href="#the-forward-process-gradually-destroying-data">The Forward Process: Gradually Destroying Data</a></li>
+<li class="toc-l3"><a href="#formal-definition">Formal Definition</a></li>
+<li class="toc-l3"><a href="#noise-schedules">Noise Schedules</a></li>
+<li class="toc-l2"><a href="#the-reverse-process-and-training-objective-ddpm">The Reverse Process and Training Objective (DDPM)</a></li>
+<li class="toc-l2"><a href="#score-matching-and-the-connection-to-sdes">Score Matching and the Connection to SDEs</a></li>
+<li class="toc-l3"><a href="#ddim-deterministic-sampling">DDIM: Deterministic Sampling</a></li>
+<li class="toc-l2"><a href="#classifier-guidance-and-classifier-free-guidance">Classifier Guidance and Classifier-Free Guidance</a></li>
+<li class="toc-l3"><a href="#classifier-guidance">Classifier Guidance</a></li>
+<li class="toc-l3"><a href="#classifier-free-guidance-cfg">Classifier-Free Guidance (CFG)</a></li>
+<li class="toc-l2"><a href="#latent-diffusion-and-stable-diffusion">Latent Diffusion and Stable Diffusion</a></li>
+<li class="toc-l3"><a href="#architecture-overview">Architecture Overview</a></li>
+<li class="toc-l3"><a href="#u-net-denoiser-architecture">U-Net Denoiser Architecture</a></li>
+<li class="toc-l2"><a href="#flow-matching-a-cleaner-generalization">Flow Matching: A Cleaner Generalization</a></li>
+<li class="toc-l3"><a href="#the-idea">The Idea</a></li>
+<li class="toc-l3"><a href="#why-flow-matching-wins-in-practice">Why Flow Matching Wins in Practice</a></li>
+<li class="toc-l2"><a href="#diffusion-language-models">Diffusion Language Models</a></li>
+<li class="toc-l3"><a href="#challenges">Challenges</a></li>
+<li class="toc-l3"><a href="#masked-diffusion-language-models">Masked Diffusion Language Models</a></li>
+<li class="toc-l3"><a href="#comparison-to-autoregressive-generation">Comparison to Autoregressive Generation</a></li>
+<li class="toc-l2"><a href="#relevance-for-llm-engineers">Relevance for LLM Engineers</a></li>
+<li class="toc-l2"><a href="#key-mathematical-connections-summary-table">Key Mathematical Connections (Summary Table)</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

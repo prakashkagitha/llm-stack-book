@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Probability, Statistics &amp; Information Theory — The LLM Stack</title>
+<meta name="description" content="Random variables, distributions, expectation/variance, Bayes; MLE/MAP; KL divergence, cross-entropy, entropy, mutual information; perplexity; why cross-entropy ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="active" href="02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part I — Mathematical &amp; Systems Foundations</div>
+<h1 id="12-probability-statistics-information-theory">1.2 Probability, Statistics &amp; Information Theory<a class="headerlink" href="#12-probability-statistics-information-theory" title="Permanent link">¶</a></h1>
+<p>Every LLM training run, every forward pass, every evaluation metric you encounter reduces to a single fundamental operation: computing a probability and then measuring how far it is from what you wanted. The model output is a probability distribution over the vocabulary. The training loss is the cross-entropy between that distribution and the ground truth. The evaluation metric is perplexity, itself an exponential of cross-entropy. To work fluently at any level of the stack, you need to understand the probability and information theory that underlie all of it — not just as formulas to memorize, but as interconnected ideas with a coherent geometry.</p>
+<p>This chapter builds those ideas from the ground up. We start with random variables and the laws that govern them, move through the statistical estimation procedures that produce model parameters, and arrive at Shannon&rsquo;s information theory — entropy, KL divergence, cross-entropy, mutual information — concluding with perplexity and a precise explanation of why cross-entropy is the right loss for language modeling. Every concept comes with a worked numerical example or code you can run.</p>
+<p>Related chapters: <a href="../01-foundations/01-linear-algebra.html">Linear Algebra for Deep Learning</a> covers the vector and matrix operations used throughout; <a href="../01-foundations/03-calculus-optimization.html">Calculus, Optimization &amp; Convexity</a> develops the gradient mechanics that minimize the cross-entropy loss; and <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a> applies everything here to real training pipelines.</p>
+<hr />
+<h2 id="random-variables-and-distributions">Random Variables and Distributions<a class="headerlink" href="#random-variables-and-distributions" title="Permanent link">¶</a></h2>
+<p>A <strong>random variable</strong> <span class="arithmatex">\(X\)</span> is a function from a probability space (a set of outcomes) to a measurable space (usually <span class="arithmatex">\(\mathbb{R}\)</span>). We typically care less about the formalism and more about the distribution it induces: the assignment of probability to events.</p>
+<p><strong>Discrete distributions</strong> are specified by a probability mass function (PMF):</p>
+<div class="arithmatex">\[
+P(X = x_i) = p_i, \quad \sum_i p_i = 1, \quad p_i \geq 0
+\]</div>
+<p><strong>Continuous distributions</strong> use a probability density function (PDF) <span class="arithmatex">\(p(x)\)</span> where <span class="arithmatex">\(P(a \leq X \leq b) = \int_a^b p(x)\,dx\)</span>.</p>
+<h3 id="distributions-you-will-encounter-in-llm-work">Distributions You Will Encounter in LLM Work<a class="headerlink" href="#distributions-you-will-encounter-in-llm-work" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Distribution</th>
+<th>PMF / PDF</th>
+<th>Key parameter</th>
+<th>Where it appears in LLMs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Categorical<span class="arithmatex">\((p_1,\ldots,p_V)\)</span></td>
+<td><span class="arithmatex">\(P(X=k)=p_k\)</span></td>
+<td>Simplex vector <span class="arithmatex">\(\mathbf{p}\)</span></td>
+<td>Every output token</td>
+</tr>
+<tr>
+<td>Bernoulli<span class="arithmatex">\((q)\)</span></td>
+<td><span class="arithmatex">\(q^x(1-q)^{1-x}\)</span></td>
+<td><span class="arithmatex">\(q \in [0,1]\)</span></td>
+<td>Binary decisions, RLHF reward</td>
+</tr>
+<tr>
+<td>Gaussian <span class="arithmatex">\(\mathcal{N}(\mu,\sigma^2)\)</span></td>
+<td><span class="arithmatex">\(\frac{1}{\sqrt{2\pi}\sigma}e^{-(x-\mu)^2/(2\sigma^2)}\)</span></td>
+<td><span class="arithmatex">\(\mu,\sigma\)</span></td>
+<td>Weight initialization, VAE latent</td>
+</tr>
+<tr>
+<td>Dirichlet<span class="arithmatex">\((\boldsymbol{\alpha})\)</span></td>
+<td><span class="arithmatex">\(\propto \prod_k p_k^{\alpha_k-1}\)</span></td>
+<td>Concentration <span class="arithmatex">\(\boldsymbol{\alpha}\)</span></td>
+<td>Prior over categorical distributions</td>
+</tr>
+</tbody>
+</table>
+<p>The <strong>categorical distribution</strong> is the star of this textbook. The softmax output of a language model is nothing but the parameter vector of a categorical distribution over the vocabulary of size <span class="arithmatex">\(V\)</span> (typically on the order of 32,000–256,000 tokens).</p>
+<h3 id="expectation-variance-and-covariance">Expectation, Variance, and Covariance<a class="headerlink" href="#expectation-variance-and-covariance" title="Permanent link">¶</a></h3>
+<p>The <strong>expectation</strong> (mean) of <span class="arithmatex">\(X\)</span> under distribution <span class="arithmatex">\(p\)</span>:</p>
+<div class="arithmatex">\[
+\mathbb{E}_p[X] = \sum_x x\, p(x) \quad \text{(discrete)}, \qquad \mathbb{E}_p[X] = \int x\, p(x)\,dx \quad \text{(continuous)}
+\]</div>
+<p><strong>Variance</strong> measures spread:</p>
+<div class="arithmatex">\[
+\operatorname{Var}(X) = \mathbb{E}[(X - \mathbb{E}[X])^2] = \mathbb{E}[X^2] - (\mathbb{E}[X])^2
+\]</div>
+<p><strong>Covariance</strong> between two random variables <span class="arithmatex">\(X\)</span> and <span class="arithmatex">\(Y\)</span>:</p>
+<div class="arithmatex">\[
+\operatorname{Cov}(X,Y) = \mathbb{E}[(X - \mathbb{E}[X])(Y - \mathbb{E}[Y])]
+\]</div>
+<p>The <strong>Pearson correlation</strong> is the normalized version: <span class="arithmatex">\(\rho = \operatorname{Cov}(X,Y) / (\sigma_X \sigma_Y)\)</span>.</p>
+<h3 id="bayes-theorem">Bayes&rsquo; Theorem<a class="headerlink" href="#bayes-theorem" title="Permanent link">¶</a></h3>
+<p><strong>Bayes&rsquo; theorem</strong> is the mechanism by which we update beliefs in light of evidence:</p>
+<div class="arithmatex">\[
+P(\theta \mid \mathcal{D}) = \frac{P(\mathcal{D} \mid \theta)\, P(\theta)}{P(\mathcal{D})}
+\]</div>
+<p>where <span class="arithmatex">\(\theta\)</span> are model parameters, <span class="arithmatex">\(\mathcal{D}\)</span> is observed data, <span class="arithmatex">\(P(\theta)\)</span> is the <strong>prior</strong>, <span class="arithmatex">\(P(\mathcal{D} \mid \theta)\)</span> is the <strong>likelihood</strong>, <span class="arithmatex">\(P(\mathcal{D})\)</span> is the <strong>marginal likelihood</strong> (evidence, a normalizing constant), and <span class="arithmatex">\(P(\theta \mid \mathcal{D})\)</span> is the <strong>posterior</strong>. In LLM training we almost never compute the posterior directly — we optimize instead — but Bayes frames the conceptual story.</p>
+<hr />
+<h2 id="maximum-likelihood-and-map-estimation">Maximum Likelihood and MAP Estimation<a class="headerlink" href="#maximum-likelihood-and-map-estimation" title="Permanent link">¶</a></h2>
+<h3 id="maximum-likelihood-estimation">Maximum Likelihood Estimation<a class="headerlink" href="#maximum-likelihood-estimation" title="Permanent link">¶</a></h3>
+<p>Suppose we have a parametric model <span class="arithmatex">\(p(x \mid \theta)\)</span> and i.i.d. observations <span class="arithmatex">\(\mathcal{D} = \{x_1, \ldots, x_N\}\)</span>. The <strong>log-likelihood</strong> is:</p>
+<div class="arithmatex">\[
+\ell(\theta) = \log P(\mathcal{D} \mid \theta) = \sum_{i=1}^N \log p(x_i \mid \theta)
+\]</div>
+<p><strong>Maximum likelihood estimation (MLE)</strong> finds:</p>
+<div class="arithmatex">\[
+\hat{\theta}_{\text{MLE}} = \arg\max_\theta \ell(\theta)
+\]</div>
+<p>For a language model, each observation <span class="arithmatex">\(x_i\)</span> is a token, <span class="arithmatex">\(p(x_i \mid \theta) = p_\theta(x_i \mid x_{&lt;i})\)</span> is the model&rsquo;s predicted probability of that token given context, and maximizing the log-likelihood is <em>exactly</em> minimizing the cross-entropy loss:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{CE}} = -\frac{1}{N}\sum_{i=1}^N \log p_\theta(x_i \mid x_{&lt;i})
+\]</div>
+<p>This is not a coincidence. Cross-entropy loss <em>is</em> negative log-likelihood. The two names refer to the same operation viewed from different disciplines.</p>
+<h3 id="map-estimation-and-regularization">MAP Estimation and Regularization<a class="headerlink" href="#map-estimation-and-regularization" title="Permanent link">¶</a></h3>
+<p><strong>Maximum a posteriori (MAP)</strong> estimation incorporates the prior:</p>
+<div class="arithmatex">\[
+\hat{\theta}_{\text{MAP}} = \arg\max_\theta \left[\log P(\mathcal{D} \mid \theta) + \log P(\theta)\right]
+\]</div>
+<p>A Gaussian prior <span class="arithmatex">\(P(\theta) \propto \exp(-\lambda\|\theta\|^2)\)</span> corresponds to <span class="arithmatex">\(\ell_2\)</span> (weight decay) regularization. A Laplace prior corresponds to <span class="arithmatex">\(\ell_1\)</span> (sparsity-inducing) regularization. When practitioners add <code>weight_decay=0.1</code> to AdamW, they are performing MAP estimation with a Gaussian prior — this is discussed further in <a href="../01-foundations/03-calculus-optimization.html">Calculus, Optimization &amp; Convexity</a> and <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a>.</p>
+<hr />
+<h2 id="shannon-information-theory">Shannon Information Theory<a class="headerlink" href="#shannon-information-theory" title="Permanent link">¶</a></h2>
+<p>Claude Shannon&rsquo;s 1948 paper &ldquo;A Mathematical Theory of Communication&rdquo; introduced the concepts we rely on every day in ML. The core idea: information content should be a function of probability, should be additive for independent events, and should be larger for rare events.</p>
+<h3 id="self-information-and-entropy">Self-Information and Entropy<a class="headerlink" href="#self-information-and-entropy" title="Permanent link">¶</a></h3>
+<p>The <strong>self-information</strong> (surprisal) of an event with probability <span class="arithmatex">\(p\)</span>:</p>
+<div class="arithmatex">\[
+I(x) = -\log_2 p(x) \quad \text{bits}
+\]</div>
+<p>If we use natural log instead of <span class="arithmatex">\(\log_2\)</span>, the unit is <strong>nats</strong>. Deep learning conventions use nats (because differentiation of <span class="arithmatex">\(\log\)</span> is cleaner), while information-theoretic literature often uses bits. The conversion is <span class="arithmatex">\(1 \text{ nat} = \log_2 e \approx 1.4427 \text{ bits}\)</span>.</p>
+<p>The <strong>Shannon entropy</strong> of a distribution <span class="arithmatex">\(p\)</span> is the expected self-information — the average surprise:</p>
+<div class="arithmatex">\[
+H(p) = -\sum_x p(x) \log p(x) = \mathbb{E}_p[-\log p(X)]
+\]</div>
+<p>Entropy is maximized by the uniform distribution (<span class="arithmatex">\(H = \log V\)</span> for <span class="arithmatex">\(V\)</span> outcomes) and minimized at zero by any degenerate (one-hot) distribution.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: entropy of a small vocabulary</p>
+<p>Suppose a toy vocabulary has 4 tokens with probabilities <span class="arithmatex">\(p = [0.5, 0.25, 0.125, 0.125]\)</span>.</p>
+<div class="arithmatex">\[
+H(p) = -0.5\log_2 0.5 - 0.25\log_2 0.25 - 0.125\log_2 0.125 - 0.125\log_2 0.125
+\]</div>
+<div class="arithmatex">\[
+= -0.5(-1) - 0.25(-2) - 0.125(-3) - 0.125(-3)
+\]</div>
+<div class="arithmatex">\[
+= 0.5 + 0.5 + 0.375 + 0.375 = 1.75 \text{ bits}
+\]</div>
+<p>The uniform distribution over 4 tokens would give <span class="arithmatex">\(H = \log_2 4 = 2\)</span> bits. Our distribution has lower entropy because token 0 is more predictable.</p>
+</div>
+<h3 id="kl-divergence">KL Divergence<a class="headerlink" href="#kl-divergence" title="Permanent link">¶</a></h3>
+<p>The <strong>Kullback-Leibler (KL) divergence</strong> from distribution <span class="arithmatex">\(q\)</span> to distribution <span class="arithmatex">\(p\)</span> measures how much information is lost when <span class="arithmatex">\(q\)</span> is used to approximate <span class="arithmatex">\(p\)</span>:</p>
+<div class="arithmatex">\[
+D_{\text{KL}}(p \,\|\, q) = \sum_x p(x) \log \frac{p(x)}{q(x)} = \mathbb{E}_p\!\left[\log \frac{p(X)}{q(X)}\right]
+\]</div>
+<p>Key properties:
+- <strong>Non-negative</strong>: <span class="arithmatex">\(D_{\text{KL}}(p \,\|\, q) \geq 0\)</span>, with equality iff <span class="arithmatex">\(p = q\)</span> (by Gibbs&rsquo; inequality)
+- <strong>Asymmetric</strong>: <span class="arithmatex">\(D_{\text{KL}}(p \,\|\, q) \neq D_{\text{KL}}(q \,\|\, p)\)</span> in general
+- <strong>Not a metric</strong>: violates the triangle inequality
+- <strong>Infinite if <span class="arithmatex">\(q(x)=0\)</span> where <span class="arithmatex">\(p(x)&gt;0\)</span></strong>: this is why label smoothing matters (more below)</p>
+<p>The forward KL <span class="arithmatex">\(D_{\text{KL}}(p\|q)\)</span> is called <strong>inclusive</strong> — minimizing it forces <span class="arithmatex">\(q\)</span> to cover all modes of <span class="arithmatex">\(p\)</span>. The reverse KL <span class="arithmatex">\(D_{\text{KL}}(q\|p)\)</span> is <strong>exclusive</strong> — minimizing it lets <span class="arithmatex">\(q\)</span> concentrate on one mode of <span class="arithmatex">\(p\)</span>. This asymmetry is critical in variational inference and in RLHF/DPO, where we penalize the KL between the fine-tuned policy and the reference model.</p>
+<h3 id="cross-entropy">Cross-Entropy<a class="headerlink" href="#cross-entropy" title="Permanent link">¶</a></h3>
+<p><strong>Cross-entropy</strong> between distribution <span class="arithmatex">\(p\)</span> (true) and <span class="arithmatex">\(q\)</span> (model) is:</p>
+<div class="arithmatex">\[
+H(p, q) = -\sum_x p(x) \log q(x) = \mathbb{E}_p[-\log q(X)]
+\]</div>
+<p>It relates to entropy and KL as:</p>
+<div class="arithmatex">\[
+H(p, q) = H(p) + D_{\text{KL}}(p \,\|\, q)
+\]</div>
+<p>This decomposition is crucial. Since <span class="arithmatex">\(H(p)\)</span> is a constant with respect to <span class="arithmatex">\(q\)</span> (it depends only on the true distribution), minimizing <span class="arithmatex">\(H(p,q)\)</span> over <span class="arithmatex">\(q\)</span> is <em>equivalent</em> to minimizing <span class="arithmatex">\(D_{\text{KL}}(p \,\|\, q)\)</span>. Training a language model by cross-entropy loss is fitting the model distribution to the data distribution in the KL-divergence sense.</p>
+<p>In language modeling the true distribution <span class="arithmatex">\(p\)</span> is the one-hot empirical distribution: all probability mass on the observed token <span class="arithmatex">\(x^*\)</span>. Therefore:</p>
+<div class="arithmatex">\[
+H(p_{\text{one-hot}}, q) = -\log q(x^*)
+\]</div>
+<p>The cross-entropy loss is simply the negative log-probability the model assigns to the correct token. No sum needed — one-hot <span class="arithmatex">\(p\)</span> kills all other terms.</p>
+<hr />
+<h2 id="why-cross-entropy-is-the-llm-loss">Why Cross-Entropy is THE LLM Loss<a class="headerlink" href="#why-cross-entropy-is-the-llm-loss" title="Permanent link">¶</a></h2>
+<p>Several properties conspire to make cross-entropy the right loss for language models.</p>
+<p><strong>1. It is the negative log-likelihood.</strong> For categorical outputs, minimizing cross-entropy is identical to MLE. MLE is consistent and asymptotically efficient (the Cramér-Rao bound) under standard regularity conditions.</p>
+<p><strong>2. It is a proper scoring rule.</strong> A loss <span class="arithmatex">\(\ell(p, y)\)</span> is proper if the minimum is achieved exactly when <span class="arithmatex">\(p\)</span> matches the true distribution. Cross-entropy (log loss) is strictly proper: the model is maximally rewarded for reporting its true beliefs.</p>
+<p><strong>3. It has well-behaved gradients.</strong> The gradient of cross-entropy with softmax output is <span class="arithmatex">\(\hat{p} - p_{\text{true}}\)</span>, the probability residual. No vanishing gradients even when the correct token probability is small (unlike squared error, whose gradient <span class="arithmatex">\((\hat{p} - p_{\text{true}}) \cdot \hat{p}(1-\hat{p})\)</span> vanishes when <span class="arithmatex">\(\hat{p} \to 0\)</span>).</p>
+<p><strong>4. It can handle uncertainty.</strong> If the true label distribution is not one-hot (label smoothing, soft targets from a teacher), cross-entropy still works: <span class="arithmatex">\(-\sum_k p_k \log q_k\)</span>.</p>
+<p><strong>5. Minimizing it minimizes KL.</strong> As shown above, it directly minimizes <span class="arithmatex">\(D_{\text{KL}}(p_{\text{data}} \| p_\theta)\)</span>, which is the information-theoretic statement that the model matches the data-generating process.</p>
+<p>The pretraining loss used by GPT-2, GPT-3, LLaMA, Gemini, and essentially every modern LLM is precisely:</p>
+<div class="arithmatex">\[
+\mathcal{L} = -\frac{1}{T} \sum_{t=1}^T \log p_\theta(x_t \mid x_1, \ldots, x_{t-1})
+\]</div>
+<p>See <a href="../03-pretraining/03-pretraining-objective.html">The Pretraining Objective &amp; Loss</a> for exactly how this is computed in practice at scale.</p>
+<hr />
+<h2 id="mutual-information-and-conditional-entropy">Mutual Information and Conditional Entropy<a class="headerlink" href="#mutual-information-and-conditional-entropy" title="Permanent link">¶</a></h2>
+<p><strong>Conditional entropy</strong> measures remaining uncertainty about <span class="arithmatex">\(X\)</span> given knowledge of <span class="arithmatex">\(Y\)</span>:</p>
+<div class="arithmatex">\[
+H(X \mid Y) = -\sum_{x,y} p(x,y) \log p(x \mid y)
+\]</div>
+<p><strong>Mutual information (MI)</strong> quantifies how much knowing <span class="arithmatex">\(Y\)</span> reduces uncertainty about <span class="arithmatex">\(X\)</span>:</p>
+<div class="arithmatex">\[
+I(X; Y) = H(X) - H(X \mid Y) = H(Y) - H(Y \mid X)
+\]</div>
+<p>Equivalently:</p>
+<div class="arithmatex">\[
+I(X; Y) = D_{\text{KL}}\bigl(p(x,y) \,\|\, p(x)p(y)\bigr) = \sum_{x,y} p(x,y) \log \frac{p(x,y)}{p(x)p(y)}
+\]</div>
+<p>MI is symmetric: <span class="arithmatex">\(I(X;Y) = I(Y;X)\)</span>. It is zero iff <span class="arithmatex">\(X\)</span> and <span class="arithmatex">\(Y\)</span> are independent. In information-theoretic terms, two variables are dependent iff their joint distribution differs from the product of marginals.</p>
+<p>Where does MI appear in LLMs? Several places:</p>
+<ul>
+<li><strong>InfoNCE loss</strong> (used in contrastive pretraining like SimCLR, and in some embedding models) is a lower bound on MI.</li>
+<li><strong>Probing classifiers</strong> measure MI between internal representations and linguistic features to understand what a model has learned.</li>
+<li><strong>Feature selection</strong> in attention analysis: the attention pattern can be viewed as routing information; MI-based measures quantify how much information flows through a head.</li>
+<li><strong>Tokenization</strong>: BPE merge criteria approximate minimizing description length, which is related to maximizing MI between pairs of adjacent subwords — see <a href="../02-transformer/01-tokenization.html">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a>.</li>
+</ul>
+<hr />
+<h2 id="perplexity">Perplexity<a class="headerlink" href="#perplexity" title="Permanent link">¶</a></h2>
+<p><strong>Perplexity</strong> (PPL) is the standard metric for evaluating language models. It is the exponentiation of the average cross-entropy loss:</p>
+<div class="arithmatex">\[
+\text{PPL}(p_\theta, \mathcal{D}) = \exp\!\left(-\frac{1}{T}\sum_{t=1}^T \log p_\theta(x_t \mid x_{&lt;t})\right) = \exp\bigl(\mathcal{L}_{\text{CE}}\bigr)
+\]</div>
+<p>Intuition: a perplexity of <span class="arithmatex">\(K\)</span> means the model is &ldquo;as confused as if it had to choose uniformly among <span class="arithmatex">\(K\)</span> options at each step.&rdquo; A random model over a vocabulary of size <span class="arithmatex">\(V\)</span> achieves <span class="arithmatex">\(\text{PPL} = V\)</span>. A perfect model achieves <span class="arithmatex">\(\text{PPL} = 1\)</span>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: computing perplexity on a toy sequence</p>
+<p>Suppose the model assigns the following token probabilities to a 5-token sequence:</p>
+<table>
+<thead>
+<tr>
+<th>Step <span class="arithmatex">\(t\)</span></th>
+<th>Token</th>
+<th><span class="arithmatex">\(p_\theta(x_t \mid x_{&lt;t})\)</span></th>
+<th><span class="arithmatex">\(-\log p\)</span> (nats)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>&ldquo;The&rdquo;</td>
+<td>0.20</td>
+<td>1.609</td>
+</tr>
+<tr>
+<td>2</td>
+<td>&ldquo;cat&rdquo;</td>
+<td>0.05</td>
+<td>2.996</td>
+</tr>
+<tr>
+<td>3</td>
+<td>&ldquo;sat&rdquo;</td>
+<td>0.30</td>
+<td>1.204</td>
+</tr>
+<tr>
+<td>4</td>
+<td>&ldquo;on&rdquo;</td>
+<td>0.60</td>
+<td>0.511</td>
+</tr>
+<tr>
+<td>5</td>
+<td>&ldquo;mat&rdquo;</td>
+<td>0.15</td>
+<td>1.897</td>
+</tr>
+</tbody>
+</table>
+<p>Average cross-entropy: <span class="arithmatex">\((1.609 + 2.996 + 1.204 + 0.511 + 1.897) / 5 = 1.643\)</span> nats.</p>
+<p>Perplexity: <span class="arithmatex">\(\exp(1.643) \approx 5.17\)</span>.</p>
+<p>The model is roughly as confused as if choosing among 5 options at each step on this sequence.</p>
+<p>For reference, GPT-2 (1.5B) achieves roughly 18–20 perplexity on WikiText-103 in nats, while strong modern models (LLaMA-3, Gemma) can reach single-digit perplexity on held-out text from the same distribution.</p>
+</div>
+<h3 id="perplexity-pitfalls">Perplexity Pitfalls<a class="headerlink" href="#perplexity-pitfalls" title="Permanent link">¶</a></h3>
+<p>Perplexity depends strongly on tokenization. A model using a byte-level tokenizer will report higher perplexity than one using a word-level tokenizer because more decisions are made per word. Always compare perplexity numbers computed with the same tokenizer on the same test set.</p>
+<p>Perplexity is also not a direct proxy for downstream task quality — a model can have lower perplexity than another while being worse at instruction following or reasoning. See <a href="../11-evaluation/01-eval-landscape.html">The Evaluation Problem &amp; Benchmark Landscape</a> for a fuller treatment.</p>
+<hr />
+<h2 id="label-smoothing-and-soft-targets">Label Smoothing and Soft Targets<a class="headerlink" href="#label-smoothing-and-soft-targets" title="Permanent link">¶</a></h2>
+<p><strong>Label smoothing</strong> replaces the one-hot target with a smoothed distribution:</p>
+<div class="arithmatex">\[
+p_{\text{smooth}}(k) = (1 - \varepsilon)\,\mathbf{1}[k = k^*] + \frac{\varepsilon}{V}
+\]</div>
+<p>where <span class="arithmatex">\(\varepsilon\)</span> is a small constant (commonly 0.1) and <span class="arithmatex">\(V\)</span> is the vocabulary size. The loss becomes:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{LS}} = -(1-\varepsilon)\log q(k^*) - \frac{\varepsilon}{V}\sum_k \log q(k)
+\]</div>
+<p>Why does this help? Three reasons:</p>
+<ol>
+<li><strong>Calibration</strong>: pure cross-entropy with hard targets can push logits for the correct class to <span class="arithmatex">\(+\infty\)</span>, producing overconfident models. Smoothing prevents this.</li>
+<li><strong>KL guard</strong>: when <span class="arithmatex">\(p(x) = 0\)</span> and <span class="arithmatex">\(q(x) = 0\)</span>, the KL term <span class="arithmatex">\(0 \cdot \log 0 / 0\)</span> is undefined; smoothing ensures <span class="arithmatex">\(p(x) &gt; 0\)</span> everywhere, making KL well-defined.</li>
+<li><strong>Regularization</strong>: the smoothed objective implicitly penalizes the entropy of the output distribution, preventing the model from assigning zero probability to any class and encouraging more distributed predictions.</li>
+</ol>
+<p>In the original Transformer paper (Vaswani et al., &ldquo;Attention Is All You Need&rdquo;, 2017), label smoothing of <span class="arithmatex">\(\varepsilon = 0.1\)</span> was used and attributed a significant improvement in BLEU score. LLM pretraining today typically does not use label smoothing (the model scale provides sufficient implicit regularization), but it remains common in fine-tuning and machine translation.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> What is the difference between KL divergence and cross-entropy, and why do we use cross-entropy as the LLM training loss rather than directly minimizing KL?</p>
+<p><strong>A:</strong> Cross-entropy decomposes as <span class="arithmatex">\(H(p, q) = H(p) + D_{\text{KL}}(p \,\|\, q)\)</span>. Since the data entropy <span class="arithmatex">\(H(p)\)</span> is a constant with respect to model parameters <span class="arithmatex">\(\theta\)</span>, minimizing cross-entropy over <span class="arithmatex">\(\theta\)</span> is exactly equivalent to minimizing <span class="arithmatex">\(D_{\text{KL}}(p \,\|\, q_\theta)\)</span>. We use cross-entropy rather than &ldquo;directly&rdquo; computing KL because the data distribution <span class="arithmatex">\(p\)</span> is only observed through samples; we cannot compute <span class="arithmatex">\(H(p)\)</span> or <span class="arithmatex">\(p(x)\)</span> in closed form. Cross-entropy requires only <span class="arithmatex">\(\log q_\theta(x)\)</span> evaluated at observed <span class="arithmatex">\(x\)</span>, which we can compute. The KL perspective explains <em>why</em> cross-entropy is the right loss: it measures the extra bits the model needs to encode data that the true distribution would encode more efficiently.</p>
+<p>A follow-up: <strong>why is KL divergence asymmetric?</strong> <span class="arithmatex">\(D_{\text{KL}}(p\|q)\)</span> is the expected extra cost (under <span class="arithmatex">\(p\)</span>) of using code <span class="arithmatex">\(q\)</span> instead of optimal code <span class="arithmatex">\(p\)</span>; <span class="arithmatex">\(D_{\text{KL}}(q\|p)\)</span> is the reverse. They measure fundamentally different things. In forward KL minimization (i.e., MLE/cross-entropy), the model is penalized for low mass where the data has high mass — it must cover all data modes. In reverse KL (used in variational inference, some distillation methods), the model is penalized for mass where the target has none — it tends to pick one mode.</p>
+</div>
+<hr />
+<h2 id="code-computing-perplexity-from-scratch">Code: Computing Perplexity From Scratch<a class="headerlink" href="#code-computing-perplexity-from-scratch" title="Permanent link">¶</a></h2>
+<p>The following is a complete, runnable Python module that computes perplexity at multiple levels of abstraction — from raw logits to a full dataset evaluation loop. It mirrors what frameworks like <code>lm-evaluation-harness</code> do internally.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">perplexity.py — compute LLM perplexity from scratch</span>
+<span class="sd">Requires: torch, transformers (for a demo tokenizer/model)</span>
+<span class="sd">Run: python perplexity.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+<span class="c1"># 1. Low-level: perplexity from a list of log-probs</span>
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">perplexity_from_log_probs</span><span class="p">(</span><span class="n">log_probs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Given a list of natural-log probabilities log p(x_t | x_{&lt;t}),</span>
+<span class="sd">    compute perplexity = exp( -mean(log_probs) ).</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        log_probs: list of floats, each &lt;= 0.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Perplexity as a float.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">log_probs</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Empty log-prob list&quot;</span><span class="p">)</span>
+    <span class="n">avg_nll</span> <span class="o">=</span> <span class="o">-</span><span class="nb">sum</span><span class="p">(</span><span class="n">log_probs</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">log_probs</span><span class="p">)</span>   <span class="c1"># average negative log-likelihood</span>
+    <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">avg_nll</span><span class="p">)</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+<span class="c1"># 2. From raw logits and target token ids</span>
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">perplexity_from_logits</span><span class="p">(</span>
+    <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># shape (T, V) — one logit vector per time step</span>
+    <span class="n">targets</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># shape (T,)   — ground-truth token ids</span>
+    <span class="n">ignore_index</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">100</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute perplexity from raw (unnormalized) logits.</span>
+
+<span class="sd">    This is exactly what a training loop would call after the forward pass,</span>
+<span class="sd">    except we expose each step for clarity.</span>
+
+<span class="sd">    Steps:</span>
+<span class="sd">      1. Apply log-softmax to get log-probabilities.</span>
+<span class="sd">      2. Gather the log-prob of the correct token at each step.</span>
+<span class="sd">      3. Mask out padding tokens (ignore_index).</span>
+<span class="sd">      4. Average and exponentiate.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># (T, V) → (T, V) in log-probability space</span>
+    <span class="n">log_probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># numerically stable via LogSumExp</span>
+
+    <span class="c1"># Gather log-prob of the target token at each position.</span>
+    <span class="c1"># targets shape: (T,) → unsqueeze to (T, 1) for gather</span>
+    <span class="n">valid_mask</span> <span class="o">=</span> <span class="n">targets</span> <span class="o">!=</span> <span class="n">ignore_index</span>
+    <span class="n">safe_targets</span> <span class="o">=</span> <span class="n">targets</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+    <span class="n">safe_targets</span><span class="p">[</span><span class="o">~</span><span class="n">valid_mask</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>  <span class="c1"># avoid index error on masked positions</span>
+
+    <span class="c1"># Shape: (T, 1) → squeeze to (T,)</span>
+    <span class="n">token_log_probs</span> <span class="o">=</span> <span class="n">log_probs</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">safe_targets</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># Zero out masked positions before averaging</span>
+    <span class="n">token_log_probs</span> <span class="o">=</span> <span class="n">token_log_probs</span> <span class="o">*</span> <span class="n">valid_mask</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+    <span class="n">n_valid</span> <span class="o">=</span> <span class="n">valid_mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="n">avg_nll</span> <span class="o">=</span> <span class="o">-</span><span class="n">token_log_probs</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">/</span> <span class="n">n_valid</span>
+    <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">avg_nll</span><span class="p">)</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+<span class="c1"># 3. Dataset-level perplexity with sliding window</span>
+<span class="c1">#    (handles sequences longer than the model context)</span>
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sliding_window_perplexity</span><span class="p">(</span>
+    <span class="n">token_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># shape (N_total,)</span>
+    <span class="n">logit_fn</span><span class="p">,</span>                  <span class="c1"># callable: (T,) -&gt; (T, V) logits</span>
+    <span class="n">max_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span>
+    <span class="n">stride</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute perplexity over a long token sequence using a sliding window.</span>
+
+<span class="sd">    The &#39;stride&#39; trick ensures each token is scored in context,</span>
+<span class="sd">    not at the very beginning of a truncated window where the model</span>
+<span class="sd">    has no context. This is the method used by Radford et al. (GPT-2)</span>
+<span class="sd">    for WikiText-103 evaluation.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        token_ids:  1-D tensor of all token ids in the test set.</span>
+<span class="sd">        logit_fn:   function mapping a 1-D token tensor of length &lt;= max_length</span>
+<span class="sd">                    to a logit tensor of shape (len, vocab_size).</span>
+<span class="sd">        max_length: model&#39;s maximum context length.</span>
+<span class="sd">        stride:     step between windows; lower stride = more context overlap</span>
+<span class="sd">                    = slightly slower but more accurate for longer texts.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Perplexity (float).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">seq_len</span> <span class="o">=</span> <span class="n">token_ids</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">total_nll</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="n">total_tokens</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">prev_end</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">for</span> <span class="n">begin</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">stride</span><span class="p">):</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">begin</span> <span class="o">+</span> <span class="n">max_length</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">)</span>
+        <span class="n">window</span> <span class="o">=</span> <span class="n">token_ids</span><span class="p">[</span><span class="n">begin</span><span class="p">:</span><span class="n">end</span><span class="p">]</span>          <span class="c1"># shape: (window_size,)</span>
+
+        <span class="c1"># The model scores positions [0, window_size-1];</span>
+        <span class="c1"># for LM evaluation we predict token t+1 from tokens 0..t.</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="n">logit_fn</span><span class="p">(</span><span class="n">window</span><span class="p">)</span>          <span class="c1"># shape: (window_size, V)</span>
+
+        <span class="c1"># Targets are the next token at each position:</span>
+        <span class="c1"># position i predicts token i+1, so we shift by 1.</span>
+        <span class="c1"># In a causal LM, logits[i] predicts token i+1 (the standard convention).</span>
+        <span class="c1"># We count only tokens that were *not* already counted in the previous window.</span>
+        <span class="n">target_ids</span> <span class="o">=</span> <span class="n">token_ids</span><span class="p">[</span><span class="n">begin</span> <span class="o">+</span> <span class="mi">1</span> <span class="p">:</span> <span class="n">end</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="c1"># Use only new positions (stride steps from the right of the window)</span>
+        <span class="n">count_from</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">prev_end</span> <span class="o">-</span> <span class="n">begin</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>  <span class="c1"># at least predict 1 token</span>
+
+        <span class="n">logits_new</span> <span class="o">=</span> <span class="n">logits</span><span class="p">[</span><span class="n">count_from</span> <span class="o">-</span> <span class="mi">1</span> <span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">target_ids</span><span class="p">)]</span>
+        <span class="n">targets_new</span> <span class="o">=</span> <span class="n">target_ids</span><span class="p">[</span><span class="n">count_from</span> <span class="o">-</span> <span class="mi">1</span> <span class="p">:]</span>
+
+        <span class="k">if</span> <span class="n">logits_new</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">prev_end</span> <span class="o">=</span> <span class="n">end</span>
+            <span class="k">continue</span>
+
+        <span class="n">log_probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">logits_new</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">token_nlls</span> <span class="o">=</span> <span class="o">-</span><span class="n">log_probs</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span>
+            <span class="mi">1</span><span class="p">,</span> <span class="n">targets_new</span><span class="p">[:</span><span class="n">logits_new</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">total_nll</span> <span class="o">+=</span> <span class="n">token_nlls</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="n">total_tokens</span> <span class="o">+=</span> <span class="n">token_nlls</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">prev_end</span> <span class="o">=</span> <span class="n">end</span>
+
+        <span class="k">if</span> <span class="n">end</span> <span class="o">==</span> <span class="n">seq_len</span><span class="p">:</span>
+            <span class="k">break</span>
+
+    <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">total_nll</span> <span class="o">/</span> <span class="n">total_tokens</span><span class="p">)</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+<span class="c1"># 4. Demonstration: cross-entropy decomposition</span>
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">demonstrate_ce_kl_relationship</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Show numerically that H(p, q) = H(p) + KL(p || q).</span>
+<span class="sd">    Uses a small 4-class example.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># True distribution p (label smoothed example)</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">0.7</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">])</span>
+    <span class="c1"># Model distribution q</span>
+    <span class="n">q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">])</span>
+
+    <span class="k">assert</span> <span class="nb">abs</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">-</span> <span class="mf">1.0</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mf">1e-6</span><span class="p">,</span> <span class="s2">&quot;p must be a valid distribution&quot;</span>
+    <span class="k">assert</span> <span class="nb">abs</span><span class="p">(</span><span class="n">q</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">-</span> <span class="mf">1.0</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mf">1e-6</span><span class="p">,</span> <span class="s2">&quot;q must be a valid distribution&quot;</span>
+
+    <span class="c1"># Shannon entropy H(p)</span>
+    <span class="c1"># Convention: 0 * log(0) = 0</span>
+    <span class="n">H_p</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">p</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">)))</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+    <span class="c1"># KL divergence KL(p || q)</span>
+    <span class="c1"># Sum over positions where p &gt; 0</span>
+    <span class="n">kl_pq</span> <span class="o">=</span> <span class="p">(</span><span class="n">p</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">((</span><span class="n">p</span> <span class="o">/</span> <span class="n">q</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">))</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">)))</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+    <span class="c1"># Cross-entropy H(p, q) = -sum_x p(x) log q(x)</span>
+    <span class="n">ce</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">p</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">q</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">)))</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;H(p)              = </span><span class="si">{</span><span class="n">H_p</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> nats&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;KL(p || q)        = </span><span class="si">{</span><span class="n">kl_pq</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> nats&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;H(p) + KL(p||q)   = </span><span class="si">{</span><span class="n">H_p</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">kl_pq</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> nats&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;H(p, q) directly  = </span><span class="si">{</span><span class="n">ce</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> nats&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Match: </span><span class="si">{</span><span class="nb">abs</span><span class="p">(</span><span class="n">ce</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="p">(</span><span class="n">H_p</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">kl_pq</span><span class="p">))</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mf">1e-5</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># In the one-hot case (standard training), H(p) = 0 so CE = KL</span>
+    <span class="n">p_onehot</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">])</span>
+    <span class="n">H_onehot</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># entropy of a degenerate distribution</span>
+    <span class="n">ce_onehot</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">p_onehot</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">q</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">)))</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="n">kl_onehot</span> <span class="o">=</span> <span class="n">ce_onehot</span> <span class="o">-</span> <span class="n">H_onehot</span>  <span class="c1"># = ce_onehot</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">One-hot target:&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;H(p_onehot, q) = -log q(k*) = </span><span class="si">{</span><span class="n">ce_onehot</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> = </span><span class="si">{</span><span class="o">-</span><span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;This equals -log(q[0]) = -log(0.5) = </span><span class="si">{</span><span class="o">-</span><span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+<span class="c1"># 5. Label smoothing loss</span>
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">label_smoothed_cross_entropy</span><span class="p">(</span>
+    <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>    <span class="c1"># (B, T, V) or (T, V)</span>
+    <span class="n">targets</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># (B, T) or (T,) long tensor</span>
+    <span class="n">smoothing</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+    <span class="n">ignore_index</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">100</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Cross-entropy with label smoothing.</span>
+
+<span class="sd">    Equivalent to PyTorch&#39;s CrossEntropyLoss(label_smoothing=smoothing),</span>
+<span class="sd">    but written out explicitly for teaching purposes.</span>
+
+<span class="sd">    The loss is:</span>
+<span class="sd">        L = (1 - eps) * CE_hard(logits, targets)</span>
+<span class="sd">          + eps * mean_over_classes( -log_softmax(logits) )</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">vocab_size</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">flat_logits</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">vocab_size</span><span class="p">)</span>   <span class="c1"># (B*T, V)</span>
+    <span class="n">flat_targets</span> <span class="o">=</span> <span class="n">targets</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>              <span class="c1"># (B*T,)</span>
+
+    <span class="n">log_probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">flat_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B*T, V)</span>
+
+    <span class="c1"># Hard-target negative log-likelihood</span>
+    <span class="n">nll_loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">nll_loss</span><span class="p">(</span>
+        <span class="n">log_probs</span><span class="p">,</span>
+        <span class="n">flat_targets</span><span class="p">,</span>
+        <span class="n">ignore_index</span><span class="o">=</span><span class="n">ignore_index</span><span class="p">,</span>
+        <span class="n">reduction</span><span class="o">=</span><span class="s1">&#39;mean&#39;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Soft-target component: uniform over all classes</span>
+    <span class="c1"># -mean_k log_prob_k, averaged over valid positions</span>
+    <span class="n">smooth_loss</span> <span class="o">=</span> <span class="o">-</span><span class="n">log_probs</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B*T,)</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">flat_targets</span> <span class="o">!=</span> <span class="n">ignore_index</span>
+    <span class="n">smooth_loss</span> <span class="o">=</span> <span class="n">smooth_loss</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">smoothing</span><span class="p">)</span> <span class="o">*</span> <span class="n">nll_loss</span> <span class="o">+</span> <span class="n">smoothing</span> <span class="o">*</span> <span class="n">smooth_loss</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+<span class="c1"># Entry point</span>
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=== CE / KL decomposition demo ===&quot;</span><span class="p">)</span>
+    <span class="n">demonstrate_ce_kl_relationship</span><span class="p">()</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== Perplexity from raw log-probs ===&quot;</span><span class="p">)</span>
+    <span class="c1"># Toy sequence: 5 tokens with model-assigned probabilities</span>
+    <span class="c1"># as in the worked example above</span>
+    <span class="n">probs</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.20</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">,</span> <span class="mf">0.30</span><span class="p">,</span> <span class="mf">0.60</span><span class="p">,</span> <span class="mf">0.15</span><span class="p">]</span>
+    <span class="n">log_probs_list</span> <span class="o">=</span> <span class="p">[</span><span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">probs</span><span class="p">]</span>
+    <span class="n">ppl</span> <span class="o">=</span> <span class="n">perplexity_from_log_probs</span><span class="p">(</span><span class="n">log_probs_list</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Perplexity = </span><span class="si">{</span><span class="n">ppl</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  (expected ~5.17)&quot;</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== Perplexity from logits ===&quot;</span><span class="p">)</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+    <span class="n">V</span><span class="p">,</span> <span class="n">T</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">10</span>
+    <span class="c1"># Simulate a model that has reasonably high confidence on the correct tokens</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+    <span class="n">targets</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="p">(</span><span class="n">T</span><span class="p">,))</span>
+    <span class="c1"># Boost the correct token logits by 2 so the model looks &quot;smart&quot;</span>
+    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">T</span><span class="p">):</span>
+        <span class="n">logits</span><span class="p">[</span><span class="n">t</span><span class="p">,</span> <span class="n">targets</span><span class="p">[</span><span class="n">t</span><span class="p">]]</span> <span class="o">+=</span> <span class="mf">2.0</span>
+    <span class="n">ppl_from_logits</span> <span class="o">=</span> <span class="n">perplexity_from_logits</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">targets</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Perplexity from logits = </span><span class="si">{</span><span class="n">ppl_from_logits</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== Label-smoothed loss ===&quot;</span><span class="p">)</span>
+    <span class="n">logits_batch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>  <span class="c1"># batch=2, seq_len=5, vocab=100</span>
+    <span class="n">targets_batch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span>
+    <span class="n">ls_loss</span> <span class="o">=</span> <span class="n">label_smoothed_cross_entropy</span><span class="p">(</span><span class="n">logits_batch</span><span class="p">,</span> <span class="n">targets_batch</span><span class="p">,</span> <span class="n">smoothing</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
+    <span class="n">hard_loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span><span class="n">logits_batch</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">100</span><span class="p">),</span> <span class="n">targets_batch</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Label-smoothed loss = </span><span class="si">{</span><span class="n">ls_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Hard cross-entropy  = </span><span class="si">{</span><span class="n">hard_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Label smoothing adds regularization: LS loss &gt; hard CE = </span><span class="si">{</span><span class="n">ls_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">hard_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Running the script produces output like:</p>
+<div class="highlight"><pre><span></span><code>=== CE / KL decomposition demo ===
+H(p)              = 0.8019 nats
+KL(p || q)        = 0.0719 nats
+H(p) + KL(p||q)   = 0.8738 nats
+H(p, q) directly  = 0.8738 nats
+Match: True
+
+One-hot target:
+H(p_onehot, q) = -log q(k*) = 0.6931 = 0.6931
+This equals -log(q[0]) = -log(0.5) = 0.6931
+
+=== Perplexity from raw log-probs ===
+Perplexity = 5.173  (expected ~5.17)
+
+=== Perplexity from logits ===
+Perplexity from logits = 5.821
+
+=== Label-smoothed loss ===
+Label-smoothed loss = 4.6231
+Hard cross-entropy  = 4.5814
+Label smoothing adds regularization: LS loss &gt; hard CE = True
+</code></pre></div>
+<hr />
+<h2 id="a-unified-picture">A Unified Picture<a class="headerlink" href="#a-unified-picture" title="Permanent link">¶</a></h2>
+<p>The diagram below shows how the concepts of this chapter interrelate:</p>
+<figure class="viz" id="fig-prob-info-unified-picture">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 820 660" role="img" aria-label="Data-flow diagram: the data distribution p-hat feeds into the cross-entropy loss which decomposes into a constant entropy term plus a KL term that gradient descent minimises; the resulting model distribution q-theta branches right to perplexity and continues down to the reverse-KL penalty used in RLHF and DPO.">
+<defs>
+  <marker id="piu-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+  <marker id="piu-arrow-muted" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#64748b)"/>
+  </marker>
+  <marker id="piu-arrow-warn" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-prob-info-unified-picture text { font: 400 13px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-prob-info-unified-picture .bold { font-weight: 700; }
+  #fig-prob-info-unified-picture .label-sm { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-prob-info-unified-picture .mono { font: 500 12px var(--mono,monospace); }
+  #fig-prob-info-unified-picture .mono-lg { font: 600 13px var(--mono,monospace); }
+  #fig-prob-info-unified-picture .accent-txt { fill: var(--accent,#6366f1); font-weight: 700; }
+  #fig-prob-info-unified-picture .good-txt { fill: var(--good,#2f9e6e); }
+  #fig-prob-info-unified-picture .warn-txt { fill: var(--warn,#e0a106); font-weight: 600; }
+  #fig-prob-info-unified-picture .muted { fill: var(--muted,#64748b); }
+
+  /* staged animation */
+  #fig-prob-info-unified-picture [data-anim] { opacity: 0; animation: piu-fade 0.5s ease forwards; }
+  #fig-prob-info-unified-picture [data-anim="1"] { animation-delay: 0.1s; }
+  #fig-prob-info-unified-picture [data-anim="2"] { animation-delay: 0.7s; }
+  #fig-prob-info-unified-picture [data-anim="3"] { animation-delay: 1.4s; }
+  #fig-prob-info-unified-picture [data-anim="4"] { animation-delay: 2.0s; }
+  #fig-prob-info-unified-picture [data-anim="5"] { animation-delay: 2.7s; }
+  @keyframes piu-fade { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform: translateY(0); } }
+
+  /* KL minimize-this pulse */
+  #fig-prob-info-unified-picture .kl-highlight { animation: piu-pulse 1.6s 2.2s ease-in-out 3 alternate; }
+  @keyframes piu-pulse { from { fill-opacity: 0.18; } to { fill-opacity: 0.55; } }
+
+  /* draw connectors */
+  #fig-prob-info-unified-picture .viz-draw {
+    stroke-dasharray: var(--len,300);
+    stroke-dashoffset: var(--len,300);
+    animation: piu-draw 0.6s ease forwards;
+  }
+  #fig-prob-info-unified-picture [data-anim="2"] .viz-draw { animation-delay: 0.7s; }
+  #fig-prob-info-unified-picture [data-anim="3"] .viz-draw { animation-delay: 1.4s; }
+  #fig-prob-info-unified-picture [data-anim="4"] .viz-draw { animation-delay: 2.0s; }
+  #fig-prob-info-unified-picture [data-anim="5"] .viz-draw { animation-delay: 2.7s; }
+  @keyframes piu-draw { to { stroke-dashoffset: 0; } }
+</style>
+
+
+<g data-anim="1">
+  <rect x="170" y="22" width="260" height="56" rx="28"
+        class="v-fill" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"
+        fill="var(--surface,#f5f7fa)"/>
+  <text x="300" y="45" text-anchor="middle" class="bold">Data distribution</text>
+  <text x="300" y="63" text-anchor="middle" class="mono muted" font-style="italic">p_data</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="300" y1="78" x2="300" y2="133"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.6"
+        marker-end="url(#piu-arrow)" class="viz-draw" style="--len:58"/>
+
+  <text x="313" y="94" class="label-sm">observed samples</text>
+  <text x="313" y="108" class="label-sm">-&gt; empirical distribution p&#770;</text>
+</g>
+
+
+<g data-anim="2">
+
+  <rect x="60" y="138" width="480" height="124" rx="10"
+        fill="var(--accent,#6366f1)" fill-opacity="0.08"
+        stroke="var(--accent,#6366f1)" stroke-width="2"/>
+
+
+  <text x="300" y="163" text-anchor="middle"
+        class="bold" style="font-size:15px">Cross-entropy loss</text>
+
+
+  <text x="300" y="188" text-anchor="middle" class="mono-lg">
+    H(p&#770;, q&#x03B8;) = H(p&#770;) + KL(p&#770; &#x2016; q&#x03B8;)
+  </text>
+
+
+
+  <rect x="389" y="192" width="137" height="4" rx="2"
+        fill="var(--accent,#6366f1)" class="kl-highlight" fill-opacity="0.30"/>
+
+
+
+  <text x="218" y="212" text-anchor="middle" class="label-sm muted">constant wrt &#x03B8;</text>
+
+  <text x="457" y="212" text-anchor="middle" class="accent-txt" style="font-size:11px">minimize this</text>
+
+
+  <line x1="362" y1="200" x2="362" y2="220"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="1" opacity="0.5"/>
+
+
+  <text x="300" y="247" text-anchor="middle" class="label-sm muted">
+    Training drives KL(p&#770; &#x2016; q&#x03B8;) -&gt; 0, so H(p&#770;, q&#x03B8;) -&gt; H(p&#770;)
+  </text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="300" y1="262" x2="300" y2="327"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.6"
+        marker-end="url(#piu-arrow)" class="viz-draw" style="--len:68"/>
+  <text x="313" y="283" class="label-sm">gradient descent</text>
+  <text x="313" y="297" class="label-sm">(see Ch. 1.3, 1.6)</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="170" y="328" width="260" height="56" rx="28"
+        fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="300" y="351" text-anchor="middle" class="bold">Model distribution</text>
+  <text x="300" y="370" text-anchor="middle" class="mono muted" font-style="italic">q&#x03B8;</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="430" y1="356" x2="524" y2="356"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.6"
+        marker-end="url(#piu-arrow)" class="viz-draw" style="--len:97"/>
+  <text x="477" y="347" text-anchor="middle" class="label-sm good-txt">evaluate</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="528" y="326" width="264" height="60" rx="10"
+        fill="var(--good,#2f9e6e)" fill-opacity="0.10"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="660" y="350" text-anchor="middle" class="bold good-txt" style="font-size:12px">Perplexity</text>
+  <text x="660" y="369" text-anchor="middle" class="mono" style="font-size:11px; fill:var(--good,#2f9e6e)">
+    = exp( H(p&#770;, q&#x03B8;) )
+  </text>
+</g>
+
+
+<g data-anim="5">
+  <line x1="300" y1="384" x2="300" y2="450"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.6"
+        marker-end="url(#piu-arrow)" class="viz-draw" style="--len:68"/>
+  <text x="313" y="407" class="label-sm">diverges from reference?</text>
+</g>
+
+
+<g data-anim="5">
+
+  <rect x="150" y="452" width="300" height="68" rx="10"
+        fill="var(--warn,#e0a106)" fill-opacity="0.10"
+        stroke="var(--warn,#e0a106)" stroke-width="2"/>
+  <text x="300" y="479" text-anchor="middle" class="warn-txt mono-lg">KL( q&#x03B8; &#x2016; q_ref )</text>
+  <text x="300" y="500" text-anchor="middle" class="label-sm muted">reversed argument order vs. training</text>
+
+
+
+  <line x1="576" y1="487" x2="453" y2="487"
+        stroke="var(--warn,#e0a106)" stroke-width="1.4"
+        marker-end="url(#piu-arrow-warn)" class="viz-draw" style="--len:125"/>
+
+
+  <rect x="578" y="455" width="222" height="66" rx="6"
+        fill="var(--surface,#f5f7fa)" fill-opacity="0.7"
+        stroke="var(--warn,#e0a106)" stroke-width="1" stroke-dasharray="4 2"/>
+  <text x="689" y="473" text-anchor="middle" class="label-sm warn-txt">used in RLHF / DPO</text>
+  <text x="689" y="487" text-anchor="middle" class="label-sm muted">as a penalty term</text>
+  <text x="689" y="501" text-anchor="middle" class="label-sm muted">(Ch. 5.5, 5.7)</text>
+</g>
+
+
+<g data-anim="5">
+  <line x1="60" y1="550" x2="760" y2="550"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+  <text x="300" y="570" text-anchor="middle" class="label-sm muted">
+    Training: forward KL(p&#770; &#x2016; q&#x03B8;) -- mode-covering, minimised via CE loss
+  </text>
+  <text x="300" y="586" text-anchor="middle" class="label-sm muted">
+    RLHF: reverse KL(q&#x03B8; &#x2016; q_ref) -- mode-seeking, keeps policy near reference
+  </text>
+</g>
+
+
+</svg>
+<figcaption><b>From data distribution to loss, perplexity, and the RLHF KL penalty.</b> The cross-entropy loss decomposes into a fixed data-entropy term plus KL(p&#770;&amp;thinsp;&#x2016;&amp;thinsp;q&#x03B8;), so minimising the loss is equivalent to minimising that KL divergence; perplexity is the same quantity on an exponential scale. Crucially, post-training alignment re-uses KL in the <em>reversed</em> direction — KL(q&#x03B8;&amp;thinsp;&#x2016;&amp;thinsp;q_ref) — as a penalty that keeps the fine-tuned policy from drifting too far from the reference model.</figcaption>
+</figure>
+
+<p>This picture has three take-aways:</p>
+<ol>
+<li>Cross-entropy loss and KL minimization are the same thing for a fixed data distribution.</li>
+<li>Perplexity is just a human-readable transformation of the loss.</li>
+<li>KL reappears in post-training alignment — but in the <em>reverse</em> direction, as a constraint preventing the policy from drifting too far from the reference model.</li>
+</ol>
+<hr />
+<h2 id="additional-interview-questions">Additional Interview Questions<a class="headerlink" href="#additional-interview-questions" title="Permanent link">¶</a></h2>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Why does label smoothing improve calibration, and when might it hurt?</p>
+<p><strong>A:</strong> Without smoothing, the cross-entropy gradient pushes the logit for the correct class toward <span class="arithmatex">\(+\infty\)</span> without bound. The resulting model becomes overconfident — it assigns near-zero probability to tokens it has never seen in a given context, leading to poor calibration (predicted probabilities don&rsquo;t match empirical frequencies). Label smoothing puts a floor of <span class="arithmatex">\(\varepsilon/V\)</span> on every class, explicitly penalizing overconfidence.</p>
+<p>It can hurt in two ways: (1) In knowledge distillation, where the teacher produces genuinely soft, informative probability vectors, using hard label smoothing discards that information. (2) When <span class="arithmatex">\(V\)</span> is very large (e.g., 128,000 tokens), the uniform smoothing component <span class="arithmatex">\(\varepsilon/V\)</span> is tiny and effectively imposes a negligible penalty, making label smoothing nearly irrelevant. In those regimes, controlling logit scale via techniques like weight tying, temperature scaling, or logit softcapping (used in Gemma) is more effective.</p>
+</div>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>A language model&rsquo;s softmax output is the parameter of a <strong>categorical distribution</strong> over the vocabulary; all of probability theory applies directly.</li>
+<li><strong>MLE</strong> and <strong>cross-entropy minimization</strong> are the same thing: the training loss is the negative log-likelihood of the data under the model.</li>
+<li><strong>Cross-entropy decomposes</strong> as <span class="arithmatex">\(H(p,q) = H(p) + D_{\text{KL}}(p\|q)\)</span>; since <span class="arithmatex">\(H(p)\)</span> is constant w.r.t. model parameters, training minimizes KL divergence from data to model.</li>
+<li><strong>KL divergence is asymmetric</strong>: forward KL (MLE) forces the model to cover all data modes; reverse KL (used in RLHF/DPO as a penalty) encourages the policy to stay near the reference model.</li>
+<li><strong>Perplexity</strong> = <span class="arithmatex">\(\exp(\text{avg cross-entropy loss})\)</span>; a perplexity of <span class="arithmatex">\(K\)</span> means the model is as uncertain as a uniform distribution over <span class="arithmatex">\(K\)</span> options.</li>
+<li><strong>Label smoothing</strong> prevents overconfidence by replacing one-hot targets with a mixture; it implicitly keeps <span class="arithmatex">\(D_{\text{KL}}(p\|q)\)</span> well-defined and acts as calibration regularization.</li>
+<li><strong>Mutual information</strong> <span class="arithmatex">\(I(X;Y) = H(X) - H(X|Y)\)</span> quantifies dependence; it appears in contrastive objectives (InfoNCE), probing studies, and tokenization design.</li>
+<li><strong>Entropy is maximized by the uniform distribution</strong> and zero for degenerate distributions; understanding entropy lets you reason about what the model is &ldquo;uncertain&rdquo; about.</li>
+<li>Everything in this chapter reappears upstream: in attention mechanisms, in RLHF KL penalties, in distillation losses, in evaluation metrics — get these right once and the rest of the stack clicks into place.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Probability and information theory are the bedrock of every LLM training objective: cross-entropy loss, KL penalties in RLHF, perplexity evaluation, and mutual-information probing all trace directly to Shannon&rsquo;s 1948 framework. The field is mature, but recent work has sharpened how these quantities interact with scale, calibration, and alignment.</p>
+<p><strong>Foundational texts</strong></p>
+<ul>
+<li><a href="https://archive.org/details/bstj27-3-379">Shannon, C. E., <em>A Mathematical Theory of Communication</em> (1948)</a> — the paper that defined entropy, channel capacity, and the bit; still remarkably readable.</li>
+<li><a href="https://onlinelibrary.wiley.com/doi/book/10.1002/047174882X">Cover &amp; Thomas, <em>Elements of Information Theory</em>, 2<sup>nd</sup> ed. (2006)</a> — the definitive graduate-level reference for entropy, KL divergence, mutual information, and coding theorems.</li>
+<li><a href="https://www.deeplearningbook.org/contents/prob.html">Goodfellow, Bengio &amp; Courville, <em>Deep Learning</em> Ch. 3 — Probability and Information Theory (2016)</a> — free online; connects distributions, Bayes, and information theory directly to ML practice.</li>
+</ul>
+<p><strong>Seminal papers</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al., <em>Attention Is All You Need</em> (2017)</a> — introduced label smoothing (ε = 0.1) as a cross-entropy regularizer; directly relevant to this chapter&rsquo;s label-smoothing section.</li>
+<li><a href="https://arxiv.org/abs/1906.02629">Müller, Kornblith &amp; Hinton, <em>When Does Label Smoothing Help?</em> (2019)</a> — empirical analysis showing smoothing improves calibration but hurts knowledge distillation.</li>
+<li><a href="https://arxiv.org/abs/2203.15556">Hoffmann et al., <em>Training Compute-Optimal Large Language Models</em> (Chinchilla, 2022)</a> — scaling-law paper whose loss curves are cross-entropy perplexity; shows how information-theoretic metrics govern optimal data/parameter allocation.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/EleutherAI/lm-evaluation-harness">EleutherAI/lm-evaluation-harness</a> — the standard open-source framework for computing perplexity and benchmarking LMs; used by Hugging Face&rsquo;s Open LLM Leaderboard.</li>
+</ul>
+<p><strong>Visual explainers &amp; go deeper</strong></p>
+<ul>
+<li><a href="https://colah.github.io/posts/2015-09-Visual-Information/">colah, <em>Visual Information Theory</em> (2015)</a> — animated, diagram-rich walkthrough of entropy, cross-entropy, and KL divergence; the clearest visual introduction available.</li>
+<li><a href="https://www.3blue1brown.com/lessons/wordle">3Blue1Brown, <em>Solving Wordle using information theory</em> (2022)</a> — builds Shannon entropy from scratch via a concrete puzzle; excellent for building geometric intuition.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Shannon, C. E. &ldquo;A Mathematical Theory of Communication.&rdquo; <em>Bell System Technical Journal</em>, 1948. The original paper; remarkably readable.</li>
+<li>Cover, T. M., and Thomas, J. A. <em>Elements of Information Theory</em>, 2<sup>nd</sup> ed. Wiley, 2006. The definitive graduate textbook.</li>
+<li>Goodfellow, I., Bengio, Y., and Courville, A. <em>Deep Learning</em>. MIT Press, 2016. Chapter 3 (Probability and Information Theory) and Chapter 5 (Machine Learning Basics).</li>
+<li>Bishop, C. M. <em>Pattern Recognition and Machine Learning</em>. Springer, 2006. Chapters 1–2 for distributions and Bayesian estimation.</li>
+<li>Vaswani, A. et al. &ldquo;Attention Is All You Need.&rdquo; <em>NeurIPS</em>, 2017. The Transformer paper; introduces label smoothing in the context of machine translation.</li>
+<li>Müller, R., Kornblith, S., and Hinton, G. &ldquo;When Does Label Smoothing Help?&rdquo; <em>NeurIPS</em>, 2019. Empirical analysis of label smoothing&rsquo;s effects on calibration and distillation.</li>
+<li>Radford, A. et al. &ldquo;Language Models are Unsupervised Multitask Learners.&rdquo; OpenAI, 2019. (GPT-2 paper) — describes the sliding-window perplexity evaluation methodology.</li>
+<li>lm-evaluation-harness (EleutherAI): open-source framework for evaluating language models, including perplexity across many benchmarks. Available at github.com/EleutherAI/lm-evaluation-harness.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="01-linear-algebra.html"><span class="pn-label">← Previous</span><span class="pn-title">Linear Algebra for Deep Learning</span></a>
+<a class="next" href="03-calculus-optimization.html"><span class="pn-label">Next →</span><span class="pn-title">Calculus, Optimization &amp; Convexity</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#random-variables-and-distributions">Random Variables and Distributions</a></li>
+<li class="toc-l3"><a href="#distributions-you-will-encounter-in-llm-work">Distributions You Will Encounter in LLM Work</a></li>
+<li class="toc-l3"><a href="#expectation-variance-and-covariance">Expectation, Variance, and Covariance</a></li>
+<li class="toc-l3"><a href="#bayes-theorem">Bayes&amp;rsquo; Theorem</a></li>
+<li class="toc-l2"><a href="#maximum-likelihood-and-map-estimation">Maximum Likelihood and MAP Estimation</a></li>
+<li class="toc-l3"><a href="#maximum-likelihood-estimation">Maximum Likelihood Estimation</a></li>
+<li class="toc-l3"><a href="#map-estimation-and-regularization">MAP Estimation and Regularization</a></li>
+<li class="toc-l2"><a href="#shannon-information-theory">Shannon Information Theory</a></li>
+<li class="toc-l3"><a href="#self-information-and-entropy">Self-Information and Entropy</a></li>
+<li class="toc-l3"><a href="#kl-divergence">KL Divergence</a></li>
+<li class="toc-l3"><a href="#cross-entropy">Cross-Entropy</a></li>
+<li class="toc-l2"><a href="#why-cross-entropy-is-the-llm-loss">Why Cross-Entropy is THE LLM Loss</a></li>
+<li class="toc-l2"><a href="#mutual-information-and-conditional-entropy">Mutual Information and Conditional Entropy</a></li>
+<li class="toc-l2"><a href="#perplexity">Perplexity</a></li>
+<li class="toc-l3"><a href="#perplexity-pitfalls">Perplexity Pitfalls</a></li>
+<li class="toc-l2"><a href="#label-smoothing-and-soft-targets">Label Smoothing and Soft Targets</a></li>
+<li class="toc-l2"><a href="#code-computing-perplexity-from-scratch">Code: Computing Perplexity From Scratch</a></li>
+<li class="toc-l2"><a href="#a-unified-picture">A Unified Picture</a></li>
+<li class="toc-l2"><a href="#additional-interview-questions">Additional Interview Questions</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

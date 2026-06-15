@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mechanistic Interpretability &amp; Model Internals — The LLM Stack</title>
+<meta name="description" content="Looking inside a transformer: the residual-stream/superposition view, probing, the logit lens, activation patching and causal tracing, circuit discovery, and sp">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="active" href="01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XIII — Interpretability, Safety &amp; Governance</div>
+<h1 id="131-mechanistic-interpretability-model-internals">13.1 Mechanistic Interpretability &amp; Model Internals<a class="headerlink" href="#131-mechanistic-interpretability-model-internals" title="Permanent link">¶</a></h1>
+<p>A trained transformer is a 70-billion-parameter function that maps token sequences to next-token distributions, and for most of its history we have treated it as a black box: feed it text, read off logits, judge it by its outputs. That stance is comfortable until the model lies, leaks a secret, develops a backdoor, or refuses for reasons you cannot articulate. At that point &ldquo;the eval went up&rdquo; stops being an explanation and you want to ask a sharper question: <em>what computation, inside the network, produced this behavior?</em> <strong>Mechanistic interpretability</strong> (often &ldquo;mech interp&rdquo;) is the program of answering that question by reverse-engineering the learned algorithms a network implements — not statistical summaries of inputs and outputs, but the actual circuits, features, and intermediate representations that carry information from layer to layer.</p>
+<p>This chapter is a working engineer&rsquo;s tour of that toolkit. We build the central mental model first — the <strong>residual stream</strong> as a shared communication channel, and <strong>superposition</strong> as the reason features are tangled — and then develop the practical instruments in roughly increasing order of causal force: <strong>probing</strong> (does the information exist?), the <strong>logit lens</strong> (what does the model &ldquo;believe&rdquo; mid-stack?), <strong>activation patching</strong> and <strong>causal tracing</strong> (which components <em>cause</em> a behavior?), <strong>circuit discovery</strong> (how do components compose into an algorithm?), and <strong>sparse autoencoders</strong> (how do we pull monosemantic features out of superposition?). We close with the applied payoff — debugging, <strong>activation steering</strong>, feature-based monitoring for safety — the tooling ecosystem (TransformerLens, SAE frameworks), and an honest accounting of what this field cannot yet do. Two from-scratch code experiments anchor the theory: a logit lens you can run on any HuggingFace model, and a tiny activation-patching study that localizes a factual association to a specific layer and token.</p>
+<p>This material sits downstream of the architecture you already know. If the residual stream, attention heads, or the MLP block are hazy, revisit <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a> and <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a>. Interpretability is also a precondition for the editing and safety techniques in <a href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html">Knowledge Editing &amp; Machine Unlearning</a> and <a href="../13-interp-safety-gov/05-ai-safety-oversight.html">AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a>.</p>
+<hr />
+<h2 id="1-the-residual-stream-and-superposition-the-core-mental-model">1. The Residual Stream and Superposition: The Core Mental Model<a class="headerlink" href="#1-the-residual-stream-and-superposition-the-core-mental-model" title="Permanent link">¶</a></h2>
+<h3 id="11-the-residual-stream-as-a-shared-bus">1.1 The residual stream as a shared bus<a class="headerlink" href="#11-the-residual-stream-as-a-shared-bus" title="Permanent link">¶</a></h3>
+<p>Take a decoder-only transformer with model dimension <span class="arithmatex">\(d_\text{model}\)</span> and <span class="arithmatex">\(L\)</span> layers. Strip away everything but the data flow and you find a strikingly simple skeleton. After embedding, every token position carries a vector <span class="arithmatex">\(x \in \mathbb{R}^{d_\text{model}}\)</span>. Each attention sub-layer and each MLP sub-layer <em>reads</em> from this vector, computes something, and <em>adds</em> its output back:</p>
+<div class="arithmatex">\[
+x_{\ell+1} = x_\ell + \operatorname{Attn}_\ell\!\big(\operatorname{LN}(x_\ell)\big) + \operatorname{MLP}_\ell\!\big(\operatorname{LN}(x_\ell)\big).
+\]</div>
+<p>Because every contribution is <em>added</em>, the value at layer <span class="arithmatex">\(\ell\)</span> is exactly the sum of the embedding plus every sub-layer output so far:</p>
+<div class="arithmatex">\[
+x_\ell = x_\text{embed} + \sum_{k &lt; \ell} \big(\operatorname{Attn}_k + \operatorname{MLP}_k\big).
+\]</div>
+<p>This running sum is the <strong>residual stream</strong>. The Anthropic &ldquo;Mathematical Framework for Transformer Circuits&rdquo; (Elhage et al., 2021) made this view canonical, and it reorganizes how you think about the network. The residual stream is not a transient activation — it is a <em>persistent communication channel</em>, a bus that all layers read from and write to. A head in layer 2 can write a vector that a head in layer 9 reads, by <em>aligning their weight matrices along a shared subspace</em> of <span class="arithmatex">\(\mathbb{R}^{d_\text{model}}\)</span>. The intermediate layers simply leave that subspace untouched. We call such an arrangement a <strong>virtual weight</strong> connection: the effective linear map from the writer to the reader, even though no single weight matrix connects them.</p>
+<figure class="viz" id="fig-mechinterp-residual-stream-bus">
+<svg viewBox="0 0 760 530" role="img" aria-label="The residual stream as a shared additive bus: two parallel columns (position t and position t+1) show how x_embed, Attn_0, MLP_0, Attn_1, and MLP layers are all added together. Horizontal dashed arrows between the Attn boxes show cross-position communication; no arrow crosses at MLP boxes, showing MLPs act within a single position.">
+<defs>
+  <marker id="rs-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="rs-arr-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+<style>
+  #fig-mechinterp-residual-stream-bus text { font: 500 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-mechinterp-residual-stream-bus .title { font: 700 13px var(--sans,sans-serif); }
+  #fig-mechinterp-residual-stream-bus .mono  { font: 500 11px var(--mono,monospace); }
+  #fig-mechinterp-residual-stream-bus .plus  { font: 700 16px var(--sans,sans-serif); }
+  #fig-mechinterp-residual-stream-bus .annot { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-mechinterp-residual-stream-bus .cap   { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+</style>
+
+
+<text x="155" y="22" text-anchor="middle" class="title">position t</text>
+<text x="475" y="22" text-anchor="middle" class="title">position t+1</text>
+
+
+<rect x="80" y="36" width="150" height="406" rx="10"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5" opacity="0.7"/>
+<line x1="155" y1="44" x2="155" y2="434"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3 4" opacity="0.4"/>
+
+<rect x="400" y="36" width="150" height="406" rx="10"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5" opacity="0.7"/>
+<line x1="475" y1="44" x2="475" y2="434"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3 4" opacity="0.4"/>
+
+
+
+
+<rect x="100" y="50" width="110" height="28" rx="5"
+      fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+<text x="155" y="69" text-anchor="middle" class="mono">x_embed</text>
+
+<text x="155" y="96" text-anchor="middle" class="plus" style="fill:var(--ink-soft,#45413a);">+</text>
+
+
+<rect x="100" y="104" width="110" height="28" rx="5"
+      fill="var(--accent,#c15b39)" fill-opacity="0.15" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="155" y="123" text-anchor="middle" class="mono">Attn_0</text>
+
+<text x="155" y="150" text-anchor="middle" class="plus" style="fill:var(--ink-soft,#45413a);">+</text>
+
+
+<rect x="100" y="158" width="110" height="28" rx="5"
+      fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+<text x="155" y="177" text-anchor="middle" class="mono">MLP_0</text>
+
+<text x="155" y="204" text-anchor="middle" class="plus" style="fill:var(--ink-soft,#45413a);">+</text>
+
+
+<rect x="100" y="212" width="110" height="28" rx="5"
+      fill="var(--accent,#c15b39)" fill-opacity="0.15" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="155" y="231" text-anchor="middle" class="mono">Attn_1</text>
+
+<text x="155" y="258" text-anchor="middle" class="plus" style="fill:var(--ink-soft,#45413a);">+</text>
+
+
+<rect x="100" y="266" width="110" height="28" rx="5"
+      fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+<text x="155" y="285" text-anchor="middle" class="mono">MLP_1 / ...</text>
+
+
+<line x1="90" y1="308" x2="220" y2="308"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+
+
+<rect x="100" y="318" width="110" height="28" rx="5"
+      fill="var(--good,#2f9e6e)" fill-opacity="0.15" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+<text x="155" y="337" text-anchor="middle" class="mono" style="fill:var(--good,#2f9e6e);">LN_f + W_U</text>
+
+<line x1="155" y1="346" x2="155" y2="364"
+      stroke="var(--good,#2f9e6e)" stroke-width="1.5" marker-end="url(#rs-arr-good)"/>
+
+
+<rect x="112" y="366" width="86" height="24" rx="8"
+      fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+<text x="155" y="383" text-anchor="middle"
+      style="font:700 12px var(--sans,sans-serif); fill:#fff;">logits</text>
+
+
+<rect x="420" y="50" width="110" height="28" rx="5"
+      fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+<text x="475" y="69" text-anchor="middle" class="mono">x_embed</text>
+
+<text x="475" y="96" text-anchor="middle" class="plus" style="fill:var(--ink-soft,#45413a);">+</text>
+
+<rect x="420" y="104" width="110" height="28" rx="5"
+      fill="var(--accent,#c15b39)" fill-opacity="0.15" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="475" y="123" text-anchor="middle" class="mono">Attn_0</text>
+
+<text x="475" y="150" text-anchor="middle" class="plus" style="fill:var(--ink-soft,#45413a);">+</text>
+
+<rect x="420" y="158" width="110" height="28" rx="5"
+      fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+<text x="475" y="177" text-anchor="middle" class="mono">MLP_0</text>
+
+<text x="475" y="204" text-anchor="middle" class="plus" style="fill:var(--ink-soft,#45413a);">+</text>
+
+<rect x="420" y="212" width="110" height="28" rx="5"
+      fill="var(--accent,#c15b39)" fill-opacity="0.15" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="475" y="231" text-anchor="middle" class="mono">Attn_1</text>
+
+<text x="475" y="258" text-anchor="middle" class="plus" style="fill:var(--ink-soft,#45413a);">+</text>
+
+<rect x="420" y="266" width="110" height="28" rx="5"
+      fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+<text x="475" y="285" text-anchor="middle" class="mono">MLP_1 / ...</text>
+
+<line x1="410" y1="308" x2="540" y2="308"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+
+<rect x="420" y="318" width="110" height="28" rx="5"
+      fill="var(--good,#2f9e6e)" fill-opacity="0.15" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+<text x="475" y="337" text-anchor="middle" class="mono" style="fill:var(--good,#2f9e6e);">LN_f + W_U</text>
+
+<line x1="475" y1="346" x2="475" y2="364"
+      stroke="var(--good,#2f9e6e)" stroke-width="1.5" marker-end="url(#rs-arr-good)"/>
+
+<rect x="432" y="366" width="86" height="24" rx="8"
+      fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+<text x="475" y="383" text-anchor="middle"
+      style="font:700 12px var(--sans,sans-serif); fill:#fff;">logits</text>
+
+
+
+
+<text x="315" y="109" text-anchor="middle" class="annot"
+      style="fill:var(--accent,#c15b39); font-weight:600;">reads across positions</text>
+<line x1="232" y1="118" x2="397" y2="118"
+      stroke="var(--accent,#c15b39)" stroke-width="2"
+      stroke-dasharray="6 3" marker-end="url(#rs-arr)"/>
+
+
+<line x1="397" y1="246" x2="232" y2="246"
+      stroke="var(--accent,#c15b39)" stroke-width="1.5"
+      stroke-dasharray="6 3" marker-end="url(#rs-arr)"/>
+<line x1="232" y1="246" x2="397" y2="246"
+      stroke="var(--accent,#c15b39)" stroke-width="1.5"
+      stroke-dasharray="6 3" marker-end="url(#rs-arr)"/>
+<text x="315" y="261" text-anchor="middle" class="annot"
+      style="fill:var(--accent,#c15b39); font-weight:600;">attention mixes across the sequence</text>
+
+
+
+
+<line x1="556" y1="50" x2="556" y2="390"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="3 2"/>
+<line x1="556" y1="50"  x2="562" y2="50"  stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+<line x1="556" y1="390" x2="562" y2="390" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+<line x1="556" y1="220" x2="562" y2="220" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+
+<text x="568" y="208" class="annot">the residual stream is a</text>
+<text x="568" y="221" class="annot">d_model-wide bus;</text>
+<text x="568" y="237" class="annot">every block ADDS to it,</text>
+<text x="568" y="250" class="annot">nothing is overwritten</text>
+
+
+<text x="315" y="416" text-anchor="middle" class="cap">
+  x&#8467;&#8330;&#8321; = x&#8467; + Attn&#8467;(LN(x&#8467;)) + MLP&#8467;(LN(x&#8467;))
+</text>
+
+
+<rect x="80" y="430" width="12" height="10" rx="2"
+      fill="var(--accent,#c15b39)" fill-opacity="0.3" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+<text x="96" y="440" class="annot">Attn (cross-position)</text>
+
+<rect x="250" y="430" width="12" height="10" rx="2"
+      fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="266" y="440" class="annot">MLP (within-position)</text>
+
+<rect x="420" y="430" width="12" height="10" rx="2"
+      fill="var(--good,#2f9e6e)" fill-opacity="0.4" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+<text x="436" y="440" class="annot">Unembed / logits</text>
+
+</svg>
+<figcaption><b>The residual stream is an additive, shared communication bus.</b> Every sub-layer reads the current vector and adds its contribution back — nothing is ever overwritten — so the state at any layer is the running sum of all prior contributions. Attention (highlighted in orange) is the <em>only</em> sub-layer that exchanges information across token positions; MLP sub-layers operate strictly within each position.</figcaption>
+</figure>
+
+<p>Two structural facts fall out immediately and we will use both. First, <strong>attention moves information <em>between</em> positions; the MLP processes information <em>within</em> a position.</strong> Attention is the only sub-layer that mixes across the sequence dimension. Second, the linearity of the residual stream makes contributions <strong>decomposable</strong>: you can take any downstream quantity — a logit, an attention pattern, a neuron&rsquo;s preactivation — and write it as a sum of additive contributions from each upstream component. This is the foundation of <em>direct logit attribution</em> and of the logit lens in §3.</p>
+<h3 id="12-features-directions-and-the-linear-representation-hypothesis">1.2 Features, directions, and the linear representation hypothesis<a class="headerlink" href="#12-features-directions-and-the-linear-representation-hypothesis" title="Permanent link">¶</a></h3>
+<p>The working hypothesis of the whole field is the <strong>linear representation hypothesis</strong>: high-level, human-meaningful <em>features</em> are represented as approximately linear directions in activation space. &ldquo;This token is inside a quotation,&rdquo; &ldquo;the subject is a US state,&rdquo; &ldquo;the sentiment is negative,&rdquo; &ldquo;we are writing Python&rdquo; — each is hypothesized to correspond to a direction <span class="arithmatex">\(v \in \mathbb{R}^{d_\text{model}}\)</span>, such that the feature is active to the degree that the activation <span class="arithmatex">\(x\)</span> has a large component along <span class="arithmatex">\(v\)</span>, i.e. the dot product <span class="arithmatex">\(\langle x, v\rangle\)</span> is large. Word-embedding analogies (<code>king - man + woman ≈ queen</code>) were the first hint; modern probing and SAE results are strong evidence that the hypothesis holds widely, if imperfectly.</p>
+<p>If features were <em>orthogonal</em> directions, life would be easy: <span class="arithmatex">\(d_\text{model}\)</span> dimensions could hold <span class="arithmatex">\(d_\text{model}\)</span> features, and we could read each off with a clean projection. They are not, and they cannot be, because of <strong>superposition</strong>.</p>
+<h3 id="13-superposition-why-neurons-are-polysemantic">1.3 Superposition: why neurons are polysemantic<a class="headerlink" href="#13-superposition-why-neurons-are-polysemantic" title="Permanent link">¶</a></h3>
+<p>A transformer &ldquo;wants&rdquo; to represent far more features than it has dimensions. A language model plausibly tracks tens or hundreds of thousands of distinct features — specific entities, syntactic roles, topics, code constructs — but <span class="arithmatex">\(d_\text{model}\)</span> is only a few thousand. The resolution, demonstrated cleanly in Anthropic&rsquo;s &ldquo;Toy Models of Superposition&rdquo; (Elhage et al., 2022), is <strong>superposition</strong>: the network packs <span class="arithmatex">\(n \gg d_\text{model}\)</span> features into <span class="arithmatex">\(d_\text{model}\)</span> dimensions by representing them as <em>non-orthogonal</em> directions, exploiting the fact that real features are <strong>sparse</strong> — only a handful are active on any given token.</p>
+<p>The geometry is the Johnson–Lindenstrauss insight: in high dimensions you can fit exponentially many <em>almost</em>-orthogonal unit vectors. With pairwise interference bounded by <span class="arithmatex">\(\langle v_i, v_j\rangle \le \epsilon\)</span>, the number of features you can pack grows roughly like <span class="arithmatex">\(\exp(\epsilon^2 d_\text{model})\)</span>. The price is <strong>interference</strong>: each feature reads a little noise from every other co-active feature. Sparsity keeps that noise manageable — if only <span class="arithmatex">\(k\)</span> of <span class="arithmatex">\(n\)</span> features fire at once, the expected squared interference scales with <span class="arithmatex">\(k\)</span>, not <span class="arithmatex">\(n\)</span>.</p>
+<p>The direct, painful consequence for interpretability is <strong>polysemanticity</strong>: an individual neuron (one coordinate of the MLP hidden activation) responds to a <em>mix</em> of unrelated features — it might fire for academic citations, for HTTP headers, <em>and</em> for Korean text. The neuron is not the unit of computation; the <em>feature direction</em>, which is spread across many neurons, is. This is precisely why we cannot interpret a network by reading neurons one at a time, and precisely the problem sparse autoencoders (§6) are built to solve — they attempt to <strong>decompose superposition</strong> back into a larger set of sparse, monosemantic features.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: privileged vs. non-privileged bases</p>
+<p>The residual stream has a <em>non-privileged</em> basis — nothing makes its coordinate axes special, because every operation that reads it (<code>LN</code>, then a linear map) is free to rotate. So residual-stream features can point in any direction. MLP <em>hidden</em> activations have a <em>privileged</em> basis because the element-wise nonlinearity (GELU, etc.) acts coordinate-by-coordinate, giving neurons a slight tendency to align with features — but superposition still wins, so they remain polysemantic. This is why SAEs are usually trained on residual-stream or MLP activations rather than assuming neurons are already interpretable.</p>
+</div>
+<hr />
+<h2 id="2-probing-does-the-information-exist">2. Probing: Does the Information Exist?<a class="headerlink" href="#2-probing-does-the-information-exist" title="Permanent link">¶</a></h2>
+<p>The lightest-weight question you can ask is existential: <strong>is feature <span class="arithmatex">\(X\)</span> linearly decodable from the activations at layer <span class="arithmatex">\(\ell\)</span>?</strong> A <strong>linear probe</strong> answers it. Freeze the model, collect activations <span class="arithmatex">\(h^{(\ell)} \in \mathbb{R}^{d_\text{model}}\)</span> at some layer for a labeled dataset, and train a small classifier — usually just logistic regression — to predict the label from <span class="arithmatex">\(h^{(\ell)}\)</span>. High accuracy means the information is present and linearly accessible at that layer.</p>
+<div class="arithmatex">\[
+\hat{y} = \sigma\!\big(w^\top h^{(\ell)} + b\big), \qquad
+\mathcal{L} = -\sum_i \big[ y_i \log \hat{y}_i + (1-y_i)\log(1-\hat{y}_i)\big].
+\]</div>
+<p>Probing is cheap, scalable, and produces a clean layer-by-layer picture: train one probe per layer and you can watch <em>where</em> in the stack a concept becomes linearly available. Classic results show part-of-speech and syntax peaking in early-middle layers of BERT-style models, with more abstract/semantic features peaking later.</p>
+<p>The crucial caveat — drilled into students by the &ldquo;control task&rdquo; / &ldquo;selectivity&rdquo; work of Hewitt &amp; Liang (2019) — is that <strong>probing measures correlation, not use</strong>. A probe with 95% accuracy tells you the information is <em>there</em>; it does <strong>not</strong> tell you the model <em>uses</em> it for any downstream computation. A sufficiently expressive probe can even fit structure the model never represents (it memorizes from the probe&rsquo;s own capacity). Guardrails:</p>
+<ul>
+<li><strong>Use the weakest probe that works</strong> (linear, low-capacity). If a linear probe succeeds, the feature is linearly available — a strong, architecture-relevant claim. If only a 3-layer MLP probe succeeds, you have learned more about the probe than the model.</li>
+<li><strong>Run a control task.</strong> Hewitt–Liang assign random-but-consistent labels and measure how well the probe fits <em>those</em>; high control accuracy means the probe is too powerful. Report <strong>selectivity</strong> = (real accuracy − control accuracy).</li>
+<li><strong>For causal claims, you must intervene</strong> — which is exactly the jump from probing to activation patching (§4). Probing is reconnaissance; patching is proof.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.linear_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">LogisticRegression</span>
+
+<span class="c1"># h_train: (N, d_model) activations cached at a chosen layer/position; y_train: (N,) labels</span>
+<span class="c1"># We deliberately use a LINEAR probe with strong L2 regularization — low capacity by design.</span>
+<span class="n">probe</span> <span class="o">=</span> <span class="n">LogisticRegression</span><span class="p">(</span><span class="n">C</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">max_iter</span><span class="o">=</span><span class="mi">2000</span><span class="p">)</span>
+<span class="n">probe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">h_train</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="n">y_train</span><span class="o">.</span><span class="n">numpy</span><span class="p">())</span>
+<span class="n">real_acc</span> <span class="o">=</span> <span class="n">probe</span><span class="o">.</span><span class="n">score</span><span class="p">(</span><span class="n">h_val</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="n">y_val</span><span class="o">.</span><span class="n">numpy</span><span class="p">())</span>
+
+<span class="c1"># Control task (Hewitt &amp; Liang): assign each *input type* a fixed random label, refit, re-score.</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">ctrl_labels</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">y_train</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>          <span class="c1"># random but held fixed per example</span>
+<span class="n">ctrl</span> <span class="o">=</span> <span class="n">LogisticRegression</span><span class="p">(</span><span class="n">C</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">max_iter</span><span class="o">=</span><span class="mi">2000</span><span class="p">)</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">h_train</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="n">ctrl_labels</span><span class="p">)</span>
+<span class="n">ctrl_acc</span> <span class="o">=</span> <span class="n">ctrl</span><span class="o">.</span><span class="n">score</span><span class="p">(</span><span class="n">h_val</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">y_val</span><span class="o">.</span><span class="n">shape</span><span class="p">))</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;probe acc=</span><span class="si">{</span><span class="n">real_acc</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  control acc=</span><span class="si">{</span><span class="n">ctrl_acc</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  selectivity=</span><span class="si">{</span><span class="n">real_acc</span><span class="o">-</span><span class="n">ctrl_acc</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># A trustworthy linear probe has HIGH real accuracy and LOW control accuracy → high selectivity.</span>
+</code></pre></div>
+<hr />
+<h2 id="3-the-logit-lens-reading-the-residual-stream-directly">3. The Logit Lens: Reading the Residual Stream Directly<a class="headerlink" href="#3-the-logit-lens-reading-the-residual-stream-directly" title="Permanent link">¶</a></h2>
+<p>Because the residual stream is the running sum that gets unembedded into logits, we can ask a beautiful question: <em>what would the model predict if we stopped here?</em> The <strong>logit lens</strong> (introduced by nostalgebraist, 2020) does exactly this. Take the residual-stream vector at an intermediate layer <span class="arithmatex">\(\ell\)</span>, apply the model&rsquo;s final layer-norm and unembedding matrix <span class="arithmatex">\(W_U\)</span> to it — skipping the remaining layers — and read off the resulting &ldquo;early&rdquo; next-token distribution:</p>
+<div class="arithmatex">\[
+\text{logits}^{(\ell)} = W_U \cdot \operatorname{LN}_f\!\big(x_\ell\big), \qquad
+p^{(\ell)} = \operatorname{softmax}\big(\text{logits}^{(\ell)}\big).
+\]</div>
+<p>What you typically see is the prediction <strong>sharpening across depth</strong>: early layers produce diffuse, often nonsensical distributions; somewhere in the middle the correct token starts climbing the ranking; the final layers commit. It is a moving picture of the model &ldquo;making up its mind.&rdquo; The logit lens is the simplest causal-flavored tool because it uses the model&rsquo;s <em>own</em> unembedding — no auxiliary training — so the directions it reads are exactly the ones the model uses.</p>
+<p>It has known failure modes. Some models (and some layers) have residual-stream activations that the unembedding does not read well until later normalization adjusts them, so a raw logit lens looks garbled. <strong>Tuned Lens</strong> (Belrose et al., 2023) fixes this by training a tiny per-layer affine &ldquo;translator&rdquo; <span class="arithmatex">\(A_\ell x_\ell + b_\ell\)</span> that maps each layer&rsquo;s residual into the space the unembed expects, giving far smoother, more faithful trajectories. Think of the logit lens as the zero-training baseline and the tuned lens as its calibrated upgrade.</p>
+<h3 id="31-from-scratch-logit-lens">3.1 From-scratch logit lens<a class="headerlink" href="#31-from-scratch-logit-lens" title="Permanent link">¶</a></h3>
+<p>Here is a complete, runnable logit lens using plain PyTorch hooks on a HuggingFace GPT-2 — no special libraries. It caches each block&rsquo;s residual-stream output, unembeds each one, and prints the top token predicted at every layer.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">GPT2LMHeadModel</span><span class="p">,</span> <span class="n">GPT2TokenizerFast</span>
+
+<span class="n">device</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span>
+<span class="n">tok</span> <span class="o">=</span> <span class="n">GPT2TokenizerFast</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">GPT2LMHeadModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+<span class="c1"># ── 1. Hook every transformer block to capture its residual-stream OUTPUT. ──────────</span>
+<span class="c1"># In GPT2, model.transformer.h[i] outputs (hidden_states, ...); hidden_states is the</span>
+<span class="c1"># residual stream AFTER block i, i.e. x_{i+1}. We stash one per layer.</span>
+<span class="n">resid_by_layer</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">make_hook</span><span class="p">(</span><span class="n">idx</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">hook</span><span class="p">(</span><span class="n">_module</span><span class="p">,</span> <span class="n">_inp</span><span class="p">,</span> <span class="n">out</span><span class="p">):</span>
+        <span class="c1"># out is a tuple; out[0] = residual stream of shape (batch, seq, d_model)</span>
+        <span class="n">resid_by_layer</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">hook</span>
+
+<span class="n">handles</span> <span class="o">=</span> <span class="p">[</span><span class="n">blk</span><span class="o">.</span><span class="n">register_forward_hook</span><span class="p">(</span><span class="n">make_hook</span><span class="p">(</span><span class="n">i</span><span class="p">))</span>
+           <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">blk</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">h</span><span class="p">)]</span>
+
+<span class="c1"># ── 2. Run the model once. ─────────────────────────────────────────────────────────</span>
+<span class="n">prompt</span> <span class="o">=</span> <span class="s2">&quot;The Eiffel Tower is located in the city of&quot;</span>
+<span class="n">ids</span> <span class="o">=</span> <span class="n">tok</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">_</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">handles</span><span class="p">:</span>
+    <span class="n">h</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+
+<span class="c1"># ── 3. Apply final LN + unembed to EACH layer&#39;s residual at the last position. ──────</span>
+<span class="n">ln_f</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">ln_f</span>          <span class="c1"># final layer norm</span>
+<span class="n">W_U</span>  <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">lm_head</span>                    <span class="c1"># unembedding (tied to embeddings in GPT2)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;prompt: </span><span class="si">{</span><span class="n">prompt</span><span class="si">!r}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;layer&#39;</span><span class="si">:</span><span class="s2">&gt;5</span><span class="si">}</span><span class="s2"> | </span><span class="si">{</span><span class="s1">&#39;top-1 token&#39;</span><span class="si">:</span><span class="s2">&lt;14</span><span class="si">}</span><span class="s2"> | prob   | rank of &#39; Paris&#39;&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+<span class="n">paris_id</span> <span class="o">=</span> <span class="n">tok</span><span class="p">(</span><span class="s2">&quot; Paris&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<span class="k">for</span> <span class="n">layer</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">n_layer</span><span class="p">):</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">resid_by_layer</span><span class="p">[</span><span class="n">layer</span><span class="p">][</span><span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span>            <span class="c1"># (d_model,) last-token residual</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">W_U</span><span class="p">(</span><span class="n">ln_f</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>                        <span class="c1"># logit lens: skip remaining layers</span>
+    <span class="n">probs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">top_id</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">probs</span><span class="o">.</span><span class="n">argmax</span><span class="p">())</span>
+    <span class="n">top_tok</span> <span class="o">=</span> <span class="n">tok</span><span class="o">.</span><span class="n">decode</span><span class="p">([</span><span class="n">top_id</span><span class="p">])</span>
+    <span class="c1"># rank of the gold answer token among all vocab logits (0 = most likely)</span>
+    <span class="n">rank</span> <span class="o">=</span> <span class="nb">int</span><span class="p">((</span><span class="n">logits</span> <span class="o">&gt;</span> <span class="n">logits</span><span class="p">[</span><span class="n">paris_id</span><span class="p">])</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">layer</span><span class="si">:</span><span class="s2">&gt;5</span><span class="si">}</span><span class="s2"> | </span><span class="si">{</span><span class="n">top_tok</span><span class="si">!r:</span><span class="s2">&lt;14</span><span class="si">}</span><span class="s2"> | </span><span class="si">{</span><span class="n">probs</span><span class="p">[</span><span class="n">top_id</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> | </span><span class="si">{</span><span class="n">rank</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>prompt: &#39;The Eiffel Tower is located in the city of&#39;
+
+layer | top-1 token    | prob   | rank of &#39; Paris&#39;
+--------------------------------------------------
+    0 | &#39; the&#39;         | 0.04   | 8122
+    3 | &#39; a&#39;           | 0.05   | 1190
+    6 | &#39; London&#39;      | 0.07   | 14
+    8 | &#39; Paris&#39;       | 0.10   | 0
+   10 | &#39; Paris&#39;       | 0.31   | 0
+   11 | &#39; Paris&#39;       | 0.58   | 0
+</code></pre></div>
+<p>The exact numbers depend on the GPT-2 checkpoint, but the <em>shape</em> is the lesson and it reproduces reliably: the gold token <code>Paris</code> is buried near rank 8000 at the embedding, climbs as middle layers retrieve the association, and by the last layers dominates the distribution. You have just watched a fact get <em>recalled</em> layer by layer — and we will now localize exactly <em>where</em> that recall happens.</p>
+<hr />
+<h2 id="4-activation-patching-causal-tracing-from-correlation-to-cause">4. Activation Patching &amp; Causal Tracing: From Correlation to Cause<a class="headerlink" href="#4-activation-patching-causal-tracing-from-correlation-to-cause" title="Permanent link">¶</a></h2>
+<p>Probing and the logit lens are observational. To make a <em>causal</em> claim — &ldquo;this component is responsible for this behavior&rdquo; — you must intervene. <strong>Activation patching</strong> (also called <em>interchange intervention</em>, and <em>causal tracing</em> in the ROME paper, Meng et al., 2022) is the workhorse, and it is conceptually a clean controlled experiment.</p>
+<h3 id="41-the-recipe">4.1 The recipe<a class="headerlink" href="#41-the-recipe" title="Permanent link">¶</a></h3>
+<p>You need two inputs that differ in the behavior of interest:</p>
+<ul>
+<li>A <strong>clean</strong> run that produces the correct/interesting behavior (e.g. prompt → <code>Paris</code>).</li>
+<li>A <strong>corrupted</strong> run that does not (e.g. the same prompt with the subject tokens replaced by noise, or swapped to a different entity → <code>Rome</code>).</li>
+</ul>
+<p>Run the model on the corrupted input, but <strong>patch in</strong> one activation (a specific component at a specific layer and token position) from the <em>clean</em> run, then let the forward pass finish. Measure how much the output recovers toward the clean answer. If patching a single component restores most of the correct behavior, that component <strong>carries the information</strong> that distinguishes the two runs.</p>
+<p>We quantify recovery with a metric — typically the logit difference between the two candidate answers, or the log-prob of the gold token:</p>
+<div class="arithmatex">\[
+\text{recovery}(\text{component } c) = \frac{m_\text{patched}(c) - m_\text{corrupt}}{m_\text{clean} - m_\text{corrupt}} \in [0, 1],
+\]</div>
+<p>where <span class="arithmatex">\(m\)</span> is, e.g., <span class="arithmatex">\(\log p(\text{Paris}) - \log p(\text{Rome})\)</span>. A recovery of <span class="arithmatex">\(1.0\)</span> means patching <span class="arithmatex">\(c\)</span> fully restores the clean behavior; <span class="arithmatex">\(0\)</span> means it does nothing. Sweep <span class="arithmatex">\(c\)</span> over (layer × position × component) and you get a <strong>causal heatmap</strong> localizing the computation.</p>
+<h3 id="42-noising-vs-denoising-and-why-direction-matters">4.2 Noising vs. denoising, and why direction matters<a class="headerlink" href="#42-noising-vs-denoising-and-why-direction-matters" title="Permanent link">¶</a></h3>
+<p>There are two directions, and they answer different questions:</p>
+<ul>
+<li><strong>Denoising</strong> (corrupted run, patch <em>in</em> a clean activation): &ldquo;Is this clean activation <em>sufficient</em> to recover the behavior?&rdquo; This finds where the critical information <em>lives</em> in the clean run.</li>
+<li><strong>Noising</strong> (clean run, patch <em>in</em> a corrupted activation): &ldquo;Is this activation <em>necessary</em> — does destroying it break the behavior?&rdquo;</li>
+</ul>
+<p>The two can disagree, and the disagreement is informative; a component that is sufficient when denoised but whose ablation barely hurts (because of redundancy/backup) is a real phenomenon (see &ldquo;backup heads&rdquo; in the IOI work, §5). The corruption method also matters: <strong>Gaussian noising</strong> of embeddings (ROME&rsquo;s original choice) can push activations off-distribution, so the modern preference is <strong>symmetric/interchange patching</strong> — swap to a genuine alternative prompt (<code>Paris</code>↔<code>Rome</code>) so both runs stay on-distribution. The &ldquo;Towards Automated Circuit Discovery&rdquo; and Neel Nanda&rsquo;s exposition both stress this point.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: patching with LayerNorm and the residual stream</p>
+<p>Two traps bite newcomers. (1) <strong>Position alignment.</strong> Clean and corrupted prompts must be the <em>same length and tokenization</em> or patched activations land at the wrong position and the result is noise. Pad or design prompts to match exactly. (2) <strong>LayerNorm folding.</strong> A patched residual changes the LN statistics (mean/variance) at that position, so the effect you measure includes LN&rsquo;s renormalization. For attribution that should be linear, libraries like TransformerLens offer <em>LN-frozen</em> or <em>folded</em> modes. If your patching results look bizarre, suspect length mismatch or LN before you suspect a deep finding.</p>
+</div>
+<h3 id="43-a-tiny-activation-patching-experiment-from-scratch">4.3 A tiny activation-patching experiment from scratch<a class="headerlink" href="#43-a-tiny-activation-patching-experiment-from-scratch" title="Permanent link">¶</a></h3>
+<p>This self-contained script patches the <strong>residual stream</strong> of GPT-2 at every (layer, position) to localize where the &ldquo;Eiffel Tower → Paris&rdquo; fact is stored. Clean prompt resolves to <code>Paris</code>; corrupted swaps the subject to &ldquo;Colosseum,&rdquo; which resolves to <code>Rome</code>. We measure recovery of the <code>Paris − Rome</code> logit difference.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">GPT2LMHeadModel</span><span class="p">,</span> <span class="n">GPT2TokenizerFast</span>
+
+<span class="n">device</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span>
+<span class="n">tok</span> <span class="o">=</span> <span class="n">GPT2TokenizerFast</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">GPT2LMHeadModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+<span class="c1"># Same-length prompts so positions align token-for-token.</span>
+<span class="n">clean_text</span>     <span class="o">=</span> <span class="s2">&quot;The Eiffel Tower is in the city of&quot;</span>
+<span class="n">corrupt_text</span>   <span class="o">=</span> <span class="s2">&quot;The Colosseum  is in the city of&quot;</span>   <span class="c1"># crafted to tokenize to equal length</span>
+<span class="n">clean_ids</span>   <span class="o">=</span> <span class="n">tok</span><span class="p">(</span><span class="n">clean_text</span><span class="p">,</span>   <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="n">corrupt_ids</span> <span class="o">=</span> <span class="n">tok</span><span class="p">(</span><span class="n">corrupt_text</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">clean_ids</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="n">corrupt_ids</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="s2">&quot;prompts must align; adjust spacing/tokens&quot;</span>
+
+<span class="n">paris</span> <span class="o">=</span> <span class="n">tok</span><span class="p">(</span><span class="s2">&quot; Paris&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<span class="n">rome</span>  <span class="o">=</span> <span class="n">tok</span><span class="p">(</span><span class="s2">&quot; Rome&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<span class="n">n_layer</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">n_layer</span>
+<span class="n">seq_len</span> <span class="o">=</span> <span class="n">clean_ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">logit_diff</span><span class="p">(</span><span class="n">logits</span><span class="p">):</span>
+    <span class="c1"># logits: (vocab,) at the final position; positive =&gt; model prefers Paris over Rome</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">logits</span><span class="p">[</span><span class="n">paris</span><span class="p">]</span> <span class="o">-</span> <span class="n">logits</span><span class="p">[</span><span class="n">rome</span><span class="p">])</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+<span class="c1"># ── 1. Cache the CLEAN residual stream after every block, at every position. ────────</span>
+<span class="n">clean_cache</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">cache_hook</span><span class="p">(</span><span class="n">idx</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">hook</span><span class="p">(</span><span class="n">_m</span><span class="p">,</span> <span class="n">_i</span><span class="p">,</span> <span class="n">out</span><span class="p">):</span>
+        <span class="n">clean_cache</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>   <span class="c1"># (1, seq, d_model)</span>
+    <span class="k">return</span> <span class="n">hook</span>
+<span class="n">handles</span> <span class="o">=</span> <span class="p">[</span><span class="n">blk</span><span class="o">.</span><span class="n">register_forward_hook</span><span class="p">(</span><span class="n">cache_hook</span><span class="p">(</span><span class="n">i</span><span class="p">))</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">blk</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">h</span><span class="p">)]</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">clean_logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">clean_ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+<span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">handles</span><span class="p">:</span> <span class="n">h</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+<span class="n">m_clean</span> <span class="o">=</span> <span class="n">logit_diff</span><span class="p">(</span><span class="n">clean_logits</span><span class="p">)</span>
+
+<span class="c1"># ── 2. Baseline corrupted run (no patching). ───────────────────────────────────────</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">corrupt_logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">corrupt_ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+<span class="n">m_corrupt</span> <span class="o">=</span> <span class="n">logit_diff</span><span class="p">(</span><span class="n">corrupt_logits</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;clean logit-diff   (Paris-Rome): </span><span class="si">{</span><span class="n">m_clean</span><span class="si">:</span><span class="s2">+.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;corrupt logit-diff (Paris-Rome): </span><span class="si">{</span><span class="n">m_corrupt</span><span class="si">:</span><span class="s2">+.2f</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># ── 3. Patch: for each (layer, position) overwrite the corrupted residual with the</span>
+<span class="c1">#       clean one at that single site, run forward, measure recovery. ───────────────</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">patch_hook</span><span class="p">(</span><span class="n">layer_idx</span><span class="p">,</span> <span class="n">pos</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">hook</span><span class="p">(</span><span class="n">_m</span><span class="p">,</span> <span class="n">_i</span><span class="p">,</span> <span class="n">out</span><span class="p">):</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">h</span><span class="p">[:,</span> <span class="n">pos</span><span class="p">,</span> <span class="p">:]</span> <span class="o">=</span> <span class="n">clean_cache</span><span class="p">[</span><span class="n">layer_idx</span><span class="p">][:,</span> <span class="n">pos</span><span class="p">,</span> <span class="p">:]</span>   <span class="c1"># denoising: inject clean info</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">h</span><span class="p">,)</span> <span class="o">+</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">out</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
+    <span class="k">return</span> <span class="n">hook</span>
+
+<span class="n">recovery</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_layer</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">layer</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_layer</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">pos</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">seq_len</span><span class="p">):</span>
+        <span class="n">hk</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">h</span><span class="p">[</span><span class="n">layer</span><span class="p">]</span><span class="o">.</span><span class="n">register_forward_hook</span><span class="p">(</span><span class="n">patch_hook</span><span class="p">(</span><span class="n">layer</span><span class="p">,</span> <span class="n">pos</span><span class="p">))</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">m_patched</span> <span class="o">=</span> <span class="n">logit_diff</span><span class="p">(</span><span class="n">model</span><span class="p">(</span><span class="n">corrupt_ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+        <span class="n">hk</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+        <span class="n">recovery</span><span class="p">[</span><span class="n">layer</span><span class="p">,</span> <span class="n">pos</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">m_patched</span> <span class="o">-</span> <span class="n">m_corrupt</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">m_clean</span> <span class="o">-</span> <span class="n">m_corrupt</span> <span class="o">+</span> <span class="mf">1e-9</span><span class="p">)</span>
+
+<span class="c1"># ── 4. Print the (layer × position) recovery heatmap as text. ──────────────────────</span>
+<span class="n">toks</span> <span class="o">=</span> <span class="p">[</span><span class="n">tok</span><span class="o">.</span><span class="n">decode</span><span class="p">([</span><span class="n">t</span><span class="p">])</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">corrupt_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">()]</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;recovery of Paris-Rome logit diff (1.0 = clean fully restored):</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;layer</span><span class="se">\\</span><span class="s2">pos &quot;</span> <span class="o">+</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">t</span><span class="o">.</span><span class="n">strip</span><span class="p">()[:</span><span class="mi">6</span><span class="p">]</span><span class="si">:</span><span class="s2">&gt;7</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">toks</span><span class="p">))</span>
+<span class="k">for</span> <span class="n">layer</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_layer</span><span class="p">):</span>
+    <span class="n">row</span> <span class="o">=</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">recovery</span><span class="p">[</span><span class="n">layer</span><span class="p">,</span><span class="n">p</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">7.2f</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">seq_len</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;   L</span><span class="si">{</span><span class="n">layer</span><span class="si">:</span><span class="s2">&lt;2</span><span class="si">}</span><span class="s2">    </span><span class="si">{</span><span class="n">row</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<figure class="viz" id="fig-mechinterp-patching-recovery-heatmap">
+<svg viewBox="0 0 720 490" role="img" aria-label="Activation-patching recovery heatmap: 6 layers by 8 token positions. Two high-recovery bumps: layer L5 at token Tower (0.78, early site) and layers L9-L11 at token 'of' (up to 0.96, late site), showing the two-bump signature of factual recall.">
+<defs>
+  <linearGradient id="hm-lg" x1="0" y1="1" x2="0" y2="0">
+    <stop offset="0%"   stop-color="var(--surface,#ffffff)"/>
+    <stop offset="100%" stop-color="var(--accent,#c15b39)"/>
+  </linearGradient>
+  <marker id="hm-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#6d675d)"/>
+  </marker>
+</defs>
+<style>
+  #fig-mechinterp-patching-recovery-heatmap text      { font: 500 11px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-mechinterp-patching-recovery-heatmap .title    { font: 600 12px var(--sans,sans-serif); }
+  #fig-mechinterp-patching-recovery-heatmap .cv       { font: 500 10px var(--mono,monospace); }
+  #fig-mechinterp-patching-recovery-heatmap .annot    { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-mechinterp-patching-recovery-heatmap .hi-e     { font: 600 9.5px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-mechinterp-patching-recovery-heatmap .hi-l     { font: 600 9.5px var(--sans,sans-serif); fill: var(--accent-2,#b04e2d); }
+  #fig-mechinterp-patching-recovery-heatmap .pill     { font: 500 10px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+</style>
+
+
+<text x="360" y="16" text-anchor="middle" class="title">recovery of Paris-Rome logit diff (1.0 = clean fully restored)</text>
+
+
+<rect x="170" y="22" width="222" height="16" rx="5" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="281" y="34" text-anchor="middle" class="pill">clean logit-diff (Paris-Rome): +6.40</text>
+<rect x="170" y="42" width="232" height="16" rx="5" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<text x="286" y="54" text-anchor="middle" class="pill">corrupt logit-diff (Paris-Rome): -4.10</text>
+
+
+
+
+<text x="169" y="126" text-anchor="middle" class="annot">The</text>
+<text x="227" y="126" text-anchor="middle" class="annot">Eiffel</text>
+<text x="285" y="126" text-anchor="middle" style="font:700 11px var(--sans,sans-serif); fill:var(--accent,#c15b39);">Tower</text>
+<text x="343" y="126" text-anchor="middle" class="annot">is</text>
+<text x="401" y="126" text-anchor="middle" class="annot">in</text>
+<text x="459" y="126" text-anchor="middle" class="annot">the</text>
+<text x="517" y="126" text-anchor="middle" class="annot">city</text>
+<text x="575" y="126" text-anchor="middle" class="annot">of</text>
+
+
+<text x="126" y="161" text-anchor="end" class="annot">L0</text>
+<text x="126" y="203" text-anchor="end" class="annot">L3</text>
+<text x="126" y="245" text-anchor="end" class="annot">L5</text>
+<text x="126" y="287" text-anchor="end" class="annot">L7</text>
+<text x="126" y="329" text-anchor="end" class="annot">L9</text>
+<text x="126" y="371" text-anchor="end" class="annot">L11</text>
+
+
+
+<rect x="140" y="136" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="169" y="161" text-anchor="middle" class="cv">0.00</text>
+<rect x="198" y="136" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.04" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="227" y="161" text-anchor="middle" class="cv">0.02</text>
+<rect x="256" y="136" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="285" y="161" text-anchor="middle" class="cv">0.01</text>
+<rect x="314" y="136" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="343" y="161" text-anchor="middle" class="cv">0.00</text>
+<rect x="372" y="136" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="401" y="161" text-anchor="middle" class="cv">0.00</text>
+<rect x="430" y="136" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="459" y="161" text-anchor="middle" class="cv">0.00</text>
+<rect x="488" y="136" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="517" y="161" text-anchor="middle" class="cv">0.00</text>
+<rect x="546" y="136" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="575" y="161" text-anchor="middle" class="cv">0.00</text>
+
+
+<rect x="140" y="178" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="169" y="203" text-anchor="middle" class="cv">0.01</text>
+<rect x="198" y="178" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="227" y="203" text-anchor="middle" class="cv">0.09</text>
+<rect x="256" y="178" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.52" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="285" y="203" text-anchor="middle" class="cv" style="fill:#fff;">0.41</text>
+<rect x="314" y="178" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.04" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="343" y="203" text-anchor="middle" class="cv">0.02</text>
+<rect x="372" y="178" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="401" y="203" text-anchor="middle" class="cv">0.01</text>
+<rect x="430" y="178" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="459" y="203" text-anchor="middle" class="cv">0.00</text>
+<rect x="488" y="178" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="517" y="203" text-anchor="middle" class="cv">0.00</text>
+<rect x="546" y="178" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="575" y="203" text-anchor="middle" class="cv">0.01</text>
+
+
+<rect x="140" y="220" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="169" y="245" text-anchor="middle" class="cv">0.00</text>
+<rect x="198" y="220" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.10" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="227" y="245" text-anchor="middle" class="cv">0.05</text>
+
+<rect x="256" y="220" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.85" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="285" y="245" text-anchor="middle" class="cv" style="fill:#fff; font-weight:700;">0.78</text>
+<rect x="314" y="220" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.06" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="343" y="245" text-anchor="middle" class="cv">0.03</text>
+<rect x="372" y="220" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="401" y="245" text-anchor="middle" class="cv">0.01</text>
+<rect x="430" y="220" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="459" y="245" text-anchor="middle" class="cv">0.01</text>
+<rect x="488" y="220" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.04" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="517" y="245" text-anchor="middle" class="cv">0.02</text>
+<rect x="546" y="220" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="575" y="245" text-anchor="middle" class="cv">0.06</text>
+
+
+<rect x="140" y="262" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="169" y="287" text-anchor="middle" class="cv">0.00</text>
+<rect x="198" y="262" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.04" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="227" y="287" text-anchor="middle" class="cv">0.02</text>
+<rect x="256" y="262" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.44" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="285" y="287" text-anchor="middle" class="cv" style="fill:#fff;">0.34</text>
+<rect x="314" y="262" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.04" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="343" y="287" text-anchor="middle" class="cv">0.02</text>
+<rect x="372" y="262" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="401" y="287" text-anchor="middle" class="cv">0.01</text>
+<rect x="430" y="262" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="459" y="287" text-anchor="middle" class="cv">0.01</text>
+<rect x="488" y="262" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.10" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="517" y="287" text-anchor="middle" class="cv">0.05</text>
+
+<rect x="546" y="262" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.67" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="575" y="287" text-anchor="middle" class="cv" style="fill:#fff;">0.55</text>
+
+
+<rect x="140" y="304" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="169" y="329" text-anchor="middle" class="cv">0.00</text>
+<rect x="198" y="304" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="227" y="329" text-anchor="middle" class="cv">0.01</text>
+<rect x="256" y="304" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="285" y="329" text-anchor="middle" class="cv">0.06</text>
+<rect x="314" y="304" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="343" y="329" text-anchor="middle" class="cv">0.01</text>
+<rect x="372" y="304" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="401" y="329" text-anchor="middle" class="cv">0.00</text>
+<rect x="430" y="304" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="459" y="329" text-anchor="middle" class="cv">0.01</text>
+<rect x="488" y="304" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.08" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="517" y="329" text-anchor="middle" class="cv">0.04</text>
+<rect x="546" y="304" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.92" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="575" y="329" text-anchor="middle" class="cv" style="fill:#fff; font-weight:700;">0.88</text>
+
+
+<rect x="140" y="346" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="169" y="371" text-anchor="middle" class="cv">0.00</text>
+<rect x="198" y="346" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="227" y="371" text-anchor="middle" class="cv">0.00</text>
+<rect x="256" y="346" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="285" y="371" text-anchor="middle" class="cv">0.01</text>
+<rect x="314" y="346" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="343" y="371" text-anchor="middle" class="cv">0.00</text>
+<rect x="372" y="346" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="401" y="371" text-anchor="middle" class="cv">0.00</text>
+<rect x="430" y="346" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="459" y="371" text-anchor="middle" class="cv">0.00</text>
+<rect x="488" y="346" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="0.02" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="517" y="371" text-anchor="middle" class="cv">0.01</text>
+
+<rect x="546" y="346" width="58" height="42" fill="var(--accent,#c15b39)" fill-opacity="1.00" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/><text x="575" y="371" text-anchor="middle" class="cv" style="fill:#fff; font-weight:700;">0.96</text>
+
+
+
+<rect x="253" y="217" width="64" height="48" rx="5"
+      fill="none" stroke="var(--accent,#c15b39)" stroke-width="2.5" stroke-dasharray="5 2"/>
+
+
+<rect x="543" y="259" width="64" height="132" rx="5"
+      fill="none" stroke="var(--accent-2,#b04e2d)" stroke-width="2.5" stroke-dasharray="5 2"/>
+
+
+
+<text x="270" y="86" text-anchor="middle" class="hi-e">early site: subject token,</text>
+<text x="270" y="98" text-anchor="middle" class="hi-e">mid-layer MLP looks up the entity</text>
+<path d="M330 100 Q 360 160 314 222"
+      fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.1" stroke-dasharray="3 2"
+      marker-end="url(#hm-arr)"/>
+
+
+<path d="M285 266 Q 350 420 545 368"
+      fill="none" stroke="var(--muted,#6d675d)" stroke-width="1.1" stroke-dasharray="4 3"
+      marker-end="url(#hm-arr)"/>
+<text x="390" y="425" text-anchor="middle" class="annot" style="font-size:9px;">fact moved across positions by attention</text>
+
+
+<text x="575" y="403" text-anchor="middle" class="hi-l">late site:</text>
+<text x="575" y="415" text-anchor="middle" class="hi-l">final token,</text>
+<text x="575" y="427" text-anchor="middle" class="hi-l">late layers</text>
+
+
+<text x="92" y="262" text-anchor="middle" class="annot" style="font-size:9px;" transform="rotate(-90 92 262)">layer</text>
+
+
+<rect x="644" y="136" width="14" height="252" rx="3"
+      fill="url(#hm-lg)" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/>
+<text x="662" y="140" class="annot">1.0</text>
+<text x="662" y="265" class="annot">0.5</text>
+<text x="662" y="391" class="annot">0.0</text>
+<line x1="642" y1="262" x2="660" y2="262" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/>
+
+</svg>
+<figcaption><b>Activation-patching heatmap reveals the two-bump factual-recall signature.</b> Recovery peaks first at the <b>subject token "Tower", layer L5 (0.78) — the early site</b> where mid-layer MLPs look up entity attributes. The effect migrates to the <b>final token "of", layers L9–L11 (up to 0.96) — the late site</b> where attention moves the recalled fact to the prediction position. This two-site pattern is what knowledge-editing methods like ROME and MEMIT exploit.</figcaption>
+</figure>
+
+<p>The numbers are illustrative but the structure is the well-replicated <strong>two-bump pattern</strong> of factual recall (this is exactly the &ldquo;early-site / late-site&rdquo; signature ROME identified). Patching is most effective at the <strong>subject token</strong> (&ldquo;Tower&rdquo;) in the <strong>early-middle MLP layers</strong> (here L5) — that is where the entity&rsquo;s attributes are looked up and written into the residual stream. Then effectiveness migrates to the <strong>final position</strong> (&ldquo;of&rdquo;) in <strong>later layers</strong> (L9–L11), where attention has <em>moved</em> the recalled fact to the position that produces the next token. You have just causally localized a fact to a <em>layer and a token</em>, which is precisely the handle that knowledge-editing methods like ROME and MEMIT grab — see <a href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html">Knowledge Editing &amp; Machine Unlearning</a>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: reading the recovery metric</p>
+<p>Suppose at <span class="arithmatex">\((L5,\ \text{Tower})\)</span> the patched logit difference is <span class="arithmatex">\(m_\text{patched} = +4.10\)</span>. With <span class="arithmatex">\(m_\text{clean} = +6.40\)</span> and <span class="arithmatex">\(m_\text{corrupt} = -4.10\)</span>, recovery is
+$$
+\frac{m_\text{patched} - m_\text{corrupt}}{m_\text{clean} - m_\text{corrupt}} = \frac{4.10 - (-4.10)}{6.40 - (-4.10)} = \frac{8.20}{10.50} \approx 0.78.
+$$
+Restoring one residual vector at one position recovered ~78% of a 10.5-nat swing in the answer — strong evidence that this single site carries most of the distinguishing information. Compare that to <span class="arithmatex">\((L0,\ \text{The})\)</span> at <span class="arithmatex">\(0.00\)</span>: patching there does nothing, so no relevant computation has happened yet.</p>
+</div>
+<hr />
+<h2 id="5-circuit-discovery-how-components-compose-into-algorithms">5. Circuit Discovery: How Components Compose into Algorithms<a class="headerlink" href="#5-circuit-discovery-how-components-compose-into-algorithms" title="Permanent link">¶</a></h2>
+<p>A single causal hot-spot is a clue; a <strong>circuit</strong> is the explanation. A circuit is a subgraph of the model&rsquo;s components — specific attention heads and MLP layers, plus the connections between them — that together implement a human-understandable algorithm, with the rest of the network ablated or shown irrelevant. Finding circuits is the most ambitious end of mech interp.</p>
+<h3 id="51-two-landmark-circuits">5.1 Two landmark circuits<a class="headerlink" href="#51-two-landmark-circuits" title="Permanent link">¶</a></h3>
+<p><strong>Induction heads</strong> are the canonical example, from the &ldquo;In-context Learning and Induction Heads&rdquo; work (Olsson et al., 2022). An induction circuit implements the rule <em>&ldquo;if the sequence <code>[A][B] ... [A]</code> appeared, predict <code>[B]</code>&ldquo;</em> — basic copy-from-context that underlies much of in-context learning. It is a two-head, two-layer composition: a <strong>previous-token head</strong> in an early layer writes &ldquo;the token before me was <code>A</code>&rdquo; into each position; then an <strong>induction head</strong> in a later layer attends <em>back</em> to the position right after the earlier <code>A</code> (using that written signal as its key) and copies its value forward. The two heads compose through the residual stream — a textbook <strong>K-composition</strong> (one head&rsquo;s output becomes another&rsquo;s key). Strikingly, the formation of induction heads coincides with a phase change in the loss curve during training and with the emergence of in-context learning, tying a circuit to a capability.</p>
+<p><strong>The IOI circuit</strong> (&ldquo;Interpretability in the Wild,&rdquo; Wang et al., 2022) reverse-engineered how GPT-2 small solves <em>indirect object identification</em> — completing &ldquo;When Mary and John went to the store, John gave a drink to ___&rdquo; with &rdquo; Mary.&rdquo; The full circuit involves ~26 heads in classes that the authors named functionally: <em>duplicate-token heads</em> and <em>induction heads</em> detect that &ldquo;John&rdquo; is repeated, <em>S-inhibition heads</em> suppress the repeated name, and <em>name-mover heads</em> attend to and copy the correct name. It also revealed <strong>backup name-mover heads</strong> that activate only when the primary movers are ablated — built-in redundancy that explains why naive ablation can under-estimate a component&rsquo;s role, and why denoising and noising disagree (§4.2).</p>
+<figure class="viz" id="fig-mechinterp-ioi-circuit">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 860 470" role="img" aria-label="The IOI circuit in GPT-2: four functional head classes solve indirect object identification. Duplicate-token and induction heads detect the repeated name John; S-inhibition heads suppress it; name-mover heads copy the other name Mary to the output. Backup name-mover heads (dashed) activate only if primary movers are ablated.">
+<defs>
+  <marker id="ioi-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="ioi-arr-mut" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#6d675d)"/>
+  </marker>
+  <marker id="ioi-arr-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+<style>
+  #fig-mechinterp-ioi-circuit text     { font: 500 11px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-mechinterp-ioi-circuit .bl      { font: 700 11px var(--sans,sans-serif); }
+  #fig-mechinterp-ioi-circuit .cap     { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-mechinterp-ioi-circuit .el      { font: 400 9px var(--sans,sans-serif);   fill: var(--muted,#6d675d); }
+  #fig-mechinterp-ioi-circuit .ptok    { font: 600 11px var(--mono,monospace); }
+  #fig-mechinterp-ioi-circuit .bus-lbl { font: 600 11px var(--sans,sans-serif); }
+
+  @keyframes ioi-fade { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:none} }
+  @keyframes ioi-draw { from{stroke-dashoffset:var(--len,200)} to{stroke-dashoffset:0} }
+  @keyframes ioi-pulse{ 0%,100%{opacity:.35} 50%{opacity:1} }
+
+  #fig-mechinterp-ioi-circuit [data-anim="1"]{ animation: ioi-fade .45s .1s  both }
+  #fig-mechinterp-ioi-circuit [data-anim="2"]{ animation: ioi-fade .45s .8s  both }
+  #fig-mechinterp-ioi-circuit [data-anim="3"]{ animation: ioi-fade .45s 1.5s both }
+  #fig-mechinterp-ioi-circuit [data-anim="4"]{ animation: ioi-fade .45s 2.2s both }
+  #fig-mechinterp-ioi-circuit [data-anim="5"]{ animation: ioi-fade .45s 2.9s both }
+
+  #fig-mechinterp-ioi-circuit .viz-draw{
+    stroke-dasharray: var(--len,200); stroke-dashoffset: var(--len,200);
+    animation: ioi-draw .55s linear both;
+  }
+  #fig-mechinterp-ioi-circuit [data-anim="2"] .viz-draw{ animation-delay:1.0s }
+  #fig-mechinterp-ioi-circuit [data-anim="3"] .viz-draw{ animation-delay:1.7s }
+  #fig-mechinterp-ioi-circuit [data-anim="4"] .viz-draw{ animation-delay:2.4s }
+  #fig-mechinterp-ioi-circuit [data-anim="5"] .viz-draw{ animation-delay:3.1s }
+
+  #fig-mechinterp-ioi-circuit .viz-pulse{ animation: ioi-pulse 1.4s 3.2s infinite }
+
+  @media(prefers-reduced-motion:reduce){
+    #fig-mechinterp-ioi-circuit [data-anim],.viz-draw,.viz-pulse{
+      animation:none!important; opacity:1; stroke-dashoffset:0; transform:none }
+  }
+</style>
+
+
+<g data-anim="1">
+  <rect x="14" y="10" width="832" height="32" rx="6"
+        fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+
+  <text x="26" y="31" class="ptok">"When </text>
+  <rect x="84" y="14" width="40" height="22" rx="3" fill="var(--good,#2f9e6e)" fill-opacity=".25" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="104" y="31" text-anchor="middle" class="ptok" style="fill:var(--good,#2f9e6e);">Mary</text>
+  <text x="126" y="31" class="ptok"> and </text>
+  <rect x="160" y="14" width="36" height="22" rx="3" fill="var(--accent,#c15b39)" fill-opacity=".25" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="178" y="31" text-anchor="middle" class="ptok" style="fill:var(--accent,#c15b39);">John</text>
+  <text x="198" y="31" class="ptok"> went to the store, </text>
+  <rect x="353" y="14" width="36" height="22" rx="3" fill="var(--accent,#c15b39)" fill-opacity=".25" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="371" y="31" text-anchor="middle" class="ptok" style="fill:var(--accent,#c15b39);">John</text>
+  <text x="391" y="31" class="ptok"> gave a drink to ___ </text>
+  <text x="537" y="31" class="ptok" style="fill:var(--muted,#6d675d);">-&gt;</text>
+  <rect x="554" y="14" width="52" height="22" rx="3" fill="var(--good,#2f9e6e)" fill-opacity=".35" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="580" y="31" text-anchor="middle" class="ptok" style="fill:var(--good,#2f9e6e); font-weight:700;">' Mary'</text>
+  <text x="614" y="31" class="cap" style="font-size:10px;">(predicted)</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="20" y="238" width="730" height="30" rx="8"
+        fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="385" y="258" text-anchor="middle" class="bus-lbl">residual stream</text>
+
+  <path d="M198 248 L206 253 L198 258 Z" fill="var(--muted,#6d675d)" opacity=".7"/>
+  <path d="M388 248 L396 253 L388 258 Z" fill="var(--muted,#6d675d)" opacity=".7"/>
+  <path d="M578 248 L586 253 L578 258 Z" fill="var(--muted,#6d675d)" opacity=".7"/>
+</g>
+
+
+<g data-anim="2">
+  <rect x="24" y="120" width="164" height="78" rx="8"
+        fill="var(--accent,#c15b39)" fill-opacity=".14" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="106" y="142" text-anchor="middle" class="bl" style="fill:var(--accent,#c15b39);">Duplicate-token /</text>
+  <text x="106" y="156" text-anchor="middle" class="bl" style="fill:var(--accent,#c15b39);">Induction heads</text>
+  <text x="106" y="171" text-anchor="middle" class="cap">detect "John" is</text>
+  <text x="106" y="183" text-anchor="middle" class="cap">repeated in prompt</text>
+
+
+  <line x1="178" y1="36" x2="140" y2="120"
+        stroke="var(--accent,#c15b39)" stroke-width="1.3" stroke-dasharray="4 3"
+        marker-end="url(#ioi-arr-acc)" class="viz-draw" style="--len:95"/>
+
+  <line x1="371" y1="36" x2="140" y2="120"
+        stroke="var(--accent,#c15b39)" stroke-width="1.3" stroke-dasharray="4 3"
+        marker-end="url(#ioi-arr-acc)" class="viz-draw" style="--len:265"/>
+
+  <line x1="106" y1="198" x2="106" y2="236"
+        stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#ioi-arr-acc)"
+        class="viz-draw" style="--len:40"/>
+</g>
+
+
+<g data-anim="3">
+  <rect x="235" y="120" width="148" height="78" rx="8"
+        fill="var(--accent,#c15b39)" fill-opacity=".14" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="309" y="143" text-anchor="middle" class="bl" style="fill:var(--accent,#c15b39);">S-inhibition</text>
+  <text x="309" y="157" text-anchor="middle" class="bl" style="fill:var(--accent,#c15b39);">heads</text>
+  <text x="309" y="172" text-anchor="middle" class="cap">suppress the repeated</text>
+  <text x="309" y="184" text-anchor="middle" class="cap">name "John"</text>
+
+
+  <path d="M106 120 Q 106 100 309 100 L309 120"
+        fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.3" stroke-dasharray="4 3"
+        marker-end="url(#ioi-arr-acc)" class="viz-draw" style="--len:250"/>
+  <text x="211" y="96" text-anchor="middle" class="el" style="fill:var(--accent,#c15b39);">"John" is the duplicated name</text>
+
+
+  <line x1="309" y1="198" x2="309" y2="236"
+        stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#ioi-arr-acc)"
+        class="viz-draw" style="--len:40"/>
+  <text x="322" y="222" class="el" style="fill:var(--accent,#c15b39);">suppress</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="445" y="120" width="158" height="78" rx="8"
+        fill="var(--accent,#c15b39)" fill-opacity=".14" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="524" y="143" text-anchor="middle" class="bl" style="fill:var(--accent,#c15b39);">Name-mover</text>
+  <text x="524" y="157" text-anchor="middle" class="bl" style="fill:var(--accent,#c15b39);">heads</text>
+  <text x="524" y="172" text-anchor="middle" class="cap">attend to + copy the</text>
+  <text x="524" y="184" text-anchor="middle" class="cap">other name ' Mary'</text>
+
+
+  <line x1="504" y1="238" x2="504" y2="200"
+        stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#ioi-arr-mut)"
+        class="viz-draw" style="--len:40"/>
+  <text x="465" y="224" text-anchor="middle" class="el">read bus</text>
+  <text x="465" y="235" text-anchor="middle" class="el">(John suppr.)</text>
+
+
+  <line x1="544" y1="198" x2="544" y2="236"
+        stroke="var(--good,#2f9e6e)" stroke-width="2.2" marker-end="url(#ioi-arr-good)"
+        class="viz-draw" style="--len:40"/>
+  <text x="560" y="219" class="el" style="fill:var(--good,#2f9e6e);">copy</text>
+  <text x="560" y="231" class="el" style="fill:var(--good,#2f9e6e);">' Mary'</text>
+</g>
+
+
+<g data-anim="5" opacity=".75">
+  <rect x="440" y="310" width="168" height="66" rx="8"
+        fill="var(--surface-3,#ece7da)" fill-opacity=".6"
+        stroke="var(--muted,#6d675d)" stroke-width="1.5" stroke-dasharray="6 3"/>
+  <text x="524" y="331" text-anchor="middle" class="bl" style="fill:var(--muted,#6d675d);">Backup name-mover</text>
+  <text x="524" y="345" text-anchor="middle" class="bl" style="fill:var(--muted,#6d675d);">heads</text>
+  <text x="524" y="360" text-anchor="middle" class="cap" style="font-style:italic;">fire ONLY if primary</text>
+  <text x="524" y="372" text-anchor="middle" class="cap" style="font-style:italic;">movers are ablated</text>
+
+
+  <line x1="524" y1="310" x2="524" y2="271"
+        stroke="var(--muted,#6d675d)" stroke-width="1.5" stroke-dasharray="5 3"
+        marker-end="url(#ioi-arr-mut)" class="viz-draw" style="--len:42"/>
+  <text x="598" y="296" class="el" style="font-style:italic;">(activates</text>
+  <text x="598" y="308" class="el" style="font-style:italic;">on ablation)</text>
+</g>
+
+
+<g data-anim="5">
+
+  <text x="716" y="243" text-anchor="middle" class="el" style="fill:var(--good,#2f9e6e);">unembed</text>
+  <line x1="750" y1="253" x2="779" y2="253"
+        stroke="var(--good,#2f9e6e)" stroke-width="2.2" marker-end="url(#ioi-arr-good)"
+        class="viz-draw" style="--len:31"/>
+
+  <rect x="781" y="238" width="62" height="30" rx="8"
+        fill="var(--good,#2f9e6e)" fill-opacity=".9" class="viz-pulse"/>
+  <text x="812" y="258" text-anchor="middle"
+        style="font:700 11px var(--sans,sans-serif); fill:#fff;">' Mary'</text>
+  <text x="812" y="269" text-anchor="middle"
+        style="font:400 9px var(--sans,sans-serif); fill:#fff;">next tok</text>
+</g>
+
+
+<text x="106" y="284" text-anchor="middle" class="cap">1. detect duplicate</text>
+<text x="309" y="284" text-anchor="middle" class="cap">2. suppress "John"</text>
+<text x="524" y="284" text-anchor="middle" class="cap">3. copy ' Mary'</text>
+
+
+<rect x="14" y="395" width="832" height="58" rx="6"
+      fill="var(--surface,#fff)" fill-opacity=".5" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8"/>
+<text x="22" y="411" style="font:600 10px var(--sans,sans-serif); fill:var(--ink-soft,#45413a);">Key insight:</text>
+<text x="22" y="424" class="cap">The circuit reveals WHY naive ablation underestimates a head: the dashed backup heads are normally</text>
+<text x="22" y="437" class="cap">silent but activate when primary name-movers are knocked out — built-in redundancy explains why</text>
+<text x="22" y="450" class="cap">denoising (sufficient?) and noising (necessary?) patching can disagree on the same component.</text>
+
+</svg>
+<figcaption><b>The IOI circuit: four head classes implement indirect object identification in GPT-2.</b> The pipeline flows left to right through the residual stream — detecting the repeated name, suppressing it, then copying the other name to the output. Backup name-mover heads (dashed) activate only when primary movers are ablated, explaining why noising and denoising patching can give different answers about the same component's importance.</figcaption>
+</figure>
+
+<h3 id="52-how-circuits-are-found">5.2 How circuits are found<a class="headerlink" href="#52-how-circuits-are-found" title="Permanent link">¶</a></h3>
+<p>The methodology is the toolkit of §§2–4 applied systematically:</p>
+<ol>
+<li><strong>Define a crisp task</strong> with a metric (logit difference between the two plausible answers).</li>
+<li><strong>Localize</strong> with activation patching over heads/layers/positions to find the components that matter.</li>
+<li><strong>Classify</strong> each important head by what it attends to and writes (attention-pattern inspection, direct logit attribution, ablation of single heads).</li>
+<li><strong>Verify composition</strong> — show how outputs of upstream heads become inputs (queries/keys/values) of downstream ones via path patching.</li>
+<li><strong>Validate</strong> by <em>knockout</em>: ablate everything outside the proposed circuit and confirm the behavior survives; ablate inside and confirm it breaks.</li>
+</ol>
+<p>Doing this by hand for 26 heads is heroic and does not scale. <strong>Automated Circuit Discovery (ACDC)</strong> (Conmy et al., 2023) automates the edge-pruning search: it greedily removes connections in the computational graph whose removal least hurts the metric, leaving a minimal subgraph. <strong>Attribution patching</strong> (a gradient-based linear approximation to patching, Nanda 2023; <strong>AtP*</strong> is a refined variant) makes the search tractable on large models by estimating every component&rsquo;s patching effect from a <em>single</em> backward pass instead of one forward pass per component — the effect of patching component <span class="arithmatex">\(c\)</span> is approximated by the first-order term</p>
+<div class="arithmatex">\[
+\Delta m_c \;\approx\; \big\langle\, \nabla_{a_c}\, m,\;\; a_c^\text{clean} - a_c^\text{corrupt} \,\big\rangle,
+\]</div>
+<p>the dot product of the metric&rsquo;s gradient w.r.t. the activation with the clean-minus-corrupt activation difference. One backward pass yields the gradients for <em>all</em> components at once, turning an <span class="arithmatex">\(O(\text{components})\)</span> sweep into <span class="arithmatex">\(O(1)\)</span> passes — at the cost of being a linear approximation that can mislead where the true effect is nonlinear.</p>
+<hr />
+<h2 id="6-sparse-autoencoders-transcoders-decomposing-superposition">6. Sparse Autoencoders &amp; Transcoders: Decomposing Superposition<a class="headerlink" href="#6-sparse-autoencoders-transcoders-decomposing-superposition" title="Permanent link">¶</a></h2>
+<p>Patching and circuits operate on the model&rsquo;s <em>given</em> units — heads, layers, neurons. But §1.3 told us neurons are polysemantic because of superposition, so a circuit drawn over neurons is drawn over the wrong primitives. <strong>Sparse autoencoders (SAEs)</strong> attack the root problem: they try to <em>recover the underlying monosemantic features</em> that the model packed into superposition.</p>
+<h3 id="61-the-architecture-and-objective">6.1 The architecture and objective<a class="headerlink" href="#61-the-architecture-and-objective" title="Permanent link">¶</a></h3>
+<p>An SAE is a wide, sparse autoencoder trained to reconstruct a model&rsquo;s activations <span class="arithmatex">\(x \in \mathbb{R}^{d_\text{model}}\)</span> from a much larger but sparsely-active hidden layer of <span class="arithmatex">\(d_\text{sae} \gg d_\text{model}\)</span> features (an <em>expansion factor</em> of 8×, 32×, even higher):</p>
+<div class="arithmatex">\[
+f = \operatorname{ReLU}\!\big(W_\text{enc}(x - b_\text{dec}) + b_\text{enc}\big) \in \mathbb{R}^{d_\text{sae}}, \qquad
+\hat{x} = W_\text{dec}\, f + b_\text{dec}.
+\]</div>
+<div class="arithmatex">\[
+\mathcal{L} = \underbrace{\lVert x - \hat{x}\rVert_2^2}_{\text{reconstruction}} \;+\; \lambda \underbrace{\lVert f \rVert_1}_{\text{sparsity}}.
+\]</div>
+<p>The <span class="arithmatex">\(\ell_1\)</span> penalty forces the code <span class="arithmatex">\(f\)</span> to be sparse — only a few of the thousands of features fire per token. The columns of <span class="arithmatex">\(W_\text{dec}\)</span> are the <strong>feature directions</strong> in residual-stream space; the rows of <span class="arithmatex">\(W_\text{enc}\)</span> detect them. The bet, vindicated by Anthropic&rsquo;s &ldquo;Towards Monosemanticity&rdquo; (Bricken et al., 2023) and &ldquo;Scaling Monosemanticity&rdquo; (Templeton et al., 2024) and by Cunningham et al. (2023), is that the learned features are dramatically <strong>more monosemantic</strong> than neurons: individual features correspond to crisp concepts — &ldquo;the Golden Gate Bridge,&rdquo; &ldquo;DNA sequences,&rdquo; &ldquo;code that is buggy,&rdquo; &ldquo;deception,&rdquo; &ldquo;sycophancy&rdquo; — and they activate exactly where you&rsquo;d expect.</p>
+<p>The <span class="arithmatex">\(\ell_1\)</span> penalty has a known flaw: it penalizes feature <em>magnitude</em>, shrinking activations and biasing reconstruction. Two important fixes: <strong>gated SAEs</strong> (Rajamanoharan et al., 2024) split the &ldquo;which features fire&rdquo; decision from &ldquo;how much,&rdquo; and <strong>TopK / JumpReLU SAEs</strong> enforce sparsity directly — TopK keeps the <span class="arithmatex">\(k\)</span> largest activations per token (no magnitude penalty at all), giving a cleaner reconstruction–sparsity frontier. <strong>Transcoders</strong> generalize the idea: instead of reconstructing one layer&rsquo;s activations, a transcoder learns a sparse, interpretable <em>replacement for the MLP</em> — it reads the MLP&rsquo;s input and predicts its output through a sparse feature bottleneck, making the MLP&rsquo;s computation itself legible and enabling cross-layer circuit analysis in feature space (&ldquo;sparse feature circuits,&rdquo; Marks et al., 2024).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="o">,</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span><span class="o">,</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TopKSAE</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A minimal Top-K sparse autoencoder for residual-stream activations.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">d_sae</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">k</span> <span class="o">=</span> <span class="n">k</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">b_dec</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">d_model</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_enc</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_sae</span><span class="p">)</span> <span class="o">/</span> <span class="n">d_model</span><span class="o">**</span><span class="mf">0.5</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">b_enc</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">d_sae</span><span class="p">))</span>
+        <span class="c1"># Tie decoder to a *unit-norm* dictionary so feature directions are comparable.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W_dec</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">d_sae</span><span class="p">,</span> <span class="n">d_model</span><span class="p">),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">pre</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">b_dec</span><span class="p">)</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_enc</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">b_enc</span>          <span class="c1"># (B, d_sae)</span>
+        <span class="c1"># Top-K: keep only the k largest activations per token; zero the rest.</span>
+        <span class="n">topv</span><span class="p">,</span> <span class="n">topi</span> <span class="o">=</span> <span class="n">pre</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">k</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">f</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">pre</span><span class="p">)</span><span class="o">.</span><span class="n">scatter_</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">topi</span><span class="p">,</span> <span class="n">F</span><span class="o">.</span><span class="n">relu</span><span class="p">(</span><span class="n">topv</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">f</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">f</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">x_hat</span> <span class="o">=</span> <span class="n">f</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_dec</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">b_dec</span>
+        <span class="c1"># No L1 term needed: Top-K enforces sparsity structurally.</span>
+        <span class="n">recon</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">mse_loss</span><span class="p">(</span><span class="n">x_hat</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">x_hat</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">recon</span>
+
+<span class="c1"># Training loop sketch (activations streamed from a frozen LM at one hook point):</span>
+<span class="c1"># sae = TopKSAE(d_model=768, d_sae=768*32, k=32)</span>
+<span class="c1"># for x in activation_loader:               # x: (B, 768), L2-normalized is common</span>
+<span class="c1">#     x_hat, f, loss = sae(x)</span>
+<span class="c1">#     loss.backward(); opt.step(); opt.zero_grad()</span>
+<span class="c1">#     sae.W_dec.data = F.normalize(sae.W_dec.data, dim=1)   # re-project to unit norm</span>
+</code></pre></div>
+<h3 id="62-evaluating-and-using-saes">6.2 Evaluating and using SAEs<a class="headerlink" href="#62-evaluating-and-using-saes" title="Permanent link">¶</a></h3>
+<p>You judge an SAE on three axes that trade against each other:</p>
+<ul>
+<li><strong>Reconstruction fidelity</strong> — typically the <em>fraction of variance explained</em>, or the <em>cross-entropy loss recovered</em> when you splice <span class="arithmatex">\(\hat{x}\)</span> back into the model in place of <span class="arithmatex">\(x\)</span> and re-run it. A good SAE loses little task performance.</li>
+<li><strong>Sparsity</strong> — the average number of active features per token (<span class="arithmatex">\(L_0\)</span>). Lower is more interpretable but harder to reconstruct from.</li>
+<li><strong>Interpretability</strong> — do features correspond to crisp human concepts? Measured via auto-interpretation (an LLM labels each feature from its top-activating examples, then predicts activations on held-out text).</li>
+</ul>
+<p>The applied payoff is large. SAE features give you a <strong>monitoring vocabulary</strong>: you can watch a &ldquo;deception&rdquo; or &ldquo;refers to a known exploit&rdquo; feature fire during generation, a far more targeted signal than an output classifier — covered as a safety control in §7. They also enable precise <strong>steering</strong>: add a multiple of a feature&rsquo;s decoder direction to the residual stream and the model&rsquo;s behavior shifts along that concept (Anthropic&rsquo;s public &ldquo;Golden Gate Claude&rdquo; demo amplified a single bridge feature). SAE-based <strong>sparse feature circuits</strong> let you draw circuits over interpretable features rather than polysemantic neurons.</p>
+<div class="admonition warning">
+<p class="admonition-title">SAEs are not a solved oracle</p>
+<p>SAEs are the most exciting tool here and also the most over-hyped. Real limitations: <strong>feature splitting</strong> (one concept fractures into many near-duplicate features as you widen the dictionary, so the &ldquo;right&rdquo; number of features is undefined); <strong>dead features</strong> (many never activate and waste capacity); <strong>reconstruction is lossy</strong> (the residual error often contains task-relevant signal the SAE discarded); and there is no guarantee the learned dictionary matches the model&rsquo;s <em>actual</em> computational primitives rather than a convenient basis for reconstruction. Recent work questions whether SAE features improve downstream tasks over baselines. Treat SAE features as <em>useful hypotheses to be causally validated</em> (with patching), not as ground truth.</p>
+</div>
+<hr />
+<h2 id="7-practical-interpretability-debugging-steering-monitoring-tooling">7. Practical Interpretability: Debugging, Steering, Monitoring &amp; Tooling<a class="headerlink" href="#7-practical-interpretability-debugging-steering-monitoring-tooling" title="Permanent link">¶</a></h2>
+<h3 id="71-activation-steering">7.1 Activation steering<a class="headerlink" href="#71-activation-steering" title="Permanent link">¶</a></h3>
+<p>The most directly useful product of mech interp for an engineer is <strong>activation steering</strong> (a.k.a. <em>representation engineering</em> / activation addition). The idea: find a direction <span class="arithmatex">\(v\)</span> in the residual stream that corresponds to a behavior, then at inference <em>add</em> <span class="arithmatex">\(\alpha v\)</span> to the residual at chosen layers to push the model toward (or, with <span class="arithmatex">\(\alpha&lt;0\)</span>, away from) that behavior — no fine-tuning, no weight changes.</p>
+<p>How to get <span class="arithmatex">\(v\)</span>? Three common routes: (1) <strong>contrastive / difference-of-means</strong> — average the residual activations on prompts that exhibit the behavior, subtract the average on prompts that don&rsquo;t (the &ldquo;ActAdd&rdquo; and &ldquo;representation engineering&rdquo; recipes; the <strong>CAA</strong>, contrastive activation addition, variant uses paired examples); (2) a <strong>probe weight vector</strong> from §2; (3) an <strong>SAE feature</strong> decoder direction from §6. A widely-reproduced result: the <strong>refusal behavior of chat models is mediated by a single direction</strong> (Arditi et al., 2024) — subtracting it largely disables refusals (a jailbreak), adding it makes the model refuse benign requests. Steering is also used constructively: suppressing a sycophancy or hallucination direction, enforcing a persona, or dialing honesty.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Steering by adding a precomputed direction `v` (unit norm) to the residual stream.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">steering_hook</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">positions</span><span class="o">=</span><span class="nb">slice</span><span class="p">(</span><span class="kc">None</span><span class="p">)):</span>
+    <span class="n">v</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">hook</span><span class="p">(</span><span class="n">_m</span><span class="p">,</span> <span class="n">_i</span><span class="p">,</span> <span class="n">out</span><span class="p">):</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">h</span><span class="p">[:,</span> <span class="n">positions</span><span class="p">,</span> <span class="p">:]</span> <span class="o">=</span> <span class="n">h</span><span class="p">[:,</span> <span class="n">positions</span><span class="p">,</span> <span class="p">:]</span> <span class="o">+</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">v</span>   <span class="c1"># broadcast add along d_model</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">h</span><span class="p">,)</span> <span class="o">+</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">out</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
+    <span class="k">return</span> <span class="n">hook</span>
+
+<span class="c1"># h = model.transformer.h[LAYER].register_forward_hook(steering_hook(v, alpha=+8.0))</span>
+<span class="c1"># ... generate ...  then h.remove()</span>
+<span class="c1"># alpha is in units of residual-stream norm; sweep it — too small = no effect,</span>
+<span class="c1"># too large = incoherent text. The usable window is model/layer specific.</span>
+</code></pre></div>
+<p>Steering&rsquo;s appeal is that it is cheap, reversible, and composable; its danger is that it is <em>blunt</em> — a direction tuned on one distribution can degrade fluency or have side effects off-distribution, and &ldquo;one direction = one concept&rdquo; is an approximation. Validate steered models on a broad eval suite, not just the target behavior.</p>
+<h3 id="72-feature-based-monitoring-for-safety">7.2 Feature-based monitoring for safety<a class="headerlink" href="#72-feature-based-monitoring-for-safety" title="Permanent link">¶</a></h3>
+<p>Interpretability promises a monitoring layer that watches <em>internal</em> state, not just I/O. Concretely: train a probe or select an SAE feature for a property you care about — &ldquo;the model is about to comply with a harmful request,&rdquo; &ldquo;the chain-of-thought is unfaithful,&rdquo; &ldquo;the output references CBRN content&rdquo; — and fire an alarm when it activates during generation. This complements the output classifiers in <a href="../12-production-mlops/04-safety-guardrails.html">Safety, Guardrails &amp; Content Moderation</a>: an internal monitor can catch a problem <em>before</em> the token is emitted, and can in principle detect <em>intent</em> the output conceals (a model that &ldquo;knows&rdquo; it is deceiving). Anthropic and others have shown probes that detect when a model is being deceptive or sandbagging. The honest caveat: such monitors can be evaded if the model&rsquo;s representations drift or if it learns to route the computation around the monitored direction, so they are one layer of defense-in-depth, not a guarantee. This connects directly to the scalable-oversight agenda in <a href="../13-interp-safety-gov/05-ai-safety-oversight.html">AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a>.</p>
+<h3 id="73-debugging-workflows">7.3 Debugging workflows<a class="headerlink" href="#73-debugging-workflows" title="Permanent link">¶</a></h3>
+<p>Day-to-day, the techniques compose into a debugging discipline. Model emits a surprising token? <strong>Direct logit attribution</strong> (decompose the final logit into per-component contributions via the residual stream&rsquo;s linearity) tells you which heads/MLPs pushed it. A prompt that should trigger a behavior doesn&rsquo;t? <strong>Logit lens</strong> shows at which layer the prediction diverges from expectation. A backdoor or spurious trigger suspected? <strong>Activation patching</strong> between triggered and clean inputs localizes the responsible component. A fine-tune that regressed? Compare logit-lens trajectories or probe accuracies before/after to see <em>where</em> the representation changed.</p>
+<h3 id="74-tooling">7.4 Tooling<a class="headerlink" href="#74-tooling" title="Permanent link">¶</a></h3>
+<p>You rarely write hooks by hand for serious work:</p>
+<ul>
+<li><strong>TransformerLens</strong> (Neel Nanda et al.) is the de facto standard for mech interp on open models. It loads models into a uniform, hookable format (<code>HookedTransformer</code>), exposes every internal activation by a consistent name (<code>blocks.5.attn.hook_z</code>, <code>blocks.5.hook_resid_post</code>), folds LayerNorm for clean attribution, and provides <code>run_with_cache</code> and <code>run_with_hooks</code> so patching is a few lines instead of the boilerplate we wrote above. Our from-scratch code is for understanding; TransformerLens is for getting work done.</li>
+<li><strong>SAELens</strong> and <strong>dictionary_learning</strong> train, store, and load SAEs; <strong>Neuronpedia</strong> hosts pretrained SAEs and an interactive feature browser with auto-interpretation labels for many open models.</li>
+<li><strong>nnsight / NDIF</strong> expose internals of very large models (including remote execution) with a clean intervention API; <strong>captum</strong> and <strong>pyvene</strong> cover attribution and intervention more broadly.</li>
+<li><strong>Gemma Scope</strong> (a large open suite of SAEs for Gemma 2) and the SAEs released for GPT-2 and Llama give you pretrained dictionaries so you need not train your own to start.</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: start observational, escalate to causal, always validate</p>
+<p>A reliable order of operations: (1) <strong>logit lens / probing</strong> to form a hypothesis cheaply; (2) <strong>activation patching</strong> to test it causally on a crisp metric; (3) <strong>circuit/SAE analysis</strong> only if you need mechanism, not just localization; (4) <strong>knockout validation</strong> — ablate your proposed circuit and confirm the behavior breaks, ablate everything else and confirm it survives. Never ship a claim that rests on a heatmap alone; correlation-flavored tools (probes, lens) must be backed by an intervention before you believe them.</p>
+</div>
+<hr />
+<h2 id="8-honest-limits-and-the-state-of-the-field">8. Honest Limits and the State of the Field<a class="headerlink" href="#8-honest-limits-and-the-state-of-the-field" title="Permanent link">¶</a></h2>
+<p>Mech interp is the most intellectually thrilling corner of LLM research and it is <strong>far from solved</strong>. Stating the limits plainly is part of using it responsibly.</p>
+<ul>
+<li><strong>It does not scale (yet).</strong> The clean, fully reverse-engineered circuits — IOI, induction, modular addition (the &ldquo;grokking&rdquo; work, Nanda et al., 2023) — are on <em>small</em> models and <em>narrow</em> tasks. We do not have an end-to-end mechanistic account of any frontier model&rsquo;s general behavior. Automated methods (ACDC, attribution patching, SAEs) push the frontier but trade rigor for tractability.</li>
+<li><strong>Superposition is only partially tamed.</strong> SAEs are progress, not closure: feature splitting, lossy reconstruction, and the absence of a ground-truth feature set mean we cannot yet claim to have &ldquo;the&rdquo; decomposition of a model&rsquo;s representations.</li>
+<li><strong>Faithfulness is hard to verify.</strong> A clean-looking explanation can be wrong — the model may use a different mechanism that happens to correlate with your story. The field&rsquo;s defense is intervention (patching, ablation), but interventions can be confounded (off-distribution activations, LN effects, backup circuits masking necessity).</li>
+<li><strong>Findings can be illusory.</strong> Apparent features or circuits sometimes reflect the <em>probe&rsquo;s</em> or <em>SAE&rsquo;s</em> inductive bias rather than the model&rsquo;s computation. Control tasks, baselines, and replication across seeds are not optional.</li>
+<li><strong>Cost and labor.</strong> Serious circuit analysis is research-grade effort; for many production problems an output classifier or a behavioral eval is the right tool, and interpretability is reserved for high-stakes debugging, safety monitoring, or science.</li>
+</ul>
+<p>None of this is a reason for cynicism. The trajectory — from word2vec analogies, to the logit lens, to causal tracing, to SAEs scaling to production models — is steep, and interpretability has already produced shippable tools: steering vectors, refusal-direction analysis, factual-recall localization that powers knowledge editing, and internal monitors for safety. The realistic stance is the engineer&rsquo;s stance: these are sharp, imperfect instruments; use the right one, validate causally, and report your uncertainty.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You suspect a model has a backdoor: when the token &ldquo;SolidGoldMagikarp&rdquo; appears, it produces unsafe completions. Walk me through how you would <em>localize</em> the mechanism, and how you&rsquo;d be sure your explanation is causal rather than correlational.</p>
+<p><strong>A:</strong> I&rsquo;d treat it as an activation-patching problem with a crisp metric. First, two aligned inputs: a <strong>clean</strong> prompt containing the trigger (unsafe behavior) and a <strong>corrupted</strong> one where I swap the trigger for a benign token of equal token-length (safe behavior). Pick a metric — logit difference between an unsafe and a safe continuation. Then <strong>denoising-patch</strong>: run the corrupted prompt but inject the clean residual stream at one (layer, position) at a time, sweeping all sites, and measure recovery <span class="arithmatex">\((m_\text{patched}-m_\text{corrupt})/(m_\text{clean}-m_\text{corrupt})\)</span>. The (layer, position) where recovery spikes localizes where the trigger&rsquo;s effect enters and where it acts. To go from localization to <em>mechanism</em>, classify the implicated attention heads by their attention pattern and use direct logit attribution to see what they write. Crucially, to make it <strong>causal not correlational</strong>, I validate by <strong>knockout</strong>: ablate the proposed component(s) and confirm the unsafe behavior disappears on triggered inputs while clean behavior is intact; conversely confirm that ablating everything <em>outside</em> my proposed circuit leaves the behavior intact. I&rsquo;d also run <em>both</em> noising and denoising — if denoising says a head is sufficient but ablating it doesn&rsquo;t hurt, I should suspect a <strong>backup circuit</strong> and widen my analysis. A probe that merely predicts &ldquo;trigger present&rdquo; from activations is <em>not</em> sufficient evidence — that&rsquo;s correlation; the patching/knockout interventions are what license a causal claim.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The <strong>residual stream</strong> is an additive, shared communication bus: every sub-layer reads from and writes to it, which makes downstream quantities (logits, attention scores) <em>linearly decomposable</em> into per-component contributions — the basis of every attribution method here.</li>
+<li><strong>Superposition</strong> lets a model pack far more sparse features than it has dimensions into non-orthogonal directions; the cost is <strong>polysemantic neurons</strong>, which is why you cannot interpret a network neuron-by-neuron and why SAEs exist.</li>
+<li><strong>Probing</strong> and the <strong>logit lens</strong> are cheap <em>observational</em> tools — they reveal what information is present and where predictions sharpen — but they measure correlation; use control tasks for probes and remember a positive probe does not imply the model <em>uses</em> the feature.</li>
+<li><strong>Activation patching / causal tracing</strong> is the workhorse for <em>causal</em> claims: patch a clean activation into a corrupted run (denoising) or vice-versa (noising) and measure recovery to localize a behavior to a (layer, position, component). Mind LayerNorm and position alignment.</li>
+<li><strong>Circuits</strong> (induction heads, the IOI circuit) are reverse-engineered algorithms over heads/MLPs; finding them combines patching, attention-pattern analysis, and knockout validation, with <strong>ACDC</strong> and <strong>attribution patching</strong> automating the search.</li>
+<li><strong>Sparse autoencoders / transcoders</strong> decompose superposition into a larger set of sparser, more monosemantic features, enabling feature-level monitoring, steering, and circuits — but suffer feature splitting, lossy reconstruction, and no ground-truth, so features are hypotheses to validate, not oracles.</li>
+<li>Applied payoffs are real today: <strong>activation steering</strong> (e.g. the single refusal direction), <strong>feature-based safety monitoring</strong> that inspects internal state before a token is emitted, and <strong>factual-recall localization</strong> that powers knowledge editing.</li>
+<li>Use <strong>TransformerLens</strong> for hooks/caching/patching, <strong>SAELens / Neuronpedia / Gemma Scope</strong> for SAEs; reach for from-scratch hooks only to learn. Always escalate from observational to causal and finish with knockout validation.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Mechanistic interpretability has evolved from manually tracing toy circuits in small models to automated methods and sparse autoencoders that operate at the scale of frontier systems; the field is moving fast but reverse-engineering a full frontier model&rsquo;s general behavior remains an open challenge.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://transformer-circuits.pub/2021/framework/index.html">Elhage et al., <em>A Mathematical Framework for Transformer Circuits</em> (2021)</a> — establishes the residual-stream / virtual-weights view that underpins every method here.</li>
+<li><a href="https://transformer-circuits.pub/2022/toy_model/index.html">Elhage et al., <em>Toy Models of Superposition</em> (2022)</a> — clean proof that networks exploit superposition to pack more features than dimensions; explains polysemanticity.</li>
+<li><a href="https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html">Olsson et al., <em>In-context Learning and Induction Heads</em> (2022)</a> — the canonical two-head induction circuit and its link to the emergence of in-context learning.</li>
+<li><a href="https://arxiv.org/abs/2202.05262">Meng et al., <em>Locating and Editing Factual Associations in GPT</em> / ROME (2022)</a> — introduced causal tracing; the two-site factual-recall pattern exploited by knowledge-editing methods.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2211.00593">Wang et al., <em>Interpretability in the Wild: IOI Circuit in GPT-2 Small</em> (2022)</a> — full reverse-engineering of indirect-object identification; revealed backup heads and the limits of ablation.</li>
+<li><a href="https://arxiv.org/abs/2309.08600">Cunningham et al., <em>Sparse Autoencoders Find Highly Interpretable Features</em> (2023)</a> — early empirical evidence that SAEs recover monosemantic features at scale.</li>
+<li><a href="https://arxiv.org/abs/2304.14997">Conmy et al., <em>Towards Automated Circuit Discovery</em> / ACDC (2023)</a> — greedy edge-pruning algorithm that automates circuit finding in GPT-2.</li>
+<li><a href="https://transformer-circuits.pub/2024/scaling-monosemanticity/index.html">Templeton et al., <em>Scaling Monosemanticity: Extracting Interpretable Features from Claude 3 Sonnet</em> (2024)</a> — SAEs at frontier model scale; features map to concepts including &ldquo;deception&rdquo; and specific entities.</li>
+<li><a href="https://arxiv.org/abs/2408.05147">Lieberum et al., <em>Gemma Scope</em> (2024)</a> — open suite of hundreds of JumpReLU SAEs for Gemma 2 2B/9B/27B; community baseline for SAE research.</li>
+<li><a href="https://arxiv.org/abs/2406.11717">Arditi et al., <em>Refusal in Language Models Is Mediated by a Single Direction</em> (2024)</a> — shows refusal is a one-dimensional subspace in 13 open chat models; a concrete applied result of mech interp.</li>
+<li><a href="https://arxiv.org/abs/2403.19647">Marks et al., <em>Sparse Feature Circuits</em> (2024)</a> — circuits drawn over SAE features rather than polysemantic neurons; enables interpretable causal graphs.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/TransformerLensOrg/TransformerLens">TransformerLensOrg/TransformerLens</a> — de facto standard library for hookable, activation-patching-friendly transformer analysis; 50+ supported models.</li>
+<li><a href="https://github.com/jbloomAus/SAELens">jbloomAus/SAELens</a> — train, load, and analyze sparse autoencoders; deep TransformerLens integration and pre-trained dictionaries.</li>
+<li><a href="https://www.neuronpedia.org">Neuronpedia</a> — hosted interactive feature browser with auto-interpretation labels, steering controls, and circuit tracing for dozens of open models including Gemma Scope.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Elhage, Nanda, Olsson, et al., <em>A Mathematical Framework for Transformer Circuits</em> (Anthropic, 2021) — the residual-stream/virtual-weights view.</li>
+<li>Elhage et al., <em>Toy Models of Superposition</em> (Anthropic, 2022) — superposition and polysemanticity from first principles.</li>
+<li>Olsson et al., <em>In-context Learning and Induction Heads</em> (Anthropic, 2022) — the induction circuit and its link to in-context learning.</li>
+<li>Wang, Variengien, Conmy, Shlegeris &amp; Steinhardt, <em>Interpretability in the Wild: a Circuit for Indirect Object Identification in GPT-2 Small</em> (2022) — the IOI circuit.</li>
+<li>Meng, Bau, Andonian &amp; Belinkov, <em>Locating and Editing Factual Associations in GPT</em> (ROME, 2022) — causal tracing of factual recall.</li>
+<li>nostalgebraist, <em>interpreting GPT: the logit lens</em> (2020); Belrose et al., <em>Eliciting Latent Predictions from Transformers with the Tuned Lens</em> (2023).</li>
+<li>Bricken et al., <em>Towards Monosemanticity: Decomposing Language Models With Dictionary Learning</em> (Anthropic, 2023); Templeton et al., <em>Scaling Monosemanticity</em> (Anthropic, 2024); Cunningham et al., <em>Sparse Autoencoders Find Highly Interpretable Features</em> (2023).</li>
+<li>Conmy et al., <em>Towards Automated Circuit Discovery</em> (ACDC, 2023); Nanda, <em>Attribution Patching</em> (2023); Rajamanoharan et al., <em>Gated / JumpReLU SAEs</em> (DeepMind, 2024); <em>Gemma Scope</em> (2024).</li>
+<li>Arditi et al., <em>Refusal in Language Models Is Mediated by a Single Direction</em> (2024); Marks et al., <em>Sparse Feature Circuits</em> (2024).</li>
+<li><strong>TransformerLens</strong> (Neel Nanda) and <strong>SAELens / Neuronpedia</strong> — the standard open tooling.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="../12-production-mlops/08-reliability-engineering.html"><span class="pn-label">← Previous</span><span class="pn-title">Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</span></a>
+<a class="next" href="02-knowledge-editing-unlearning.html"><span class="pn-label">Next →</span><span class="pn-title">Knowledge Editing &amp; Machine Unlearning</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#1-the-residual-stream-and-superposition-the-core-mental-model">1. The Residual Stream and Superposition: The Core Mental Model</a></li>
+<li class="toc-l3"><a href="#11-the-residual-stream-as-a-shared-bus">1.1 The residual stream as a shared bus</a></li>
+<li class="toc-l3"><a href="#12-features-directions-and-the-linear-representation-hypothesis">1.2 Features, directions, and the linear representation hypothesis</a></li>
+<li class="toc-l3"><a href="#13-superposition-why-neurons-are-polysemantic">1.3 Superposition: why neurons are polysemantic</a></li>
+<li class="toc-l2"><a href="#2-probing-does-the-information-exist">2. Probing: Does the Information Exist?</a></li>
+<li class="toc-l2"><a href="#3-the-logit-lens-reading-the-residual-stream-directly">3. The Logit Lens: Reading the Residual Stream Directly</a></li>
+<li class="toc-l3"><a href="#31-from-scratch-logit-lens">3.1 From-scratch logit lens</a></li>
+<li class="toc-l2"><a href="#4-activation-patching-causal-tracing-from-correlation-to-cause">4. Activation Patching &amp;amp; Causal Tracing: From Correlation to Cause</a></li>
+<li class="toc-l3"><a href="#41-the-recipe">4.1 The recipe</a></li>
+<li class="toc-l3"><a href="#42-noising-vs-denoising-and-why-direction-matters">4.2 Noising vs. denoising, and why direction matters</a></li>
+<li class="toc-l3"><a href="#43-a-tiny-activation-patching-experiment-from-scratch">4.3 A tiny activation-patching experiment from scratch</a></li>
+<li class="toc-l2"><a href="#5-circuit-discovery-how-components-compose-into-algorithms">5. Circuit Discovery: How Components Compose into Algorithms</a></li>
+<li class="toc-l3"><a href="#51-two-landmark-circuits">5.1 Two landmark circuits</a></li>
+<li class="toc-l3"><a href="#52-how-circuits-are-found">5.2 How circuits are found</a></li>
+<li class="toc-l2"><a href="#6-sparse-autoencoders-transcoders-decomposing-superposition">6. Sparse Autoencoders &amp;amp; Transcoders: Decomposing Superposition</a></li>
+<li class="toc-l3"><a href="#61-the-architecture-and-objective">6.1 The architecture and objective</a></li>
+<li class="toc-l3"><a href="#62-evaluating-and-using-saes">6.2 Evaluating and using SAEs</a></li>
+<li class="toc-l2"><a href="#7-practical-interpretability-debugging-steering-monitoring-tooling">7. Practical Interpretability: Debugging, Steering, Monitoring &amp;amp; Tooling</a></li>
+<li class="toc-l3"><a href="#71-activation-steering">7.1 Activation steering</a></li>
+<li class="toc-l3"><a href="#72-feature-based-monitoring-for-safety">7.2 Feature-based monitoring for safety</a></li>
+<li class="toc-l3"><a href="#73-debugging-workflows">7.3 Debugging workflows</a></li>
+<li class="toc-l3"><a href="#74-tooling">7.4 Tooling</a></li>
+<li class="toc-l2"><a href="#8-honest-limits-and-the-state-of-the-field">8. Honest Limits and the State of the Field</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

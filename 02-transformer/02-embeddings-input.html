@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embeddings &amp; The Input Pipeline — The LLM Stack</title>
+<meta name="description" content="Token embeddings, weight tying, embedding matrices, the unembedding/logits; one-hot vs lookup; embedding dimension; how text becomes tensors end to end. Code: e">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="active" href="02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part II — The Transformer Architecture</div>
+<h1 id="22-embeddings-the-input-pipeline">2.2 Embeddings &amp; The Input Pipeline<a class="headerlink" href="#22-embeddings-the-input-pipeline" title="Permanent link">¶</a></h1>
+<p>Every neural network speaks floating-point. Language is discrete — a sequence of symbols selected from a finite vocabulary. The <strong>embedding layer</strong> is the bridge: it translates a token ID (an integer) into a dense vector that the rest of the model can reason about geometrically. Getting this bridge right matters enormously: the embedding matrix is often the single largest parameter tensor in the model, and the way information enters the model shapes everything downstream.</p>
+<p>This chapter takes you from raw bytes to the first hidden state. We cover the mathematical structure of the embedding operation, how weight tying connects the input and output ends of the model, what the embedding dimension buys you, and how the entire input pipeline — tokenizer → IDs → embeddings → positional signal → Transformer block — fits together as a tensor-processing graph.</p>
+<p>For the upstream step of turning raw text into token IDs, see <a href="../02-transformer/01-tokenization.html">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a>. For what happens immediately after the embedding layer — adding positional encodings — see <a href="../02-transformer/05-positional-encoding.html">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a>. The full model that uses these building blocks lives in <a href="../02-transformer/07-build-gpt-from-scratch.html">Building a GPT From Scratch (nanoGPT-style)</a>.</p>
+<hr />
+<h2 id="why-not-one-hot-vectors">Why Not One-Hot Vectors?<a class="headerlink" href="#why-not-one-hot-vectors" title="Permanent link">¶</a></h2>
+<p>Before we justify what embeddings are, let us feel why the obvious alternative fails. The simplest way to represent a symbol from a vocabulary of size <span class="arithmatex">\(V\)</span> is a <strong>one-hot vector</strong> <span class="arithmatex">\(\mathbf{o}_i \in \{0,1\}^V\)</span>, which is all zeros except for a <span class="arithmatex">\(1\)</span> at position <span class="arithmatex">\(i\)</span>.</p>
+<p>This representation has two fatal flaws for a neural network:</p>
+<ol>
+<li>
+<p><strong>Dimensionality.</strong> Modern vocabularies have <span class="arithmatex">\(V \approx 32{,}000\)</span>–<span class="arithmatex">\(256{,}000\)</span> tokens. A batch of <span class="arithmatex">\(B = 32\)</span> sequences each of length <span class="arithmatex">\(T = 2048\)</span> would produce a tensor of shape <span class="arithmatex">\([32, 2048, 256000]\)</span>, a float32 representation occupying <span class="arithmatex">\(32 \times 2048 \times 256000 \times 4 \approx 67\)</span> GB. That exceeds the HBM of most GPU clusters, just for the input.</p>
+</li>
+<li>
+<p><strong>No geometry.</strong> One-hot vectors are orthogonal by construction: every pair of tokens has Euclidean distance <span class="arithmatex">\(\sqrt{2}\)</span> and cosine similarity <span class="arithmatex">\(0\)</span>, regardless of semantic relationship. The model would need to learn from scratch that &ldquo;king&rdquo; and &ldquo;queen&rdquo; are related, with no inductive bias whatsoever.</p>
+</li>
+</ol>
+<p>The standard solution is to project the one-hot vector through a learned weight matrix:</p>
+<div class="arithmatex">\[
+\mathbf{e}_i = \mathbf{W}_E \,\mathbf{o}_i = \mathbf{W}_E[:, i]
+\]</div>
+<p>where <span class="arithmatex">\(\mathbf{W}_E \in \mathbb{R}^{d \times V}\)</span> is the <strong>embedding matrix</strong>. The expression <span class="arithmatex">\(\mathbf{W}_E[:, i]\)</span> simply extracts column <span class="arithmatex">\(i\)</span> — it is a cheap table lookup, not a matrix multiply. The result is a dense vector <span class="arithmatex">\(\mathbf{e}_i \in \mathbb{R}^d\)</span> where <span class="arithmatex">\(d \ll V\)</span> (typically <span class="arithmatex">\(d \in \{512, 768, 1024, 2048, 4096, 8192\}\)</span>).</p>
+<p>We have replaced a <span class="arithmatex">\(V\)</span>-dimensional sparse vector with a <span class="arithmatex">\(d\)</span>-dimensional dense one. The ratio <span class="arithmatex">\(V/d\)</span> is often <span class="arithmatex">\(10\times\)</span>–<span class="arithmatex">\(100\times\)</span>, so the representation is radically more compact.</p>
+<hr />
+<h2 id="the-embedding-matrix-in-detail">The Embedding Matrix in Detail<a class="headerlink" href="#the-embedding-matrix-in-detail" title="Permanent link">¶</a></h2>
+<h3 id="shape-initialization-and-data-type">Shape, Initialization, and Data Type<a class="headerlink" href="#shape-initialization-and-data-type" title="Permanent link">¶</a></h3>
+<p>PyTorch exposes this via <code>torch.nn.Embedding(num_embeddings, embedding_dim)</code>. Internally it is just a <code>Parameter</code> of shape <code>[V, d]</code> — note the transposition convention relative to the formula above; PyTorch stores rows indexed by token ID.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="c1"># Typical GPT-2 small vocabulary and model dimension</span>
+<span class="n">V</span> <span class="o">=</span> <span class="mi">50_257</span>   <span class="c1"># GPT-2 vocab size (BPE)</span>
+<span class="n">d_model</span> <span class="o">=</span> <span class="mi">768</span>  <span class="c1"># embedding dimension</span>
+
+<span class="n">embedding</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">V</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+
+<span class="c1"># The raw weight tensor: shape [V, d_model]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">embedding</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>   <span class="c1"># torch.Size([50257, 768])</span>
+
+<span class="c1"># Memory: float32</span>
+<span class="n">bytes_f32</span> <span class="o">=</span> <span class="n">V</span> <span class="o">*</span> <span class="n">d_model</span> <span class="o">*</span> <span class="mi">4</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Embedding table (fp32): </span><span class="si">{</span><span class="n">bytes_f32</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mf">1e6</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB&quot;</span><span class="p">)</span>  <span class="c1"># ~154 MB</span>
+
+<span class="c1"># Memory: bfloat16 (typical training)</span>
+<span class="n">bytes_bf16</span> <span class="o">=</span> <span class="n">V</span> <span class="o">*</span> <span class="n">d_model</span> <span class="o">*</span> <span class="mi">2</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Embedding table (bf16): </span><span class="si">{</span><span class="n">bytes_bf16</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mf">1e6</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB&quot;</span><span class="p">)</span>  <span class="c1"># ~77 MB</span>
+</code></pre></div>
+<p>Initialization matters. <code>nn.Embedding</code> defaults to <span class="arithmatex">\(\mathcal{N}(0, 1)\)</span>. In practice, you often want a tighter distribution — GPT-2 uses <span class="arithmatex">\(\mathcal{N}(0, 0.02^2)\)</span>, and Llama uses a similarly small standard deviation. If the embedding vectors start large, they dominate the residual stream and can destabilize layer normalization early in training.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Recommended initialization used by GPT-2 / nanoGPT</span>
+<span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="n">embedding</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">mean</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="the-lookup-as-a-matrix-multiply">The Lookup as a Matrix Multiply<a class="headerlink" href="#the-lookup-as-a-matrix-multiply" title="Permanent link">¶</a></h3>
+<p>The lookup operation <code>embedding(ids)</code> where <code>ids</code> is a <code>LongTensor</code> is <em>mathematically</em> equivalent to:</p>
+<div class="arithmatex">\[
+E = \mathbf{O} \, \mathbf{W}_E^\top, \quad \mathbf{O} \in \{0,1\}^{T \times V},\; \mathbf{W}_E^\top \in \mathbb{R}^{V \times d}
+\]</div>
+<p>but it is implemented as an <strong>index select</strong>, not an actual matmul. This is important: doing a real GEMM would be <span class="arithmatex">\(O(TV d)\)</span> arithmetic, while the lookup is <span class="arithmatex">\(O(Td)\)</span> — just copying <span class="arithmatex">\(T\)</span> rows out of a big table. On GPU, this is done with <code>torch.index_select</code> or equivalently <code>embedding.weight[ids]</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Directly equivalent to nn.Embedding forward pass</span>
+<span class="n">ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">16</span><span class="p">))</span>   <span class="c1"># batch=4, seq_len=16</span>
+
+<span class="c1"># Method 1: nn.Embedding (recommended; handles padding_idx, sparse gradients)</span>
+<span class="n">out1</span> <span class="o">=</span> <span class="n">embedding</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span>                 <span class="c1"># shape: [4, 16, 768]</span>
+
+<span class="c1"># Method 2: Direct indexing (identical for inference, slightly faster in some cases)</span>
+<span class="n">out2</span> <span class="o">=</span> <span class="n">embedding</span><span class="o">.</span><span class="n">weight</span><span class="p">[</span><span class="n">ids</span><span class="p">]</span>          <span class="c1"># shape: [4, 16, 768]</span>
+
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">out1</span><span class="p">,</span> <span class="n">out2</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="the-unembedding-matrix-and-logits">The Unembedding Matrix and Logits<a class="headerlink" href="#the-unembedding-matrix-and-logits" title="Permanent link">¶</a></h2>
+<p>At the other end of the Transformer, after <span class="arithmatex">\(L\)</span> layers of self-attention and feed-forward computation, we have a sequence of hidden states <span class="arithmatex">\(\mathbf{H} \in \mathbb{R}^{T \times d}\)</span>. To produce a probability distribution over the vocabulary, we need to <strong>project back</strong> to <span class="arithmatex">\(\mathbb{R}^V\)</span>:</p>
+<div class="arithmatex">\[
+\text{logits} = \mathbf{H} \, \mathbf{W}_U^\top, \quad \mathbf{W}_U \in \mathbb{R}^{V \times d}
+\]</div>
+<p>The resulting tensor has shape <span class="arithmatex">\([T, V]\)</span> (or <span class="arithmatex">\([B, T, V]\)</span> batched). Passing it through softmax gives a distribution:</p>
+<div class="arithmatex">\[
+p(x_{t+1} = k \mid x_{\le t}) = \frac{\exp(\text{logits}_{t,k})}{\sum_{j=1}^{V} \exp(\text{logits}_{t,j})}
+\]</div>
+<p>The unembedding step is a <strong>genuine matrix multiply</strong> — <span class="arithmatex">\(O(TVd)\)</span> — and it is often the most expensive single operation in the model when <span class="arithmatex">\(V\)</span> is large. For a sequence of <span class="arithmatex">\(T = 2048\)</span> tokens in a model with <span class="arithmatex">\(d = 4096\)</span> and <span class="arithmatex">\(V = 128{,}000\)</span> (Llama 3), the logit projection is a matmul of shape <span class="arithmatex">\([2048, 4096] \times [4096, 128000]\)</span>, producing <span class="arithmatex">\(2048 \times 128000 \approx 262\)</span> million values.</p>
+<h3 id="weight-tying">Weight Tying<a class="headerlink" href="#weight-tying" title="Permanent link">¶</a></h3>
+<p>A key observation: <span class="arithmatex">\(\mathbf{W}_E\)</span> (the input embedding) and <span class="arithmatex">\(\mathbf{W}_U\)</span> (the unembedding) both have shape <span class="arithmatex">\([V, d]\)</span> and both need to learn &ldquo;what each token means.&rdquo; It is natural to <strong>share them</strong> — setting <span class="arithmatex">\(\mathbf{W}_U = \mathbf{W}_E\)</span>.</p>
+<p>This idea, called <strong>weight tying</strong> (or <strong>tied embeddings</strong>), was popularized by Press &amp; Wolf (2017) in the paper <em>Using the Output Embedding to Improve Language Models</em>. It was adopted by GPT-2, BERT, and most subsequent models.</p>
+<p><strong>Why it works:</strong></p>
+<ul>
+<li>It halves the parameter count in the vocabulary-dependent tensors (saving <span class="arithmatex">\(V \times d\)</span> parameters — in GPT-2 small, that is about 38M parameters saved, ~30% of the total).</li>
+<li>It couples the representation space of tokens-as-inputs with tokens-as-outputs, creating a consistency pressure: a token&rsquo;s input embedding must be compatible with its appearance as a prediction target.</li>
+<li>Empirically it improves perplexity at equal parameter counts, especially for smaller models.</li>
+</ul>
+<p><strong>Implementation:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TiedTransformerHead</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Minimal example of weight tying between token embedding and unembedding.</span>
+<span class="sd">    In a full model, the Transformer layers would sit between embed() and unembed().</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vocab_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="c1"># The single shared weight matrix: shape [vocab_size, d_model]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">embed</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">vocab_size</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+        <span class="c1"># No separate nn.Linear for the output: we share weights explicitly.</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">token_embed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;ids: [B, T] LongTensor  -&gt;  [B, T, d_model] float&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">embed</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">logits</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hidden</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        hidden: [B, T, d_model]</span>
+<span class="sd">        returns logits: [B, T, vocab_size]</span>
+
+<span class="sd">        F.linear computes  hidden @ weight.T + bias.</span>
+<span class="sd">        We pass the embedding weight directly, with no bias.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">linear</span><span class="p">(</span><span class="n">hidden</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">embed</span><span class="o">.</span><span class="n">weight</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;End-to-end: token IDs -&gt; logits (no Transformer layers for brevity).&quot;&quot;&quot;</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">token_embed</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span>          <span class="c1"># [B, T, d_model]</span>
+        <span class="c1"># ... Transformer layers would go here ...</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">logits</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>              <span class="c1"># [B, T, vocab_size]</span>
+
+<span class="c1"># Verify parameter count</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">TiedTransformerHead</span><span class="p">(</span><span class="n">vocab_size</span><span class="o">=</span><span class="mi">32_000</span><span class="p">,</span> <span class="n">d_model</span><span class="o">=</span><span class="mi">4096</span><span class="p">)</span>
+<span class="n">total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Parameters: </span><span class="si">{</span><span class="n">total</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># 32000 * 4096 = 131,072,000</span>
+
+<span class="c1"># Verify the weights are truly shared (same object, not a copy)</span>
+<span class="k">assert</span> <span class="n">model</span><span class="o">.</span><span class="n">embed</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">data_ptr</span><span class="p">()</span> <span class="o">==</span> <span class="n">model</span><span class="o">.</span><span class="n">embed</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">data_ptr</span><span class="p">()</span>
+
+<span class="c1"># Gradient flows through both paths during training:</span>
+<span class="c1"># dL/d(W_E) accumulates gradients from both token_embed() and logits().</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: copying instead of sharing</p>
+<p>A frequent mistake is doing <code>self.unembed = nn.Linear(d_model, vocab_size); self.unembed.weight = self.embed.weight</code>. This looks right but <code>nn.Linear</code> initializes its own weight before you reassign it — you waste memory for a moment and, more dangerously, the <code>bias</code> is still separate. Use <code>F.linear(hidden, self.embed.weight)</code> (no <code>nn.Linear</code> at all) to avoid any ambiguity. Also be careful: if you serialize the model and reload it, ensure the saved checkpoint does not store two copies of the weight.</p>
+</div>
+<hr />
+<h2 id="choosing-the-embedding-dimension">Choosing the Embedding Dimension<a class="headerlink" href="#choosing-the-embedding-dimension" title="Permanent link">¶</a></h2>
+<p>The embedding dimension <span class="arithmatex">\(d\)</span> (also called <code>d_model</code>, <code>hidden_size</code>, or <code>n_embd</code> in various codebases) is the central architectural hyperparameter. It determines:</p>
+<ul>
+<li>The <strong>width</strong> of the residual stream throughout the entire Transformer.</li>
+<li>The number of parameters in every linear layer (attention projections, MLP layers).</li>
+<li>Memory bandwidth costs at inference.</li>
+</ul>
+<p>Typical values across model families:</p>
+<table>
+<thead>
+<tr>
+<th>Model family</th>
+<th><span class="arithmatex">\(d\)</span></th>
+<th><span class="arithmatex">\(V\)</span></th>
+<th>Embed params (<span class="arithmatex">\(V \times d\)</span>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPT-2 small</td>
+<td>768</td>
+<td>50,257</td>
+<td>38.6 M</td>
+</tr>
+<tr>
+<td>GPT-2 XL</td>
+<td>1,600</td>
+<td>50,257</td>
+<td>80.4 M</td>
+</tr>
+<tr>
+<td>Llama 2 7B</td>
+<td>4,096</td>
+<td>32,000</td>
+<td>131 M</td>
+</tr>
+<tr>
+<td>Llama 3 8B</td>
+<td>4,096</td>
+<td>128,000</td>
+<td>524 M</td>
+</tr>
+<tr>
+<td>GPT-3 175B</td>
+<td>12,288</td>
+<td>50,257</td>
+<td>617 M</td>
+</tr>
+<tr>
+<td>Llama 3 70B</td>
+<td>8,192</td>
+<td>128,000</td>
+<td>1,048 M</td>
+</tr>
+</tbody>
+</table>
+<p>With weight tying, the embed/unembed table is counted once. Without weight tying (some encoder-decoder models like T5 do not tie weights), double those numbers.</p>
+<p><strong>Scaling law intuition.</strong> The Kaplan et al. (2020) and Chinchilla (Hoffmann et al., 2022) scaling laws treat <span class="arithmatex">\(d\)</span> as one axis of model capacity. In practice, the ratio of <span class="arithmatex">\(d\)</span> to the number of layers and the ratio of <span class="arithmatex">\(d\)</span> to the number of attention heads are constrained (typically <span class="arithmatex">\(d_{\text{head}} = d / n_{\text{heads}} = 64\)</span> or <span class="arithmatex">\(128\)</span>), so <span class="arithmatex">\(d\)</span> scales roughly as the square root of the parameter count. See <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a> for the full picture.</p>
+<hr />
+<h2 id="end-to-end-text-becomes-tensors">End-to-End: Text Becomes Tensors<a class="headerlink" href="#end-to-end-text-becomes-tensors" title="Permanent link">¶</a></h2>
+<p>Let us trace a concrete example from raw string to the first Transformer block input.</p>
+<figure class="viz" id="fig-embed-text-to-tensors-pipeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 910" role="img" aria-label="Five-stage data-flow pipeline tracing the sentence 'The cat sat on the mat.' from raw text through tokenization, BOS prepending, token embedding lookup, positional encoding addition, to the first Transformer block input, with tensor shapes at each stage.">
+<defs>
+  <marker id="tp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="tp-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6aa3ff)"/>
+  </marker>
+  <filter id="tp-glow">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+
+  <style>
+    /* Animation */
+    @media (prefers-reduced-motion: no-preference) {
+      #fig-embed-text-to-tensors-pipeline .pulse { animation: tp-travel 3.4s ease-in-out infinite; }
+      #fig-embed-text-to-tensors-pipeline .c1 { animation: tp-flash 3.4s infinite 0.2s; }
+      #fig-embed-text-to-tensors-pipeline .c2 { animation: tp-flash 3.4s infinite 0.8s; }
+      #fig-embed-text-to-tensors-pipeline .c3 { animation: tp-flash 3.4s infinite 1.4s; }
+      #fig-embed-text-to-tensors-pipeline .c4 { animation: tp-flash 3.4s infinite 2.0s; }
+      #fig-embed-text-to-tensors-pipeline .c5 { animation: tp-flash 3.4s infinite 2.6s; }
+      #fig-embed-text-to-tensors-pipeline .rflash { animation: tp-rflash 3.4s infinite 1.4s; }
+    }
+    @keyframes tp-travel {
+      0%   { cy: 52px; opacity:1; }
+      14%  { cy: 175px; }
+      28%  { cy: 335px; }
+      42%  { cy: 495px; }
+      56%  { cy: 655px; }
+      70%  { cy: 800px; opacity:1; }
+      80%  { opacity:0; }
+      99%  { cy: 52px; opacity:0; }
+      100% { cy: 52px; opacity:1; }
+    }
+    @keyframes tp-flash {
+      0%,12%  { stroke-opacity:1; }
+      15%,30% { stroke-opacity:1; stroke-width:3; }
+      35%,100%{ stroke-opacity:1; stroke-width:1.5; }
+    }
+    @keyframes tp-rflash {
+      0%,38%  { opacity:0.35; }
+      42%,58% { opacity:1; }
+      63%,100%{ opacity:0.35; }
+    }
+  </style>
+</defs>
+
+
+<rect x="110" y="14" width="540" height="52" rx="26" fill="var(--accent,#6aa3ff)"/>
+<text x="380" y="36" text-anchor="middle" font="600 13px var(--sans,sans-serif)"
+      style="font:600 13px var(--sans,sans-serif)" fill="#fff">Input text:</text>
+<text x="380" y="56" text-anchor="middle"
+      style="font:700 14px var(--mono,monospace)" fill="#fff">"The cat sat on the mat."</text>
+
+
+<line x1="380" y1="66" x2="380" y2="86" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+<text x="392" y="80" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">raw string</text>
+
+
+<rect x="30" y="88" width="700" height="126" rx="10" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.5" class="c1"/>
+
+<circle cx="52" cy="100" r="11" fill="var(--accent,#6aa3ff)"/>
+<text x="52" y="104" text-anchor="middle" style="font:700 11px var(--sans,sans-serif)" fill="#fff">1</text>
+
+<text x="70" y="104" style="font:600 13px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Step 1 — Tokenizer (BPE)</text>
+
+<text x="720" y="104" text-anchor="end" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">[7]</text>
+
+<text x="46" y="128" style="font:500 11px var(--mono,monospace)" fill="var(--ink-soft,#333)">Token IDs:</text>
+
+<rect x="130" y="116" width="42" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="151" y="129" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">464</text>
+<rect x="177" y="116" width="46" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="200" y="129" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">3797</text>
+<rect x="228" y="116" width="46" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="251" y="129" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">3332</text>
+<rect x="279" y="116" width="38" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="298" y="129" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">319</text>
+<rect x="322" y="116" width="38" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="341" y="129" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">262</text>
+<rect x="365" y="116" width="46" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="388" y="129" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">2603</text>
+<rect x="416" y="116" width="30" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="431" y="129" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">13</text>
+<text x="454" y="129" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">  ← 7 tokens</text>
+
+<text x="46" y="153" style="font:400 10.5px var(--mono,monospace)" fill="var(--muted,#888)">"The"=464,  " cat"=3797,  " sat"=3332,  " on"=319</text>
+<text x="46" y="169" style="font:400 10.5px var(--mono,monospace)" fill="var(--muted,#888)">" the"=262,  " mat"=2603,  "."=13</text>
+<text x="46" y="202" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)"/>
+
+
+<line x1="380" y1="214" x2="380" y2="234" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+<text x="392" y="228" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">token IDs</text>
+
+
+<rect x="30" y="236" width="700" height="106" rx="10" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.5" class="c2"/>
+<circle cx="52" cy="248" r="11" fill="var(--accent,#6aa3ff)"/>
+<text x="52" y="252" text-anchor="middle" style="font:700 11px var(--sans,sans-serif)" fill="#fff">2</text>
+<text x="70" y="252" style="font:600 13px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Step 2 — Prepend BOS (optional, model-dependent)</text>
+<text x="720" y="252" text-anchor="end" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">[1, 8]</text>
+<text x="46" y="278" style="font:500 11px var(--mono,monospace)" fill="var(--ink-soft,#333)">Token IDs:</text>
+
+<rect x="130" y="266" width="28" height="18" rx="4" fill="var(--accent,#6aa3ff)"/>
+<text x="144" y="279" text-anchor="middle" style="font:700 11px var(--mono,monospace)" fill="#fff">1</text>
+
+<rect x="163" y="266" width="42" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="184" y="279" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">464</text>
+<rect x="210" y="266" width="46" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="233" y="279" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">3797</text>
+<rect x="261" y="266" width="46" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="284" y="279" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">3332</text>
+<rect x="312" y="266" width="38" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="331" y="279" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">319</text>
+<rect x="355" y="266" width="38" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="374" y="279" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">262</text>
+<rect x="398" y="266" width="46" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="421" y="279" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">2603</text>
+<rect x="449" y="266" width="30" height="18" rx="4" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="464" y="279" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">13</text>
+<text x="490" y="279" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">  T = 8</text>
+<text x="46" y="320" style="font:400 10.5px var(--sans,sans-serif)" fill="var(--muted,#888)">BOS token (ID=1) prepended; sequence length grows from 7 to 8</text>
+
+
+<line x1="380" y1="342" x2="380" y2="362" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+<text x="392" y="356" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">[1, 8]</text>
+
+
+<rect x="30" y="364" width="700" height="134" rx="10" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.5" class="c3"/>
+<circle cx="52" cy="376" r="11" fill="var(--accent,#6aa3ff)"/>
+<text x="52" y="380" text-anchor="middle" style="font:700 11px var(--sans,sans-serif)" fill="#fff">3</text>
+<text x="70" y="380" style="font:600 13px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Step 3 — Token Embedding lookup</text>
+<text x="720" y="380" text-anchor="end" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">[1, 8, 768]</text>
+
+
+<rect x="46" y="392" width="52" height="78" rx="4" fill="var(--surface-3,#eee)" stroke="var(--accent,#6aa3ff)" stroke-width="1.4"/>
+<text x="72" y="406" text-anchor="middle" style="font:600 9px var(--mono,monospace)" fill="var(--ink-soft,#333)">W_E</text>
+<text x="72" y="418" text-anchor="middle" style="font:500 9px var(--mono,monospace)" fill="var(--muted,#888)">[50257</text>
+<text x="72" y="430" text-anchor="middle" style="font:500 9px var(--mono,monospace)" fill="var(--muted,#888)"> x 768]</text>
+
+<rect x="46" y="440" width="52" height="10" rx="2" fill="var(--accent,#6aa3ff)" opacity="0.8" class="rflash"/>
+<rect x="46" y="452" width="52" height="10" rx="2" fill="var(--accent,#6aa3ff)" opacity="0.6" class="rflash"/>
+<rect x="46" y="464" width="52" height="10" rx="2" fill="var(--accent,#6aa3ff)" opacity="0.4" class="rflash"/>
+
+<line x1="102" y1="445" x2="124" y2="445" stroke="var(--accent,#6aa3ff)" stroke-width="1.2" stroke-dasharray="3 2" marker-end="url(#tp-arr-acc)"/>
+<line x1="102" y1="457" x2="124" y2="457" stroke="var(--accent,#6aa3ff)" stroke-width="1.2" stroke-dasharray="3 2" marker-end="url(#tp-arr-acc)"/>
+<line x1="102" y1="469" x2="124" y2="469" stroke="var(--accent,#6aa3ff)" stroke-width="1.2" stroke-dasharray="3 2" marker-end="url(#tp-arr-acc)"/>
+
+<rect x="128" y="430" width="56" height="56" rx="4" fill="var(--surface-3,#eee)" stroke="var(--accent,#6aa3ff)" stroke-width="1.4"/>
+<text x="156" y="453" text-anchor="middle" style="font:500 9px var(--mono,monospace)" fill="var(--ink-soft,#333)">[1, 8,</text>
+<text x="156" y="466" text-anchor="middle" style="font:500 9px var(--mono,monospace)" fill="var(--ink-soft,#333)"> 768]</text>
+
+
+<text x="200" y="406" style="font:500 11px var(--mono,monospace)" fill="var(--ink-soft,#333)">ids:  [1, 8]   (batch=1, seq_len=8)</text>
+<text x="200" y="424" style="font:500 11px var(--mono,monospace)" fill="var(--ink-soft,#333)">W_E:  [V, d] = [50257, 768]</text>
+<text x="200" y="442" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">out:  [1, 8, 768]   (8 rows copied from W_E)</text>
+<text x="46"  y="480" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">Each of the 8 token IDs selects one 768-dim row from the embedding table.</text>
+
+
+<line x1="380" y1="498" x2="380" y2="518" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+<text x="392" y="512" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">[1, 8, 768]</text>
+
+
+<rect x="30" y="520" width="700" height="120" rx="10" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.5" class="c4"/>
+<circle cx="52" cy="532" r="11" fill="var(--accent,#6aa3ff)"/>
+<text x="52" y="536" text-anchor="middle" style="font:700 11px var(--sans,sans-serif)" fill="#fff">4</text>
+<text x="70" y="536" style="font:600 13px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Step 4 — Positional Encoding added</text>
+<text x="720" y="536" text-anchor="end" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">[1, 8, 768]</text>
+
+
+<rect x="60"  y="552" width="118" height="44" rx="6" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+<text x="119" y="570" text-anchor="middle" style="font:500 11px var(--mono,monospace)" fill="var(--ink-soft,#333)">tok_emb</text>
+<text x="119" y="586" text-anchor="middle" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">[1, 8, 768]</text>
+
+<circle cx="214" cy="574" r="13" fill="var(--accent,#6aa3ff)"/>
+<text x="214" y="579" text-anchor="middle" style="font:700 16px var(--sans,sans-serif)" fill="#fff">+</text>
+
+<rect x="232" y="552" width="118" height="44" rx="6" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+<text x="291" y="570" text-anchor="middle" style="font:500 11px var(--mono,monospace)" fill="var(--ink-soft,#333)">pos_enc</text>
+<text x="291" y="586" text-anchor="middle" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">[1, 8, 768]</text>
+
+<line x1="354" y1="574" x2="388" y2="574" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#tp-arr)"/>
+<text x="398" y="562" style="font:500 11px var(--mono,monospace)" fill="var(--ink-soft,#333)">x = tok_emb + pos_enc</text>
+<text x="398" y="578" style="font:600 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">→ [1, 8, 768]</text>
+<text x="46"  y="624" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">Element-wise addition; both tensors are the same shape.</text>
+
+
+<line x1="380" y1="640" x2="380" y2="660" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+<text x="392" y="654" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">[1, 8, 768]</text>
+
+
+<rect x="30" y="662" width="700" height="116" rx="10" fill="var(--surface,#fff)" stroke="var(--accent,#6aa3ff)" stroke-width="2.2" class="c5"/>
+<circle cx="52" cy="674" r="11" fill="var(--accent,#6aa3ff)"/>
+<text x="52" y="678" text-anchor="middle" style="font:700 11px var(--sans,sans-serif)" fill="#fff">5</text>
+<text x="70" y="678" style="font:600 13px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Step 5 — Transformer Block 0 input</text>
+<text x="720" y="678" text-anchor="end" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">[1, 8, 768]</text>
+
+<text x="46" y="706" style="font:700 13px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">x:  [1, 8, 768]</text>
+<text x="46" y="726" style="font:500 11px var(--sans,sans-serif)" fill="var(--text,#333)">(ready for LayerNorm <tspan style="font-family:var(--mono,monospace)">&#8594;</tspan> QKV projection <tspan style="font-family:var(--mono,monospace)">&#8594;</tspan> self-attention <tspan style="font-family:var(--mono,monospace)">&#8594;</tspan> ...)</text>
+<text x="46" y="750" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">8 positions, each a 768-dimensional floating-point vector.</text>
+
+
+<text x="380" y="806" text-anchor="middle" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">Pipeline is differentiable end-to-end; only Step 1 (tokenizer) is a non-differentiable rule-based lookup.</text>
+
+
+<circle cx="380" cy="52" r="7" fill="var(--accent,#6aa3ff)" opacity="0.9" filter="url(#tp-glow)" class="pulse"/>
+</svg>
+<figcaption><b>From raw text to the first Transformer block input.</b> Five stages transform discrete symbols into a continuous tensor: tokenization maps characters to integer IDs, BOS prepending grows the sequence to T=8, the embedding table lookup replaces each ID with a learned 768-dim vector, positional encoding adds position information element-wise, and the resulting [1, 8, 768] tensor enters Transformer Block 0. The animated dot traces the forward-pass direction; each card's border brightens as it is reached.</figcaption>
+</figure>
+
+<p>The entire pipeline is differentiable end-to-end. The only non-differentiable step is the tokenizer itself — it is a deterministic rule-based lookup, not a learned function (though soft approaches like SentencePiece with straight-through gradients have been explored).</p>
+<p>Here is the corresponding runnable code:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="c1"># ------------------------------------------------------------------</span>
+<span class="c1"># Minimal end-to-end input pipeline for a decoder-only LM</span>
+<span class="c1"># ------------------------------------------------------------------</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">InputPipeline</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Converts a batch of token ID sequences into the first hidden state</span>
+<span class="sd">    that will be fed to a Transformer block.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        vocab_size:  Size of the token vocabulary (V).</span>
+<span class="sd">        d_model:     Embedding dimension (d).</span>
+<span class="sd">        max_seq_len: Maximum sequence length supported.</span>
+<span class="sd">        dropout:     Dropout applied to the summed embedding (regularization).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">vocab_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">max_seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_model</span> <span class="o">=</span> <span class="n">d_model</span>
+
+        <span class="c1"># Token embedding table: shape [V, d_model]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">token_embed</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">vocab_size</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+
+        <span class="c1"># Learned positional embedding: shape [max_seq_len, d_model]</span>
+        <span class="c1"># (Many modern models use RoPE instead; see Chapter 2.5)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pos_embed</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">max_seq_len</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">drop</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">)</span>
+
+        <span class="c1"># Initialize weights following GPT-2 conventions</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">token_embed</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pos_embed</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">LongTensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        ids: [B, T] integer tensor of token IDs (0 &lt;= ids[i,j] &lt; vocab_size)</span>
+<span class="sd">        returns: [B, T, d_model] float tensor — the first hidden state</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">device</span>
+
+        <span class="c1"># --- Token embeddings ---</span>
+        <span class="c1"># Each integer is replaced by its row in the embedding table.</span>
+        <span class="n">tok_emb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">token_embed</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span>           <span class="c1"># [B, T, d_model]</span>
+
+        <span class="c1"># --- Positional embeddings ---</span>
+        <span class="c1"># Build position indices [0, 1, ..., T-1] and look them up.</span>
+        <span class="n">pos</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>      <span class="c1"># [T]</span>
+        <span class="n">pos_emb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">pos_embed</span><span class="p">(</span><span class="n">pos</span><span class="p">)</span>             <span class="c1"># [T, d_model]</span>
+        <span class="c1"># Broadcast: [B, T, d_model] + [T, d_model] -&gt; [B, T, d_model]</span>
+
+        <span class="c1"># --- Sum and apply dropout ---</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">drop</span><span class="p">(</span><span class="n">tok_emb</span> <span class="o">+</span> <span class="n">pos_emb</span><span class="p">)</span>          <span class="c1"># [B, T, d_model]</span>
+        <span class="k">return</span> <span class="n">x</span>
+
+
+<span class="c1"># Quick sanity check</span>
+<span class="n">pipeline</span> <span class="o">=</span> <span class="n">InputPipeline</span><span class="p">(</span><span class="n">vocab_size</span><span class="o">=</span><span class="mi">50_257</span><span class="p">,</span> <span class="n">d_model</span><span class="o">=</span><span class="mi">768</span><span class="p">,</span> <span class="n">max_seq_len</span><span class="o">=</span><span class="mi">1024</span><span class="p">)</span>
+<span class="n">ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">50_257</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">512</span><span class="p">))</span>          <span class="c1"># batch=4, seq_len=512</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">pipeline</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>   <span class="c1"># torch.Size([4, 512, 768])</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output norm (mean token): </span><span class="si">{</span><span class="n">x</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="numerical-worked-example-memory-and-flops">Numerical Worked Example: Memory and FLOPs<a class="headerlink" href="#numerical-worked-example-memory-and-flops" title="Permanent link">¶</a></h2>
+<div class="admonition example">
+<p class="admonition-title">Worked example: Embedding layer sizing for Llama 3 8B</p>
+<p>Llama 3 uses <span class="arithmatex">\(V = 128{,}000\)</span>, <span class="arithmatex">\(d = 4{,}096\)</span>, and weight tying.</p>
+<p><strong>Parameter count (embedding table):</strong>
+$$
+V \times d = 128{,}000 \times 4{,}096 = 524{,}288{,}000 \approx 524\text{ M parameters}
+$$
+At bfloat16 (2 bytes/param), this is <span class="arithmatex">\(524 \times 10^6 \times 2 = 1{,}048\)</span> MB <span class="arithmatex">\(\approx 1.02\)</span> GB.</p>
+<p><strong>Logit projection FLOPs (per token, per forward pass):</strong>
+The unembedding step computes <span class="arithmatex">\(\mathbf{h} \cdot \mathbf{W}_U^\top\)</span> where <span class="arithmatex">\(\mathbf{h} \in \mathbb{R}^{4096}\)</span> and <span class="arithmatex">\(\mathbf{W}_U \in \mathbb{R}^{128000 \times 4096}\)</span>.
+Floating-point multiply-adds: <span class="arithmatex">\(4{,}096 \times 128{,}000 = 524{,}288{,}000 \approx 0.5\)</span> GFLOPs per token.</p>
+<p>For a batch of <span class="arithmatex">\(B = 1\)</span> with <span class="arithmatex">\(T = 2048\)</span> tokens:
+$$
+0.5 \times 2048 \approx 1\,024 \text{ GFLOPs}
+$$
+for the logit projection alone. This is non-trivial — it is comparable to multiple attention layers.</p>
+<p><strong>Memory bandwidth cost during decode (single token):</strong>
+During autoregressive decode, we generate one token at a time. The logit projection reads all <span class="arithmatex">\(524\)</span> M parameters from HBM to compute a single <span class="arithmatex">\(128{,}000\)</span>-dimensional vector. At 900 GB/s (an A100), reading <span class="arithmatex">\(\approx 1\)</span> GB takes <span class="arithmatex">\(\approx 1.1\)</span> ms — a significant fraction of per-token latency for smaller models. This is why some inference systems use lower-precision or approximate logit computation.</p>
+</div>
+<hr />
+<h2 id="gradient-flow-through-the-embedding-layer">Gradient Flow Through the Embedding Layer<a class="headerlink" href="#gradient-flow-through-the-embedding-layer" title="Permanent link">¶</a></h2>
+<p>The embedding operation is differentiable in the sense that autograd knows how to compute <span class="arithmatex">\(\partial \mathcal{L} / \partial \mathbf{W}_E\)</span>. However, because the forward pass is an index select (not a dense matmul), the gradient of <span class="arithmatex">\(\mathbf{W}_E\)</span> is <strong>sparse</strong>: only the rows corresponding to tokens that appeared in the current batch receive nonzero gradients.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="n">embed</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="mi">50_257</span><span class="p">,</span> <span class="mi">768</span><span class="p">)</span>
+<span class="n">ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="mi">464</span><span class="p">,</span> <span class="mi">3797</span><span class="p">,</span> <span class="mi">3332</span><span class="p">,</span> <span class="mi">319</span><span class="p">,</span> <span class="mi">262</span><span class="p">,</span> <span class="mi">2603</span><span class="p">,</span> <span class="mi">13</span><span class="p">]])</span>  <span class="c1"># one sentence</span>
+
+<span class="n">x</span> <span class="o">=</span> <span class="n">embed</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span>             <span class="c1"># [1, 7, 768]</span>
+<span class="n">loss</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>             <span class="c1"># toy loss</span>
+<span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+<span class="n">grad</span> <span class="o">=</span> <span class="n">embed</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">grad</span>   <span class="c1"># shape: [50257, 768]</span>
+<span class="c1"># Most rows are exactly zero — only rows [464, 3797, 3332, 319, 262, 2603, 13]</span>
+<span class="c1"># have nonzero gradients.</span>
+<span class="n">nonzero_rows</span> <span class="o">=</span> <span class="p">(</span><span class="n">grad</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rows with nonzero gradient: </span><span class="si">{</span><span class="n">nonzero_rows</span><span class="si">}</span><span class="s2"> / 50257&quot;</span><span class="p">)</span>
+<span class="c1"># Output: 7 / 50257   (one per unique token in the batch)</span>
+</code></pre></div>
+<p>This sparsity has practical consequences:</p>
+<ul>
+<li><strong>Adam/AdaGrad/Adam-W</strong> maintain per-parameter second-moment accumulators. For the embedding table, most accumulators are never updated, which is wasteful in memory and can skew the effective learning rate.</li>
+<li><strong>Sparse gradient optimizers</strong> (e.g., <code>torch.optim.SparseAdam</code>) only update the rows that received gradients, reducing memory writes. In practice, modern codebases simply use dense AdamW and accept the overhead, because sparse updates complicate distributed training and sharding.</li>
+<li>During <strong>gradient accumulation</strong> with many micro-batches, the probability that a row is &ldquo;hot&rdquo; increases, amortizing this effect.</li>
+</ul>
+<h3 id="gradient-scaling-and-the-embedding-norm">Gradient Scaling and the Embedding Norm<a class="headerlink" href="#gradient-scaling-and-the-embedding-norm" title="Permanent link">¶</a></h3>
+<p>With weight tying, gradients accumulate from <em>both</em> the forward token lookup and the backward logit projection:</p>
+<div class="arithmatex">\[
+\frac{\partial \mathcal{L}}{\partial \mathbf{W}_E} = \underbrace{\frac{\partial \mathcal{L}}{\partial \mathbf{e}_i}}_{\text{from embed}} + \underbrace{\mathbf{H}^\top \frac{\partial \mathcal{L}}{\partial \text{logits}}}_{\text{from unembed}}
+\]</div>
+<p>The unembed gradient is dense (it involves all <span class="arithmatex">\(T\)</span> hidden states hitting all <span class="arithmatex">\(V\)</span> rows), while the embed gradient is sparse. This means the gradient magnitude for frequently used tokens will be dominated by the unembed path, while rare tokens only receive signal through the embed path — a subtle asymmetry that the optimizer must handle.</p>
+<hr />
+<h2 id="special-tokens-and-padding">Special Tokens and Padding<a class="headerlink" href="#special-tokens-and-padding" title="Permanent link">¶</a></h2>
+<p>Real models reserve slots in the vocabulary for special-purpose tokens. For example:</p>
+<table>
+<thead>
+<tr>
+<th>Token</th>
+<th>GPT-2 ID</th>
+<th>Llama 3 ID</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;\|endoftext\|&gt;</code></td>
+<td>50256</td>
+<td>—</td>
+<td>end-of-sequence / pad</td>
+</tr>
+<tr>
+<td><code>&lt;s&gt;</code> (BOS)</td>
+<td>—</td>
+<td>128000</td>
+<td>begin-of-sequence</td>
+</tr>
+<tr>
+<td><code>&lt;/s&gt;</code> (EOS)</td>
+<td>—</td>
+<td>128001</td>
+<td>end-of-sequence</td>
+</tr>
+<tr>
+<td><code>&lt;\|pad\|&gt;</code></td>
+<td>—</td>
+<td>128004</td>
+<td>padding (variable-length batches)</td>
+</tr>
+</tbody>
+</table>
+<p>These tokens have embedding vectors like any other token. The critical implementation detail is the <code>padding_idx</code> argument to <code>nn.Embedding</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># padding_idx ensures the pad token&#39;s embedding stays zero and receives</span>
+<span class="c1"># no gradient — crucial for variable-length batched sequences.</span>
+<span class="n">embed</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span>
+    <span class="n">num_embeddings</span><span class="o">=</span><span class="mi">128_256</span><span class="p">,</span>
+    <span class="n">embedding_dim</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span>
+    <span class="n">padding_idx</span><span class="o">=</span><span class="mi">128004</span><span class="p">,</span>  <span class="c1"># &lt;|pad|&gt; token ID</span>
+<span class="p">)</span>
+
+<span class="c1"># The pad embedding is initialized to zero and frozen there.</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">embed</span><span class="o">.</span><span class="n">weight</span><span class="p">[</span><span class="mi">128004</span><span class="p">]</span><span class="o">.</span><span class="n">norm</span><span class="p">())</span>   <span class="c1"># tensor(0.)</span>
+
+<span class="c1"># During backward, gradient for padding_idx is zeroed out automatically.</span>
+</code></pre></div>
+<p>In practice, most modern LLM training uses <strong>sequence packing</strong> to avoid padding entirely — multiple documents are concatenated into a single sequence, separated by EOS tokens, and an attention mask prevents cross-document attention. See <a href="../05-posttraining-alignment/02-chat-templates-packing.html">Chat Templates, Data Formatting &amp; Sequence Packing</a> for how this is implemented in training pipelines.</p>
+<hr />
+<h2 id="the-full-embedding-stack-layer-norm-scale-and-rope">The Full Embedding Stack: Layer Norm, Scale, and RoPE<a class="headerlink" href="#the-full-embedding-stack-layer-norm-scale-and-rope" title="Permanent link">¶</a></h2>
+<p>In a modern production model, the embedding layer is usually followed by additional transformations before the first attention layer:</p>
+<figure class="viz" id="fig-embed-full-stack-architecture">
+<svg viewBox="0 0 720 1020" role="img" aria-label="Full embedding stack architecture for a decoder-only language model: Token IDs flow through Token Embedding, then either learned positional embedding (GPT-2/BERT) or no addition with RoPE in attention (Llama/Mistral), then optional dropout and LayerNorm, L Transformer blocks, Final LayerNorm, Logit Projection with optional weight tying to the embedding matrix, and Softmax probabilities. Tensor shapes are shown in the right gutter.">
+
+
+<defs>
+  <marker id="fa-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="fa-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6aa3ff)" opacity="0.55"/>
+  </marker>
+</defs>
+
+
+
+
+<rect x="100" y="16" width="310" height="44" rx="22" fill="var(--accent,#6aa3ff)"/>
+<text x="255" y="44" text-anchor="middle" style="font:700 14px var(--sans,sans-serif)" fill="#fff">Token IDs</text>
+
+<text x="460" y="44" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">(integer ids [B, T])</text>
+
+
+<line x1="255" y1="60" x2="255" y2="82" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#fa-arr)"/>
+
+
+<rect x="100" y="84" width="310" height="52" rx="8" fill="var(--surface-3,#eee)" stroke="var(--accent,#6aa3ff)" stroke-width="1.8"/>
+<text x="255" y="106" text-anchor="middle" style="font:600 13px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Token Embedding  W_E</text>
+<text x="255" y="124" text-anchor="middle" style="font:500 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">[V, d]  →  [B, T, d]</text>
+
+<text x="460" y="120" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">[B, T, d]</text>
+
+
+<line x1="255" y1="136" x2="255" y2="156" stroke="var(--ink-soft,#555)" stroke-width="1.3"/>
+<line x1="255" y1="156" x2="128" y2="174" stroke="var(--ink-soft,#555)" stroke-width="1.3" marker-end="url(#fa-arr)"/>
+<line x1="255" y1="156" x2="382" y2="174" stroke="var(--ink-soft,#555)" stroke-width="1.3" marker-end="url(#fa-arr)"/>
+
+
+<rect x="56" y="164" width="512" height="126" rx="8" fill="var(--surface,#fff)" stroke="var(--accent-2,#b794f6)" stroke-width="1.3" stroke-dasharray="6 3"/>
+<text x="312" y="178" text-anchor="middle" style="font:600 10px var(--sans,sans-serif)" fill="var(--accent-2,#b794f6)">Positional handling (choose one)</text>
+
+
+<polygon points="255,184 265,196 255,208 245,196" fill="var(--surface,#fff)" stroke="var(--accent,#6aa3ff)" stroke-width="1.5"/>
+<text x="255" y="201" text-anchor="middle" style="font:700 9px var(--sans,sans-serif)" fill="var(--accent,#6aa3ff)">OR</text>
+
+
+<rect x="66" y="182" width="178" height="96" rx="7" fill="var(--surface,#fff)" stroke="var(--accent-2,#b794f6)" stroke-width="1.5"/>
+<text x="155" y="202" text-anchor="middle" style="font:600 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">+ Learned Positional</text>
+<text x="155" y="218" text-anchor="middle" style="font:600 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Embedding</text>
+<text x="155" y="238" text-anchor="middle" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">[B, T, d]</text>
+
+<rect x="80" y="248" width="150" height="16" rx="7" fill="var(--surface-3,#eee)" stroke="var(--accent-2,#b794f6)" stroke-width="0.8"/>
+<text x="155" y="260" text-anchor="middle" style="font:500 9px var(--sans,sans-serif)" fill="var(--accent-2,#b794f6)">GPT-2 / BERT style</text>
+
+
+<rect x="368" y="182" width="190" height="96" rx="7" fill="var(--surface,#fff)" stroke="var(--accent-2,#b794f6)" stroke-width="1.5"/>
+<text x="463" y="202" text-anchor="middle" style="font:600 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">No addition;</text>
+<text x="463" y="218" text-anchor="middle" style="font:600 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">RoPE inside attention</text>
+<text x="463" y="238" text-anchor="middle" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">[B, T, d] unchanged</text>
+
+<rect x="385" y="248" width="156" height="16" rx="7" fill="var(--surface-3,#eee)" stroke="var(--accent-2,#b794f6)" stroke-width="0.8"/>
+<text x="463" y="260" text-anchor="middle" style="font:500 9px var(--sans,sans-serif)" fill="var(--accent-2,#b794f6)">Llama / Mistral style</text>
+
+
+<line x1="155" y1="278" x2="155" y2="306" stroke="var(--ink-soft,#555)" stroke-width="1.3"/>
+<line x1="155" y1="306" x2="255" y2="318" stroke="var(--ink-soft,#555)" stroke-width="1.3" marker-end="url(#fa-arr)"/>
+<line x1="463" y1="278" x2="463" y2="306" stroke="var(--ink-soft,#555)" stroke-width="1.3"/>
+<line x1="463" y1="306" x2="255" y2="318" stroke="var(--ink-soft,#555)" stroke-width="1.3"/>
+
+
+<rect x="100" y="320" width="310" height="48" rx="8" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.3" stroke-dasharray="5 3"/>
+<text x="255" y="340" text-anchor="middle" style="font:600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">(Input Dropout)</text>
+<text x="255" y="358" text-anchor="middle" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">[B, T, d]</text>
+
+<rect x="420" y="322" width="56" height="15" rx="6" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="0.8"/>
+<text x="448" y="334" text-anchor="middle" style="font:500 9px var(--sans,sans-serif)" fill="var(--muted,#888)">optional</text>
+<rect x="420" y="340" width="72" height="15" rx="6" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="0.8"/>
+<text x="456" y="352" text-anchor="middle" style="font:500 9px var(--sans,sans-serif)" fill="var(--muted,#888)">GPT-2 style</text>
+
+<text x="510" y="348" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">[B, T, d]</text>
+
+
+<line x1="255" y1="368" x2="255" y2="388" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#fa-arr)"/>
+
+
+<rect x="100" y="390" width="310" height="48" rx="8" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.3" stroke-dasharray="5 3"/>
+<text x="255" y="410" text-anchor="middle" style="font:600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">(Embedding LayerNorm)</text>
+<text x="255" y="428" text-anchor="middle" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">[B, T, d]</text>
+
+<rect x="420" y="392" width="56" height="15" rx="6" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="0.8"/>
+<text x="448" y="404" text-anchor="middle" style="font:500 9px var(--sans,sans-serif)" fill="var(--muted,#888)">optional</text>
+<rect x="420" y="410" width="66" height="15" rx="6" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="0.8"/>
+<text x="453" y="422" text-anchor="middle" style="font:500 9px var(--sans,sans-serif)" fill="var(--muted,#888)">BERT style</text>
+
+<text x="510" y="418" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">[B, T, d]</text>
+
+
+<line x1="255" y1="438" x2="255" y2="456" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#fa-arr)"/>
+
+
+<rect x="100" y="458" width="310" height="48" rx="8" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="255" y="488" text-anchor="middle" style="font:600 13px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Transformer Block 0</text>
+
+
+<line x1="92" y1="458" x2="86" y2="458" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+<line x1="86" y1="458" x2="86" y2="620" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+<line x1="86" y1="620" x2="92" y2="620" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+<text x="76" y="544" text-anchor="middle" style="font:500 9px var(--sans,sans-serif)" fill="var(--muted,#888)" transform="rotate(-90,76,544)">x L blocks</text>
+
+
+<line x1="255" y1="506" x2="255" y2="526" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+<text x="255" y="543" text-anchor="middle" style="font:500 14px var(--sans,sans-serif)" fill="var(--muted,#888)">· · ·</text>
+<line x1="255" y1="554" x2="255" y2="572" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#fa-arr)"/>
+
+
+<rect x="100" y="574" width="310" height="48" rx="8" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="255" y="604" text-anchor="middle" style="font:600 13px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Transformer Block L-1</text>
+
+
+<line x1="255" y1="622" x2="255" y2="642" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#fa-arr)"/>
+
+
+<rect x="100" y="644" width="310" height="48" rx="8" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="255" y="664" text-anchor="middle" style="font:600 13px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Final LayerNorm</text>
+<text x="255" y="682" text-anchor="middle" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">[B, T, d]</text>
+
+<rect x="420" y="654" width="88" height="15" rx="6" fill="var(--surface-3,#eee)" stroke="var(--border-2,#ccc)" stroke-width="0.8"/>
+<text x="464" y="666" text-anchor="middle" style="font:500 9px var(--sans,sans-serif)" fill="var(--muted,#888)">pre-norm models</text>
+
+<text x="522" y="672" style="font:500 11px var(--mono,monospace)" fill="var(--muted,#888)">[B, T, d]</text>
+
+
+<line x1="255" y1="692" x2="255" y2="712" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#fa-arr)"/>
+
+
+
+<path d="M 415 110 C 620 110, 620 746, 415 746" fill="none" stroke="var(--accent,#6aa3ff)" stroke-width="1.4" stroke-dasharray="6 3" opacity="0.5" marker-end="url(#fa-arr-acc)"/>
+
+<text x="628" y="428" style="font:400 9px var(--sans,sans-serif)" fill="var(--accent,#6aa3ff)" opacity="0.8">weight tying:</text>
+<text x="628" y="442" style="font:400 9px var(--sans,sans-serif)" fill="var(--accent,#6aa3ff)" opacity="0.8">W_U = W_E</text>
+<text x="628" y="456" style="font:400 9px var(--sans,sans-serif)" fill="var(--accent,#6aa3ff)" opacity="0.8">(optional)</text>
+
+
+<rect x="100" y="714" width="310" height="52" rx="8" fill="var(--surface-3,#eee)" stroke="var(--accent,#6aa3ff)" stroke-width="1.8"/>
+<text x="255" y="736" text-anchor="middle" style="font:600 13px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Logit Projection  W_U^T</text>
+<text x="255" y="754" text-anchor="middle" style="font:500 11px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">[B, T, d]  ×  [d, V]  →  [B, T, V]</text>
+
+<text x="422" y="742" style="font:700 12px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">[B, T, V]</text>
+<text x="422" y="758" style="font:400 9px var(--sans,sans-serif)" fill="var(--accent,#6aa3ff)">V widens here</text>
+
+
+<line x1="255" y1="766" x2="255" y2="786" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#fa-arr)"/>
+
+
+<rect x="100" y="788" width="310" height="48" rx="24" fill="var(--accent,#6aa3ff)"/>
+<text x="255" y="808" text-anchor="middle" style="font:700 13px var(--sans,sans-serif)" fill="#fff">Softmax<tspan dx="6" style="font:700 13px var(--mono,monospace)">&#8594;</tspan><tspan dx="6">Probabilities</tspan></text>
+<text x="255" y="826" text-anchor="middle" style="font:500 11px var(--mono,monospace)" fill="#fff">[B, T, V]</text>
+
+<text x="422" y="816" style="font:700 12px var(--mono,monospace)" fill="var(--accent,#6aa3ff)">[B, T, V]</text>
+
+
+<line x1="414" y1="24" x2="414" y2="840" stroke="var(--border-2,#ccc)" stroke-width="0.6" stroke-dasharray="2 5" opacity="0.5"/>
+
+
+<rect x="20" y="858" width="680" height="148" rx="8" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1" opacity="0.9"/>
+<text x="38" y="878" style="font:700 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Legend</text>
+
+
+<rect x="38" y="886" width="26" height="14" rx="3" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="70" y="898" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">solid border = always present</text>
+
+
+<rect x="38" y="906" width="26" height="14" rx="3" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.3" stroke-dasharray="4 2"/>
+<text x="70" y="918" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">dashed border = optional / architecture-dependent</text>
+
+
+<line x1="38" y1="933" x2="64" y2="933" stroke="var(--accent,#6aa3ff)" stroke-width="1.4" stroke-dasharray="4 2" opacity="0.6"/>
+<text x="70" y="937" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">dashed arc = weight tying (W_U = W_E)</text>
+
+
+<polygon points="52,949 60,960 52,971 44,960" fill="var(--surface,#fff)" stroke="var(--accent,#6aa3ff)" stroke-width="1.2"/>
+<text x="70" y="965" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">OR = mutually exclusive positional-encoding choice</text>
+
+
+<rect x="38" y="977" width="26" height="14" rx="3" fill="var(--surface,#fff)" stroke="var(--accent-2,#b794f6)" stroke-width="1.5"/>
+<text x="70" y="989" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">purple border = alternative branch option</text>
+
+
+<rect x="360" y="886" width="26" height="14" rx="3" fill="var(--surface-3,#eee)" stroke="var(--accent,#6aa3ff)" stroke-width="1.8"/>
+<text x="392" y="898" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">accent border = key parameter node</text>
+
+
+<rect x="360" y="906" width="26" height="14" rx="7" fill="var(--accent,#6aa3ff)"/>
+<text x="392" y="918" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">filled pill = input / output boundary</text>
+
+</svg>
+<figcaption><b>The full embedding stack: from token IDs to softmax probabilities.</b> The residual-stream width d stays constant from the token embedding through all L Transformer blocks and the final LayerNorm, then widens abruptly to V at the logit projection — the most expensive operation at inference. The dashed arc marks the optional weight-tying shortcut (W_U = W_E); the OR branch shows the two dominant positional-encoding strategies.</figcaption>
+</figure>
+
+<p>Different architecture families make different choices:</p>
+<ul>
+<li><strong>GPT-2</strong> (Radford et al., 2019): learned positional embeddings, added to token embeddings, then dropout. Pre-layer-norm.</li>
+<li><strong>BERT</strong> (Devlin et al., 2018): token + positional + segment type embeddings, then layer norm, then dropout. Post-layer-norm.</li>
+<li><strong>Llama / Mistral / Gemma</strong>: no positional addition at input; RoPE is applied inside each attention layer. The embedding is just <code>W_E[ids]</code> followed directly by the first RMSNorm inside the block.</li>
+</ul>
+<p>Here is the Llama-style input pipeline:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LlamaInputPipeline</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Llama-3 style input pipeline:</span>
+<span class="sd">      - token_embed only (no positional embedding added here)</span>
+<span class="sd">      - RoPE is applied inside attention layers (not shown here)</span>
+<span class="sd">      - RMSNorm is the first op inside each Transformer block (not here)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vocab_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="c1"># Simple lookup; no padding_idx by default in Llama</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">embed_tokens</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">vocab_size</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+        <span class="c1"># Initialization: std scales with d_model</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">embed_tokens</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="n">d_model</span> <span class="o">**</span> <span class="o">-</span><span class="mf">0.5</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">LongTensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;input_ids: [B, T]  -&gt;  hidden_states: [B, T, d_model]&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">embed_tokens</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>
+</code></pre></div>
+<p>For details on the RoPE step that follows, see <a href="../02-transformer/05-positional-encoding.html">Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a>.</p>
+<hr />
+<h2 id="residual-stream-perspective">Residual Stream Perspective<a class="headerlink" href="#residual-stream-perspective" title="Permanent link">¶</a></h2>
+<p>A key conceptual framing (popularized by Anthropic&rsquo;s mechanistic interpretability work) is to think of the embedding layer as <strong>writing the initial state</strong> of the <em>residual stream</em>. Every subsequent layer reads from this stream and adds its contribution. The final hidden state that is fed to the unembedding is the accumulated sum:</p>
+<div class="arithmatex">\[
+\mathbf{h}_T = \mathbf{e} + \sum_{\ell=1}^{L} \Delta_\ell
+\]</div>
+<p>where <span class="arithmatex">\(\mathbf{e}\)</span> is the initial embedding and each <span class="arithmatex">\(\Delta_\ell\)</span> is the output of block <span class="arithmatex">\(\ell\)</span>. The unembedding then projects this summed representation.</p>
+<p>This perspective has practical implications:</p>
+<ul>
+<li>The initial embedding magnitude sets the scale of the residual stream. If <span class="arithmatex">\(\|\mathbf{e}\|\)</span> is too large relative to <span class="arithmatex">\(\|\Delta_\ell\|\)</span>, early layers will struggle to modify the signal.</li>
+<li>Weight tying creates a direct algebraic link: a token&rsquo;s embedding vector is the same direction the logit head uses to &ldquo;vote&rdquo; for that token. This means tokens that appear in similar contexts (and thus have similar embeddings) will also be predicted with similar probabilities — a desirable regularizer.</li>
+<li>Tokens that are close in embedding space (low cosine distance) will interfere with each other&rsquo;s logit scores. This is why <strong>tokenizer vocabulary size matters</strong>: too small a vocabulary means too many distinct meanings packed into the same token embedding; too large means rare tokens get almost no gradient signal.</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">The rank of the embedding matrix</p>
+<p>For very large vocabularies (<span class="arithmatex">\(V \gg d\)</span>), the full-rank embedding <span class="arithmatex">\(\mathbf{W}_E \in \mathbb{R}^{V \times d}\)</span> can only represent <span class="arithmatex">\(V\)</span> points in a <span class="arithmatex">\(d\)</span>-dimensional space. The geometry is constrained: with <span class="arithmatex">\(V = 128{,}000\)</span> and <span class="arithmatex">\(d = 4{,}096\)</span>, we have <span class="arithmatex">\(128{,}000\)</span> points in a <span class="arithmatex">\(4{,}096\)</span>-dimensional space — sparse, but not degenerate. Models with very small <span class="arithmatex">\(d\)</span> relative to <span class="arithmatex">\(V\)</span> (early word2vec-style models used <span class="arithmatex">\(d = 300\)</span> with <span class="arithmatex">\(V = 10^6\)</span>) are more severely constrained.</p>
+</div>
+<hr />
+<h2 id="interview-corner">Interview Corner<a class="headerlink" href="#interview-corner" title="Permanent link">¶</a></h2>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Why do we tie the input embedding and the output unembedding weights in language models? What are the tradeoffs?</p>
+<p><strong>A:</strong> Weight tying (proposed by Press &amp; Wolf, 2017) shares the token embedding matrix <span class="arithmatex">\(\mathbf{W}_E\)</span> between the lookup at the input and the logit projection at the output. The motivations are: (1) it cuts the vocabulary-dependent parameter count roughly in half — for a model with <span class="arithmatex">\(V = 128{,}000\)</span> and <span class="arithmatex">\(d = 4{,}096\)</span> that saves about 524 M parameters; (2) it regularizes training by enforcing that a token&rsquo;s input representation is geometrically aligned with the direction the output head uses to predict that same token; (3) it generally improves perplexity at equal model size, especially for smaller models.</p>
+<p>The main tradeoff is that it couples two computations that might benefit from different representations — the input embedding is the start of computation, while the output head reads the fully processed hidden state. For very large models, this coupling becomes less harmful because the model has enough capacity to compensate. Some encoder-decoder models (e.g., early T5 variants) do not tie weights, giving the encoder embedding and decoder LM head full independence.</p>
+<p>An interviewer follow-up: &ldquo;Where does the gradient go?&rdquo; — During backprop, <span class="arithmatex">\(\mathbf{W}_E\)</span> receives a sparse gradient from the input lookup (only the rows corresponding to tokens in the current batch) plus a dense gradient from the logit projection (all rows, weighted by the hidden states). The dense unembed gradient dominates for frequent tokens.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The embedding layer is a learned lookup table <span class="arithmatex">\(\mathbf{W}_E \in \mathbb{R}^{V \times d}\)</span>. Mathematically it is <span class="arithmatex">\(\mathbf{W}_E \mathbf{o}_i\)</span>, but implemented as an index select for <span class="arithmatex">\(O(Td)\)</span> cost rather than an <span class="arithmatex">\(O(TVd)\)</span> matmul.</li>
+<li>The unembedding (logit projection) is a genuine dense matmul <span class="arithmatex">\(\mathbf{H} \mathbf{W}_U^\top\)</span> of shape <span class="arithmatex">\([T, d] \times [d, V]\)</span> and is often one of the most expensive operations at inference time.</li>
+<li>Weight tying (<span class="arithmatex">\(\mathbf{W}_U = \mathbf{W}_E\)</span>) halves the vocabulary parameter count, regularizes the model, and typically improves perplexity — it is the default in most modern decoder-only LLMs.</li>
+<li>Embedding gradients are sparse (only touched tokens get nonzero gradient); the unembed gradient is dense. This asymmetry matters for optimizer state memory and effective learning rate.</li>
+<li>The embedding dimension <span class="arithmatex">\(d\)</span> is the width of the entire residual stream and must be chosen jointly with the number of layers, heads, and MLP expansion factor.</li>
+<li>Modern models (Llama, Mistral) do not add positional encodings at the embedding stage — RoPE is applied inside each attention layer, making the input pipeline a single table lookup.</li>
+<li>Special tokens (<code>&lt;pad&gt;</code>, <code>&lt;bos&gt;</code>, <code>&lt;eos&gt;</code>) occupy regular vocabulary slots; using <code>padding_idx</code> in <code>nn.Embedding</code> ensures the pad token embedding stays at zero with no gradient.</li>
+<li>Sequence packing eliminates padding entirely in training by concatenating multiple documents with EOS separators and using attention masks to prevent cross-document attention leakage.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Token embeddings remain the gateway from discrete symbols to the continuous geometry of neural computation. Modern research is extending the embedding layer itself as a scaling axis — growing vocabularies, adding n-gram embeddings, and distributing embedding parameters across layers — while decoder-only LLMs have emerged as dominant embedding models for retrieval and similarity tasks.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1301.3781">Mikolov et al., <em>Efficient Estimation of Word Representations in Vector Space</em> (2013)</a> — the original word2vec paper that established dense learned embeddings as the standard input representation.</li>
+<li><a href="https://arxiv.org/abs/1310.4546">Mikolov et al., <em>Distributed Representations of Words and Phrases and their Compositionality</em> (2013)</a> — Skip-gram with negative sampling; the formulation still underpins embedding intuitions taught today.</li>
+<li><a href="https://arxiv.org/abs/1608.05859">Press &amp; Wolf, <em>Using the Output Embedding to Improve Language Models</em> (2017)</a> — the paper that popularized weight tying between input embedding and output unembedding, now the default in most LLMs.</li>
+<li><a href="https://arxiv.org/abs/2001.08361">Kaplan et al., <em>Scaling Laws for Neural Language Models</em> (2020)</a> — establishes how embedding dimension <span class="arithmatex">\(d\)</span> scales with total parameter count and compute budget.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2502.01637">Yu et al., <em>Scaling Embedding Layers in Language Models</em> (2025)</a> — SCONE adds frequent n-gram embeddings off-accelerator so a 1B model matches a 1.9B baseline at half the compute.</li>
+<li><a href="https://arxiv.org/abs/2412.12591">Tao et al., <em>LLMs are Also Effective Embedding Models: An In-depth Overview</em> (2024)</a> — surveys how decoder-only LLMs (GPT, LLaMA) now outperform BERT-style encoders for retrieval and semantic similarity.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/karpathy/nanoGPT">karpathy/nanoGPT</a> — ~300-line reference for weight tying, embedding initialization, and the full token-ID-to-logit pipeline.</li>
+<li><a href="https://huggingface.co/docs/tokenizers/index">huggingface/tokenizers</a> — official docs for the Rust-backed tokenizer library that feeds token IDs into embedding layers in production systems.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://transformer-circuits.pub/2021/framework/index.html">Elhage et al., <em>A Mathematical Framework for Transformer Circuits</em> (Anthropic, 2021)</a> — introduces the residual-stream framing and analyzes how embedding and unembedding matrices interact via linear decomposition.</li>
+<li><a href="https://jalammar.github.io/illustrated-word2vec/">Jay Alammar, <em>The Illustrated Word2vec</em> (2019)</a> — the best visual explainer for why dense embeddings encode semantic geometry and how training shapes the embedding space.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Press &amp; Wolf</strong> — <em>Using the Output Embedding to Improve Language Models</em> (2017). The paper that popularized weight tying and provided the theoretical and empirical justification.</li>
+<li><strong>Mikolov et al.</strong> — <em>Distributed Representations of Words and Phrases and their Compositionality</em> (2013). Word2Vec; foundational work on learning dense word representations.</li>
+<li><strong>Devlin et al.</strong> — <em>BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding</em> (2018). Segment and positional embedding design for encoder models.</li>
+<li><strong>Radford et al.</strong> — <em>Language Models are Unsupervised Multitask Learners</em> (GPT-2, 2019). Source of the GPT-2 learned positional embedding and initialization conventions widely copied since.</li>
+<li><strong>Touvron et al.</strong> — <em>Llama 2: Open Foundation and Fine-Tuned Chat Models</em> (2023). Shows the minimal embedding design (no positional addition; RoPE in attention) used by the modern Llama family.</li>
+<li><strong>Elhage et al.</strong> — <em>A Mathematical Framework for Transformer Circuits</em> (Anthropic, 2021). Introduces the residual stream framing and analyzes how embedding and unembedding matrices interact.</li>
+<li><strong>nanoGPT</strong> — Andrej Karpathy&rsquo;s minimal GPT implementation on GitHub. The <code>model.py</code> file is an excellent reference for weight tying, embedding initialization, and the full input-to-logit pipeline in under 300 lines of PyTorch.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="01-tokenization.html"><span class="pn-label">← Previous</span><span class="pn-title">Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</span></a>
+<a class="next" href="03-attention-from-scratch.html"><span class="pn-label">Next →</span><span class="pn-title">The Attention Mechanism From Scratch</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-not-one-hot-vectors">Why Not One-Hot Vectors?</a></li>
+<li class="toc-l2"><a href="#the-embedding-matrix-in-detail">The Embedding Matrix in Detail</a></li>
+<li class="toc-l3"><a href="#shape-initialization-and-data-type">Shape, Initialization, and Data Type</a></li>
+<li class="toc-l3"><a href="#the-lookup-as-a-matrix-multiply">The Lookup as a Matrix Multiply</a></li>
+<li class="toc-l2"><a href="#the-unembedding-matrix-and-logits">The Unembedding Matrix and Logits</a></li>
+<li class="toc-l3"><a href="#weight-tying">Weight Tying</a></li>
+<li class="toc-l2"><a href="#choosing-the-embedding-dimension">Choosing the Embedding Dimension</a></li>
+<li class="toc-l2"><a href="#end-to-end-text-becomes-tensors">End-to-End: Text Becomes Tensors</a></li>
+<li class="toc-l2"><a href="#numerical-worked-example-memory-and-flops">Numerical Worked Example: Memory and FLOPs</a></li>
+<li class="toc-l2"><a href="#gradient-flow-through-the-embedding-layer">Gradient Flow Through the Embedding Layer</a></li>
+<li class="toc-l3"><a href="#gradient-scaling-and-the-embedding-norm">Gradient Scaling and the Embedding Norm</a></li>
+<li class="toc-l2"><a href="#special-tokens-and-padding">Special Tokens and Padding</a></li>
+<li class="toc-l2"><a href="#the-full-embedding-stack-layer-norm-scale-and-rope">The Full Embedding Stack: Layer Norm, Scale, and RoPE</a></li>
+<li class="toc-l2"><a href="#residual-stream-perspective">Residual Stream Perspective</a></li>
+<li class="toc-l2"><a href="#interview-corner">Interview Corner</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

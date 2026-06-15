@@ -1,0 +1,1329 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The RLHF Pipeline &amp; Reward Modeling — The LLM Stack</title>
+<meta name="description" content="The InstructGPT recipe end to end; preference data collection, the Bradley-Terry model, reward model training (pairwise loss), reward model evaluation/reward ha">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="active" href="05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part V — Post-Training &amp; Alignment</div>
+<h1 id="55-the-rlhf-pipeline-reward-modeling">5.5 The RLHF Pipeline &amp; Reward Modeling<a class="headerlink" href="#55-the-rlhf-pipeline-reward-modeling" title="Permanent link">¶</a></h1>
+<p>A base language model, freshly pretrained on a trillion tokens of internet text, is a magnificent next-token predictor and a frustrating assistant. Ask it &ldquo;How do I make a loaf of sourdough?&rdquo; and it might continue with three more questions in the same style, because forum posts that begin with a question are often followed by <em>more</em> questions. It has learned the <em>distribution of text</em>, not the <em>intent to be helpful</em>. <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a> goes a long way toward fixing this: show the model tens of thousands of (instruction, good-response) pairs and it learns the <em>format</em> of being an assistant. But SFT has a ceiling. It can only imitate demonstrations a human bothered to write, it gives equal weight to every token of every demonstration regardless of quality, and it has no notion that one valid answer might be <em>better</em> than another equally valid answer.</p>
+<p>The problem is that &ldquo;good response&rdquo; is not a thing you can easily write down. You cannot author a demonstration for every possible prompt, and for open-ended prompts (&ldquo;write me a poem about the ocean&rdquo;) there is no single correct target at all. But humans find it <em>easy to compare</em>: shown two ocean poems, a person can reliably say which they prefer, even when they could not have written either. <strong>Reinforcement Learning from Human Feedback (RLHF)</strong> is the machinery that converts that cheap, plentiful comparison signal into a training objective. We collect human <em>preferences</em> over model outputs, distill them into a learned <strong>reward model</strong> (RM) that scores any response with a scalar, and then optimize the language model — now the <strong>policy</strong> — to maximize that score while staying close to its SFT starting point.</p>
+<p>This chapter is the cornerstone of Part V. We follow the <strong>InstructGPT</strong> recipe (Ouyang et al., 2022) end to end: how preference data is collected, the <strong>Bradley–Terry</strong> statistical model that turns pairwise comparisons into a continuous reward, how to train and evaluate the reward model (and how it gets <em>hacked</em>), and the four-model — actor, critic, reward, reference — apparatus that makes the optimization step work. The actual policy-optimization algorithm (PPO) is the subject of <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>; the reward-free shortcut that skips the RM entirely is <a href="../05-posttraining-alignment/07-dpo-and-variants.html">Direct Preference Optimization &amp; Its Variants</a>. Here we build everything <em>up to and including the reward signal</em>, plus the scaffolding around the optimizer.</p>
+<h2 id="the-three-stage-recipe-and-why-it-works">The three-stage recipe and why it works<a class="headerlink" href="#the-three-stage-recipe-and-why-it-works" title="Permanent link">¶</a></h2>
+<p>InstructGPT (and ChatGPT after it) is built on a three-stage pipeline. Each stage produces an artifact the next stage consumes.</p>
+<figure class="viz" id="fig-rlhf-pipeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 800 384" role="img" aria-label="The three-stage RLHF pipeline: SFT on demonstrations produces the SFT model, which seeds a reward model trained on human preference comparisons, and a PPO policy optimized against that reward model under a KL penalty to the frozen SFT reference.">
+  <defs>
+    <marker id="rp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-rlhf-pipeline text{ fill:var(--ink-soft); }
+    #fig-rlhf-pipeline .stage{ font:700 13px var(--sans,sans-serif); }
+    #fig-rlhf-pipeline .tag{ font:700 10px var(--mono,monospace); fill:var(--muted); }
+    #fig-rlhf-pipeline .step{ font:500 11px var(--sans,sans-serif); }
+    #fig-rlhf-pipeline .sub{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rlhf-pipeline .mono{ font:600 11px var(--mono,monospace); }
+    #fig-rlhf-pipeline .cap{ font:600 10px var(--sans,sans-serif); fill:var(--muted); }
+  </style>
+
+
+  <g data-anim="1">
+    <rect x="14" y="40" width="222" height="246" rx="9" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="26" y="32" class="tag">STAGE 1</text>
+    <text x="125" y="62" text-anchor="middle" class="stage" fill="var(--accent)">SFT</text>
+
+
+    <rect x="40" y="78" width="170" height="40" rx="6" class="v-fill v-accent-s" stroke-width="1.3"/>
+    <text x="125" y="95" text-anchor="middle" class="step">prompts + human</text>
+    <text x="125" y="109" text-anchor="middle" class="step">demonstrations</text>
+
+    <line x1="125" y1="118" x2="125" y2="146" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#rp-arrow)"/>
+
+
+    <rect x="40" y="148" width="170" height="34" rx="6" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="125" y="169" text-anchor="middle" class="step">fine-tune base model</text>
+
+    <line x1="125" y1="182" x2="125" y2="210" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#rp-arrow)"/>
+
+
+    <rect x="56" y="212" width="138" height="50" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.16" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="125" y="234" text-anchor="middle" class="mono" fill="var(--good,#2f9e6e)">π_SFT</text>
+    <text x="125" y="251" text-anchor="middle" class="sub">the SFT model</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="236" y1="160" x2="284" y2="160" stroke="currentColor" class="v-muted" stroke-width="1.6" marker-end="url(#rp-arrow)"/>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="288" y="40" width="222" height="246" rx="9" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="300" y="32" class="tag">STAGE 2</text>
+    <text x="399" y="62" text-anchor="middle" class="stage" fill="var(--accent)">Reward Model</text>
+
+
+    <rect x="314" y="78" width="170" height="40" rx="6" class="v-fill v-accent-s" stroke-width="1.3"/>
+    <text x="399" y="95" text-anchor="middle" class="step">sample K responses</text>
+    <text x="399" y="109" text-anchor="middle" class="step">from <tspan class="mono" dx="2">π_SFT</tspan></text>
+
+    <line x1="399" y1="118" x2="399" y2="146" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#rp-arrow)"/>
+
+
+    <rect x="314" y="148" width="170" height="34" rx="6" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="399" y="163" text-anchor="middle" class="step">humans compare them</text>
+    <text x="399" y="176" text-anchor="middle" class="sub">prefer y_w  &gt;  y_l</text>
+
+    <line x1="399" y1="182" x2="399" y2="210" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#rp-arrow)"/>
+
+
+    <rect x="330" y="212" width="138" height="50" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.16" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="399" y="234" text-anchor="middle" class="mono" fill="var(--good,#2f9e6e)">r_φ(x, y)</text>
+    <text x="399" y="251" text-anchor="middle" class="sub">Bradley–Terry loss</text>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="510" y1="160" x2="558" y2="160" stroke="currentColor" class="v-muted" stroke-width="1.6" marker-end="url(#rp-arrow)"/>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="562" y="40" width="224" height="246" rx="9" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="574" y="32" class="tag">STAGE 3</text>
+    <text x="674" y="62" text-anchor="middle" class="stage" fill="var(--accent)">RL (PPO)</text>
+
+
+    <rect x="588" y="78" width="172" height="40" rx="6" class="v-fill v-accent-s" stroke-width="1.3"/>
+    <text x="674" y="95" text-anchor="middle" class="step">policy samples</text>
+    <text x="674" y="109" text-anchor="middle" class="step">a response y</text>
+
+    <line x1="674" y1="118" x2="674" y2="146" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#rp-arrow)"/>
+
+
+    <rect x="588" y="148" width="172" height="34" rx="6" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="674" y="163" text-anchor="middle" class="step">reward model scores it</text>
+    <text x="674" y="176" text-anchor="middle" class="sub">frozen r_φ, one scalar</text>
+
+    <line x1="674" y1="182" x2="674" y2="210" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#rp-arrow)"/>
+
+
+    <rect x="604" y="212" width="140" height="50" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.16" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="674" y="234" text-anchor="middle" class="mono" fill="var(--good,#2f9e6e)">π_RL</text>
+    <text x="674" y="251" text-anchor="middle" class="sub">the aligned model</text>
+  </g>
+
+
+  <g data-anim="4">
+
+    <path d="M125 262 V300 H674 V120" fill="none" stroke="var(--accent)" class="v-accent-s viz-draw" style="--len:1145" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#rp-arrow)"/>
+    <text x="332" y="316" text-anchor="middle" class="cap" fill="var(--accent)">π_SFT initializes RM &amp; policy, and is the frozen reference</text>
+  </g>
+
+
+  <g data-anim="5">
+    <path d="M744 237 q32 -4 32 -40 V136 q0 -36 -16 -42" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#rp-arrow)"/>
+    <text x="786" y="186" class="cap" fill="var(--warn,#e0a106)" transform="rotate(-90 786 186)" text-anchor="middle">KL leash to π_ref</text>
+  </g>
+
+
+  <g data-anim="5">
+    <text x="400" y="358" text-anchor="middle" class="sub">Each stage produces an artifact the next consumes — comparisons become a dense, queryable reward.</text>
+  </g>
+</svg>
+<figcaption><b>RLHF turns cheap human comparisons into a learned objective in three stages.</b> <b>Stage 1</b> fine-tunes the base model on demonstrations to get <span class="mono">π_SFT</span>; <b>Stage 2</b> samples K responses, has humans compare them, and fits a reward model <span class="mono">r_φ</span> with the Bradley–Terry loss; <b>Stage 3</b> uses PPO to push the policy toward high <span class="mono">r_φ</span> while a KL penalty leashes it to the frozen <span class="mono">π_SFT</span> reference.</figcaption>
+</figure>
+
+<figure class="viz" id="fig-rlhf-three-stage-pipeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 1180 620" role="img" aria-label="The InstructGPT three-stage RLHF pipeline: Stage 1 produces pi_SFT via supervised fine-tuning on demonstrations; Stage 2 trains a reward model r_phi from human rankings of K responses; Stage 3 uses PPO to optimize the policy under a KL penalty anchored to pi_SFT.">
+<defs>
+  <marker id="rp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="rp-arr-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+</defs>
+<style>
+  #fig-rlhf-three-stage-pipeline text { fill: var(--ink-soft,#334155); }
+  #fig-rlhf-three-stage-pipeline .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-rlhf-three-stage-pipeline .lbl-sm { font: 400 11px var(--sans,sans-serif); }
+  #fig-rlhf-three-stage-pipeline .lbl-xs { font: 400 10px var(--sans,sans-serif); }
+  #fig-rlhf-three-stage-pipeline .bold { font: 700 13px var(--sans,sans-serif); }
+  #fig-rlhf-three-stage-pipeline .title { font: 700 14px var(--sans,sans-serif); fill: #fff; }
+  #fig-rlhf-three-stage-pipeline .accent { fill: var(--accent,#4f46e5); }
+  #fig-rlhf-three-stage-pipeline .muted { fill: var(--muted,#94a3b8); }
+  #fig-rlhf-three-stage-pipeline .mono { font: 600 12px var(--mono,monospace); }
+</style>
+
+
+<g data-anim="1">
+
+  <rect x="20" y="60" width="340" height="370" rx="12" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+
+  <rect x="20" y="60" width="340" height="42" rx="12" fill="var(--accent,#4f46e5)"/>
+  <rect x="20" y="84" width="340" height="18" fill="var(--accent,#4f46e5)"/>
+  <text x="190" y="86" text-anchor="middle" class="title">STAGE 1: SFT</text>
+
+
+  <rect x="50" y="130" width="280" height="60" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="190" y="154" text-anchor="middle" class="lbl">prompts + human</text>
+  <text x="190" y="171" text-anchor="middle" class="lbl">demonstrations</text>
+
+
+  <line x1="190" y1="190" x2="190" y2="220" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+
+
+  <rect x="50" y="220" width="280" height="60" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="190" y="244" text-anchor="middle" class="lbl">fine-tune base model</text>
+  <text x="190" y="261" text-anchor="middle" class="mono accent">yields π_SFT</text>
+
+
+  <rect x="120" y="330" width="140" height="34" rx="16" fill="var(--accent,#4f46e5)" opacity="0.15" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+  <text x="190" y="352" text-anchor="middle" class="mono accent">π_SFT</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="420" y="60" width="340" height="370" rx="12" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <rect x="420" y="60" width="340" height="42" rx="12" fill="var(--accent,#4f46e5)"/>
+  <rect x="420" y="84" width="340" height="18" fill="var(--accent,#4f46e5)"/>
+  <text x="590" y="86" text-anchor="middle" class="title">STAGE 2: Reward Model</text>
+
+
+  <rect x="450" y="114" width="280" height="52" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="590" y="136" text-anchor="middle" class="lbl">prompt, then sample K responses</text>
+  <text x="590" y="153" text-anchor="middle" class="lbl-sm muted">from π_SFT  (K = 4–9)</text>
+
+  <line x1="590" y1="166" x2="590" y2="196" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+
+
+  <rect x="450" y="196" width="280" height="46" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="590" y="216" text-anchor="middle" class="bold accent">humans RANK them</text>
+  <text x="590" y="232" text-anchor="middle" class="lbl-sm muted">pairwise preferences extracted</text>
+
+  <line x1="590" y1="242" x2="590" y2="272" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+
+
+  <rect x="450" y="272" width="280" height="52" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="590" y="294" text-anchor="middle" class="lbl">train RM on pairwise</text>
+  <text x="590" y="311" text-anchor="middle" class="lbl">preferences</text>
+  <text x="590" y="326" text-anchor="middle" class="mono accent">yields r_φ</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="820" y="60" width="340" height="370" rx="12" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <rect x="820" y="60" width="340" height="42" rx="12" fill="var(--accent,#4f46e5)"/>
+  <rect x="820" y="84" width="340" height="18" fill="var(--accent,#4f46e5)"/>
+  <text x="990" y="86" text-anchor="middle" class="title">STAGE 3: RL (PPO)</text>
+
+
+  <rect x="850" y="114" width="280" height="52" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="990" y="136" text-anchor="middle" class="lbl">prompt, then policy samples</text>
+  <text x="990" y="153" text-anchor="middle" class="lbl">a response</text>
+
+  <line x1="990" y1="166" x2="990" y2="196" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+
+
+  <rect x="850" y="196" width="280" height="46" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="990" y="216" text-anchor="middle" class="lbl">reward model r_φ</text>
+  <text x="990" y="232" text-anchor="middle" class="lbl">scores it</text>
+
+  <line x1="990" y1="242" x2="990" y2="272" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+
+
+  <rect x="850" y="272" width="280" height="66" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="990" y="294" text-anchor="middle" class="lbl">PPO update on policy,</text>
+  <text x="990" y="311" text-anchor="middle" class="bold accent">KL-anchored</text>
+  <text x="990" y="328" text-anchor="middle" class="lbl">to frozen π_SFT reference</text>
+</g>
+
+
+<g data-anim="4">
+
+
+  <path d="M 260 347 Q 340 400 420 340" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#rp-arr-accent)"/>
+
+  <path d="M 260 355 Q 600 430 820 340" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#rp-arr-accent)"/>
+
+
+  <rect x="340" y="400" width="500" height="46" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#4f46e5)" stroke-width="1" opacity="0.85"/>
+  <text x="590" y="418" text-anchor="middle" class="lbl-sm accent">π_SFT used as: init for the RM, init for the policy,</text>
+  <text x="590" y="435" text-anchor="middle" class="lbl-sm accent">and the frozen reference (the KL anchor)</text>
+</g>
+
+
+<g data-anim="5">
+
+  <line x1="990" y1="338" x2="990" y2="515" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+
+  <rect x="840" y="515" width="300" height="46" rx="23" fill="var(--accent,#4f46e5)"/>
+  <text x="990" y="533" text-anchor="middle" class="title" style="font-size:13px">π_RL — the aligned model</text>
+  <text x="990" y="550" text-anchor="middle" style="font:400 10px var(--sans,sans-serif); fill:#c7d2fe">output of the full pipeline</text>
+</g>
+
+
+<text x="590" y="38" text-anchor="middle" class="lbl-xs muted">Each stage produces an artifact the next stage consumes</text>
+
+
+<g data-anim="2" opacity="0.5">
+  <line x1="360" y1="250" x2="420" y2="250" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+  <line x1="760" y1="250" x2="820" y2="250" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+</g>
+</svg>
+<figcaption><b>The InstructGPT three-stage RLHF pipeline.</b> Stage 1 fine-tunes the base model on human demonstrations, producing <code>π_SFT</code>. Stage 2 collects human rankings of K responses and trains a reward model <code>r_φ</code> using Bradley–Terry pairwise loss. Stage 3 uses PPO to optimize the policy for reward while a KL penalty keeps it anchored to the frozen <code>π_SFT</code> reference. The <code>π_SFT</code> artifact (purple arrows) seeds both Stages 2 and 3, making it the critical cross-stage thread.</figcaption>
+</figure>
+
+<p>The key conceptual move is <strong>decoupling the source of supervision from the form of supervision.</strong> Humans supply preferences — a comparison signal that is cheap, has low inter-annotator variance, and requires no expertise to author. The reward model turns those discrete comparisons into a <em>dense, differentiable scalar</em> defined on the entire space of possible responses, including responses no human has ever seen. The policy then gets to <em>generate its own training data</em>: it proposes responses, the RM grades them, and the policy is nudged toward the high-scoring region. This is why RLHF can exceed SFT — the policy explores outputs <em>better than any demonstration in the dataset</em>, and the RM, generalizing from preferences, can recognize and reward them.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: why not just SFT on the best responses?</p>
+<p>A natural alternative is <strong>rejection sampling / best-of-N SFT</strong>: sample many responses, keep the one the RM (or a human) likes best, and SFT on it. This works and is widely used (it is &ldquo;Stage 2&rdquo; of the LLaMA-2 alignment and a core ingredient in many recipes). RLHF with PPO can be seen as a smoother, online version of the same idea: instead of taking one discrete &ldquo;keep the best&rdquo; step, you continuously push probability mass toward higher-reward regions and <em>away</em> from lower-reward ones, using the <em>contrast</em> between good and bad. The negative signal — learning what <em>not</em> to do — is something best-of-N SFT throws away.</p>
+</div>
+<h2 id="preference-data-collection">Preference data collection<a class="headerlink" href="#preference-data-collection" title="Permanent link">¶</a></h2>
+<p>Everything downstream is only as good as the preference data. This is where most of the human cost and most of the subtle failure modes live.</p>
+<h3 id="what-a-labeler-actually-does">What a labeler actually does<a class="headerlink" href="#what-a-labeler-actually-does" title="Permanent link">¶</a></h3>
+<p>The labeling unit is a <strong>comparison</strong>. A prompt <span class="arithmatex">\(x\)</span> is drawn (from real API traffic, in InstructGPT&rsquo;s case, plus labeler-written prompts). The SFT model generates <span class="arithmatex">\(K\)</span> candidate responses <span class="arithmatex">\(y_1, \dots, y_K\)</span> (InstructGPT used <span class="arithmatex">\(K\)</span> between 4 and 9). A human is shown the prompt and all <span class="arithmatex">\(K\)</span> responses and produces a <strong>ranking</strong> — a total or partial order over the candidates. From a single ranking of <span class="arithmatex">\(K\)</span> items you extract <span class="arithmatex">\(\binom{K}{2}\)</span> pairwise preferences. Ranking <span class="arithmatex">\(K\)</span> items at once is far more sample-efficient than <span class="arithmatex">\(\binom{K}{2}\)</span> independent pairwise tasks, <em>and</em> it forces internal consistency: a labeler cannot say A&gt;B, B&gt;C, and C&gt;A within one ranking.</p>
+<p>Each extracted pair becomes a training row <span class="arithmatex">\((x, y_w, y_l)\)</span> where <span class="arithmatex">\(y_w\)</span> (&ldquo;win&rdquo;) is the preferred response and <span class="arithmatex">\(y_l\)</span> (&ldquo;lose&rdquo;) is the dispreferred one. A modern open preference dataset row looks like:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;prompt&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Explain why the sky is blue to a 10-year-old.&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;chosen&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Sunlight is actually made of all the colors mixed together...&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;rejected&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;The sky is blue due to Rayleigh scattering, wherein the cross-section...&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;metadata&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;annotator_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">71</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;confidence&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;strong&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;k_rank_position&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">]}</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="the-dimensions-labelers-are-asked-to-judge">The dimensions labelers are asked to judge<a class="headerlink" href="#the-dimensions-labelers-are-asked-to-judge" title="Permanent link">¶</a></h3>
+<p>&ldquo;Which is better?&rdquo; is underspecified, so production labeling uses an explicit rubric. InstructGPT&rsquo;s instructions asked labelers to weigh:</p>
+<ul>
+<li><strong>Helpfulness</strong> — does it follow the instruction and actually solve the user&rsquo;s problem (including inferring unstated intent)?</li>
+<li><strong>Honesty / truthfulness</strong> — is it factually correct; does it avoid confidently stating falsehoods?</li>
+<li><strong>Harmlessness</strong> — does it avoid toxic, dangerous, or biased content?</li>
+</ul>
+<p>These can conflict: the most helpful answer to &ldquo;how do I pick a lock&rdquo; is harmful; the most harmless is unhelpful. InstructGPT told labelers to prioritize helpfulness during <em>comparison</em> labeling but harmlessness during a separate <em>safety</em> labeling pass — a deliberate decomposition that later work (Anthropic&rsquo;s helpfulness/harmlessness split, then <a href="../05-posttraining-alignment/11-constitutional-rlaif.html">Constitutional AI, RLAIF &amp; Self-Improvement</a>) made explicit by training <em>separate</em> reward models per axis.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: the preference signal is noisy and biased</p>
+<p>Human preference labels have a measurable agreement rate — labeler-vs-labeler agreement is often only in the 70–75% range on hard prompts, and labeler-vs-researcher agreement similar. That ceiling propagates: a reward model can rarely exceed human agreement, and a policy optimized against it inherits the model&rsquo;s blind spots. Worse, preferences carry <strong>systematic biases</strong>: humans (and therefore RMs) prefer <em>longer</em> answers, more <em>confident</em> tone, nicely <em>formatted</em> markdown, and sycophantic agreement — independent of correctness. Length bias is so strong that &ldquo;the RM rewards verbosity&rdquo; is one of the first things to check when an RLHF run produces rambling outputs. Curate for <em>contrast on the axis you care about</em>, balance response lengths, and audit for these confounds before training.</p>
+</div>
+<h3 id="how-much-data">How much data<a class="headerlink" href="#how-much-data" title="Permanent link">¶</a></h3>
+<p>InstructGPT used on the order of tens of thousands of comparisons. Reward-model data is more leveraged than SFT data because each comparison is a <em>relative</em> judgment that constrains the whole reward surface, not a single absolute target. But preference data has a shelf life: once you optimize a policy against an RM, the <em>new</em> policy generates responses in a distribution the RM never saw during training. This is the <strong>distribution-shift</strong> problem and it motivates <em>iterated</em> RLHF — collect fresh preferences on the new policy&rsquo;s outputs, retrain the RM, optimize again. LLaMA-2 ran roughly five such iterations; this loop is the seed of the <a href="../12-production-mlops/05-data-flywheel.html">Data Flywheels &amp; Continuous Improvement</a> story.</p>
+<h2 id="the-bradleyterry-model-from-comparisons-to-a-scalar">The Bradley–Terry model: from comparisons to a scalar<a class="headerlink" href="#the-bradleyterry-model-from-comparisons-to-a-scalar" title="Permanent link">¶</a></h2>
+<p>We have pairs <span class="arithmatex">\((x, y_w, y_l)\)</span>. We want a function <span class="arithmatex">\(r_\phi(x, y)\)</span> — a single scalar score — such that higher means &ldquo;more preferred.&rdquo; How do we get a continuous score from discrete comparisons? The bridge is a 70-year-old idea from the statistics of paired comparisons: the <strong>Bradley–Terry model</strong> (Bradley &amp; Terry, 1952), the same math behind Elo chess ratings.</p>
+<h3 id="the-model">The model<a class="headerlink" href="#the-model" title="Permanent link">¶</a></h3>
+<p>Assume each response <span class="arithmatex">\(y\)</span> to a prompt <span class="arithmatex">\(x\)</span> has a latent real-valued &ldquo;strength&rdquo; <span class="arithmatex">\(r(x,y)\)</span>. The Bradley–Terry assumption is that the probability a human prefers <span class="arithmatex">\(y_w\)</span> over <span class="arithmatex">\(y_l\)</span> is a <strong>logistic function of the difference in strengths</strong>:</p>
+<div class="arithmatex">\[
+P(y_w \succ y_l \mid x) \;=\; \frac{\exp\big(r(x, y_w)\big)}{\exp\big(r(x, y_w)\big) + \exp\big(r(x, y_l)\big)} \;=\; \sigma\big(r(x, y_w) - r(x, y_l)\big),
+\]</div>
+<p>where <span class="arithmatex">\(\sigma(z) = 1/(1 + e^{-z})\)</span> is the logistic sigmoid. This is exactly a softmax over two items, or equivalently logistic regression on the <em>score gap</em>. Three properties make it the right choice:</p>
+<ol>
+<li><strong>Only differences matter.</strong> Adding a constant <span class="arithmatex">\(c\)</span> to every score leaves all preference probabilities unchanged (<span class="arithmatex">\(\sigma((r_w + c) - (r_l + c)) = \sigma(r_w - r_l)\)</span>). The reward is identified only up to an additive constant — a fact with real consequences (it is why you must not compare raw reward magnitudes across two separately-trained RMs, and why we mean-center rewards before PPO).</li>
+<li><strong>It is calibrated and monotone.</strong> Equal scores give a coin flip (<span class="arithmatex">\(\sigma(0)=0.5\)</span>); a score gap of <span class="arithmatex">\(+2\)</span> means <span class="arithmatex">\(\sigma(2)\approx 0.88\)</span>, i.e. &ldquo;preferred 88% of the time.&rdquo; The score <em>is</em> a log-odds of preference, so it has an interpretable scale.</li>
+<li><strong>It is differentiable</strong>, so we can fit <span class="arithmatex">\(r\)</span> by gradient descent.</li>
+</ol>
+<p>We replace the abstract strength <span class="arithmatex">\(r\)</span> with a neural network <span class="arithmatex">\(r_\phi\)</span> and fit <span class="arithmatex">\(\phi\)</span> by <strong>maximum likelihood</strong> on the observed preferences.</p>
+<h3 id="deriving-the-pairwise-loss">Deriving the pairwise loss<a class="headerlink" href="#deriving-the-pairwise-loss" title="Permanent link">¶</a></h3>
+<p>For one comparison <span class="arithmatex">\((x, y_w, y_l)\)</span>, the likelihood under Bradley–Terry is <span class="arithmatex">\(\sigma(r_\phi(x,y_w) - r_\phi(x,y_l))\)</span>. The negative log-likelihood — the loss we minimize — is therefore</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{RM}}(\phi) \;=\; -\,\mathbb{E}_{(x,\,y_w,\,y_l)\sim\mathcal{D}}\Big[\, \log \sigma\big(r_\phi(x, y_w) - r_\phi(x, y_l)\big) \Big].
+\]</div>
+<p>Let <span class="arithmatex">\(\Delta = r_\phi(x,y_w) - r_\phi(x,y_l)\)</span> be the <strong>margin</strong> the model assigns. Then the per-example loss is <span class="arithmatex">\(-\log\sigma(\Delta) = \log(1 + e^{-\Delta})\)</span>, the <strong>softplus</strong> of <span class="arithmatex">\(-\Delta\)</span>. Note its shape: it is <em>near zero</em> when <span class="arithmatex">\(\Delta\)</span> is large and positive (model confidently correct), grows <em>linearly</em> in <span class="arithmatex">\(-\Delta\)</span> when the model is confidently wrong, and equals <span class="arithmatex">\(\log 2 \approx 0.693\)</span> at <span class="arithmatex">\(\Delta = 0\)</span>. The gradient with respect to the margin is clean:</p>
+<div class="arithmatex">\[
+\frac{\partial \mathcal{L}}{\partial \Delta} = -\,\sigma(-\Delta) = -\big(1 - \sigma(\Delta)\big).
+\]</div>
+<p>So the push on the scores is proportional to <em>how wrong the model currently is</em>: if it already strongly prefers the winner (<span class="arithmatex">\(\sigma(\Delta)\to 1\)</span>), the gradient vanishes; if it has it backwards, the gradient saturates at magnitude <span class="arithmatex">\(1\)</span>. This self-limiting behavior is exactly the robustness property of logistic losses.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: the ranking generalization (Plackett–Luce)</p>
+<p>When labelers produce a full ranking of <span class="arithmatex">\(K\)</span> items rather than a single pair, you <em>can</em> train on all <span class="arithmatex">\(\binom{K}{2}\)</span> pairs (InstructGPT does — and crucially treats all pairs from one prompt as <strong>one batch element</strong> to avoid overfitting, see below). The principled multi-item generalization of Bradley–Terry is the <strong>Plackett–Luce</strong> model, whose likelihood for a ranking <span class="arithmatex">\(y_1 \succ y_2 \succ \dots \succ y_K\)</span> is a product of softmaxes, &ldquo;choose the best, remove it, choose the next best, …&rdquo;. For most LLM RM training the simple pairwise decomposition is used because it is trivially batchable.</p>
+</div>
+<h3 id="a-subtle-but-critical-training-detail">A subtle but critical training detail<a class="headerlink" href="#a-subtle-but-critical-training-detail" title="Permanent link">¶</a></h3>
+<p>InstructGPT found that if you shuffle all <span class="arithmatex">\(\binom{K}{2}\)</span> pairs from many prompts together and train on them as independent examples, the RM <strong>overfits</strong>: each completion <span class="arithmatex">\(y_i\)</span> appears in <span class="arithmatex">\(K-1\)</span> pairs within an epoch, so a single forward pass&rsquo;s value gets reused many times and the model memorizes specific completions. The fix is to put <strong>all <span class="arithmatex">\(\binom{K}{2}\)</span> pairs from one prompt into a single forward/backward pass</strong> (one gradient step &ldquo;sees&rdquo; each of the <span class="arithmatex">\(K\)</span> completions exactly once, computing all pairwise terms from those <span class="arithmatex">\(K\)</span> scores). This is both more compute-efficient (each completion is encoded once, not <span class="arithmatex">\(K-1\)</span> times) and a strong regularizer. Remember this for the interview.</p>
+<h2 id="reward-model-architecture-and-training">Reward model architecture and training<a class="headerlink" href="#reward-model-architecture-and-training" title="Permanent link">¶</a></h2>
+<h3 id="the-architecture-a-transformer-with-a-scalar-head">The architecture: a transformer with a scalar head<a class="headerlink" href="#the-architecture-a-transformer-with-a-scalar-head" title="Permanent link">¶</a></h3>
+<p>A reward model is almost the same network as the policy. You take the SFT model, <strong>remove the unembedding (language-modeling) head</strong>, and bolt on a small linear layer that maps the final hidden state to a single scalar. You read off the scalar at the position of the <strong>last token</strong> of the response (or the EOS token) — that hidden state has attended over the entire prompt-and-response, so it is a reasonable summary on which to base a whole-sequence judgment.</p>
+<figure class="viz" id="fig-rm-scalar-head-architecture">
+<svg viewBox="0 0 760 540" role="img" aria-label="Reward model architecture: token sequence fed into a transformer backbone (SFT-initialized, LM head removed), producing per-token hidden states; only the final h_T state feeds a Linear(d_model to 1) head that outputs a single scalar reward r_phi(x,y).">
+<defs>
+  <marker id="rsa-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="rsa-arr-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+</defs>
+<style>
+  #fig-rm-scalar-head-architecture text { fill: var(--ink-soft,#334155); }
+  #fig-rm-scalar-head-architecture .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-rm-scalar-head-architecture .lbl-sm { font: 400 11px var(--sans,sans-serif); }
+  #fig-rm-scalar-head-architecture .lbl-xs { font: 400 10px var(--sans,sans-serif); }
+  #fig-rm-scalar-head-architecture .mono { font: 600 12px var(--mono,monospace); }
+  #fig-rm-scalar-head-architecture .mono-sm { font: 400 11px var(--mono,monospace); }
+  #fig-rm-scalar-head-architecture .accent { fill: var(--accent,#4f46e5); }
+  #fig-rm-scalar-head-architecture .muted { fill: var(--muted,#94a3b8); }
+</style>
+
+
+
+<text x="140" y="24" text-anchor="middle" class="lbl-xs muted">prompt tokens</text>
+<text x="480" y="24" text-anchor="middle" class="lbl-xs muted">response tokens</text>
+
+
+<path d="M 66 30 L 66 36 L 220 36 L 220 30" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<path d="M 228 30 L 228 36 L 676 36 L 676 30" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+
+<g>
+  <rect x="66" y="40" width="44" height="32" rx="4" fill="var(--surface-3,#e8edf5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="88" y="61" text-anchor="middle" class="mono-sm">x_1</text>
+
+  <rect x="116" y="40" width="44" height="32" rx="4" fill="var(--surface-3,#e8edf5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="138" y="61" text-anchor="middle" class="mono-sm">x_2</text>
+
+  <rect x="166" y="40" width="44" height="32" rx="4" fill="var(--surface-3,#e8edf5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="188" y="61" text-anchor="middle" class="mono-sm">...</text>
+</g>
+
+
+<g>
+  <rect x="228" y="40" width="44" height="32" rx="4" fill="var(--surface,#f0f4fb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="250" y="61" text-anchor="middle" class="mono-sm">y_1</text>
+
+  <rect x="278" y="40" width="44" height="32" rx="4" fill="var(--surface,#f0f4fb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="300" y="61" text-anchor="middle" class="mono-sm">y_2</text>
+
+  <rect x="328" y="40" width="44" height="32" rx="4" fill="var(--surface,#f0f4fb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="350" y="61" text-anchor="middle" class="mono-sm">y_3</text>
+
+  <rect x="378" y="40" width="44" height="32" rx="4" fill="var(--surface,#f0f4fb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="400" y="61" text-anchor="middle" class="mono-sm">...</text>
+
+  <rect x="428" y="40" width="44" height="32" rx="4" fill="var(--surface,#f0f4fb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="450" y="61" text-anchor="middle" class="mono-sm">y_T</text>
+
+  <rect x="478" y="40" width="44" height="32" rx="4" fill="var(--surface,#f0f4fb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="500" y="61" text-anchor="middle" class="mono-sm">...</text>
+</g>
+
+
+<rect x="628" y="36" width="52" height="40" rx="5" fill="var(--accent,#4f46e5)" opacity="0.18" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+<text x="654" y="58" text-anchor="middle" class="mono accent">&lt;eos&gt;</text>
+<text x="654" y="70" text-anchor="middle" class="lbl-xs accent">(last token)</text>
+
+
+<line x1="380" y1="80" x2="380" y2="110" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+
+
+<rect x="60" y="110" width="640" height="110" rx="10" fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="380" y="148" text-anchor="middle" class="lbl">Transformer backbone</text>
+<text x="380" y="167" text-anchor="middle" class="lbl-sm muted">(SFT-initialized; LM/unembedding head removed, then fine-tuned)</text>
+<text x="380" y="186" text-anchor="middle" class="lbl-xs muted">Multi-head self-attention — attends over full prompt + response context</text>
+<text x="380" y="202" text-anchor="middle" class="lbl-xs muted">at each layer</text>
+
+
+<line x1="380" y1="220" x2="380" y2="248" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+
+
+<text x="60" y="265" text-anchor="start" class="lbl-xs muted">per-token hidden states:</text>
+
+
+<circle cx="130" cy="290" r="18" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="130" y="294" text-anchor="middle" class="mono-sm">h_1</text>
+
+
+<circle cx="185" cy="290" r="18" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="185" y="294" text-anchor="middle" class="mono-sm">h_2</text>
+
+
+<text x="248" y="295" text-anchor="middle" class="muted lbl">...</text>
+
+
+<circle cx="310" cy="290" r="18" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2" opacity="0.6"/>
+<text x="310" y="294" text-anchor="middle" class="mono-sm muted">h_{T-1}</text>
+
+
+<circle cx="390" cy="290" r="22" fill="var(--accent,#4f46e5)" opacity="0.85"/>
+<text x="390" y="294" text-anchor="middle" class="mono" style="fill:#fff">h_T</text>
+
+
+<line x1="130" y1="308" x2="130" y2="332" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/>
+<line x1="185" y1="308" x2="185" y2="332" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/>
+<line x1="310" y1="308" x2="310" y2="332" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/>
+
+<text x="220" y="350" text-anchor="middle" class="lbl-xs muted" opacity="0.7">other positions discarded</text>
+
+
+<text x="428" y="278" class="lbl-xs accent">take last (or &lt;eos&gt;) position —</text>
+<text x="428" y="292" class="lbl-xs accent">has attended over whole</text>
+<text x="428" y="306" class="lbl-xs accent">prompt+response</text>
+
+
+<line x1="390" y1="312" x2="390" y2="370" stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#rsa-arr-accent)"/>
+
+
+<rect x="270" y="370" width="240" height="44" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+<text x="390" y="388" text-anchor="middle" class="lbl">Linear(d_model</text>
+<text x="390" y="406" text-anchor="middle" class="lbl accent">to 1)  (bias=False)</text>
+
+
+<line x1="390" y1="414" x2="390" y2="455" stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#rsa-arr-accent)"/>
+
+
+<rect x="220" y="455" width="340" height="46" rx="23" fill="var(--accent,#4f46e5)"/>
+<text x="390" y="476" text-anchor="middle" class="lbl" style="fill:#fff; font-size:13px">scalar reward  r_φ(x, y)</text>
+<text x="390" y="493" text-anchor="middle" class="lbl-xs" style="fill:#c7d2fe">single scalar — the optimization target</text>
+
+
+<text x="590" y="420" class="lbl-xs muted">Smaller RM is fine</text>
+<text x="590" y="434" class="lbl-xs muted">(e.g. 6B RM for</text>
+<text x="590" y="448" class="lbl-xs muted">a 175B policy)</text>
+</svg>
+<figcaption><b>Reward model: transformer backbone with a scalar value head.</b> The SFT model's LM head is replaced by a single <code>Linear(d_model→1)</code> layer. Only the last-token (or <code>&lt;eos&gt;</code>) hidden state <code>h_T</code> — which has attended over the entire prompt and response — is passed to this head, producing the scalar reward <code>r_φ(x, y)</code> used to supervise RL training.</figcaption>
+</figure>
+
+<p>Why initialize from the SFT model rather than from scratch or from the base? It already understands language and the task distribution; you are only teaching it a new, low-dimensional output (a ranking). InstructGPT noted that a <em>smaller</em> RM than the policy works fine and is far cheaper — they used a 6B RM to align a 175B policy. The RM does not need to be as capable as the policy; it only needs to <em>recognize</em> quality, which is easier than <em>producing</em> it (judging is easier than generating).</p>
+<h3 id="the-from-scratch-pairwise-loss">The from-scratch pairwise loss<a class="headerlink" href="#the-from-scratch-pairwise-loss" title="Permanent link">¶</a></h3>
+<p>Here is the complete, runnable core of reward-model training — the loss every RLHF library implements. This is the central code of the chapter.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RewardModel</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A transformer backbone with a scalar value head on top.</span>
+
+<span class="sd">    `backbone` is any model returning per-token hidden states of shape</span>
+<span class="sd">    (batch, seq_len, d_model) -- e.g. an SFT-initialized decoder with its</span>
+<span class="sd">    language-modeling head removed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">backbone</span><span class="p">,</span> <span class="n">d_model</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">backbone</span> <span class="o">=</span> <span class="n">backbone</span>
+        <span class="c1"># A single linear layer: d_model -&gt; 1 scalar. Initialize small so early</span>
+        <span class="c1"># rewards are near zero (helps optimization stability downstream).</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">value_head</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">value_head</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">d_model</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">input_ids</span><span class="p">,</span> <span class="n">attention_mask</span><span class="p">):</span>
+        <span class="c1"># hidden: (B, T, d_model)</span>
+        <span class="n">hidden</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">backbone</span><span class="p">(</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">attention_mask</span><span class="o">=</span><span class="n">attention_mask</span><span class="p">)</span><span class="o">.</span><span class="n">last_hidden_state</span>
+        <span class="c1"># Per-token scalar scores: (B, T)</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">value_head</span><span class="p">(</span><span class="n">hidden</span><span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="c1"># Reward is read at the LAST non-pad token of each sequence.</span>
+        <span class="c1"># attention_mask is 1 for real tokens, 0 for padding.</span>
+        <span class="n">last_idx</span> <span class="o">=</span> <span class="n">attention_mask</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span>            <span class="c1"># (B,) index of final real token</span>
+        <span class="n">batch_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">input_ids</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">input_ids</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">reward</span> <span class="o">=</span> <span class="n">scores</span><span class="p">[</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">last_idx</span><span class="p">]</span>                <span class="c1"># (B,) one scalar per sequence</span>
+        <span class="k">return</span> <span class="n">reward</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bradley_terry_loss</span><span class="p">(</span><span class="n">reward_chosen</span><span class="p">,</span> <span class="n">reward_rejected</span><span class="p">,</span> <span class="n">margin</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The Bradley-Terry / pairwise ranking loss.</span>
+
+<span class="sd">    reward_chosen, reward_rejected : (B,) scalar reward for the preferred and</span>
+<span class="sd">                                     dispreferred response in each pair.</span>
+<span class="sd">    margin : optional fixed margin m. Loss becomes -log sigmoid(r_w - r_l - m),</span>
+<span class="sd">             which only counts the pair as &quot;solved&quot; once r_w beats r_l by m.</span>
+<span class="sd">             Useful when you have a graded preference strength (set m larger for</span>
+<span class="sd">             strongly-preferred pairs). Default 0 recovers plain Bradley-Terry.</span>
+
+<span class="sd">    Returns (loss, accuracy) where accuracy is the fraction of pairs the model</span>
+<span class="sd">    currently orders correctly -- the single most important RM training metric.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">delta</span> <span class="o">=</span> <span class="n">reward_chosen</span> <span class="o">-</span> <span class="n">reward_rejected</span> <span class="o">-</span> <span class="n">margin</span>        <span class="c1"># the margin Δ</span>
+    <span class="c1"># -log σ(Δ) == softplus(-Δ), computed stably:</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softplus</span><span class="p">(</span><span class="o">-</span><span class="n">delta</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="c1"># A pair is &quot;correct&quot; iff the chosen response scores higher than the rejected.</span>
+    <span class="n">accuracy</span> <span class="o">=</span> <span class="p">(</span><span class="n">reward_chosen</span> <span class="o">&gt;</span> <span class="n">reward_rejected</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">loss</span><span class="p">,</span> <span class="n">accuracy</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">train_step</span><span class="p">(</span><span class="n">rm</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">batch</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One optimization step on a batch of preference pairs.</span>
+
+<span class="sd">    `batch` provides chosen/rejected token ids and masks, already tokenized as</span>
+<span class="sd">    [prompt + response]. We run BOTH responses through the SAME reward model and</span>
+<span class="sd">    compare their scalar scores. This shared-encoder, two-forward-pass structure</span>
+<span class="sd">    is exactly what TRL&#39;s RewardTrainer and DPO-style code do under the hood.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rm</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+    <span class="c1"># Forward both completions of every pair through the same network.</span>
+    <span class="n">r_chosen</span>   <span class="o">=</span> <span class="n">rm</span><span class="p">(</span><span class="n">batch</span><span class="p">[</span><span class="s2">&quot;chosen_ids&quot;</span><span class="p">],</span>   <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;chosen_mask&quot;</span><span class="p">])</span>     <span class="c1"># (B,)</span>
+    <span class="n">r_rejected</span> <span class="o">=</span> <span class="n">rm</span><span class="p">(</span><span class="n">batch</span><span class="p">[</span><span class="s2">&quot;rejected_ids&quot;</span><span class="p">],</span> <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;rejected_mask&quot;</span><span class="p">])</span>   <span class="c1"># (B,)</span>
+
+    <span class="n">loss</span><span class="p">,</span> <span class="n">acc</span> <span class="o">=</span> <span class="n">bradley_terry_loss</span><span class="p">(</span><span class="n">r_chosen</span><span class="p">,</span> <span class="n">r_rejected</span><span class="p">)</span>
+
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">rm</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="mf">1.0</span><span class="p">)</span>   <span class="c1"># RMs train fast; clip helps</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;loss&quot;</span><span class="p">:</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span> <span class="s2">&quot;pref_acc&quot;</span><span class="p">:</span> <span class="n">acc</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+            <span class="s2">&quot;reward_margin&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">r_chosen</span> <span class="o">-</span> <span class="n">r_rejected</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()}</span>
+</code></pre></div>
+<p>The two non-obvious lines are worth dwelling on. First, <code>F.softplus(-delta)</code> is the <em>numerically stable</em> way to compute <span class="arithmatex">\(-\log\sigma(\Delta)\)</span>: a naive <code>-torch.log(torch.sigmoid(delta))</code> underflows to <code>inf</code> when <code>delta</code> is very negative, whereas <code>softplus</code> is stable everywhere (the same reason we use <code>F.binary_cross_entropy_with_logits</code> rather than logits-then-sigmoid-then-BCE; see <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a>). Second, both responses pass through the <strong>same</strong> network — the reward model is a <em>Siamese</em> / shared-encoder architecture, and only the <em>difference</em> of its two outputs ever enters the loss.</p>
+<h3 id="batching-all-pairs-from-one-prompt">Batching all-pairs-from-one-prompt<a class="headerlink" href="#batching-all-pairs-from-one-prompt" title="Permanent link">¶</a></h3>
+<p>To implement the InstructGPT regularizer — all <span class="arithmatex">\(\binom{K}{2}\)</span> pairs from a prompt in one step — you encode the <span class="arithmatex">\(K\)</span> completions once and form all pairwise terms from the <span class="arithmatex">\(K\)</span> scalars:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">all_pairs_bt_loss</span><span class="p">(</span><span class="n">rewards_K</span><span class="p">,</span> <span class="n">chosen_better_mask</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;rewards_K : (K,) scalar reward for the K completions of ONE prompt,</span>
+<span class="sd">                   ordered by the human ranking (index 0 = most preferred).</span>
+<span class="sd">       Since they are ranked, every pair (i, j) with i &lt; j has y_i preferred.</span>
+<span class="sd">    Computes the mean BT loss over all C(K,2) pairs, encoding each completion once.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">K</span> <span class="o">=</span> <span class="n">rewards_K</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="c1"># Pairwise score differences Δ_ij = r_i - r_j for all i&lt;j.</span>
+    <span class="n">diff</span> <span class="o">=</span> <span class="n">rewards_K</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">-</span> <span class="n">rewards_K</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>   <span class="c1"># (K, K), Δ_ij at [i, j]</span>
+    <span class="n">iu</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">triu_indices</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">offset</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>                  <span class="c1"># upper triangle: i&lt;j</span>
+    <span class="n">deltas</span> <span class="o">=</span> <span class="n">diff</span><span class="p">[</span><span class="n">iu</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">iu</span><span class="p">[</span><span class="mi">1</span><span class="p">]]</span>                              <span class="c1"># (C(K,2),) all preferred-minus-dispreferred</span>
+    <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">softplus</span><span class="p">(</span><span class="o">-</span><span class="n">deltas</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</code></pre></div>
+<p>Each of the <span class="arithmatex">\(K\)</span> completions is encoded by the transformer exactly once; the <span class="arithmatex">\(\binom{K}{2}\)</span> comparisons are cheap arithmetic on the resulting scalars. This is both the efficiency win and the anti-overfitting win InstructGPT reported.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: reward magnitudes, loss, and preference probability</p>
+<p>Suppose for a single comparison the reward model outputs <span class="arithmatex">\(r_\phi(x, y_w) = 2.3\)</span> for the chosen response and <span class="arithmatex">\(r_\phi(x, y_l) = 0.8\)</span> for the rejected one. The margin is <span class="arithmatex">\(\Delta = 2.3 - 0.8 = 1.5\)</span>.</p>
+<ul>
+<li><strong>Preference probability the model assigns:</strong> <span class="arithmatex">\(\sigma(1.5) = \frac{1}{1 + e^{-1.5}} = \frac{1}{1 + 0.223} \approx 0.817\)</span>. The model thinks the chosen response would be preferred about <strong>82%</strong> of the time — consistent with a genuine but not overwhelming preference.</li>
+<li><strong>Per-example loss:</strong> <span class="arithmatex">\(-\log\sigma(1.5) = \log(1 + e^{-1.5}) = \log(1.223) \approx 0.201\)</span> nats. Low, because the model already orders this pair correctly.</li>
+<li><strong>Gradient on the margin:</strong> <span class="arithmatex">\(-(1 - \sigma(1.5)) = -(1 - 0.817) = -0.183\)</span>. To <em>reduce</em> the loss, gradient descent pushes <span class="arithmatex">\(\Delta\)</span> <em>up</em> (the negative sign means the loss decreases as <span class="arithmatex">\(\Delta\)</span> increases), i.e. spreads the two scores further apart — but only gently, since the model is mostly right already.</li>
+</ul>
+<p>Now suppose the model had it <strong>backwards</strong>: <span class="arithmatex">\(r_\phi(x,y_w) = 0.5\)</span>, <span class="arithmatex">\(r_\phi(x,y_l) = 1.9\)</span>, so <span class="arithmatex">\(\Delta = -1.4\)</span>. Then <span class="arithmatex">\(\sigma(-1.4)\approx 0.198\)</span> (model thinks the <em>chosen</em> one wins only 20% of the time — wrong!), the loss is <span class="arithmatex">\(-\log(0.198) \approx 1.62\)</span> nats (eight times larger), and the margin gradient is <span class="arithmatex">\(-(1 - 0.198) = -0.80\)</span> — a strong push to flip the ordering. The loss and its gradient both scale with how wrong the model is, exactly as designed.</p>
+<p>Finally, the <strong>additive-constant invariance</strong>: if we shifted <em>both</em> rewards by <span class="arithmatex">\(+100\)</span>, every <span class="arithmatex">\(\Delta\)</span>, every loss, and every gradient above is <em>identical</em>. The absolute scale of an RM&rsquo;s outputs is meaningless; only gaps are.</p>
+</div>
+<h3 id="what-good-rm-training-looks-like">What good RM training looks like<a class="headerlink" href="#what-good-rm-training-looks-like" title="Permanent link">¶</a></h3>
+<p>The headline metric is <strong>preference accuracy</strong> on a held-out set — the fraction of pairs the RM orders the same way the human did. For well-curated data this lands somewhere in the high-60s to high-70s percent; remember that the <em>human–human</em> agreement ceiling is itself around 70–75%, so an RM scoring near there is essentially at the noise floor of the labels. Other diagnostics:</p>
+<ul>
+<li><strong>Calibration:</strong> bucket pairs by the RM&rsquo;s predicted preference probability <span class="arithmatex">\(\sigma(\Delta)\)</span> and check that, e.g., pairs where it predicts 80% are actually preferred ~80% of the time. A miscalibrated RM gives PPO a distorted gradient.</li>
+<li><strong>Reward distribution:</strong> plot the histogram of scores on a fixed eval set across training. A healthy RM has well-separated chosen/rejected distributions; a collapsing one pushes everything to extremes.</li>
+<li><strong>Score on a fixed anchor set:</strong> because rewards are only identified up to a constant, track <em>gaps</em> between fixed reference responses, not absolute values, to compare checkpoints.</li>
+</ul>
+<h2 id="reward-model-evaluation-and-reward-hacking">Reward model evaluation and reward hacking<a class="headerlink" href="#reward-model-evaluation-and-reward-hacking" title="Permanent link">¶</a></h2>
+<p>The reward model is a <em>proxy</em>. It is a learned, imperfect stand-in for &ldquo;what humans actually want,&rdquo; and the moment you optimize a policy against it, you create an adversary — the policy — whose entire job is to find inputs the proxy scores highly. <strong>Goodhart&rsquo;s law</strong> (&ldquo;when a measure becomes a target, it ceases to be a good measure&rdquo;) is not a footnote here; it is the central operational risk of RLHF. We give this its own deep treatment in <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>; here we cover the mechanism and the controls baked into the pipeline.</p>
+<h3 id="what-reward-hacking-looks-like">What reward hacking looks like<a class="headerlink" href="#what-reward-hacking-looks-like" title="Permanent link">¶</a></h3>
+<p>The policy discovers responses that score high under <span class="arithmatex">\(r_\phi\)</span> but are <em>not actually better</em> to a human. Classic patterns:</p>
+<ul>
+<li><strong>Length exploitation.</strong> The RM learned (from biased data) that longer answers are usually preferred, so the policy learns to pad. You see reward climbing while answers get verbose and repetitive. The fix at the data level is length-balanced preference data; at the optimization level, length-penalty rewards or length-debiasing of the RM.</li>
+<li><strong>Sycophancy.</strong> The RM rewards agreeing with the user&rsquo;s stated position, so the policy stops pushing back even when the user is wrong.</li>
+<li><strong>Format farming.</strong> The RM over-weights markdown structure, bullet points, or a confident tone; the policy emits beautifully formatted nonsense.</li>
+<li><strong>Out-of-distribution exploitation.</strong> The policy finds genuinely degenerate text (gibberish, repeated tokens, special-token soup) that lands in a corner of input space the RM never trained on and happens to score high. This is the most dramatic failure: reward goes up, human quality goes to zero.</li>
+</ul>
+<h3 id="the-kl-leash-and-over-optimization">The KL leash and over-optimization<a class="headerlink" href="#the-kl-leash-and-over-optimization" title="Permanent link">¶</a></h3>
+<p>The reason RLHF does not immediately collapse into reward hacking is the <strong>KL penalty</strong> that anchors the policy to the frozen reference (the SFT model). Optimization maximizes a <em>regularized</em> objective:</p>
+<div class="arithmatex">\[
+\max_{\pi_\theta} \;\; \mathbb{E}_{x\sim\mathcal{D},\, y\sim\pi_\theta(\cdot\mid x)}\Big[\, r_\phi(x, y) \;-\; \beta\,\mathbb{D}_{\text{KL}}\!\big(\pi_\theta(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x)\big)\Big].
+\]</div>
+<p>The KL term penalizes the policy for drifting from the SFT model&rsquo;s distribution. Why does this curb hacking? Reward-hacking outputs are usually <em>low-probability under the SFT model</em> (no sane assistant produces token soup), so reaching them requires a large KL move that the penalty makes expensive. The coefficient <span class="arithmatex">\(\beta\)</span> is the leash length: small <span class="arithmatex">\(\beta\)</span> lets the policy roam (more reward, more hacking risk); large <span class="arithmatex">\(\beta\)</span> keeps it near SFT (safer, less gain).</p>
+<p>This trade-off has a famous empirical shape. Plot <em>true</em> quality (measured by held-out humans or a much larger &ldquo;gold&rdquo; RM) against the KL distance from the reference as you optimize. Quality rises, peaks, then <strong>falls</strong> as the policy over-optimizes the proxy — the <strong>reward-model over-optimization</strong> curve characterized by Gao, Schulman &amp; Hilton (2022). They found the gold-reward gain follows a clean functional form in <span class="arithmatex">\(\sqrt{\mathrm{KL}}\)</span>, with proxy reward diverging upward while true reward turns over. The practical takeaway: <strong>the KL budget is a hyperparameter you tune to sit near the peak</strong>, and &ldquo;reward went up&rdquo; is <em>never</em> sufficient evidence that the model got better.</p>
+<figure class="viz" id="fig-rm-overoptimization-curve">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 820 520" role="img" aria-label="Reward-model over-optimization curve: true quality (gold reward) rises then falls as KL distance from the reference increases, while the proxy reward keeps rising monotonically. The peak marks the best policy; optimizing further causes reward hacking.">
+<defs>
+  <marker id="roc-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <clipPath id="roc-clip">
+    <rect x="90" y="55" width="670" height="375"/>
+  </clipPath>
+</defs>
+<style>
+  #fig-rm-overoptimization-curve text { fill: var(--ink-soft,#334155); }
+  #fig-rm-overoptimization-curve .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-rm-overoptimization-curve .lbl-sm { font: 400 11px var(--sans,sans-serif); }
+  #fig-rm-overoptimization-curve .lbl-xs { font: 400 10px var(--sans,sans-serif); }
+  #fig-rm-overoptimization-curve .accent { fill: var(--accent,#4f46e5); }
+  #fig-rm-overoptimization-curve .muted { fill: var(--muted,#94a3b8); }
+
+  /* Draw-on animation: start fully hidden, animate offset to 0 */
+  #fig-rm-overoptimization-curve .draw-true {
+    stroke-dasharray: 870;
+    stroke-dashoffset: 870;
+    animation: roc-draw-true 2.5s ease-out 0.1s forwards;
+  }
+  #fig-rm-overoptimization-curve .draw-proxy {
+    stroke-dasharray: 730;
+    stroke-dashoffset: 730;
+    animation: roc-draw-proxy 2.2s ease-out 0.4s forwards;
+  }
+  #fig-rm-overoptimization-curve .roc-peak-group {
+    opacity: 0;
+    animation: roc-fadein 0.5s ease 2.6s forwards;
+  }
+  #fig-rm-overoptimization-curve .roc-dot {
+    r: 0;
+    animation: roc-popin 0.35s ease 2.6s forwards;
+  }
+  @keyframes roc-draw-true {
+    to { stroke-dashoffset: 0; }
+  }
+  @keyframes roc-draw-proxy {
+    to { stroke-dashoffset: 0; }
+  }
+  @keyframes roc-fadein {
+    to { opacity: 1; }
+  }
+  @keyframes roc-popin {
+    to { r: 7px; }
+  }
+</style>
+
+
+<line x1="90" y1="430" x2="90" y2="55" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#roc-arr)"/>
+<line x1="90" y1="430" x2="762" y2="430" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#roc-arr)"/>
+
+
+<text x="30" y="250" text-anchor="middle" class="lbl" transform="rotate(-90,30,250)">true quality (gold reward)</text>
+<text x="426" y="478" text-anchor="middle" class="lbl">KL(π_θ ‖ π_ref)</text>
+
+
+<rect x="380" y="55" width="380" height="375" fill="var(--accent,#4f46e5)" opacity="0.05" clip-path="url(#roc-clip)"/>
+<text x="570" y="82" text-anchor="middle" class="lbl-xs muted" opacity="0.8">over-optimization zone</text>
+
+
+<path
+  d="M 90 370
+     C 140 340, 200 220, 260 160
+     C 310 115, 350 108, 380 110
+     C 420 112, 460 145, 510 200
+     C 560 255, 620 305, 680 335
+     C 710 348, 740 354, 760 358"
+  fill="none"
+  stroke="var(--accent,#4f46e5)" stroke-width="3"
+  stroke-linecap="round"
+  class="draw-true"/>
+
+
+<path
+  d="M 90 395
+     C 150 370, 210 340, 280 300
+     C 340 265, 400 230, 460 195
+     C 530 155, 610 120, 680 95
+     C 720 82, 748 74, 760 70"
+  fill="none"
+  stroke="var(--ink-soft,#94a3b8)" stroke-width="2"
+  stroke-dasharray="730 8 4"
+  stroke-linecap="round"
+  class="draw-proxy"/>
+
+
+<g class="roc-peak-group">
+
+  <line x1="90" y1="110" x2="380" y2="110" stroke="var(--accent,#4f46e5)" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.7"/>
+
+  <line x1="380" y1="110" x2="380" y2="430" stroke="var(--accent,#4f46e5)" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.7"/>
+
+  <rect x="363" y="432" width="34" height="16" rx="4" fill="var(--accent,#4f46e5)" opacity="0.2"/>
+  <text x="380" y="444" text-anchor="middle" class="lbl-xs accent">opt. KL</text>
+</g>
+
+
+<circle cx="380" cy="110" r="0" fill="var(--accent,#4f46e5)" class="roc-dot"/>
+
+
+<g class="roc-peak-group">
+  <text x="392" y="100" class="lbl accent" style="font-size:12px">peak (best policy)</text>
+  <text x="392" y="116" class="lbl-sm accent">early stop here</text>
+</g>
+
+
+<text x="690" y="150" text-anchor="middle" class="lbl-sm muted">proxy reward</text>
+<text x="690" y="165" text-anchor="middle" class="lbl-sm muted">keeps rising</text>
+
+
+<text x="512" y="320" class="lbl-xs muted">over-optimization:</text>
+<text x="512" y="334" class="lbl-xs muted">proxy reward keeps rising,</text>
+<text x="512" y="348" class="lbl-xs muted">TRUE quality falls</text>
+
+
+<line x1="98" y1="196" x2="130" y2="196" stroke="var(--accent,#4f46e5)" stroke-width="3"/>
+<text x="138" y="200" class="lbl-xs accent">true / gold quality</text>
+<line x1="98" y1="214" x2="130" y2="214" stroke="var(--ink-soft,#94a3b8)" stroke-width="2" stroke-dasharray="6 3"/>
+<text x="138" y="218" class="lbl-xs muted">proxy RM reward</text>
+
+
+<text x="150" y="464" class="lbl-xs muted">small β (long leash): race rightward fast</text>
+<text x="470" y="464" class="lbl-xs muted">large β: stay near reference (safe, less gain)</text>
+
+
+<circle r="6" fill="var(--warn,#e0a106)" opacity="0">
+  <animateMotion
+    path="M 90 370 C 140 340, 200 220, 260 160 C 310 115, 350 108, 380 110 C 420 112, 460 145, 510 200 C 560 255, 620 305, 680 335 C 710 348, 740 354, 760 358"
+    dur="4.5s" begin="0.1s" fill="freeze"
+    calcMode="spline"
+    keyTimes="0; 0.44; 0.56; 1"
+    keySplines="0.3 0 0.7 1; 0.0 0.0 0.1 1.0; 0.3 0 0.7 1"/>
+  <animate attributeName="opacity" values="0;0;1;1;1" keyTimes="0;0.02;0.05;0.5;1" dur="4.5s" begin="0.1s" fill="freeze"/>
+</circle>
+</svg>
+<figcaption><b>Reward-model over-optimization: true quality peaks, then falls.</b> As the policy is optimized to maximize the proxy reward (dashed line), the true quality (solid purple) initially rises but turns over at the peak — the best policy. Continuing past this point is <em>reward hacking</em>: the proxy reward keeps climbing while genuine quality degrades. The KL budget β is a hyperparameter tuned to stay near the peak.</figcaption>
+</figure>
+
+<h3 id="defenses">Defenses<a class="headerlink" href="#defenses" title="Permanent link">¶</a></h3>
+<p>The pipeline-level defenses against reward hacking are: (1) the <strong>KL penalty</strong> and <strong>early stopping</strong> on a gold metric; (2) <strong>reward model ensembles</strong> — average several independently trained RMs so the policy must hack all of them at once, which is harder; (3) <strong>iterated RLHF</strong> — once the policy finds an exploit, collect human preferences on those exploited outputs (where humans will rank the garbage <em>last</em>), retrain the RM, and the hole closes; (4) <strong>uncertainty-aware rewards</strong> — penalize responses where the RM ensemble disagrees, since high disagreement flags out-of-distribution inputs. We expand all of these in <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: a held-out &lsquo;gold&rsquo; signal is non-negotiable</p>
+<p>Never tune an RLHF run on RM reward alone — that is the metric being hacked. Hold out a <em>different</em> evaluation signal the policy is not optimizing against: a panel of human ratings, a much larger reward model, or an <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a> with a different prompt and base model. When proxy reward keeps climbing but your gold signal plateaus or dips, you have found the over-optimization peak — stop or shrink the KL leash.</p>
+</div>
+<h2 id="the-four-model-setup">The four-model setup<a class="headerlink" href="#the-four-model-setup" title="Permanent link">¶</a></h2>
+<p>When people say RLHF is &ldquo;memory-hungry and operationally heavy,&rdquo; this is what they mean. The PPO stage juggles <strong>four</strong> models simultaneously. Understanding what each one is, whether it is trained or frozen, and why it exists is the single most-tested piece of RLHF systems knowledge.</p>
+<figure class="viz" id="fig-rlhf-four-model-setup">
+<svg viewBox="0 0 980 600" role="img" aria-label="The four-model PPO setup: the Actor (trained) generates a response from the prompt; the response fans out to the Critic (trained, advantage baseline), the Reward model (frozen, terminal scalar), and the Reference model (frozen SFT copy, KL penalty).">
+<defs>
+  <marker id="fms-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="fms-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+</defs>
+<style>
+  #fig-rlhf-four-model-setup text { fill: var(--ink-soft,#334155); }
+  #fig-rlhf-four-model-setup .lbl    { font: 600 13px var(--sans,sans-serif); }
+  #fig-rlhf-four-model-setup .lbl-sm { font: 400 11px var(--sans,sans-serif); }
+  #fig-rlhf-four-model-setup .lbl-xs { font: 400 10px var(--sans,sans-serif); }
+  #fig-rlhf-four-model-setup .bold   { font: 700 13px var(--sans,sans-serif); }
+  #fig-rlhf-four-model-setup .mono   { font: 600 12px var(--mono,monospace); }
+  #fig-rlhf-four-model-setup .accent { fill: var(--accent,#4f46e5); }
+  #fig-rlhf-four-model-setup .muted  { fill: var(--muted,#94a3b8); }
+  #fig-rlhf-four-model-setup .wht    { fill: #fff; }
+  #fig-rlhf-four-model-setup .num    { font: 700 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+</style>
+
+
+<rect x="210" y="12" width="560" height="42" rx="8" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="490" y="31" text-anchor="middle" class="lbl">prompt  x</text>
+<text x="490" y="47" text-anchor="middle" class="lbl-xs muted">input at each PPO step</text>
+
+
+<line x1="490" y1="54" x2="490" y2="88" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#fms-arr)"/>
+
+
+<rect x="90" y="88" width="800" height="106" rx="10" fill="var(--accent,#4f46e5)" opacity="0.10" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+
+<text x="106" y="106" class="num">(1)</text>
+
+<rect x="122" y="92" width="88" height="20" rx="5" fill="var(--accent,#4f46e5)"/>
+<text x="166" y="106" text-anchor="middle" class="lbl-xs wht">TRAINED</text>
+
+<text x="490" y="130" text-anchor="middle" class="bold accent">ACTOR  π_θ  — TRAINED</text>
+<text x="490" y="148" text-anchor="middle" class="lbl-sm">the policy we are aligning; initialized from SFT model</text>
+<text x="490" y="165" text-anchor="middle" class="lbl-sm">generates response y;  provides log π_θ(y|x) for per-token log-probs</text>
+<text x="490" y="181" text-anchor="middle" class="lbl-xs muted">weights updated every PPO step</text>
+
+
+<line x1="490" y1="194" x2="490" y2="236" stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#fms-arr-acc)"/>
+<text x="508" y="218" class="lbl-sm accent">response y</text>
+
+
+<line x1="148" y1="236" x2="832" y2="236" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+
+<line x1="188" y1="236" x2="188" y2="280" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#fms-arr)"/>
+<line x1="490" y1="236" x2="490" y2="280" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#fms-arr)"/>
+<line x1="792" y1="236" x2="792" y2="280" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#fms-arr)"/>
+
+
+<rect x="18" y="280" width="340" height="168" rx="10" fill="var(--accent,#4f46e5)" opacity="0.10" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+<text x="34" y="298" class="num">(2)</text>
+<rect x="50" y="284" width="88" height="20" rx="5" fill="var(--accent,#4f46e5)"/>
+<text x="94" y="298" text-anchor="middle" class="lbl-xs wht">TRAINED</text>
+
+<text x="188" y="326" text-anchor="middle" class="bold accent">CRITIC  V_ψ</text>
+<text x="188" y="344" text-anchor="middle" class="lbl-sm accent">— TRAINED</text>
+<text x="188" y="362" text-anchor="middle" class="lbl-sm">value of each partial</text>
+<text x="188" y="378" text-anchor="middle" class="lbl-sm">sequence, for GAE</text>
+<text x="188" y="394" text-anchor="middle" class="lbl-xs muted">(advantage baseline)</text>
+<text x="188" y="410" text-anchor="middle" class="lbl-xs muted">init from RM or SFT</text>
+
+
+<rect x="320" y="280" width="340" height="168" rx="10" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.8"/>
+<text x="336" y="298" class="num">(3)</text>
+<rect x="352" y="284" width="88" height="20" rx="5" fill="var(--surface-3,#dde3ec)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="396" y="298" text-anchor="middle" class="lbl-xs muted">FROZEN</text>
+
+<text x="490" y="326" text-anchor="middle" class="bold">REWARD  r_φ</text>
+<text x="490" y="344" text-anchor="middle" class="lbl-sm muted">— FROZEN</text>
+<text x="490" y="362" text-anchor="middle" class="lbl-sm">scalar score for the</text>
+<text x="490" y="378" text-anchor="middle" class="lbl-sm">whole response</text>
+<text x="490" y="394" text-anchor="middle" class="lbl-xs muted">(terminal reward only)</text>
+<text x="490" y="410" text-anchor="middle" class="lbl-xs muted">from Stage 2 training</text>
+
+
+<rect x="622" y="280" width="340" height="168" rx="10" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.8"/>
+<text x="638" y="298" class="num">(4)</text>
+<rect x="654" y="284" width="88" height="20" rx="5" fill="var(--surface-3,#dde3ec)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="698" y="298" text-anchor="middle" class="lbl-xs muted">FROZEN</text>
+
+<text x="792" y="326" text-anchor="middle" class="bold">REFERENCE  π_ref</text>
+<text x="792" y="344" text-anchor="middle" class="lbl-sm muted">— FROZEN</text>
+<text x="792" y="362" text-anchor="middle" class="lbl-sm">= the SFT model;</text>
+<text x="792" y="378" text-anchor="middle" class="lbl-sm">gives log π_ref(y|x)</text>
+<text x="792" y="394" text-anchor="middle" class="lbl-xs muted">for the KL penalty</text>
+<text x="792" y="410" text-anchor="middle" class="lbl-xs muted">never updates — the fixed anchor</text>
+
+
+<rect x="18" y="460" width="340" height="38" rx="6" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="188" y="476" text-anchor="middle" class="lbl-xs muted">baseline gives advantage A_t (GAE)</text>
+<text x="188" y="491" text-anchor="middle" class="lbl-xs muted">reduces gradient variance</text>
+
+<rect x="320" y="460" width="340" height="38" rx="6" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="490" y="476" text-anchor="middle" class="lbl-xs muted">r_φ(x,y) at final token</text>
+<text x="490" y="491" text-anchor="middle" class="lbl-xs muted">terminal sparse reward signal</text>
+
+<rect x="622" y="460" width="340" height="38" rx="6" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="792" y="476" text-anchor="middle" class="lbl-xs muted">-β · KL(π_θ ‖ π_ref) per token</text>
+<text x="792" y="491" text-anchor="middle" class="lbl-xs muted">controls distribution drift</text>
+
+
+<rect x="18" y="514" width="112" height="20" rx="5" fill="var(--accent,#4f46e5)" opacity="0.15" stroke="var(--accent,#4f46e5)" stroke-width="1.2"/>
+<text x="74" y="528" text-anchor="middle" class="lbl-xs accent">TRAINED</text>
+<rect x="140" y="514" width="112" height="20" rx="5" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="196" y="528" text-anchor="middle" class="lbl-xs muted">FROZEN</text>
+
+
+<text x="420" y="522" class="lbl-xs muted">(actor also supplies log π_θ for per-token KL —</text>
+<text x="420" y="536" class="lbl-xs muted">used in advantage computation alongside critic)</text>
+</svg>
+<figcaption><b>The four-model PPO setup — actor, critic, reward, reference.</b> The <em>actor</em> and <em>critic</em> (blue, TRAINED) have their weights updated each PPO step; the <em>reward model</em> and <em>reference</em> (grey, FROZEN) provide fixed signals. The reference is a frozen SFT copy whose log-probs anchor the KL penalty, preventing the actor from drifting into reward-hacking territory.</figcaption>
+</figure>
+
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Model</th>
+<th>Role</th>
+<th>Trained?</th>
+<th>Initialized from</th>
+<th>Why it exists</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>Actor</strong> <span class="arithmatex">\(\pi_\theta\)</span></td>
+<td>the policy: generates responses; we update its weights</td>
+<td><strong>yes</strong></td>
+<td>SFT model</td>
+<td>this <em>is</em> the model we are aligning</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>Critic</strong> <span class="arithmatex">\(V_\psi\)</span></td>
+<td>value function: predicts expected future reward of a partial sequence</td>
+<td><strong>yes</strong></td>
+<td>RM (or SFT)</td>
+<td>reduces gradient variance via advantage estimation (GAE)</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>Reward</strong> <span class="arithmatex">\(r_\phi\)</span></td>
+<td>scores the full response with one scalar</td>
+<td><strong>no (frozen)</strong></td>
+<td>trained in Stage 2</td>
+<td>supplies the optimization signal</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>Reference</strong> <span class="arithmatex">\(\pi_{\text{ref}}\)</span></td>
+<td>frozen copy of the SFT model</td>
+<td><strong>no (frozen)</strong></td>
+<td>SFT model</td>
+<td>the KL anchor that keeps the policy from drifting/hacking</td>
+</tr>
+</tbody>
+</table>
+<h3 id="the-actor-and-the-reference">The actor and the reference<a class="headerlink" href="#the-actor-and-the-reference" title="Permanent link">¶</a></h3>
+<p>The <strong>actor</strong> is the policy <span class="arithmatex">\(\pi_\theta\)</span> — the model you will ship. It is initialized from the SFT model and is the only model whose weights we want to end up with. The <strong>reference</strong> <span class="arithmatex">\(\pi_{\text{ref}}\)</span> is a <em>frozen snapshot of that same SFT model</em>. At each PPO step we need both <span class="arithmatex">\(\log\pi_\theta(y\mid x)\)</span> (from the actor) and <span class="arithmatex">\(\log\pi_{\text{ref}}(y\mid x)\)</span> (from the reference) to compute the per-token KL penalty. The reference never updates — that is the whole point; it is the fixed star the policy is leashed to. (Some recipes periodically refresh the reference to the current policy; the default is to freeze it for the entire run.)</p>
+<h3 id="the-reward-model">The reward model<a class="headerlink" href="#the-reward-model" title="Permanent link">¶</a></h3>
+<p>The <strong>reward model</strong> <span class="arithmatex">\(r_\phi\)</span> from Stage 2 is frozen during PPO. It is consulted <em>once per response</em>, at the end, to produce the terminal scalar reward. Because the reward is terminal (only the last token &ldquo;earns&rdquo; <span class="arithmatex">\(r_\phi\)</span>), the per-token reward fed to the optimizer is the KL penalty at every token <em>plus</em> the reward model&rsquo;s scalar at the final token:</p>
+<div class="arithmatex">\[
+R_t = \underbrace{-\beta\big(\log\pi_\theta(y_t\mid x, y_{&lt;t}) - \log\pi_{\text{ref}}(y_t\mid x, y_{&lt;t})\big)}_{\text{per-token KL penalty}} \;+\; \underbrace{r_\phi(x, y)\cdot\mathbb{1}[t = T]}_{\text{terminal reward}}.
+\]</div>
+<p>That is, every token pays a little KL &ldquo;rent,&rdquo; and the whole sequence collects the RM&rsquo;s score at the end. This sparse-terminal-reward structure is exactly why a critic is so valuable here — and why critic-free methods (next section) had to find another way.</p>
+<h3 id="the-critic">The critic<a class="headerlink" href="#the-critic" title="Permanent link">¶</a></h3>
+<p>The <strong>critic</strong> <span class="arithmatex">\(V_\psi\)</span> is the subtle one. It is a value network that, at each token position, predicts the <em>expected total future reward</em> of the sequence from that point on. Why do we need it? Policy-gradient methods have enormous variance if you weight each action by the raw return; subtracting a <em>baseline</em> — the expected return — dramatically reduces variance without adding bias. The critic <em>is</em> that learned baseline, and combined with the rewards it yields the <strong>advantage</strong> <span class="arithmatex">\(A_t\)</span> (via Generalized Advantage Estimation, GAE) that PPO actually optimizes. The critic is trained jointly with the actor, usually initialized from the reward model (which already knows how to map sequences to scalar values). The full machinery of advantages, GAE, and the clipped PPO objective is the subject of <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>; the infrastructure view of advantage estimation and KL control is <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>.</p>
+<h3 id="the-memory-bill">The memory bill<a class="headerlink" href="#the-memory-bill" title="Permanent link">¶</a></h3>
+<p>Four models is a lot of GPU. If the policy is a <span class="arithmatex">\(7\)</span>B-parameter model in bf16, then in the worst case:</p>
+<ul>
+<li><strong>Actor:</strong> trained, so it carries weights + gradients + Adam optimizer states. Roughly <span class="arithmatex">\(2\)</span> bytes (bf16 weights) <span class="arithmatex">\(+ 2\)</span> (grad) <span class="arithmatex">\(+ 8\)</span> (fp32 Adam moments, two states) <span class="arithmatex">\(\approx 16\)</span> bytes/param <span class="arithmatex">\(\to \sim 112\)</span> GB before activations.</li>
+<li><strong>Critic:</strong> also trained; another full set of weights+grads+optimizer states, often similar size <span class="arithmatex">\(\to\)</span> on the order of another <span class="arithmatex">\(\sim 100\)</span> GB (a <span class="arithmatex">\(7\)</span>B critic), or less if smaller.</li>
+<li><strong>Reward:</strong> frozen, inference only <span class="arithmatex">\(\to \sim 14\)</span> GB (bf16 weights, no grad/optimizer).</li>
+<li><strong>Reference:</strong> frozen, inference only <span class="arithmatex">\(\to \sim 14\)</span> GB.</li>
+</ul>
+<p>So a &ldquo;<span class="arithmatex">\(7\)</span>B RLHF run&rdquo; can have a resident footprint on the order of <span class="arithmatex">\(250\)</span>+ GB <em>before</em> activations and the KV cache for generation — which is why RLHF training is dominated by sharding tricks and by the generation/training split covered in <a href="../06-rl-infra/01-anatomy-rl-system.html">The Anatomy of an RL-for-LLM System</a>. Practical economizers: make the <strong>RM and critic smaller</strong> than the policy (InstructGPT&rsquo;s 6B RM for a 175B policy); use <strong>LoRA</strong> so actor and critic share a frozen backbone and the reference is &ldquo;free&rdquo; (the policy <em>minus</em> its LoRA adapters <em>is</em> the reference — see <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a>); or <strong>fold the value head onto the actor</strong> so actor and critic share a trunk.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: how the four-model count shrinks</p>
+<p>A through-line of Part V and Part VI is <em>removing models from this diagram.</em> <strong>DPO</strong> (<a href="../05-posttraining-alignment/07-dpo-and-variants.html">Direct Preference Optimization &amp; Its Variants</a>) deletes the reward model <em>and</em> the critic by deriving a loss that optimizes the policy directly on preference pairs — leaving just the actor and a frozen reference. <strong>GRPO/RLOO</strong> (<a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>) delete the <em>critic</em> by using a group of sampled responses as a Monte Carlo baseline, keeping a reward (often a rule-based verifier) and a reference. Each method is, in part, an answer to &ldquo;this four-model setup is too expensive.&rdquo;</p>
+</div>
+<h2 id="putting-it-together-a-skeleton-rlhf-loop">Putting it together: a skeleton RLHF loop<a class="headerlink" href="#putting-it-together-a-skeleton-rlhf-loop" title="Permanent link">¶</a></h2>
+<p>To cement how the pieces interlock, here is the <em>control flow</em> of the PPO stage in pseudo-real PyTorch. The actual PPO update (clipped surrogate, GAE) is intentionally abstracted into <code>ppo_update</code>, which the next chapter builds in full; the goal here is to see where each of the four models is called.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rlhf_ppo_epoch</span><span class="p">(</span><span class="n">actor</span><span class="p">,</span> <span class="n">critic</span><span class="p">,</span> <span class="n">reward_model</span><span class="p">,</span> <span class="n">ref_model</span><span class="p">,</span>
+                   <span class="n">prompts</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">beta_kl</span><span class="o">=</span><span class="mf">0.02</span><span class="p">,</span> <span class="n">ppo_update</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One outer iteration of the RLHF/PPO loop.</span>
+
+<span class="sd">    actor       : policy π_θ        (trained)   -- generates and is updated</span>
+<span class="sd">    critic      : value V_ψ         (trained)   -- baseline for advantages</span>
+<span class="sd">    reward_model: r_φ               (frozen)    -- terminal scalar reward</span>
+<span class="sd">    ref_model   : π_ref (SFT copy)  (frozen)    -- KL anchor</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># ---- 1. ROLLOUT: actor generates responses to a batch of prompts. ----</span>
+    <span class="c1">#     In production this runs on a fast inference engine (vLLM/SGLang);</span>
+    <span class="c1">#     see &quot;The Generation–Training Loop &amp; Rollout Engines&quot;.</span>
+    <span class="n">queries</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="n">responses</span> <span class="o">=</span> <span class="n">actor</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="o">**</span><span class="n">queries</span><span class="p">,</span> <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">do_sample</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># full sequence = prompt ++ response; build a mask marking response tokens</span>
+    <span class="n">seq</span><span class="p">,</span> <span class="n">resp_mask</span> <span class="o">=</span> <span class="n">build_sequences_and_mask</span><span class="p">(</span><span class="n">queries</span><span class="p">,</span> <span class="n">responses</span><span class="p">)</span>
+
+    <span class="c1"># ---- 2. SCORE &amp; ANCHOR (all under no_grad; these models are not updated). ----</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="c1"># Terminal scalar reward for each complete response (frozen RM).</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">reward_model</span><span class="p">(</span><span class="n">seq</span><span class="p">,</span> <span class="n">attention_mask</span><span class="o">=</span><span class="p">(</span><span class="n">seq</span> <span class="o">!=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span><span class="p">))</span>  <span class="c1"># (B,)</span>
+
+        <span class="c1"># Per-token log-probs from the FROZEN reference (for the KL penalty).</span>
+        <span class="n">ref_logprobs</span> <span class="o">=</span> <span class="n">token_logprobs</span><span class="p">(</span><span class="n">ref_model</span><span class="p">,</span> <span class="n">seq</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">)</span>                    <span class="c1"># (B, T)</span>
+
+    <span class="c1"># ---- 3. The actor&#39;s own per-token log-probs and the critic&#39;s values</span>
+    <span class="c1">#         (these DO require grad -- they define the PPO objective). ----</span>
+    <span class="n">actor_logprobs</span> <span class="o">=</span> <span class="n">token_logprobs</span><span class="p">(</span><span class="n">actor</span><span class="p">,</span> <span class="n">seq</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">)</span>                          <span class="c1"># (B, T)</span>
+    <span class="n">values</span>         <span class="o">=</span> <span class="n">critic</span><span class="p">(</span><span class="n">seq</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">)</span>                                         <span class="c1"># (B, T)</span>
+
+    <span class="c1"># ---- 4. Build the per-token reward: KL penalty everywhere + RM score at end. ----</span>
+    <span class="n">kl_per_token</span> <span class="o">=</span> <span class="n">actor_logprobs</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">-</span> <span class="n">ref_logprobs</span>                           <span class="c1"># (B, T)</span>
+    <span class="n">rewards</span> <span class="o">=</span> <span class="o">-</span><span class="n">beta_kl</span> <span class="o">*</span> <span class="n">kl_per_token</span>                                               <span class="c1"># KL &quot;rent&quot;</span>
+    <span class="n">last</span> <span class="o">=</span> <span class="n">resp_mask</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span>                                                 <span class="c1"># final resp idx</span>
+    <span class="n">rewards</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">rewards</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)),</span> <span class="n">last</span><span class="p">]</span> <span class="o">+=</span> <span class="n">scores</span>                          <span class="c1"># add terminal r_φ</span>
+
+    <span class="c1"># ---- 5. PPO update: compute advantages (GAE) from (rewards, values), then</span>
+    <span class="c1">#         take clipped policy-gradient + value-function steps. See chapter 5.6. ----</span>
+    <span class="n">stats</span> <span class="o">=</span> <span class="n">ppo_update</span><span class="p">(</span><span class="n">actor</span><span class="p">,</span> <span class="n">critic</span><span class="p">,</span>
+                       <span class="n">logprobs</span><span class="o">=</span><span class="n">actor_logprobs</span><span class="p">,</span> <span class="n">old_logprobs</span><span class="o">=</span><span class="n">actor_logprobs</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span>
+                       <span class="n">values</span><span class="o">=</span><span class="n">values</span><span class="p">,</span> <span class="n">rewards</span><span class="o">=</span><span class="n">rewards</span><span class="p">,</span> <span class="n">resp_mask</span><span class="o">=</span><span class="n">resp_mask</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">stats</span>
+</code></pre></div>
+<p>Trace the four models through it: the <strong>actor</strong> generates (step 1) and supplies differentiable log-probs (step 3); the <strong>reward model</strong> scores once (step 2); the <strong>reference</strong> supplies frozen log-probs for KL (step 2); the <strong>critic</strong> supplies values (step 3) that become the advantage baseline (step 5). Every line of an industrial RLHF library is an elaboration of this skeleton — better generation engines, sharded models, vectorized KL control, and the PPO clip — but the data flow is exactly this.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Walk me through the InstructGPT RLHF pipeline. Why do we train a separate <em>reward model</em> instead of optimizing directly against human ratings, and what is the Bradley–Terry model doing?</p>
+<p><strong>A:</strong> Three stages. (1) <strong>SFT</strong>: fine-tune the base model on human-written (prompt, response) demonstrations to get an instruction-following starting point <span class="arithmatex">\(\pi_{\text{SFT}}\)</span>. (2) <strong>Reward modeling</strong>: for each prompt, sample <span class="arithmatex">\(K\)</span> responses from <span class="arithmatex">\(\pi_{\text{SFT}}\)</span>, have humans <em>rank</em> them, extract <span class="arithmatex">\(\binom{K}{2}\)</span> pairwise preferences, and fit a reward model <span class="arithmatex">\(r_\phi\)</span> — the SFT network with a scalar head — by minimizing the <strong>Bradley–Terry</strong> loss <span class="arithmatex">\(-\log\sigma(r_\phi(x,y_w)-r_\phi(x,y_l))\)</span>. (3) <strong>RL (PPO)</strong>: optimize the policy to maximize <span class="arithmatex">\(r_\phi\)</span> minus a KL penalty to a frozen reference. We use a <em>learned</em> reward model rather than querying humans in the loop because PPO needs to score <em>millions</em> of freshly generated responses per run — humans are far too slow and expensive, and they cannot score outputs the policy hasn&rsquo;t generated yet. The reward model converts a sparse, discrete, slow human comparison signal into a <strong>dense, differentiable, queryable</strong> scalar over the <em>entire</em> response space. Bradley–Terry is the bridge: it models <span class="arithmatex">\(P(y_w\succ y_l)=\sigma(r(x,y_w)-r(x,y_l))\)</span>, i.e. it treats each response as having a latent strength and the preference as a logistic function of the strength <em>difference</em>. Fitting it by max-likelihood gives the pairwise loss. A sharp candidate adds: rewards are only identified up to an additive constant (only differences matter), the RM can be smaller than the policy (judging is easier than generating), and the whole thing is a proxy that the policy will try to hack — hence the KL leash and early stopping on a held-out gold signal.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> RLHF&rsquo;s PPO stage is said to require &ldquo;four models.&rdquo; Name them, say which are trained vs. frozen, and explain what breaks if you drop the reference model or the critic.</p>
+<p><strong>A:</strong> <strong>Actor</strong> (the policy <span class="arithmatex">\(\pi_\theta\)</span>, <em>trained</em>), <strong>critic</strong> (value network <span class="arithmatex">\(V_\psi\)</span>, <em>trained</em>), <strong>reward model</strong> (<span class="arithmatex">\(r_\phi\)</span>, <em>frozen</em>), and <strong>reference</strong> (<span class="arithmatex">\(\pi_{\text{ref}}\)</span>, a <em>frozen</em> copy of the SFT model). The reward model supplies the terminal scalar signal; the reference supplies <span class="arithmatex">\(\log\pi_{\text{ref}}\)</span> for the per-token KL penalty; the critic supplies a learned baseline so advantages have low variance. <strong>Drop the reference</strong> and you lose the KL anchor — the policy is free to drift arbitrarily far from the SFT distribution, which collapses fluency and, worse, lets it sprint toward reward-hacking regions (degenerate text that scores high on the proxy RM). The KL term is what makes hacking <em>expensive</em>, because hacked outputs are low-probability under the SFT model. <strong>Drop the critic</strong> and your policy-gradient estimates get very high variance, because you are now weighting actions by raw returns with no baseline; training becomes unstable and sample-inefficient. You <em>can</em> drop the critic if you replace it with another baseline — that is exactly what <strong>RLOO/GRPO</strong> do, using a group of sampled responses as a Monte Carlo baseline instead of a learned value network. So: reference is about <em>safety/stability of the distribution</em>; critic is about <em>variance of the gradient estimate</em>. Bonus point: the four-model footprint is the main reason DPO (which drops the RM and critic) and GRPO (which drops the critic) exist.</p>
+</div>
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>RLHF turns cheap comparisons into a learned objective.</strong> Humans can&rsquo;t author a target for every prompt, but they can reliably say which of two responses is better. RLHF distills those preferences into a reward model and optimizes the policy against it, letting the model exceed its SFT demonstrations.</li>
+<li><strong>The InstructGPT recipe is three stages:</strong> SFT (imitate demonstrations) → reward modeling (fit a scalar from rankings) → PPO (maximize reward under a KL leash). Each stage&rsquo;s output seeds the next.</li>
+<li><strong>Bradley–Terry is the bridge from discrete preferences to a continuous reward.</strong> It models <span class="arithmatex">\(P(y_w\succ y_l)=\sigma\big(r(x,y_w)-r(x,y_l)\big)\)</span>; max-likelihood gives the pairwise loss <span class="arithmatex">\(-\log\sigma(r_w - r_l)\)</span>. Rewards are identified only up to an additive constant — <strong>only score differences are meaningful.</strong></li>
+<li><strong>The reward model is the SFT network with a scalar head</strong>, read at the last token, trained as a shared-encoder (Siamese) comparator. It can be <em>smaller</em> than the policy, because recognizing quality is easier than producing it. Batch all <span class="arithmatex">\(\binom{K}{2}\)</span> pairs from one prompt together to avoid overfitting.</li>
+<li><strong>The reward model is a proxy, and the policy is its adversary.</strong> Optimizing it triggers Goodhart&rsquo;s law: length exploitation, sycophancy, format farming, and OOD gibberish that scores high but is worse to humans. &ldquo;Reward went up&rdquo; is never proof the model improved.</li>
+<li><strong>The KL penalty to a frozen reference is the leash</strong> that makes hacking expensive and curbs over-optimization; quality vs. KL traces a rise-then-fall curve, so you tune the KL budget and early-stop on a held-out <em>gold</em> signal you are <em>not</em> optimizing.</li>
+<li><strong>The PPO stage juggles four models:</strong> actor (trained), critic (trained), reward (frozen), reference (frozen). Reference controls distribution drift; critic controls gradient variance. This four-model, ~250 GB-for-7B footprint is precisely what DPO (drops RM + critic) and GRPO/RLOO (drop critic) were invented to shrink.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>RLHF with learned reward models remains the backbone of production alignment, now extended through iterated online loops, generative/process reward models, and critic-free variants (GRPO, DAPO). The four-model PPO pipeline described here is the baseline every modern recipe either uses or explicitly departs from.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1706.03741">Christiano et al., <em>Deep Reinforcement Learning from Human Preferences</em> (2017)</a> — introduced the idea of learning a reward model from pairwise human comparisons, the conceptual seed of all RLHF pipelines.</li>
+<li><a href="https://arxiv.org/abs/2203.02155">Ouyang et al., <em>Training language models to follow instructions with human feedback</em> (InstructGPT, 2022)</a> — the canonical three-stage SFT → RM → PPO recipe this chapter follows end to end.</li>
+<li><a href="https://arxiv.org/abs/2204.05862">Bai et al. (Anthropic), <em>Training a Helpful and Harmless Assistant with RLHF</em> (2022)</a> — iterated RLHF, the helpfulness/harmlessness reward split, and the public HH-RLHF preference dataset.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2210.10760">Gao, Schulman &amp; Hilton, <em>Scaling Laws for Reward Model Overoptimization</em> (2022)</a> — characterizes the proxy-vs-gold reward over-optimization curve and derives the √KL functional form; essential reading before tuning β.</li>
+<li><a href="https://arxiv.org/abs/2307.09288">Touvron et al., <em>Llama 2</em> (2023)</a> — iterated RLHF in practice: five rounds of RM retraining, separate helpfulness/safety reward models, and rejection-sampling + PPO in combination.</li>
+<li><a href="https://arxiv.org/abs/2403.13787">Lambert et al., <em>RewardBench: Evaluating Reward Models for Language Modeling</em> (2024)</a> — the first standardized benchmark for reward models; the leaderboard reveals which RMs generalize to safety, reasoning, and instruction-following.</li>
+<li><a href="https://arxiv.org/abs/2405.07863">Dong et al., <em>RLHF Workflow: From Reward Modeling to Online RLHF</em> (2024)</a> — comprehensive open-source recipe for online iterative RLHF, matching proprietary pipelines on AlpacaEval-2 and Arena-Hard.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/huggingface/trl">huggingface/trl</a> — the standard library for RLHF in the HuggingFace ecosystem; <code>RewardTrainer</code> and <code>PPOTrainer</code> implement the core algorithms from this chapter.</li>
+<li><a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF/OpenRLHF</a> — Ray + vLLM-based framework for scalable RLHF, supporting PPO, GRPO, REINFORCE++, and 70B+ models across multiple nodes.</li>
+<li><a href="https://github.com/allenai/reward-bench">allenai/reward-bench</a> — RewardBench inference and evaluation harness for comparing reward models on chat, safety, and reasoning subsets.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Ouyang, Wu, Jiang, et al., <strong>Training language models to follow instructions with human feedback</strong> (InstructGPT, 2022) — the canonical end-to-end RLHF recipe this chapter follows.</li>
+<li>Christiano, Leike, Brown, et al., <strong>Deep Reinforcement Learning from Human Preferences</strong> (2017) — the foundational paper that introduced learning a reward model from pairwise human comparisons.</li>
+<li>Bradley &amp; Terry, <strong>Rank Analysis of Incomplete Block Designs</strong> (1952) — the original paired-comparison model underlying the reward loss; Luce/Plackett for the ranking generalization.</li>
+<li>Stiennon, Ouyang, Wu, et al., <strong>Learning to summarize from human feedback</strong> (2020) — the precursor that worked out reward modeling and PPO for a concrete task (summarization).</li>
+<li>Bai, Jones, Ndousse, et al. (Anthropic), <strong>Training a Helpful and Harmless Assistant with RLHF</strong> (2022) — the helpfulness/harmlessness split and separate reward models per axis.</li>
+<li>Gao, Schulman &amp; Hilton, <strong>Scaling Laws for Reward Model Overoptimization</strong> (2022) — the proxy-vs-gold reward over-optimization curve and the <span class="arithmatex">\(\sqrt{\mathrm{KL}}\)</span> functional form.</li>
+<li>Touvron, Martin, Stone, et al., <strong>Llama 2: Open Foundation and Fine-Tuned Chat Models</strong> (2023) — iterated RLHF, separate helpfulness/safety RMs, rejection-sampling + PPO in practice.</li>
+<li>HuggingFace <strong>TRL</strong> (<code>RewardTrainer</code>, <code>PPOTrainer</code>) and <strong>OpenRLHF</strong> repositories — production implementations of the reward loss and four-model loop; see <a href="../06-rl-infra/03-trl.html">TRL: HuggingFace&rsquo;s RL Library</a>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="04-peft-prompt-merging.html"><span class="pn-label">← Previous</span><span class="pn-title">PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</span></a>
+<a class="next" href="06-ppo-for-llms.html"><span class="pn-label">Next →</span><span class="pn-title">Policy Gradients &amp; PPO for Language Models</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-three-stage-recipe-and-why-it-works">The three-stage recipe and why it works</a></li>
+<li class="toc-l2"><a href="#preference-data-collection">Preference data collection</a></li>
+<li class="toc-l3"><a href="#what-a-labeler-actually-does">What a labeler actually does</a></li>
+<li class="toc-l3"><a href="#the-dimensions-labelers-are-asked-to-judge">The dimensions labelers are asked to judge</a></li>
+<li class="toc-l3"><a href="#how-much-data">How much data</a></li>
+<li class="toc-l2"><a href="#the-bradleyterry-model-from-comparisons-to-a-scalar">The Bradley–Terry model: from comparisons to a scalar</a></li>
+<li class="toc-l3"><a href="#the-model">The model</a></li>
+<li class="toc-l3"><a href="#deriving-the-pairwise-loss">Deriving the pairwise loss</a></li>
+<li class="toc-l3"><a href="#a-subtle-but-critical-training-detail">A subtle but critical training detail</a></li>
+<li class="toc-l2"><a href="#reward-model-architecture-and-training">Reward model architecture and training</a></li>
+<li class="toc-l3"><a href="#the-architecture-a-transformer-with-a-scalar-head">The architecture: a transformer with a scalar head</a></li>
+<li class="toc-l3"><a href="#the-from-scratch-pairwise-loss">The from-scratch pairwise loss</a></li>
+<li class="toc-l3"><a href="#batching-all-pairs-from-one-prompt">Batching all-pairs-from-one-prompt</a></li>
+<li class="toc-l3"><a href="#what-good-rm-training-looks-like">What good RM training looks like</a></li>
+<li class="toc-l2"><a href="#reward-model-evaluation-and-reward-hacking">Reward model evaluation and reward hacking</a></li>
+<li class="toc-l3"><a href="#what-reward-hacking-looks-like">What reward hacking looks like</a></li>
+<li class="toc-l3"><a href="#the-kl-leash-and-over-optimization">The KL leash and over-optimization</a></li>
+<li class="toc-l3"><a href="#defenses">Defenses</a></li>
+<li class="toc-l2"><a href="#the-four-model-setup">The four-model setup</a></li>
+<li class="toc-l3"><a href="#the-actor-and-the-reference">The actor and the reference</a></li>
+<li class="toc-l3"><a href="#the-reward-model">The reward model</a></li>
+<li class="toc-l3"><a href="#the-critic">The critic</a></li>
+<li class="toc-l3"><a href="#the-memory-bill">The memory bill</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-skeleton-rlhf-loop">Putting it together: a skeleton RLHF loop</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

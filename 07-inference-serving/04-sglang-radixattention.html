@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SGLang: RadixAttention &amp; Structured Programs — The LLM Stack</title>
+<meta name="description" content="SGLang&#x27;s RadixAttention (automatic KV reuse via a radix tree of prefixes), the frontend language (gen/select/fork/join), the runtime, constrained decoding, zero">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="active" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="74-sglang-radixattention-structured-programs">7.4 SGLang: RadixAttention &amp; Structured Programs<a class="headerlink" href="#74-sglang-radixattention-structured-programs" title="Permanent link">¶</a></h1>
+<p>In <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a> we saw how paging the KV cache into fixed-size blocks turns memory fragmentation into a non-problem and lets an engine pack many requests onto one GPU. PagedAttention answers the question <em>&ldquo;how do I store the KV cache without wasting memory?&rdquo;</em> SGLang asks a sharper, complementary question: <em>&ldquo;why am I recomputing the same prefixes over and over, and why is my Python scheduler the bottleneck?&rdquo;</em></p>
+<p>SGLang (Structured Generation Language) began as a research system from the same broad lineage as vLLM and grew into one of the two dominant open-source inference engines of 2024–2026. It contributes two big ideas that this chapter is about:</p>
+<ol>
+<li><strong>RadixAttention</strong> — a runtime that keeps a <em>radix tree of token prefixes</em> and automatically reuses any KV cache that has already been computed for a shared prefix, across requests, with no user annotation. It is prefix caching turned from a hand-managed feature into an always-on property of the scheduler.</li>
+<li><strong>The frontend language</strong> — <code>gen</code>, <code>select</code>, <code>fork</code>, <code>join</code>, and friends, a small embedded DSL (domain-specific language) in Python that lets you express multi-call LLM programs (branching, parallel sampling, tool calls, agents) so the runtime can <em>see the structure</em> and exploit prefix sharing, parallelism, and constrained decoding.</li>
+</ol>
+<p>Underneath sits a high-throughput <strong>runtime</strong> with a zero-overhead scheduler, a fast constrained-decoding stack, and the same continuous-batching machinery from <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>. You have SGLang checked out locally, so throughout this chapter we will be concrete: real module paths, real class names, real CLI flags.</p>
+<p>By the end you should be able to (a) explain RadixAttention&rsquo;s data structure and eviction policy at the level of a whiteboard implementation, (b) write a structured SGLang program that branches and recombines, &copy; reason about when SGLang beats vLLM and when it does not, and (d) answer the interview question &ldquo;how would you cache KV across requests?&rdquo; without hand-waving.</p>
+<h2 id="why-radixattention-exists-the-shared-prefix-problem">Why RadixAttention exists: the shared-prefix problem<a class="headerlink" href="#why-radixattention-exists-the-shared-prefix-problem" title="Permanent link">¶</a></h2>
+<p>Recall the two phases of inference from <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference</a>. <strong>Prefill</strong> runs the prompt through the model once, producing one KV vector pair per layer per token; this is compute-bound and <span class="arithmatex">\(O(L)\)</span> in prompt length <span class="arithmatex">\(L\)</span>. <strong>Decode</strong> then generates tokens one at a time, each step reading the entire KV cache; this is memory-bandwidth-bound.</p>
+<p>The crucial observation: a huge fraction of real-world prompts <em>share prefixes</em>.</p>
+<ul>
+<li><strong>System prompts.</strong> Every request to a chat assistant begins with the same multi-hundred-token system prompt. If you serve 1,000 requests/second, you re-prefill that identical block 1,000 times per second.</li>
+<li><strong>Few-shot prompts.</strong> A classification service sends the same 8 in-context examples (maybe 2,000 tokens) before each new query.</li>
+<li><strong>Agents and tree search.</strong> A reasoning agent forks <span class="arithmatex">\(k\)</span> candidate continuations from a common context (self-consistency, beam-like search, branch-and-evaluate). All <span class="arithmatex">\(k\)</span> branches share the entire context up to the fork point.</li>
+<li><strong>Multi-turn chat.</strong> Turn <span class="arithmatex">\(t+1\)</span> is exactly turn <span class="arithmatex">\(t\)</span>&rsquo;s context plus a new user message plus the model&rsquo;s previous reply. The first <span class="arithmatex">\(N\)</span> tokens are byte-identical.</li>
+</ul>
+<p>Naively, prefill recomputes the KV cache for every shared token. RadixAttention&rsquo;s promise is: <strong>compute the KV for a token sequence at most once, then reuse it for any request whose prompt starts with that sequence</strong>, automatically, as long as it is still in GPU memory.</p>
+<p>This is the same idea as <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>, but SGLang&rsquo;s contribution is the <em>data structure</em> (a radix tree) and the <em>eviction policy</em> (LRU over the tree) that make it general — it works across arbitrarily overlapping prefixes from unrelated requests, not just a single pinned system prompt.</p>
+<h3 id="a-back-of-the-envelope-motivation">A back-of-the-envelope motivation<a class="headerlink" href="#a-back-of-the-envelope-motivation" title="Permanent link">¶</a></h3>
+<p>Take a 70B-parameter model with grouped-query attention (GQA): 80 layers, 8 KV heads, head dimension 128, in bf16 (2 bytes). The KV cache cost <em>per token</em> is</p>
+<div class="arithmatex">\[
+\text{bytes/token} = 2 \times n_{\text{layers}} \times n_{\text{kv heads}} \times d_{\text{head}} \times \text{bytes} = 2 \times 80 \times 8 \times 128 \times 2 = 327{,}680 \text{ bytes} \approx 320\ \text{KiB}.
+\]</div>
+<p>A 2,000-token shared system prompt therefore costs about <span class="arithmatex">\(2000 \times 320\ \text{KiB} \approx 625\ \text{MiB}\)</span> of KV cache — and roughly <span class="arithmatex">\(2000 \times 2 \times P\)</span> FLOPs of prefill compute per request, where <span class="arithmatex">\(P\)</span> is the parameter count. Recomputing that for 1,000 requests is <span class="arithmatex">\(1000 \times\)</span> wasted prefill. RadixAttention pays it <strong>once</strong> and serves the other 999 from cache. We will put exact numbers on this in the worked example below.</p>
+<h2 id="the-radix-tree-data-structure-and-operations">The radix tree: data structure and operations<a class="headerlink" href="#the-radix-tree-data-structure-and-operations" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-radix-tree">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 430" role="img" aria-label="A radix tree of cached KV: three requests share a system-prompt prefix on one edge, branch into two task templates, and diverge into distinct user inputs, so the shared prefix's KV is computed once and reused.">
+  <defs>
+    <marker id="rt-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-radix-tree text{ fill:var(--ink-soft); }
+    #fig-radix-tree .node{ font:600 12px var(--mono,monospace); }
+    #fig-radix-tree .edge{ font:600 11.5px var(--mono,monospace); }
+    #fig-radix-tree .kv{ font:600 9.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-radix-tree .role{ font:700 11px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-radix-tree .req{ font:700 11px var(--sans,sans-serif); }
+    #fig-radix-tree .note{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-radix-tree .root{ font:700 11px var(--mono,monospace); fill:var(--muted); }
+  </style>
+
+
+
+  <g data-anim="1" fill="none" stroke-width="2.2" marker-end="url(#rt-arrow)">
+    <path class="viz-draw" style="--len:48" d="M380 56 L380 96" stroke="var(--accent)"/>
+  </g>
+
+  <g data-anim="2" fill="none" stroke-width="2" marker-end="url(#rt-arrow)">
+    <path class="viz-draw" style="--len:150" d="M380 166 C 380 196, 214 192, 214 222" stroke="var(--accent2,#3b82f6)"/>
+    <path class="viz-draw" style="--len:150" d="M380 166 C 380 196, 546 192, 546 222" stroke="var(--warn,#e0a106)"/>
+  </g>
+
+  <g data-anim="3" fill="none" stroke-width="1.8" marker-end="url(#rt-arrow)">
+    <path class="viz-draw" style="--len:96" d="M214 292 C 214 318, 120 322, 120 348" stroke="var(--accent2,#3b82f6)"/>
+    <path class="viz-draw" style="--len:96" d="M214 292 C 214 318, 308 322, 308 348" stroke="var(--accent2,#3b82f6)"/>
+    <path class="viz-draw" style="--len:60" d="M546 292 L546 348" stroke="var(--warn,#e0a106)"/>
+  </g>
+
+
+  <g data-anim="1">
+    <circle cx="380" cy="44" r="13" class="v-fill v-stroke" stroke-width="1.5"/>
+    <text x="380" y="48" text-anchor="middle" class="root">root</text>
+  </g>
+
+
+  <g data-anim="1">
+    <rect x="246" y="96" width="268" height="70" rx="9" class="v-fill v-accent-s" stroke-width="2"/>
+    <text x="380" y="118" text-anchor="middle" class="role">system prompt · shared prefix</text>
+    <text x="380" y="138" text-anchor="middle" class="edge v-accent" fill="var(--accent)">"You are a helpful assistant."</text>
+    <text x="380" y="156" text-anchor="middle" class="kv">KV slots [0…26] · prefilled ONCE</text>
+  </g>
+
+
+
+  <g data-anim="2">
+    <rect x="92" y="222" width="244" height="70" rx="9" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+    <text x="214" y="244" text-anchor="middle" class="role">task template</text>
+    <text x="214" y="264" text-anchor="middle" class="edge" fill="var(--accent2,#3b82f6)">"Translate to French:"</text>
+    <text x="214" y="282" text-anchor="middle" class="kv">KV slots [27…32]</text>
+  </g>
+
+  <g data-anim="2">
+    <rect x="424" y="222" width="244" height="70" rx="9" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+    <text x="546" y="244" text-anchor="middle" class="role">task template</text>
+    <text x="546" y="264" text-anchor="middle" class="edge" fill="var(--warn,#e0a106)">"Summarize:"</text>
+    <text x="546" y="282" text-anchor="middle" class="kv">KV slots [27…30]</text>
+  </g>
+
+
+
+  <g data-anim="3">
+    <rect x="18" y="348" width="204" height="62" rx="9" class="v-fill v-stroke" stroke-width="1.5"/>
+    <text x="120" y="368" text-anchor="middle" class="req v-accent" fill="var(--accent)">req 1</text>
+    <text x="120" y="386" text-anchor="middle" class="edge">"Hello world"</text>
+    <text x="120" y="403" text-anchor="middle" class="kv">unique suffix · new KV</text>
+  </g>
+
+  <g data-anim="3">
+    <rect x="234" y="348" width="204" height="62" rx="9" class="v-fill v-stroke" stroke-width="1.5"/>
+    <text x="336" y="368" text-anchor="middle" class="req v-accent" fill="var(--accent)">req 2</text>
+    <text x="336" y="386" text-anchor="middle" class="edge">"Good morning"</text>
+    <text x="336" y="403" text-anchor="middle" class="kv">unique suffix · new KV</text>
+  </g>
+
+  <g data-anim="3">
+    <rect x="444" y="348" width="204" height="62" rx="9" class="v-fill v-stroke" stroke-width="1.5"/>
+    <text x="546" y="368" text-anchor="middle" class="req v-accent" fill="var(--accent)">req 3</text>
+    <text x="546" y="386" text-anchor="middle" class="edge">"The quick brown…"</text>
+    <text x="546" y="403" text-anchor="middle" class="kv">unique suffix · new KV</text>
+  </g>
+
+
+  <g data-anim="4">
+    <line x1="514" y1="131" x2="700" y2="131" class="v-accent-s" stroke="var(--accent)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>
+    <text x="730" y="118" text-anchor="end" class="note">one edge holds the</text>
+    <text x="730" y="132" text-anchor="end" class="note">whole shared prompt;</text>
+    <text x="730" y="146" text-anchor="end" class="note">its KV is reused by</text>
+    <text x="730" y="160" text-anchor="end" class="note">all 3 requests</text>
+  </g>
+</svg>
+<figcaption><b>A radix tree shares KV along common prefixes and branches only where requests diverge.</b> All three requests reuse the single system-prompt edge (its KV is prefilled <b>once</b>), then split into two task templates, and finally attach their distinct user inputs as fresh leaves. Matching a new prompt walks down from the root to the longest cached prefix, so only the divergent suffix is recomputed.</figcaption>
+</figure>
+
+<p>A <strong>trie</strong> (prefix tree) stores strings by sharing common prefixes: each edge is one character, each path from root to a node spells a stored string. A <strong>radix tree</strong> (a.k.a. PATRICIA trie, compressed trie) is a trie where every chain of single-child nodes is collapsed into one node whose edge holds a <em>whole substring</em>. This compression is what makes it practical: a 2,000-token system prompt is one edge, not 2,000 nodes.</p>
+<p>SGLang adapts this to KV caching with a key twist: <strong>the &ldquo;characters&rdquo; are token IDs, and each node owns the KV-cache slots for its edge&rsquo;s tokens.</strong> Reuse the prefix → reuse those KV slots.</p>
+<div class="highlight"><pre><span></span><code>                       (root)
+                         |
+              &quot;You are a helpful assistant.&quot;   &lt;- shared system prompt (one edge)
+                         |  [KV slots for these tokens live here]
+              +----------+-----------+
+              |                      |
+   &quot;Translate to French:&quot;   &quot;Summarize:&quot;        &lt;- two task templates branch
+              |                      |
+   &quot;Hello world&quot;            &quot;The quick brown...&quot; &lt;- distinct user inputs
+</code></pre></div>
+<p>Each path from root to a node spells a token sequence; the node holds (a pointer to) the KV-cache entries for the tokens on the edge leading into it. When a new request arrives, we <strong>match its prompt against the tree</strong> to find the longest cached prefix, reuse that KV, and only prefill the <em>uncached suffix</em>.</p>
+<h3 id="what-a-node-actually-holds">What a node actually holds<a class="headerlink" href="#what-a-node-actually-holds" title="Permanent link">¶</a></h3>
+<p>In SGLang&rsquo;s source (<code>python/sglang/srt/mem_cache/radix_cache.py</code>), the node is <code>TreeNode</code>. Stripped to essentials, its real fields are:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TreeNode</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">children</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="n">TreeNode</span><span class="p">)</span>   <span class="c1"># child_key (first token / page) -&gt; child</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">parent</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">key</span> <span class="o">=</span> <span class="kc">None</span>        <span class="c1"># RadixKey: the token-id sequence on the edge INTO this node</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="kc">None</span>      <span class="c1"># torch.Tensor of KV-cache slot indices for those tokens</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lock_ref</span> <span class="o">=</span> <span class="mi">0</span>      <span class="c1"># &gt;0  =&gt; pinned, cannot be evicted (a running req needs it)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">last_access_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>  <span class="c1"># for LRU eviction</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">hit_count</span> <span class="o">=</span> <span class="mi">0</span>
+</code></pre></div>
+<p>Two fields carry the whole design:</p>
+<ul>
+<li><strong><code>value</code></strong> is <em>not</em> the KV tensors themselves; it is a tensor of <strong>indices</strong> into the global paged KV pool (the <code>token_to_kv_pool_allocator</code>). The radix tree is a thin index structure layered on top of the same paged memory you met in <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>. This separation is what lets one KV block be referenced by many tree nodes.</li>
+<li><strong><code>lock_ref</code></strong> is a reference count. While a request is actively using a node&rsquo;s KV (during its prefill or decode), the node is <em>locked</em> (<code>inc_lock_ref</code>) so eviction cannot reclaim it out from under a running kernel. When the request finishes, <code>dec_lock_ref</code> unlocks it, and the node becomes <em>evictable</em> — its KV lingers in the cache for future reuse until memory pressure forces it out.</li>
+</ul>
+<h3 id="matching-a-prefix">Matching a prefix<a class="headerlink" href="#matching-a-prefix" title="Permanent link">¶</a></h3>
+<p><code>match_prefix</code> walks down from the root, consuming as many tokens of the incoming key as it can. The core loop (<code>_match_prefix_helper</code>) is short and worth reading:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">_match_prefix_helper</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">,</span> <span class="n">key</span><span class="p">):</span>
+    <span class="c1"># key is the incoming request&#39;s token-id sequence (a RadixKey)</span>
+    <span class="n">child_key</span> <span class="o">=</span> <span class="n">key</span><span class="o">.</span><span class="n">child_key</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">page_size</span><span class="p">)</span>   <span class="c1"># hash of the first page of `key`</span>
+    <span class="n">value</span> <span class="o">=</span> <span class="p">[]</span>                                   <span class="c1"># collected KV-slot index tensors</span>
+
+    <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="n">key</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">child_key</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+        <span class="n">child</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">[</span><span class="n">child_key</span><span class="p">]</span>
+        <span class="c1"># how many leading tokens of `key` agree with this edge&#39;s tokens?</span>
+        <span class="n">prefix_len</span> <span class="o">=</span> <span class="n">child</span><span class="o">.</span><span class="n">key</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">page_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">page_size</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">prefix_len</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">child</span><span class="o">.</span><span class="n">key</span><span class="p">):</span>
+            <span class="c1"># partial match: the edge agrees for `prefix_len` tokens then diverges.</span>
+            <span class="c1"># SPLIT the edge so the shared part becomes its own node.</span>
+            <span class="n">new_node</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_split_node</span><span class="p">(</span><span class="n">child</span><span class="o">.</span><span class="n">key</span><span class="p">,</span> <span class="n">child</span><span class="p">,</span> <span class="n">prefix_len</span><span class="p">)</span>
+            <span class="n">value</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">new_node</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+            <span class="n">node</span> <span class="o">=</span> <span class="n">new_node</span>
+            <span class="k">break</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># full edge matched: take its whole KV, descend, continue with the rest.</span>
+            <span class="n">value</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">child</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+            <span class="n">node</span> <span class="o">=</span> <span class="n">child</span>
+            <span class="n">key</span> <span class="o">=</span> <span class="n">key</span><span class="p">[</span><span class="n">prefix_len</span><span class="p">:]</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">key</span><span class="p">):</span>
+                <span class="n">child_key</span> <span class="o">=</span> <span class="n">key</span><span class="o">.</span><span class="n">child_key</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">page_size</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">value</span><span class="p">,</span> <span class="n">node</span>     <span class="c1"># concatenated `value` = cached KV indices; `node` = match point</span>
+</code></pre></div>
+<p>The returned <code>value</code> tensors, concatenated, are exactly the KV-cache slots the new request can <strong>reuse without recomputation</strong>. The request then only prefills <code>key</code> from the match point onward.</p>
+<h3 id="splitting-and-inserting">Splitting and inserting<a class="headerlink" href="#splitting-and-inserting" title="Permanent link">¶</a></h3>
+<p>The interesting case is a <strong>partial</strong> match. Suppose the tree has one edge <code>"You are a helpful assistant. Be concise."</code> and a new request shares only <code>"You are a helpful assistant. "</code>. We must <em>split</em> the edge so the shared part is reusable:</p>
+<div class="highlight"><pre><span></span><code>before:  (root) --&quot;You are a helpful assistant. Be concise.&quot;--&gt; (A)
+
+after:   (root) --&quot;You are a helpful assistant. &quot;--&gt; (S)
+                                                       |
+                                  --&quot;Be concise.&quot;--&gt; (A, original KV preserved)
+</code></pre></div>
+<p><code>_split_node</code> creates the new intermediate node <code>S</code>, gives it the shared KV slots (<code>child.value[:split_len]</code>), re-parents the old node <code>A</code> under it with the remaining slots (<code>child.value[split_len:]</code>), and rewires children. No KV is recomputed — we only re-slice index tensors. The new request then attaches its divergent suffix as a fresh child of <code>S</code>. <strong>Insertion is just matching plus, if a suffix is left over, allocating new KV and adding a child.</strong></p>
+<p>A subtlety: matching and splitting happen at <strong>page granularity</strong> (<code>page_size</code>, default 1 token, but commonly a small power of two). Pages are the same allocation unit as in PagedAttention; the radix key uses <code>child_key(page_size)</code> so two requests share a node only when they agree on whole pages. With <code>page_size &gt; 1</code>, a divergence mid-page cannot be shared — a deliberate trade of a little reuse for cheaper, block-aligned bookkeeping.</p>
+<h3 id="eviction-lru-over-leaves">Eviction: LRU over leaves<a class="headerlink" href="#eviction-lru-over-leaves" title="Permanent link">¶</a></h3>
+<p>GPU memory is finite, so the tree must shrink under pressure. SGLang evicts with an <strong>LRU (least-recently-used) policy restricted to evictable leaves</strong>. Because <code>TreeNode.__lt__</code> compares <code>last_access_time</code>, the eviction routine heapifies the leaves and pops the oldest first:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">evict</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num_tokens</span><span class="p">):</span>
+    <span class="n">leaves</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_collect_leaves</span><span class="p">()</span>
+    <span class="n">heapq</span><span class="o">.</span><span class="n">heapify</span><span class="p">(</span><span class="n">leaves</span><span class="p">)</span>                 <span class="c1"># min-heap by last_access_time (oldest first)</span>
+    <span class="n">num_evicted</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="n">num_evicted</span> <span class="o">&lt;</span> <span class="n">num_tokens</span> <span class="ow">and</span> <span class="n">leaves</span><span class="p">:</span>
+        <span class="n">node</span> <span class="o">=</span> <span class="n">heapq</span><span class="o">.</span><span class="n">heappop</span><span class="p">(</span><span class="n">leaves</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">lock_ref</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>             <span class="c1"># pinned by a running request -&gt; skip</span>
+            <span class="k">continue</span>
+        <span class="c1"># free this node&#39;s KV slots back to the paged pool</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">token_to_kv_pool_allocator</span><span class="o">.</span><span class="n">free</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+        <span class="n">num_evicted</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_delete_leaf</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+        <span class="c1"># if the parent just became a childless, unlocked leaf, it is now evictable</span>
+        <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">children</span> <span class="o">==</span> <span class="p">{}</span> <span class="ow">and</span> <span class="n">node</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">lock_ref</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">heapq</span><span class="o">.</span><span class="n">heappush</span><span class="p">(</span><span class="n">leaves</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">parent</span><span class="p">)</span>
+</code></pre></div>
+<p>Three properties make this correct and effective:</p>
+<ul>
+<li><strong>Leaf-only eviction.</strong> You can never evict an interior node while its children live, because evicting a prefix would orphan the suffixes that depend on it. By construction, evicting leaves peels the tree from its tips inward — exactly the cold prefixes.</li>
+<li><strong>Lock-awareness.</strong> <code>lock_ref &gt; 0</code> nodes are skipped, so you never reclaim KV a running kernel is reading.</li>
+<li><strong>Cache-aware order.</strong> Recently used prefixes (your hot system prompt) have fresh <code>last_access_time</code> and sit at the bottom of the heap; they survive. SGLang also supports alternative strategies (LFU, priority-aware) via <code>EvictionStrategy</code>, but LRU is the default and the one to reason about.</li>
+</ul>
+<p>Beyond GPU, SGLang has a <strong>hierarchical</strong> variant (<code>hiradix_cache.py</code>, <code>memory_pool_host.py</code>) that backs evicted nodes to host/CPU memory (and even disk or a remote KV store) so a prefix that falls out of GPU can be paged back in faster than recomputing it — the same spirit as the multi-tier caches discussed in <a href="../12-production-mlops/03-caching-routing-cost.html">Caching, Routing &amp; Cost Control in Production</a>.</p>
+<h2 id="a-from-scratch-radixattention-cache">A from-scratch RadixAttention cache<a class="headerlink" href="#a-from-scratch-radixattention-cache" title="Permanent link">¶</a></h2>
+<p>Reading SGLang&rsquo;s production code is one thing; the idea sticks when you build it. Here is a self-contained, runnable token-level radix cache that captures match/insert/split/evict. It models KV slots as integers (real SGLang stores tensors of pool indices), which is all you need to understand the mechanics.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">heapq</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">itertools</span><span class="w"> </span><span class="kn">import</span> <span class="n">count</span>
+
+<span class="n">_slot_counter</span> <span class="o">=</span> <span class="n">count</span><span class="p">()</span>   <span class="c1"># stand-in for a paged KV allocator handing out slot ids</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Node</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">children</span> <span class="o">=</span> <span class="p">{}</span>          <span class="c1"># first_token -&gt; Node</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">key</span> <span class="o">=</span> <span class="p">[]</span>               <span class="c1"># token ids on the edge into this node</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="p">[]</span>             <span class="c1"># KV &quot;slot ids&quot; for those tokens (1 per token)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">parent</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lock_ref</span> <span class="o">=</span> <span class="mi">0</span>           <span class="c1"># pinned while a request uses this node</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">last_access</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__lt__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>        <span class="c1"># LRU ordering for the eviction heap</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">last_access</span> <span class="o">&lt;</span> <span class="n">other</span><span class="o">.</span><span class="n">last_access</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_match_len</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Number of leading tokens shared by sequences a and b.&quot;&quot;&quot;</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">x</span> <span class="o">!=</span> <span class="n">y</span><span class="p">:</span>
+            <span class="k">break</span>
+        <span class="n">n</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="n">n</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RadixCache</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">root</span> <span class="o">=</span> <span class="n">Node</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">num_tokens</span> <span class="o">=</span> <span class="mi">0</span>          <span class="c1"># total cached tokens (proxy for KV memory)</span>
+
+    <span class="c1"># ---- MATCH: longest cached prefix of `key` -------------------------------</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">match_prefix</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">):</span>
+        <span class="n">node</span><span class="p">,</span> <span class="n">matched_value</span><span class="p">,</span> <span class="n">matched_len</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">root</span><span class="p">,</span> <span class="p">[],</span> <span class="mi">0</span>
+        <span class="n">node</span><span class="o">.</span><span class="n">last_access</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
+        <span class="k">while</span> <span class="n">key</span><span class="p">:</span>
+            <span class="n">first</span> <span class="o">=</span> <span class="n">key</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">first</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+                <span class="k">break</span>
+            <span class="n">child</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">[</span><span class="n">first</span><span class="p">]</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">last_access</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
+            <span class="n">p</span> <span class="o">=</span> <span class="n">_match_len</span><span class="p">(</span><span class="n">child</span><span class="o">.</span><span class="n">key</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">p</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">child</span><span class="o">.</span><span class="n">key</span><span class="p">):</span>           <span class="c1"># partial -&gt; split, then stop</span>
+                <span class="n">child</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_split</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">child</span><span class="p">,</span> <span class="n">p</span><span class="p">)</span>
+                <span class="n">matched_value</span> <span class="o">+=</span> <span class="n">child</span><span class="o">.</span><span class="n">value</span>
+                <span class="n">matched_len</span> <span class="o">+=</span> <span class="n">p</span>
+                <span class="n">node</span> <span class="o">=</span> <span class="n">child</span>
+                <span class="k">break</span>
+            <span class="k">else</span><span class="p">:</span>                            <span class="c1"># full edge consumed -&gt; descend</span>
+                <span class="n">matched_value</span> <span class="o">+=</span> <span class="n">child</span><span class="o">.</span><span class="n">value</span>
+                <span class="n">matched_len</span> <span class="o">+=</span> <span class="n">p</span>
+                <span class="n">node</span> <span class="o">=</span> <span class="n">child</span>
+                <span class="n">key</span> <span class="o">=</span> <span class="n">key</span><span class="p">[</span><span class="n">p</span><span class="p">:]</span>
+        <span class="k">return</span> <span class="n">node</span><span class="p">,</span> <span class="n">matched_value</span><span class="p">,</span> <span class="n">matched_len</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_split</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parent</span><span class="p">,</span> <span class="n">child</span><span class="p">,</span> <span class="n">split_len</span><span class="p">):</span>
+        <span class="n">mid</span> <span class="o">=</span> <span class="n">Node</span><span class="p">()</span>
+        <span class="n">mid</span><span class="o">.</span><span class="n">parent</span> <span class="o">=</span> <span class="n">parent</span>
+        <span class="n">mid</span><span class="o">.</span><span class="n">key</span> <span class="o">=</span> <span class="n">child</span><span class="o">.</span><span class="n">key</span><span class="p">[:</span><span class="n">split_len</span><span class="p">]</span>
+        <span class="n">mid</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">child</span><span class="o">.</span><span class="n">value</span><span class="p">[:</span><span class="n">split_len</span><span class="p">]</span>      <span class="c1"># shared prefix KV</span>
+        <span class="n">mid</span><span class="o">.</span><span class="n">lock_ref</span> <span class="o">=</span> <span class="n">child</span><span class="o">.</span><span class="n">lock_ref</span>
+        <span class="n">child</span><span class="o">.</span><span class="n">key</span> <span class="o">=</span> <span class="n">child</span><span class="o">.</span><span class="n">key</span><span class="p">[</span><span class="n">split_len</span><span class="p">:]</span>        <span class="c1"># remainder stays on old node</span>
+        <span class="n">child</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">child</span><span class="o">.</span><span class="n">value</span><span class="p">[</span><span class="n">split_len</span><span class="p">:]</span>
+        <span class="n">child</span><span class="o">.</span><span class="n">parent</span> <span class="o">=</span> <span class="n">mid</span>
+        <span class="n">mid</span><span class="o">.</span><span class="n">children</span> <span class="o">=</span> <span class="p">{</span><span class="n">child</span><span class="o">.</span><span class="n">key</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">child</span><span class="p">}</span>
+        <span class="n">parent</span><span class="o">.</span><span class="n">children</span><span class="p">[</span><span class="n">mid</span><span class="o">.</span><span class="n">key</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span> <span class="o">=</span> <span class="n">mid</span>
+        <span class="k">return</span> <span class="n">mid</span>
+
+    <span class="c1"># ---- INSERT: cache a full prompt+output, return reused-token count --------</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">insert</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">):</span>
+        <span class="n">node</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">matched_len</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">match_prefix</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">key</span><span class="p">))</span>
+        <span class="n">suffix</span> <span class="o">=</span> <span class="n">key</span><span class="p">[</span><span class="n">matched_len</span><span class="p">:]</span>
+        <span class="k">if</span> <span class="n">suffix</span><span class="p">:</span>                                <span class="c1"># allocate fresh KV for the new tail</span>
+            <span class="n">child</span> <span class="o">=</span> <span class="n">Node</span><span class="p">()</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">parent</span> <span class="o">=</span> <span class="n">node</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">key</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">suffix</span><span class="p">)</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="p">[</span><span class="nb">next</span><span class="p">(</span><span class="n">_slot_counter</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">suffix</span><span class="p">]</span>   <span class="c1"># &quot;compute&quot; KV</span>
+            <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">[</span><span class="n">suffix</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span> <span class="o">=</span> <span class="n">child</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">num_tokens</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">suffix</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">matched_len</span>                        <span class="c1"># how many tokens we reused</span>
+
+    <span class="c1"># ---- LOCK / UNLOCK: pin a path so it survives eviction -------------------</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">lock_path</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">,</span> <span class="n">delta</span><span class="p">):</span>
+        <span class="k">while</span> <span class="n">node</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">node</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">root</span><span class="p">:</span>
+            <span class="n">node</span><span class="o">.</span><span class="n">lock_ref</span> <span class="o">+=</span> <span class="n">delta</span>
+            <span class="n">node</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">parent</span>
+
+    <span class="c1"># ---- EVICT: free `n` tokens, LRU over evictable leaves -------------------</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">evict</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">):</span>
+        <span class="n">leaves</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_leaves</span><span class="p">()</span> <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">lock_ref</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]</span>
+        <span class="n">heapq</span><span class="o">.</span><span class="n">heapify</span><span class="p">(</span><span class="n">leaves</span><span class="p">)</span>
+        <span class="n">freed</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">while</span> <span class="n">freed</span> <span class="o">&lt;</span> <span class="n">n</span> <span class="ow">and</span> <span class="n">leaves</span><span class="p">:</span>
+            <span class="n">node</span> <span class="o">=</span> <span class="n">heapq</span><span class="o">.</span><span class="n">heappop</span><span class="p">(</span><span class="n">leaves</span><span class="p">)</span>
+            <span class="n">freed</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">num_tokens</span> <span class="o">-=</span> <span class="nb">len</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+            <span class="k">del</span> <span class="n">node</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">children</span><span class="p">[</span><span class="n">node</span><span class="o">.</span><span class="n">key</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span>
+            <span class="n">parent</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">parent</span>
+            <span class="k">if</span> <span class="n">parent</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">root</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">parent</span><span class="o">.</span><span class="n">children</span> <span class="ow">and</span> <span class="n">parent</span><span class="o">.</span><span class="n">lock_ref</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">heapq</span><span class="o">.</span><span class="n">heappush</span><span class="p">(</span><span class="n">leaves</span><span class="p">,</span> <span class="n">parent</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">freed</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_leaves</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">out</span><span class="p">,</span> <span class="n">stack</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">root</span><span class="p">]</span>
+        <span class="k">while</span> <span class="n">stack</span><span class="p">:</span>
+            <span class="n">nd</span> <span class="o">=</span> <span class="n">stack</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">nd</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+                <span class="n">stack</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">children</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+            <span class="k">elif</span> <span class="n">nd</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">root</span><span class="p">:</span>
+                <span class="n">out</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">nd</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="c1"># ---- demo: a shared system prompt across three requests ----------------------</span>
+<span class="n">cache</span> <span class="o">=</span> <span class="n">RadixCache</span><span class="p">()</span>
+<span class="n">sys_prompt</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="s2">&quot;SYS:&quot;</span><span class="p">)</span>                 <span class="c1"># pretend each char is a token id</span>
+<span class="n">r1</span> <span class="o">=</span> <span class="n">sys_prompt</span> <span class="o">+</span> <span class="nb">list</span><span class="p">(</span><span class="s2">&quot;hello&quot;</span><span class="p">)</span>
+<span class="n">r2</span> <span class="o">=</span> <span class="n">sys_prompt</span> <span class="o">+</span> <span class="nb">list</span><span class="p">(</span><span class="s2">&quot;help&quot;</span><span class="p">)</span>
+<span class="n">r3</span> <span class="o">=</span> <span class="n">sys_prompt</span> <span class="o">+</span> <span class="nb">list</span><span class="p">(</span><span class="s2">&quot;hi&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;req1 reused:&quot;</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="n">r1</span><span class="p">))</span>   <span class="c1"># 0  (cold cache)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;req2 reused:&quot;</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="n">r2</span><span class="p">))</span>   <span class="c1"># 5  (&quot;SYS:h&quot; shared) -&gt; triggers a split</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;req3 reused:&quot;</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="n">r3</span><span class="p">))</span>   <span class="c1"># 4  (&quot;SYS:&quot; shared)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;tokens cached:&quot;</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">num_tokens</span><span class="p">)</span> <span class="c1"># far fewer than 5+4+3 prefilled tokens</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;freed by evict(3):&quot;</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">evict</span><span class="p">(</span><span class="mi">3</span><span class="p">))</span>
+</code></pre></div>
+<p>Run it: request 1 is a cold miss; request 2 reuses the shared <code>"SYS:h"</code> prefix and forces a node split; request 3 reuses <code>"SYS:"</code>. The total cached-token count is well below the sum of the three prompt lengths, which is precisely the prefill compute you saved. This ~120-line toy is, structurally, what <code>radix_cache.py</code> does at scale — minus paging, GQA, page-size alignment, host offload, and CUDA.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: forgetting to lock before you compute</p>
+<p>A running request&rsquo;s prefix must be <strong>locked</strong> (<code>lock_ref += 1</code> along its path) <em>before</em> you start its forward pass and unlocked only after it finishes. If you skip this, a concurrent request under memory pressure can evict KV slots your in-flight kernel is still reading, producing silent garbage or an out-of-bounds access. In the toy above, <code>lock_path</code> exists for exactly this reason; in SGLang it is <code>inc_lock_ref</code> / <code>dec_lock_ref</code>. Reference counting — not a global mutex — is what lets many requests safely share one node.</p>
+</div>
+<h2 id="the-frontend-language-structured-llm-programs">The frontend language: structured LLM programs<a class="headerlink" href="#the-frontend-language-structured-llm-programs" title="Permanent link">¶</a></h2>
+<p>The radix tree gives you <em>implicit</em> reuse: send overlapping prompts and they share KV automatically, even through the OpenAI-compatible HTTP server with zero code changes. But SGLang&rsquo;s second contribution is letting you <em>express structure explicitly</em> so the runtime can do even better — branch in parallel, share prefixes deliberately, and constrain outputs.</p>
+<p>The frontend lives in <code>python/sglang/lang/</code>. You write a function decorated with <code>@sgl.function</code>; inside, a state object <code>s</code> accumulates the program, and primitives describe LLM calls.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sglang</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sgl</span>
+
+<span class="nd">@sgl</span><span class="o">.</span><span class="n">function</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">tip_suggestion</span><span class="p">(</span><span class="n">s</span><span class="p">):</span>
+    <span class="n">s</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="s2">&quot;You are an expert assistant. Give concise, correct advice.&quot;</span><span class="p">)</span>
+    <span class="n">s</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">user</span><span class="p">(</span><span class="s2">&quot;Give me three tips for staying healthy.&quot;</span><span class="p">)</span>
+    <span class="c1"># Branch: generate three independent tips IN PARALLEL, all sharing the prefix above.</span>
+    <span class="n">forks</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">fork</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">f</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">forks</span><span class="p">):</span>
+        <span class="n">f</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">assistant</span><span class="p">(</span><span class="n">sgl</span><span class="o">.</span><span class="n">gen</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;tip_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.7</span><span class="p">))</span>
+    <span class="c1"># Recombine the children back into the parent state.</span>
+    <span class="n">forks</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+    <span class="n">tips</span> <span class="o">=</span> <span class="p">[</span><span class="n">f</span><span class="p">[</span><span class="s2">&quot;tip_&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">)]</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">f</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">forks</span><span class="p">)]</span>
+    <span class="n">s</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">assistant</span><span class="p">(</span><span class="s2">&quot;Here are three tips:</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tips</span><span class="p">))</span>
+
+<span class="c1"># Connect to a running runtime (sglang.launch_server) and run it.</span>
+<span class="n">backend</span> <span class="o">=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">RuntimeEndpoint</span><span class="p">(</span><span class="s2">&quot;http://localhost:30000&quot;</span><span class="p">)</span>
+<span class="n">sgl</span><span class="o">.</span><span class="n">set_default_backend</span><span class="p">(</span><span class="n">backend</span><span class="p">)</span>
+<span class="n">state</span> <span class="o">=</span> <span class="n">tip_suggestion</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">state</span><span class="p">[</span><span class="s2">&quot;tip_0&quot;</span><span class="p">],</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;tip_1&quot;</span><span class="p">],</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;tip_2&quot;</span><span class="p">])</span>
+</code></pre></div>
+<p>The primitives (from <code>python/sglang/lang/api.py</code>):</p>
+<ul>
+<li><strong><code>gen(name, max_tokens=..., temperature=..., stop=..., regex=..., json_schema=..., choices=...)</code></strong> — a model generation, bound to a variable <code>name</code> you can read back from the state. With <code>regex</code>/<code>json_schema</code> it constrains output (next section); with <code>choices</code> it becomes a <code>select</code>.</li>
+<li><strong><code>select(name, choices=[...])</code></strong> — pick the single most likely option from a fixed list, scored by the model&rsquo;s own log-probabilities (length-normalized by default). This is a <em>constrained classification</em> primitive: the output is guaranteed to be one of the choices, and it costs one short scoring pass rather than open-ended generation.</li>
+<li><strong><code>fork(k)</code></strong> — split the current state into <code>k</code> children that <strong>all share the parent&rsquo;s prefix</strong> (and thus its KV cache, via RadixAttention). Branches run concurrently on the runtime.</li>
+<li><strong><code>join()</code></strong> — synchronize forked branches and gather their variables back, so the parent can read each child&rsquo;s results.</li>
+<li><strong><code>system</code> / <code>user</code> / <code>assistant</code></strong> (and their <code>_begin</code>/<code>_end</code> forms) — emit role-tagged segments using the model&rsquo;s <a href="../05-posttraining-alignment/02-chat-templates-packing.html">chat template</a>.</li>
+</ul>
+<h3 id="why-this-matters-beyond-ergonomics">Why this matters beyond ergonomics<a class="headerlink" href="#why-this-matters-beyond-ergonomics" title="Permanent link">¶</a></h3>
+<p><code>fork</code> is where the frontend and RadixAttention meet. When you fork three branches off a shared context, SGLang knows — <em>statically, before running</em> — that all three share a prefix, so it computes that prefix&rsquo;s KV once and points all three branches at the same radix node. Compare this to issuing three independent HTTP requests: with RadixAttention the prefix is <em>probably</em> still cached, but with <code>fork</code> it is <em>guaranteed</em> shared and the branches are co-scheduled into the same batch. The frontend turns prefix sharing from a lucky cache hit into a planned execution.</p>
+<p>The same applies to agents and chained calls. A multi-step program (extract → reason → format) keeps a single growing state; each step&rsquo;s prompt is the previous state plus new text, so each call reuses everything before it. Tree-of-thought search, self-consistency voting, and branch-and-evaluate harnesses are the canonical fits — the same patterns from <a href="../08-agents-harness/02-agentic-loop.html">The Agentic Loop</a> and <a href="../05-posttraining-alignment/10-reasoning-test-time-compute.html">Reasoning, Chain-of-Thought &amp; Test-Time Compute</a>.</p>
+<h3 id="tracing-and-interpretation">Tracing and interpretation<a class="headerlink" href="#tracing-and-interpretation" title="Permanent link">¶</a></h3>
+<p>How does <code>fork</code> know the prefix statically? SGLang can <strong>trace</strong> the program (<code>lang/tracer.py</code>) into an intermediate representation (<code>lang/ir.py</code>) — a dataflow graph of <code>Gen</code>, <code>Select</code>, <code>Fork</code>, <code>Join</code> nodes — before execution. The interpreter (<code>lang/interpreter.py</code>) then walks that graph, dispatching calls to the runtime and managing the shared state. Tracing lets the system reorder independent calls, batch siblings, and reuse prefixes without you orchestrating any of it. For simple use you never see the IR; for advanced control flow it is what makes the structure analyzable.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: you do not need the frontend to get RadixAttention</p>
+<p>RadixAttention is a property of the <strong>runtime</strong>, so the plain OpenAI-compatible endpoint (<code>/v1/chat/completions</code>) already reuses shared prefixes across independent requests with no code changes. Use the <code>gen</code>/<code>fork</code> frontend when you want <em>guaranteed</em> co-scheduled sharing and parallel branching (agents, tree search, batch evaluation). For a stateless chat proxy, just point your existing OpenAI client at the SGLang server and enjoy free prefix caching.</p>
+</div>
+<h2 id="constrained-decoding-making-the-model-obey-a-grammar">Constrained decoding: making the model obey a grammar<a class="headerlink" href="#constrained-decoding-making-the-model-obey-a-grammar" title="Permanent link">¶</a></h2>
+<p>A recurring production need is <em>structured output</em>: valid JSON, a value from an enum, a number, a date. SGLang&rsquo;s frontend exposes this through <code>gen(..., regex=...)</code>, <code>gen(..., json_schema=...)</code>, and <code>select(...)</code>, backed by a fast constrained-decoding engine in <code>python/sglang/srt/constrained/</code>.</p>
+<p>The mechanism (covered in depth in <a href="../07-inference-serving/10-structured-generation.html">Structured &amp; Constrained Generation</a>) is <strong>logit masking against a finite-state machine (FSM)</strong>. A regular expression — or a JSON schema compiled to a grammar — is converted to an FSM over the <em>token vocabulary</em>. At each decode step the FSM is in some state; only tokens whose first character(s) keep the FSM on a valid path are allowed. SGLang sets the logits of every disallowed token to <span class="arithmatex">\(-\infty\)</span> before sampling:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_fsm_mask</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">allowed_token_ids</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Zero out probability mass on tokens that would violate the grammar.&quot;&quot;&quot;</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full_like</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">))</span>
+    <span class="n">mask</span><span class="p">[</span><span class="n">allowed_token_ids</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="k">return</span> <span class="n">logits</span> <span class="o">+</span> <span class="n">mask</span>        <span class="c1"># softmax over this only samples from allowed tokens</span>
+</code></pre></div>
+<p>The expensive part is computing <code>allowed_token_ids</code> per state. The naive approach scans the whole vocabulary (e.g. 150k tokens) at every step — pure CPU overhead that can dominate decode latency. SGLang&rsquo;s key optimization is a <strong>compressed FSM with jump-forward decoding</strong>: when the grammar forces a run of tokens (e.g. after <code>{"name":</code> the next characters <em>must</em> be <code>"</code>), the engine doesn&rsquo;t sample them one at a time. It <em>jumps forward</em>, emitting the forced substring in a single step and skipping the model calls entirely. For a JSON schema with many fixed keys and punctuation, jump-forward can collapse a large fraction of decode steps. SGLang integrates grammar backends (historically its own, plus <code>outlines</code> and <code>xgrammar</code>) and caches compiled FSMs so a repeated schema is compiled once.</p>
+<p><code>select</code> is a different, even cheaper kind of constraint: instead of decoding under a mask, it <strong>scores</strong> each candidate string against the prompt and returns the highest-probability one (by default length-normalized log-prob; other methods live in <code>lang/choices.py</code>). For &ldquo;is this sentiment positive/negative/neutral?&rdquo; <code>select</code> is both faster and strictly correct — the output cannot be off-list.</p>
+<h2 id="the-runtime-and-the-zero-overhead-scheduler">The runtime and the zero-overhead scheduler<a class="headerlink" href="#the-runtime-and-the-zero-overhead-scheduler" title="Permanent link">¶</a></h2>
+<p>The frontend is the brain; the <strong>runtime</strong> is the muscle. Launch it from the CLI you have locally:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Start an OpenAI-compatible SGLang server with RadixAttention on by default.</span>
+python<span class="w"> </span>-m<span class="w"> </span>sglang.launch_server<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model-path<span class="w"> </span>meta-llama/Llama-3.1-8B-Instruct<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--port<span class="w"> </span><span class="m">30000</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--tp-size<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\ </span><span class="w">                </span><span class="c1"># tensor-parallel degree (see ch 7.11)</span>
+<span class="w">    </span>--mem-fraction-static<span class="w"> </span><span class="m">0</span>.85<span class="w"> </span><span class="se">\ </span><span class="w"> </span><span class="c1"># fraction of GPU mem reserved for weights+KV pool</span>
+<span class="w">    </span>--chunked-prefill-size<span class="w"> </span><span class="m">8192</span><span class="w">   </span><span class="c1"># cap prefill tokens per step (ch 7.8)</span>
+
+<span class="c1"># Prefix caching (RadixAttention) is ENABLED by default; disable to A/B test:</span>
+<span class="c1">#   --disable-radix-cache</span>
+</code></pre></div>
+<p>Internally the runtime mirrors the architecture from <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a>: a <strong>tokenizer manager</strong> (HTTP front), a <strong>scheduler</strong> (<code>srt/managers/scheduler.py</code>) that batches requests and drives the model, and a <strong>detokenizer manager</strong> that streams text back. The scheduler owns the <code>RadixCache</code>, runs continuous batching, applies chunked prefill, and decides — every step — which requests to prefill, which to decode, and which to wait. Its admission/eviction logic lives in <code>srt/managers/schedule_policy.py</code>, which is <em>cache-aware</em>: it prefers to schedule requests that hit long cached prefixes, because those are cheap to admit.</p>
+<h3 id="the-zero-overhead-scheduler">The &ldquo;zero-overhead&rdquo; scheduler<a class="headerlink" href="#the-zero-overhead-scheduler" title="Permanent link">¶</a></h3>
+<p>Here is a problem that sounds boring but dominates real throughput: <strong>the CPU scheduler is in the critical path</strong>. Each step the engine must, on the CPU, pick the batch, update the radix tree, build sampling metadata, prepare input tensors, and launch kernels. If the GPU forward pass for a decode step takes, say, 8 ms but the Python scheduling around it takes 4 ms, the GPU idles 33% of the time. The GPU is the expensive resource; idling it is the cardinal sin of an inference engine.</p>
+<p>SGLang&rsquo;s <strong>zero-overhead scheduler</strong> (sometimes called <em>overlap scheduling</em>) attacks this by <strong>overlapping CPU scheduling with GPU compute</strong>. The trick: while the GPU executes step <span class="arithmatex">\(t\)</span>&rsquo;s forward pass, the CPU concurrently prepares the batch and metadata for step <span class="arithmatex">\(t+1\)</span>. By the time the GPU finishes step <span class="arithmatex">\(t\)</span>, step <span class="arithmatex">\(t+1\)</span>&rsquo;s inputs are already staged, so kernels launch back-to-back with no bubble.</p>
+<div class="highlight"><pre><span></span><code>Without overlap (CPU and GPU alternate, GPU idles during scheduling):
+  CPU: [sched t]              [sched t+1]              [sched t+2]
+  GPU:          [fwd t]                  [fwd t+1]                 [fwd t+2]
+       &lt;-idle-&gt;        &lt;-idle-&gt;                 &lt;-idle-&gt;
+
+With overlap scheduling (CPU step t+1 runs UNDER GPU step t):
+  CPU: [sched t][sched t+1][sched t+2][sched t+3]
+  GPU:          [  fwd t  ][ fwd t+1 ][ fwd t+2 ]   &lt;- GPU never waits on the CPU
+</code></pre></div>
+<p>Combined with <strong>CUDA graphs</strong> (capturing the decode forward pass once and replaying it to eliminate per-kernel launch overhead — see <a href="../04-kernels-efficiency/09-compilers-fusion.html">Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a>), the steady-state decode loop becomes almost pure GPU work. This is why SGLang&rsquo;s decode throughput is competitive-to-leading: the scheduler stops being the bottleneck. The implementation realizes this by running model execution and the next batch&rsquo;s preparation on separate streams/threads so their timelines overlap; conceptually:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Pseudocode for the overlap idea (the real code uses CUDA streams + a worker).</span>
+<span class="n">prev</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">prepare_batch</span><span class="p">()</span>          <span class="c1"># build batch for step 0</span>
+<span class="n">launch_forward</span><span class="p">(</span><span class="n">prev</span><span class="p">)</span>                      <span class="c1"># GPU starts step 0 (async)</span>
+<span class="k">while</span> <span class="n">running</span><span class="p">:</span>
+    <span class="n">nxt</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">prepare_batch</span><span class="p">()</span>       <span class="c1"># CPU builds step t+1 WHILE GPU runs step t</span>
+    <span class="n">sync</span><span class="p">(</span><span class="n">prev</span><span class="p">)</span>                            <span class="c1"># wait only for GPU step t to finish</span>
+    <span class="n">sample_and_update</span><span class="p">(</span><span class="n">prev</span><span class="p">)</span>               <span class="c1"># detokenize, update radix tree</span>
+    <span class="n">launch_forward</span><span class="p">(</span><span class="n">nxt</span><span class="p">)</span>                   <span class="c1"># immediately launch step t+1</span>
+    <span class="n">prev</span> <span class="o">=</span> <span class="n">nxt</span>
+</code></pre></div>
+<p>The win is structural, not a micro-optimization: it removes a <em>serial dependency</em>, so it compounds with everything else (batch size, GQA, quantization).</p>
+<h2 id="a-worked-example-how-much-does-radixattention-save">A worked example: how much does RadixAttention save?<a class="headerlink" href="#a-worked-example-how-much-does-radixattention-save" title="Permanent link">¶</a></h2>
+<div class="admonition example">
+<p class="admonition-title">Worked example: 1,000 requests sharing a 2,000-token system prompt</p>
+<p><strong>Setup.</strong> We serve a 70B model (GQA: 80 layers, 8 KV heads, <span class="arithmatex">\(d_{\text{head}}=128\)</span>, bf16) to 1,000 chat requests. Every request begins with the <strong>same 2,000-token system prompt</strong>, then appends a unique 50-token user message. We compare prefill cost with and without RadixAttention.</p>
+<p><strong>KV cache per token</strong> (from the earlier formula):
+$$
+2 \times 80 \times 8 \times 128 \times 2 = 327{,}680 \text{ bytes} \approx 320 \text{KiB/token}.
+$$
+The shared prefix costs <span class="arithmatex">\(2000 \times 320\ \text{KiB} \approx 625\ \text{MiB}\)</span> of KV — <strong>stored once</strong>.</p>
+<p><strong>Prefill FLOPs.</strong> A forward pass costs <span class="arithmatex">\(\approx 2P\)</span> FLOPs per token for a dense <span class="arithmatex">\(P\)</span>-parameter model (<span class="arithmatex">\(P = 70 \times 10^9\)</span>), so per token <span class="arithmatex">\(\approx 1.4 \times 10^{11}\)</span> FLOPs.</p>
+<p><em>Without RadixAttention</em> every request re-prefills all <span class="arithmatex">\(2000 + 50 = 2050\)</span> tokens:
+$$
+1000 \times 2050 \times 1.4\times 10^{11} \approx 2.87 \times 10^{17} \text{FLOPs}.
+$$</p>
+<p><em>With RadixAttention</em> the 2,000-token prefix is prefilled <strong>once</strong>; each request prefills only its unique 50-token suffix:
+$$
+\underbrace{2000 \times 1.4\times 10^{11}}<em _text_suffixes="\text{suffixes">{\text{prefix, once}} + \underbrace{1000 \times 50 \times 1.4\times 10^{11}}</em>.
+$$}} \approx 2.8\times 10^{14} + 7.0 \times 10^{15} \approx 7.3 \times 10^{15} \text{FLOPs</p>
+<p><strong>Speedup on prefill:</strong> <span class="arithmatex">\(2.87\times 10^{17} / 7.3\times 10^{15} \approx \mathbf{39\times}\)</span> less prefill compute. The shared prefix went from 97.6% of the prefill work to a one-time cost. Decode work is unchanged (each request still generates its own tokens), so the <em>end-to-end</em> speedup depends on your prefill/decode ratio — but for short-output, long-shared-prompt workloads (classification, routing, RAG with a fixed instruction block), the win is enormous.</p>
+<p><strong>Memory check.</strong> The 625 MiB shared prefix easily fits; the 1,000 unique 50-token suffixes add <span class="arithmatex">\(1000 \times 50 \times 320\ \text{KiB} \approx 16\ \text{GiB}\)</span> — substantial, which is exactly why eviction and paging matter. As requests finish, their suffix nodes unlock and the LRU evictor reclaims them while keeping the hot shared prefix pinned.</p>
+</div>
+<p>The take-away: <strong>RadixAttention converts repeated prefill into a one-time cost plus cheap suffix prefill.</strong> The more your traffic shares prefixes, the closer you get to that 39× figure; with all-unique prompts the radix tree degenerates to a flat list of leaves and you pay roughly the same as without it (minus tiny bookkeeping).</p>
+<h2 id="sglang-vs-vllm-a-practical-comparison">SGLang vs vLLM: a practical comparison<a class="headerlink" href="#sglang-vs-vllm-a-practical-comparison" title="Permanent link">¶</a></h2>
+<p>Both engines descend from the same insights (continuous batching, paged KV) and have converged feature-wise — vLLM added automatic prefix caching; SGLang added strong paged-attention kernels. They are more alike than different. The distinctions worth knowing:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>SGLang</th>
+<th>vLLM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>KV reuse data structure</td>
+<td>Radix tree of prefixes (<code>RadixCache</code>), always-on, cross-request</td>
+<td>Automatic prefix caching via block-hash table; PagedAttention blocks</td>
+</tr>
+<tr>
+<td>Headline original idea</td>
+<td>RadixAttention + structured frontend</td>
+<td>PagedAttention (block-paged KV)</td>
+</tr>
+<tr>
+<td>Frontend programming model</td>
+<td><code>gen</code>/<code>select</code>/<code>fork</code>/<code>join</code> DSL for multi-call programs</td>
+<td>Primarily request-in/text-out; LLM Python API + OpenAI server</td>
+</tr>
+<tr>
+<td>Scheduler</td>
+<td>Zero-overhead / overlap scheduler (CPU under GPU)</td>
+<td>Continuous batching; its own scheduler optimizations</td>
+</tr>
+<tr>
+<td>Constrained decoding</td>
+<td>Compressed FSM + jump-forward; xgrammar/outlines backends</td>
+<td>Guided decoding via outlines/xgrammar</td>
+</tr>
+<tr>
+<td>Best-fit workload</td>
+<td>Branchy/agentic programs, heavy shared prefixes, structured output</td>
+<td>General-purpose high-throughput serving, very broad model &amp; HW support</td>
+</tr>
+<tr>
+<td>Ecosystem breadth</td>
+<td>Fast-moving, strong on reasoning/agent serving</td>
+<td>Largest model zoo, hardware backends, integrations</td>
+</tr>
+</tbody>
+</table>
+<p><strong>When to reach for SGLang:</strong> workloads with strong prefix structure (shared system prompts, few-shot, RAG instruction blocks), agentic/tree-search programs where <code>fork</code>/<code>join</code> express parallel branches, heavy structured-output (JSON/grammar) needs, and reasoning servers where the overlap scheduler&rsquo;s decode throughput shines. Several RL training stacks use SGLang as their rollout engine for exactly these reasons — see <a href="../06-rl-infra/04-verl.html">veRL: HybridFlow &amp; The Single-Controller Architecture</a> and <a href="../06-rl-infra/02-generation-training-loop.html">The Generation–Training Loop &amp; Rollout Engines</a>.</p>
+<p><strong>When vLLM may fit better:</strong> maximum model/hardware coverage, an existing vLLM-centric deployment, or when you simply want the broadest, most battle-tested OpenAI-compatible server. In practice many teams benchmark both on <em>their</em> traffic — the right answer is workload-dependent, and both projects move fast enough that any specific throughput claim ages within months.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: the two ideas are composable, not competing</p>
+<p>RadixAttention and PagedAttention are orthogonal. PagedAttention is about <em>how KV blocks are allocated and addressed</em> (non-contiguous, paged). RadixAttention is about <em>which requests share which blocks</em> (a prefix tree over those blocks). SGLang in fact runs paged attention kernels underneath its radix tree — the tree stores <em>indices into paged blocks</em>. You can have either without the other, and the best systems have both.</p>
+</div>
+<h2 id="putting-it-together-end-to-end-usage">Putting it together: end-to-end usage<a class="headerlink" href="#putting-it-together-end-to-end-usage" title="Permanent link">¶</a></h2>
+<p>A complete, runnable client that exercises shared prefixes, parallel forks, and constrained output against a locally launched server:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sglang</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sgl</span>
+
+<span class="c1"># Assumes: python -m sglang.launch_server --model-path &lt;m&gt; --port 30000 is running.</span>
+<span class="n">sgl</span><span class="o">.</span><span class="n">set_default_backend</span><span class="p">(</span><span class="n">sgl</span><span class="o">.</span><span class="n">RuntimeEndpoint</span><span class="p">(</span><span class="s2">&quot;http://localhost:30000&quot;</span><span class="p">))</span>
+
+<span class="nd">@sgl</span><span class="o">.</span><span class="n">function</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">classify_and_explain</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">review</span><span class="p">):</span>
+    <span class="c1"># Shared instruction block: identical across every call -&gt; cached once by RadixAttention.</span>
+    <span class="n">s</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="s2">&quot;You are a sentiment classifier. Be precise.&quot;</span><span class="p">)</span>
+    <span class="n">s</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">user</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Classify the sentiment of this review:</span><span class="se">\n</span><span class="si">{</span><span class="n">review</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># Constrained: output MUST be one of these three labels (FSM-masked / scored).</span>
+    <span class="n">s</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">assistant</span><span class="p">(</span><span class="s2">&quot;Sentiment: &quot;</span> <span class="o">+</span> <span class="n">sgl</span><span class="o">.</span><span class="n">gen</span><span class="p">(</span><span class="s2">&quot;label&quot;</span><span class="p">,</span>
+                                               <span class="n">choices</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;positive&quot;</span><span class="p">,</span> <span class="s2">&quot;negative&quot;</span><span class="p">,</span> <span class="s2">&quot;neutral&quot;</span><span class="p">]))</span>
+    <span class="c1"># Now branch: 2 independent one-sentence justifications, sharing everything above.</span>
+    <span class="n">forks</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">fork</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">f</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">forks</span><span class="p">):</span>
+        <span class="n">f</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">user</span><span class="p">(</span><span class="s2">&quot;Give a one-sentence reason.&quot;</span><span class="p">)</span>
+        <span class="n">f</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">assistant</span><span class="p">(</span><span class="n">sgl</span><span class="o">.</span><span class="n">gen</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;reason_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">40</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.9</span><span class="p">))</span>
+    <span class="n">forks</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;label&quot;</span><span class="p">:</span> <span class="n">s</span><span class="p">[</span><span class="s2">&quot;label&quot;</span><span class="p">],</span>
+        <span class="s2">&quot;reasons&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">forks</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s2">&quot;reason_&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">)]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">2</span><span class="p">)],</span>
+    <span class="p">}</span>
+
+<span class="n">reviews</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;The battery dies in two hours. Useless.&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Exceeded every expectation — buying another!&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;It works. Nothing special, nothing wrong.&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+<span class="c1"># run_batch executes these concurrently; the shared system+instruction prefix</span>
+<span class="c1"># is prefilled ONCE and reused across all three via the radix tree.</span>
+<span class="n">states</span> <span class="o">=</span> <span class="n">classify_and_explain</span><span class="o">.</span><span class="n">run_batch</span><span class="p">(</span>
+    <span class="p">[{</span><span class="s2">&quot;review&quot;</span><span class="p">:</span> <span class="n">r</span><span class="p">}</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">reviews</span><span class="p">],</span> <span class="n">progress_bar</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+<span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">states</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">st</span><span class="p">[</span><span class="s2">&quot;label&quot;</span><span class="p">],</span> <span class="s2">&quot;::&quot;</span><span class="p">,</span> <span class="n">st</span><span class="p">[</span><span class="s2">&quot;reasons&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">])</span>
+</code></pre></div>
+<p>What happens under the hood, end to end:</p>
+<ol>
+<li>The three calls in <code>run_batch</code> are admitted by the scheduler. Their shared <code>system</code> + instruction prefix matches a single radix node after the first call computes it; calls 2 and 3 <strong>reuse</strong> its KV (a cache hit, no re-prefill).</li>
+<li>The <code>select</code> over <code>["positive","negative","neutral"]</code> scores the three candidates and returns the best — output is guaranteed on-list.</li>
+<li>Each <code>fork(2)</code> creates two children sharing the parent&rsquo;s full KV path; the two justifications generate in parallel, co-scheduled.</li>
+<li>The overlap scheduler keeps the GPU busy across decode steps; CUDA graphs replay the decode kernel; finished requests unlock their nodes; LRU eviction reclaims cold suffixes under pressure.</li>
+</ol>
+<p>You wrote a branchy, constrained, prefix-sharing program in ~20 lines and the runtime exploited all three properties automatically.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re serving a chatbot where every request shares a 1,500-token system prompt, but user messages and conversations are all different. Walk me through how you&rsquo;d cache KV across requests, and what data structure you&rsquo;d use. What breaks at scale, and how do you bound memory?</p>
+<p><strong>A:</strong> I&rsquo;d use a <strong>radix tree (compressed prefix trie) over token IDs</strong>, exactly SGLang&rsquo;s RadixAttention. Each node owns the KV-cache slot indices for the tokens on its incoming edge; a path from root spells a cached token sequence. On a new request I run <code>match_prefix</code> to find the longest cached prefix, reuse those KV slots, and only prefill the divergent suffix — so the 1,500-token system prompt is prefilled <strong>once</strong> and shared by all requests, splitting nodes when prompts diverge mid-edge.</p>
+<p>To bound memory I store KV in a <strong>paged pool</strong> and let the tree hold indices, not tensors, so one block can be referenced by many nodes. I <strong>reference-count</strong> nodes (<code>lock_ref</code>): a node is pinned while any running request uses its path, and becomes evictable when all finish. Under memory pressure I <strong>evict LRU over evictable leaves</strong> — peeling cold suffixes from the tips inward, never orphaning a live prefix, never reclaiming locked KV. The hot system prompt has a fresh access time and survives. What breaks at scale: with all-unique prompts the tree degenerates to a flat leaf list and reuse vanishes (you pay normal prefill plus tiny overhead); and the CPU bookkeeping per step can starve the GPU — which is why SGLang overlaps scheduling with compute. For a final tier I&rsquo;d offload evicted prefixes to host/CPU memory so a falling-out prefix can be paged back faster than recomputed.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>RadixAttention</strong> keeps a <em>radix tree of token prefixes</em> whose nodes own KV-cache slot indices, giving automatic, always-on, cross-request KV reuse — not just for a pinned system prompt but for any overlapping prefixes.</li>
+<li>The core operations are <strong>match (find longest cached prefix), split (share a diverging edge), insert (prefill only the suffix), and evict (LRU over unlocked leaves)</strong> — peeling cold tips while pinning hot prefixes via reference counting (<code>lock_ref</code>).</li>
+<li>RadixAttention is layered on <strong>paged KV</strong> (PagedAttention): the tree stores <em>indices into paged blocks</em>, so the two ideas compose rather than compete.</li>
+<li>The <strong>frontend DSL</strong> — <code>gen</code>, <code>select</code>, <code>fork</code>, <code>join</code> — lets you express branchy multi-call programs so the runtime can <em>guarantee</em> prefix sharing and co-schedule parallel branches, instead of relying on lucky cache hits.</li>
+<li><strong>Constrained decoding</strong> masks logits against a grammar/FSM; SGLang&rsquo;s <strong>compressed FSM + jump-forward</strong> emits forced token runs in one step, slashing decode cost for JSON/regex outputs, while <code>select</code> scores a fixed choice list.</li>
+<li>The <strong>zero-overhead (overlap) scheduler</strong> runs CPU batch preparation <em>under</em> the GPU forward pass, removing scheduling bubbles; with CUDA graphs the decode loop becomes near-pure GPU work.</li>
+<li><strong>Versus vLLM:</strong> the engines have converged; SGLang&rsquo;s edge is branchy/agentic programs, heavy shared prefixes, and structured output, while vLLM leads on breadth of models/hardware. Benchmark both on your own traffic.</li>
+<li>The savings are real and bounded by your sharing: a long shared prefix can cut prefill compute by an order of magnitude or more; all-unique prompts see little benefit.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>SGLang has become one of the two dominant open-source LLM inference engines (alongside vLLM), with RadixAttention now a standard technique widely replicated across serving frameworks. The zero-overhead overlap scheduler and XGrammar-backed structured generation represent the current frontier for high-throughput production serving as of 2026.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2312.07104">Zheng et al., <em>SGLang: Efficient Execution of Structured Language Model Programs</em> (2023)</a> — introduces RadixAttention, the frontend DSL, and compressed-FSM decoding; the primary reference for this chapter.</li>
+<li><a href="https://arxiv.org/abs/2309.06180">Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (2023)</a> — the vLLM paper establishing paged KV blocks that RadixAttention indexes into.</li>
+<li><a href="https://arxiv.org/abs/2307.09702">Willard &amp; Louf, <em>Efficient Guided Generation for Large Language Models</em> (2023)</a> — FSM-based constrained decoding (the Outlines approach) that SGLang&rsquo;s grammar backend builds upon.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2411.15100">Dong et al., <em>XGrammar: Flexible and Efficient Structured Generation Engine for Large Language Models</em> (2024)</a> — near-zero-overhead context-free grammar decoding; now the default structured-output backend in SGLang and vLLM.</li>
+<li><a href="https://www.lmsys.org/blog/2024-12-04-sglang-v0-4/">LMSYS, <em>SGLang v0.4: Zero-Overhead Batch Scheduler, Cache-Aware Load Balancer, Faster Structured Outputs</em> (2024)</a> — engineering post detailing the overlap scheduler and cache-aware load balancing that define the current SGLang architecture.</li>
+<li><a href="https://www.lmsys.org/blog/2024-07-25-sglang-llama3/">LMSYS, <em>Achieving Faster Open-Source Llama3 Serving with SGLang Runtime</em> (2024)</a> — benchmark showing SGLang matching or exceeding TensorRT-LLM on Llama-3 at various scales.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — the main SGLang repo; see <code>srt/mem_cache/radix_cache.py</code> for RadixAttention and <code>lang/api.py</code> for the frontend DSL.</li>
+<li><a href="https://github.com/mlc-ai/xgrammar">mlc-ai/xgrammar</a> — the XGrammar structured generation engine used by SGLang, vLLM, and TensorRT-LLM.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.lmsys.org/blog/2024-01-17-sglang/">LMSYS, <em>Fast and Expressive LLM Inference with RadixAttention and SGLang</em> (2024)</a> — the original blog post walking through RadixAttention&rsquo;s design and throughput results, an excellent complement to the paper.</li>
+<li><a href="https://www.lmsys.org/blog/2024-02-05-compressed-fsm/">LMSYS, <em>Fast JSON Decoding for Local LLMs with Compressed Finite State Machine</em> (2024)</a> — deep-dive on jump-forward decoding and why the compressed FSM cuts JSON decode latency by up to 2×.</li>
+<li><a href="https://sgl-project.github.io/">SGLang Documentation</a> — official docs covering installation, server flags, structured output APIs, and deployment guides.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Zheng et al., <em>SGLang: Efficient Execution of Structured Language Model Programs</em> — the paper that introduces RadixAttention, the frontend language, and the compressed-FSM constrained decoder.</li>
+<li>Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (the vLLM paper) — the paged-KV foundation RadixAttention builds on; compare and contrast.</li>
+<li>Dao et al., <em>FlashAttention</em> and <em>FlashAttention-2</em> — the IO-aware attention kernels that the runtime uses under the hood; see <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I</a>.</li>
+<li>Willard &amp; Louf, <em>Efficient Guided Generation for Large Language Models</em> (the <code>outlines</code> FSM approach) and the <strong>xgrammar</strong> project — grammar/FSM constrained decoding integrated by SGLang.</li>
+<li>The <strong>sglang</strong> GitHub repository (<code>sgl-project/sglang</code>) — read <code>python/sglang/srt/mem_cache/radix_cache.py</code>, <code>srt/managers/scheduler.py</code>, and <code>lang/api.py</code> for the production implementations behind this chapter.</li>
+<li>Related chapters: <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a>, <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>, <a href="../07-inference-serving/10-structured-generation.html">Structured &amp; Constrained Generation</a>, and <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="03-vllm-internals.html"><span class="pn-label">← Previous</span><span class="pn-title">vLLM: Architecture, PagedAttention &amp; Internals</span></a>
+<a class="next" href="05-trtllm-tgi-stacks.html"><span class="pn-label">Next →</span><span class="pn-title">TensorRT-LLM, TGI &amp; Other Serving Stacks</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-radixattention-exists-the-shared-prefix-problem">Why RadixAttention exists: the shared-prefix problem</a></li>
+<li class="toc-l3"><a href="#a-back-of-the-envelope-motivation">A back-of-the-envelope motivation</a></li>
+<li class="toc-l2"><a href="#the-radix-tree-data-structure-and-operations">The radix tree: data structure and operations</a></li>
+<li class="toc-l3"><a href="#what-a-node-actually-holds">What a node actually holds</a></li>
+<li class="toc-l3"><a href="#matching-a-prefix">Matching a prefix</a></li>
+<li class="toc-l3"><a href="#splitting-and-inserting">Splitting and inserting</a></li>
+<li class="toc-l3"><a href="#eviction-lru-over-leaves">Eviction: LRU over leaves</a></li>
+<li class="toc-l2"><a href="#a-from-scratch-radixattention-cache">A from-scratch RadixAttention cache</a></li>
+<li class="toc-l2"><a href="#the-frontend-language-structured-llm-programs">The frontend language: structured LLM programs</a></li>
+<li class="toc-l3"><a href="#why-this-matters-beyond-ergonomics">Why this matters beyond ergonomics</a></li>
+<li class="toc-l3"><a href="#tracing-and-interpretation">Tracing and interpretation</a></li>
+<li class="toc-l2"><a href="#constrained-decoding-making-the-model-obey-a-grammar">Constrained decoding: making the model obey a grammar</a></li>
+<li class="toc-l2"><a href="#the-runtime-and-the-zero-overhead-scheduler">The runtime and the zero-overhead scheduler</a></li>
+<li class="toc-l3"><a href="#the-zero-overhead-scheduler">The &amp;ldquo;zero-overhead&amp;rdquo; scheduler</a></li>
+<li class="toc-l2"><a href="#a-worked-example-how-much-does-radixattention-save">A worked example: how much does RadixAttention save?</a></li>
+<li class="toc-l2"><a href="#sglang-vs-vllm-a-practical-comparison">SGLang vs vLLM: a practical comparison</a></li>
+<li class="toc-l2"><a href="#putting-it-together-end-to-end-usage">Putting it together: end-to-end usage</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

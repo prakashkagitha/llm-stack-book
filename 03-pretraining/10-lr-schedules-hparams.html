@@ -1,0 +1,1323 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters — The LLM Stack</title>
+<meta name="description" content="Warmup rationale, cosine/linear/WSD (warmup-stable-decay) schedules, LR vs batch size scaling (linear/sqrt), critical batch size, gradient accumulation, weight ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="active" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="310-learning-rate-schedules-warmup-batch-size-hyperparameters">3.10 Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters<a class="headerlink" href="#310-learning-rate-schedules-warmup-batch-size-hyperparameters" title="Permanent link">¶</a></h1>
+<p>Hyperparameter tuning is one of the most impactful — and most under-documented — parts of pretraining a large language model. A 10x learning rate error will destroy a run that would otherwise converge cleanly; the right schedule can shave percentage points off final perplexity. Yet the wisdom lives mostly in appendices of papers and in the institutional memory of ML engineering teams.</p>
+<p>This chapter makes that implicit knowledge explicit. We cover the full pipeline: why warmup is mandatory at scale, the major schedule families and when to use each, how batch size interacts with learning rate and what the <em>critical batch size</em> tells you about compute efficiency, and finally how muP (maximal-update parameterization) lets you tune hyperparameters on a small model and transfer them to a large one. Every section includes runnable code and concrete numbers.</p>
+<p>Related chapters you should read in tandem: <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a> covers the adaptive optimizer mechanics that schedules ride on top of; <a href="../03-pretraining/11-training-stability.html">Training Stability, Loss Spikes &amp; Debugging Large Runs</a> covers what happens when you get the schedule wrong; <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a> gives the big picture that informs budget allocation decisions.</p>
+<h2 id="why-schedules-and-warmup-exist">Why Schedules and Warmup Exist<a class="headerlink" href="#why-schedules-and-warmup-exist" title="Permanent link">¶</a></h2>
+<p>Deep learning optimizers like Adam carry two moving-average estimates: first moment <span class="arithmatex">\(m_t\)</span> (gradient direction) and second moment <span class="arithmatex">\(v_t\)</span> (gradient magnitude squared). Both are initialized to zero. During the first few hundred steps, <span class="arithmatex">\(v_t\)</span> is still a noisy underestimate of the true gradient variance — the bias-correction terms in Adam partially compensate, but the effective learning rate is still erratic early in training.</p>
+<p>For large models, this cold-start instability is catastrophic. At step 1 of a run with 1 billion parameters and a 4096-token context, the weight matrices are random; the gradient norms are large and wildly variable across layers. Applying the full target learning rate immediately produces parameter updates large enough to push weights into regions where softmax logits saturate, norms explode, or residual magnitudes collapse — none of which recover easily. Empirically, runs without warmup frequently spike or diverge within the first thousand steps.</p>
+<p>Warmup solves this by linearly ramping the effective learning rate from near-zero to the target value over a set number of steps, giving the optimizer time to calibrate its momentum estimates and giving the network time to find a reasonable initialization basin before the full update magnitude kicks in.</p>
+<p>The interplay with weight initialization is important. Standard initialization schemes (<a href="../02-transformer/06-transformer-block.html">Transformers: The Transformer Block</a>) ensure variance-preserving forward passes at step 0, but they do not ensure that the <em>gradient landscape</em> is well-behaved. Warmup effectively treats the first <span class="arithmatex">\(T_w\)</span> steps as a coarser form of initialization.</p>
+<h2 id="the-major-schedule-families">The Major Schedule Families<a class="headerlink" href="#the-major-schedule-families" title="Permanent link">¶</a></h2>
+<h3 id="linear-schedule">Linear Schedule<a class="headerlink" href="#linear-schedule" title="Permanent link">¶</a></h3>
+<p>The simplest useful schedule: ramp linearly from <span class="arithmatex">\(\eta_{\min}\)</span> to <span class="arithmatex">\(\eta_{\max}\)</span> during warmup, then decay linearly to <span class="arithmatex">\(\eta_{\min}\)</span> over the remaining steps.</p>
+<div class="arithmatex">\[
+\eta(t) = \begin{cases}
+\eta_{\max} \cdot \dfrac{t}{T_w} &amp; t \leq T_w \\[6pt]
+\eta_{\max} \cdot \dfrac{T - t}{T - T_w} &amp; t &gt; T_w
+\end{cases}
+\]</div>
+<p>Linear decay is fast to implement and interpretable. It was widely used in BERT-era fine-tuning but is now rarely the first choice for pretraining because it decays too aggressively in the middle of the run.</p>
+<h3 id="cosine-annealing">Cosine Annealing<a class="headerlink" href="#cosine-annealing" title="Permanent link">¶</a></h3>
+<p>The dominant pretraining schedule as of 2024. After warmup, the learning rate follows the right half of a cosine curve, smoothly decaying to a floor <span class="arithmatex">\(\eta_{\min}\)</span> (usually <span class="arithmatex">\(\eta_{\max}/10\)</span> or a small constant like <span class="arithmatex">\(1\text{e-}5\)</span>):</p>
+<figure class="viz" id="fig-lr-schedule">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 700 300" role="img" aria-label="A learning-rate schedule: the rate ramps linearly from near zero to a peak during warmup, then follows a cosine curve smoothly decaying to a small floor at one tenth of the peak.">
+  <style>
+    #fig-lr-schedule text{ fill:var(--ink-soft); }
+    #fig-lr-schedule .ax{ font:600 12px var(--sans,sans-serif); }
+    #fig-lr-schedule .sm{ font:500 11px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-lr-schedule .tag{ font:600 12px var(--sans,sans-serif); }
+    #fig-lr-schedule .mono{ font:500 11px var(--mono,monospace); fill:var(--muted); }
+  </style>
+
+
+  <g data-anim="1">
+    <rect x="92" y="56" width="86" height="194" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.07"/>
+    <rect x="178" y="56" width="462" height="194" rx="3" fill="var(--accent)" fill-opacity="0.07"/>
+  </g>
+
+
+  <g data-anim="1">
+    <line x1="92" y1="56" x2="92" y2="250" class="v-stroke" stroke="currentColor" stroke-width="1.4"/>
+    <line x1="92" y1="250" x2="652" y2="250" class="v-stroke" stroke="currentColor" stroke-width="1.4"/>
+
+    <text x="40" y="44" class="ax">learning</text>
+    <text x="40" y="60" class="ax">rate η</text>
+
+    <text x="372" y="288" text-anchor="middle" class="ax">training step t</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="92" y1="70" x2="640" y2="70" class="v-grid" stroke-width="1" stroke-dasharray="4 4"/>
+    <text x="86" y="74" text-anchor="end" class="sm">η_max</text>
+    <line x1="92" y1="228" x2="640" y2="228" class="v-grid" stroke-width="1" stroke-dasharray="4 4"/>
+    <text x="86" y="232" text-anchor="end" class="sm">η_min</text>
+    <text x="80" y="220" text-anchor="end" class="mono">= η_max/10</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="178" y1="56" x2="178" y2="256" class="v-grid" stroke-width="1.1"/>
+    <text x="178" y="270" text-anchor="middle" class="mono">T_w</text>
+    <line x1="640" y1="244" x2="640" y2="256" class="v-grid" stroke-width="1.1"/>
+    <text x="640" y="270" text-anchor="middle" class="mono">T</text>
+    <text x="92" y="270" text-anchor="middle" class="mono">0</text>
+  </g>
+
+
+  <g data-anim="3">
+    <path d="M92 250 L178 70" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="2.6"
+          class="viz-draw" style="--len:199" stroke-linecap="round"/>
+    <path d="M178 70 L197.2 70.7 L216.5 72.7 L235.8 76 L255 80.6 L274.2 86.3 L293.5 93.1 L312.8 100.9 L332 109.5 L351.2 118.8 L370.5 128.6 L389.8 138.7 L409 149 L428.2 159.3 L447.5 169.4 L466.8 179.2 L486 188.5 L505.2 197.1 L524.5 204.9 L543.8 211.7 L563 217.4 L582.2 222 L601.5 225.3 L620.8 227.3 L640 228"
+          fill="none" stroke="var(--accent)" stroke-width="2.6" class="viz-draw" style="--len:494" stroke-linecap="round"/>
+  </g>
+
+
+  <g data-anim="4">
+    <circle cx="178" cy="70" r="4.2" fill="var(--accent)" stroke="var(--surface,#fff)" stroke-width="1.3"/>
+    <circle cx="178" cy="70" r="4.2" fill="none" stroke="var(--accent)" stroke-width="1.3" class="viz-pulse"/>
+  </g>
+
+
+  <g data-anim="4">
+    <text x="136" y="182" text-anchor="middle" class="tag" fill="var(--accent2,#3b82f6)">warmup</text>
+    <text x="136" y="198" text-anchor="middle" class="sm">linear ramp</text>
+
+    <text x="430" y="86" text-anchor="middle" class="tag" fill="var(--accent)">cosine decay</text>
+    <text x="430" y="102" text-anchor="middle" class="sm">flat near the peak, then a soft tail</text>
+  </g>
+
+
+  <g data-anim="5">
+    <circle cx="640" cy="228" r="3.6" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+    <text x="634" y="244" text-anchor="end" class="sm">floor</text>
+  </g>
+</svg>
+<figcaption><b>Warmup then cosine decay — the default pretraining schedule.</b> The learning rate climbs linearly from near zero to its peak <b>η_max</b> over the first <b>T_w</b> warmup steps (letting Adam's moment estimates calibrate), then follows the right half of a cosine curve down to a small floor <b>η_min = η_max/10</b>. Because the cosine is flat near its maximum, the run spends most of its budget at an aggressive learning rate and only slows for fine-grained convergence at the end.</figcaption>
+</figure>
+
+<div class="arithmatex">\[
+\eta(t) = \eta_{\min} + \frac{1}{2}(\eta_{\max} - \eta_{\min})\left(1 + \cos\!\left(\pi \cdot \frac{t - T_w}{T - T_w}\right)\right)
+\]</div>
+<p>Key properties:
+- Spends most of the budget near the peak learning rate (the cosine curve is flat near its maximum), which means the network sees aggressive gradient steps for most of training — good for exploration.
+- The tail naturally slows down near the end, allowing fine-grained convergence.
+- The exact shape is not sensitive to the precise <span class="arithmatex">\(T\)</span> you use, as long as <span class="arithmatex">\(T\)</span> is approximately correct.</p>
+<p>The main weakness: cosine requires knowing the total token budget <span class="arithmatex">\(T\)</span> upfront. If you extend the run or add a second phase, you need to restart the schedule or accept a discontinuity.</p>
+<h3 id="cosine-with-restarts-sgdr">Cosine with Restarts (SGDR)<a class="headerlink" href="#cosine-with-restarts-sgdr" title="Permanent link">¶</a></h3>
+<p>Introduced by Loshchilov &amp; Hutter (<em>SGDR: Stochastic Gradient Descent with Warm Restarts</em>, 2016), this runs multiple cosine cycles with exponentially increasing cycle length. Each restart re-warms the LR to <span class="arithmatex">\(\eta_{\max}\)</span> and decays again. It was influential in CV but is rarely used in modern LLM pretraining because the LR spike at each restart causes loss spikes and the benefits for language modeling are unclear.</p>
+<h3 id="warmup-stable-decay-wsd">Warmup-Stable-Decay (WSD)<a class="headerlink" href="#warmup-stable-decay-wsd" title="Permanent link">¶</a></h3>
+<p>WSD, popularized by MiniCPM (Hu et al., 2024) and used in several other recent models, divides training into three explicit phases:</p>
+<ol>
+<li><strong>Warmup</strong> (<span class="arithmatex">\(T_w\)</span> steps): linear ramp from near-zero to <span class="arithmatex">\(\eta_{\max}\)</span>.</li>
+<li><strong>Stable</strong> (<span class="arithmatex">\(T_s\)</span> steps): constant <span class="arithmatex">\(\eta_{\max}\)</span>.</li>
+<li><strong>Decay</strong> (<span class="arithmatex">\(T_d\)</span> steps): cosine or linear decay to <span class="arithmatex">\(\eta_{\min}\)</span>.</li>
+</ol>
+<div class="arithmatex">\[
+\eta(t) = \begin{cases}
+\eta_{\max} \cdot \dfrac{t}{T_w} &amp; t \leq T_w \\[6pt]
+\eta_{\max} &amp; T_w &lt; t \leq T_w + T_s \\[6pt]
+\eta_{\max} \cdot f\!\left(\dfrac{t - T_w - T_s}{T_d}\right) &amp; t &gt; T_w + T_s
+\end{cases}
+\]</div>
+<p>where <span class="arithmatex">\(f\)</span> is a cosine or linear decay function. The insight driving WSD is that most of the loss reduction happens in the stable phase, and the decay phase mainly &ldquo;polishes&rdquo; the model. This decoupling is practically valuable: you can train in the stable phase for as long as resources allow, then trigger the decay when you&rsquo;re ready to finalize — without having committed to a specific total step count at the start.</p>
+<figure class="viz" id="fig-lrsched-wsd-shape">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-lrsched-wsd-shape .lbl { font: 600 12px var(--sans,sans-serif); }
+  #fig-lrsched-wsd-shape .tick-lbl { font: 500 11px var(--mono,monospace); }
+  #fig-lrsched-wsd-shape .axis-lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-lrsched-wsd-shape .phase-lbl { font: 700 12px var(--sans,sans-serif); }
+  #fig-lrsched-wsd-shape .guide-lbl { font: 500 11px var(--mono,monospace); }
+  #fig-lrsched-wsd-shape text { fill: var(--ink-soft,#64748b); }
+  #fig-lrsched-wsd-shape .accent-text { fill: var(--accent,#6366f1); }
+  #fig-lrsched-wsd-shape .muted-text { fill: var(--muted,#94a3b8); }
+
+  #fig-lrsched-wsd-shape #band-warmup { opacity: 0.08; }
+  #fig-lrsched-wsd-shape #band-stable { opacity: 0.08; }
+  #fig-lrsched-wsd-shape #band-decay  { opacity: 0.08; }
+
+  #fig-lrsched-wsd-shape #wsd-curve {
+    stroke-dasharray: 1650;
+    stroke-dashoffset: 1650;
+    animation: wsd-draw 5.5s ease-in-out infinite;
+  }
+  #fig-lrsched-wsd-shape #wsd-dot {
+    animation: wsd-dot-move 5.5s linear infinite;
+  }
+  #fig-lrsched-wsd-shape #wsd-vline {
+    animation: wsd-vline-move 5.5s linear infinite;
+  }
+
+  #fig-lrsched-wsd-shape #band-warmup { animation: band-w-pulse 5.5s linear infinite; }
+  #fig-lrsched-wsd-shape #band-stable { animation: band-s-pulse 5.5s linear infinite; }
+  #fig-lrsched-wsd-shape #band-decay  { animation: band-d-pulse 5.5s linear infinite; }
+  #fig-lrsched-wsd-shape #lbl-warmup  { animation: lbl-w-pulse 5.5s linear infinite; }
+  #fig-lrsched-wsd-shape #lbl-stable  { animation: lbl-s-pulse 5.5s linear infinite; }
+  #fig-lrsched-wsd-shape #lbl-decay   { animation: lbl-d-pulse 5.5s linear infinite; }
+
+  @keyframes wsd-draw {
+    0%  { stroke-dashoffset: 1650; }
+    85% { stroke-dashoffset: 0; }
+    100%{ stroke-dashoffset: 0; }
+  }
+
+  /* Dot travels: warmup 0%->20% (70,300)->(230,70), stable 20%->55% (230,70)->(520,70),
+     decay 55%->85% bezier approximated, tail 85%->90% (690,300)->(710,300), reset 95%->100% */
+  @keyframes wsd-dot-move {
+    0%  { cx: 70;  cy: 300; opacity: 1; }
+    20% { cx: 230; cy: 70;  opacity: 1; }
+    55% { cx: 520; cy: 70;  opacity: 1; }
+    63% { cx: 565; cy: 108; opacity: 1; }
+    70% { cx: 605; cy: 186; opacity: 1; }
+    78% { cx: 648; cy: 264; opacity: 1; }
+    85% { cx: 690; cy: 300; opacity: 1; }
+    90% { cx: 710; cy: 300; opacity: 1; }
+    92% { cx: 710; cy: 300; opacity: 0; }
+    99% { cx: 70;  cy: 300; opacity: 0; }
+    100%{ cx: 70;  cy: 300; opacity: 1; }
+  }
+
+  @keyframes wsd-vline-move {
+    0%  { transform: translateX(70px);  opacity: 0.45; }
+    20% { transform: translateX(230px); opacity: 0.45; }
+    55% { transform: translateX(520px); opacity: 0.45; }
+    63% { transform: translateX(565px); opacity: 0.45; }
+    70% { transform: translateX(605px); opacity: 0.45; }
+    78% { transform: translateX(648px); opacity: 0.45; }
+    85% { transform: translateX(690px); opacity: 0.45; }
+    90% { transform: translateX(710px); opacity: 0.45; }
+    92% { transform: translateX(710px); opacity: 0; }
+    99% { transform: translateX(70px);  opacity: 0; }
+    100%{ transform: translateX(70px);  opacity: 0.45; }
+  }
+
+  @keyframes band-w-pulse {
+    0%  { opacity: 0.17; }
+    19% { opacity: 0.17; }
+    21% { opacity: 0.06; }
+    100%{ opacity: 0.06; }
+  }
+  @keyframes band-s-pulse {
+    0%  { opacity: 0.06; }
+    19% { opacity: 0.06; }
+    21% { opacity: 0.17; }
+    54% { opacity: 0.17; }
+    56% { opacity: 0.06; }
+    100%{ opacity: 0.06; }
+  }
+  @keyframes band-d-pulse {
+    0%  { opacity: 0.06; }
+    54% { opacity: 0.06; }
+    56% { opacity: 0.17; }
+    90% { opacity: 0.17; }
+    92% { opacity: 0.06; }
+    100%{ opacity: 0.06; }
+  }
+  @keyframes lbl-w-pulse {
+    0%  { opacity: 1; }
+    19% { opacity: 1; }
+    21% { opacity: 0.45; }
+    100%{ opacity: 0.45; }
+  }
+  @keyframes lbl-s-pulse {
+    0%  { opacity: 0.45; }
+    19% { opacity: 0.45; }
+    21% { opacity: 1; }
+    54% { opacity: 1; }
+    56% { opacity: 0.45; }
+    100%{ opacity: 0.45; }
+  }
+  @keyframes lbl-d-pulse {
+    0%  { opacity: 0.45; }
+    54% { opacity: 0.45; }
+    56% { opacity: 1; }
+    90% { opacity: 1; }
+    92% { opacity: 0.45; }
+    100%{ opacity: 0.45; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-lrsched-wsd-shape #wsd-curve { stroke-dashoffset: 0; animation: none; }
+    #fig-lrsched-wsd-shape #wsd-dot  { animation: none; cx: 690; cy: 300; opacity: 0.8; }
+    #fig-lrsched-wsd-shape #wsd-vline { animation: none; transform: translateX(690px); opacity: 0.3; }
+    #fig-lrsched-wsd-shape #band-warmup { animation: none; opacity: 0.08; }
+    #fig-lrsched-wsd-shape #band-stable { animation: none; opacity: 0.08; }
+    #fig-lrsched-wsd-shape #band-decay  { animation: none; opacity: 0.08; }
+    #fig-lrsched-wsd-shape #lbl-warmup  { animation: none; opacity: 1; }
+    #fig-lrsched-wsd-shape #lbl-stable  { animation: none; opacity: 1; }
+    #fig-lrsched-wsd-shape #lbl-decay   { animation: none; opacity: 1; }
+  }
+</style>
+<svg viewBox="0 0 760 390" role="img" aria-label="Warmup-Stable-Decay learning-rate schedule: LR linearly ramps up during warmup, holds constant during the stable phase, then cosine-decays to a minimum floor during decay.">
+<defs>
+  <marker id="wsd-arx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="wsd-ary" viewBox="0 0 10 10" refX="5" refY="1" markerWidth="6" markerHeight="6" orient="90">
+    <path d="M0 9 L5 0 L10 9 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+</defs>
+
+
+<rect id="band-warmup" x="70" y="55" width="160" height="265" rx="2" fill="var(--accent,#6366f1)" opacity="0.08"/>
+<rect id="band-stable" x="230" y="55" width="290" height="265" rx="2" fill="var(--accent,#6366f1)" opacity="0.08"/>
+<rect id="band-decay"  x="520" y="55" width="170" height="265" rx="2" fill="var(--accent,#6366f1)" opacity="0.08"/>
+
+
+<line x1="65" y1="70" x2="718" y2="70" stroke="var(--ink-soft,#64748b)" stroke-width="1" stroke-dasharray="4 4" opacity="0.3"/>
+<line x1="65" y1="300" x2="718" y2="300" stroke="var(--ink-soft,#64748b)" stroke-width="1" stroke-dasharray="4 4" opacity="0.22"/>
+
+
+<text x="722" y="74" class="guide-lbl muted-text" text-anchor="end">&#951;_max</text>
+<text x="722" y="304" class="guide-lbl muted-text" text-anchor="end">&#951;_min</text>
+
+
+<line x1="230" y1="55" x2="230" y2="320" stroke="var(--ink-soft,#64748b)" stroke-width="1" stroke-dasharray="3 4" opacity="0.25"/>
+<line x1="520" y1="55" x2="520" y2="320" stroke="var(--ink-soft,#64748b)" stroke-width="1" stroke-dasharray="3 4" opacity="0.25"/>
+<line x1="690" y1="55" x2="690" y2="320" stroke="var(--ink-soft,#64748b)" stroke-width="1" stroke-dasharray="3 4" opacity="0.25"/>
+
+
+<line x1="70" y1="320" x2="70" y2="46" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#wsd-ary)"/>
+
+
+<line x1="70" y1="320" x2="726" y2="320" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#wsd-arx)"/>
+
+
+<text x="26" y="188" class="axis-lbl" text-anchor="middle" transform="rotate(-90,26,188)">LR (&#951;)</text>
+
+
+<text x="680" y="370" class="axis-lbl" text-anchor="middle">steps (t)</text>
+
+
+<line x1="230" y1="318" x2="230" y2="326" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+<text x="230" y="340" class="tick-lbl" text-anchor="middle">T_w</text>
+
+<line x1="520" y1="318" x2="520" y2="326" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+<text x="520" y="340" class="tick-lbl" text-anchor="middle">T_w + T_s</text>
+
+<line x1="690" y1="318" x2="690" y2="326" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+<text x="690" y="338" class="tick-lbl" text-anchor="middle" font-size="9">T_w+T_s</text>
+<text x="690" y="350" class="tick-lbl" text-anchor="middle" font-size="9">+T_d</text>
+
+
+<text id="lbl-warmup" x="150" y="112" class="phase-lbl accent-text" text-anchor="middle">warmup</text>
+<text id="lbl-stable" x="375" y="112" class="phase-lbl accent-text" text-anchor="middle">stable</text>
+<text id="lbl-decay"  x="605" y="112" class="phase-lbl accent-text" text-anchor="middle">decay</text>
+
+
+<path id="wsd-curve"
+  d="M70,300 L230,70 L520,70 C530,70 545,75 565,108 C585,141 610,191 638,244 C655,272 673,291 690,300 L710,300"
+  stroke="var(--accent,#6366f1)"
+  stroke-width="3"
+  fill="none"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+/>
+
+
+<g id="wsd-vline">
+  <line x1="0" y1="52" x2="0" y2="320" stroke="var(--accent,#6366f1)" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.45"/>
+</g>
+
+
+<circle id="wsd-dot" cx="70" cy="300" r="5.5" fill="var(--accent,#6366f1)" opacity="1"/>
+
+</svg>
+<figcaption><b>Warmup-Stable-Decay (WSD) learning-rate schedule.</b> The LR linearly ramps from near-zero to <i>&#951;_max</i> over <i>T_w</i> warmup steps, holds constant through the stable phase, then cosine-decays to <i>&#951;_min</i> over <i>T_d</i> decay steps. The key advantage: training can run in the stable phase indefinitely and decay is triggered on demand, without committing to a total step count upfront.</figcaption>
+</figure>
+
+<h3 id="rsqrt-inverse-square-root">RSqrt (Inverse Square Root)<a class="headerlink" href="#rsqrt-inverse-square-root" title="Permanent link">¶</a></h3>
+<div class="arithmatex">\[
+\eta(t) = \eta_{\max} \cdot \sqrt{\frac{T_w}{\max(t, T_w)}}
+\]</div>
+<p>Used in original Transformer training (Vaswani et al., 2017) with the combined formula <span class="arithmatex">\(\eta(t) = d_{\text{model}}^{-0.5} \cdot \min(t^{-0.5},\; t \cdot T_w^{-1.5})\)</span>. The rsqrt schedule never fully plateaus — the LR continues to slowly decrease throughout training. It works well for smaller models and shorter runs but tends to decay too quickly for billion-scale pretraining.</p>
+<h2 id="implementing-schedules-from-scratch">Implementing Schedules From Scratch<a class="headerlink" href="#implementing-schedules-from-scratch" title="Permanent link">¶</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.optim.lr_scheduler</span><span class="w"> </span><span class="kn">import</span> <span class="n">LambdaLR</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_cosine_schedule_with_warmup</span><span class="p">(</span>
+    <span class="n">optimizer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Optimizer</span><span class="p">,</span>
+    <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">num_training_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">min_lr_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>   <span class="c1"># eta_min = eta_max * min_lr_fraction</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LambdaLR</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Cosine annealing with linear warmup.</span>
+<span class="sd">    The LambdaLR multiplier is relative to the base LR in the optimizer.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">lr_lambda</span><span class="p">(</span><span class="n">current_step</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="c1"># --- Warmup phase ---</span>
+        <span class="k">if</span> <span class="n">current_step</span> <span class="o">&lt;</span> <span class="n">num_warmup_steps</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">current_step</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">))</span>
+
+        <span class="c1"># --- Cosine decay phase ---</span>
+        <span class="n">progress</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">current_step</span> <span class="o">-</span> <span class="n">num_warmup_steps</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span>
+            <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_training_steps</span> <span class="o">-</span> <span class="n">num_warmup_steps</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="c1"># progress in [0, 1]; cosine from 1 → min_lr_fraction</span>
+        <span class="n">cosine_decay</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">progress</span><span class="p">))</span>
+        <span class="c1"># Rescale so the floor is min_lr_fraction</span>
+        <span class="k">return</span> <span class="n">min_lr_fraction</span> <span class="o">+</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">min_lr_fraction</span><span class="p">)</span> <span class="o">*</span> <span class="n">cosine_decay</span>
+
+    <span class="k">return</span> <span class="n">LambdaLR</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">lr_lambda</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_wsd_schedule</span><span class="p">(</span>
+    <span class="n">optimizer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Optimizer</span><span class="p">,</span>
+    <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">num_stable_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">num_decay_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">min_lr_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LambdaLR</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Warmup-Stable-Decay (WSD) schedule.</span>
+<span class="sd">    Advantage: total training length can be decided late — just extend stable phase.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">T_w</span> <span class="o">=</span> <span class="n">num_warmup_steps</span>
+    <span class="n">T_s</span> <span class="o">=</span> <span class="n">num_stable_steps</span>
+    <span class="n">T_d</span> <span class="o">=</span> <span class="n">num_decay_steps</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">lr_lambda</span><span class="p">(</span><span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">step</span> <span class="o">&lt;</span> <span class="n">T_w</span><span class="p">:</span>
+            <span class="c1"># Linear warmup</span>
+            <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">step</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">T_w</span><span class="p">))</span>
+        <span class="k">elif</span> <span class="n">step</span> <span class="o">&lt;</span> <span class="n">T_w</span> <span class="o">+</span> <span class="n">T_s</span><span class="p">:</span>
+            <span class="c1"># Stable plateau at peak LR</span>
+            <span class="k">return</span> <span class="mf">1.0</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Cosine decay to floor</span>
+            <span class="n">decay_progress</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">step</span> <span class="o">-</span> <span class="n">T_w</span> <span class="o">-</span> <span class="n">T_s</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">T_d</span><span class="p">))</span>
+            <span class="n">decay_progress</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">decay_progress</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>  <span class="c1"># clamp at end</span>
+            <span class="n">cosine</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">decay_progress</span><span class="p">))</span>
+            <span class="k">return</span> <span class="n">min_lr_fraction</span> <span class="o">+</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">min_lr_fraction</span><span class="p">)</span> <span class="o">*</span> <span class="n">cosine</span>
+
+    <span class="k">return</span> <span class="n">LambdaLR</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">lr_lambda</span><span class="p">)</span>
+
+
+<span class="c1"># ---- Quick smoke test ----</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">10</span><span class="p">)</span>
+    <span class="c1"># Base LR that the scheduler multiplies against</span>
+    <span class="n">optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">3e-4</span><span class="p">)</span>
+
+    <span class="n">scheduler</span> <span class="o">=</span> <span class="n">get_cosine_schedule_with_warmup</span><span class="p">(</span>
+        <span class="n">optimizer</span><span class="p">,</span>
+        <span class="n">num_warmup_steps</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+        <span class="n">num_training_steps</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
+        <span class="n">min_lr_fraction</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">lrs</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000</span><span class="p">):</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="n">lrs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">optimizer</span><span class="o">.</span><span class="n">param_groups</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;lr&quot;</span><span class="p">])</span>
+        <span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+
+    <span class="c1"># Verify: step 50 should be ~50% of peak; step 999 should be near min</span>
+    <span class="k">assert</span> <span class="nb">abs</span><span class="p">(</span><span class="n">lrs</span><span class="p">[</span><span class="mi">50</span><span class="p">]</span> <span class="o">/</span> <span class="n">lrs</span><span class="p">[</span><span class="mi">99</span><span class="p">]</span> <span class="o">-</span> <span class="mi">50</span><span class="o">/</span><span class="mi">100</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mf">0.01</span><span class="p">,</span> <span class="s2">&quot;warmup slope wrong&quot;</span>
+    <span class="k">assert</span> <span class="n">lrs</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">lrs</span><span class="p">[</span><span class="mi">99</span><span class="p">]</span> <span class="o">*</span> <span class="mf">0.15</span><span class="p">,</span> <span class="s2">&quot;floor not reached&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Peak LR: </span><span class="si">{</span><span class="nb">max</span><span class="p">(</span><span class="n">lrs</span><span class="p">)</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">, Final LR: </span><span class="si">{</span><span class="n">lrs</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># Output: Peak LR: 3.00e-04, Final LR: 3.00e-05</span>
+</code></pre></div>
+<h2 id="learning-rate-vs-batch-size-scaling">Learning Rate vs. Batch Size Scaling<a class="headerlink" href="#learning-rate-vs-batch-size-scaling" title="Permanent link">¶</a></h2>
+<h3 id="the-linear-scaling-rule">The Linear Scaling Rule<a class="headerlink" href="#the-linear-scaling-rule" title="Permanent link">¶</a></h3>
+<p>When you increase the batch size <span class="arithmatex">\(B\)</span> by a factor <span class="arithmatex">\(k\)</span>, each gradient step is an average over <span class="arithmatex">\(k\)</span> times more samples, reducing variance by <span class="arithmatex">\(\sqrt{k}\)</span> and the signal-to-noise ratio effectively improves. To maintain the same training dynamics — the same total parameter update magnitude per unit of data — you should also scale the learning rate:</p>
+<div class="arithmatex">\[
+\eta' = k \cdot \eta \quad \text{(linear scaling rule, Goyal et al., 2017)}
+\]</div>
+<p>This rule works well for small-to-moderate batch size changes (say, 256 to 4096) with SGD and has been observed to hold approximately for Adam as well. The intuition: with <span class="arithmatex">\(k\times\)</span> larger batches, each step is <span class="arithmatex">\(k\times\)</span> more expensive in wall time (same flops per sample), but covers <span class="arithmatex">\(k\times\)</span> more data, so to move at the same &ldquo;rate through the data manifold,&rdquo; the step size should scale linearly.</p>
+<h3 id="the-square-root-scaling-rule">The Square-Root Scaling Rule<a class="headerlink" href="#the-square-root-scaling-rule" title="Permanent link">¶</a></h3>
+<p>For very large batch sizes, linear scaling breaks down — the gradient variance no longer falls as <span class="arithmatex">\(1/B\)</span> because you start hitting the intrinsic noise floor of the data distribution, not just sampling noise. The square-root rule offers a more conservative alternative:</p>
+<div class="arithmatex">\[
+\eta' = \sqrt{k} \cdot \eta
+\]</div>
+<p>In practice, OpenAI GPT-3 and similar runs used variants of this rule when scaling from thousands to millions of tokens per batch.</p>
+<h3 id="critical-batch-size">Critical Batch Size<a class="headerlink" href="#critical-batch-size" title="Permanent link">¶</a></h3>
+<p>The <em>critical batch size</em> <span class="arithmatex">\(B^*\)</span> is the regime boundary between these two laws. It was formalized by McCandlish et al. (<em>An Empirical Model of Large-Batch Training</em>, 2018). The key quantity is the <em>gradient noise scale</em>:</p>
+<div class="arithmatex">\[
+B_{\text{noise}} = \frac{\text{tr}(\Sigma)}{\|G\|^2}
+\]</div>
+<p>where <span class="arithmatex">\(\Sigma\)</span> is the covariance of the per-sample gradient and <span class="arithmatex">\(G\)</span> is the mean gradient. When <span class="arithmatex">\(B \ll B_{\text{noise}}\)</span>, batches are too small to average out noise — increasing batch size linearly reduces steps needed. When <span class="arithmatex">\(B \gg B_{\text{noise}}\)</span>, you are in the <em>saturated</em> regime where more data per step doesn&rsquo;t help; gradient noise is already small and increasing <span class="arithmatex">\(B\)</span> wastes compute.</p>
+<p>The practical takeaway: there is an optimal batch size for a given compute budget. Doubling the batch size beyond <span class="arithmatex">\(B^*\)</span> halves your throughput efficiency. For typical LLM pretraining, <span class="arithmatex">\(B^*\)</span> for cross-entropy loss on language is on the order of a few million tokens — consistent with the token batches used in Chinchilla-optimal runs.</p>
+<figure class="viz" id="fig-lrsched-critical-batch-size">
+<style>
+  #fig-lrsched-critical-batch-size .lbl       { font: 600 12px var(--sans,sans-serif); }
+  #fig-lrsched-critical-batch-size .tick-lbl  { font: 500 11px var(--mono,monospace); }
+  #fig-lrsched-critical-batch-size .axis-lbl  { font: 600 13px var(--sans,sans-serif); }
+  #fig-lrsched-critical-batch-size .regime-lbl{ font: 700 12px var(--sans,sans-serif); }
+  #fig-lrsched-critical-batch-size .sub-lbl   { font: 500 11px var(--sans,sans-serif); }
+  #fig-lrsched-critical-batch-size .annot     { font: 500 10.5px var(--mono,monospace); }
+  #fig-lrsched-critical-batch-size text       { fill: var(--ink-soft,#64748b); }
+  #fig-lrsched-critical-batch-size .muted-text{ fill: var(--muted,#94a3b8); }
+  #fig-lrsched-critical-batch-size .accent-text{ fill: var(--accent,#6366f1); }
+  #fig-lrsched-critical-batch-size .accent2-text{ fill: var(--accent2,#3b82f6); }
+</style>
+<svg viewBox="0 0 760 420" role="img" aria-label="Log-log schematic of steps-to-converge versus batch size, showing a linear speedup regime where doubling batch size halves steps, transitioning at critical batch size B-star to a saturated regime where adding batch size barely reduces steps.">
+<defs>
+  <marker id="cbs-arx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="cbs-ary" viewBox="0 0 10 10" refX="5" refY="1" markerWidth="6" markerHeight="6" orient="90">
+    <path d="M0 9 L5 0 L10 9 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+</defs>
+
+
+<rect x="80" y="50" width="300" height="310" fill="var(--accent,#6366f1)"  opacity="0.06" rx="2"/>
+<rect x="380" y="50" width="340" height="310" fill="var(--accent2,#3b82f6)" opacity="0.06" rx="2"/>
+
+
+<line x1="378" y1="325" x2="722" y2="325" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.4"/>
+<text x="588" y="319" class="annot muted-text" text-anchor="middle">minimum steps (serial-time floor)</text>
+
+
+<line x1="380" y1="50" x2="380" y2="368" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" stroke-dasharray="4 4" opacity="0.45"/>
+
+
+<line x1="80" y1="360" x2="80" y2="42" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#cbs-ary)"/>
+
+
+<line x1="80" y1="360" x2="728" y2="360" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#cbs-arx)"/>
+
+
+<text x="22" y="205" class="axis-lbl" text-anchor="middle" transform="rotate(-90,22,205)">Steps to converge</text>
+<text x="38" y="222" class="annot muted-text" text-anchor="middle" transform="rotate(-90,38,222)">(log scale)</text>
+
+
+<text x="555" y="393" class="axis-lbl" text-anchor="middle">Batch size B</text>
+<text x="555" y="408" class="annot muted-text" text-anchor="middle">(log scale)</text>
+
+
+<path
+  d="M110,92 C175,92 255,148 338,214 C358,229 370,241 380,252
+     C392,265 420,298 480,314 C540,322 625,326 720,327"
+  stroke="var(--accent,#6366f1)"
+  stroke-width="3"
+  fill="none"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+/>
+
+
+<circle cx="380" cy="252" r="5.5" fill="var(--surface,#fff)" stroke="var(--accent,#6366f1)" stroke-width="2.2"/>
+
+
+<text x="380" y="377" class="lbl accent-text" text-anchor="middle">B*</text>
+<text x="380" y="390" class="annot muted-text" text-anchor="middle">(critical batch size)</text>
+
+
+<text x="228" y="142" class="regime-lbl accent-text" text-anchor="middle">Linear speedup regime</text>
+<text x="228" y="158" class="sub-lbl muted-text" text-anchor="middle">B &lt;&lt; B_noise</text>
+
+
+<line x1="115" y1="96" x2="370" y2="242" stroke="var(--ink-soft,#64748b)" stroke-width="1" stroke-dasharray="3 3" opacity="0.32"/>
+
+
+<text x="552" y="198" class="regime-lbl accent2-text" text-anchor="middle">Saturated regime</text>
+<text x="552" y="214" class="sub-lbl muted-text" text-anchor="middle">B &gt;&gt; B_noise</text>
+<text x="552" y="231" class="sub-lbl muted-text" text-anchor="middle">more data per step wasted</text>
+
+</svg>
+<figcaption><b>Critical batch size separates two compute-efficiency regimes.</b> Below <i>B*</i> (the gradient-noise scale), doubling batch size roughly halves the steps needed, giving near-linear speedup. Above <i>B*</i>, gradient noise is already small and adding more samples per step yields diminishing returns — the curve flattens toward an irreducible serial-time floor. Exceeding <i>B*</i> wastes compute without proportionally reducing wall-clock time.</figcaption>
+</figure>
+
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Batch-LR Pair for a 7B Pretraining Run</p>
+<p>Suppose your baseline is:
+- <span class="arithmatex">\(\eta_{\max} = 3\text{e-}4\)</span>, batch size <span class="arithmatex">\(B = 512\)</span> samples × 2048 tokens = ~1M tokens/step.</p>
+<p>You want to scale to <span class="arithmatex">\(B' = 2048\)</span> samples × 2048 tokens = ~4M tokens/step, a factor <span class="arithmatex">\(k = 4\)</span>.</p>
+<p><strong>Linear scaling rule:</strong> <span class="arithmatex">\(\eta' = 4 \times 3\text{e-}4 = 1.2\text{e-}3\)</span>.</p>
+<p>At 4M tokens/step, you&rsquo;ll also converge in roughly <span class="arithmatex">\(1/4\)</span> the steps for the same total token count. If original run had 100K steps, new run has 25K steps. With cosine schedule, the peak LR and total steps both halve/quarter.</p>
+<p><strong>Check: does 1.2e-3 violate any rule of thumb?</strong> For a 7B model with hidden dim <span class="arithmatex">\(d = 4096\)</span>, muP-optimal LR scales as <span class="arithmatex">\(1/d\)</span> — at <span class="arithmatex">\(d=4096\)</span> we expect peak LRs in the range <span class="arithmatex">\(1\text{e-}4\)</span> to <span class="arithmatex">\(3\text{e-}3\)</span>. So 1.2e-3 is well within range.</p>
+<p><strong>Square-root rule (conservative):</strong> <span class="arithmatex">\(\eta' = 2 \times 3\text{e-}4 = 6\text{e-}4\)</span>. This is safer if you&rsquo;re uncertain whether you&rsquo;ve exceeded the critical batch size.</p>
+</div>
+<h2 id="gradient-accumulation">Gradient Accumulation<a class="headerlink" href="#gradient-accumulation" title="Permanent link">¶</a></h2>
+<p>When you can&rsquo;t fit the full desired batch size in GPU memory in a single forward-backward pass, <em>gradient accumulation</em> (GA) simulates a larger effective batch by running <span class="arithmatex">\(k\)</span> micro-batches before calling <code>optimizer.step()</code>:</p>
+<div class="arithmatex">\[
+g_{\text{eff}} = \frac{1}{k} \sum_{i=1}^{k} g_i
+\]</div>
+<p>The effective batch size is <code>micro_batch_size * accumulation_steps * world_size</code>. Gradient accumulation is mathematically equivalent to a full batch if loss is averaged (not summed) — a subtle but critical distinction.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">contextlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">nullcontext</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">train_step_with_grad_accumulation</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span>
+    <span class="n">optimizer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Optimizer</span><span class="p">,</span>
+    <span class="n">data_loader</span><span class="p">,</span>
+    <span class="n">accumulation_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+    <span class="n">scaler</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>  <span class="c1"># Optional GradScaler for mixed precision</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    One effective step = accumulation_steps micro-forward-backward passes.</span>
+<span class="sd">    Returns mean loss over the effective batch.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+    <span class="n">total_loss</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="k">for</span> <span class="n">micro_step</span><span class="p">,</span> <span class="n">batch</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">data_loader</span><span class="p">):</span>
+        <span class="n">input_ids</span> <span class="o">=</span> <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">labels</span> <span class="o">=</span> <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;labels&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># Only sync gradients across DDP replicas on the LAST micro-step.</span>
+        <span class="c1"># This avoids expensive all-reduce on every micro-step.</span>
+        <span class="n">sync_ctx</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">model</span><span class="o">.</span><span class="n">no_sync</span><span class="p">()</span>
+            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="s2">&quot;no_sync&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">micro_step</span> <span class="o">&lt;</span> <span class="n">accumulation_steps</span> <span class="o">-</span> <span class="mi">1</span>
+            <span class="k">else</span> <span class="n">nullcontext</span><span class="p">()</span>
+        <span class="p">)</span>
+
+        <span class="k">with</span> <span class="n">sync_ctx</span><span class="p">:</span>
+            <span class="c1"># Use autocast for bf16/fp16 if scaler is provided</span>
+            <span class="n">amp_ctx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">autocast</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span> <span class="k">if</span> <span class="n">scaler</span> <span class="k">else</span> <span class="n">nullcontext</span><span class="p">()</span>
+            <span class="k">with</span> <span class="n">amp_ctx</span><span class="p">:</span>
+                <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>
+                <span class="c1"># CRITICAL: divide by accumulation_steps so effective batch</span>
+                <span class="c1"># average == sum-of-microbatch-averages / k.</span>
+                <span class="c1"># If your loss already averages over tokens in the microbatch,</span>
+                <span class="c1"># this gives the right weight for each sample.</span>
+                <span class="n">loss</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span>
+                    <span class="n">logits</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">logits</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)),</span>
+                    <span class="n">labels</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span>
+                <span class="p">)</span> <span class="o">/</span> <span class="n">accumulation_steps</span>
+
+            <span class="k">if</span> <span class="n">scaler</span><span class="p">:</span>
+                <span class="n">scaler</span><span class="o">.</span><span class="n">scale</span><span class="p">(</span><span class="n">loss</span><span class="p">)</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+        <span class="n">total_loss</span> <span class="o">+=</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="p">(</span><span class="n">micro_step</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">==</span> <span class="n">accumulation_steps</span><span class="p">:</span>
+            <span class="k">break</span>  <span class="c1"># done accumulating</span>
+
+    <span class="c1"># Unscale, clip, step</span>
+    <span class="k">if</span> <span class="n">scaler</span><span class="p">:</span>
+        <span class="n">scaler</span><span class="o">.</span><span class="n">unscale_</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+    <span class="c1"># Gradient clipping (see next section)</span>
+    <span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">max_norm</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">scaler</span><span class="p">:</span>
+        <span class="n">scaler</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+        <span class="n">scaler</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">total_loss</span> <span class="o">*</span> <span class="n">accumulation_steps</span>  <span class="c1"># report unscaled mean loss</span>
+</code></pre></div>
+<p>One important caveat with distributed training: gradient synchronization (the all-reduce across data-parallel ranks) should happen only at the final accumulation step. Using <code>model.no_sync()</code> in PyTorch DDP avoids the all-reduce on intermediate steps. See <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a> for the full picture.</p>
+<h2 id="weight-decay-and-gradient-clipping">Weight Decay and Gradient Clipping<a class="headerlink" href="#weight-decay-and-gradient-clipping" title="Permanent link">¶</a></h2>
+<h3 id="weight-decay">Weight Decay<a class="headerlink" href="#weight-decay" title="Permanent link">¶</a></h3>
+<p>Weight decay (L2 regularization) penalizes large weights and prevents any single parameter from dominating. In modern deep learning it is implemented as <em>decoupled weight decay</em> (as in AdamW, Loshchilov &amp; Hutter, 2019):</p>
+<div class="arithmatex">\[
+\theta_{t+1} = (1 - \lambda \eta) \theta_t - \eta \cdot m_t / (\sqrt{v_t} + \epsilon)
+\]</div>
+<p>The decay is applied to the raw parameter values, not the gradient estimate, which prevents the adaptive scaling of Adam from interfering with regularization. Typical values: <span class="arithmatex">\(\lambda = 0.1\)</span> for pretraining (used in GPT-3, Llama, and most modern runs). Embeddings and bias terms are usually excluded from decay since they have a different scale and semantics.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_optimizer_with_decay</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span>
+    <span class="n">lr</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">weight_decay</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+    <span class="n">betas</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">=</span> <span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">),</span>  <span class="c1"># common for LLM pretraining</span>
+    <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-8</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    AdamW with weight decay applied only to weight matrices (not biases/norms).</span>
+<span class="sd">    betas=(0.9, 0.95) is standard for LLM pretraining — beta2=0.999 (default)</span>
+<span class="sd">    can slow adaptation to gradient changes late in training.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Partition params: decay weights but NOT biases, LayerNorm params, embeddings</span>
+    <span class="n">decay_params</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">no_decay_params</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">():</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">param</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="c1"># Common no-decay criteria: 1D params (bias, LN scale/bias),</span>
+        <span class="c1"># and sometimes embedding matrices</span>
+        <span class="k">if</span> <span class="n">param</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">or</span> <span class="s2">&quot;bias&quot;</span> <span class="ow">in</span> <span class="n">name</span> <span class="ow">or</span> <span class="s2">&quot;norm&quot;</span> <span class="ow">in</span> <span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+            <span class="n">no_decay_params</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">param</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">decay_params</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">param</span><span class="p">)</span>
+
+    <span class="n">param_groups</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="n">decay_params</span><span class="p">,</span> <span class="s2">&quot;weight_decay&quot;</span><span class="p">:</span> <span class="n">weight_decay</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="n">no_decay_params</span><span class="p">,</span> <span class="s2">&quot;weight_decay&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">},</span>
+    <span class="p">]</span>
+
+    <span class="n">optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span>
+        <span class="n">param_groups</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="n">lr</span><span class="p">,</span> <span class="n">betas</span><span class="o">=</span><span class="n">betas</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="n">eps</span><span class="p">,</span> <span class="n">fused</span><span class="o">=</span><span class="kc">True</span>  <span class="c1"># fused=True uses fast CUDA kernel</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">optimizer</span>
+</code></pre></div>
+<p>Setting <code>betas=(0.9, 0.95)</code> rather than the default <code>(0.9, 0.999)</code> is a commonly used pretraining choice — the lower <span class="arithmatex">\(\beta_2\)</span> makes the optimizer more responsive to recent gradient magnitude changes, which helps during the warmup phase and when learning rate jumps occur.</p>
+<h3 id="gradient-clipping">Gradient Clipping<a class="headerlink" href="#gradient-clipping" title="Permanent link">¶</a></h3>
+<p>Gradient clipping prevents parameter updates from being catastrophically large due to occasional gradient spikes (common when training on noisy web data or when the schedule is aggressive). The global-norm clip is by far the most common form:</p>
+<div class="arithmatex">\[
+g \leftarrow g \cdot \min\!\left(1,\; \frac{c}{\|g\|_2}\right)
+\]</div>
+<p>where <span class="arithmatex">\(c\)</span> is the clip threshold (typically 1.0) and <span class="arithmatex">\(\|g\|_2 = \sqrt{\sum_i g_i^2}\)</span> is the global L2 norm across all parameters. This preserves gradient direction while bounding the step magnitude.</p>
+<p>A persistent misconception: clipping is <em>not</em> a substitute for a well-designed schedule. If your global gradient norm is routinely hitting the clip threshold on more than ~20% of steps, something is wrong with your initialization, learning rate, or data distribution.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Gradient clipping with norm tracking for monitoring</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">clip_and_log_grad_norm</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Returns the pre-clip gradient norm for monitoring dashboards.&quot;&quot;&quot;</span>
+    <span class="c1"># Computes global L2 norm across all parameters</span>
+    <span class="n">total_norm</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">max_norm</span><span class="o">=</span><span class="n">max_norm</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">total_norm</span><span class="p">)</span>
+</code></pre></div>
+<p>Always log the pre-clip gradient norm at every step. A sudden spike — say, from 0.5 to 50 — is an early warning of a loss spike before it becomes visible in the loss itself. See <a href="../03-pretraining/11-training-stability.html">Training Stability, Loss Spikes &amp; Debugging Large Runs</a> for the full debugging playbook.</p>
+<h2 id="mup-maximal-update-parameterization">muP: Maximal-Update Parameterization<a class="headerlink" href="#mup-maximal-update-parameterization" title="Permanent link">¶</a></h2>
+<h3 id="the-problem-with-standard-parameterization-at-scale">The Problem with Standard Parameterization at Scale<a class="headerlink" href="#the-problem-with-standard-parameterization-at-scale" title="Permanent link">¶</a></h3>
+<p>When you tune hyperparameters on a small model (say, 125M parameters) and transfer them to a large model (7B+), something breaks. The optimal learning rate changes because the width of the network changes: wider networks have larger forward activations and can receive larger gradient signal, so they need smaller learning rates to maintain stable training dynamics.</p>
+<p>In standard parameterization (SP), the optimal LR scales roughly as <span class="arithmatex">\(1/\sqrt{d}\)</span> or <span class="arithmatex">\(1/d\)</span> depending on the layer type, where <span class="arithmatex">\(d\)</span> is the hidden dimension. This means every time you scale the model, you have to re-tune LR.</p>
+<h3 id="mup-what-changes">muP: What Changes<a class="headerlink" href="#mup-what-changes" title="Permanent link">¶</a></h3>
+<p>Maximal-update parameterization (Yang et al., <em>Tensor Programs V</em>, 2022) is a reparameterization of the network that makes the optimal hyperparameters — especially learning rate and initialization scale — <em>independent of model width</em>. You can then:</p>
+<ol>
+<li>Run a full HP sweep on a tiny &ldquo;proxy model&rdquo; (e.g., width 256).</li>
+<li>Transfer the optimal HPs directly to the full-scale run at width 4096 or beyond.</li>
+</ol>
+<p>The key changes relative to standard PyTorch initialization:</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Standard Param</th>
+<th>muP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Input embedding</td>
+<td><span class="arithmatex">\(\mathcal{N}(0, 1)\)</span></td>
+<td><span class="arithmatex">\(\mathcal{N}(0, 1)\)</span></td>
+</tr>
+<tr>
+<td>Hidden weight <span class="arithmatex">\(W \in \mathbb{R}^{d_{\text{in}} \times d_{\text{out}}}\)</span></td>
+<td><span class="arithmatex">\(\mathcal{N}(0, \sigma^2/d_{\text{in}})\)</span></td>
+<td><span class="arithmatex">\(\mathcal{N}(0, \sigma^2/d_{\text{in}})\)</span></td>
+</tr>
+<tr>
+<td>Output / readout weight</td>
+<td><span class="arithmatex">\(\mathcal{N}(0, 1/d_{\text{in}})\)</span></td>
+<td><span class="arithmatex">\(\mathcal{N}(0, 1/d_{\text{in}}^2)\)</span> scaled by <span class="arithmatex">\(1/d\)</span></td>
+</tr>
+<tr>
+<td>Per-layer LR multiplier</td>
+<td>1</td>
+<td><span class="arithmatex">\(1/d_{\text{in}}\)</span> for hidden; <span class="arithmatex">\(1/d\)</span> for readout</td>
+</tr>
+<tr>
+<td>Attention logit scale</td>
+<td><span class="arithmatex">\(1/\sqrt{d_k}\)</span></td>
+<td><span class="arithmatex">\(1/d_k\)</span></td>
+</tr>
+</tbody>
+</table>
+<p>The precise prescription comes from requiring that all feature updates <span class="arithmatex">\(\Delta h^{(l)}\)</span> (the pre-activation change per step) remain <span class="arithmatex">\(O(1)\)</span> as width <span class="arithmatex">\(d \to \infty\)</span> — the &ldquo;maximal&rdquo; in muP means every neuron participates maximally in learning without causing instability.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MuPLinear</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Linear layer with muP-compatible initialization and LR scaling.</span>
+<span class="sd">    In muP:</span>
+<span class="sd">      - hidden layers: init std = base_std / sqrt(fan_in), LR *= 1/fan_in</span>
+<span class="sd">      - readout layer: init std = base_std / fan_in, LR *= 1/fan_in</span>
+<span class="sd">    We implement LR scaling via a per-parameter LR multiplier convention</span>
+<span class="sd">    compatible with mup (microsoft/mup on GitHub).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">in_features</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">out_features</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">bias</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">is_readout</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">base_std</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+        <span class="n">inf_width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>  <span class="c1"># width at &quot;infinite&quot; (reference) model scale</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">in_features</span><span class="p">,</span> <span class="n">out_features</span><span class="p">,</span> <span class="n">bias</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">is_readout</span> <span class="o">=</span> <span class="n">is_readout</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">inf_width</span> <span class="o">=</span> <span class="n">inf_width</span> <span class="ow">or</span> <span class="n">in_features</span>
+
+        <span class="c1"># muP initialization</span>
+        <span class="k">if</span> <span class="n">is_readout</span><span class="p">:</span>
+            <span class="c1"># Readout: std ∝ 1/d so activations stay O(1)</span>
+            <span class="n">std</span> <span class="o">=</span> <span class="n">base_std</span> <span class="o">/</span> <span class="n">in_features</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Hidden: same as standard He/fan-in but with explicit inf_width scaling</span>
+            <span class="n">std</span> <span class="o">=</span> <span class="n">base_std</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">in_features</span><span class="p">)</span>
+
+        <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">mean</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="n">std</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">bias</span><span class="p">:</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">zeros_</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_lr_multiplier</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Returns the per-layer LR multiplier.</span>
+<span class="sd">        Base LR should be tuned at proxy (small) model; this scales it correctly.</span>
+<span class="sd">        At proxy model width d_proxy, multiplier = 1.</span>
+<span class="sd">        At width d &gt;&gt; d_proxy, multiplier = d_proxy / d.</span>
+<span class="sd">        For simplicity, return 1/in_features (absorbed into optimizer param groups).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">in_features</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_mup_optimizer</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span>
+    <span class="n">base_lr</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">proxy_width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">weight_decay</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Build AdamW where each layer&#39;s effective LR = base_lr * (proxy_width / layer_width).</span>
+<span class="sd">    base_lr is tuned at proxy_width; this transfers the HP to any larger model.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">param_groups</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">module</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_modules</span><span class="p">():</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">MuPLinear</span><span class="p">):</span>
+            <span class="c1"># Scale LR inversely with layer width to maintain muP invariance</span>
+            <span class="n">actual_width</span> <span class="o">=</span> <span class="n">module</span><span class="o">.</span><span class="n">in_features</span>
+            <span class="n">lr_scale</span> <span class="o">=</span> <span class="n">proxy_width</span> <span class="o">/</span> <span class="n">actual_width</span>  <span class="c1"># == 1 at proxy, &lt;1 at larger models</span>
+            <span class="n">param_groups</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+                <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="n">module</span><span class="o">.</span><span class="n">parameters</span><span class="p">()),</span>
+                <span class="s2">&quot;lr&quot;</span><span class="p">:</span> <span class="n">base_lr</span> <span class="o">*</span> <span class="n">lr_scale</span><span class="p">,</span>
+                <span class="s2">&quot;weight_decay&quot;</span><span class="p">:</span> <span class="n">weight_decay</span><span class="p">,</span>
+                <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">name</span><span class="p">,</span>
+            <span class="p">})</span>
+
+    <span class="c1"># All other parameters (norms, embeddings) get base LR</span>
+    <span class="n">named_param_set</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">modules</span><span class="p">()</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">MuPLinear</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">m</span><span class="o">.</span><span class="n">parameters</span><span class="p">()</span>
+    <span class="p">}</span>
+    <span class="n">other_params</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()</span> <span class="k">if</span> <span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">named_param_set</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">other_params</span><span class="p">:</span>
+        <span class="n">param_groups</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+            <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="n">other_params</span><span class="p">,</span>
+            <span class="s2">&quot;lr&quot;</span><span class="p">:</span> <span class="n">base_lr</span><span class="p">,</span>
+            <span class="s2">&quot;weight_decay&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span>
+            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;other&quot;</span><span class="p">,</span>
+        <span class="p">})</span>
+
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">param_groups</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="n">base_lr</span><span class="p">,</span> <span class="n">betas</span><span class="o">=</span><span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">))</span>
+</code></pre></div>
+<h3 id="practical-mup-workflow">Practical muP Workflow<a class="headerlink" href="#practical-mup-workflow" title="Permanent link">¶</a></h3>
+<p>The Microsoft <code>mup</code> library (github.com/microsoft/mup) provides a plug-and-play implementation. The typical workflow is:</p>
+<ol>
+<li><strong>Define a base config</strong> with a small proxy width (e.g., 256 hidden dim).</li>
+<li><strong>Run a dense HP sweep</strong> over LR, initialization std, and possibly weight decay — this is cheap at small width.</li>
+<li><strong>Identify the optimal HP at proxy width.</strong></li>
+<li><strong>Scale width</strong> to the full model. muP guarantees the same HP is optimal (up to reasonable approximation in practice).</li>
+<li><strong>Validate on a medium model</strong> (e.g., 1B) before launching the full run.</li>
+</ol>
+<p>The evidence that this works is now substantial: Microsoft&rsquo;s Phi models, various internal runs at other labs, and controlled ablations in the <em>Tensor Programs V</em> paper all show that muP-transferred LRs closely match the empirically optimal LRs found by grid search at the large scale — saving orders-of-magnitude in tuning compute.</p>
+<h2 id="practical-hyperparameter-recipes">Practical Hyperparameter Recipes<a class="headerlink" href="#practical-hyperparameter-recipes" title="Permanent link">¶</a></h2>
+<p>Consolidating the above into a reference table for common pretraining scales:</p>
+<table>
+<thead>
+<tr>
+<th>Model scale</th>
+<th>Peak LR</th>
+<th>Warmup steps</th>
+<th>Batch (tokens)</th>
+<th>Grad clip</th>
+<th>Weight decay</th>
+<th><span class="arithmatex">\(\beta_1, \beta_2\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>125M</td>
+<td><span class="arithmatex">\(6\text{e-}4\)</span></td>
+<td>2000</td>
+<td>~0.5M</td>
+<td>1.0</td>
+<td>0.1</td>
+<td>0.9, 0.95</td>
+</tr>
+<tr>
+<td>1B</td>
+<td><span class="arithmatex">\(3\text{e-}4\)</span></td>
+<td>2000</td>
+<td>~2M</td>
+<td>1.0</td>
+<td>0.1</td>
+<td>0.9, 0.95</td>
+</tr>
+<tr>
+<td>7B</td>
+<td><span class="arithmatex">\(3\text{e-}4\)</span></td>
+<td>2000</td>
+<td>~4M</td>
+<td>1.0</td>
+<td>0.1</td>
+<td>0.9, 0.95</td>
+</tr>
+<tr>
+<td>70B</td>
+<td><span class="arithmatex">\(1.5\text{e-}4\)</span></td>
+<td>4000</td>
+<td>~8M</td>
+<td>1.0</td>
+<td>0.1</td>
+<td>0.9, 0.95</td>
+</tr>
+<tr>
+<td>400B+</td>
+<td><span class="arithmatex">\(\sim 1\text{e-}4\)</span></td>
+<td>4000–8000</td>
+<td>~16M</td>
+<td>1.0</td>
+<td>0.1</td>
+<td>0.9, 0.95</td>
+</tr>
+</tbody>
+</table>
+<p>These are starting points synthesized from published literature (GPT-3, Llama &frac12;/3, Mistral, Falcon, OLMo) — treat them as reasonable defaults, not ground truth. The right value for any specific run depends on architecture choices (RMSNorm vs LayerNorm, activation function, depth/width ratio) and the data mixture.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">PretrainingHParams</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Reference hyperparameter config for LLM pretraining.</span>
+<span class="sd">    Start here and tune with muP proxy sweeps.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Optimizer</span>
+    <span class="n">optimizer</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;adamw&quot;</span><span class="p">,</span> <span class="s2">&quot;lion&quot;</span><span class="p">,</span> <span class="s2">&quot;adafactor&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;adamw&quot;</span>
+    <span class="n">peak_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">3e-4</span>
+    <span class="n">min_lr_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span>       <span class="c1"># eta_min = peak_lr * min_lr_fraction</span>
+    <span class="n">beta1</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.9</span>
+    <span class="n">beta2</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.95</span>
+    <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-8</span>
+    <span class="n">weight_decay</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span>
+
+    <span class="c1"># Schedule</span>
+    <span class="n">schedule</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;cosine&quot;</span><span class="p">,</span> <span class="s2">&quot;wsd&quot;</span><span class="p">,</span> <span class="s2">&quot;linear&quot;</span><span class="p">,</span> <span class="s2">&quot;rsqrt&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;cosine&quot;</span>
+    <span class="n">warmup_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2000</span>
+    <span class="c1"># For cosine: total_steps must be set before training</span>
+    <span class="c1"># For WSD: set stable_steps and decay_steps instead</span>
+    <span class="n">total_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100_000</span>
+    <span class="n">wsd_stable_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.85</span>  <span class="c1"># fraction of (total-warmup) in stable phase</span>
+
+    <span class="c1"># Gradient</span>
+    <span class="n">grad_clip_norm</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>
+    <span class="n">grad_accumulation_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+
+    <span class="c1"># Batch</span>
+    <span class="n">micro_batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span>          <span class="c1"># per-GPU, per-step</span>
+    <span class="n">tokens_per_sample</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2048</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">effective_batch_tokens</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">world_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">micro_batch_size</span>
+            <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokens_per_sample</span>
+            <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">grad_accumulation_steps</span>
+            <span class="o">*</span> <span class="n">world_size</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">total_tokens</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">world_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">effective_batch_tokens</span><span class="p">(</span><span class="n">world_size</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">total_steps</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">scale_lr_for_batch_size</span><span class="p">(</span>
+    <span class="n">base_lr</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">base_batch</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">target_batch</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">rule</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;linear&quot;</span><span class="p">,</span> <span class="s2">&quot;sqrt&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;linear&quot;</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Scale learning rate when changing effective batch size.</span>
+<span class="sd">    Use &#39;linear&#39; when target_batch / base_batch &lt;= 8x.</span>
+<span class="sd">    Use &#39;sqrt&#39; for more aggressive batch scaling.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ratio</span> <span class="o">=</span> <span class="n">target_batch</span> <span class="o">/</span> <span class="n">base_batch</span>
+    <span class="k">if</span> <span class="n">rule</span> <span class="o">==</span> <span class="s2">&quot;linear&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">base_lr</span> <span class="o">*</span> <span class="n">ratio</span>
+    <span class="k">elif</span> <span class="n">rule</span> <span class="o">==</span> <span class="s2">&quot;sqrt&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">base_lr</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">ratio</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown rule: </span><span class="si">{</span><span class="n">rule</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># Example: scale 1M-token/step config to 4M tokens/step</span>
+<span class="n">base_cfg</span> <span class="o">=</span> <span class="n">PretrainingHParams</span><span class="p">(</span><span class="n">peak_lr</span><span class="o">=</span><span class="mf">3e-4</span><span class="p">)</span>
+<span class="n">new_lr</span> <span class="o">=</span> <span class="n">scale_lr_for_batch_size</span><span class="p">(</span>
+    <span class="n">base_lr</span><span class="o">=</span><span class="n">base_cfg</span><span class="o">.</span><span class="n">peak_lr</span><span class="p">,</span>
+    <span class="n">base_batch</span><span class="o">=</span><span class="mi">1_000_000</span><span class="p">,</span>
+    <span class="n">target_batch</span><span class="o">=</span><span class="mi">4_000_000</span><span class="p">,</span>
+    <span class="n">rule</span><span class="o">=</span><span class="s2">&quot;linear&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Scaled LR: </span><span class="si">{</span><span class="n">new_lr</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 1.20e-03</span>
+</code></pre></div>
+<h3 id="warmup-duration-heuristics">Warmup Duration Heuristics<a class="headerlink" href="#warmup-duration-heuristics" title="Permanent link">¶</a></h3>
+<p>A useful rule of thumb: warm up for at least <span class="arithmatex">\(T_w = \max(1000, 0.02 \times T_{\text{total}})\)</span> steps — that is, at least 1000 steps or 2% of the total budget, whichever is larger. Shorter warmups are fine for fine-tuning (where the model is already initialized near a good basin) but dangerous for pretraining from scratch.</p>
+<p>For continues pretraining (e.g., domain adaptation starting from a released checkpoint), a short warmup of 100–500 steps is usually sufficient — the parameters are already in a well-behaved regime.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common Pitfall: Forgetting to Warm Up After a Checkpoint Restart</p>
+<p>When you resume from a checkpoint, the learning rate resumes at whatever value the schedule produced at the checkpoint step. This is correct if the run is a clean continuation.</p>
+<p>But if you restart with a new optimizer state (e.g., because you ran out of memory and had to restart ZeRO-3), the optimizer&rsquo;s <span class="arithmatex">\(m_t\)</span> and <span class="arithmatex">\(v_t\)</span> estimates are reset to zero — yet the LR is at its full value. This is exactly the dangerous cold-start situation warmup is designed to prevent. Always re-warm for a few hundred steps when reinitializing optimizer state.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re scaling a 1B model run to 10B parameters. Keeping all other hyperparameters fixed, how would you adjust the learning rate and why? What framework would you use to make this decision more systematic?</p>
+<p><strong>A:</strong> With standard parameterization, the optimal LR typically decreases with model width because wider networks produce larger activations and gradient signals, so a proportionally smaller step size is needed to maintain stable training dynamics. A rough empirical rule is to scale LR as <span class="arithmatex">\(1/\sqrt{d}\)</span> or <span class="arithmatex">\(1/d\)</span> (depending on the layer type), though the exact exponent varies by architecture. The more principled answer is to use muP (maximal-update parameterization, Yang et al. 2022): define a small proxy model of width 256 or 512, run a grid search over LR there, then transfer the optimal LR directly to the 10B model because muP guarantees width-invariant optimal hyperparameters. This saves enormous compute compared to grid-searching at scale. Additionally, when scaling batch size — which often grows with model scale — apply the linear or sqrt scaling rule accordingly, and re-validate warmup duration since larger models are more sensitive to cold-start instability.</p>
+</div>
+<h2 id="putting-it-all-together-a-training-launch-checklist">Putting It All Together: A Training Launch Checklist<a class="headerlink" href="#putting-it-all-together-a-training-launch-checklist" title="Permanent link">¶</a></h2>
+<p>Before launching a large run, verify each item:</p>
+<div class="highlight"><pre><span></span><code>Hyperparameter Launch Checklist
+================================
+[ ] Peak LR set (use muP proxy sweep if scaling architecture)
+[ ] Warmup steps &gt;= max(1000, 2% of total) for full pretraining
+[ ] Batch size chosen: effective tokens/step in range [0.5M, 16M]
+    depending on model scale; check against critical batch size estimate
+[ ] LR scaled for batch size if changed from reference run (linear or sqrt)
+[ ] Cosine or WSD schedule: total_steps (cosine) or stable_steps set
+[ ] Min LR floor = 10% of peak LR
+[ ] Weight decay = 0.1 (decoupled, excluded from embeddings/norms/biases)
+[ ] Grad clip norm = 1.0; grad norm logged every step
+[ ] beta2 = 0.95 (not 0.999 default)
+[ ] Gradient accumulation: effective_batch = micro_batch * accum_steps * world_size
+[ ] DDP: model.no_sync() used on non-final accumulation steps
+[ ] Optimizer state saved in checkpoint; LR scheduler state saved separately
+[ ] Monitoring: log {lr, grad_norm, loss, step} every step
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner Tip: Curriculum for Batch Size</p>
+<p>Some teams ramp the batch size up alongside the learning rate during warmup — starting with a small batch (say 128K tokens/step) and linearly increasing to the full target batch over the first 2000 steps. This provides a stronger implicit regularization signal early in training (small batches have higher gradient noise, which acts like data augmentation) and can improve final evaluation loss slightly. The learning rate warmup and batch warmup interact: keep them synchronized so the effective LR-per-sample stays roughly constant during the warmup phase.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Warmup is mandatory at large scale because Adam&rsquo;s momentum estimates are cold-started at zero; ramping LR over 1000–4000 steps prevents early instability.</li>
+<li>Cosine annealing is the dominant pretraining schedule; Warmup-Stable-Decay (WSD) is increasingly popular because it decouples training length from schedule shape.</li>
+<li>Linearly scale LR with batch size for moderate scaling (<span class="arithmatex">\(k \leq 8\times\)</span>); use sqrt scaling for larger changes. Beyond the critical batch size, increasing batch size no longer reduces the step count proportionally.</li>
+<li>Gradient accumulation simulates large batches; always divide loss by accumulation steps and use <code>model.no_sync()</code> on intermediate steps in DDP.</li>
+<li>Use <code>AdamW</code> with <span class="arithmatex">\((\beta_1, \beta_2) = (0.9, 0.95)\)</span>, weight decay 0.1 (decoupled, excluding 1D params), and gradient clip norm 1.0 as the default pretraining recipe.</li>
+<li>muP (maximal-update parameterization) makes hyperparameters — especially peak LR — invariant to model width, enabling HP transfer from small proxy models to billion-parameter runs.</li>
+<li>Always log pre-clip gradient norm every step; spikes in grad norm are early warnings of loss spikes.</li>
+<li>When restarting training with reset optimizer state, always re-warm the LR — a full warm-start LR with cold optimizer moments is as dangerous as the original cold start.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Learning rate schedules, warmup, and hyperparameter transfer are now well-understood engineering disciplines: cosine annealing and Warmup-Stable-Decay (WSD) dominate LLM pretraining, muP has become the standard framework for transferring hyperparameters from proxy to full-scale models, and the theoretical underpinnings of why these schedules work are being rigorously established (2024–2026).</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1608.03983">Loshchilov &amp; Hutter, <em>SGDR: Stochastic Gradient Descent with Warm Restarts</em> (2017)</a> — introduced cosine annealing with warm restarts; the cosine curve became the default LLM pretraining schedule.</li>
+<li><a href="https://arxiv.org/abs/1706.02677">Goyal et al., <em>Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour</em> (2017)</a> — established the linear scaling rule for batch size / learning rate.</li>
+<li><a href="https://arxiv.org/abs/1812.06162">McCandlish et al., <em>An Empirical Model of Large-Batch Training</em> (2018)</a> — defined the gradient noise scale and critical batch size; the conceptual backbone of batch-size tuning.</li>
+<li><a href="https://arxiv.org/abs/1711.05101">Loshchilov &amp; Hutter, <em>Decoupled Weight Decay Regularization</em> (AdamW, 2019)</a> — decoupled weight decay from gradient updates; now the universal pretraining optimizer recipe.</li>
+<li><a href="https://arxiv.org/abs/2203.03466">Yang et al., <em>Tensor Programs V: Tuning Large Neural Networks via Zero-Shot Hyperparameter Transfer</em> (2022)</a> — muP; proved that optimal hyperparameters (especially LR) can be made width-invariant and transferred from small proxy models.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2404.06395">Hu et al., <em>MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies</em> (2024)</a> — popularized the Warmup-Stable-Decay (WSD) schedule, demonstrating that decoupling training length from schedule shape enables flexible, efficient pretraining.</li>
+<li><a href="https://arxiv.org/abs/2410.05192">Wen et al., <em>Understanding Warmup-Stable-Decay Learning Rates: A River Valley Loss Landscape Perspective</em> (2024)</a> — theoretical explanation of WSD via the &ldquo;river valley&rdquo; loss landscape; explains why large LR oscillations during the stable phase are benign.</li>
+<li><a href="https://arxiv.org/abs/2602.06797">Li et al., <em>Optimal Learning-Rate Schedules under Functional Scaling Laws: Power Decay and Warmup-Stable-Decay</em> (2026)</a> — rigorous theory showing a phase transition between power-decay and WSD as optimal schedules depending on task difficulty.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/microsoft/mup">microsoft/mup</a> — reference PyTorch implementation of muP with MuAdam/MuSGD optimizers, coordinate-check utilities, and Transformer examples; the standard starting point for HP transfer workflows.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2402.00838">Groeneveld et al., <em>OLMo: Accelerating the Science of Language Models</em> (2024)</a> — fully open pretraining paper with detailed hyperparameter tables (LR, warmup, batch, weight decay) for 1B and 7B runs; a clean reference implementation of the standard recipe.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Yang, G. et al. &ldquo;Tensor Programs V: Tuning Large Neural Networks via Zero-Shot Hyperparameter Transfer.&rdquo; NeurIPS 2022. (The muP paper; defines maximal-update parameterization and the theoretical framework behind HP transfer.)</li>
+<li>McCandlish, S. et al. &ldquo;An Empirical Model of Large-Batch Training.&rdquo; arXiv, 2018. (Introduces the gradient noise scale and critical batch size.)</li>
+<li>Goyal, P. et al. &ldquo;Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour.&rdquo; arXiv, 2017. (The linear scaling rule for batch size.)</li>
+<li>Loshchilov, I. &amp; Hutter, F. &ldquo;Decoupled Weight Decay Regularization.&rdquo; ICLR 2019. (Defines AdamW and decoupled weight decay.)</li>
+<li>Loshchilov, I. &amp; Hutter, F. &ldquo;SGDR: Stochastic Gradient Descent with Warm Restarts.&rdquo; ICLR 2017. (Cosine annealing with warm restarts.)</li>
+<li>Hu, S. et al. &ldquo;MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies.&rdquo; arXiv, 2024. (Popularizes the WSD schedule and demonstrates its practical advantages.)</li>
+<li>Brown, T. et al. &ldquo;Language Models are Few-Shot Learners.&rdquo; NeurIPS 2020. (GPT-3; documents the hyperparameter choices used for large-scale pretraining at the time.)</li>
+<li>microsoft/mup GitHub repository. Reference implementation of maximal-update parameterization in PyTorch.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="09-optimizers.html"><span class="pn-label">← Previous</span><span class="pn-title">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</span></a>
+<a class="next" href="11-training-stability.html"><span class="pn-label">Next →</span><span class="pn-title">Training Stability, Loss Spikes &amp; Debugging Large Runs</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-schedules-and-warmup-exist">Why Schedules and Warmup Exist</a></li>
+<li class="toc-l2"><a href="#the-major-schedule-families">The Major Schedule Families</a></li>
+<li class="toc-l3"><a href="#linear-schedule">Linear Schedule</a></li>
+<li class="toc-l3"><a href="#cosine-annealing">Cosine Annealing</a></li>
+<li class="toc-l3"><a href="#cosine-with-restarts-sgdr">Cosine with Restarts (SGDR)</a></li>
+<li class="toc-l3"><a href="#warmup-stable-decay-wsd">Warmup-Stable-Decay (WSD)</a></li>
+<li class="toc-l3"><a href="#rsqrt-inverse-square-root">RSqrt (Inverse Square Root)</a></li>
+<li class="toc-l2"><a href="#implementing-schedules-from-scratch">Implementing Schedules From Scratch</a></li>
+<li class="toc-l2"><a href="#learning-rate-vs-batch-size-scaling">Learning Rate vs. Batch Size Scaling</a></li>
+<li class="toc-l3"><a href="#the-linear-scaling-rule">The Linear Scaling Rule</a></li>
+<li class="toc-l3"><a href="#the-square-root-scaling-rule">The Square-Root Scaling Rule</a></li>
+<li class="toc-l3"><a href="#critical-batch-size">Critical Batch Size</a></li>
+<li class="toc-l2"><a href="#gradient-accumulation">Gradient Accumulation</a></li>
+<li class="toc-l2"><a href="#weight-decay-and-gradient-clipping">Weight Decay and Gradient Clipping</a></li>
+<li class="toc-l3"><a href="#weight-decay">Weight Decay</a></li>
+<li class="toc-l3"><a href="#gradient-clipping">Gradient Clipping</a></li>
+<li class="toc-l2"><a href="#mup-maximal-update-parameterization">muP: Maximal-Update Parameterization</a></li>
+<li class="toc-l3"><a href="#the-problem-with-standard-parameterization-at-scale">The Problem with Standard Parameterization at Scale</a></li>
+<li class="toc-l3"><a href="#mup-what-changes">muP: What Changes</a></li>
+<li class="toc-l3"><a href="#practical-mup-workflow">Practical muP Workflow</a></li>
+<li class="toc-l2"><a href="#practical-hyperparameter-recipes">Practical Hyperparameter Recipes</a></li>
+<li class="toc-l3"><a href="#warmup-duration-heuristics">Warmup Duration Heuristics</a></li>
+<li class="toc-l2"><a href="#putting-it-all-together-a-training-launch-checklist">Putting It All Together: A Training Launch Checklist</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

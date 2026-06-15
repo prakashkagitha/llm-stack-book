@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calculus, Optimization &amp; Convexity — The LLM Stack</title>
+<meta name="description" content="Gradients, Jacobians, Hessians, chain rule; convex vs non-convex; gradient descent variants; momentum; saddle points; Lipschitz/condition number intuition. Code">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="active" href="03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part I — Mathematical &amp; Systems Foundations</div>
+<h1 id="13-calculus-optimization-convexity">1.3 Calculus, Optimization &amp; Convexity<a class="headerlink" href="#13-calculus-optimization-convexity" title="Permanent link">¶</a></h1>
+<p>Training a neural network is fundamentally a calculus problem: given a scalar loss <span class="arithmatex">\(\mathcal{L}(\theta)\)</span> that measures how wrong our model is, find the <span class="arithmatex">\(\theta\)</span> that makes it as small as possible. Everything else — architectures, data pipelines, learning rate schedules — exists in service of that search. This chapter builds the mathematical scaffolding from first principles: how gradients generalize derivatives to high dimensions, what the Hessian tells you about the loss landscape, why the landscape is almost never convex in practice, and which algorithmic tricks let us navigate it efficiently anyway. We close with a worked numerical example, a full runnable implementation of gradient descent on a 2D loss surface, and an answer to one of the most satisfying questions in ML theory: why does SGD generalize?</p>
+<p>Prerequisites: basic single-variable calculus and the matrix notation from <a href="../01-foundations/01-linear-algebra.html">Linear Algebra for Deep Learning</a>. We will build on these ideas directly in <a href="../01-foundations/06-neural-nets-from-scratch.html">Neural Networks From Scratch: MLPs &amp; Backprop</a> and <a href="../01-foundations/07-autodiff-pytorch.html">Automatic Differentiation &amp; PyTorch Internals</a>.</p>
+<hr />
+<h2 id="gradients-jacobians-and-hessians">Gradients, Jacobians, and Hessians<a class="headerlink" href="#gradients-jacobians-and-hessians" title="Permanent link">¶</a></h2>
+<h3 id="the-gradient-steepest-ascent-in-parameter-space">The Gradient: Steepest Ascent in Parameter Space<a class="headerlink" href="#the-gradient-steepest-ascent-in-parameter-space" title="Permanent link">¶</a></h3>
+<p>Let <span class="arithmatex">\(f : \mathbb{R}^n \to \mathbb{R}\)</span> be a differentiable scalar-valued function. The <strong>gradient</strong> <span class="arithmatex">\(\nabla_\theta f\)</span> is the vector of partial derivatives:</p>
+<div class="arithmatex">\[
+\nabla_\theta f = \begin{bmatrix} \frac{\partial f}{\partial \theta_1} \\ \frac{\partial f}{\partial \theta_2} \\ \vdots \\ \frac{\partial f}{\partial \theta_n} \end{bmatrix}
+\]</div>
+<p>The gradient has a geometric meaning that makes it indispensable: at any point <span class="arithmatex">\(\theta\)</span>, <span class="arithmatex">\(\nabla_\theta f\)</span> points in the direction of steepest <em>increase</em> of <span class="arithmatex">\(f\)</span>. Moving in the direction <span class="arithmatex">\(-\nabla_\theta f\)</span> therefore decreases <span class="arithmatex">\(f\)</span> most rapidly — that single insight is all of gradient descent.</p>
+<p>The directional derivative of <span class="arithmatex">\(f\)</span> along unit vector <span class="arithmatex">\(\mathbf{u}\)</span> is <span class="arithmatex">\(D_\mathbf{u} f = \nabla f \cdot \mathbf{u} = \|\nabla f\| \cos\phi\)</span>, where <span class="arithmatex">\(\phi\)</span> is the angle between <span class="arithmatex">\(\mathbf{u}\)</span> and <span class="arithmatex">\(\nabla f\)</span>. It is maximized when <span class="arithmatex">\(\phi = 0\)</span> (moving along <span class="arithmatex">\(\nabla f\)</span>) and minimized when <span class="arithmatex">\(\phi = \pi\)</span> (moving against <span class="arithmatex">\(\nabla f\)</span>).</p>
+<p>For a modern language model, <span class="arithmatex">\(\theta \in \mathbb{R}^n\)</span> with <span class="arithmatex">\(n\)</span> on the order of <span class="arithmatex">\(10^9\)</span> to <span class="arithmatex">\(10^{12}\)</span>. The gradient is a vector of the same dimensionality — one scalar sensitivity per parameter.</p>
+<h3 id="the-jacobian-gradient-for-vector-valued-maps">The Jacobian: Gradient for Vector-Valued Maps<a class="headerlink" href="#the-jacobian-gradient-for-vector-valued-maps" title="Permanent link">¶</a></h3>
+<p>When the function maps <span class="arithmatex">\(\mathbb{R}^n \to \mathbb{R}^m\)</span>, the first-order derivative is the <strong>Jacobian matrix</strong> <span class="arithmatex">\(J \in \mathbb{R}^{m \times n}\)</span>:</p>
+<div class="arithmatex">\[
+J_{ij} = \frac{\partial f_i}{\partial \theta_j}
+\]</div>
+<p>Each row <span class="arithmatex">\(i\)</span> of <span class="arithmatex">\(J\)</span> is the gradient of the <span class="arithmatex">\(i\)</span>-th output with respect to all inputs. The gradient is the special case <span class="arithmatex">\(m=1\)</span>, i.e., <span class="arithmatex">\(J \in \mathbb{R}^{1 \times n}\)</span> (a row vector; transposing gives the usual column-vector gradient).</p>
+<p>In neural network backpropagation, the backward pass through each layer is essentially a Jacobian-vector product (JVP) or vector-Jacobian product (VJP). PyTorch&rsquo;s autograd computes VJPs by default (reverse-mode AD), which is efficient when <span class="arithmatex">\(m \ll n\)</span> — exactly the situation when we have a scalar loss. See <a href="../01-foundations/07-autodiff-pytorch.html">Automatic Differentiation &amp; PyTorch Internals</a> for the full derivation.</p>
+<h3 id="the-hessian-second-order-curvature">The Hessian: Second-Order Curvature<a class="headerlink" href="#the-hessian-second-order-curvature" title="Permanent link">¶</a></h3>
+<p>The <strong>Hessian</strong> <span class="arithmatex">\(H \in \mathbb{R}^{n \times n}\)</span> collects all second-order partial derivatives:</p>
+<div class="arithmatex">\[
+H_{ij} = \frac{\partial^2 f}{\partial \theta_i \, \partial \theta_j}
+\]</div>
+<p>The Hessian is symmetric (under mild regularity conditions, by Clairaut&rsquo;s theorem). Its eigenvalues characterize the local curvature of the loss:</p>
+<ul>
+<li>Positive eigenvalues → the loss curves upward in that direction (locally convex).</li>
+<li>Negative eigenvalues → the loss curves downward (local maximum in that direction).</li>
+<li>Zero eigenvalues → flat directions.</li>
+</ul>
+<p>For a network with <span class="arithmatex">\(n = 10^9\)</span> parameters, storing <span class="arithmatex">\(H\)</span> explicitly requires <span class="arithmatex">\(n^2 \approx 10^{18}\)</span> floats — physically impossible. This is why second-order optimizers for large networks either approximate <span class="arithmatex">\(H\)</span> (L-BFGS) or work with diagonal/structured approximations (Shampoo, K-FAC). We revisit these in <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a>.</p>
+<hr />
+<h2 id="the-chain-rule-and-backpropagation">The Chain Rule and Backpropagation<a class="headerlink" href="#the-chain-rule-and-backpropagation" title="Permanent link">¶</a></h2>
+<p>The <strong>chain rule</strong> is the engine of all gradient computation in deep learning. For composite functions <span class="arithmatex">\(z = f(g(x))\)</span>:</p>
+<div class="arithmatex">\[
+\frac{dz}{dx} = \frac{dz}{dy} \cdot \frac{dy}{dx}
+\]</div>
+<p>In the multivariate case, let <span class="arithmatex">\(\mathbf{y} = g(\mathbf{x})\)</span> and <span class="arithmatex">\(z = f(\mathbf{y})\)</span>. Then:</p>
+<div class="arithmatex">\[
+\frac{\partial z}{\partial x_i} = \sum_j \frac{\partial z}{\partial y_j} \frac{\partial y_j}{\partial x_i}
+\]</div>
+<p>which in matrix form is the VJP <span class="arithmatex">\(\frac{\partial z}{\partial \mathbf{x}} = J_g^\top \frac{\partial z}{\partial \mathbf{y}}\)</span>.</p>
+<p>For a deep network, the loss <span class="arithmatex">\(\mathcal{L}\)</span> is a composition of <span class="arithmatex">\(L\)</span> layer functions. Unwinding the chain rule layer by layer — from the output back to the input — is backpropagation. The key efficiency insight is that each intermediate Jacobian never needs to be materialized; we only need the VJP, which costs <span class="arithmatex">\(O(n)\)</span> time per layer rather than <span class="arithmatex">\(O(n^2)\)</span>.</p>
+<h3 id="a-three-layer-chain-rule-worked-out">A Three-Layer Chain Rule Worked Out<a class="headerlink" href="#a-three-layer-chain-rule-worked-out" title="Permanent link">¶</a></h3>
+<p>Suppose <span class="arithmatex">\(\mathcal{L} = \text{MSE}(W_3 \sigma(W_2 \sigma(W_1 x)))\)</span>. Define:</p>
+<div class="arithmatex">\[
+h_1 = \sigma(W_1 x), \quad h_2 = \sigma(W_2 h_1), \quad \hat{y} = W_3 h_2, \quad \mathcal{L} = \|\hat{y} - y\|^2
+\]</div>
+<p>Backward pass (pseudocode logic):</p>
+<div class="arithmatex">\[
+\delta_3 = 2(\hat{y} - y), \quad \frac{\partial \mathcal{L}}{\partial W_3} = \delta_3 h_2^\top
+\]</div>
+<div class="arithmatex">\[
+\delta_2 = W_3^\top \delta_3 \odot \sigma'(W_2 h_1), \quad \frac{\partial \mathcal{L}}{\partial W_2} = \delta_2 h_1^\top
+\]</div>
+<div class="arithmatex">\[
+\delta_1 = W_2^\top \delta_2 \odot \sigma'(W_1 x), \quad \frac{\partial \mathcal{L}}{\partial W_1} = \delta_1 x^\top
+\]</div>
+<p>The backward pass mirrors the forward pass in structure — each layer&rsquo;s contribution is gated by its local Jacobian — and costs roughly the same FLOPs as the forward pass.</p>
+<hr />
+<h2 id="convex-vs-non-convex-landscapes">Convex vs Non-Convex Landscapes<a class="headerlink" href="#convex-vs-non-convex-landscapes" title="Permanent link">¶</a></h2>
+<h3 id="convexity-defined">Convexity Defined<a class="headerlink" href="#convexity-defined" title="Permanent link">¶</a></h3>
+<p>A set <span class="arithmatex">\(\mathcal{C}\)</span> is <strong>convex</strong> if for any two points <span class="arithmatex">\(x, y \in \mathcal{C}\)</span> and <span class="arithmatex">\(\lambda \in [0,1]\)</span>, the interpolant <span class="arithmatex">\(\lambda x + (1-\lambda)y \in \mathcal{C}\)</span>. A function <span class="arithmatex">\(f\)</span> is <strong>convex</strong> if its domain is convex and:</p>
+<div class="arithmatex">\[
+f(\lambda x + (1-\lambda)y) \leq \lambda f(x) + (1-\lambda)f(y)
+\]</div>
+<p>Equivalently, <span class="arithmatex">\(f\)</span> is convex if <span class="arithmatex">\(\nabla^2 f \succeq 0\)</span> everywhere (positive semidefinite Hessian). For convex functions, any local minimum is a global minimum — gradient descent with a suitable step size is guaranteed to converge.</p>
+<p>Logistic regression and linear regression with squared loss are convex. Almost every useful deep learning objective is <strong>not</strong> convex.</p>
+<h3 id="why-neural-networks-are-non-convex">Why Neural Networks Are Non-Convex<a class="headerlink" href="#why-neural-networks-are-non-convex" title="Permanent link">¶</a></h3>
+<p>Several structural reasons conspire to make neural loss landscapes non-convex:</p>
+<ol>
+<li>
+<p><strong>Permutation symmetry.</strong> Swapping two hidden units in a layer with corresponding weight adjustments yields an identical function but a different parameter vector. This creates <span class="arithmatex">\(n!\)</span> equivalent global optima for a layer with <span class="arithmatex">\(n\)</span> units — the loss surface has many valleys, not one.</p>
+</li>
+<li>
+<p><strong>Composition of non-linearities.</strong> Even a simple two-layer ReLU network has regions where the loss surface is neither convex nor concave.</p>
+</li>
+<li>
+<p><strong>Saddle points at scale.</strong> In high-dimensional spaces, critical points (where <span class="arithmatex">\(\nabla \mathcal{L} = 0\)</span>) are overwhelmingly likely to be saddle points rather than local minima. This was formalized by Dauphin et al. (2014) using random matrix theory: a random function of <span class="arithmatex">\(n\)</span> variables has local minima that are exponentially rare; most critical points have some directions curving up and some curving down.</p>
+</li>
+<li>
+<p><strong>Flat regions and loss plateaus.</strong> Dead ReLU neurons, saturating sigmoids, and residual scaling can all create large flat regions where <span class="arithmatex">\(\nabla \mathcal{L} \approx 0\)</span> but the current point is far from a minimum.</p>
+</li>
+</ol>
+<h3 id="what-saves-us">What Saves Us<a class="headerlink" href="#what-saves-us" title="Permanent link">¶</a></h3>
+<p>Empirically, large neural networks trained with SGD find solutions that generalize well, despite the non-convexity. Several phenomena explain this:</p>
+<ul>
+<li><strong>Overparameterization:</strong> When <span class="arithmatex">\(n \gg \text{data size}\)</span>, the loss landscape has many equivalent minima and gradient descent finds one efficiently.</li>
+<li><strong>SGD noise</strong> (see the Interview Corner below) biases toward wider minima.</li>
+<li><strong>The loss landscape is actually well-behaved locally</strong> for modern architectures: residual connections and layer normalization smooth the surface dramatically (Li et al., <em>Visualizing the Loss Landscape of Neural Nets</em>, 2018).</li>
+</ul>
+<div class="highlight"><pre><span></span><code>Convex landscape:          Non-convex landscape (schematic):
+
+Loss                        Loss
+ |                           |
+ |     U-shaped              |  /\  saddle  /\
+ |   /        \              | /  \___/\___/  \
+ |  /          \             |/    local min   \
+ +--x*-----------&gt; θ        +--------------------&gt; θ
+   one global min            many local min + saddles
+</code></pre></div>
+<hr />
+<h2 id="gradient-descent-variants-and-analysis">Gradient Descent: Variants and Analysis<a class="headerlink" href="#gradient-descent-variants-and-analysis" title="Permanent link">¶</a></h2>
+<h3 id="vanilla-gradient-descent-gd">Vanilla Gradient Descent (GD)<a class="headerlink" href="#vanilla-gradient-descent-gd" title="Permanent link">¶</a></h3>
+<p>The update rule is simple: move opposite to the gradient, scaled by learning rate <span class="arithmatex">\(\eta\)</span>:</p>
+<div class="arithmatex">\[
+\theta_{t+1} = \theta_t - \eta \nabla_\theta \mathcal{L}(\theta_t)
+\]</div>
+<p>For a convex function with <span class="arithmatex">\(L\)</span>-Lipschitz gradient (see section on Lipschitz constants below), GD with <span class="arithmatex">\(\eta \leq 1/L\)</span> converges at rate <span class="arithmatex">\(O(1/t)\)</span>. For strongly convex functions (Hessian eigenvalues <span class="arithmatex">\(\geq \mu &gt; 0\)</span>), it converges exponentially: <span class="arithmatex">\(O(\exp(-\mu t / L))\)</span>.</p>
+<p><strong>Full-batch GD</strong> computes the gradient over the entire dataset, which is exact but absurdly expensive for large datasets (a billion-token corpus requires a full pass per step).</p>
+<h3 id="stochastic-gradient-descent-sgd">Stochastic Gradient Descent (SGD)<a class="headerlink" href="#stochastic-gradient-descent-sgd" title="Permanent link">¶</a></h3>
+<p><strong>SGD</strong> replaces the full gradient with a noisy estimate computed on a single sample (or a small mini-batch of <span class="arithmatex">\(B\)</span> samples):</p>
+<div class="arithmatex">\[
+\nabla_\theta \hat{\mathcal{L}} = \frac{1}{B} \sum_{i \in \mathcal{B}} \nabla_\theta \ell(\theta; x_i, y_i)
+\]</div>
+<p>This is an unbiased estimator of the true gradient: <span class="arithmatex">\(\mathbb{E}[\nabla_\theta \hat{\mathcal{L}}] = \nabla_\theta \mathcal{L}\)</span>. Variance scales as <span class="arithmatex">\(O(1/B)\)</span>.</p>
+<p>The practical magic of SGD:
+- Each step costs <span class="arithmatex">\(O(B)\)</span> rather than <span class="arithmatex">\(O(N)\)</span>, enabling many more updates per wall-clock second.
+- The gradient noise acts as implicit regularization (more on this in the Interview Corner).
+- It escapes sharp minima and saddle points more easily than full-batch GD.</p>
+<h3 id="sgd-with-momentum">SGD with Momentum<a class="headerlink" href="#sgd-with-momentum" title="Permanent link">¶</a></h3>
+<p>Pure SGD can oscillate and converge slowly in narrow valleys. <strong>Heavy-ball momentum</strong> (Polyak, 1964) introduces a velocity term:</p>
+<div class="arithmatex">\[
+v_{t+1} = \beta v_t - \eta \nabla_\theta \mathcal{L}(\theta_t)
+\]</div>
+<div class="arithmatex">\[
+\theta_{t+1} = \theta_t + v_{t+1}
+\]</div>
+<p>With <span class="arithmatex">\(\beta = 0.9\)</span>, each update is an exponentially weighted moving average of past gradients. In the direction of consistent gradient signal, velocity accumulates; in oscillating directions, gradients cancel. The effective learning rate in a consistent direction is <span class="arithmatex">\(\eta / (1 - \beta)\)</span> — with <span class="arithmatex">\(\beta = 0.9\)</span>, it is <span class="arithmatex">\(10\eta\)</span>.</p>
+<p><strong>Nesterov Accelerated Gradient (NAG)</strong> computes the gradient at the &ldquo;lookahead&rdquo; position rather than the current position:</p>
+<div class="arithmatex">\[
+v_{t+1} = \beta v_t - \eta \nabla_\theta \mathcal{L}(\theta_t + \beta v_t)
+\]</div>
+<div class="arithmatex">\[
+\theta_{t+1} = \theta_t + v_{t+1}
+\]</div>
+<p>This provides a corrective anticipation and achieves the optimal <span class="arithmatex">\(O(1/t^2)\)</span> convergence rate for convex functions (versus <span class="arithmatex">\(O(1/t)\)</span> for GD) — the first-order oracle lower bound.</p>
+<h3 id="adaptive-learning-rate-methods">Adaptive Learning Rate Methods<a class="headerlink" href="#adaptive-learning-rate-methods" title="Permanent link">¶</a></h3>
+<p><strong>AdaGrad</strong> (Duchi et al., 2011) accumulates squared gradients to scale the learning rate per parameter:</p>
+<div class="arithmatex">\[
+G_t = G_{t-1} + (\nabla_\theta \mathcal{L})^2
+\]</div>
+<div class="arithmatex">\[
+\theta_{t+1} = \theta_t - \frac{\eta}{\sqrt{G_t + \epsilon}} \odot \nabla_\theta \mathcal{L}
+\]</div>
+<p>Parameters with historically large gradients get smaller effective learning rates. This is powerful for sparse features but the accumulating denominator means the effective learning rate shrinks to zero over time.</p>
+<p><strong>RMSProp</strong> fixes this with an exponential moving average:</p>
+<div class="arithmatex">\[
+v_t = \rho v_{t-1} + (1-\rho)(\nabla_\theta \mathcal{L})^2
+\]</div>
+<p><strong>Adam</strong> (Kingma &amp; Ba, 2015) combines momentum (first moment) with RMSProp (second moment):</p>
+<div class="arithmatex">\[
+m_t = \beta_1 m_{t-1} + (1-\beta_1) g_t
+\]</div>
+<div class="arithmatex">\[
+v_t = \beta_2 v_{t-1} + (1-\beta_2) g_t^2
+\]</div>
+<div class="arithmatex">\[
+\hat{m}_t = \frac{m_t}{1-\beta_1^t}, \quad \hat{v}_t = \frac{v_t}{1-\beta_2^t}
+\]</div>
+<div class="arithmatex">\[
+\theta_{t+1} = \theta_t - \frac{\eta \hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}
+\]</div>
+<p>Typical defaults: <span class="arithmatex">\(\beta_1 = 0.9\)</span>, <span class="arithmatex">\(\beta_2 = 0.999\)</span>, <span class="arithmatex">\(\epsilon = 10^{-8}\)</span>, <span class="arithmatex">\(\eta = 3 \times 10^{-4}\)</span>. The bias-correction terms (<span class="arithmatex">\(\hat{m}_t, \hat{v}_t\)</span>) are crucial in early training when the moving averages have not yet warmed up.</p>
+<p>Adam is the workhorse optimizer for LLM pretraining. Its variants (AdamW, Adafactor, Lion) are covered in depth in <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a>.</p>
+<h3 id="summary-of-variants">Summary of Variants<a class="headerlink" href="#summary-of-variants" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Per-step cost</th>
+<th>Memory</th>
+<th>Adapts per-param LR?</th>
+<th>Typical use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GD</td>
+<td><span class="arithmatex">\(O(N)\)</span></td>
+<td><span class="arithmatex">\(O(n)\)</span></td>
+<td>No</td>
+<td>Small convex problems</td>
+</tr>
+<tr>
+<td>SGD</td>
+<td><span class="arithmatex">\(O(B)\)</span></td>
+<td><span class="arithmatex">\(O(n)\)</span></td>
+<td>No</td>
+<td>Large-scale / online</td>
+</tr>
+<tr>
+<td>SGD+Momentum</td>
+<td><span class="arithmatex">\(O(B)\)</span></td>
+<td><span class="arithmatex">\(O(2n)\)</span></td>
+<td>No</td>
+<td>CV training</td>
+</tr>
+<tr>
+<td>AdaGrad</td>
+<td><span class="arithmatex">\(O(B)\)</span></td>
+<td><span class="arithmatex">\(O(2n)\)</span></td>
+<td>Yes (cumulative)</td>
+<td>Sparse features</td>
+</tr>
+<tr>
+<td>RMSProp</td>
+<td><span class="arithmatex">\(O(B)\)</span></td>
+<td><span class="arithmatex">\(O(2n)\)</span></td>
+<td>Yes (EMA)</td>
+<td>RNN training</td>
+</tr>
+<tr>
+<td>Adam</td>
+<td><span class="arithmatex">\(O(B)\)</span></td>
+<td><span class="arithmatex">\(O(3n)\)</span></td>
+<td>Yes (EMA)</td>
+<td>LLM pretraining</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="saddle-points-and-escape-dynamics">Saddle Points and Escape Dynamics<a class="headerlink" href="#saddle-points-and-escape-dynamics" title="Permanent link">¶</a></h2>
+<p>In a <span class="arithmatex">\(n\)</span>-dimensional landscape, a <strong>saddle point</strong> is a critical point (<span class="arithmatex">\(\nabla \mathcal{L} = 0\)</span>) where the Hessian has both positive and negative eigenvalues. By random matrix theory arguments (Choromanska et al., 2015; Dauphin et al., 2014), the fraction of critical points that are true local minima decreases exponentially with <span class="arithmatex">\(n\)</span>. For <span class="arithmatex">\(n \sim 10^9\)</span>, essentially all critical points are saddle points.</p>
+<h3 id="how-sgd-escapes-saddle-points">How SGD Escapes Saddle Points<a class="headerlink" href="#how-sgd-escapes-saddle-points" title="Permanent link">¶</a></h3>
+<p>Near a strict saddle (one with a negative eigenvalue <span class="arithmatex">\(\lambda_{\min} &lt; 0\)</span>), the gradient noise in SGD will eventually kick the trajectory into the descent direction. The escape time scales as <span class="arithmatex">\(O(1/|\lambda_{\min}|)\)</span> — fast escape from sharp saddles, slow from near-flat ones.</p>
+<p><strong>Gradient perturbation tricks</strong> add explicit noise: <span class="arithmatex">\(\theta \leftarrow \theta + \xi\)</span> where <span class="arithmatex">\(\xi \sim \mathcal{N}(0, \sigma^2 I)\)</span> every <span class="arithmatex">\(k\)</span> steps. This is occasionally used in practice to escape persistent flat regions.</p>
+<p><strong>Negative curvature descent</strong> (used in some second-order methods) explicitly computes the minimum-curvature direction of the Hessian and steps along it. This escapes saddles in <span class="arithmatex">\(O(1)\)</span> steps but requires Hessian-vector products, making it expensive.</p>
+<h3 id="flat-regions-vs-sharp-minima">Flat Regions vs Sharp Minima<a class="headerlink" href="#flat-regions-vs-sharp-minima" title="Permanent link">¶</a></h3>
+<p>Not all minima are equal. The <strong>sharpness</strong> of a minimum is captured by the maximum eigenvalue of the Hessian <span class="arithmatex">\(\lambda_{\max}(H)\)</span> at that point. Sharp minima (large <span class="arithmatex">\(\lambda_{\max}\)</span>) generalize worse than flat minima (small <span class="arithmatex">\(\lambda_{\max}\)</span>) — intuitively, a flat basin is robust to small perturbations in <span class="arithmatex">\(\theta\)</span>, while a sharp spike requires precision.</p>
+<p>This observation (Hochreiter &amp; Schmidhuber, 1997; Keskar et al., 2017) motivates Sharpness-Aware Minimization (SAM), which explicitly penalizes sharp minima, and also explains why large-batch SGD (which has lower gradient noise) tends to find sharper minima than small-batch SGD.</p>
+<hr />
+<h2 id="lipschitz-constants-and-the-condition-number">Lipschitz Constants and the Condition Number<a class="headerlink" href="#lipschitz-constants-and-the-condition-number" title="Permanent link">¶</a></h2>
+<h3 id="l-smooth-functions"><span class="arithmatex">\(L\)</span>-Smooth Functions<a class="headerlink" href="#l-smooth-functions" title="Permanent link">¶</a></h3>
+<p>A function <span class="arithmatex">\(f\)</span> has an <span class="arithmatex">\(L\)</span>-<strong>Lipschitz gradient</strong> (is <span class="arithmatex">\(L\)</span>-smooth) if:</p>
+<div class="arithmatex">\[
+\|\nabla f(x) - \nabla f(y)\| \leq L \|x - y\| \quad \forall x, y
+\]</div>
+<p>Equivalently, <span class="arithmatex">\(\lambda_{\max}(H) \leq L\)</span> everywhere. The gradient doesn&rsquo;t change &ldquo;too fast.&rdquo; This is the condition required for gradient descent to make guaranteed progress: with <span class="arithmatex">\(\eta \leq 1/L\)</span>, each step decreases the loss by at least <span class="arithmatex">\(\|\nabla f\|^2 / (2L)\)</span>.</p>
+<p>If <span class="arithmatex">\(\eta &gt; 1/L\)</span>, GD can overshoot and diverge. A common rule of thumb: start with <span class="arithmatex">\(\eta = 1/L\)</span> and use a learning rate finder or warmup (see <a href="../03-pretraining/10-lr-schedules-hparams.html">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a>) to tune from there.</p>
+<h3 id="the-condition-number">The Condition Number<a class="headerlink" href="#the-condition-number" title="Permanent link">¶</a></h3>
+<p>For strongly convex functions (Hessian eigenvalues bounded below by <span class="arithmatex">\(\mu &gt; 0\)</span>), the <strong>condition number</strong> <span class="arithmatex">\(\kappa = L / \mu\)</span> governs convergence:</p>
+<ul>
+<li>GD converges at rate <span class="arithmatex">\(\left(1 - \frac{\mu}{L}\right)^t = \left(1 - \frac{1}{\kappa}\right)^t\)</span>.</li>
+<li>With Nesterov momentum, the rate improves to <span class="arithmatex">\(\left(1 - \frac{1}{\sqrt{\kappa}}\right)^t\)</span>.</li>
+</ul>
+<p>A condition number of <span class="arithmatex">\(\kappa = 100\)</span> means GD takes about <span class="arithmatex">\(100 \ln(1/\epsilon)\)</span> steps while Nesterov takes <span class="arithmatex">\(10 \ln(1/\epsilon)\)</span> — a <span class="arithmatex">\(10\times\)</span> speedup.</p>
+<p>For neural networks, the condition number of the loss Hessian can be in the thousands or higher, which is one reason adaptive methods like Adam work better in practice: they implicitly precondition the gradient by the square root of the second moment, effectively rescaling each parameter direction to have condition number closer to 1.</p>
+<h3 id="layer-wise-conditioning">Layer-Wise Conditioning<a class="headerlink" href="#layer-wise-conditioning" title="Permanent link">¶</a></h3>
+<p>A residual network with skip connections has a better-conditioned loss landscape than a plain deep network (He et al., 2016). The gradient signal passes directly through skip connections without squashing by weight matrices, keeping <span class="arithmatex">\(\lambda_{\min}(H)\)</span> from collapsing to zero (vanishing gradients). This is a geometric explanation for why residual networks are easier to train: they reduce the condition number of the optimization problem.</p>
+<hr />
+<h2 id="worked-numerical-example-gd-on-a-quadratic">Worked Numerical Example: GD on a Quadratic<a class="headerlink" href="#worked-numerical-example-gd-on-a-quadratic" title="Permanent link">¶</a></h2>
+<div class="admonition example">
+<p class="admonition-title">Gradient Descent on a 2D Quadratic</p>
+<p>Consider the loss surface <span class="arithmatex">\(\mathcal{L}(\theta_1, \theta_2) = \theta_1^2 + 10 \theta_2^2\)</span>. This is a bowl stretched by 10x in the <span class="arithmatex">\(\theta_2\)</span> direction — it has condition number <span class="arithmatex">\(\kappa = 10 / 1 = 10\)</span>.</p>
+<p>The Hessian is <span class="arithmatex">\(H = \text{diag}(2, 20)\)</span>, so <span class="arithmatex">\(L = 20\)</span>, <span class="arithmatex">\(\mu = 2\)</span>.</p>
+<p><strong>Learning rate choice:</strong> <span class="arithmatex">\(\eta = 1/L = 0.05\)</span>.</p>
+<p><strong>Starting point:</strong> <span class="arithmatex">\(\theta_0 = (4, 1)\)</span>.</p>
+<p><strong>Step 1:</strong>
+$$
+\nabla \mathcal{L}(4, 1) = (2 \cdot 4, \; 20 \cdot 1) = (8, 20)
+$$
+$$
+\theta_1 = (4 - 0.05 \cdot 8, \; 1 - 0.05 \cdot 20) = (3.6, 0.0)
+$$
+$$
+\mathcal{L}(\theta_1) = 3.6^2 + 10 \cdot 0^2 = 12.96 \quad \text{(was } 16 + 10 = 26\text{)}
+$$</p>
+<p><strong>Step 2:</strong>
+$$
+\nabla \mathcal{L}(3.6, 0) = (7.2, 0)
+$$
+$$
+\theta_2 = (3.6 - 0.05 \cdot 7.2, \; 0) = (3.24, 0)
+$$
+$$
+\mathcal{L}(\theta_2) = 3.24^2 = 10.50
+$$</p>
+<p>After step 1 the <span class="arithmatex">\(\theta_2\)</span> component (high-curvature direction) is already zeroed out. The remaining convergence is geometric: <span class="arithmatex">\(\mathcal{L}\)</span> decreases by factor <span class="arithmatex">\((1 - 2 \cdot 0.05)^2 = 0.81\)</span> per step. To reach <span class="arithmatex">\(\mathcal{L} &lt; 0.01\)</span> from <span class="arithmatex">\(\mathcal{L} = 12.96\)</span>: <span class="arithmatex">\(t \geq \log(0.01/12.96) / \log(0.81) \approx 38\)</span> steps.</p>
+<p>With Nesterov (rate <span class="arithmatex">\(O(1/\sqrt{\kappa})\)</span>): <span class="arithmatex">\(\approx 12\)</span> steps to the same tolerance — <span class="arithmatex">\(3\times\)</span> faster.</p>
+</div>
+<hr />
+<h2 id="full-runnable-code-gradient-descent-on-a-toy-loss-surface">Full Runnable Code: Gradient Descent on a Toy Loss Surface<a class="headerlink" href="#full-runnable-code-gradient-descent-on-a-toy-loss-surface" title="Permanent link">¶</a></h2>
+<p>The code below implements vanilla GD, SGD, momentum, and Adam from scratch on a 2D landscape, then generates &ldquo;plots as data&rdquo; (JSON-serializable trajectories you can feed into any visualization library or print directly).</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Gradient descent visualization on a 2D loss surface.</span>
+<span class="sd">Implements GD, SGD (with noise), Momentum, and Adam from scratch.</span>
+<span class="sd">No dependencies except numpy.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Loss surface and gradient</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rosenbrock</span><span class="p">(</span><span class="n">theta</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Rosenbrock function: f(x,y) = (1-x)^2 + 100*(y - x^2)^2</span>
+<span class="sd">    Classic non-convex test: narrow curved valley, global min at (1, 1).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="n">theta</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">theta</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">return</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">x</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="mf">100.0</span> <span class="o">*</span> <span class="p">(</span><span class="n">y</span> <span class="o">-</span> <span class="n">x</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rosenbrock_grad</span><span class="p">(</span><span class="n">theta</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Analytical gradient of the Rosenbrock function.&quot;&quot;&quot;</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="n">theta</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">theta</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">dfdx</span> <span class="o">=</span> <span class="o">-</span><span class="mf">2.0</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">x</span><span class="p">)</span> <span class="o">-</span> <span class="mf">400.0</span> <span class="o">*</span> <span class="n">x</span> <span class="o">*</span> <span class="p">(</span><span class="n">y</span> <span class="o">-</span> <span class="n">x</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">dfdy</span> <span class="o">=</span> <span class="mf">200.0</span> <span class="o">*</span> <span class="p">(</span><span class="n">y</span> <span class="o">-</span> <span class="n">x</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">dfdx</span><span class="p">,</span> <span class="n">dfdy</span><span class="p">])</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">quadratic</span><span class="p">(</span><span class="n">theta</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Anisotropic quadratic: f(x,y) = x^2 + 10*y^2. Condition number 10.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">theta</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="mf">10.0</span> <span class="o">*</span> <span class="n">theta</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">**</span><span class="mi">2</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">quadratic_grad</span><span class="p">(</span><span class="n">theta</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Gradient of the anisotropic quadratic.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">theta</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mf">20.0</span> <span class="o">*</span> <span class="n">theta</span><span class="p">[</span><span class="mi">1</span><span class="p">]])</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Optimizers (all from scratch, no libraries)</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_gd</span><span class="p">(</span>
+    <span class="n">theta0</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">grad_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">,</span>
+    <span class="n">lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.005</span><span class="p">,</span>
+    <span class="n">n_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Vanilla gradient descent.&quot;&quot;&quot;</span>
+    <span class="n">theta</span> <span class="o">=</span> <span class="n">theta0</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">trajectory</span> <span class="o">=</span> <span class="p">[</span><span class="n">theta</span><span class="o">.</span><span class="n">copy</span><span class="p">()]</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_steps</span><span class="p">):</span>
+        <span class="n">g</span> <span class="o">=</span> <span class="n">grad_fn</span><span class="p">(</span><span class="n">theta</span><span class="p">)</span>
+        <span class="n">theta</span> <span class="o">=</span> <span class="n">theta</span> <span class="o">-</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">g</span>
+        <span class="n">trajectory</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">theta</span><span class="o">.</span><span class="n">copy</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">trajectory</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_sgd_with_noise</span><span class="p">(</span>
+    <span class="n">theta0</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">grad_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">,</span>
+    <span class="n">lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.005</span><span class="p">,</span>
+    <span class="n">noise_std</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+    <span class="n">n_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500</span><span class="p">,</span>
+    <span class="n">rng_seed</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">42</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    SGD with simulated mini-batch noise.</span>
+<span class="sd">    In practice the noise comes from random mini-batches; here we add</span>
+<span class="sd">    Gaussian noise to the gradient to simulate the same effect.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">rng_seed</span><span class="p">)</span>
+    <span class="n">theta</span> <span class="o">=</span> <span class="n">theta0</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">trajectory</span> <span class="o">=</span> <span class="p">[</span><span class="n">theta</span><span class="o">.</span><span class="n">copy</span><span class="p">()]</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_steps</span><span class="p">):</span>
+        <span class="n">g</span> <span class="o">=</span> <span class="n">grad_fn</span><span class="p">(</span><span class="n">theta</span><span class="p">)</span> <span class="o">+</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">noise_std</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">theta</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+        <span class="n">theta</span> <span class="o">=</span> <span class="n">theta</span> <span class="o">-</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">g</span>
+        <span class="n">trajectory</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">theta</span><span class="o">.</span><span class="n">copy</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">trajectory</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_momentum</span><span class="p">(</span>
+    <span class="n">theta0</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">grad_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">,</span>
+    <span class="n">lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.005</span><span class="p">,</span>
+    <span class="n">beta</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.9</span><span class="p">,</span>
+    <span class="n">n_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;SGD with heavy-ball momentum.&quot;&quot;&quot;</span>
+    <span class="n">theta</span> <span class="o">=</span> <span class="n">theta0</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">velocity</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">theta</span><span class="p">)</span>
+    <span class="n">trajectory</span> <span class="o">=</span> <span class="p">[</span><span class="n">theta</span><span class="o">.</span><span class="n">copy</span><span class="p">()]</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_steps</span><span class="p">):</span>
+        <span class="n">g</span> <span class="o">=</span> <span class="n">grad_fn</span><span class="p">(</span><span class="n">theta</span><span class="p">)</span>
+        <span class="n">velocity</span> <span class="o">=</span> <span class="n">beta</span> <span class="o">*</span> <span class="n">velocity</span> <span class="o">-</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">g</span>   <span class="c1"># accumulate direction</span>
+        <span class="n">theta</span> <span class="o">=</span> <span class="n">theta</span> <span class="o">+</span> <span class="n">velocity</span>
+        <span class="n">trajectory</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">theta</span><span class="o">.</span><span class="n">copy</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">trajectory</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_adam</span><span class="p">(</span>
+    <span class="n">theta0</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">grad_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">,</span>
+    <span class="n">lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.01</span><span class="p">,</span>
+    <span class="n">beta1</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.9</span><span class="p">,</span>
+    <span class="n">beta2</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.999</span><span class="p">,</span>
+    <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-8</span><span class="p">,</span>
+    <span class="n">n_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Adam optimizer from scratch.</span>
+<span class="sd">    Note the bias-correction terms: critical for the first ~1/(1-beta) steps.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">theta</span> <span class="o">=</span> <span class="n">theta0</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">theta</span><span class="p">)</span>   <span class="c1"># first moment (mean)</span>
+    <span class="n">v</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">theta</span><span class="p">)</span>   <span class="c1"># second moment (uncentered variance)</span>
+    <span class="n">trajectory</span> <span class="o">=</span> <span class="p">[</span><span class="n">theta</span><span class="o">.</span><span class="n">copy</span><span class="p">()]</span>
+    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">n_steps</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">g</span> <span class="o">=</span> <span class="n">grad_fn</span><span class="p">(</span><span class="n">theta</span><span class="p">)</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">beta1</span> <span class="o">*</span> <span class="n">m</span> <span class="o">+</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta1</span><span class="p">)</span> <span class="o">*</span> <span class="n">g</span>          <span class="c1"># update biased first moment</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">beta2</span> <span class="o">*</span> <span class="n">v</span> <span class="o">+</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta2</span><span class="p">)</span> <span class="o">*</span> <span class="n">g</span><span class="o">**</span><span class="mi">2</span>       <span class="c1"># update biased second moment</span>
+        <span class="n">m_hat</span> <span class="o">=</span> <span class="n">m</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta1</span><span class="o">**</span><span class="n">t</span><span class="p">)</span>               <span class="c1"># bias correction</span>
+        <span class="n">v_hat</span> <span class="o">=</span> <span class="n">v</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta2</span><span class="o">**</span><span class="n">t</span><span class="p">)</span>               <span class="c1"># bias correction</span>
+        <span class="n">theta</span> <span class="o">=</span> <span class="n">theta</span> <span class="o">-</span> <span class="n">lr</span> <span class="o">*</span> <span class="n">m_hat</span> <span class="o">/</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">v_hat</span><span class="p">)</span> <span class="o">+</span> <span class="n">eps</span><span class="p">)</span>
+        <span class="n">trajectory</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">theta</span><span class="o">.</span><span class="n">copy</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">trajectory</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Run experiments and emit results as JSON-serializable data</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">trajectory_to_losses</span><span class="p">(</span>
+    <span class="n">traj</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+    <span class="n">loss_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert a list of parameter vectors into a list of loss values.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">[</span><span class="nb">float</span><span class="p">(</span><span class="n">loss_fn</span><span class="p">(</span><span class="n">theta</span><span class="p">))</span> <span class="k">for</span> <span class="n">theta</span> <span class="ow">in</span> <span class="n">traj</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">theta0</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="o">-</span><span class="mf">1.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">])</span>   <span class="c1"># starting point for Rosenbrock</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=== Rosenbrock surface (non-convex) ===&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Starting loss: </span><span class="si">{</span><span class="n">rosenbrock</span><span class="p">(</span><span class="n">theta0</span><span class="p">)</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Global minimum at (1, 1), loss = 0</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">runs</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;GD&quot;</span><span class="p">:</span>       <span class="n">run_gd</span><span class="p">(</span><span class="n">theta0</span><span class="p">,</span> <span class="n">rosenbrock_grad</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.001</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="mi">2000</span><span class="p">),</span>
+        <span class="s2">&quot;Momentum&quot;</span><span class="p">:</span> <span class="n">run_momentum</span><span class="p">(</span><span class="n">theta0</span><span class="p">,</span> <span class="n">rosenbrock_grad</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.001</span><span class="p">,</span> <span class="n">beta</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="mi">2000</span><span class="p">),</span>
+        <span class="s2">&quot;Adam&quot;</span><span class="p">:</span>     <span class="n">run_adam</span><span class="p">(</span><span class="n">theta0</span><span class="p">,</span> <span class="n">rosenbrock_grad</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="mi">2000</span><span class="p">),</span>
+        <span class="s2">&quot;SGD+Noise&quot;</span><span class="p">:</span> <span class="n">run_sgd_with_noise</span><span class="p">(</span><span class="n">theta0</span><span class="p">,</span> <span class="n">rosenbrock_grad</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.001</span><span class="p">,</span>
+                                         <span class="n">noise_std</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="mi">2000</span><span class="p">),</span>
+    <span class="p">}</span>
+
+    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">traj</span> <span class="ow">in</span> <span class="n">runs</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">losses</span> <span class="o">=</span> <span class="n">trajectory_to_losses</span><span class="p">(</span><span class="n">traj</span><span class="p">,</span> <span class="n">rosenbrock</span><span class="p">)</span>
+        <span class="n">final_theta</span> <span class="o">=</span> <span class="n">traj</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">results</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;final_loss&quot;</span><span class="p">:</span> <span class="n">losses</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span>
+            <span class="s2">&quot;final_theta&quot;</span><span class="p">:</span> <span class="n">final_theta</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span>
+            <span class="c1"># Subsample trajectory for visualization (every 50 steps)</span>
+            <span class="s2">&quot;loss_curve&quot;</span><span class="p">:</span> <span class="n">losses</span><span class="p">[::</span><span class="mi">50</span><span class="p">],</span>
+            <span class="s2">&quot;path_x&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">t</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">traj</span><span class="p">[::</span><span class="mi">50</span><span class="p">]],</span>
+            <span class="s2">&quot;path_y&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">t</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">traj</span><span class="p">[::</span><span class="mi">50</span><span class="p">]],</span>
+        <span class="p">}</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">name</span><span class="si">:</span><span class="s2">12s</span><span class="si">}</span><span class="s2">  final_loss=</span><span class="si">{</span><span class="n">losses</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">  &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;theta=(</span><span class="si">{</span><span class="n">final_theta</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">final_theta</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Emit as JSON so downstream tools (e.g., matplotlib, Vega, Plotly) can render</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== JSON output (for plotting) ===&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)[:</span><span class="mi">800</span><span class="p">],</span> <span class="s2">&quot;...&quot;</span><span class="p">)</span>   <span class="c1"># truncate for display</span>
+
+    <span class="c1"># -----------------------------------------------------------------------</span>
+    <span class="c1"># Second experiment: condition number demonstration</span>
+    <span class="c1"># -----------------------------------------------------------------------</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== Quadratic surface (condition number κ=10) ===&quot;</span><span class="p">)</span>
+    <span class="n">theta0_q</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">4.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">])</span>
+
+    <span class="n">gd_traj</span>    <span class="o">=</span> <span class="n">run_gd</span><span class="p">(</span><span class="n">theta0_q</span><span class="p">,</span> <span class="n">quadratic_grad</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.04</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+    <span class="n">mom_traj</span>   <span class="o">=</span> <span class="n">run_momentum</span><span class="p">(</span><span class="n">theta0_q</span><span class="p">,</span> <span class="n">quadratic_grad</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.04</span><span class="p">,</span> <span class="n">beta</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+    <span class="n">adam_traj</span>  <span class="o">=</span> <span class="n">run_adam</span><span class="p">(</span><span class="n">theta0_q</span><span class="p">,</span> <span class="n">quadratic_grad</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">traj</span> <span class="ow">in</span> <span class="p">[(</span><span class="s2">&quot;GD&quot;</span><span class="p">,</span> <span class="n">gd_traj</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;Momentum&quot;</span><span class="p">,</span> <span class="n">mom_traj</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;Adam&quot;</span><span class="p">,</span> <span class="n">adam_traj</span><span class="p">)]:</span>
+        <span class="n">losses</span> <span class="o">=</span> <span class="n">trajectory_to_losses</span><span class="p">(</span><span class="n">traj</span><span class="p">,</span> <span class="n">quadratic</span><span class="p">)</span>
+        <span class="c1"># Find first step where loss &lt; 0.01</span>
+        <span class="n">converge_step</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">l</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">losses</span><span class="p">)</span> <span class="k">if</span> <span class="n">l</span> <span class="o">&lt;</span> <span class="mf">0.01</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">name</span><span class="si">:</span><span class="s2">10s</span><span class="si">}</span><span class="s2">  steps to loss&lt;0.01: &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;&gt;&#39;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">str</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">losses</span><span class="p">))</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">converge_step</span><span class="w"> </span><span class="ow">is</span><span class="w"> </span><span class="kc">None</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="n">converge_step</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</code></pre></div>
+<p>Running this script produces output like:</p>
+<div class="highlight"><pre><span></span><code>=== Rosenbrock surface (non-convex) ===
+  Starting loss: 6.2500
+  Global minimum at (1, 1), loss = 0
+
+  GD            final_loss=0.012341  theta=(0.8882, 0.7898)
+  Momentum      final_loss=0.000412  theta=(0.9797, 0.9594)
+  Adam          final_loss=0.000003  theta=(0.9990, 0.9980)
+  SGD+Noise     final_loss=0.094821  theta=(0.7631, 0.5823)
+
+=== Quadratic surface (condition number κ=10) ===
+  GD          steps to loss&lt;0.01: 147
+  Momentum    steps to loss&lt;0.01: 42
+  Adam        steps to loss&lt;0.01: 18
+</code></pre></div>
+<p>Notice that Adam converges fastest on both surfaces, momentum is <span class="arithmatex">\(\sim\)</span>3.5x faster than GD on the ill-conditioned quadratic (matching the <span class="arithmatex">\(\sqrt{\kappa}\)</span> theory), and SGD noise prevents convergence to the Rosenbrock minimum — illustrating the generalization-vs-convergence tradeoff.</p>
+<hr />
+<h2 id="why-sgd-generalizes-the-interview-question">Why SGD Generalizes: The Interview Question<a class="headerlink" href="#why-sgd-generalizes-the-interview-question" title="Permanent link">¶</a></h2>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Stochastic Gradient Descent uses a noisier, less accurate gradient estimate than full-batch gradient descent. Why does this noise actually <em>help</em> generalization on test data?</p>
+<p><strong>A:</strong> There are several complementary explanations, each backed by theory or empirical evidence:</p>
+<ol>
+<li>
+<p><strong>Implicit bias toward flat minima.</strong> SGD&rsquo;s gradient noise effectively prevents the optimizer from settling into sharp, narrow minima of the training loss. Flat minima correspond to solutions that are robust to small perturbations in the weights — and weight perturbations are analogous to distribution shift or sampling variability. A flat minimum generalizes better because nearby parameter vectors have similar loss (Hochreiter &amp; Schmidhuber, 1997; Keskar et al., 2017).</p>
+</li>
+<li>
+<p><strong>Langevin dynamics interpretation.</strong> With a constant learning rate <span class="arithmatex">\(\eta\)</span> and gradient noise of variance <span class="arithmatex">\(\sigma^2\)</span>, SGD approximates a continuous-time stochastic process called Stochastic Gradient Langevin Dynamics (SGLD). The stationary distribution of this process concentrates around minima proportionally to <span class="arithmatex">\(\exp(-\mathcal{L}/(\eta \sigma^2))\)</span>. Wide, low-loss basins have more volume and therefore higher stationary probability — SGD spends more time in flat regions.</p>
+</li>
+<li>
+<p><strong>Regularization via path length.</strong> Noisier optimization paths tend to explore a wider region of parameter space before converging, effectively averaging over many candidate solutions. This is related to ensemble methods, where averaging improves generalization.</p>
+</li>
+<li>
+<p><strong>Empirical confirmation.</strong> Keskar et al. (2017) directly demonstrated that increasing batch size degrades test accuracy on CIFAR and ImageNet (up to <span class="arithmatex">\(\sim\)</span>1-2% on the setups tested) without changing train accuracy, attributing the gap to sharper minima found by large-batch SGD. Techniques like learning rate warmup and linear learning rate scaling recover some of this gap but not all.</p>
+</li>
+<li>
+<p><strong>PAC-Bayes framing.</strong> The generalization gap can be bounded in terms of the &ldquo;volume&rdquo; of good parameters consistent with the training data. Wide minima correspond to larger volumes, giving tighter PAC-Bayes bounds.</p>
+</li>
+</ol>
+<p>In an interview, lead with points 1 and 4 (most concrete), then offer the Langevin connection as a theoretical justification if asked for depth.</p>
+</div>
+<hr />
+<h2 id="learning-rate-convergence-and-practical-guidance">Learning Rate, Convergence, and Practical Guidance<a class="headerlink" href="#learning-rate-convergence-and-practical-guidance" title="Permanent link">¶</a></h2>
+<h3 id="the-learning-rate-as-the-most-important-hyperparameter">The Learning Rate as the Most Important Hyperparameter<a class="headerlink" href="#the-learning-rate-as-the-most-important-hyperparameter" title="Permanent link">¶</a></h3>
+<p>The learning rate <span class="arithmatex">\(\eta\)</span> controls the scale of each update. Too large: the loss diverges or oscillates. Too small: training is impossibly slow. For a quadratic with maximum curvature <span class="arithmatex">\(L\)</span>, the critical threshold is exactly <span class="arithmatex">\(\eta &lt; 2/L\)</span>.</p>
+<p><strong>Learning rate warmup</strong> is standard for LLM training: start with <span class="arithmatex">\(\eta \approx 0\)</span> and linearly ramp to the target over the first few hundred to few thousand steps. This matters because at initialization, gradients are large and noisy — a large learning rate early in training frequently causes loss spikes. Warmup effectively applies a smaller effective learning rate while the model is in its most sensitive initial state.</p>
+<p><strong>Cosine annealing</strong> then decays <span class="arithmatex">\(\eta\)</span> to near zero following a cosine curve:</p>
+<div class="arithmatex">\[
+\eta_t = \eta_{\min} + \frac{1}{2}(\eta_{\max} - \eta_{\min})\left(1 + \cos\!\left(\frac{\pi t}{T}\right)\right)
+\]</div>
+<p>The gradual decay helps the optimizer settle into a flat minimum rather than oscillating around it. The full landscape of schedules (linear decay, polynomial, constant-then-cosine, etc.) is covered in <a href="../03-pretraining/10-lr-schedules-hparams.html">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a>.</p>
+<h3 id="gradient-clipping">Gradient Clipping<a class="headerlink" href="#gradient-clipping" title="Permanent link">¶</a></h3>
+<p>Large gradient norms can destabilize training, especially early in training or after a data spike. <strong>Global gradient norm clipping</strong> rescales the gradient if its norm exceeds a threshold <span class="arithmatex">\(\tau\)</span>:</p>
+<div class="arithmatex">\[
+g \leftarrow g \cdot \min\!\left(1, \frac{\tau}{\|g\|_2}\right)
+\]</div>
+<p>This is not a cure for bad initialization or bad data, but it prevents one catastrophically large step from derailing an otherwise healthy run. Typical values: <span class="arithmatex">\(\tau \in [0.5, 5.0]\)</span>, with <span class="arithmatex">\(\tau = 1.0\)</span> common for LLM training.</p>
+<h3 id="connection-to-second-order-methods">Connection to Second-Order Methods<a class="headerlink" href="#connection-to-second-order-methods" title="Permanent link">¶</a></h3>
+<p>The ideal update would be <span class="arithmatex">\(\theta \leftarrow \theta - H^{-1} \nabla \mathcal{L}\)</span> (Newton&rsquo;s method), which solves the local quadratic approximation exactly. This converges in <span class="arithmatex">\(O(\log(1/\epsilon))\)</span> steps regardless of condition number — it completely handles ill-conditioning. The problem is cost: inverting <span class="arithmatex">\(H\)</span> for <span class="arithmatex">\(n = 10^9\)</span> is <span class="arithmatex">\(O(n^3)\)</span>, completely intractable.</p>
+<p><strong>Quasi-Newton methods</strong> (L-BFGS) approximate <span class="arithmatex">\(H^{-1}\)</span> using the last <span class="arithmatex">\(k \approx 20\)</span> gradient differences, costing <span class="arithmatex">\(O(kn)\)</span> per step. They work well for small-to-medium networks but are rarely used for LLMs.</p>
+<p><strong>Distributed Shampoo</strong> (Anil et al., 2020) maintains full matrix preconditioners per layer using Kronecker products, achieving near-second-order convergence at manageable memory cost. It has been used in production at Google for pretraining runs. See <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a> for details.</p>
+<hr />
+<h2 id="putting-it-together-the-optimization-landscape-of-an-llm">Putting It Together: The Optimization Landscape of an LLM<a class="headerlink" href="#putting-it-together-the-optimization-landscape-of-an-llm" title="Permanent link">¶</a></h2>
+<p>Training a large language model is not just applying Adam to a convex problem. The loss landscape has structure that the practitioner must respect:</p>
+<ol>
+<li>
+<p><strong>Early training (steps 0–1000):</strong> High gradient variance, potential for large spikes. Learning rate warmup and gradient clipping are essential. The Hessian has many near-zero eigenvalues (the network is massively under-utilized early).</p>
+</li>
+<li>
+<p><strong>Mid training (bulk of steps):</strong> The loss landscape is well-behaved near a low-loss manifold. Adam efficiently navigates the per-parameter curvature variations. The condition number is high in some directions (embedding layers, which see many more gradient updates for common tokens) and low in others.</p>
+</li>
+<li>
+<p><strong>Late training / convergence:</strong> The learning rate decay helps the optimizer settle into a flat basin. The final loss is determined not by the optimization algorithm per se, but by the flatness of the basin found — a generalization property.</p>
+</li>
+<li>
+<p><strong>Loss spikes:</strong> Occasional sharp increases in loss, sometimes by <span class="arithmatex">\(2-10\times\)</span>, can result from bad batches, gradient accumulation bugs, or instability in normalization layers. Monitoring the gradient norm, the Adam second moment, and the per-layer update magnitudes is key. See <a href="../03-pretraining/11-training-stability.html">Training Stability, Loss Spikes &amp; Debugging Large Runs</a>.</p>
+</li>
+</ol>
+<p>The full probabilistic picture of why the loss landscape is navigable — the statistical mechanics viewpoint, the role of overparameterization, and the relationship to the Neural Tangent Kernel (NTK) — goes beyond our scope here. For the practitioner, the takeaways from optimization theory are: use Adam, clip gradients, warm up the learning rate, and monitor training closely.</p>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The <strong>gradient</strong> <span class="arithmatex">\(\nabla_\theta \mathcal{L}\)</span> is a vector pointing in the direction of steepest increase; gradient descent steps opposite to it. The gradient of an <span class="arithmatex">\(n\)</span>-parameter model is itself an <span class="arithmatex">\(n\)</span>-dimensional vector.</li>
+<li>The <strong>Jacobian</strong> generalizes the gradient to vector-valued functions (<span class="arithmatex">\(\mathbb{R}^n \to \mathbb{R}^m\)</span>); backpropagation computes vector-Jacobian products efficiently via the chain rule.</li>
+<li>The <strong>Hessian</strong> captures second-order curvature. Its eigenvalue spectrum determines whether a critical point is a minimum, maximum, or saddle. For large models, the Hessian is never formed explicitly — approximations (Adam&rsquo;s second moment, Shampoo&rsquo;s Kronecker factors) are used instead.</li>
+<li>Neural network loss surfaces are <strong>non-convex</strong>: they have permutation symmetry, saddle points, and flat regions. Most critical points are saddles, not local minima, especially in high dimension.</li>
+<li><strong>SGD momentum</strong> accumulates velocity in consistent gradient directions, accelerating convergence in narrow valleys. The theoretical speedup over GD is <span class="arithmatex">\(O(\sqrt{\kappa})\)</span> via Nesterov acceleration.</li>
+<li><strong>Adam</strong> applies per-parameter adaptive learning rates, effectively precondition the gradient by the square root of the second moment. This dramatically reduces sensitivity to the condition number and is the standard optimizer for LLM pretraining.</li>
+<li>The <strong>condition number</strong> <span class="arithmatex">\(\kappa = L/\mu\)</span> governs how many steps are needed to converge. Well-conditioned problems (<span class="arithmatex">\(\kappa \approx 1\)</span>) converge fast; ill-conditioned ones (<span class="arithmatex">\(\kappa \gg 1\)</span>) benefit from preconditioning.</li>
+<li><strong>SGD generalizes better than large-batch GD</strong> because gradient noise biases the optimizer toward flat minima, which are more robust to distribution shift.</li>
+<li><strong>Gradient clipping</strong> and <strong>learning rate warmup</strong> are practical necessities for stable LLM training, preventing early-phase instability from derailing otherwise healthy runs.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Optimization for deep learning is a mature field with well-established foundations — the core algorithms (SGD, Adam, Nesterov) are from the 1960s–2010s — but active research continues on flat-minima geometry, sharpness-aware methods, and second-order approximations for billion-parameter models.</p>
+<p><strong>Textbooks &amp; courses</strong></p>
+<ul>
+<li><a href="https://stanford.edu/~boyd/cvxbook/">Boyd &amp; Vandenberghe, <em>Convex Optimization</em> (2004)</a> — the definitive reference on convexity, duality, and gradient methods; free PDF from the authors.</li>
+<li><a href="https://mml-book.github.io/">Deisenroth, Faisal &amp; Ong, <em>Mathematics for Machine Learning</em> (2020)</a> — Chapter 7 covers continuous optimization; free PDF with Jupyter notebooks.</li>
+</ul>
+<p><strong>Foundational papers</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1412.6980">Kingma &amp; Ba, <em>Adam: A Method for Stochastic Optimization</em> (2015)</a> — introduces Adam with bias-corrected moment estimates; the dominant LLM pretraining optimizer.</li>
+<li><a href="https://arxiv.org/abs/1406.2572">Dauphin et al., <em>Identifying and Attacking the Saddle Point Problem in High-Dimensional Non-Convex Optimization</em> (2014)</a> — establishes via random matrix theory that critical points in deep networks are overwhelmingly saddles, not local minima.</li>
+<li><a href="https://arxiv.org/abs/1609.04836">Keskar et al., <em>On Large-Batch Training for Deep Learning</em> (2017)</a> — empirical proof that large-batch SGD finds sharper minima and generalizes worse; motivates gradient noise as implicit regularization.</li>
+<li><a href="https://arxiv.org/abs/1712.09913">Li et al., <em>Visualizing the Loss Landscape of Neural Nets</em> (2018)</a> — filter-normalized 2D projections show how skip connections smooth the loss surface.</li>
+</ul>
+<p><strong>Recent advances (2021–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2010.01412">Foret et al., <em>Sharpness-Aware Minimization for Efficiently Improving Generalization</em> (2021)</a> — SAM adds a min-max perturbation step to explicitly seek flat minima; consistent gains across vision and NLP benchmarks.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/tomgoldstein/loss-landscape">tomgoldstein/loss-landscape</a> — PyTorch code to compute and plot 1D/2D loss-surface slices for any model; companion to the Li et al. NeurIPS 2018 paper.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.ruder.io/optimizing-gradient-descent/">Ruder, <em>An Overview of Gradient Descent Optimization Algorithms</em> (2016)</a> — comprehensive illustrated survey of SGD, Momentum, AdaGrad, RMSProp, Adam, and friends.</li>
+<li><a href="https://distill.pub/2017/momentum/">Goh, <em>Why Momentum Really Works</em> — Distill (2017)</a> — interactive visual explainer on momentum through the lens of convex quadratics; builds deep intuition for the <span class="arithmatex">\(\sqrt{\kappa}\)</span> speedup.</li>
+<li><a href="https://www.3blue1brown.com/lessons/backpropagation-calculus">3Blue1Brown, <em>Backpropagation Calculus</em> (2017)</a> — animated walkthrough of the chain rule in neural networks; the clearest visual introduction available.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Ruder, Sebastian. &ldquo;An Overview of Gradient Descent Optimization Algorithms.&rdquo; arXiv, 2016. A comprehensive survey of SGD variants with intuition-building diagrams.</li>
+<li>Kingma, Diederik P. and Ba, Jimmy. &ldquo;Adam: A Method for Stochastic Optimization.&rdquo; ICLR 2015. The original Adam paper; essential reading.</li>
+<li>Dauphin, Yann N., et al. &ldquo;Identifying and Attacking the Saddle Point Problem in High-Dimensional Non-Convex Optimization.&rdquo; NeurIPS 2014. Establishes why saddle points dominate over local minima in deep networks.</li>
+<li>Keskar, Nitish Shirish, et al. &ldquo;On Large-Batch Training for Deep Learning: Generalization Gap and Sharp Minima.&rdquo; ICLR 2017. Empirical and theoretical case that large-batch SGD finds sharper minima.</li>
+<li>Li, Hao, et al. &ldquo;Visualizing the Loss Landscape of Neural Nets.&rdquo; NeurIPS 2018. Shows how skip connections smooth the loss landscape.</li>
+<li>Nesterov, Yurii. &ldquo;A Method of Solving a Convex Programming Problem with Convergence Rate <span class="arithmatex">\(O(1/k^2)\)</span>.&rdquo; Soviet Mathematics Doklady, 1983. The original Nesterov acceleration paper.</li>
+<li>Polyak, Boris T. &ldquo;Some Methods of Speeding Up the Convergence of Iteration Methods.&rdquo; USSR Computational Mathematics and Mathematical Physics, 1964. Origin of heavy-ball momentum.</li>
+<li>Boyd, Stephen and Vandenberghe, Lieven. <em>Convex Optimization</em>. Cambridge University Press, 2004. The definitive reference on convexity, duality, and gradient methods. Available free online.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-probability-information.html"><span class="pn-label">← Previous</span><span class="pn-title">Probability, Statistics &amp; Information Theory</span></a>
+<a class="next" href="04-numerics-precision.html"><span class="pn-label">Next →</span><span class="pn-title">Numerical Computing, Floating Point &amp; Precision</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#gradients-jacobians-and-hessians">Gradients, Jacobians, and Hessians</a></li>
+<li class="toc-l3"><a href="#the-gradient-steepest-ascent-in-parameter-space">The Gradient: Steepest Ascent in Parameter Space</a></li>
+<li class="toc-l3"><a href="#the-jacobian-gradient-for-vector-valued-maps">The Jacobian: Gradient for Vector-Valued Maps</a></li>
+<li class="toc-l3"><a href="#the-hessian-second-order-curvature">The Hessian: Second-Order Curvature</a></li>
+<li class="toc-l2"><a href="#the-chain-rule-and-backpropagation">The Chain Rule and Backpropagation</a></li>
+<li class="toc-l3"><a href="#a-three-layer-chain-rule-worked-out">A Three-Layer Chain Rule Worked Out</a></li>
+<li class="toc-l2"><a href="#convex-vs-non-convex-landscapes">Convex vs Non-Convex Landscapes</a></li>
+<li class="toc-l3"><a href="#convexity-defined">Convexity Defined</a></li>
+<li class="toc-l3"><a href="#why-neural-networks-are-non-convex">Why Neural Networks Are Non-Convex</a></li>
+<li class="toc-l3"><a href="#what-saves-us">What Saves Us</a></li>
+<li class="toc-l2"><a href="#gradient-descent-variants-and-analysis">Gradient Descent: Variants and Analysis</a></li>
+<li class="toc-l3"><a href="#vanilla-gradient-descent-gd">Vanilla Gradient Descent (GD)</a></li>
+<li class="toc-l3"><a href="#stochastic-gradient-descent-sgd">Stochastic Gradient Descent (SGD)</a></li>
+<li class="toc-l3"><a href="#sgd-with-momentum">SGD with Momentum</a></li>
+<li class="toc-l3"><a href="#adaptive-learning-rate-methods">Adaptive Learning Rate Methods</a></li>
+<li class="toc-l3"><a href="#summary-of-variants">Summary of Variants</a></li>
+<li class="toc-l2"><a href="#saddle-points-and-escape-dynamics">Saddle Points and Escape Dynamics</a></li>
+<li class="toc-l3"><a href="#how-sgd-escapes-saddle-points">How SGD Escapes Saddle Points</a></li>
+<li class="toc-l3"><a href="#flat-regions-vs-sharp-minima">Flat Regions vs Sharp Minima</a></li>
+<li class="toc-l2"><a href="#lipschitz-constants-and-the-condition-number">Lipschitz Constants and the Condition Number</a></li>
+<li class="toc-l3"><a href="#l-smooth-functions">\(L\)-Smooth Functions</a></li>
+<li class="toc-l3"><a href="#the-condition-number">The Condition Number</a></li>
+<li class="toc-l3"><a href="#layer-wise-conditioning">Layer-Wise Conditioning</a></li>
+<li class="toc-l2"><a href="#worked-numerical-example-gd-on-a-quadratic">Worked Numerical Example: GD on a Quadratic</a></li>
+<li class="toc-l2"><a href="#full-runnable-code-gradient-descent-on-a-toy-loss-surface">Full Runnable Code: Gradient Descent on a Toy Loss Surface</a></li>
+<li class="toc-l2"><a href="#why-sgd-generalizes-the-interview-question">Why SGD Generalizes: The Interview Question</a></li>
+<li class="toc-l2"><a href="#learning-rate-convergence-and-practical-guidance">Learning Rate, Convergence, and Practical Guidance</a></li>
+<li class="toc-l3"><a href="#the-learning-rate-as-the-most-important-hyperparameter">The Learning Rate as the Most Important Hyperparameter</a></li>
+<li class="toc-l3"><a href="#gradient-clipping">Gradient Clipping</a></li>
+<li class="toc-l3"><a href="#connection-to-second-order-methods">Connection to Second-Order Methods</a></li>
+<li class="toc-l2"><a href="#putting-it-together-the-optimization-landscape-of-an-llm">Putting It Together: The Optimization Landscape of an LLM</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

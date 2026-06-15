@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tool Use &amp; Function Calling — The LLM Stack</title>
+<meta name="description" content="How models call tools: schemas, the function-calling fine-tune, parsing/validation, parallel tool calls, the tool-call loop, error handling, structured outputs;">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="active" href="01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VIII — Agents &amp; Harness Engineering</div>
+<h1 id="81-tool-use-function-calling">8.1 Tool Use &amp; Function Calling<a class="headerlink" href="#81-tool-use-function-calling" title="Permanent link">¶</a></h1>
+<p>A language model that can only read and write text is like a calculator without the equals key — impressive internally but frustratingly incomplete for real tasks. Tool use, also called <em>function calling</em>, is the mechanism that lets a model reach outside its context window and invoke the world: run code, query a database, look up today&rsquo;s weather, book a calendar event, or call any API imaginable. It is the foundational primitive on top of which every agent framework — ReAct, plan-and-execute, coding agents, multi-agent orchestrators — is built.</p>
+<p>This chapter covers the full engineering picture: how tool schemas are defined, how the function-calling fine-tune works, how you parse and validate model outputs, how to run the tool-call loop, how to handle errors gracefully, and how structured outputs relate to function calling. We also look at parallel tool calls, streaming, and best practices for production agents. By the end, you will be able to build a correct, robust tool-calling loop from scratch and understand what is happening inside the model when it decides to call a function.</p>
+<p>This chapter is the foundation for <a href="../08-agents-harness/02-agentic-loop.html">The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a>, <a href="../08-agents-harness/03-harness-coding-agent.html">Harness Engineering: Building a Coding Agent</a>, and <a href="../08-agents-harness/05-agent-memory.html">Memory Systems for Agents</a>.</p>
+<hr />
+<h2 id="why-models-need-tools">Why Models Need Tools<a class="headerlink" href="#why-models-need-tools" title="Permanent link">¶</a></h2>
+<p>Language models are frozen at training time. Their parametric knowledge is a lossy compression of their training corpus, not a live index of the world. Without tools, every answer about current events, exact arithmetic, external databases, or user-specific state is either wrong, hallucinated, or stale.</p>
+<p>Three fundamental limitations motivate tool use:</p>
+<ol>
+<li><strong>Knowledge cutoff.</strong> A model trained through date <span class="arithmatex">\(T\)</span> cannot know what happened after <span class="arithmatex">\(T\)</span>. Connecting it to a search engine or a live API dissolves this limit.</li>
+<li><strong>Exact computation.</strong> Transformers are surprisingly poor at reliable arithmetic and symbolic manipulation (see <a href="../05-posttraining-alignment/10-reasoning-test-time-compute.html">Reasoning, Chain-of-Thought &amp; Test-Time Compute</a> for the mechanistic reason). Delegating computation to a Python interpreter or calculator produces exact results.</li>
+<li><strong>Stateful action.</strong> An agent that can only generate text cannot create a file, send an email, or call an API — actions that require side effects in external systems.</li>
+</ol>
+<p>Tool use is <em>not</em> about making the model smarter; it is about augmenting a powerful reasoning engine with reliable, exact, up-to-date actuators.</p>
+<hr />
+<h2 id="tool-schemas-defining-the-interface">Tool Schemas: Defining the Interface<a class="headerlink" href="#tool-schemas-defining-the-interface" title="Permanent link">¶</a></h2>
+<p>Before a model can call a tool, it needs a structured description of what the tool does, what arguments it accepts, and what it returns. This description is called a <em>tool schema</em> or <em>function schema</em>, and it is injected into the model&rsquo;s context — typically in the system prompt or a dedicated tools section of the chat template.</p>
+<p>The de facto standard for tool schemas is a subset of JSON Schema. Here is a complete example schema for a weather tool:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;get_current_weather&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Retrieve the current weather for a given city. Returns temperature, conditions, humidity, and wind speed. Only use this when the user asks about current or near-future weather.&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;parameters&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;object&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;properties&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;string&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;City and optionally country, e.g. &#39;San Francisco, CA&#39; or &#39;Tokyo, Japan&#39;.&quot;</span>
+<span class="w">      </span><span class="p">},</span>
+<span class="w">      </span><span class="nt">&quot;units&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;string&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">&quot;enum&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;celsius&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;fahrenheit&quot;</span><span class="p">],</span>
+<span class="w">        </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Temperature unit. Defaults to celsius.&quot;</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;required&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;location&quot;</span><span class="p">]</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Several elements are worth highlighting:</p>
+<ul>
+<li><strong><code>description</code> on the tool itself.</strong> This is the most important field. The model reads this to decide <em>whether</em> to call the tool at all. Vague descriptions produce erratic call behavior. Be explicit about when the tool should and should not be invoked.</li>
+<li><strong><code>description</code> on each parameter.</strong> Format hints, examples, and constraints all belong here. The model will try to satisfy them.</li>
+<li><strong><code>required</code></strong> lists which parameters the model must provide. Parameters not listed are optional and may be omitted.</li>
+<li><strong><code>enum</code></strong> constrains a parameter to a fixed set of values, which dramatically reduces malformed outputs.</li>
+<li><strong><code>type</code></strong> maps to JSON Schema primitive types: <code>string</code>, <code>number</code>, <code>integer</code>, <code>boolean</code>, <code>array</code>, <code>object</code>.</li>
+</ul>
+<h3 id="schema-best-practices">Schema best practices<a class="headerlink" href="#schema-best-practices" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Practice</th>
+<th>Why it matters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keep descriptions action-oriented (&ldquo;Retrieve X given Y&rdquo;)</td>
+<td>Guides the model&rsquo;s call-or-not decision</td>
+</tr>
+<tr>
+<td>List all enum values explicitly</td>
+<td>Prevents the model from inventing invalid values</td>
+</tr>
+<tr>
+<td>Use <code>additionalProperties: false</code> for nested objects</td>
+<td>Prevents hallucinated extra fields</td>
+</tr>
+<tr>
+<td>Add a <code>format</code> hint for strings (e.g., <code>"format": "date-time"</code>)</td>
+<td>Improves conformance</td>
+</tr>
+<tr>
+<td>Keep parameter names consistent with your codebase</td>
+<td>Reduces translation bugs in harness code</td>
+</tr>
+</tbody>
+</table>
+<h3 id="how-schemas-reach-the-model">How schemas reach the model<a class="headerlink" href="#how-schemas-reach-the-model" title="Permanent link">¶</a></h3>
+<p>Different providers and open-source frameworks serialize the tool list differently. The OpenAI Chat Completions API puts tools in a top-level <code>tools</code> array. HuggingFace chat templates encode them as a system message using a Jinja template that calls <code>tools | tojson</code>. The model is fine-tuned to understand whichever serialization format it was trained on.</p>
+<p>Here is a simplified view of how a Jinja chat template injects tools into the prompt:</p>
+<div class="highlight"><pre><span></span><code>{%- if tools %}
+&lt;|im_start|&gt;system
+You have access to the following tools:
+{{ tools | tojson(indent=2) }}
+
+Call tools using &lt;tool_call&gt;{&quot;name&quot;: ..., &quot;arguments&quot;: {...}}&lt;/tool_call&gt;.
+The result will be returned in &lt;tool_response&gt;...&lt;/tool_response&gt;.
+&lt;|im_end|&gt;
+{%- endif %}
+</code></pre></div>
+<p>The exact XML-like or JSON-like wrapper tokens vary per model family. Llama 3.1 uses a <code>&lt;|python_tag|&gt;</code> prefix for code interpreter calls and a custom tool-call format. Mistral uses <code>[TOOL_CALLS]</code> markers. Claude uses a dedicated <code>&lt;parameter name="name"&gt;</code> XML structure. What they all share is that the <em>schema is in the context</em> and the <em>call is in the generated text</em>.</p>
+<hr />
+<h2 id="the-function-calling-fine-tune">The Function-Calling Fine-Tune<a class="headerlink" href="#the-function-calling-fine-tune" title="Permanent link">¶</a></h2>
+<p>A vanilla pretrained model cannot reliably produce well-formed tool call syntax. The function-calling capability is taught during supervised fine-tuning (SFT) and sometimes reinforced with RL (see <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a> for the SFT pipeline).</p>
+<h3 id="training-data-format">Training data format<a class="headerlink" href="#training-data-format" title="Permanent link">¶</a></h3>
+<p>Training data for function calling consists of multi-turn conversations where tool calls and their results appear in specific positions. A typical training example looks like:</p>
+<div class="highlight"><pre><span></span><code>[system]: You have tools: [{&quot;name&quot;: &quot;search&quot;, ...}]
+[user]: What&#39;s the capital of France?
+[assistant]: &lt;tool_call&gt;{&quot;name&quot;: &quot;search&quot;, &quot;arguments&quot;: {&quot;query&quot;: &quot;capital of France&quot;}}&lt;/tool_call&gt;
+[tool]: {&quot;result&quot;: &quot;Paris&quot;}
+[assistant]: The capital of France is Paris.
+</code></pre></div>
+<p>The model learns simultaneously:
+1. When to call a tool (the call decision).
+2. Which tool to call (tool selection).
+3. How to form the argument JSON (argument generation).
+4. How to synthesize a final answer from tool results (grounded response).</p>
+<p>The training loss is computed only on the assistant tokens — the tool call JSON and the final response — not on the user turns or tool results (which are fixed ground truth).</p>
+<h3 id="what-the-model-actually-learns">What the model actually learns<a class="headerlink" href="#what-the-model-actually-learns" title="Permanent link">¶</a></h3>
+<p>From a representation-learning perspective, the model learns to:
+- Map natural-language intent (e.g., &ldquo;what&rsquo;s the weather&rdquo;) onto a tool&rsquo;s <code>description</code> via approximate semantic matching.
+- Generate a JSON object whose token distribution is conditioned on the schema (field names, types, constraints) that appears earlier in the context.
+- Recognize when tool results are sufficient to answer without further calls.</p>
+<p>The function-calling capability generalizes across tools never seen during training because the schema is in-context. The model does not memorize specific tool names; it learns the <em>meta-skill</em> of reading a schema and producing conformant output. This is the same mechanism discussed in <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a> — the schema tokens attend to the generation tokens, providing strong conditioning.</p>
+<h3 id="rl-on-top-of-sft">RL on top of SFT<a class="headerlink" href="#rl-on-top-of-sft" title="Permanent link">¶</a></h3>
+<p>OpenAI&rsquo;s original GPT-4 function calling and subsequent work augmented SFT data with RL signals: if a tool call resulted in a successful downstream task completion, the call was rewarded. This teaches the model to be more conservative about calling tools unnecessarily and more aggressive about calling them when needed. See <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a> for the general pipeline.</p>
+<hr />
+<h2 id="parsing-and-validation">Parsing and Validation<a class="headerlink" href="#parsing-and-validation" title="Permanent link">¶</a></h2>
+<p>The model outputs a string. Your harness must parse that string into a structured call object, validate it against the schema, and dispatch to the right function. Getting this right is where most production bugs live.</p>
+<h3 id="the-parse-validate-dispatch-pipeline">The parse-validate-dispatch pipeline<a class="headerlink" href="#the-parse-validate-dispatch-pipeline" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jsonschema</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="c1"># --- Tool registry ---------------------------------------------------------</span>
+<span class="c1"># Maps tool name -&gt; (python_callable, json_schema_for_parameters)</span>
+<span class="n">TOOL_REGISTRY</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">register_tool</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">schema</span><span class="p">:</span> <span class="nb">dict</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Decorator that registers a Python function as a callable tool.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">decorator</span><span class="p">(</span><span class="n">fn</span><span class="p">):</span>
+        <span class="n">TOOL_REGISTRY</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="n">schema</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">fn</span>
+    <span class="k">return</span> <span class="n">decorator</span>
+
+<span class="c1"># --- Schema definitions ----------------------------------------------------</span>
+<span class="n">WEATHER_SCHEMA</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;object&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;properties&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;location&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">},</span>
+        <span class="s2">&quot;units&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">,</span> <span class="s2">&quot;enum&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;celsius&quot;</span><span class="p">,</span> <span class="s2">&quot;fahrenheit&quot;</span><span class="p">]}</span>
+    <span class="p">},</span>
+    <span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;location&quot;</span><span class="p">],</span>
+    <span class="s2">&quot;additionalProperties&quot;</span><span class="p">:</span> <span class="kc">False</span>
+<span class="p">}</span>
+
+<span class="nd">@register_tool</span><span class="p">(</span><span class="s2">&quot;get_current_weather&quot;</span><span class="p">,</span> <span class="n">WEATHER_SCHEMA</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_current_weather</span><span class="p">(</span><span class="n">location</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">units</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;celsius&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Stub: in production this calls a real weather API.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;location&quot;</span><span class="p">:</span> <span class="n">location</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mi">22</span><span class="p">,</span> <span class="s2">&quot;units&quot;</span><span class="p">:</span> <span class="n">units</span><span class="p">,</span>
+            <span class="s2">&quot;conditions&quot;</span><span class="p">:</span> <span class="s2">&quot;partly cloudy&quot;</span><span class="p">}</span>
+
+<span class="c1"># --- Parser ----------------------------------------------------------------</span>
+<span class="n">TOOL_CALL_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+    <span class="sa">r</span><span class="s2">&quot;&lt;tool_call&gt;\s*(\{.*?\})\s*&lt;/tool_call&gt;&quot;</span><span class="p">,</span>
+    <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span>
+<span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_tool_calls</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extract zero or more tool call objects from model output text.</span>
+<span class="sd">    Returns a list of dicts, each with keys &#39;name&#39; and &#39;arguments&#39;.</span>
+<span class="sd">    Raises ValueError if JSON is malformed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">matches</span> <span class="o">=</span> <span class="n">TOOL_CALL_RE</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+    <span class="n">calls</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">raw_json</span> <span class="ow">in</span> <span class="n">matches</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">call</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">raw_json</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">json</span><span class="o">.</span><span class="n">JSONDecodeError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Malformed tool call JSON: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="se">\n</span><span class="s2">Raw: </span><span class="si">{</span><span class="n">raw_json</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="s2">&quot;name&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">call</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Tool call missing &#39;name&#39; field: </span><span class="si">{</span><span class="n">call</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">calls</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">call</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">calls</span>
+
+<span class="c1"># --- Validator -------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">validate_tool_call</span><span class="p">(</span><span class="n">call</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Validate that the tool exists in the registry and that its</span>
+<span class="sd">    arguments conform to the registered JSON schema.</span>
+<span class="sd">    Raises ValueError or jsonschema.ValidationError on failure.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">call</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">TOOL_REGISTRY</span><span class="p">:</span>
+        <span class="n">available</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">TOOL_REGISTRY</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown tool &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;. Available: </span><span class="si">{</span><span class="n">available</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">schema</span> <span class="o">=</span> <span class="n">TOOL_REGISTRY</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">call</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;arguments&quot;</span><span class="p">,</span> <span class="p">{})</span>
+    <span class="c1"># This raises jsonschema.ValidationError on schema mismatch</span>
+    <span class="n">jsonschema</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">instance</span><span class="o">=</span><span class="n">args</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">schema</span><span class="p">)</span>
+
+<span class="c1"># --- Dispatcher ------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">dispatch_tool_call</span><span class="p">(</span><span class="n">call</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Execute a validated tool call. Returns the raw Python return value,</span>
+<span class="sd">    which the harness will serialize back to JSON for the model.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">fn</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">TOOL_REGISTRY</span><span class="p">[</span><span class="n">call</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]]</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">call</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;arguments&quot;</span><span class="p">,</span> <span class="p">{})</span>
+    <span class="k">return</span> <span class="n">fn</span><span class="p">(</span><span class="o">**</span><span class="n">args</span><span class="p">)</span>  <span class="c1"># keyword-unpack the arguments dict</span>
+
+<span class="c1"># --- Top-level entry point -------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">run_tool_call</span><span class="p">(</span><span class="n">raw_text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Full pipeline: parse -&gt; validate -&gt; dispatch for all calls in raw_text.</span>
+<span class="sd">    Returns a list of result dicts: [{&quot;name&quot;: ..., &quot;result&quot;: ...}, ...]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">calls</span> <span class="o">=</span> <span class="n">extract_tool_calls</span><span class="p">(</span><span class="n">raw_text</span><span class="p">)</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">call</span> <span class="ow">in</span> <span class="n">calls</span><span class="p">:</span>
+        <span class="n">validate_tool_call</span><span class="p">(</span><span class="n">call</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">dispatch_tool_call</span><span class="p">(</span><span class="n">call</span><span class="p">)</span>
+        <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">call</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">],</span> <span class="s2">&quot;result&quot;</span><span class="p">:</span> <span class="n">result</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">results</span>
+</code></pre></div>
+<h3 id="error-taxonomy">Error taxonomy<a class="headerlink" href="#error-taxonomy" title="Permanent link">¶</a></h3>
+<p>Not all parse failures are equal. A robust harness distinguishes between:</p>
+<table>
+<thead>
+<tr>
+<th>Error type</th>
+<th>Example</th>
+<th>Recovery strategy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>JSON syntax error</td>
+<td>Missing closing brace</td>
+<td>Return error to model; ask it to retry</td>
+</tr>
+<tr>
+<td>Unknown tool</td>
+<td>Model hallucinated <code>get_stocks</code></td>
+<td>Return error listing valid tools</td>
+</tr>
+<tr>
+<td>Missing required arg</td>
+<td><code>location</code> omitted</td>
+<td>Return error naming the missing field</td>
+</tr>
+<tr>
+<td>Wrong arg type</td>
+<td><code>units: 42</code> instead of string</td>
+<td>Return schema fragment; ask model to fix</td>
+</tr>
+<tr>
+<td>Tool execution error</td>
+<td>Network timeout, API 500</td>
+<td>Return truncated error message; log for ops</td>
+</tr>
+</tbody>
+</table>
+<p>The key insight: <strong>errors are tool results</strong>. Feed them back into the conversation just like a successful result, and the model can usually correct itself on the next turn. Do not silently swallow errors — the model cannot fix what it cannot see.</p>
+<div class="admonition warning">
+<p class="admonition-title">Never trust the model&rsquo;s JSON blindly</p>
+<p>Even a well fine-tuned model will occasionally emit JSON with trailing commas (invalid), single-quoted strings (invalid), or Python-style <code>True</code>/<code>None</code> booleans (invalid in JSON). Always parse with a strict parser like <code>json.loads</code>. Consider a lenient fallback like <code>json5</code> or a regex-clean pass for production systems where latency matters more than strictness.</p>
+</div>
+<hr />
+<h2 id="the-tool-call-loop">The Tool-Call Loop<a class="headerlink" href="#the-tool-call-loop" title="Permanent link">¶</a></h2>
+<p>A single tool call is rare. Real tasks require multiple calls, sometimes in sequence (where later calls depend on earlier results) and sometimes in parallel (where calls are independent). The orchestration of this sequence is called the <em>tool-call loop</em> or <em>agentic loop</em>.</p>
+<h3 id="architecture-of-the-loop">Architecture of the loop<a class="headerlink" href="#architecture-of-the-loop" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-toolcall-loop-architecture">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 436" role="img" aria-label="The tool-call loop: a Messages list sends a prompt to the LLM, which either emits tool calls dispatched to external Tools whose results are appended back to Messages repeating the cycle, or emits a plain-text final response that exits the loop.">
+<defs>
+  <marker id="tc-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="tc-arr-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <marker id="tc-arr-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+<style>
+  #fig-toolcall-loop-architecture text { fill: var(--ink-soft,#333); font: 400 12px var(--sans,sans-serif); }
+  #fig-toolcall-loop-architecture .title    { font: 700 14px var(--sans,sans-serif); }
+  #fig-toolcall-loop-architecture .node-lbl { font: 700 13px var(--sans,sans-serif); }
+  #fig-toolcall-loop-architecture .node-sub { font: 400 10px var(--mono,monospace); fill: var(--muted,#888); }
+  #fig-toolcall-loop-architecture .edge-lbl { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-toolcall-loop-architecture .foot     { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-toolcall-loop-architecture .iter     { font: 500 9px var(--mono,monospace); fill: var(--accent,#6366f1); }
+
+  /* ── animation keyframes ── */
+  @keyframes tc-pulse-ab {
+    0%,100% { opacity:0 }
+    0%      { opacity:0; offset-distance:0% }
+    5%      { opacity:1 }
+    28%     { opacity:1; offset-distance:100% }
+    30%     { opacity:0 }
+  }
+  @keyframes tc-pulse-bc {
+    0%,100% { opacity:0 }
+    30%     { opacity:0; offset-distance:0% }
+    35%     { opacity:1 }
+    55%     { opacity:1; offset-distance:100% }
+    57%     { opacity:0 }
+  }
+  @keyframes tc-pulse-ca {
+    0%,100% { opacity:0 }
+    57%     { opacity:0; offset-distance:0% }
+    62%     { opacity:1 }
+    82%     { opacity:1; offset-distance:100% }
+    84%     { opacity:0 }
+  }
+  @keyframes tc-pulse-exit {
+    0%,84% { opacity:0 }
+    85%    { opacity:0; offset-distance:0% }
+    90%    { opacity:1 }
+    100%   { opacity:1; offset-distance:100% }
+  }
+  @keyframes tc-glow-exit {
+    0%,88%  { fill-opacity:0.12 }
+    90%     { fill-opacity:0.45 }
+    100%    { fill-opacity:0.45 }
+  }
+  @keyframes tc-node-pulse-a {
+    0%,2%,26%,100% { opacity:0 }
+    5%,24% { opacity:0.35 }
+  }
+  @keyframes tc-node-pulse-b {
+    0%,28%,100% { opacity:0 }
+    32%,54% { opacity:0.35 }
+    55% { opacity:0 }
+  }
+  @keyframes tc-node-pulse-c {
+    0%,55%,100% { opacity:0 }
+    59%,80% { opacity:0.35 }
+    82% { opacity:0 }
+  }
+
+  /* A→B path */
+  #fig-toolcall-loop-architecture .tc-dot-ab {
+    offset-path: path("M220,205 C260,205 290,175 320,155");
+    animation: tc-pulse-ab 5s ease-in-out infinite;
+  }
+  /* B→C path */
+  #fig-toolcall-loop-architecture .tc-dot-bc {
+    offset-path: path("M470,165 C510,165 540,230 535,265");
+    animation: tc-pulse-bc 5s ease-in-out infinite;
+  }
+  /* C→A path */
+  #fig-toolcall-loop-architecture .tc-dot-ca {
+    offset-path: path("M535,345 C480,390 300,390 220,265");
+    animation: tc-pulse-ca 5s ease-in-out infinite;
+  }
+  /* B→exit path */
+  #fig-toolcall-loop-architecture .tc-dot-exit {
+    offset-path: path("M395,110 C400,80 460,56 530,52");
+    animation: tc-pulse-exit 5s ease-in-out infinite;
+  }
+  #fig-toolcall-loop-architecture .tc-hl-a   { animation: tc-node-pulse-a 5s ease-in-out infinite; }
+  #fig-toolcall-loop-architecture .tc-hl-b   { animation: tc-node-pulse-b 5s ease-in-out infinite; }
+  #fig-toolcall-loop-architecture .tc-hl-c   { animation: tc-node-pulse-c 5s ease-in-out infinite; }
+  #fig-toolcall-loop-architecture .tc-glow-exit { animation: tc-glow-exit 5s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-toolcall-loop-architecture .tc-dot-ab,
+    #fig-toolcall-loop-architecture .tc-dot-bc,
+    #fig-toolcall-loop-architecture .tc-dot-ca,
+    #fig-toolcall-loop-architecture .tc-dot-exit { opacity: 0 !important; animation: none; }
+    #fig-toolcall-loop-architecture .tc-hl-a,
+    #fig-toolcall-loop-architecture .tc-hl-b,
+    #fig-toolcall-loop-architecture .tc-hl-c { opacity: 0.18; animation: none; }
+    #fig-toolcall-loop-architecture .tc-glow-exit { fill-opacity: 0.3; animation: none; }
+  }
+</style>
+
+
+<rect x="12" y="10" width="736" height="418" rx="12"
+      fill="var(--surface,#fafafa)" fill-opacity="0.5"
+      stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+
+<rect x="12" y="10" width="736" height="36" rx="12"
+      fill="var(--surface-3,#e8e8f0)" fill-opacity="0.7" stroke="none"/>
+<rect x="12" y="34" width="736" height="12"
+      fill="var(--surface-3,#e8e8f0)" fill-opacity="0.7" stroke="none"/>
+<text x="380" y="33" text-anchor="middle" class="title">Tool-Call Loop</text>
+
+
+<g data-anim="2">
+  <rect x="534" y="20" width="200" height="44" rx="22"
+        fill="var(--good,#2f9e6e)" fill-opacity="0.12"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+  <rect class="tc-glow-exit" x="534" y="20" width="200" height="44" rx="22"
+        fill="var(--good,#2f9e6e)" fill-opacity="0.12"/>
+  <text x="634" y="39" text-anchor="middle" style="font:700 11px var(--sans,sans-serif); fill:var(--good,#2f9e6e);">final text response</text>
+  <text x="634" y="55" text-anchor="middle" style="font:700 11px var(--mono,monospace); fill:var(--good,#2f9e6e);">&#x2192; return</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="50" y="158" width="170" height="96" rx="10"
+        fill="var(--surface,#fafafa)" stroke="var(--border-2,#ccc)" stroke-width="1.6"/>
+  <rect class="tc-hl-a" x="50" y="158" width="170" height="96" rx="10"
+        fill="var(--accent,#6366f1)" fill-opacity="0"/>
+  <text x="135" y="196" text-anchor="middle" class="node-lbl">Messages (list)</text>
+  <text x="135" y="212" text-anchor="middle" class="node-sub">system / user /</text>
+  <text x="135" y="226" text-anchor="middle" class="node-sub">assistant / tool</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="310" y="108" width="160" height="82" rx="10"
+        fill="var(--accent,#6366f1)" fill-opacity="0.12"
+        stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <rect class="tc-hl-b" x="310" y="108" width="160" height="82" rx="10"
+        fill="var(--accent,#6366f1)" fill-opacity="0"/>
+  <text x="390" y="145" text-anchor="middle" class="node-lbl" fill="var(--accent,#6366f1)">LLM</text>
+  <text x="390" y="160" text-anchor="middle" class="node-sub">chat.completions</text>
+  <text x="390" y="173" text-anchor="middle" class="node-sub">.create(tools=...)</text>
+</g>
+
+
+<rect x="310" y="198" width="160" height="17" rx="8"
+      fill="var(--accent,#6366f1)" fill-opacity="0.08"
+      stroke="var(--accent,#6366f1)" stroke-width="0.8" stroke-dasharray="3 2"/>
+<text x="390" y="210" text-anchor="middle" class="iter">iteration &lt; max_iterations</text>
+
+
+<g data-anim="1">
+  <rect x="524" y="265" width="186" height="96" rx="10"
+        fill="var(--surface-3,#e8e8f0)" fill-opacity="0.7"
+        stroke="var(--border-2,#ccc)" stroke-width="1.6" stroke-dasharray="6 3"/>
+  <rect class="tc-hl-c" x="524" y="265" width="186" height="96" rx="10"
+        fill="var(--accent,#6366f1)" fill-opacity="0"/>
+  <text x="617" y="306" text-anchor="middle" class="node-lbl">Tool(s) — external</text>
+  <text x="617" y="323" text-anchor="middle" class="node-sub">weather API ·</text>
+  <text x="617" y="337" text-anchor="middle" class="node-sub">calculator · ...</text>
+</g>
+
+
+
+<g data-anim="3">
+  <path d="M220,205 C260,205 290,175 310,155"
+        fill="none" stroke="var(--ink-soft,#555)" stroke-width="1.6"
+        marker-end="url(#tc-arr)"/>
+  <text x="257" y="175" text-anchor="middle" class="edge-lbl" transform="rotate(-28,257,175)">prompt</text>
+</g>
+
+
+<g data-anim="3">
+  <path d="M470,165 C510,165 540,230 535,265"
+        fill="none" stroke="var(--ink-soft,#555)" stroke-width="1.6"
+        marker-end="url(#tc-arr)"/>
+  <text x="522" y="215" text-anchor="start" class="edge-lbl">tool call(s)</text>
+</g>
+
+
+<g data-anim="4">
+  <path d="M535,345 C480,390 300,390 220,265"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.8"
+        stroke-dasharray="5 3"
+        marker-end="url(#tc-arr-a)"/>
+  <text x="390" y="406" text-anchor="middle" class="edge-lbl" fill="var(--accent,#6366f1)">tool result(s)  (append)</text>
+</g>
+
+
+<g data-anim="5">
+  <path d="M395,108 C400,80 460,56 534,42"
+        fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6"
+        marker-end="url(#tc-arr-g)"/>
+  <text x="455" y="76" text-anchor="middle" class="edge-lbl" fill="var(--good,#2f9e6e)">no tool calls</text>
+</g>
+
+
+<circle class="tc-dot-ab" r="6" fill="var(--accent,#6366f1)" opacity="0"/>
+<circle class="tc-dot-bc" r="6" fill="var(--accent,#6366f1)" opacity="0"/>
+<circle class="tc-dot-ca" r="6" fill="var(--accent,#6366f1)" opacity="0"/>
+<circle class="tc-dot-exit" r="6" fill="var(--good,#2f9e6e)" opacity="0"/>
+
+
+<text x="380" y="422" text-anchor="middle" class="foot">Loop exits when the model emits a plain-text response (no tool calls) or max_iterations is reached.</text>
+</svg>
+<figcaption><b>The tool-call loop feeds the Messages history to the LLM, dispatches any tool calls, appends results, and repeats until the model returns a plain-text answer.</b> On each iteration the full conversation history (Messages list) is sent to the model; if the response contains <code>tool_calls</code> the executor runs each tool and appends a <code>tool</code>-role message with the result, then calls the model again. The loop exits — returning the text — only when the model replies with no tool calls, or when the iteration cap is hit.</figcaption>
+</figure>
+
+<h3 id="complete-loop-implementation">Complete loop implementation<a class="headerlink" href="#complete-loop-implementation" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAI</span>  <span class="c1"># pip install openai</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Message types</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Message</span><span class="p">:</span>
+    <span class="n">role</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># &quot;system&quot; | &quot;user&quot; | &quot;assistant&quot; | &quot;tool&quot;</span>
+    <span class="n">content</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">tool_calls</span><span class="p">:</span> <span class="nb">list</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>   <span class="c1"># populated by assistant when calling tools</span>
+    <span class="n">tool_call_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># populated for role=&quot;tool&quot; responses</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>          <span class="c1"># tool name for role=&quot;tool&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">message_to_api_dict</span><span class="p">(</span><span class="n">m</span><span class="p">:</span> <span class="n">Message</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert our Message dataclass to the OpenAI API dict format.&quot;&quot;&quot;</span>
+    <span class="n">d</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="n">m</span><span class="o">.</span><span class="n">role</span><span class="p">}</span>
+    <span class="k">if</span> <span class="n">m</span><span class="o">.</span><span class="n">content</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">d</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">content</span>
+    <span class="k">if</span> <span class="n">m</span><span class="o">.</span><span class="n">tool_calls</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">d</span><span class="p">[</span><span class="s2">&quot;tool_calls&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">tool_calls</span>
+    <span class="k">if</span> <span class="n">m</span><span class="o">.</span><span class="n">tool_call_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">d</span><span class="p">[</span><span class="s2">&quot;tool_call_id&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">tool_call_id</span>
+    <span class="k">if</span> <span class="n">m</span><span class="o">.</span><span class="n">name</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">d</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">name</span>
+    <span class="k">return</span> <span class="n">d</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Tool definitions (OpenAI format)</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="n">TOOLS</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">{</span>
+        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;function&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;function&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;get_current_weather&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="p">(</span>
+                <span class="s2">&quot;Get the current weather in a city. Use this when the user &quot;</span>
+                <span class="s2">&quot;asks about current weather or temperature.&quot;</span>
+            <span class="p">),</span>
+            <span class="s2">&quot;parameters&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;object&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;properties&quot;</span><span class="p">:</span> <span class="p">{</span>
+                    <span class="s2">&quot;location&quot;</span><span class="p">:</span> <span class="p">{</span>
+                        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;City name, e.g. &#39;London, UK&#39;&quot;</span>
+                    <span class="p">},</span>
+                    <span class="s2">&quot;units&quot;</span><span class="p">:</span> <span class="p">{</span>
+                        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;enum&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;celsius&quot;</span><span class="p">,</span> <span class="s2">&quot;fahrenheit&quot;</span><span class="p">],</span>
+                        <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;Temperature units&quot;</span>
+                    <span class="p">}</span>
+                <span class="p">},</span>
+                <span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;location&quot;</span><span class="p">],</span>
+                <span class="s2">&quot;additionalProperties&quot;</span><span class="p">:</span> <span class="kc">False</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+    <span class="p">},</span>
+    <span class="p">{</span>
+        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;function&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;function&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;calculate&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="p">(</span>
+                <span class="s2">&quot;Evaluate a mathematical expression using Python&#39;s eval(). &quot;</span>
+                <span class="s2">&quot;Use for arithmetic, conversions, and simple algebra. &quot;</span>
+                <span class="s2">&quot;Example expression: &#39;(32 - 32) * 5/9&#39;&quot;</span>
+            <span class="p">),</span>
+            <span class="s2">&quot;parameters&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;object&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;properties&quot;</span><span class="p">:</span> <span class="p">{</span>
+                    <span class="s2">&quot;expression&quot;</span><span class="p">:</span> <span class="p">{</span>
+                        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;A valid Python arithmetic expression.&quot;</span>
+                    <span class="p">}</span>
+                <span class="p">},</span>
+                <span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;expression&quot;</span><span class="p">],</span>
+                <span class="s2">&quot;additionalProperties&quot;</span><span class="p">:</span> <span class="kc">False</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+<span class="p">]</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Tool implementations</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_get_current_weather</span><span class="p">(</span><span class="n">location</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">units</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;celsius&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Stub weather API. Replace with a real HTTP call in production.&quot;&quot;&quot;</span>
+    <span class="c1"># Fake data for illustration</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;London, UK&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;temp_c&quot;</span><span class="p">:</span> <span class="mi">14</span><span class="p">,</span> <span class="s2">&quot;conditions&quot;</span><span class="p">:</span> <span class="s2">&quot;cloudy&quot;</span><span class="p">},</span>
+        <span class="s2">&quot;Tokyo, Japan&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;temp_c&quot;</span><span class="p">:</span> <span class="mi">28</span><span class="p">,</span> <span class="s2">&quot;conditions&quot;</span><span class="p">:</span> <span class="s2">&quot;sunny&quot;</span><span class="p">},</span>
+    <span class="p">}</span>
+    <span class="n">info</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">location</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;temp_c&quot;</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s2">&quot;conditions&quot;</span><span class="p">:</span> <span class="s2">&quot;unknown&quot;</span><span class="p">})</span>
+    <span class="n">temp</span> <span class="o">=</span> <span class="n">info</span><span class="p">[</span><span class="s2">&quot;temp_c&quot;</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">units</span> <span class="o">==</span> <span class="s2">&quot;fahrenheit&quot;</span><span class="p">:</span>
+        <span class="n">temp</span> <span class="o">=</span> <span class="n">temp</span> <span class="o">*</span> <span class="mi">9</span><span class="o">/</span><span class="mi">5</span> <span class="o">+</span> <span class="mi">32</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;location&quot;</span><span class="p">:</span> <span class="n">location</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="n">temp</span><span class="p">,</span> <span class="s2">&quot;units&quot;</span><span class="p">:</span> <span class="n">units</span><span class="p">,</span>
+            <span class="s2">&quot;conditions&quot;</span><span class="p">:</span> <span class="n">info</span><span class="p">[</span><span class="s2">&quot;conditions&quot;</span><span class="p">]}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_calculate</span><span class="p">(</span><span class="n">expression</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Safely evaluate a math expression. Uses a restricted eval.&quot;&quot;&quot;</span>
+    <span class="n">allowed_names</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;__builtins__&quot;</span><span class="p">:</span> <span class="p">{}}</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="nb">eval</span><span class="p">(</span><span class="n">expression</span><span class="p">,</span> <span class="n">allowed_names</span><span class="p">)</span>  <span class="c1"># noqa: S307</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;expression&quot;</span><span class="p">:</span> <span class="n">expression</span><span class="p">,</span> <span class="s2">&quot;result&quot;</span><span class="p">:</span> <span class="n">result</span><span class="p">}</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;expression&quot;</span><span class="p">:</span> <span class="n">expression</span><span class="p">,</span> <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">)}</span>
+
+<span class="n">TOOL_FN_MAP</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;get_current_weather&quot;</span><span class="p">:</span> <span class="n">_get_current_weather</span><span class="p">,</span>
+    <span class="s2">&quot;calculate&quot;</span><span class="p">:</span> <span class="n">_calculate</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># The tool-call loop</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">run_tool_loop</span><span class="p">(</span>
+    <span class="n">user_message</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">system_prompt</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;You are a helpful assistant.&quot;</span><span class="p">,</span>
+    <span class="n">max_iterations</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run the full tool-call loop for a single user turn.</span>
+<span class="sd">    Returns the final assistant text response.</span>
+
+<span class="sd">    The loop:</span>
+<span class="sd">      1. Build messages list with system + user.</span>
+<span class="sd">      2. Call the model. If it emits tool calls, execute them and append</span>
+<span class="sd">         their results, then call the model again.</span>
+<span class="sd">      3. Stop when the model produces a plain text response (no tool calls)</span>
+<span class="sd">         or when max_iterations is exhausted.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="p">])</span>
+
+    <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">system_prompt</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">user_message</span><span class="p">},</span>
+    <span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">iteration</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_iterations</span><span class="p">):</span>
+        <span class="c1"># --- Model call ---</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+            <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+            <span class="n">messages</span><span class="o">=</span><span class="n">messages</span><span class="p">,</span>
+            <span class="n">tools</span><span class="o">=</span><span class="n">TOOLS</span><span class="p">,</span>
+            <span class="c1"># &quot;auto&quot; lets the model decide; &quot;required&quot; forces at least one call;</span>
+            <span class="c1"># {&quot;type&quot;: &quot;function&quot;, &quot;function&quot;: {&quot;name&quot;: &quot;...&quot;}} forces a specific call.</span>
+            <span class="n">tool_choice</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">msg</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span>
+
+        <span class="c1"># Append the assistant&#39;s raw response to the conversation history</span>
+        <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+            <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">msg</span><span class="o">.</span><span class="n">content</span><span class="p">,</span>
+            <span class="s2">&quot;tool_calls&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">tc</span><span class="o">.</span><span class="n">model_dump</span><span class="p">()</span> <span class="k">for</span> <span class="n">tc</span> <span class="ow">in</span> <span class="n">msg</span><span class="o">.</span><span class="n">tool_calls</span><span class="p">]</span> <span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">tool_calls</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="p">})</span>
+
+        <span class="c1"># --- Check for tool calls ---</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">msg</span><span class="o">.</span><span class="n">tool_calls</span><span class="p">:</span>
+            <span class="c1"># Model produced a final text answer — we&#39;re done</span>
+            <span class="k">return</span> <span class="n">msg</span><span class="o">.</span><span class="n">content</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span>
+
+        <span class="c1"># --- Execute every tool call the model requested ---</span>
+        <span class="k">for</span> <span class="n">tool_call</span> <span class="ow">in</span> <span class="n">msg</span><span class="o">.</span><span class="n">tool_calls</span><span class="p">:</span>
+            <span class="n">fn_name</span> <span class="o">=</span> <span class="n">tool_call</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">name</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">fn_args</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">tool_call</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">arguments</span><span class="p">)</span>
+            <span class="k">except</span> <span class="n">json</span><span class="o">.</span><span class="n">JSONDecodeError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="c1"># Feed the parse error back so the model can recover</span>
+                <span class="n">result</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;JSONDecodeError: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">}</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">fn_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">TOOL_FN_MAP</span><span class="p">:</span>
+                    <span class="n">result</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;Unknown tool &#39;</span><span class="si">{</span><span class="n">fn_name</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">}</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">try</span><span class="p">:</span>
+                        <span class="n">result</span> <span class="o">=</span> <span class="n">TOOL_FN_MAP</span><span class="p">[</span><span class="n">fn_name</span><span class="p">](</span><span class="o">**</span><span class="n">fn_args</span><span class="p">)</span>
+                    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                        <span class="c1"># Execution errors are also fed back to the model</span>
+                        <span class="n">result</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">)}</span>
+
+            <span class="c1"># Append the tool result as a &quot;tool&quot; role message</span>
+            <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+                <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;tool&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;tool_call_id&quot;</span><span class="p">:</span> <span class="n">tool_call</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>   <span class="c1"># must match the call&#39;s id</span>
+                <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">fn_name</span><span class="p">,</span>
+                <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">result</span><span class="p">),</span>
+            <span class="p">})</span>
+
+    <span class="c1"># Exhausted iterations without a clean stop — return partial content</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;[max_iterations=</span><span class="si">{</span><span class="n">max_iterations</span><span class="si">}</span><span class="s2"> reached without final answer]&quot;</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Demo</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">query</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;What&#39;s the weather in London right now? &quot;</span>
+        <span class="s2">&quot;And if it&#39;s 14°C there, what is that in Fahrenheit?&quot;</span>
+    <span class="p">)</span>
+    <span class="n">answer</span> <span class="o">=</span> <span class="n">run_tool_loop</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">answer</span><span class="p">)</span>
+    <span class="c1"># Expected: something like</span>
+    <span class="c1"># &quot;The weather in London is currently 14°C (cloudy).</span>
+    <span class="c1">#  14°C is 57.2°F.&quot;</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: two-call chain</p>
+<p>Consider the query: <em>&ldquo;What is the weather in London, and what is that temperature in Fahrenheit?&rdquo;</em></p>
+<p>The model makes <strong>two sequential calls</strong>:</p>
+<p><strong>Turn 1 — model calls <code>get_current_weather</code>:</strong>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;get_current_weather&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;arguments&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;London, UK&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;units&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;celsius&quot;</span><span class="p">}}</span>
+</code></pre></div>
+Tool returns: <code>{"temperature": 14, "units": "celsius", "conditions": "cloudy"}</code></p>
+<p><strong>Turn 2 — model calls <code>calculate</code>:</strong>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;calculate&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;arguments&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;expression&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;14 * 9/5 + 32&quot;</span><span class="p">}}</span>
+</code></pre></div>
+Tool returns: <code>{"result": 57.2}</code></p>
+<p><strong>Turn 3 — model produces final answer:</strong></p>
+<blockquote>
+<p>&ldquo;The weather in London is 14°C (cloudy). That is <strong>57.2°F</strong>.&rdquo;</p>
+</blockquote>
+<p>Total tokens for this 3-turn exchange on the order of 400–600 prompt tokens plus ~50 completion tokens — on the order of USD 0.001 with a small model. Context window growth is <span class="arithmatex">\(O(n)\)</span> in the number of tool calls because every call + result is appended to the message history.</p>
+</div>
+<hr />
+<h2 id="parallel-tool-calls">Parallel Tool Calls<a class="headerlink" href="#parallel-tool-calls" title="Permanent link">¶</a></h2>
+<p>When the model needs results from multiple independent tools, it can emit all calls in a single response. This is called <em>parallel tool calling</em> and it was introduced in the OpenAI API in late 2023. It halves latency for independent subtasks.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># The model response.choices[0].message.tool_calls may contain multiple items:</span>
+<span class="c1">#</span>
+<span class="c1"># tool_calls = [</span>
+<span class="c1">#   ToolCall(id=&quot;call_abc&quot;, function=Function(name=&quot;get_current_weather&quot;, arguments=&#39;{&quot;location&quot;:&quot;Tokyo&quot;}&#39;)),</span>
+<span class="c1">#   ToolCall(id=&quot;call_xyz&quot;, function=Function(name=&quot;get_current_weather&quot;, arguments=&#39;{&quot;location&quot;:&quot;London&quot;}&#39;)),</span>
+<span class="c1"># ]</span>
+<span class="c1">#</span>
+<span class="c1"># Execute them concurrently, then append BOTH results before the next LLM call.</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">concurrent.futures</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">execute_tool_calls_parallel</span><span class="p">(</span><span class="n">tool_calls</span><span class="p">:</span> <span class="nb">list</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Execute a list of tool calls concurrently using a thread pool.</span>
+<span class="sd">    Returns a list of tool-result message dicts, one per call.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run_one</span><span class="p">(</span><span class="n">tc</span><span class="p">):</span>
+        <span class="n">fn_name</span> <span class="o">=</span> <span class="n">tc</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">name</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">fn_args</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">tc</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">arguments</span><span class="p">)</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="n">TOOL_FN_MAP</span><span class="p">[</span><span class="n">fn_name</span><span class="p">](</span><span class="o">**</span><span class="n">fn_args</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">)}</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;tool&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;tool_call_id&quot;</span><span class="p">:</span> <span class="n">tc</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
+            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">fn_name</span><span class="p">,</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">result</span><span class="p">),</span>
+        <span class="p">}</span>
+
+    <span class="k">with</span> <span class="n">concurrent</span><span class="o">.</span><span class="n">futures</span><span class="o">.</span><span class="n">ThreadPoolExecutor</span><span class="p">()</span> <span class="k">as</span> <span class="n">executor</span><span class="p">:</span>
+        <span class="c1"># Submit all calls simultaneously</span>
+        <span class="n">futures</span> <span class="o">=</span> <span class="p">{</span><span class="n">executor</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">run_one</span><span class="p">,</span> <span class="n">tc</span><span class="p">):</span> <span class="n">tc</span> <span class="k">for</span> <span class="n">tc</span> <span class="ow">in</span> <span class="n">tool_calls</span><span class="p">}</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">future</span> <span class="ow">in</span> <span class="n">concurrent</span><span class="o">.</span><span class="n">futures</span><span class="o">.</span><span class="n">as_completed</span><span class="p">(</span><span class="n">futures</span><span class="p">):</span>
+            <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">future</span><span class="o">.</span><span class="n">result</span><span class="p">())</span>
+
+    <span class="c1"># Sort by tool_call_id to produce a deterministic ordering</span>
+    <span class="n">results</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">m</span><span class="p">:</span> <span class="n">m</span><span class="p">[</span><span class="s2">&quot;tool_call_id&quot;</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">results</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Ordering of tool result messages matters</p>
+<p>The OpenAI API requires that tool result messages appear in the <em>same order</em> as their corresponding tool calls in the assistant message. If you execute calls in parallel and append results out of order, the API may reject the request or the model may correlate results to the wrong calls. Always sort results by <code>tool_call_id</code> before appending.</p>
+</div>
+<hr />
+<h2 id="structured-outputs-and-json-mode">Structured Outputs and JSON Mode<a class="headerlink" href="#structured-outputs-and-json-mode" title="Permanent link">¶</a></h2>
+<p>Function calling and <em>structured outputs</em> solve overlapping but distinct problems:</p>
+<ul>
+<li><strong>Function calling</strong>: the model decides <em>whether</em> to call a tool and <em>which one</em>. The output is a tool invocation object, not prose.</li>
+<li><strong>Structured outputs / JSON mode</strong>: the model is constrained to always produce valid JSON conforming to a schema, regardless of whether tools are involved. Useful for extraction, classification, and parsing tasks.</li>
+</ul>
+<p>Both mechanisms use constrained decoding under the hood (see <a href="../07-inference-serving/10-structured-generation.html">Structured &amp; Constrained Generation</a> for the full theory). The key insight is that once you have a JSON Schema, a CFG (context-free grammar) can be derived that accepts exactly the set of strings conforming to the schema. Token sampling is then masked so only tokens that could continue a valid prefix are allowed.</p>
+<p>The practical implication: when you set <code>response_format={"type": "json_schema", "json_schema": {...}}</code>, the model cannot produce invalid JSON. Field names are not masked (the model still generates them from its parameters), but structural elements — braces, commas, colons, value types — are enforced.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Using structured outputs for a classification task (no tool needed)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAI</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SentimentResult</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">sentiment</span><span class="p">:</span> <span class="nb">str</span>      <span class="c1"># &quot;positive&quot; | &quot;negative&quot; | &quot;neutral&quot;</span>
+    <span class="n">confidence</span><span class="p">:</span> <span class="nb">float</span>   <span class="c1"># 0.0 to 1.0</span>
+    <span class="n">rationale</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">()</span>
+<span class="n">completion</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">beta</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+    <span class="n">messages</span><span class="o">=</span><span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;Classify the sentiment of the user&#39;s text.&quot;</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;The product is okay but the shipping was terrible.&quot;</span><span class="p">}</span>
+    <span class="p">],</span>
+    <span class="n">response_format</span><span class="o">=</span><span class="n">SentimentResult</span><span class="p">,</span>   <span class="c1"># pydantic model -&gt; auto-generated JSON schema</span>
+<span class="p">)</span>
+<span class="n">result</span><span class="p">:</span> <span class="n">SentimentResult</span> <span class="o">=</span> <span class="n">completion</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">parsed</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">sentiment</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">confidence</span><span class="p">)</span>   <span class="c1"># e.g. &quot;negative&quot; 0.72</span>
+</code></pre></div>
+<h3 id="when-to-use-structured-outputs-vs-function-calling">When to use structured outputs vs. function calling<a class="headerlink" href="#when-to-use-structured-outputs-vs-function-calling" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Use structured outputs when&hellip;</th>
+<th>Use function calling when&hellip;</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>You want a fixed JSON payload every time</td>
+<td>The model should decide whether to call</td>
+</tr>
+<tr>
+<td>Extraction or classification tasks</td>
+<td>The model may need to call multiple tools</td>
+</tr>
+<tr>
+<td>No external system needs to be invoked</td>
+<td>Actions with real-world side effects</td>
+</tr>
+<tr>
+<td>You want guaranteed-valid JSON</td>
+<td>The tool has an explicit Python implementation</td>
+</tr>
+</tbody>
+</table>
+<p>In practice, most agentic systems use both: function calling for tool invocations and structured outputs for parsing the final answer into a machine-readable form.</p>
+<hr />
+<h2 id="error-handling-and-robustness">Error Handling and Robustness<a class="headerlink" href="#error-handling-and-robustness" title="Permanent link">¶</a></h2>
+<p>A production tool-call loop must handle a wide variety of failure modes gracefully. The goal is <em>graceful degradation</em>: never crash, always return something useful to the user, and log failures for observability.</p>
+<h3 id="the-error-as-tool-result-pattern">The error-as-tool-result pattern<a class="headerlink" href="#the-error-as-tool-result-pattern" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Canonical error feedback pattern</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">safe_dispatch</span><span class="p">(</span><span class="n">tool_call</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Execute a single tool call with comprehensive error handling.</span>
+<span class="sd">    Always returns a dict suitable for json.dumps().</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">fn_name</span> <span class="o">=</span> <span class="n">tool_call</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">name</span>
+
+    <span class="c1"># Step 1: Parse arguments</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">fn_args</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">tool_call</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">arguments</span><span class="p">)</span>
+    <span class="k">except</span> <span class="n">json</span><span class="o">.</span><span class="n">JSONDecodeError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;invalid_json&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">),</span>
+            <span class="s2">&quot;hint&quot;</span><span class="p">:</span> <span class="s2">&quot;Please emit valid JSON in the &#39;arguments&#39; field.&quot;</span>
+        <span class="p">}</span>
+
+    <span class="c1"># Step 2: Check tool exists</span>
+    <span class="k">if</span> <span class="n">fn_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">TOOL_FN_MAP</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;unknown_tool&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;Tool &#39;</span><span class="si">{</span><span class="n">fn_name</span><span class="si">}</span><span class="s2">&#39; does not exist.&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;available_tools&quot;</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="n">TOOL_FN_MAP</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+        <span class="p">}</span>
+
+    <span class="c1"># Step 3: Execute with timeout</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">signal</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_timeout_handler</span><span class="p">(</span><span class="n">signum</span><span class="p">,</span> <span class="n">frame</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">TimeoutError</span><span class="p">(</span><span class="s2">&quot;Tool execution exceeded time limit.&quot;</span><span class="p">)</span>
+
+    <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGALRM</span><span class="p">,</span> <span class="n">_timeout_handler</span><span class="p">)</span>
+    <span class="n">signal</span><span class="o">.</span><span class="n">alarm</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>  <span class="c1"># 10 second limit</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">TOOL_FN_MAP</span><span class="p">[</span><span class="n">fn_name</span><span class="p">](</span><span class="o">**</span><span class="n">fn_args</span><span class="p">)</span>
+        <span class="n">signal</span><span class="o">.</span><span class="n">alarm</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># cancel alarm</span>
+        <span class="k">return</span> <span class="n">result</span>
+    <span class="k">except</span> <span class="ne">TimeoutError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;timeout&quot;</span><span class="p">,</span> <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="s2">&quot;Tool call timed out after 10 seconds.&quot;</span><span class="p">}</span>
+    <span class="k">except</span> <span class="ne">TypeError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="c1"># Wrong argument names or types</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;bad_arguments&quot;</span><span class="p">,</span> <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">)}</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="c1"># Catch-all: log internally, return generic message</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">traceback</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[ERROR] Tool &#39;</span><span class="si">{</span><span class="n">fn_name</span><span class="si">}</span><span class="s2">&#39; raised: </span><span class="si">{</span><span class="n">traceback</span><span class="o">.</span><span class="n">format_exc</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;execution_error&quot;</span><span class="p">,</span> <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="s2">&quot;An internal error occurred.&quot;</span><span class="p">}</span>
+</code></pre></div>
+<h3 id="maximum-call-limits-and-infinite-loop-prevention">Maximum call limits and infinite loop prevention<a class="headerlink" href="#maximum-call-limits-and-infinite-loop-prevention" title="Permanent link">¶</a></h3>
+<p>A model with a bug in its reasoning (or a pathologically adversarial user) can trigger an infinite loop where it keeps calling the same tool with slightly different arguments. Always enforce:</p>
+<ol>
+<li><strong><code>max_iterations</code></strong> — a hard cap on how many times the model can call tools in one turn.</li>
+<li><strong>Per-tool call quotas</strong> — optionally limit how many times a single tool can be called per loop.</li>
+<li><strong>Context window budget</strong> — check that appending one more tool result will not overflow the context window before making the next LLM call.</li>
+</ol>
+<p>The context window budget is worth quantifying. If each tool result is ~200 tokens and a model has a 128k context window with 50k tokens already consumed by the system prompt and conversation, we have budget for roughly <span class="arithmatex">\((128{,}000 - 50{,}000) / 200 \approx 390\)</span> tool result messages before truncation is required. In practice, keep the loop limit well under 20 to stay in the low-latency regime.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A model in your production tool-calling agent is repeatedly calling the same search tool without making progress. What are the possible root causes, and how would you fix each one?</p>
+<p><strong>A:</strong> Root causes fall into three buckets. First, <em>the tool is returning unhelpful results</em>: the search query is too broad or the tool is returning the same cached page. Fix: return richer metadata with results (URL, snippet length, freshness) and instruct the model to vary the query. Second, <em>the model is stuck in a reasoning loop</em>: the system prompt or few-shot examples do not demonstrate how to synthesize partial information into a final answer. Fix: add an explicit instruction like &ldquo;If after two searches you still lack a definitive answer, tell the user what you found and what remains uncertain.&rdquo; Third, <em>a lack of a hard iteration limit</em>: without <code>max_iterations</code>, the loop never exits. Fix: enforce a cap and surface a partial-answer message rather than an infinite spin. In all cases, structured logging of each (call, result) pair is essential for debugging.</p>
+</div>
+<hr />
+<h2 id="training-models-for-tool-use">Training Models for Tool Use<a class="headerlink" href="#training-models-for-tool-use" title="Permanent link">¶</a></h2>
+<p>If you are fine-tuning a model to use tools rather than relying on a pretrained capability, here is what the data preparation and training loop look like.</p>
+<h3 id="constructing-training-examples">Constructing training examples<a class="headerlink" href="#constructing-training-examples" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_tool_call_example</span><span class="p">(</span>
+    <span class="n">user_query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">tool_call</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>          <span class="c1"># {&quot;name&quot;: ..., &quot;arguments&quot;: {...}}</span>
+    <span class="n">tool_result</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>        <span class="c1"># what the tool actually returned</span>
+    <span class="n">final_answer</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>        <span class="c1"># the available tool schemas</span>
+    <span class="n">system_prompt</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;You are a helpful assistant with tool access.&quot;</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Build a multi-turn conversation suitable for SFT on tool use.</span>
+<span class="sd">    Returns a list of message dicts in OpenAI chat format.</span>
+
+<span class="sd">    The training loss should be computed ONLY on:</span>
+<span class="sd">      - The assistant&#39;s tool call content (turn 3)</span>
+<span class="sd">      - The assistant&#39;s final answer (turn 5)</span>
+<span class="sd">    Not on: system, user, or tool result messages.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">tool_call_str</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">tool_call</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">],</span>
+                                 <span class="s2">&quot;arguments&quot;</span><span class="p">:</span> <span class="n">tool_call</span><span class="p">[</span><span class="s2">&quot;arguments&quot;</span><span class="p">]})</span>
+    <span class="k">return</span> <span class="p">[</span>
+        <span class="c1"># Turn 1: system prompt includes serialized tool schemas</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">system_prompt</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Available tools:</span><span class="se">\n</span><span class="si">{</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">tools</span><span class="p">,</span><span class="w"> </span><span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+        <span class="p">},</span>
+        <span class="c1"># Turn 2: user query (no loss computed here)</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">user_query</span><span class="p">},</span>
+        <span class="c1"># Turn 3: assistant decides to call a tool  ← COMPUTE LOSS HERE</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;&lt;tool_call&gt;</span><span class="si">{</span><span class="n">tool_call_str</span><span class="si">}</span><span class="s2">&lt;/tool_call&gt;&quot;</span>
+        <span class="p">},</span>
+        <span class="c1"># Turn 4: tool result (no loss computed here — this is fixed truth)</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;tool&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">tool_call</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">],</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">tool_result</span><span class="p">)</span>
+        <span class="p">},</span>
+        <span class="c1"># Turn 5: final assistant answer  ← COMPUTE LOSS HERE</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;assistant&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">final_answer</span><span class="p">}</span>
+    <span class="p">]</span>
+
+<span class="c1"># Example</span>
+<span class="n">example</span> <span class="o">=</span> <span class="n">build_tool_call_example</span><span class="p">(</span>
+    <span class="n">user_query</span><span class="o">=</span><span class="s2">&quot;What is 15</span><span class="si">% o</span><span class="s2">f 240?&quot;</span><span class="p">,</span>
+    <span class="n">tool_call</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;calculate&quot;</span><span class="p">,</span> <span class="s2">&quot;arguments&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;expression&quot;</span><span class="p">:</span> <span class="s2">&quot;0.15 * 240&quot;</span><span class="p">}},</span>
+    <span class="n">tool_result</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;result&quot;</span><span class="p">:</span> <span class="mf">36.0</span><span class="p">},</span>
+    <span class="n">final_answer</span><span class="o">=</span><span class="s2">&quot;15</span><span class="si">% o</span><span class="s2">f 240 is 36.&quot;</span><span class="p">,</span>
+    <span class="n">tools</span><span class="o">=</span><span class="p">[{</span>
+        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;calculate&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;Evaluate a Python arithmetic expression.&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;parameters&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;object&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;properties&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;expression&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">}},</span>
+            <span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;expression&quot;</span><span class="p">]</span>
+        <span class="p">}</span>
+    <span class="p">}]</span>
+<span class="p">)</span>
+
+<span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">example</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;role&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">])[:</span><span class="mi">80</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="data-sources-for-tool-call-training">Data sources for tool-call training<a class="headerlink" href="#data-sources-for-tool-call-training" title="Permanent link">¶</a></h3>
+<ol>
+<li><strong>Synthetic generation</strong>: Use a capable model (GPT-4, Claude 3.5) to generate (query, tool call, result, answer) tuples given tool schemas. This scales cheaply and can cover arbitrary tool combinations.</li>
+<li><strong>Templated math/code tasks</strong>: For calculator-style tools, many reasoning benchmarks (GSM8K, MATH) can be automatically converted: &ldquo;call <code>calculate</code> with the expression, then state the answer.&rdquo;</li>
+<li><strong>Human demonstrations</strong>: The highest quality but most expensive. Necessary for tools with complex multi-call chains.</li>
+<li><strong>Negative examples</strong>: Include examples where the model correctly decides <em>not</em> to call a tool (the answer is in its parametric knowledge). Without these, over-calling becomes a problem.</li>
+</ol>
+<p>A rough rule of thumb: the order of thousands of tool-use examples is sufficient to teach a model the meta-skill on top of a strong instruction-following base. The exact count depends heavily on base model quality; a strong SFT base like Mistral-7B-Instruct can generalize to new schemas with on the order of 1,000–5,000 tool-call examples.</p>
+<hr />
+<h2 id="key-concepts-in-practice">Key Concepts in Practice<a class="headerlink" href="#key-concepts-in-practice" title="Permanent link">¶</a></h2>
+<h3 id="streaming-with-tool-calls">Streaming with tool calls<a class="headerlink" href="#streaming-with-tool-calls" title="Permanent link">¶</a></h3>
+<p>When using streaming mode (<code>stream=True</code>), tool call arguments arrive token by token. The complete argument JSON is not available until the stream for that tool call ends. Most SDKs accumulate the delta and surface a complete <code>ToolCall</code> object at the end of the stream. For the harness, the simplest approach is to collect the full stream, then parse tool calls from the accumulated message rather than trying to parse partial JSON mid-stream.</p>
+<h3 id="tool-call-ids-and-multi-turn-history">Tool call IDs and multi-turn history<a class="headerlink" href="#tool-call-ids-and-multi-turn-history" title="Permanent link">¶</a></h3>
+<p>Each tool call has a unique <code>id</code> (e.g., <code>call_abc123</code>). The corresponding tool result message must include this <code>id</code> as <code>tool_call_id</code>. This correlation allows the model to match results to calls when parallel calls are made. Lose the ID and the API will reject the message sequence.</p>
+<h3 id="context-management-across-long-tool-chains">Context management across long tool chains<a class="headerlink" href="#context-management-across-long-tool-chains" title="Permanent link">¶</a></h3>
+<p>In a long agentic session, the message history grows without bound. Strategies to manage this (covered in depth in <a href="../08-agents-harness/04-context-engineering.html">Context Engineering &amp; Management</a>):</p>
+<ul>
+<li><strong>Truncate old tool results</strong>: keep only the most recent <span class="arithmatex">\(k\)</span> tool call/result pairs.</li>
+<li><strong>Summarize intermediate results</strong>: after every <span class="arithmatex">\(n\)</span> tool calls, ask the model to produce a concise summary and replace the raw results with it.</li>
+<li><strong>Structured memory</strong>: extract key facts from tool results and store them in a dedicated memory section (see <a href="../08-agents-harness/05-agent-memory.html">Memory Systems for Agents</a>).</li>
+</ul>
+<h3 id="the-model-context-protocol-mcp">The Model Context Protocol (MCP)<a class="headerlink" href="#the-model-context-protocol-mcp" title="Permanent link">¶</a></h3>
+<p>The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a standardized JSON-RPC-based protocol that lets any server expose tools, resources, and prompts to any compliant client. Instead of writing bespoke tool dispatch code per application, MCP provides a universal adapter: a tool server speaks MCP, the harness speaks MCP, and new tools can be plugged in without changing the client. See <a href="../08-agents-harness/06-mcp.html">The Model Context Protocol (MCP)</a> for a deep dive.</p>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Tool schemas are JSON Schema objects injected into the model&rsquo;s context; the <code>description</code> field is the most important signal the model uses to decide whether and how to call a tool.</li>
+<li>Function-calling capability is taught during SFT on multi-turn conversations that include tool calls and results; the model learns the meta-skill of reading any schema and producing conformant output.</li>
+<li>The parse-validate-dispatch pipeline must handle JSON syntax errors, unknown tools, wrong argument types, and execution errors — all by feeding errors back to the model as tool results.</li>
+<li>The tool-call loop appends every (call, result) pair to the message history and repeats until the model produces a plain-text response or a maximum iteration limit is reached.</li>
+<li>Parallel tool calls allow the model to emit multiple independent calls in one response; results must be appended in the same order as the calls before the next LLM invocation.</li>
+<li>Structured outputs (JSON Schema constrained decoding) and function calling are complementary: function calling governs when to invoke a tool; structured outputs ensure the response payload is machine-readable.</li>
+<li>Always enforce a maximum call limit and a context window budget check to prevent infinite loops and context overflow.</li>
+<li>Training for tool use requires both positive examples (correct calls) and negative examples (correct non-calls) to avoid over-calling; a few thousand high-quality examples suffice on top of a strong instruction-following base.</li>
+<li>Tool use is the foundational primitive for all agent architectures; everything in the agentic loop builds on top of the mechanisms described in this chapter.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Tool use and function calling are now table-stakes capabilities for frontier LLMs, with every major provider offering native JSON-Schema-defined tool dispatch and constrained structured outputs. Research focus has shifted from teaching the basic meta-skill to multi-hop agentic planning, reliable error recovery, and standardized tool protocols such as MCP.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2302.04761">Schick et al., <em>Toolformer: Language Models Can Teach Themselves to Use Tools</em> (2023)</a> — first demonstration that a model can self-supervisedly learn when and how to call external APIs.</li>
+<li><a href="https://arxiv.org/abs/2210.03629">Yao et al., <em>ReAct: Synergizing Reasoning and Acting in Language Models</em> (2023)</a> — interleaves chain-of-thought reasoning traces with tool actions; canonical formalization of the agentic tool loop.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2307.16789">Qin et al., <em>ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs</em> (2023)</a> — large-scale SFT dataset and benchmark spanning 16k+ real REST APIs; introduced depth-first search–based decision tree for multi-step tool planning.</li>
+<li><a href="https://arxiv.org/abs/2305.15334">Patil et al., <em>Gorilla: Large Language Model Connected with Massive APIs</em> (2023)</a> — studied and reduced API hallucination via retrieval-augmented training; spawned the Berkeley Function Calling Leaderboard.</li>
+<li><a href="https://gorilla.cs.berkeley.edu/leaderboard.html">Patil et al., <em>Berkeley Function Calling Leaderboard (BFCL)</em> (2024–2026)</a> — live, continuously updated benchmark evaluating single-call, parallel, multi-turn, and agentic tool-call accuracy across all major models.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/OpenBMB/ToolBench">OpenBMB/ToolBench</a> — ICLR 2024 spotlight; training data, ToolLLaMA model, and evaluation harness for 16k-API tool use.</li>
+<li><a href="https://github.com/ShishirPatil/gorilla">ShishirPatil/gorilla</a> — Gorilla OpenFunctions models, BFCL evaluation code, and GoEx safe execution engine.</li>
+<li><a href="https://github.com/modelcontextprotocol/modelcontextprotocol">modelcontextprotocol/modelcontextprotocol</a> — Anthropic&rsquo;s open MCP specification; the emerging standard for universal tool/resource interfaces between LLM clients and servers.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://developers.openai.com/api/docs/guides/function-calling">OpenAI, <em>Function Calling</em> (official docs)</a> — canonical API reference that de facto standardized JSON Schema tool definitions, parallel calls, and <code>strict</code> structured-output mode.</li>
+<li><a href="https://www.langchain.com/blog/tool-calling-with-langchain">LangChain, <em>Tool Calling with LangChain</em> (2024)</a> — practical guide to the unified <code>tool_calls</code> interface across OpenAI, Anthropic, and Gemini providers.</li>
+<li><a href="https://www.anthropic.com/news/model-context-protocol">Anthropic, <em>Introducing the Model Context Protocol</em> (2024)</a> — announcement and motivation for MCP as a universal adapter replacing bespoke tool dispatch code.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Toolformer</strong> — Schick et al., &ldquo;Toolformer: Language Models Can Teach Themselves to Use Tools,&rdquo; 2023. The foundational paper demonstrating self-supervised tool-use learning.</li>
+<li><strong>ToolBench / ToolLLM</strong> — Qin et al., &ldquo;ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs,&rdquo; 2023. Large-scale benchmark and dataset for tool use across thousands of APIs.</li>
+<li><strong>HuggingFace <code>chat_templates</code> documentation</strong> — Practical reference for how tool schemas are injected into prompt templates for open-source models.</li>
+<li><strong>OpenAI Function Calling documentation</strong> — The API reference that de facto standardized the JSON Schema tool definition format.</li>
+<li><strong>ReAct</strong> — Yao et al., &ldquo;ReAct: Synergizing Reasoning and Acting in Language Models,&rdquo; ICLR 2023. Interleaves reasoning traces and tool calls; the canonical formalization of the agent loop (see <a href="../08-agents-harness/02-agentic-loop.html">The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a>).</li>
+<li><strong>Model Context Protocol (MCP)</strong> — Anthropic, 2024. Open specification for a universal tool/resource interface; see <a href="../08-agents-harness/06-mcp.html">The Model Context Protocol (MCP)</a>.</li>
+<li><strong>Gorilla</strong> — Patil et al., &ldquo;Gorilla: Large Language Model Connected with Massive APIs,&rdquo; 2023. Studied API hallucination and trained models to call APIs correctly from documentation.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="pn-label">← Previous</span><span class="pn-title">Multi-Tenant LoRA &amp; Adapter Serving at Scale</span></a>
+<a class="next" href="02-agentic-loop.html"><span class="pn-label">Next →</span><span class="pn-title">The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-models-need-tools">Why Models Need Tools</a></li>
+<li class="toc-l2"><a href="#tool-schemas-defining-the-interface">Tool Schemas: Defining the Interface</a></li>
+<li class="toc-l3"><a href="#schema-best-practices">Schema best practices</a></li>
+<li class="toc-l3"><a href="#how-schemas-reach-the-model">How schemas reach the model</a></li>
+<li class="toc-l2"><a href="#the-function-calling-fine-tune">The Function-Calling Fine-Tune</a></li>
+<li class="toc-l3"><a href="#training-data-format">Training data format</a></li>
+<li class="toc-l3"><a href="#what-the-model-actually-learns">What the model actually learns</a></li>
+<li class="toc-l3"><a href="#rl-on-top-of-sft">RL on top of SFT</a></li>
+<li class="toc-l2"><a href="#parsing-and-validation">Parsing and Validation</a></li>
+<li class="toc-l3"><a href="#the-parse-validate-dispatch-pipeline">The parse-validate-dispatch pipeline</a></li>
+<li class="toc-l3"><a href="#error-taxonomy">Error taxonomy</a></li>
+<li class="toc-l2"><a href="#the-tool-call-loop">The Tool-Call Loop</a></li>
+<li class="toc-l3"><a href="#architecture-of-the-loop">Architecture of the loop</a></li>
+<li class="toc-l3"><a href="#complete-loop-implementation">Complete loop implementation</a></li>
+<li class="toc-l2"><a href="#parallel-tool-calls">Parallel Tool Calls</a></li>
+<li class="toc-l2"><a href="#structured-outputs-and-json-mode">Structured Outputs and JSON Mode</a></li>
+<li class="toc-l3"><a href="#when-to-use-structured-outputs-vs-function-calling">When to use structured outputs vs. function calling</a></li>
+<li class="toc-l2"><a href="#error-handling-and-robustness">Error Handling and Robustness</a></li>
+<li class="toc-l3"><a href="#the-error-as-tool-result-pattern">The error-as-tool-result pattern</a></li>
+<li class="toc-l3"><a href="#maximum-call-limits-and-infinite-loop-prevention">Maximum call limits and infinite loop prevention</a></li>
+<li class="toc-l2"><a href="#training-models-for-tool-use">Training Models for Tool Use</a></li>
+<li class="toc-l3"><a href="#constructing-training-examples">Constructing training examples</a></li>
+<li class="toc-l3"><a href="#data-sources-for-tool-call-training">Data sources for tool-call training</a></li>
+<li class="toc-l2"><a href="#key-concepts-in-practice">Key Concepts in Practice</a></li>
+<li class="toc-l3"><a href="#streaming-with-tool-calls">Streaming with tool calls</a></li>
+<li class="toc-l3"><a href="#tool-call-ids-and-multi-turn-history">Tool call IDs and multi-turn history</a></li>
+<li class="toc-l3"><a href="#context-management-across-long-tool-chains">Context management across long tool chains</a></li>
+<li class="toc-l3"><a href="#the-model-context-protocol-mcp">The Model Context Protocol (MCP)</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

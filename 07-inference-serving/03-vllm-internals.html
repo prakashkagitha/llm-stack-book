@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vLLM: Architecture, PagedAttention &amp; Internals — The LLM Stack</title>
+<meta name="description" content="vLLM design: PagedAttention (recap), the block manager, the scheduler, the engine/executor, V1 architecture, prefix caching, speculative decoding support, multi">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="active" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="73-vllm-architecture-pagedattention-internals">7.3 vLLM: Architecture, PagedAttention &amp; Internals<a class="headerlink" href="#73-vllm-architecture-pagedattention-internals" title="Permanent link">¶</a></h1>
+<p>If there is a single piece of open-source software that defined the era of practical LLM serving, it is <strong>vLLM</strong>. Born from a 2023 Berkeley paper (Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em>), it took an idea borrowed from operating systems — paging — and applied it to the one resource that dominates LLM inference memory: the <strong>KV cache</strong>. The result was a throughput jump of several times over the contemporary baselines, and within a year vLLM became the default backend for an enormous fraction of self-hosted inference, RL rollout engines, and managed APIs.</p>
+<p>This chapter is a <em>reference</em> on how vLLM actually works inside. We assume you already understand the mechanics of prefill, decode, and the KV cache from <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>, and the idea of running many requests in one forward pass from <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>. PagedAttention itself — the kernel and the memory-management algorithm — is developed in depth in <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>; here we recap it just enough to understand vLLM&rsquo;s <em>system</em>, then spend most of our time on the block manager, the scheduler, the engine/executor stack, the rewritten <strong>V1</strong> architecture, and the features that make vLLM a production engine: prefix caching, speculative decoding, and multi-LoRA. We close with how to actually run and tune it.</p>
+<h2 id="why-the-kv-cache-is-the-bottleneck-and-what-pagedattention-fixes">Why the KV cache is the bottleneck (and what PagedAttention fixes)<a class="headerlink" href="#why-the-kv-cache-is-the-bottleneck-and-what-pagedattention-fixes" title="Permanent link">¶</a></h2>
+<p>Recall the shape of autoregressive inference. <strong>Prefill</strong> runs the whole prompt through the network in one parallel pass and produces a key and value vector for every layer and every prompt token; those are stored in the <strong>KV cache</strong>. <strong>Decode</strong> then generates one token at a time, and each new token appends one more K and V vector per layer. The cache grows by one token-slot per step and is read in full on every step.</p>
+<p>The per-request KV cache size is exact and worth memorizing:</p>
+<div class="arithmatex">\[
+\text{bytes} = 2 \times L \times H_{kv} \times d_{h} \times S \times b
+\]</div>
+<p>where <span class="arithmatex">\(L\)</span> is the number of layers, <span class="arithmatex">\(H_{kv}\)</span> the number of <strong>key/value</strong> heads (after GQA/MQA — see <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>), <span class="arithmatex">\(d_h\)</span> the head dimension, <span class="arithmatex">\(S\)</span> the sequence length, <span class="arithmatex">\(b\)</span> the bytes per element, and the leading <span class="arithmatex">\(2\)</span> counts keys and values.</p>
+<p>The systems problem is not the total — it is the <em>dynamics</em>. A request&rsquo;s final length is unknown when it arrives. Pre-vLLM engines handled this by <strong>pre-allocating a contiguous buffer</strong> for each request sized to <code>max_seq_len</code>. This is catastrophic for memory:</p>
+<ul>
+<li><strong>Internal fragmentation.</strong> A request that generates 50 tokens but was allocated 2048 slots wastes 97% of its reservation for its entire lifetime.</li>
+<li><strong>External fragmentation.</strong> Contiguous buffers of different sizes leave unusable gaps between them, exactly like a poorly managed heap.</li>
+<li><strong>No sharing.</strong> Two requests with an identical system prompt each keep their own full copy.</li>
+</ul>
+<p>The vLLM paper measured that in such systems only ~20–40% of KV memory held actual tokens; the rest was reserved-but-empty or fragmented. Since KV memory caps the number of concurrent requests, and concurrency caps throughput, this waste translated almost linearly into lost throughput.</p>
+<h3 id="pagedattention-in-one-paragraph">PagedAttention in one paragraph<a class="headerlink" href="#pagedattention-in-one-paragraph" title="Permanent link">¶</a></h3>
+<p>The operating-systems answer to fragmentation is <strong>virtual memory with paging</strong>: divide memory into fixed-size pages, let a process see a contiguous virtual address space, and map each virtual page to any physical page through a page table. PagedAttention applies this exactly. The KV cache is carved into fixed-size <strong>blocks</strong> (vLLM&rsquo;s term for pages), each holding the K and V vectors for a fixed number of tokens — the <strong>block size</strong>, commonly 16. A request&rsquo;s logical sequence of tokens maps, via a <strong>block table</strong>, to a list of physical blocks that need not be contiguous in GPU memory.</p>
+<figure class="viz" id="fig-vllm-paged-block-table-mapping">
+<svg viewBox="0 0 920 465" role="img" aria-label="PagedAttention address mapping: logical KV blocks for sequence A and sequence B map through per-sequence block tables to non-contiguous physical blocks in GPU HBM — block_table[A]=[1,4] and block_table[B]=[3,5].">
+<defs>
+  <marker id="pbt-arr-a" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#4f7cff)"/>
+  </marker>
+  <marker id="pbt-arr-b" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent-2,#e08a3c)"/>
+  </marker>
+  <marker id="pbt-arr-n" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#666)"/>
+  </marker>
+</defs>
+<style>
+  #fig-vllm-paged-block-table-mapping text { fill: var(--ink-soft, #444); }
+  #fig-vllm-paged-block-table-mapping .lbl  { font: 600 12px var(--sans,sans-serif); }
+  #fig-vllm-paged-block-table-mapping .mono { font: 500 11px var(--mono,monospace); }
+  #fig-vllm-paged-block-table-mapping .tiny { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-vllm-paged-block-table-mapping .hdr  { font: 700 12px var(--sans,sans-serif); fill: var(--accent,#4f7cff); }
+  #fig-vllm-paged-block-table-mapping .seq-lbl { font: 700 12px var(--sans,sans-serif); }
+  #fig-vllm-paged-block-table-mapping .ann  { font: italic 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+</style>
+
+
+<text x="155" y="22" text-anchor="middle" class="hdr">Logical KV (what the model "sees")</text>
+<text x="700" y="22" text-anchor="middle" class="hdr">Physical KV blocks (GPU HBM)</text>
+
+
+<text x="22" y="70" class="seq-lbl" fill="var(--accent,#4f7cff)">sequence A</text>
+
+<rect x="22" y="78" width="256" height="52" rx="7"
+      class="v-fill v-stroke" stroke="var(--accent,#4f7cff)" stroke-width="1.8" fill="var(--surface,#f8f9fc)"/>
+
+<line x1="150" y1="78" x2="150" y2="130" stroke="var(--accent,#4f7cff)" stroke-width="1.2" stroke-dasharray="4 2" opacity="0.6"/>
+
+<text x="86"  y="96" text-anchor="middle" class="tiny">logical block 0</text>
+<text x="203" y="96" text-anchor="middle" class="tiny">logical block 1</text>
+
+<text x="86"  y="113" text-anchor="middle" class="mono">t0 t1 … t15</text>
+<text x="203" y="113" text-anchor="middle" class="mono">t16 …</text>
+
+
+<text x="22" y="188" class="seq-lbl" fill="var(--accent-2,#e08a3c)">sequence B</text>
+<rect x="22" y="196" width="256" height="52" rx="7"
+      class="v-fill v-stroke" stroke="var(--accent-2,#e08a3c)" stroke-width="1.8" fill="var(--surface,#f8f9fc)"/>
+<line x1="150" y1="196" x2="150" y2="248" stroke="var(--accent-2,#e08a3c)" stroke-width="1.2" stroke-dasharray="4 2" opacity="0.6"/>
+<text x="86"  y="214" text-anchor="middle" class="tiny">logical block 0</text>
+<text x="203" y="214" text-anchor="middle" class="tiny">logical block 1</text>
+<text x="86"  y="231" text-anchor="middle" class="mono">t0 t1 … t15</text>
+<text x="203" y="231" text-anchor="middle" class="mono">t16 …</text>
+
+
+
+<line x1="278" y1="104" x2="316" y2="104"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#pbt-arr-n)"/>
+<rect x="318" y="82" width="168" height="44" rx="6"
+      fill="var(--accent,#4f7cff)" fill-opacity="0.13" stroke="var(--accent,#4f7cff)" stroke-width="1.5"/>
+<text x="402" y="100" text-anchor="middle" class="mono" fill="var(--accent,#4f7cff)">block_table[A]</text>
+<text x="402" y="116" text-anchor="middle" class="mono" fill="var(--accent,#4f7cff)">= [1, 4, …]</text>
+
+
+
+<line x1="278" y1="222" x2="316" y2="222"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#pbt-arr-n)"/>
+<rect x="318" y="200" width="168" height="44" rx="6"
+      fill="var(--accent-2,#e08a3c)" fill-opacity="0.13" stroke="var(--accent-2,#e08a3c)" stroke-width="1.5"/>
+<text x="402" y="218" text-anchor="middle" class="mono" fill="var(--accent-2,#e08a3c)">block_table[B]</text>
+<text x="402" y="234" text-anchor="middle" class="mono" fill="var(--accent-2,#e08a3c)">= [3, 5, …]</text>
+
+
+
+
+<rect x="530" y="42"  width="330" height="52" rx="6"
+      fill="var(--muted,#aaa)" fill-opacity="0.12" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+<text x="545" y="63"  class="mono" fill="var(--muted,#888)">block 0</text>
+<text x="700" y="63"  text-anchor="middle" class="tiny">(free)</text>
+
+
+<rect x="530" y="100" width="330" height="52" rx="6"
+      fill="var(--accent,#4f7cff)" fill-opacity="0.18" stroke="var(--accent,#4f7cff)" stroke-width="1.6"/>
+<text x="545" y="121" class="mono" fill="var(--accent,#4f7cff)">block 1</text>
+<text x="700" y="121" text-anchor="middle" class="mono" fill="var(--accent,#4f7cff)">A: t0 … t15</text>
+
+
+<rect x="530" y="158" width="330" height="52" rx="6"
+      fill="var(--muted,#aaa)" fill-opacity="0.12" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+<text x="545" y="179" class="mono" fill="var(--muted,#888)">block 2</text>
+<text x="700" y="179" text-anchor="middle" class="tiny">(free)</text>
+
+
+<rect x="530" y="216" width="330" height="52" rx="6"
+      fill="var(--accent-2,#e08a3c)" fill-opacity="0.18" stroke="var(--accent-2,#e08a3c)" stroke-width="1.6"/>
+<text x="545" y="237" class="mono" fill="var(--accent-2,#e08a3c)">block 3</text>
+<text x="700" y="237" text-anchor="middle" class="mono" fill="var(--accent-2,#e08a3c)">B: t0 … t15</text>
+
+
+<rect x="530" y="274" width="330" height="52" rx="6"
+      fill="var(--accent,#4f7cff)" fill-opacity="0.18" stroke="var(--accent,#4f7cff)" stroke-width="1.6"/>
+<text x="545" y="295" class="mono" fill="var(--accent,#4f7cff)">block 4</text>
+<text x="700" y="295" text-anchor="middle" class="mono" fill="var(--accent,#4f7cff)">A: t16 …</text>
+
+
+<rect x="530" y="332" width="330" height="52" rx="6"
+      fill="var(--accent-2,#e08a3c)" fill-opacity="0.18" stroke="var(--accent-2,#e08a3c)" stroke-width="1.6"/>
+<text x="545" y="353" class="mono" fill="var(--accent-2,#e08a3c)">block 5</text>
+<text x="700" y="353" text-anchor="middle" class="mono" fill="var(--accent-2,#e08a3c)">B: t16 …</text>
+
+
+<text x="695" y="408" text-anchor="middle" class="lbl" fill="var(--muted,#888)">…</text>
+
+
+
+<path d="M486 97 C510 97 510 126 529 126"
+      fill="none" stroke="var(--accent,#4f7cff)" stroke-width="1.8"
+      stroke-dasharray="5 3" marker-end="url(#pbt-arr-a)"/>
+
+<path d="M486 108 C516 108 516 300 529 300"
+      fill="none" stroke="var(--accent,#4f7cff)" stroke-width="1.8"
+      stroke-dasharray="5 3" marker-end="url(#pbt-arr-a)"/>
+
+
+
+<path d="M486 218 C512 218 512 242 529 242"
+      fill="none" stroke="var(--accent-2,#e08a3c)" stroke-width="1.8"
+      stroke-dasharray="5 3" marker-end="url(#pbt-arr-b)"/>
+
+<path d="M486 228 C518 228 518 358 529 358"
+      fill="none" stroke="var(--accent-2,#e08a3c)" stroke-width="1.8"
+      stroke-dasharray="5 3" marker-end="url(#pbt-arr-b)"/>
+
+
+<text x="695" y="406" text-anchor="middle" class="ann">Uniform block size: any free block fits any new request</text>
+<text x="695" y="420" text-anchor="middle" class="ann">Last block partially filled: &lt;= block_size-1 wasted slots</text>
+
+</svg>
+<figcaption><b>PagedAttention maps logical KV streams to non-contiguous physical blocks via per-sequence block tables.</b> Sequence A's logical blocks map to physical blocks 1 and 4; sequence B's to blocks 3 and 5 — neither sequence needs contiguous physical memory. Blocks 0 and 2 remain free and can be instantly allocated to any new request because all blocks are the same size, eliminating external fragmentation.</figcaption>
+</figure>
+
+<p>The payoff:</p>
+<ul>
+<li><strong>Near-zero internal waste.</strong> Only the <em>last</em> partially-filled block of each sequence is under-utilized — at most <code>block_size - 1</code> slots, independent of <code>max_seq_len</code>. With block size 16 the worst-case waste per sequence is 15 token-slots, versus thousands before.</li>
+<li><strong>No external fragmentation.</strong> All blocks are the same size, so any free block fits any request. Allocation is <code>O(1)</code> off a free list.</li>
+<li><strong>Copy-on-write sharing.</strong> Two sequences can point their block tables at the <em>same</em> physical block. This is the mechanism behind shared prompts and parallel sampling.</li>
+</ul>
+<p>The cost is a custom attention kernel: instead of reading K and V from one contiguous tensor, the kernel must gather them block-by-block using the block table. That gather is the PagedAttention CUDA kernel. The arithmetic of attention is unchanged — only the addressing is indirected. We develop that kernel in <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>; here we treat it as a primitive and build the engine around it.</p>
+<div class="admonition note">
+<p class="admonition-title">Block size is a real tuning knob</p>
+<p>Larger blocks mean fewer block-table entries and slightly more efficient kernels, but more internal waste in the last block and coarser-grained prefix sharing. Block size 16 is the long-standing default for most models; FP8 KV caches and certain attention backends prefer other values. It is exposed as <code>block_size</code> and you rarely need to change it.</p>
+</div>
+<h2 id="the-block-manager-paging-for-the-kv-cache">The block manager: paging for the KV cache<a class="headerlink" href="#the-block-manager-paging-for-the-kv-cache" title="Permanent link">¶</a></h2>
+<p>The <strong>block manager</strong> (in V1, the <code>KVCacheManager</code>) is vLLM&rsquo;s memory allocator. It owns the pool of physical KV blocks and hands them out to sequences. Think of it as <code>malloc</code>/<code>free</code> plus a page-table — but tuned for the append-only, highly-shareable access pattern of LLM decode.</p>
+<h3 id="how-many-blocks-exist">How many blocks exist?<a class="headerlink" href="#how-many-blocks-exist" title="Permanent link">¶</a></h3>
+<p>At startup vLLM runs a <strong>memory profiling</strong> pass. It loads the model weights, runs a dummy forward at the configured maximum batch, and measures peak activation memory. Whatever is left of GPU memory — up to a fraction set by <code>gpu_memory_utilization</code> (default ~0.9) — is dedicated to the KV cache. Dividing that by the bytes-per-block gives the total number of physical blocks. This is why vLLM &ldquo;grabs&rdquo; most of your GPU on launch: it is pre-carving the entire KV pool so allocation at runtime is just popping from a free list.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Sketch of vLLM&#39;s startup KV-budget computation (numbers illustrative).</span>
+<span class="n">total_gpu_bytes</span>      <span class="o">=</span> <span class="mi">80</span> <span class="o">*</span> <span class="mi">1024</span><span class="o">**</span><span class="mi">3</span>          <span class="c1"># 80 GB GPU (e.g. A100/H100)</span>
+<span class="n">weight_bytes</span>         <span class="o">=</span> <span class="mi">14</span> <span class="o">*</span> <span class="mi">1024</span><span class="o">**</span><span class="mi">3</span>          <span class="c1"># ~14 GB for a 7B model in bf16</span>
+<span class="n">peak_activation</span>      <span class="o">=</span> <span class="mi">4</span>  <span class="o">*</span> <span class="mi">1024</span><span class="o">**</span><span class="mi">3</span>          <span class="c1"># measured by a profiling forward pass</span>
+<span class="n">util</span>                 <span class="o">=</span> <span class="mf">0.90</span>                  <span class="c1"># gpu_memory_utilization</span>
+
+<span class="n">usable</span>               <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">total_gpu_bytes</span> <span class="o">*</span> <span class="n">util</span><span class="p">)</span>        <span class="c1"># ~72 GB</span>
+<span class="n">kv_cache_bytes</span>       <span class="o">=</span> <span class="n">usable</span> <span class="o">-</span> <span class="n">weight_bytes</span> <span class="o">-</span> <span class="n">peak_activation</span>
+
+<span class="c1"># Bytes for one block: 2 (K and V) * block_size * num_kv_heads * head_dim</span>
+<span class="c1">#                       * num_layers * dtype_bytes</span>
+<span class="n">block_size</span><span class="p">,</span> <span class="n">n_kv_heads</span><span class="p">,</span> <span class="n">head_dim</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">128</span>
+<span class="n">n_layers</span><span class="p">,</span> <span class="n">dtype_bytes</span>            <span class="o">=</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">2</span>     <span class="c1"># bf16</span>
+<span class="n">bytes_per_block</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">block_size</span> <span class="o">*</span> <span class="n">n_kv_heads</span> <span class="o">*</span> <span class="n">head_dim</span> <span class="o">*</span> <span class="n">n_layers</span> <span class="o">*</span> <span class="n">dtype_bytes</span>
+
+<span class="n">num_gpu_blocks</span> <span class="o">=</span> <span class="n">kv_cache_bytes</span> <span class="o">//</span> <span class="n">bytes_per_block</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;KV pool: </span><span class="si">{</span><span class="n">kv_cache_bytes</span><span class="o">/</span><span class="mi">1024</span><span class="o">**</span><span class="mi">3</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> GB -&gt; </span><span class="si">{</span><span class="n">num_gpu_blocks</span><span class="si">}</span><span class="s2"> blocks &quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">num_gpu_blocks</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">block_size</span><span class="si">}</span><span class="s2"> token-slots)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The total token-slots (<code>num_gpu_blocks * block_size</code>) is the hard ceiling on <em>how many tokens of KV cache can exist across all running requests at once</em>. The scheduler&rsquo;s whole job is to keep total demand under this ceiling.</p>
+<h3 id="the-free-list-and-the-block-table">The free list and the block table<a class="headerlink" href="#the-free-list-and-the-block-table" title="Permanent link">¶</a></h3>
+<p>The allocator maintains a free list of physical block IDs. Each sequence keeps a <strong>block table</strong>: an ordered list mapping its logical block index to a physical block ID. The core operations:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">BlockManager</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Simplified KV-block allocator (V0-flavoured for clarity).&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num_blocks</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">block_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span> <span class="o">=</span> <span class="n">block_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">free_blocks</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">num_blocks</span><span class="p">))</span>   <span class="c1"># the free list</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span> <span class="o">=</span> <span class="p">{}</span>                          <span class="c1"># phys_block -&gt; refcount</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">can_allocate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="p">(</span><span class="n">seq_len</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">free_blocks</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">n</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">allocate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="p">(</span><span class="n">seq_len</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_size</span>
+        <span class="n">table</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+            <span class="n">blk</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">free_blocks</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>             <span class="c1"># O(1)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">blk</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+            <span class="n">table</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">blk</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">table</span>                                  <span class="c1"># this is the block table</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">append_slot</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">block_table</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Called each decode step. Returns a new block id iff a fresh</span>
+<span class="sd">        block was needed (i.e. the last block just filled up).&quot;&quot;&quot;</span>
+        <span class="c1"># Caller knows the current token count; if it crosses a block</span>
+        <span class="c1"># boundary we must grow the table by one block.</span>
+        <span class="n">blk</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">free_blocks</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">blk</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="n">block_table</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">blk</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">blk</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">free</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">block_table</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">blk</span> <span class="ow">in</span> <span class="n">block_table</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">blk</span><span class="p">]</span> <span class="o">-=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">blk</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>             <span class="c1"># last owner releases it</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">free_blocks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">blk</span><span class="p">)</span>
+</code></pre></div>
+<p>Two design points carry their weight:</p>
+<ul>
+<li><strong>Lazy, incremental growth.</strong> A sequence allocates one block at a time as decode crosses block boundaries (<code>append_slot</code>). It never reserves space for tokens it has not yet produced. This is the direct cure for internal fragmentation.</li>
+<li><strong>Reference counting enables sharing.</strong> A physical block can be referenced by multiple sequences. <code>free</code> only returns a block to the pool when its refcount hits zero. This single mechanism powers parallel sampling, beam search, and prefix caching.</li>
+</ul>
+<h3 id="copy-on-write-for-shared-blocks">Copy-on-write for shared blocks<a class="headerlink" href="#copy-on-write-for-shared-blocks" title="Permanent link">¶</a></h3>
+<p>When two sequences share a block (refcount &gt; 1) and one of them needs to <em>write</em> into it — e.g. two samples diverged and one wants to append a token into a block the other still reads — vLLM does <strong>copy-on-write</strong>: allocate a fresh block, copy the shared block&rsquo;s contents into it, point the writer&rsquo;s block table at the copy, and decrement the original&rsquo;s refcount. Identical to COW in <code>fork()</code>. It means shared prefixes cost memory only once until the moment of divergence.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">append_with_cow</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">block_table</span><span class="p">,</span> <span class="n">idx</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Ensure block_table[idx] is writable; copy if shared.&quot;&quot;&quot;</span>
+    <span class="n">blk</span> <span class="o">=</span> <span class="n">block_table</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">blk</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>                <span class="c1"># shared -&gt; must not clobber</span>
+        <span class="n">new_blk</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">free_blocks</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+        <span class="c1"># GPU-side: copy KV contents of `blk` into `new_blk`</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">blk</span><span class="p">]</span>   <span class="o">-=</span> <span class="mi">1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ref_count</span><span class="p">[</span><span class="n">new_blk</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="n">block_table</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">new_blk</span>             <span class="c1"># writer now owns its private copy</span>
+        <span class="k">return</span> <span class="p">(</span><span class="s2">&quot;copy&quot;</span><span class="p">,</span> <span class="n">blk</span><span class="p">,</span> <span class="n">new_blk</span><span class="p">)</span>          <span class="c1"># scheduler emits a copy op</span>
+    <span class="k">return</span> <span class="p">(</span><span class="s2">&quot;noop&quot;</span><span class="p">,)</span>
+</code></pre></div>
+<h2 id="the-scheduler-continuous-batching-under-a-memory-budget">The scheduler: continuous batching under a memory budget<a class="headerlink" href="#the-scheduler-continuous-batching-under-a-memory-budget" title="Permanent link">¶</a></h2>
+<p>vLLM&rsquo;s scheduler is the brain. On every engine step it decides <em>which</em> sequences run in the next forward pass, subject to the block budget. It implements <strong>continuous batching</strong> (also called iteration-level scheduling): requests join and leave the running batch at token granularity, so a finished sequence frees its slot mid-flight and a waiting request fills it on the very next step. The general technique is covered in <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>; here we look at vLLM&rsquo;s specific policy.</p>
+<h3 id="the-three-queues-and-the-step-loop">The three queues and the step loop<a class="headerlink" href="#the-three-queues-and-the-step-loop" title="Permanent link">¶</a></h3>
+<p>Sequences live in three states:</p>
+<ul>
+<li><strong>WAITING</strong> — admitted but no KV blocks yet (never run, or preempted-and-recomputed).</li>
+<li><strong>RUNNING</strong> — has KV blocks; will be in the next forward pass.</li>
+<li><strong>SWAPPED</strong> — preempted, its KV blocks evicted to CPU RAM (V0 swap path).</li>
+</ul>
+<p>A schedule step, conceptually:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">schedule_step</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="n">scheduled</span><span class="p">,</span> <span class="n">blocks_to_copy</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[]</span>
+
+    <span class="c1"># 1. Keep RUNNING sequences going; each decode step may need +1 block.</span>
+    <span class="k">for</span> <span class="n">seq</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">:</span>
+        <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_mgr</span><span class="o">.</span><span class="n">can_append</span><span class="p">(</span><span class="n">seq</span><span class="p">):</span>
+            <span class="c1"># Out of memory: preempt the lowest-priority running seq.</span>
+            <span class="n">victim</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>              <span class="c1"># tail = newest/lowest prio</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_preempt</span><span class="p">(</span><span class="n">victim</span><span class="p">)</span>                    <span class="c1"># recompute or swap</span>
+            <span class="k">if</span> <span class="n">victim</span> <span class="ow">is</span> <span class="n">seq</span><span class="p">:</span>
+                <span class="k">break</span>
+        <span class="k">if</span> <span class="n">seq</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">block_mgr</span><span class="o">.</span><span class="n">append_slot</span><span class="p">(</span><span class="n">seq</span><span class="o">.</span><span class="n">block_table</span><span class="p">)</span>
+            <span class="n">scheduled</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">seq</span><span class="p">)</span>
+
+    <span class="c1"># 2. Admit WAITING sequences (prefill) if budget and token quota allow.</span>
+    <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">waiting</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_budget_left</span><span class="p">(</span><span class="n">scheduled</span><span class="p">):</span>
+        <span class="n">seq</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_mgr</span><span class="o">.</span><span class="n">can_allocate</span><span class="p">(</span><span class="n">seq</span><span class="o">.</span><span class="n">prompt_len</span><span class="p">):</span>
+            <span class="k">break</span>                                    <span class="c1"># not enough free blocks</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="o">.</span><span class="n">popleft</span><span class="p">()</span>
+        <span class="n">seq</span><span class="o">.</span><span class="n">block_table</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">block_mgr</span><span class="o">.</span><span class="n">allocate</span><span class="p">(</span><span class="n">seq</span><span class="o">.</span><span class="n">prompt_len</span><span class="p">)</span>
+        <span class="n">seq</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">RUNNING</span>
+        <span class="n">scheduled</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">seq</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">scheduled</span><span class="p">,</span> <span class="n">blocks_to_copy</span>
+</code></pre></div>
+<p>The subtlety in step 1 is <strong>preemption</strong>. Decode is monotonic: every running sequence needs at most one new block per step, and once you are decoding you cannot pause a sequence without losing forward progress. So when the pool is exhausted, vLLM evicts a <em>whole</em> sequence to make room, with two recovery strategies:</p>
+<ul>
+<li><strong>Recomputation (default in V1).</strong> Drop the victim&rsquo;s KV blocks entirely and move it back to WAITING. When rescheduled, re-run prefill over its prompt <em>plus tokens generated so far</em>. Wastes compute but frees memory instantly and needs no CPU transfer. Because prefill is compute-bound and fast, this is usually the better choice.</li>
+<li><strong>Swapping (V0).</strong> Copy the victim&rsquo;s KV blocks to pinned CPU memory, free the GPU blocks, and copy back when rescheduled. Saves recompute but pays PCIe bandwidth twice.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Preemption storms degrade tail latency</p>
+<p>If you admit more requests than the KV pool can sustain, the scheduler thrashes: requests are admitted, partly decoded, preempted, recomputed, preempted again. Throughput collapses and p99 latency explodes. The cure is <code>max_num_seqs</code> and <code>max_num_batched_tokens</code> sized so steady-state demand fits the pool — see the tuning section. Watch the <code>num_preemptions</code> counter in the logs.</p>
+</div>
+<h3 id="prefill-decode-and-chunked-prefill">Prefill, decode, and chunked prefill<a class="headerlink" href="#prefill-decode-and-chunked-prefill" title="Permanent link">¶</a></h3>
+<p>A naive scheduler runs either a batch of prefills or a batch of decodes. The trouble: a long prefill (say a 32k-token prompt) monopolizes a forward pass and stalls every decoding request, spiking inter-token latency for everyone — a head-of-line blocking problem.</p>
+<p><strong>Chunked prefill</strong> fixes this by splitting a long prompt into chunks of at most <code>max_num_batched_tokens</code> and processing one chunk per step, <em>interleaved with decodes of other requests in the same batch</em>. A single forward pass thus mixes a slice of prefill tokens with many one-token decodes. This smooths inter-token latency and keeps the GPU busy (decode alone is memory-bound and under-utilizes compute; mixing in prefill tokens raises arithmetic intensity — see the roofline view in <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>). In V1 chunked prefill is on by default and the prefill/decode distinction largely dissolves into a single &ldquo;token budget&rdquo; per step. The disaggregation alternative — running prefill and decode on <em>separate</em> machines — is covered in <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>.</p>
+<h2 id="the-engine-and-executor-stack">The engine and executor stack<a class="headerlink" href="#the-engine-and-executor-stack" title="Permanent link">¶</a></h2>
+<p>Around the scheduler sits the request-handling and execution machinery. From the outside in:</p>
+<figure class="viz" id="fig-vllm-engine-executor-stack">
+<svg viewBox="0 0 820 650" role="img" aria-label="vLLM engine and executor stack: API layer at top feeds add_request to LLMEngine containing Scheduler and KVCacheManager, which sends ExecuteModelRequest to the Executor, which broadcasts via RPC to Worker 0, Worker 1, and Worker N-1, each containing a ModelRunner and attention backend with KV blocks.">
+<defs>
+  <marker id="ees-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="ees-arrow-fan" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+</defs>
+<style>
+  #fig-vllm-engine-executor-stack text { fill: var(--ink-soft, #444); }
+  #fig-vllm-engine-executor-stack .band-title { font: 700 13px var(--sans,sans-serif); }
+  #fig-vllm-engine-executor-stack .inner-title { font: 700 12px var(--sans,sans-serif); }
+  #fig-vllm-engine-executor-stack .sub-cap { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#777); }
+  #fig-vllm-engine-executor-stack .mono { font: 500 11px var(--mono,monospace); fill: var(--muted,#777); }
+  #fig-vllm-engine-executor-stack .badge { font: 500 10px var(--sans,sans-serif); fill: var(--accent,#4f7cff); }
+  #fig-vllm-engine-executor-stack .note { font: italic 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-vllm-engine-executor-stack .arr-lbl { font: 500 11px var(--mono,monospace); fill: var(--muted,#777); }
+</style>
+
+
+<rect x="20" y="20" width="778" height="60" rx="8"
+      fill="var(--accent,#4f7cff)" fill-opacity="0.85" stroke="var(--accent,#4f7cff)" stroke-width="1.8"/>
+<text x="409" y="47" text-anchor="middle" class="band-title" fill="white">API layer: OpenAI-compatible server / LLM() offline</text>
+<text x="409" y="65" text-anchor="middle" fill="white" style="font:400 11px var(--sans,sans-serif); opacity:0.88">entry point — handles HTTP, tokenization, request admission, output streaming</text>
+
+
+<line x1="409" y1="80" x2="409" y2="108" stroke="var(--ink-soft,#555)" stroke-width="1.6" marker-end="url(#ees-arrow)"/>
+<text x="415" y="98" class="arr-lbl">add_request / get outputs</text>
+
+
+<rect x="20" y="110" width="778" height="158" rx="8"
+      class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.6" fill="var(--surface,#f5f6fa)"/>
+<text x="40" y="132" class="band-title">LLMEngine  (V1: EngineCore in its own process)</text>
+
+
+<rect x="656" y="118" width="132" height="22" rx="11"
+      fill="none" stroke="var(--accent,#4f7cff)" stroke-width="1.3"/>
+<text x="722" y="133" text-anchor="middle" class="badge">V1: dedicated process</text>
+
+
+<rect x="40" y="144" width="188" height="52" rx="6"
+      fill="var(--accent,#4f7cff)" fill-opacity="0.14" stroke="var(--accent,#4f7cff)" stroke-width="1.4"/>
+<text x="134" y="165" text-anchor="middle" class="inner-title" fill="var(--accent,#4f7cff)">Scheduler</text>
+<text x="134" y="184" text-anchor="middle" style="font:400 10px var(--sans,sans-serif); fill:var(--muted,#777)">batching · preemption · budgets</text>
+
+
+<rect x="244" y="144" width="252" height="52" rx="6"
+      fill="var(--accent,#4f7cff)" fill-opacity="0.14" stroke="var(--accent,#4f7cff)" stroke-width="1.4"/>
+<text x="370" y="165" text-anchor="middle" class="inner-title" fill="var(--accent,#4f7cff)">KVCacheManager (block mgr)</text>
+<text x="370" y="184" text-anchor="middle" style="font:400 10px var(--sans,sans-serif); fill:var(--muted,#777)">free list · block tables · COW · prefix cache</text>
+
+
+<text x="409" y="222" text-anchor="middle" class="sub-cap">detokenizer | output processor | request lifecycle</text>
+<text x="409" y="238" text-anchor="middle" class="note">overlaps CPU work (tokenize/detokenize) with GPU execution in V1</text>
+
+
+<line x1="409" y1="268" x2="409" y2="296" stroke="var(--ink-soft,#555)" stroke-width="1.6" marker-end="url(#ees-arrow)"/>
+<text x="415" y="280" class="arr-lbl">ExecuteModelRequest (token ids,</text>
+<text x="415" y="293" class="arr-lbl">block tables, sampling params)</text>
+
+
+<rect x="20" y="298" width="778" height="66" rx="8"
+      class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.6" fill="var(--surface,#f5f6fa)"/>
+<text x="409" y="322" text-anchor="middle" class="band-title">Executor  (single-GPU / Ray / multiproc / TP+PP)</text>
+<text x="409" y="342" text-anchor="middle" class="note">abstracts where/how the model runs — broadcasts to all workers, gathers results</text>
+
+
+
+<line x1="409" y1="364" x2="409" y2="386" stroke="var(--ink-soft,#555)" stroke-width="1.5"/>
+<text x="415" y="380" class="arr-lbl">RPC to workers</text>
+
+<line x1="155" y1="386" x2="665" y2="386" stroke="var(--ink-soft,#555)" stroke-width="1.5"/>
+
+<line x1="155" y1="386" x2="155" y2="408" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#ees-arrow-fan)"/>
+<line x1="409" y1="386" x2="409" y2="408" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#ees-arrow-fan)"/>
+<line x1="665" y1="386" x2="665" y2="408" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#ees-arrow-fan)"/>
+
+
+
+<rect x="30" y="410" width="240" height="56" rx="7"
+      class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.5" fill="var(--surface,#f5f6fa)"/>
+<text x="150" y="432" text-anchor="middle" class="inner-title">Worker 0</text>
+<text x="150" y="450" text-anchor="middle" class="note">GPU 0 · shard + KV blocks</text>
+
+
+<text x="296" y="442" text-anchor="middle" style="font:700 18px var(--sans,sans-serif); fill:var(--muted,#888);">…</text>
+
+
+<rect x="284" y="410" width="240" height="56" rx="7"
+      class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.5" fill="var(--surface,#f5f6fa)"/>
+<text x="404" y="432" text-anchor="middle" class="inner-title">Worker 1</text>
+<text x="404" y="450" text-anchor="middle" class="note">GPU 1 · shard + KV blocks</text>
+
+
+<text x="552" y="442" text-anchor="middle" style="font:700 18px var(--sans,sans-serif); fill:var(--muted,#888);">…</text>
+
+
+<rect x="539" y="410" width="240" height="56" rx="7"
+      class="v-fill" stroke="var(--border-2,#bbb)" stroke-width="1.5" fill="var(--surface,#f5f6fa)"/>
+<text x="659" y="432" text-anchor="middle" class="inner-title">Worker N-1</text>
+<text x="659" y="450" text-anchor="middle" class="note">GPU N-1 · shard + KV blocks</text>
+
+
+
+<rect x="30" y="474" width="749" height="70" rx="7"
+      fill="var(--surface-3,#eef0f8)" stroke="var(--border-2,#ccc)" stroke-width="1.3"/>
+
+
+<text x="409" y="499" text-anchor="middle" class="inner-title" fill="var(--ink-soft,#444)">ModelRunner: build input tensors, run fwd, sample</text>
+<text x="409" y="517" text-anchor="middle" class="note">assembles slot_mapping + block_tables per step; flattens tokens into GPU tensors</text>
+
+
+<rect x="30" y="530" width="749" height="14" rx="0"
+      fill="var(--accent,#4f7cff)" fill-opacity="0.12" stroke="none"/>
+<text x="409" y="542" text-anchor="middle" style="font:600 11px var(--sans,sans-serif); fill:var(--accent,#4f7cff)">Attention backend (FlashAttn / PagedAttn) + KV blocks</text>
+
+
+<line x1="150" y1="466" x2="150" y2="474" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<line x1="404" y1="466" x2="404" y2="474" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<line x1="659" y1="466" x2="659" y2="474" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+
+
+<text x="409" y="566" text-anchor="middle" class="note">each worker runs its own copy of the model shard and attention backend</text>
+
+</svg>
+<figcaption><b>vLLM's layered engine and executor stack, from API entry to per-GPU workers.</b> Requests enter through the API layer, are scheduled by the LLMEngine (which owns both the Scheduler and the KVCacheManager), packaged as <code>ExecuteModelRequest</code> objects, and broadcast by the Executor to all Workers. Each Worker holds a ModelRunner that assembles concrete GPU tensors from the block tables, runs the forward pass through the attention backend, and samples next tokens.</figcaption>
+</figure>
+
+<ul>
+<li>
+<p><strong>LLMEngine / EngineCore</strong> is the orchestrator. It owns the scheduler and the block manager, accepts requests, drives the step loop, runs the tokenizer/detokenizer, and streams outputs. In V1 the heavy loop runs in a dedicated <strong>EngineCore</strong> process so Python overhead (tokenization, HTTP, scheduling) overlaps with GPU execution.</p>
+</li>
+<li>
+<p><strong>Executor</strong> abstracts <em>where and how</em> the model runs: a single process for one GPU, a multiprocessing or Ray-based executor for tensor/pipeline parallelism across GPUs and nodes. It broadcasts the <code>ExecuteModelRequest</code> to every worker and gathers results. Multi-GPU details are in <a href="../07-inference-serving/11-multi-gpu-inference.html">Multi-GPU &amp; Multi-Node Inference</a>.</p>
+</li>
+<li>
+<p><strong>Worker</strong> owns one GPU&rsquo;s slice of the model and its KV blocks. It holds the <strong>ModelRunner</strong>, which turns the scheduler&rsquo;s abstract plan into concrete GPU work: it flattens token IDs and positions into tensors, assembles per-sequence block tables and slot mappings, runs the forward pass through the model with the chosen <strong>attention backend</strong> (FlashAttention, FlashInfer, or the PagedAttention kernel), and samples the next tokens.</p>
+</li>
+</ul>
+<h3 id="the-forward-step-in-detail">The forward step in detail<a class="headerlink" href="#the-forward-step-in-detail" title="Permanent link">¶</a></h3>
+<p>Each engine step, the ModelRunner builds inputs for a batch that may mix prefill chunks and decodes. The crucial tensors are the <strong>slot mapping</strong> (for each token being written, the exact physical KV slot to write its K and V into) and the <strong>block tables</strong> (for each sequence, where to <em>read</em> prior KV from).</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Conceptual ModelRunner input assembly for one step.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">prepare_inputs</span><span class="p">(</span><span class="n">scheduled_seqs</span><span class="p">,</span> <span class="n">block_size</span><span class="p">):</span>
+    <span class="n">input_ids</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">slot_mapping</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
+    <span class="n">block_tables</span> <span class="o">=</span> <span class="p">[]</span>                         <span class="c1"># padded [num_seqs, max_blocks]</span>
+
+    <span class="k">for</span> <span class="n">seq</span> <span class="ow">in</span> <span class="n">scheduled_seqs</span><span class="p">:</span>
+        <span class="n">new_tokens</span> <span class="o">=</span> <span class="n">seq</span><span class="o">.</span><span class="n">tokens_to_process</span><span class="p">()</span>  <span class="c1"># prompt chunk (prefill) or 1 (decode)</span>
+        <span class="n">start</span> <span class="o">=</span> <span class="n">seq</span><span class="o">.</span><span class="n">num_computed_tokens</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">tok</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">new_tokens</span><span class="p">):</span>
+            <span class="n">pos</span> <span class="o">=</span> <span class="n">start</span> <span class="o">+</span> <span class="n">i</span>
+            <span class="n">input_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tok</span><span class="p">)</span>
+            <span class="n">positions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pos</span><span class="p">)</span>
+            <span class="c1"># Where does this token&#39;s K/V get written?</span>
+            <span class="n">logical_block</span> <span class="o">=</span> <span class="n">pos</span> <span class="o">//</span> <span class="n">block_size</span>
+            <span class="n">offset</span>        <span class="o">=</span> <span class="n">pos</span> <span class="o">%</span>  <span class="n">block_size</span>
+            <span class="n">phys_block</span>    <span class="o">=</span> <span class="n">seq</span><span class="o">.</span><span class="n">block_table</span><span class="p">[</span><span class="n">logical_block</span><span class="p">]</span>
+            <span class="n">slot_mapping</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">phys_block</span> <span class="o">*</span> <span class="n">block_size</span> <span class="o">+</span> <span class="n">offset</span><span class="p">)</span>
+        <span class="n">block_tables</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">seq</span><span class="o">.</span><span class="n">block_table</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;input_ids&quot;</span><span class="p">:</span>    <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">input_ids</span><span class="p">,</span>    <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">),</span>
+        <span class="s2">&quot;positions&quot;</span><span class="p">:</span>    <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span>    <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">),</span>
+        <span class="s2">&quot;slot_mapping&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">slot_mapping</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">),</span>
+        <span class="s2">&quot;block_tables&quot;</span><span class="p">:</span> <span class="n">pad_and_stack</span><span class="p">(</span><span class="n">block_tables</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">),</span>
+    <span class="p">}</span>
+</code></pre></div>
+<p>Inside each attention layer, the freshly computed K and V are scattered into the cache at <code>slot_mapping</code>, then PagedAttention reads K and V for the whole context by gathering blocks via <code>block_tables</code>. The MLP and norms are ordinary dense ops. Because the same kernel handles any mix of prefill and decode tokens, the scheduler is free to pack them however it likes.</p>
+<h3 id="cuda-graphs-and-torchcompile">CUDA graphs and <code>torch.compile</code><a class="headerlink" href="#cuda-graphs-and-torchcompile" title="Permanent link">¶</a></h3>
+<p>Decode steps are tiny — one token per sequence — so per-kernel <strong>launch overhead</strong> (the CPU cost of dispatching each CUDA kernel) becomes a large fraction of step time. vLLM captures the decode forward pass into a <strong>CUDA graph</strong>: the sequence of kernel launches is recorded once for a given batch shape and replayed as a single GPU submission, slashing CPU overhead. Because graphs are shape-specialized, vLLM captures a set of graphs for a ladder of batch sizes and pads each real batch up to the nearest captured size. V1 deepens this with a <code>torch.compile</code>-based path (piecewise compilation that leaves attention as a custom op while compiling the rest), further fusing kernels. See <a href="../04-kernels-efficiency/09-compilers-fusion.html">Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a>. The flags <code>enforce_eager=True</code> (disable graphs, easier debugging, slower) and <code>--cuda-graph-sizes</code> control this.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: how many requests fit, and what throughput follows</p>
+<p>Take Llama-3-8B in bf16 on one 80 GB GPU. The model has <span class="arithmatex">\(L=32\)</span> layers, GQA with <span class="arithmatex">\(H_{kv}=8\)</span> KV heads, <span class="arithmatex">\(d_h=128\)</span>, and bf16 means <span class="arithmatex">\(b=2\)</span> bytes.</p>
+<p><strong>Per-token KV cost</strong> (both K and V, all layers):
+$$
+2 \times L \times H_{kv} \times d_h \times b
+= 2 \times 32 \times 8 \times 128 \times 2 = 131{,}072 \text{ bytes} \approx 128\text{ KB/token}.
+$$</p>
+<p><strong>KV budget.</strong> Weights take <span class="arithmatex">\(\approx 16\)</span> GB. With <code>gpu_memory_utilization=0.9</code> we use <span class="arithmatex">\(\approx 72\)</span> GB; reserve <span class="arithmatex">\(\approx 4\)</span> GB for activations, leaving <span class="arithmatex">\(\approx 52\)</span> GB for KV:
+$$
+\frac{52 \times 1024^3 \text{ bytes}}{128 \times 1024 \text{ bytes/token}} \approx 425{,}000 \text{ token-slots}.
+$$</p>
+<p><strong>Concurrency.</strong> If the average request holds <span class="arithmatex">\(\approx 2{,}000\)</span> tokens of context (prompt + generated), that is <span class="arithmatex">\(425{,}000 / 2{,}000 \approx 210\)</span> concurrent requests. A pre-paging engine that reserved <code>max_seq_len = 8192</code> per request would fit only <span class="arithmatex">\(425{,}000 / 8{,}192 \approx 52\)</span> — a <span class="arithmatex">\(4\times\)</span> concurrency loss purely to fragmentation.</p>
+<p><strong>Block count.</strong> With block size 16, one block holds <span class="arithmatex">\(16 \times 128\text{KB} = 2\)</span> MB, so the pool is <span class="arithmatex">\(\approx 52\text{GB} / 2\text{MB} \approx 26{,}500\)</span> blocks. Worst-case internal waste is 15 token-slots per sequence — about <span class="arithmatex">\(15/2000 = 0.75\%\)</span> — versus the old design&rsquo;s reservation-dominated waste.</p>
+<p>The throughput consequence is direct: decode is memory-bandwidth bound, so reading <span class="arithmatex">\(\sim4\times\)</span> more concurrent sequences&rsquo; KV per unit time (because <span class="arithmatex">\(4\times\)</span> more fit) yields roughly <span class="arithmatex">\(4\times\)</span> the tokens/second, until you saturate HBM bandwidth or compute.</p>
+</div>
+<h2 id="v1-the-rewritten-architecture">V1: the rewritten architecture<a class="headerlink" href="#v1-the-rewritten-architecture" title="Permanent link">¶</a></h2>
+<p>In 2024–2025 vLLM was substantially re-architected as <strong>V1</strong>, now the default engine. V0 had accreted features over a fast-moving codebase, and its single-process design left GPU bubbles whenever the CPU was busy tokenizing, scheduling, or detokenizing. V1&rsquo;s themes:</p>
+<ul>
+<li>
+<p><strong>Isolated EngineCore process.</strong> The scheduler + block manager + model execution loop run in their own process, communicating with the API/tokenizer side over a fast IPC channel. This <strong>overlaps CPU work with GPU execution</strong> — while the GPU runs step <span class="arithmatex">\(t\)</span>, the front end is already tokenizing requests and detokenizing outputs for step <span class="arithmatex">\(t-1\)</span>/<span class="arithmatex">\(t+1\)</span>. The result is fewer GPU idle bubbles and higher utilization, especially at high request rates.</p>
+</li>
+<li>
+<p><strong>Unified scheduler with a token budget.</strong> V1 removes the rigid &ldquo;prefill batch vs decode batch&rdquo; split. The scheduler simply allocates a per-step <strong>token budget</strong> (<code>max_num_batched_tokens</code>) across whatever sequences want to run, mixing prefill chunks and decodes freely. Chunked prefill becomes the default, not an option.</p>
+</li>
+<li>
+<p><strong>Prefix caching on by default.</strong> V1&rsquo;s KV-cache manager treats cached prefixes as a first-class citizen (next section), with low enough overhead that it is enabled out of the box rather than opt-in.</p>
+</li>
+<li>
+<p><strong><code>torch.compile</code> + piecewise CUDA graphs</strong> as the default execution path, replacing much hand-written V0 glue and improving portability across hardware backends.</p>
+</li>
+<li>
+<p><strong>Cleaner extension points</strong> for new attention backends, hardware (the <code>Platform</code> abstraction for NVIDIA/AMD/TPU/CPU), speculative decoding, and structured output.</p>
+</li>
+</ul>
+<p>For the user, V1 is mostly transparent: the <code>LLM(...)</code> and OpenAI-server interfaces are unchanged. What you observe is higher throughput, lower overhead at small batch sizes, and prefix caching helping for free. If you need a V0-only feature during a migration you can sometimes force the old engine, but new development targets V1.</p>
+<h2 id="prefix-caching-reuse-kv-across-requests">Prefix caching: reuse KV across requests<a class="headerlink" href="#prefix-caching-reuse-kv-across-requests" title="Permanent link">¶</a></h2>
+<p>Many requests share a prefix: a long system prompt, a few-shot exemplar block, a chat history that grows by one turn, or — in agentic and RL workloads — a giant fixed instruction reused across thousands of rollouts. Recomputing that prefix&rsquo;s KV every time is pure waste. <strong>Automatic prefix caching (APC)</strong> lets vLLM <em>reuse the KV blocks of a previously computed prefix</em> across requests, turning an expensive prefill into a cheap cache hit.</p>
+<h3 id="how-it-works-hashing-blocks">How it works: hashing blocks<a class="headerlink" href="#how-it-works-hashing-blocks" title="Permanent link">¶</a></h3>
+<p>Because the KV cache is already block-structured, sharing is natural. vLLM computes a <strong>hash for each full block</strong> that incorporates the token IDs in that block <em>and the hash of all preceding blocks</em> — a rolling hash that makes the block ID a function of the entire prefix up to that point. (Two prefixes that diverge at token 5 get different hashes from block 0 onward; two identical prefixes get identical hashes block-for-block.)</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">block_hash</span><span class="p">(</span><span class="n">prev_hash</span><span class="p">,</span> <span class="n">token_ids_in_block</span><span class="p">,</span> <span class="n">extra</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Hash of a *full* block = (hash of everything before) + (this block&#39;s</span>
+<span class="sd">    tokens) + optional extras (LoRA id, multimodal hash, cache salt).&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">hash</span><span class="p">((</span><span class="n">prev_hash</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">token_ids_in_block</span><span class="p">),</span> <span class="n">extra</span><span class="p">))</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">hash_prompt_blocks</span><span class="p">(</span><span class="n">prompt_ids</span><span class="p">,</span> <span class="n">block_size</span><span class="p">,</span> <span class="n">lora_id</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="n">hashes</span><span class="p">,</span> <span class="n">h</span> <span class="o">=</span> <span class="p">[],</span> <span class="kc">None</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt_ids</span><span class="p">)</span> <span class="o">-</span> <span class="n">block_size</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">block_size</span><span class="p">):</span>
+        <span class="n">block</span> <span class="o">=</span> <span class="n">prompt_ids</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">block_size</span><span class="p">]</span>      <span class="c1"># only FULL blocks are hashable</span>
+        <span class="n">h</span> <span class="o">=</span> <span class="n">block_hash</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">block</span><span class="p">,</span> <span class="n">extra</span><span class="o">=</span><span class="n">lora_id</span><span class="p">)</span>
+        <span class="n">hashes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">hashes</span>
+</code></pre></div>
+<p>The block manager keeps a map from <code>block_hash -&gt; physical_block_id</code> for blocks whose contents are &ldquo;committed&rdquo; (full and immutable). When a new request arrives:</p>
+<ol>
+<li>Hash its prompt blocks.</li>
+<li>For each leading block whose hash is already in the map, <strong>reuse</strong> that physical block: point the new request&rsquo;s block table at it and bump the refcount. No compute, no new memory.</li>
+<li>At the first block that misses, stop matching; allocate fresh blocks for the remaining (uncached) tokens and prefill only those.</li>
+</ol>
+<p>A new request with a 4000-token cached system prompt and 50 new tokens prefills only ~50 tokens instead of 4050 — a roughly <span class="arithmatex">\(80\times\)</span> reduction in prefill work for that request, and a large drop in time-to-first-token.</p>
+<h3 id="eviction-and-correctness">Eviction and correctness<a class="headerlink" href="#eviction-and-correctness" title="Permanent link">¶</a></h3>
+<p>Cached blocks still occupy the pool. When the pool is full and a new allocation is needed, vLLM evicts cached blocks that no running sequence references (refcount via the cache, not active use), typically <strong>LRU</strong> with awareness of how deep in a prefix the block sits (evict leaves before roots so popular shared prefixes survive). Eviction is lossless: a re-request just recomputes.</p>
+<p>Correctness hinges on the hash covering <em>everything that affects the KV</em>: token IDs, position (implied by block order), the active <strong>LoRA adapter</strong> (different adapters produce different KV — see multi-LoRA below), and a <strong>cache salt</strong> you can set to isolate tenants so one user&rsquo;s cached prefix can never be served to another. Multimodal inputs hash their image/audio features too. Get this wrong and you would serve one request&rsquo;s KV to another — a correctness and security bug — which is why the hashing is conservative. Prefix caching has its own dedicated chapter, <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>; here the point is that it falls out almost for free from the paged design plus reference counting.</p>
+<div class="admonition tip">
+<p class="admonition-title">Prefix caching is a giant win for agents and RL rollouts</p>
+<p>Workloads that hammer a fixed instruction block — coding agents, ReAct loops, GRPO/PPO rollouts that sample many completions from the same prompt — see the largest gains, because the shared prefix can be many thousands of tokens reused thousands of times. This is also why vLLM is the rollout engine of choice in RL stacks like veRL (<a href="../06-rl-infra/04-verl.html">veRL: HybridFlow &amp; The Single-Controller Architecture</a>). It is on by default in V1; you can disable with <code>enable_prefix_caching=False</code> if your traffic has no shared prefixes and you want to avoid the (small) hashing overhead.</p>
+</div>
+<h2 id="speculative-decoding-support">Speculative decoding support<a class="headerlink" href="#speculative-decoding-support" title="Permanent link">¶</a></h2>
+<p>Decode is memory-bound: each step you load the entire model&rsquo;s weights from HBM to produce <em>one</em> token. The hardware could do far more arithmetic per byte loaded. <strong>Speculative decoding</strong> exploits this by having a cheap <strong>drafter</strong> propose several future tokens, then verifying them with the big model in a <em>single</em> forward pass; accepted tokens come &ldquo;for free&rdquo; because verifying <span class="arithmatex">\(k\)</span> tokens costs about the same memory traffic as generating one. The algorithms (draft models, Medusa, EAGLE, n-gram/lookahead) are the subject of <a href="../07-inference-serving/06-speculative-decoding.html">Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a>; here we note vLLM&rsquo;s <em>plumbing</em>.</p>
+<p>vLLM supports several proposers behind a common interface:</p>
+<ul>
+<li><strong>Draft model</strong> — a small model of the same family proposes tokens.</li>
+<li><strong>N-gram / prompt lookahead</strong> — propose by matching recent context against the prompt; free, great for tasks with copying (summarization, code editing).</li>
+<li><strong>EAGLE / Medusa-style</strong> — lightweight heads on the target model predict multiple future tokens.</li>
+</ul>
+<p>Each step, vLLM runs the proposer to get <span class="arithmatex">\(k\)</span> draft tokens, then runs the target model on all <span class="arithmatex">\(k+1\)</span> positions at once. A <strong>rejection-sampling verifier</strong> accepts the longest prefix of drafts consistent with the target&rsquo;s distribution and corrects the first rejected token, so the output distribution is <em>provably identical</em> to plain sampling from the target — speculation changes speed, not what is generated.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Engine-level shape of one speculative step (target distribution preserved).</span>
+<span class="n">draft_tokens</span><span class="p">,</span> <span class="n">draft_probs</span> <span class="o">=</span> <span class="n">proposer</span><span class="o">.</span><span class="n">propose</span><span class="p">(</span><span class="n">seq</span><span class="p">,</span> <span class="n">k</span><span class="p">)</span>          <span class="c1"># cheap</span>
+<span class="n">target_logits</span> <span class="o">=</span> <span class="n">target_model</span><span class="p">(</span><span class="n">seq</span><span class="o">.</span><span class="n">context</span> <span class="o">+</span> <span class="n">draft_tokens</span><span class="p">)</span>      <span class="c1"># ONE big fwd, k+1 pos</span>
+<span class="n">accepted</span> <span class="o">=</span> <span class="n">rejection_sample</span><span class="p">(</span><span class="n">draft_tokens</span><span class="p">,</span> <span class="n">draft_probs</span><span class="p">,</span> <span class="n">target_logits</span><span class="p">)</span>  <span class="c1"># 0..k accepted</span>
+<span class="n">seq</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">accepted</span><span class="p">)</span>
+<span class="n">seq</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="n">sample</span><span class="p">(</span><span class="n">target_logits</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">accepted</span><span class="p">)])])</span>            <span class="c1"># +1 bonus/correction token</span>
+<span class="c1"># Net: up to k+1 tokens emitted per single target forward pass.</span>
+</code></pre></div>
+<p>The system challenge is that speculation must coexist with paged KV and continuous batching: the KV for <em>rejected</em> draft tokens must be discarded (their blocks/slots rolled back), and batches mix sequences accepting different numbers of tokens. V1 re-implemented spec decode to fit the unified scheduler cleanly. The <strong>speedup</strong> depends on the <strong>acceptance rate</strong> <span class="arithmatex">\(\alpha\)</span> and draft cost; expected tokens per target step is roughly <span class="arithmatex">\(\frac{1-\alpha^{k+1}}{1-\alpha}\)</span>, so high-<span class="arithmatex">\(\alpha\)</span>, predictable text (code, structured output) benefits most, while creative high-entropy text benefits least — and a poor drafter can even <em>slow you down</em> because of the wasted draft compute.</p>
+<h2 id="multi-lora-serving">Multi-LoRA serving<a class="headerlink" href="#multi-lora-serving" title="Permanent link">¶</a></h2>
+<p>LoRA (low-rank adaptation — <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a>) fine-tunes a model by adding a low-rank update <span class="arithmatex">\(\Delta W = BA\)</span> to selected weight matrices, where <span class="arithmatex">\(B \in \mathbb{R}^{d\times r}\)</span>, <span class="arithmatex">\(A \in \mathbb{R}^{r\times d}\)</span>, and the rank <span class="arithmatex">\(r\)</span> is tiny (8–64). The adapter is a few megabytes versus tens of gigabytes for the base model. vLLM&rsquo;s <strong>multi-LoRA</strong> serving exploits this: keep <em>one</em> copy of the base model in GPU memory and serve <strong>many different fine-tunes simultaneously</strong> by swapping in the small adapters, even mixing requests for different adapters in the same batch.</p>
+<p>The key kernel insight is that you do not merge adapters into the weights (that would force one adapter per batch). Instead you keep the base forward pass shared and add each request&rsquo;s LoRA contribution as a <strong>batched, gathered low-rank matmul</strong>. For a layer&rsquo;s output <span class="arithmatex">\(y = Wx\)</span>, the LoRA-augmented output for request <span class="arithmatex">\(i\)</span> using adapter <span class="arithmatex">\(a(i)\)</span> is:</p>
+<div class="arithmatex">\[
+y_i = W x_i + \frac{\alpha}{r}\, B_{a(i)} \big(A_{a(i)}\, x_i\big).
+\]</div>
+<p>vLLM&rsquo;s <strong>Punica/SGMV-style</strong> kernels compute the <span class="arithmatex">\(B(Ax)\)</span> term for a whole batch where each row may use a <em>different</em> adapter, gathering the right <span class="arithmatex">\(A, B\)</span> per row. This makes the marginal cost of serving <span class="arithmatex">\(N\)</span> adapters close to serving one, as long as the adapters fit in memory.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">vllm</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLM</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">vllm.lora.request</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoRARequest</span>
+
+<span class="c1"># Base model loaded once; enable LoRA with a max rank and a cap on</span>
+<span class="c1"># how many distinct adapters may be active in a single batch.</span>
+<span class="n">llm</span> <span class="o">=</span> <span class="n">LLM</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;meta-llama/Llama-3-8b&quot;</span><span class="p">,</span>
+          <span class="n">enable_lora</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+          <span class="n">max_loras</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>        <span class="c1"># distinct adapters per *batch*</span>
+          <span class="n">max_lora_rank</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>   <span class="c1"># must be &gt;= rank of any adapter you load</span>
+          <span class="n">max_cpu_loras</span><span class="o">=</span><span class="mi">32</span><span class="p">)</span>   <span class="c1"># adapters parked in CPU, paged to GPU on demand</span>
+
+<span class="c1"># Each request names the adapter it wants. Different adapters can be</span>
+<span class="c1"># batched together in the same forward pass.</span>
+<span class="n">out</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
+    <span class="p">[</span><span class="s2">&quot;Translate to French: Hello&quot;</span><span class="p">,</span> <span class="s2">&quot;Summarize: ...long doc...&quot;</span><span class="p">],</span>
+    <span class="n">lora_request</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">LoRARequest</span><span class="p">(</span><span class="s2">&quot;fr-translator&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;/adapters/fr_lora&quot;</span><span class="p">),</span>
+        <span class="n">LoRARequest</span><span class="p">(</span><span class="s2">&quot;summarizer&quot;</span><span class="p">,</span>    <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;/adapters/sum_lora&quot;</span><span class="p">),</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Adapters themselves are <strong>paged like the KV cache</strong>: a pool of GPU adapter slots, with inactive adapters held in CPU memory (<code>max_cpu_loras</code>) and copied in on demand. <code>max_loras</code> caps distinct adapters <em>per batch</em> (kernel/memory limit); <code>max_cpu_loras</code> caps how many are kept warm. This is the backbone of multi-tenant &ldquo;one base model, hundreds of customer fine-tunes&rdquo; serving. Note the interaction with prefix caching: the LoRA ID is part of the block hash, so two requests can only share cached prefix blocks if they use the <em>same</em> adapter.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> vLLM gets a large throughput win over a naive HuggingFace <code>generate</code> serving loop. Mechanistically, where does that win come from, and what is the single biggest lever?</p>
+<p><strong>A:</strong> The win is overwhelmingly about <strong>KV-cache memory efficiency translating into concurrency</strong>. A naive loop pre-allocates a contiguous KV buffer sized to <code>max_seq_len</code> per request, so 60–80% of KV memory is reserved-but-empty (internal fragmentation) or unusable gaps (external fragmentation). Since KV memory caps how many sequences run concurrently, and decode throughput scales with concurrency (it&rsquo;s HBM-bandwidth bound — more sequences read per unit time = more tokens/sec), that wasted memory is wasted throughput. <strong>PagedAttention</strong> removes the fragmentation by paging the KV cache into fixed-size blocks mapped through a per-sequence block table, so the only waste is the last partial block (≤ <code>block_size − 1</code> slots). That can quadruple concurrency on typical workloads. <strong>Continuous batching</strong> then keeps that concurrency saturated by admitting and retiring requests at token granularity instead of waiting for a whole batch to finish. The single biggest lever is the paged KV enabling high concurrency; continuous batching, prefix caching, CUDA graphs, and chunked prefill are multipliers on top. A good follow-up answer names the failure mode: oversubscribing the KV pool causes preemption thrashing that destroys tail latency, so <code>gpu_memory_utilization</code>, <code>max_num_seqs</code>, and <code>max_num_batched_tokens</code> must be tuned to keep steady-state demand under the pool size.</p>
+</div>
+<h2 id="running-and-tuning-vllm">Running and tuning vLLM<a class="headerlink" href="#running-and-tuning-vllm" title="Permanent link">¶</a></h2>
+<h3 id="two-entry-points">Two entry points<a class="headerlink" href="#two-entry-points" title="Permanent link">¶</a></h3>
+<p><strong>Offline batched inference</strong> — drive the engine directly from Python; best for evals, dataset generation, and RL rollouts:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">vllm</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLM</span><span class="p">,</span> <span class="n">SamplingParams</span>
+
+<span class="n">llm</span> <span class="o">=</span> <span class="n">LLM</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;meta-llama/Llama-3-8b-instruct&quot;</span><span class="p">,</span>
+    <span class="n">tensor_parallel_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>          <span class="c1"># shard across 2 GPUs (TP)</span>
+    <span class="n">gpu_memory_utilization</span><span class="o">=</span><span class="mf">0.90</span><span class="p">,</span>     <span class="c1"># fraction of GPU for weights + KV</span>
+    <span class="n">max_model_len</span><span class="o">=</span><span class="mi">8192</span><span class="p">,</span>              <span class="c1"># caps KV per request; lower = more concurrency</span>
+    <span class="n">enable_prefix_caching</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>      <span class="c1"># default in V1; reuse shared prefixes</span>
+    <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;bfloat16&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">params</span> <span class="o">=</span> <span class="n">SamplingParams</span><span class="p">(</span><span class="n">temperature</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span> <span class="n">top_p</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">256</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">llm</span><span class="o">.</span><span class="n">generate</span><span class="p">([</span><span class="s2">&quot;Explain PagedAttention in one sentence.&quot;</span><span class="p">],</span> <span class="n">params</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">o</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Online OpenAI-compatible server</strong> — a drop-in replacement for the OpenAI API, used by virtually every &ldquo;self-host an LLM&rdquo; deployment:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Launch an OpenAI-compatible HTTP server.</span>
+vllm<span class="w"> </span>serve<span class="w"> </span>meta-llama/Llama-3-8b-instruct<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--tensor-parallel-size<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--gpu-memory-utilization<span class="w"> </span><span class="m">0</span>.90<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max-model-len<span class="w"> </span><span class="m">8192</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max-num-seqs<span class="w"> </span><span class="m">256</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--enable-chunked-prefill<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--port<span class="w"> </span><span class="m">8000</span>
+
+<span class="c1"># Then call it exactly like the OpenAI API:</span>
+curl<span class="w"> </span>http://localhost:8000/v1/chat/completions<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;model&quot;:&quot;meta-llama/Llama-3-8b-instruct&quot;,</span>
+<span class="s1">       &quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Hello!&quot;}]}&#39;</span>
+</code></pre></div>
+<h3 id="the-knobs-that-actually-matter">The knobs that actually matter<a class="headerlink" href="#the-knobs-that-actually-matter" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>What it controls</th>
+<th>How to think about it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gpu_memory_utilization</code></td>
+<td>Fraction of GPU for weights + KV pool</td>
+<td>Higher = bigger KV pool = more concurrency, but risks OOM from activation spikes. 0.85–0.92 typical.</td>
+</tr>
+<tr>
+<td><code>max_model_len</code></td>
+<td>Max context (prompt + output) per request</td>
+<td>Caps per-request KV; set to the largest you truly need, not the model&rsquo;s max — lower frees KV for more concurrency.</td>
+</tr>
+<tr>
+<td><code>max_num_seqs</code></td>
+<td>Max concurrent sequences per batch</td>
+<td>Too high → preemption thrash; too low → idle GPU. Tune with the preemption counter.</td>
+</tr>
+<tr>
+<td><code>max_num_batched_tokens</code></td>
+<td>Token budget per forward step</td>
+<td>Bigger favors throughput/prefill; smaller favors inter-token latency. Key chunked-prefill knob.</td>
+</tr>
+<tr>
+<td><code>tensor_parallel_size</code></td>
+<td>GPUs to shard one model across</td>
+<td>Use when weights+KV don&rsquo;t fit on one GPU, or to cut latency. See <a href="../07-inference-serving/11-multi-gpu-inference.html">Multi-GPU &amp; Multi-Node Inference</a>.</td>
+</tr>
+<tr>
+<td><code>enable_prefix_caching</code></td>
+<td>Reuse KV of shared prefixes</td>
+<td>On by default in V1; huge for shared system prompts / agents / RL.</td>
+</tr>
+<tr>
+<td><code>quantization</code></td>
+<td>Weight quant (<code>awq</code>, <code>gptq</code>, <code>fp8</code>, …)</td>
+<td>Shrinks weights → bigger KV pool &amp; cheaper compute; small quality cost. See <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I</a>.</td>
+</tr>
+<tr>
+<td><code>kv_cache_dtype</code></td>
+<td>KV cache precision (e.g. <code>fp8</code>)</td>
+<td>Halves KV bytes → roughly doubles concurrency, slight accuracy cost.</td>
+</tr>
+<tr>
+<td><code>enforce_eager</code></td>
+<td>Disable CUDA graphs</td>
+<td>For debugging only; costs throughput.</td>
+</tr>
+</tbody>
+</table>
+<p>A practical tuning loop:</p>
+<ol>
+<li><strong>Pick <code>max_model_len</code> honestly.</strong> This single number sets the worst-case KV per request. Cutting an unnecessary 32k cap down to 8k can multiply concurrency.</li>
+<li><strong>Push <code>gpu_memory_utilization</code> up</strong> until you see activation OOMs, then back off a notch.</li>
+<li><strong>Decide your objective.</strong> Throughput-first: large <code>max_num_batched_tokens</code>, large <code>max_num_seqs</code>. Latency-first (low inter-token latency for chat): smaller <code>max_num_batched_tokens</code> with chunked prefill so long prefills don&rsquo;t stall decodes.</li>
+<li><strong>Watch the metrics.</strong> vLLM logs/Prometheus expose KV-cache utilization, running/waiting/swapped counts, <code>num_preemptions</code>, prefix-cache hit rate, and throughput. If preemptions are nonzero in steady state, you&rsquo;re oversubscribed — lower <code>max_num_seqs</code> or <code>max_model_len</code>, or quantize to enlarge the pool.</li>
+<li><strong>Quantize to buy concurrency.</strong> FP8/INT4 weights and an FP8 KV cache both enlarge the effective KV pool; for many workloads that concurrency gain outweighs the tiny quality cost. Inference economics — the latency/throughput/cost trade-off you are navigating — is the subject of <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a>.</li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: <code>max_model_len</code> left at the model maximum</p>
+<p>Leaving <code>max_model_len</code> at a model&rsquo;s full 128k context when your requests are 2k forces vLLM to <em>reason</em> about the KV budget conservatively for admission and (in some paths) over-reserve, throttling concurrency for no benefit. Always set <code>max_model_len</code> to the largest context you actually serve. Similarly, setting <code>gpu_memory_utilization</code> too high leaves no headroom for transient activation spikes during long prefills and triggers OOM crashes mid-traffic.</p>
+</div>
+<p>vLLM is not the only serving engine — <a href="../07-inference-serving/04-sglang-radixattention.html">SGLang: RadixAttention &amp; Structured Programs</a> pushes prefix sharing further with a radix tree, and <a href="../07-inference-serving/05-trtllm-tgi-stacks.html">TensorRT-LLM, TGI &amp; Other Serving Stacks</a> trades flexibility for hand-tuned NVIDIA kernels. But vLLM&rsquo;s combination of a clean paged-memory core, broad model and hardware coverage, an active community, and the OpenAI-compatible surface has made it the default. Understanding its internals — the block manager, the scheduler, the executor, and how prefix caching, speculation, and multi-LoRA bolt onto the paged core — is understanding how modern open LLM serving works.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The KV cache, not the weights, is the dynamic bottleneck in LLM serving; pre-paging engines wasted 60–80% of it to internal and external fragmentation, which directly throttled concurrency and thus throughput.</li>
+<li><strong>PagedAttention</strong> pages the KV cache into fixed-size blocks mapped through a per-sequence <strong>block table</strong>, cutting waste to at most one partial block per sequence and enabling <code>O(1)</code> allocation, copy-on-write sharing, and prefix reuse.</li>
+<li>The <strong>block manager</strong> is a refcounted block allocator; the <strong>scheduler</strong> runs continuous batching under the block budget, preempting (by recomputation or swap) when the pool is exhausted — oversubscription causes preemption thrashing that wrecks tail latency.</li>
+<li><strong>Chunked prefill</strong> interleaves long prefills with decodes to smooth inter-token latency and raise GPU utilization; in <strong>V1</strong> it is default and the engine runs on a unified per-step token budget.</li>
+<li><strong>V1</strong> isolates the engine loop in its own process to overlap CPU and GPU work, defaults to <code>torch.compile</code> + piecewise CUDA graphs, and enables <strong>prefix caching</strong> out of the box.</li>
+<li><strong>Automatic prefix caching</strong> hashes full KV blocks (including LoRA id and a tenant salt) to reuse shared prefixes across requests — a massive win for system prompts, agents, and RL rollouts.</li>
+<li><strong>Speculative decoding</strong> and <strong>multi-LoRA</strong> bolt onto the paged core: speculation verifies <span class="arithmatex">\(k\)</span> drafted tokens in one target pass (output distribution preserved), and multi-LoRA serves many adapters over one base model via batched gathered low-rank matmuls, with adapters paged like KV blocks.</li>
+<li>Tune via <code>gpu_memory_utilization</code>, an honest <code>max_model_len</code>, <code>max_num_seqs</code>, and <code>max_num_batched_tokens</code>; quantizing weights and the KV cache buys concurrency, and the preemption/cache-hit metrics tell you whether you&rsquo;re oversubscribed.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>vLLM has become the dominant open-source LLM serving engine, with its V1 architecture (2025) now the default: an isolated EngineCore process, unified token-budget scheduler, prefix caching on by default, and <code>torch.compile</code> + piecewise CUDA graphs — delivering up to 1.7× higher throughput than V0. Active research continues on tighter disaggregated prefill/decode, speculative decoding, and multi-LoRA efficiency.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2309.06180">Kwon et al., <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (SOSP 2023)</a> — the founding vLLM paper; introduces PagedAttention and demonstrates 2–4× throughput gains over prior systems.</li>
+<li><a href="https://www.usenix.org/conference/osdi22/presentation/yu">Yu et al., <em>Orca: A Distributed Serving System for Transformer-Based Generative Models</em> (OSDI 2022)</a> — origin of iteration-level (continuous) batching; 36× throughput improvement over FasterTransformer on GPT-3 scale.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2501.01005">Ye et al., <em>FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving</em> (MLSys 2025)</a> — block-sparse KV-cache formats and JIT-compiled attention kernels; the attention backend vLLM V1 uses alongside FlashAttention.</li>
+<li><a href="https://arxiv.org/abs/2310.18547">Chen et al., <em>Punica: Multi-Tenant LoRA Serving</em> (2023)</a> — SGMV (segmented gather matmul) kernels that batch LoRA contributions across different adapters in one pass; underpins vLLM&rsquo;s multi-LoRA implementation.</li>
+<li><a href="https://arxiv.org/abs/2311.03285">Sheng et al., <em>S-LoRA: Serving Thousands of Concurrent LoRA Adapters</em> (2023)</a> — unified memory paging for adapter weights alongside KV cache; shows near-flat marginal cost for hundreds of adapters.</li>
+<li><a href="https://arxiv.org/abs/2401.07851">Xia et al., <em>Unlocking Efficiency in LLM Inference: A Comprehensive Survey of Speculative Decoding</em> (2024)</a> — broad survey of draft-model, Medusa, EAGLE, and lookahead approaches; useful for understanding acceptance-rate trade-offs and when speculation helps.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm</a> — the vLLM engine itself (~82k stars); reference implementation of PagedAttention, continuous batching, prefix caching, multi-LoRA, and speculative decoding.</li>
+<li><a href="https://github.com/flashinfer-ai/flashinfer">flashinfer-ai/flashinfer</a> — the FlashInfer kernel library used by vLLM V1&rsquo;s attention backend; supports paged KV-cache in block-sparse format with JIT compilation.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://vllm.ai/blog/2025-01-27-v1-alpha-release">vLLM V1: A Major Upgrade to vLLM&rsquo;s Core Architecture (vLLM Blog, Jan 2025)</a> — the official design writeup for V1: EngineCore isolation, unified scheduler, torch.compile path, and what changed from V0.</li>
+<li><a href="https://docs.vllm.ai/en/stable/">vLLM Official Documentation</a> — production deployment guide, tuning knobs, hardware support matrix, and the V1 migration guide.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Kwon, Li, Zhuang, Sheng, Zheng, Yu, Gonzalez, Zhang, Stoica — <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em> (SOSP 2023). The founding vLLM paper.</li>
+<li>Yu, Jeong, Kim, Kim, Chun — <em>Orca: A Distributed Serving System for Transformer-Based Generative Models</em> (OSDI 2022). Origin of iteration-level / continuous batching.</li>
+<li>Dao, Fu, Ermon, Rudra, Ré — <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em>. The attention kernel vLLM builds on.</li>
+<li>Chen, Borgeaud, Irving, Lespiau, Sifre, Jumper — <em>Accelerating Large Language Model Decoding with Speculative Sampling</em>; and Leviathan, Kalman, Matias — <em>Fast Inference from Transformers via Speculative Decoding</em>.</li>
+<li>Chen, Ye, Zheng, et al. — <em>Punica: Multi-Tenant LoRA Serving</em>, and <em>S-LoRA: Serving Thousands of Concurrent LoRA Adapters</em>. The basis of vLLM&rsquo;s multi-LoRA kernels.</li>
+<li>The <strong>vLLM</strong> project repository and documentation (vllm-project/vllm), including the V1 architecture design notes.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-continuous-batching.html"><span class="pn-label">← Previous</span><span class="pn-title">Continuous Batching &amp; Request Scheduling</span></a>
+<a class="next" href="04-sglang-radixattention.html"><span class="pn-label">Next →</span><span class="pn-title">SGLang: RadixAttention &amp; Structured Programs</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-the-kv-cache-is-the-bottleneck-and-what-pagedattention-fixes">Why the KV cache is the bottleneck (and what PagedAttention fixes)</a></li>
+<li class="toc-l3"><a href="#pagedattention-in-one-paragraph">PagedAttention in one paragraph</a></li>
+<li class="toc-l2"><a href="#the-block-manager-paging-for-the-kv-cache">The block manager: paging for the KV cache</a></li>
+<li class="toc-l3"><a href="#how-many-blocks-exist">How many blocks exist?</a></li>
+<li class="toc-l3"><a href="#the-free-list-and-the-block-table">The free list and the block table</a></li>
+<li class="toc-l3"><a href="#copy-on-write-for-shared-blocks">Copy-on-write for shared blocks</a></li>
+<li class="toc-l2"><a href="#the-scheduler-continuous-batching-under-a-memory-budget">The scheduler: continuous batching under a memory budget</a></li>
+<li class="toc-l3"><a href="#the-three-queues-and-the-step-loop">The three queues and the step loop</a></li>
+<li class="toc-l3"><a href="#prefill-decode-and-chunked-prefill">Prefill, decode, and chunked prefill</a></li>
+<li class="toc-l2"><a href="#the-engine-and-executor-stack">The engine and executor stack</a></li>
+<li class="toc-l3"><a href="#the-forward-step-in-detail">The forward step in detail</a></li>
+<li class="toc-l3"><a href="#cuda-graphs-and-torchcompile">CUDA graphs and torch.compile</a></li>
+<li class="toc-l2"><a href="#v1-the-rewritten-architecture">V1: the rewritten architecture</a></li>
+<li class="toc-l2"><a href="#prefix-caching-reuse-kv-across-requests">Prefix caching: reuse KV across requests</a></li>
+<li class="toc-l3"><a href="#how-it-works-hashing-blocks">How it works: hashing blocks</a></li>
+<li class="toc-l3"><a href="#eviction-and-correctness">Eviction and correctness</a></li>
+<li class="toc-l2"><a href="#speculative-decoding-support">Speculative decoding support</a></li>
+<li class="toc-l2"><a href="#multi-lora-serving">Multi-LoRA serving</a></li>
+<li class="toc-l2"><a href="#running-and-tuning-vllm">Running and tuning vLLM</a></li>
+<li class="toc-l3"><a href="#two-entry-points">Two entry points</a></li>
+<li class="toc-l3"><a href="#the-knobs-that-actually-matter">The knobs that actually matter</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

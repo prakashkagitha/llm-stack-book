@@ -1,0 +1,1681 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Colocated vs Disaggregated RL &amp; Weight Synchronization — The LLM Stack</title>
+<meta name="description" content="Sharing GPUs between training and rollout (colocate, time-slice, offload) vs separate pools (disaggregate); weight sync mechanisms (NCCL broadcast, CUDA IPC, ch">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="active" href="07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VI — RL Infrastructure (Deep Dive)</div>
+<h1 id="67-colocated-vs-disaggregated-rl-weight-synchronization">6.7 Colocated vs Disaggregated RL &amp; Weight Synchronization<a class="headerlink" href="#67-colocated-vs-disaggregated-rl-weight-synchronization" title="Permanent link">¶</a></h1>
+<p>Every reinforcement-learning-for-LLM system is, at heart, a tug-of-war between two very different programs fighting over the same scarce resource: GPUs. On one side is the <strong>trainer</strong> — a backward-pass-heavy, memory-hungry process that holds the policy weights, the optimizer state, gradients, and activations, and runs at full tensor-core utilization in short, dense bursts. On the other side is the <strong>rollout engine</strong> (also called the <em>generator</em> or <em>actor</em>) — an autoregressive decoder that is memory-bandwidth bound, runs for a long time per step, and spends most of its life waiting on the KV cache. These two workloads have nearly opposite hardware appetites, and how you place them on your cluster is the single most consequential infrastructure decision in an RL run.</p>
+<p>This chapter is about that decision. We cover the two dominant placement strategies — <strong>colocated</strong> (trainer and rollout share GPUs) and <strong>disaggregated</strong> (they live in separate GPU pools) — and the family of tricks in between (time-slicing, offloading). Then we get to the hard part that ties both worlds together: <strong>weight synchronization</strong>. After every (or every few) optimizer steps, the freshly updated policy weights must reach the inference engine, which is laid out in a completely different parallelism scheme. We dissect the three transport mechanisms (NCCL broadcast, CUDA IPC, checkpoint reload), the <strong>resharding problem</strong> between training and inference layouts, and the latency/utilization math that decides which design wins.</p>
+<p>This is the chapter where the <a href="../06-rl-infra/01-anatomy-rl-system.html">anatomy of an RL system</a> and the <a href="../06-rl-infra/02-generation-training-loop.html">generation–training loop</a> become a concrete engineering problem. We assume you know what GRPO and PPO are (<a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>, <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>); here we care only about <em>where the bytes live and how they move</em>.</p>
+<h2 id="the-two-workloads-and-why-placement-matters">The Two Workloads and Why Placement Matters<a class="headerlink" href="#the-two-workloads-and-why-placement-matters" title="Permanent link">¶</a></h2>
+<p>Start with a single RL iteration. Ignoring the reward step, the loop is:</p>
+<figure class="viz" id="fig-colodis-rl-iteration-loop">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 360" role="img" aria-label="One RL iteration loop: Dataset sends prompts to Rollout inference engine, which sends completions to Reward verifier, which passes advantages to Trainer, and Trainer syncs updated weights back to Rollout, closing the cycle.">
+  <defs>
+    <marker id="rl-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#666)"/>
+    </marker>
+    <marker id="rl-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#0ea5e9)"/>
+    </marker>
+    <style>
+      @keyframes rl-pulse-dot {
+        0%   { opacity: 0; }
+        5%   { opacity: 1; }
+        20%  { opacity: 1; }
+        30%  { opacity: 0; }
+        100% { opacity: 0; }
+      }
+      @keyframes rl-march {
+        0%   { stroke-dashoffset: 24; }
+        100% { stroke-dashoffset: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .rl-dot, .rl-march-path { animation: none !important; opacity: 0.7; }
+        .rl-dot { display: block !important; }
+      }
+      #fig-colodis-rl-iteration-loop .lbl { font: 600 13px var(--sans,sans-serif); }
+      #fig-colodis-rl-iteration-loop .sub { font: 400 10px var(--sans,sans-serif); }
+      #fig-colodis-rl-iteration-loop .edge-lbl { font: 500 11px var(--sans,sans-serif); }
+      #fig-colodis-rl-iteration-loop text { fill: var(--ink-soft,#333); }
+      #fig-colodis-rl-iteration-loop .v-muted { fill: var(--muted,#888); }
+    </style>
+  </defs>
+
+
+  <g data-anim="1">
+    <rect x="20" y="50" width="130" height="64" rx="8" class="v-fill v-stroke" stroke="var(--border-2,#aaa)" stroke-width="1.5" fill="var(--surface,#f8f9fa)"/>
+    <text x="85" y="78" text-anchor="middle" class="lbl">Dataset</text>
+    <text x="85" y="96" text-anchor="middle" class="sub v-muted">prompt source</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="240" y="30" width="170" height="94" rx="8" stroke="var(--accent,#0ea5e9)" stroke-width="2" fill="var(--surface,#f8f9fa)" class="v-fill"/>
+    <rect x="240" y="30" width="170" height="94" rx="8" fill="var(--accent,#0ea5e9)" fill-opacity="0.08" stroke="none"/>
+    <text x="325" y="62" text-anchor="middle" class="lbl" fill="var(--accent,#0ea5e9)">ROLLOUT</text>
+    <text x="325" y="78" text-anchor="middle" class="sub" fill="var(--accent,#0ea5e9)">(inference engine)</text>
+    <text x="325" y="96" text-anchor="middle" class="sub v-muted">autoregressive decode, KV cache</text>
+    <text x="325" y="112" text-anchor="middle" class="sub v-muted">memory-bandwidth bound</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="550" y="50" width="190" height="64" rx="8" class="v-fill v-stroke" stroke="var(--border-2,#aaa)" stroke-width="1.5" fill="var(--surface,#f8f9fa)"/>
+    <text x="645" y="78" text-anchor="middle" class="lbl">REWARD</text>
+    <text x="645" y="96" text-anchor="middle" class="sub v-muted">(verifier / sandbox)</text>
+  </g>
+
+
+  <g data-anim="4">
+    <rect x="500" y="230" width="220" height="95" rx="8" stroke="var(--accent-2,#c2410c)" stroke-width="2" fill="var(--surface,#f8f9fa)" class="v-fill"/>
+    <rect x="500" y="230" width="220" height="95" rx="8" fill="var(--accent-2,#c2410c)" fill-opacity="0.08" stroke="none"/>
+    <text x="610" y="263" text-anchor="middle" class="lbl" fill="var(--accent-2,#c2410c)">TRAINER</text>
+    <text x="610" y="280" text-anchor="middle" class="sub" fill="var(--accent-2,#c2410c)">(fwd + bwd)</text>
+    <text x="610" y="297" text-anchor="middle" class="sub v-muted">holds optimizer state,</text>
+    <text x="610" y="311" text-anchor="middle" class="sub v-muted">~16P bytes</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="150" y1="82" x2="238" y2="82" stroke="var(--ink-soft,#666)" stroke-width="1.5" marker-end="url(#rl-arrow)"/>
+    <text x="194" y="72" text-anchor="middle" class="edge-lbl">prompts</text>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="410" y1="78" x2="548" y2="78" stroke="var(--ink-soft,#666)" stroke-width="1.5" marker-end="url(#rl-arrow)"/>
+    <text x="479" y="68" text-anchor="middle" class="edge-lbl">completions</text>
+  </g>
+
+
+  <g data-anim="4">
+    <line x1="640" y1="114" x2="640" y2="228" stroke="var(--ink-soft,#666)" stroke-width="1.5" marker-end="url(#rl-arrow)"/>
+    <text x="695" y="178" text-anchor="middle" class="edge-lbl">advantages</text>
+  </g>
+
+
+  <g data-anim="5">
+
+    <path id="rl-sync-path" d="M500,277 L160,277 L160,124 L240,124" fill="none" stroke="var(--accent,#0ea5e9)" stroke-width="2.5" stroke-dasharray="8 4" marker-end="url(#rl-arrow-accent)" class="rl-march-path"/>
+    <text x="192" y="222" text-anchor="middle" class="edge-lbl" fill="var(--accent,#0ea5e9)">weights</text>
+    <text x="192" y="238" text-anchor="middle" class="edge-lbl" fill="var(--accent,#0ea5e9)">(sync)</text>
+  </g>
+
+
+  <path d="M500,277 L160,277 L160,124 L240,124" fill="none" stroke="var(--accent,#0ea5e9)" stroke-width="2.5" stroke-dasharray="8 4" stroke-dashoffset="0" opacity="0.6"
+        style="animation: rl-march 1.2s linear infinite;"/>
+
+
+
+  <circle class="rl-dot" r="5" fill="var(--accent,#0ea5e9)"
+    style="animation: rl-pulse-dot 4s ease-in-out 0s infinite; offset-path: path('M150,82 L238,82');">
+    <animateMotion dur="4s" repeatCount="indefinite" begin="0s">
+      <mpath href="#rl-path-ab"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0;0" keyTimes="0;0.03;0.12;0.18;0.5;0.75;0.9;1" dur="4s" repeatCount="indefinite" begin="0s"/>
+  </circle>
+  <path id="rl-path-ab" d="M150,82 L238,82" fill="none" stroke="none"/>
+
+
+  <circle r="5" fill="var(--accent,#0ea5e9)">
+    <animateMotion dur="4s" repeatCount="indefinite" begin="0.8s">
+      <mpath href="#rl-path-bc"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0;0" keyTimes="0;0.03;0.12;0.18;0.5;0.75;0.9;1" dur="4s" repeatCount="indefinite" begin="0.8s"/>
+  </circle>
+  <path id="rl-path-bc" d="M410,78 L548,78" fill="none" stroke="none"/>
+
+
+  <circle r="5" fill="var(--ink-soft,#888)">
+    <animateMotion dur="4s" repeatCount="indefinite" begin="1.6s">
+      <mpath href="#rl-path-cd"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0;0" keyTimes="0;0.03;0.12;0.18;0.5;0.75;0.9;1" dur="4s" repeatCount="indefinite" begin="1.6s"/>
+  </circle>
+  <path id="rl-path-cd" d="M640,114 L640,228" fill="none" stroke="none"/>
+
+
+  <circle r="6" fill="var(--accent,#0ea5e9)">
+    <animateMotion dur="4s" repeatCount="indefinite" begin="2.4s">
+      <mpath href="#rl-path-db"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0;0" keyTimes="0;0.03;0.18;0.25;0.5;0.75;0.9;1" dur="4s" repeatCount="indefinite" begin="2.4s"/>
+  </circle>
+  <path id="rl-path-db" d="M500,277 L160,277 L160,124 L240,124" fill="none" stroke="none"/>
+
+</svg>
+<figcaption><b>One complete RL iteration: Dataset → Rollout → Reward → Trainer → weight sync → Rollout.</b> The rollout engine (inference-bound, teal) generates completions from prompts; the reward verifier scores them and computes advantages; the trainer (compute-bound, orange) runs forward+backward; and the updated weights flow back to the rollout engine via the emphasized sync arrow, closing the loop. The dashed animated return arrow is the architectural crux: weight synchronization after every optimizer step is what keeps the rollout policy fresh.</figcaption>
+</figure>
+
+<p>The rollout and the trainer touch <em>the same model</em>, but they want it in different forms. Let us be precise about the differences, because the entire chapter follows from them.</p>
+<p><strong>Memory profile.</strong> The trainer holds, for a model with <span class="arithmatex">\(P\)</span> parameters trained in bf16 with the Adam optimizer:</p>
+<div class="arithmatex">\[
+M_\text{train} = \underbrace{2P}_{\text{weights}} + \underbrace{2P}_{\text{grads}} + \underbrace{12P}_{\text{Adam m, v, fp32 master}} + M_\text{act}
+\]</div>
+<p>That well-known <span class="arithmatex">\(\approx 16P\)</span> bytes (plus activations) is why training a 7B model needs on the order of 112 GB of optimizer-related state. The rollout engine, by contrast, holds only weights and a KV cache:</p>
+<div class="arithmatex">\[
+M_\text{infer} = \underbrace{2P}_{\text{weights}} + M_\text{KV}
+\]</div>
+<p>A bf16 7B policy is 14 GB of weights; the rest of an 80 GB GPU is free for KV cache, which is exactly what an inference engine like <a href="../07-inference-serving/03-vllm-internals.html">vLLM</a> or <a href="../07-inference-serving/04-sglang-radixattention.html">SGLang</a> wants — more KV cache means larger rollout batches and higher decode throughput.</p>
+<p><strong>Compute profile.</strong> Training is <em>compute bound</em>: a forward+backward pass is <span class="arithmatex">\(\approx 6P\)</span> FLOPs per token and saturates the tensor cores. Decoding is <em>memory-bandwidth bound</em>: each generated token reads the entire weight matrix from HBM but does only <span class="arithmatex">\(\approx 2P\)</span> FLOPs, so the GPU&rsquo;s arithmetic units idle while the memory bus is the bottleneck. (This is the prefill-vs-decode distinction from <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference</a>, and the roofline picture from <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>.)</p>
+<p><strong>Temporal profile.</strong> Generation is <em>long and bursty per sample but parallelizable across samples</em>; a long chain-of-thought rollout can take tens of seconds. Training is <em>short and dense</em>: once the rollouts and advantages are ready, a handful of minibatch gradient steps finish in seconds.</p>
+<p>These three mismatches are the crux. If you put both workloads on the same GPU at the same time, they contend for HBM and you must shrink both. If you put them on separate GPUs, one pool sits idle while the other works (unless you pipeline). The art of RL infrastructure is hiding that idle time.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: parallelism layouts differ too</p>
+<p>It is not just memory and compute that differ — the <em>parallelism strategy</em> differs. A trainer typically uses FSDP/ZeRO (<a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I</a>) or Megatron-style tensor + pipeline parallelism (<a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II</a>) tuned for backward throughput. The inference engine picks a <em>different</em> tensor-parallel degree tuned for decode latency and KV-cache headroom. The mismatch between these two layouts is the <strong>resharding problem</strong> of <a href="#the-resharding-problem-training-vs-inference-layouts">§5</a>, and it is the reason weight sync is hard rather than a simple memcpy.</p>
+</div>
+<h2 id="colocated-sharing-gpus-between-training-and-rollout">Colocated: Sharing GPUs Between Training and Rollout<a class="headerlink" href="#colocated-sharing-gpus-between-training-and-rollout" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-colocated-disagg">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 790 412" role="img" aria-label="Colocated versus disaggregated RL placement: colocated time-slices one shared GPU pool between rollout and training, while disaggregated runs separate rollout and training pools connected by a weight-sync path and an experience path.">
+  <defs>
+    <marker id="cd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-colocated-disagg text{ fill:var(--ink-soft); }
+    #fig-colocated-disagg .ttl{ font:700 14px var(--sans,sans-serif); }
+    #fig-colocated-disagg .sub{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-colocated-disagg .role{ font:700 12px var(--sans,sans-serif); }
+    #fig-colocated-disagg .small{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-colocated-disagg .mono{ font:600 10px var(--mono,monospace); }
+    #fig-colocated-disagg .tag{ font:600 10.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-colocated-disagg .gen{ fill:var(--accent2,#3b82f6); }
+    #fig-colocated-disagg .trn{ fill:var(--accent); }
+  </style>
+
+
+  <line x1="380" y1="34" x2="380" y2="396" class="v-grid" stroke-width="1.2" stroke-dasharray="4 4"/>
+
+
+  <g data-anim="1">
+    <rect x="232" y="12" width="13" height="13" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+    <text x="251" y="22" class="small">rollout / generation (memory-bound)</text>
+    <rect x="488" y="12" width="13" height="13" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
+    <text x="507" y="22" class="small">trainer / fwd+bwd (compute-bound)</text>
+  </g>
+
+
+
+
+  <g data-anim="2">
+    <text x="30" y="50" class="ttl">COLOCATED</text>
+    <text x="30" y="66" class="sub">one GPU pool, time-sliced (hybrid engine)</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="30" y="78" width="320" height="58" rx="8" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="44" y="96" class="tag">8&#215; GPU &#183; shared</text>
+    <g class="mono" text-anchor="middle">
+      <rect x="186" y="104" width="36" height="22" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+      <rect x="228" y="104" width="36" height="22" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+      <rect x="270" y="104" width="36" height="22" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+      <rect x="312" y="104" width="36" height="22" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+      <text x="204" y="119">G</text><text x="246" y="119">G</text><text x="288" y="119">G</text><text x="330" y="119">G</text>
+    </g>
+  </g>
+
+
+  <g data-anim="3">
+    <text x="30" y="170" class="role">HBM timeline (serial phases)</text>
+
+
+    <rect x="30" y="180" width="206" height="50" rx="6" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.16" stroke="var(--accent2,#3b82f6)" stroke-width="1.3"/>
+    <text x="133" y="199" text-anchor="middle" class="role gen" fill="var(--accent2,#3b82f6)">ROLLOUT</text>
+    <text x="133" y="214" text-anchor="middle" class="small">weights + KV cache; optimizer</text>
+    <text x="133" y="225" text-anchor="middle" class="small">state offloaded to CPU</text>
+
+
+    <line x1="240" y1="205" x2="266" y2="205" class="v-muted" stroke="currentColor" stroke-width="1.4" marker-end="url(#cd-arrow)"/>
+
+
+    <rect x="270" y="180" width="80" height="50" rx="6" class="trn" fill="var(--accent)" fill-opacity="0.16" stroke="var(--accent)" stroke-width="1.3"/>
+    <text x="310" y="199" text-anchor="middle" class="role trn" fill="var(--accent)">TRAIN</text>
+    <text x="310" y="214" text-anchor="middle" class="small">grads +</text>
+    <text x="310" y="225" text-anchor="middle" class="small">Adam</text>
+  </g>
+
+
+  <g data-anim="4">
+    <path d="M310 230 C310 250 133 250 133 234" fill="none" class="trn" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#cd-arrow)"/>
+    <text x="222" y="262" text-anchor="middle" class="tag">weight sync: in-place / CUDA IPC (~0 ms)</text>
+  </g>
+
+
+  <g data-anim="4">
+    <rect x="30" y="282" width="320" height="98" rx="7" class="v-fill v-grid" stroke-width="1.1"/>
+    <text x="44" y="302" class="role">No overlap &#8594; one capability idle</text>
+    <text x="44" y="320" class="small">Phases are strictly serial: training-grade GPUs</text>
+    <text x="44" y="333" class="small">spend the long rollout doing memory-bound decode.</text>
+    <text x="44" y="354" class="mono" fill="var(--warn,#e0a106)">U &#8776; T_train / T_iter  (small, rollout-bound)</text>
+    <text x="44" y="372" class="small">+ simplest to run &#183; 1:1 ratio forced &#183; on-policy</text>
+  </g>
+
+
+
+
+  <g data-anim="2">
+    <text x="410" y="50" class="ttl">DISAGGREGATED</text>
+    <text x="410" y="66" class="sub">two pools, sized independently &amp; pipelined</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="410" y="80" width="200" height="64" rx="8" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.12" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <text x="424" y="98" class="tag" fill="var(--accent2,#3b82f6)">ROLLOUT POOL</text>
+    <text x="424" y="111" class="small">12&#215; GPU &#183; vLLM TP=2 &#183; KV cache</text>
+    <g class="mono" text-anchor="middle" fill="var(--accent2,#3b82f6)">
+      <rect x="424" y="118" width="26" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <rect x="456" y="118" width="26" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <rect x="488" y="118" width="26" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <rect x="520" y="118" width="26" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <rect x="552" y="118" width="26" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <rect x="584" y="118" width="20" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <g fill="var(--surface,#fff)"><text x="437" y="131">G</text><text x="469" y="131">G</text><text x="501" y="131">G</text><text x="533" y="131">G</text><text x="565" y="131">G</text></g>
+    </g>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="410" y="232" width="200" height="60" rx="8" class="trn" fill="var(--accent)" fill-opacity="0.12" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="424" y="250" class="tag" fill="var(--accent)">TRAINING POOL</text>
+    <text x="424" y="263" class="small">4&#215; GPU &#183; FSDP / Megatron &#183; Adam</text>
+    <g class="mono" text-anchor="middle">
+      <rect x="424" y="270" width="30" height="16" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
+      <rect x="460" y="270" width="30" height="16" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
+      <rect x="496" y="270" width="30" height="16" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
+      <rect x="532" y="270" width="30" height="16" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
+      <g fill="var(--surface,#fff)"><text x="439" y="282">T</text><text x="475" y="282">T</text><text x="511" y="282">T</text><text x="547" y="282">T</text></g>
+    </g>
+  </g>
+
+
+  <g data-anim="4">
+    <line x1="460" y1="232" x2="460" y2="146" class="trn viz-draw" style="--len:86" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#cd-arrow)"/>
+    <text x="452" y="192" text-anchor="end" class="tag" fill="var(--accent)">weights</text>
+    <text x="452" y="204" text-anchor="end" class="small">NCCL bcast</text>
+    <text x="452" y="215" text-anchor="end" class="small">+ reshard</text>
+  </g>
+
+
+  <g data-anim="4">
+    <line x1="560" y1="146" x2="560" y2="230" class="gen viz-draw" style="--len:84" stroke="var(--accent2,#3b82f6)" stroke-width="1.8" marker-end="url(#cd-arrow)"/>
+    <text x="568" y="192" class="tag" fill="var(--accent2,#3b82f6)">experience</text>
+    <text x="568" y="204" class="small">rollouts</text>
+    <text x="568" y="215" class="small">via Ray queue</text>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="410" y="306" width="320" height="74" rx="7" class="v-fill v-grid" stroke-width="1.1"/>
+    <text x="424" y="326" class="role">Pools overlap &#8594; both stay busy</text>
+    <text x="424" y="344" class="small">Rollout generates the next batch while the trainer</text>
+    <text x="424" y="357" class="small">steps on the current one &#8212; at the cost of 1-step</text>
+    <text x="424" y="370" class="mono" fill="var(--good,#2f9e6e)">staleness, corrected by the PPO/GRPO ratio &#961;.</text>
+  </g>
+</svg>
+<figcaption><b>Where the bytes live: colocated time-slicing vs disaggregated pools.</b> <b>Colocated</b> runs rollout and training on one shared GPU pool in strictly serial phases (weights swapped in place via CUDA IPC), so the expensive training-grade GPUs spend most of a rollout-bound run idling at low utilization. <b>Disaggregated</b> splits generation and training onto independently-sized pools connected by a weight-sync path (NCCL broadcast + resharding) and an experience path; the two overlap to keep both busy, paying a one-step <b>staleness</b> that the importance ratio corrects.</figcaption>
+</figure>
+
+<p>In a <strong>colocated</strong> design, the same physical GPUs run both the trainer and the rollout engine. This is the default in <a href="../06-rl-infra/03-trl.html">TRL</a>, the classic configuration in <a href="../06-rl-infra/04-verl.html">veRL</a>&rsquo;s &ldquo;hybrid engine,&rdquo; and the simplest thing to reason about. The fundamental constraint is that an 80 GB GPU cannot simultaneously hold <span class="arithmatex">\(16P\)</span> bytes of training state <em>and</em> <span class="arithmatex">\(2P\)</span> bytes of inference weights <em>and</em> a useful KV cache. Something has to give, and the three strategies for making it give are <strong>time-slicing</strong>, <strong>offloading</strong>, and <strong>memory partitioning</strong>.</p>
+<h3 id="time-slicing-the-hybrid-engine">Time-slicing (the hybrid engine)<a class="headerlink" href="#time-slicing-the-hybrid-engine" title="Permanent link">¶</a></h3>
+<p>The cleanest colocated pattern runs the two phases sequentially on the same GPUs and swaps which one owns memory. During the rollout phase, the inference engine is &ldquo;live&rdquo;: weights are resident, KV cache is allocated, the trainer&rsquo;s optimizer state and gradients are pushed out of the way (to CPU or freed). During the training phase, the inference engine releases its KV cache and the trainer reclaims the memory for activations and gradients.</p>
+<figure class="viz" id="fig-colodis-memory-timeline">
+<svg viewBox="0 0 820 430" role="img" aria-label="Colocated GPU memory timeline: during rollout phase an 80 GB GPU holds policy weights (14 GB), KV cache (50 GB), and inference activations (4 GB) while optimizer state is offloaded to CPU; during train phase the KV cache is freed and the GPU holds weights plus grads (28 GB), activations (20 GB), and reloads 84 GB Adam state from CPU.">
+  <defs>
+    <marker id="mt-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
+    </marker>
+    <marker id="mt-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#0ea5e9)"/>
+    </marker>
+    <marker id="mt-arrow-accent2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#c2410c)"/>
+    </marker>
+    <marker id="mt-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#999)"/>
+    </marker>
+
+    <pattern id="mt-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="var(--accent-2,#c2410c)" stroke-width="2.5" stroke-opacity="0.4"/>
+    </pattern>
+    <style>
+      #fig-colodis-memory-timeline .lbl  { font: 700 13px var(--sans,sans-serif); }
+      #fig-colodis-memory-timeline .seg  { font: 600 11px var(--sans,sans-serif); }
+      #fig-colodis-memory-timeline .tiny { font: 400 10px var(--sans,sans-serif); }
+      #fig-colodis-memory-timeline .axis { font: 600 12px var(--sans,sans-serif); }
+      #fig-colodis-memory-timeline .ann  { font: 500 10px var(--sans,sans-serif); }
+      #fig-colodis-memory-timeline text  { fill: var(--ink-soft,#333); }
+      #fig-colodis-memory-timeline .v-muted-txt { fill: var(--muted,#888); }
+    </style>
+  </defs>
+
+
+  <line x1="55" y1="38" x2="780" y2="38" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#mt-arrow)"/>
+
+  <line x1="110" y1="33" x2="110" y2="43" stroke="var(--ink-soft,#555)" stroke-width="1.5"/>
+  <text x="110" y="28" text-anchor="middle" class="axis">t0</text>
+
+  <line x1="430" y1="33" x2="430" y2="43" stroke="var(--ink-soft,#555)" stroke-width="1.5"/>
+  <text x="430" y="28" text-anchor="middle" class="axis">t1</text>
+
+  <line x1="740" y1="33" x2="740" y2="43" stroke="var(--ink-soft,#555)" stroke-width="1.5"/>
+  <text x="740" y="28" text-anchor="middle" class="axis">t2</text>
+
+  <text x="270" y="54" text-anchor="middle" class="lbl" fill="var(--accent,#0ea5e9)">ROLLOUT PHASE</text>
+  <text x="660" y="54" text-anchor="middle" class="lbl" fill="var(--accent-2,#c2410c)">TRAIN PHASE</text>
+
+
+  <text x="48" y="80" text-anchor="end" class="tiny v-muted-txt">80 GB</text>
+  <text x="48" y="388" text-anchor="end" class="tiny v-muted-txt">0 GB</text>
+  <text x="26" y="235" text-anchor="middle" class="tiny v-muted-txt" transform="rotate(-90,26,235)">HBM used</text>
+
+
+
+
+  <rect x="110" y="335" width="240" height="53" fill="var(--accent,#0ea5e9)" fill-opacity="0.75" stroke="var(--accent,#0ea5e9)" stroke-width="1"/>
+  <text x="230" y="355" text-anchor="middle" class="seg" fill="var(--accent,#0ea5e9)">policy weights (bf16)</text>
+  <text x="230" y="371" text-anchor="middle" class="seg" fill="var(--accent,#0ea5e9)">14 GB</text>
+
+
+  <rect x="110" y="148" width="240" height="187" fill="var(--accent,#0ea5e9)" fill-opacity="0.28" stroke="var(--accent,#0ea5e9)" stroke-width="1"/>
+  <text x="230" y="235" text-anchor="middle" class="seg" fill="var(--accent,#0ea5e9)">KV cache (paged)</text>
+  <text x="230" y="252" text-anchor="middle" class="seg" fill="var(--accent,#0ea5e9)">~50 GB</text>
+
+
+  <rect x="110" y="126" width="240" height="22" fill="var(--muted,#aaa)" fill-opacity="0.45" stroke="var(--muted,#aaa)" stroke-width="1"/>
+  <text x="230" y="141" text-anchor="middle" class="tiny">inference activations ~4 GB</text>
+
+
+  <rect x="110" y="80" width="240" height="46" fill="none" stroke="var(--border-2,#bbb)" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="230" y="107" text-anchor="middle" class="tiny v-muted-txt">(free ~12 GB)</text>
+
+
+  <rect x="110" y="80" width="240" height="308" fill="none" stroke="var(--ink-soft,#666)" stroke-width="1.5"/>
+
+
+
+  <rect x="470" y="283" width="240" height="105" fill="var(--accent-2,#c2410c)" fill-opacity="0.75" stroke="var(--accent-2,#c2410c)" stroke-width="1"/>
+  <text x="590" y="328" text-anchor="middle" class="seg" fill="var(--accent-2,#c2410c)">weights + grads</text>
+  <text x="590" y="345" text-anchor="middle" class="seg" fill="var(--accent-2,#c2410c)">28 GB</text>
+
+
+  <rect x="470" y="208" width="240" height="75" fill="var(--muted,#aaa)" fill-opacity="0.45" stroke="var(--muted,#aaa)" stroke-width="1"/>
+  <text x="590" y="250" text-anchor="middle" class="seg">activations</text>
+  <text x="590" y="266" text-anchor="middle" class="seg">~20 GB</text>
+
+
+  <rect x="470" y="80" width="240" height="128" fill="url(#mt-hatch)" stroke="var(--accent-2,#c2410c)" stroke-width="1.5" stroke-dasharray="6 3"/>
+  <text x="590" y="128" text-anchor="middle" class="seg" fill="var(--accent-2,#c2410c)">Adam state (fp32)</text>
+  <text x="590" y="145" text-anchor="middle" class="seg" fill="var(--accent-2,#c2410c)">~84 GB</text>
+  <text x="590" y="162" text-anchor="middle" class="tiny" fill="var(--accent-2,#c2410c)">(reloaded from CPU H2D;</text>
+  <text x="590" y="176" text-anchor="middle" class="tiny" fill="var(--accent-2,#c2410c)">exceeds bar -- dominant cost)</text>
+
+
+  <rect x="470" y="80" width="240" height="308" fill="none" stroke="var(--ink-soft,#666)" stroke-width="1.5"/>
+
+
+  <line x1="475" y1="76" x2="475" y2="60" stroke="var(--accent,#0ea5e9)" stroke-width="1.5" marker-end="url(#mt-arrow-accent)" stroke-dasharray="4 3"/>
+  <text x="475" y="54" text-anchor="middle" class="ann" fill="var(--accent,#0ea5e9)">KV cache freed (~50 GB released)</text>
+
+
+  <rect x="130" y="400" width="200" height="22" rx="4" fill="var(--surface,#f0f0f0)" stroke="var(--border-2,#aaa)" stroke-width="1.2"/>
+  <text x="230" y="415" text-anchor="middle" class="ann">CPU host RAM (pinned)</text>
+
+
+  <line x1="190" y1="388" x2="190" y2="398" stroke="var(--muted,#999)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#mt-arrow-muted)"/>
+  <text x="60" y="397" text-anchor="middle" class="tiny v-muted-txt">opt. state</text>
+  <text x="60" y="409" text-anchor="middle" class="tiny v-muted-txt">offloaded</text>
+
+
+
+  <rect x="460" y="400" width="240" height="22" rx="4" fill="var(--surface,#f0f0f0)" stroke="var(--accent-2,#c2410c)" stroke-width="1.2" stroke-dasharray="4 2"/>
+  <text x="580" y="415" text-anchor="middle" class="ann" fill="var(--accent-2,#c2410c)">CPU RAM -&gt; H2D reload (Adam)</text>
+  <line x1="530" y1="400" x2="530" y2="392" stroke="var(--accent-2,#c2410c)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#mt-arrow-accent2)"/>
+
+
+
+  <line x1="430" y1="60" x2="430" y2="395" stroke="var(--border-2,#bbb)" stroke-width="1.5" stroke-dasharray="6 4"/>
+
+
+  <text x="430" y="74" text-anchor="middle" class="tiny v-muted-txt">phase</text>
+  <text x="430" y="86" text-anchor="middle" class="tiny v-muted-txt">boundary</text>
+
+</svg>
+<figcaption><b>A single colocated 80 GB GPU holds very different content in the two time-sliced phases.</b> During rollout the bulk of HBM is consumed by the paged KV cache (~50 GB) while the optimizer's Adam state (~84 GB) is offloaded to CPU pinned memory. At the phase boundary (t1) the KV cache is freed, the inference engine sleeps, and the training phase reloads the Adam state from CPU over PCIe — the dominant latency cost of colocated time-slicing.</figcaption>
+</figure>
+
+<p>veRL calls this the <strong>hybrid engine</strong>: a single set of workers that wears two hats, flipping between a training role (FSDP or Megatron) and a generation role (vLLM/SGLang) on command from the single controller. The key implementation detail is that the inference engine must support <em>sleep/wake</em>: it tears down and rebuilds its KV-cache memory pool around the training phase rather than holding it for the whole iteration.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Sketch of the time-sliced colocated loop (single-controller view, veRL-style).</span>
+<span class="c1"># Each &quot;worker&quot; actually holds BOTH an FSDP-wrapped trainer and a vLLM engine</span>
+<span class="c1"># bound to the same CUDA devices. We flip between them every iteration.</span>
+
+<span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_steps</span><span class="p">):</span>
+    <span class="c1"># ---- PHASE 1: ROLLOUT ----------------------------------------------------</span>
+    <span class="c1"># Wake the inference engine: allocate the KV-cache pool on the GPUs.</span>
+    <span class="n">rollout_engine</span><span class="o">.</span><span class="n">wake_up</span><span class="p">()</span>                  <span class="c1"># cudaMalloc the paged KV blocks</span>
+    <span class="c1"># Trainer state is offloaded so the KV cache has room (see §offloading).</span>
+    <span class="n">trainer</span><span class="o">.</span><span class="n">offload_optimizer_to_cpu</span><span class="p">()</span>        <span class="c1"># async D2H copy of Adam m, v, master</span>
+    <span class="n">trainer</span><span class="o">.</span><span class="n">offload_grads</span><span class="p">()</span>
+
+    <span class="n">batch</span> <span class="o">=</span> <span class="n">sample_prompts</span><span class="p">(</span><span class="n">dataset</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">global_batch</span><span class="p">)</span>
+    <span class="c1"># generate() runs continuous batching over all prompts (G samples each for GRPO)</span>
+    <span class="n">completions</span> <span class="o">=</span> <span class="n">rollout_engine</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">sampling_params</span><span class="p">)</span>
+
+    <span class="c1"># ---- PHASE 2: REWARD -----------------------------------------------------</span>
+    <span class="n">rewards</span> <span class="o">=</span> <span class="n">reward_fn</span><span class="p">(</span><span class="n">batch</span><span class="o">.</span><span class="n">prompts</span><span class="p">,</span> <span class="n">completions</span><span class="p">)</span>        <span class="c1"># may call a sandbox/verifier</span>
+    <span class="n">advantages</span> <span class="o">=</span> <span class="n">compute_group_advantages</span><span class="p">(</span><span class="n">rewards</span><span class="p">)</span>         <span class="c1"># GRPO: r_i - mean(r_group)</span>
+
+    <span class="c1"># ---- PHASE 3: TRAIN ------------------------------------------------------</span>
+    <span class="n">rollout_engine</span><span class="o">.</span><span class="n">sleep</span><span class="p">()</span>                    <span class="c1"># free the KV-cache pool back to the allocator</span>
+    <span class="n">trainer</span><span class="o">.</span><span class="n">reload_optimizer_to_gpu</span><span class="p">()</span>         <span class="c1"># bring Adam state back (async H2D)</span>
+
+    <span class="k">for</span> <span class="n">micro</span> <span class="ow">in</span> <span class="n">make_microbatches</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">completions</span><span class="p">,</span> <span class="n">advantages</span><span class="p">):</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">trainer</span><span class="o">.</span><span class="n">compute_loss</span><span class="p">(</span><span class="n">micro</span><span class="p">)</span>    <span class="c1"># fwd + bwd under FSDP</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+    <span class="n">trainer</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+    <span class="n">trainer</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+
+    <span class="c1"># ---- PHASE 4: WEIGHT SYNC ------------------------------------------------</span>
+    <span class="c1"># Push the just-updated weights into the (sleeping) inference engine&#39;s</span>
+    <span class="c1"># parameter buffers so the NEXT rollout uses the new policy. See §4.</span>
+    <span class="n">sync_weights</span><span class="p">(</span><span class="n">trainer</span><span class="p">,</span> <span class="n">rollout_engine</span><span class="p">)</span>
+</code></pre></div>
+<p>The beauty of time-slicing is <strong>GPU utilization</strong>: every GPU is busy in every phase, because there is only one pool. The cost is <strong>latency</strong> — the phases are strictly serial, so the rollout GPUs are doing inference work while the (same) training capability sits idle, and vice versa. There is no overlap. For a run where rollout dominates wall-clock (long reasoning traces), this means your expensive training-capable cluster spends most of its time doing memory-bound decode at low FLOP utilization.</p>
+<h3 id="offloading">Offloading<a class="headerlink" href="#offloading" title="Permanent link">¶</a></h3>
+<p>Time-slicing only works if you can <em>make room</em>. The mechanism is offloading: moving tensors that are not needed in the current phase off the GPU. There are two flavors:</p>
+<ol>
+<li>
+<p><strong>Optimizer-state offload (host RAM).</strong> Adam&rsquo;s <span class="arithmatex">\(m\)</span>, <span class="arithmatex">\(v\)</span>, and fp32 master copy are <span class="arithmatex">\(12P\)</span> bytes — the largest single consumer. During rollout they are dead weight, so we copy them to pinned CPU memory over PCIe/NVLink-C2C and free the GPU tensors. Before the optimizer step we copy them back. This is exactly ZeRO-Offload / FSDP CPU-offload (<a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training</a>), reused here on a per-phase cadence.</p>
+</li>
+<li>
+<p><strong>Weight offload / KV-cache release.</strong> The inference engine&rsquo;s KV pool (tens of GB) is released between rollouts. Inference <em>weights</em> may be kept resident (they are the same bytes the trainer needs) or, in the most aggressive colocation, the inference engine and trainer literally alias the <em>same</em> weight tensors — there is one copy of the parameters and a &ldquo;view&rdquo; of them for each role.</p>
+</li>
+</ol>
+<p>The offload transfer is not free. A 7B model&rsquo;s Adam state is <span class="arithmatex">\(12 \times 7\text{e}9 = 84\)</span> GB. Over a 64 GB/s PCIe 4.0 x16 link that is <span class="arithmatex">\(84 / 64 \approx 1.3\)</span> s each way, or 2.6 s of pure copy per iteration. Over NVLink-C2C (Grace-Hopper, hundreds of GB/s) it is a fraction of that. This copy time is the hidden tax of colocated time-slicing, and it is why fast host interconnects (NVLink-C2C, large pinned buffers, double-buffered async copies) matter so much.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>Always use <strong>pinned (page-locked) host memory</strong> for offload buffers and issue the copies on a dedicated CUDA stream so they overlap with the tail of the previous phase. A naïve <code>tensor.cpu()</code> allocates pageable memory and serializes the copy, turning a 0.5 s overlap-able transfer into a 2 s stall. In PyTorch: pre-allocate with <code>torch.empty(..., pin_memory=True)</code> and use <code>non_blocking=True</code> on <code>.to()</code>.</p>
+</div>
+<h3 id="memory-partitioning-true-simultaneous-colocation">Memory partitioning (true simultaneous colocation)<a class="headerlink" href="#memory-partitioning-true-simultaneous-colocation" title="Permanent link">¶</a></h3>
+<p>The third option is to <em>not</em> time-slice at all: carve the GPU&rsquo;s HBM into a training partition and an inference partition that coexist. This is rare in pure RL because the combined footprint rarely fits, but it appears in two guises: (a) very small models or heavily LoRA-fied policies where <span class="arithmatex">\(16P\)</span> is tiny, and (b) <strong>multiplexing via MPS</strong> (NVIDIA Multi-Process Service) or MIG, where two processes share SMs and memory under a hardware scheduler. The win is true overlap; the risk is that the two contend for HBM bandwidth and <em>both</em> slow down. In practice, time-slicing + offload dominates for full-parameter RL; partitioning shows up mainly with LoRA-based RL where the policy delta is small.</p>
+<h2 id="disaggregated-separate-pools-for-training-and-rollout">Disaggregated: Separate Pools for Training and Rollout<a class="headerlink" href="#disaggregated-separate-pools-for-training-and-rollout" title="Permanent link">¶</a></h2>
+<p>The <strong>disaggregated</strong> design gives up on sharing. You provision two distinct GPU pools: a <em>training cluster</em> and an <em>inference (rollout) cluster</em>, each with its own optimal parallelism layout, connected by a network and a weight-sync channel. This is the design of <a href="../06-rl-infra/05-openrlhf-nemo-ray.html">OpenRLHF</a>, the async architecture of <a href="../06-rl-infra/06-prime-rl-async.html">Prime-RL</a>, and the throughput-optimized mode of large-scale veRL deployments. It mirrors the <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">disaggregated prefill/decode</a> idea from serving — split a workload whose phases have different hardware profiles onto specialized hardware.</p>
+<figure class="viz" id="fig-colodis-disagg-topology">
+<svg viewBox="0 0 860 420" role="img" aria-label="Disaggregated RL topology: a training pool of 8 GPUs using FSDP or Megatron on the left, a rollout pool of 16 GPUs using vLLM on the right, connected by a weight-sync rail left-to-right and an experience rail right-to-left; a reward workers box at the bottom receives completions from the rollout pool and sends advantages back to the training pool.">
+  <defs>
+    <marker id="dt-arr-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#0ea5e9)"/>
+    </marker>
+    <marker id="dt-arr-l" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#666)"/>
+    </marker>
+    <marker id="dt-arr-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#999)"/>
+    </marker>
+    <style>
+      #fig-colodis-disagg-topology .lbl  { font: 700 14px var(--sans,sans-serif); }
+      #fig-colodis-disagg-topology .sub  { font: 400 11px var(--sans,sans-serif); }
+      #fig-colodis-disagg-topology .edge { font: 600 11px var(--sans,sans-serif); }
+      #fig-colodis-disagg-topology .tiny { font: 400 10px var(--sans,sans-serif); }
+      #fig-colodis-disagg-topology .gpu  { font: 400 7px var(--sans,sans-serif); }
+      #fig-colodis-disagg-topology text  { fill: var(--ink-soft,#333); }
+      #fig-colodis-disagg-topology .v-muted { fill: var(--muted,#888); }
+    </style>
+  </defs>
+
+
+  <rect x="20" y="40" width="300" height="160" rx="10" fill="var(--accent-2,#c2410c)" fill-opacity="0.10" stroke="var(--accent-2,#c2410c)" stroke-width="2.5"/>
+
+
+  <g transform="translate(30,52)">
+    <rect x="0"   y="0" width="22" height="14" rx="2" fill="var(--accent-2,#c2410c)" fill-opacity="0.5" stroke="var(--accent-2,#c2410c)" stroke-width="0.8"/>
+    <rect x="26"  y="0" width="22" height="14" rx="2" fill="var(--accent-2,#c2410c)" fill-opacity="0.5" stroke="var(--accent-2,#c2410c)" stroke-width="0.8"/>
+    <rect x="52"  y="0" width="22" height="14" rx="2" fill="var(--accent-2,#c2410c)" fill-opacity="0.5" stroke="var(--accent-2,#c2410c)" stroke-width="0.8"/>
+    <rect x="78"  y="0" width="22" height="14" rx="2" fill="var(--accent-2,#c2410c)" fill-opacity="0.5" stroke="var(--accent-2,#c2410c)" stroke-width="0.8"/>
+    <rect x="104" y="0" width="22" height="14" rx="2" fill="var(--accent-2,#c2410c)" fill-opacity="0.5" stroke="var(--accent-2,#c2410c)" stroke-width="0.8"/>
+    <rect x="130" y="0" width="22" height="14" rx="2" fill="var(--accent-2,#c2410c)" fill-opacity="0.5" stroke="var(--accent-2,#c2410c)" stroke-width="0.8"/>
+    <rect x="156" y="0" width="22" height="14" rx="2" fill="var(--accent-2,#c2410c)" fill-opacity="0.5" stroke="var(--accent-2,#c2410c)" stroke-width="0.8"/>
+    <rect x="182" y="0" width="22" height="14" rx="2" fill="var(--accent-2,#c2410c)" fill-opacity="0.5" stroke="var(--accent-2,#c2410c)" stroke-width="0.8"/>
+  </g>
+
+  <text x="170" y="90" text-anchor="middle" class="lbl" fill="var(--accent-2,#c2410c)">TRAINING POOL</text>
+  <text x="170" y="110" text-anchor="middle" class="sub">8× GPU, FSDP / Megatron</text>
+  <text x="170" y="128" text-anchor="middle" class="sub">holds optimizer state</text>
+  <text x="170" y="146" text-anchor="middle" class="sub">does fwd + bwd</text>
+  <text x="170" y="164" text-anchor="middle" class="tiny v-muted">(compute-bound, ~16P bytes)</text>
+  <text x="170" y="182" text-anchor="middle" class="tiny v-muted">tp/pp tuned for throughput</text>
+
+
+  <rect x="540" y="40" width="300" height="160" rx="10" fill="var(--accent,#0ea5e9)" fill-opacity="0.10" stroke="var(--accent,#0ea5e9)" stroke-width="2.5"/>
+
+
+  <g transform="translate(550,52)">
+
+    <rect x="0"   y="0" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="22"  y="0" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="44"  y="0" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="66"  y="0" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="88"  y="0" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="110" y="0" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="132" y="0" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="154" y="0" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+
+    <rect x="0"   y="16" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="22"  y="16" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="44"  y="16" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="66"  y="16" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="88"  y="16" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="110" y="16" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="132" y="16" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+    <rect x="154" y="16" width="18" height="12" rx="2" fill="var(--accent,#0ea5e9)" fill-opacity="0.5" stroke="var(--accent,#0ea5e9)" stroke-width="0.8"/>
+  </g>
+
+  <text x="690" y="100" text-anchor="middle" class="lbl" fill="var(--accent,#0ea5e9)">ROLLOUT POOL</text>
+  <text x="690" y="118" text-anchor="middle" class="sub">16× GPU, vLLM TP=2</text>
+  <text x="690" y="136" text-anchor="middle" class="sub">holds KV cache</text>
+  <text x="690" y="154" text-anchor="middle" class="sub">does generation</text>
+  <text x="690" y="172" text-anchor="middle" class="tiny v-muted">(memory-bw bound, ~2P + KV)</text>
+  <text x="690" y="188" text-anchor="middle" class="tiny v-muted">tp tuned for decode latency</text>
+
+
+
+
+
+  <line x1="322" y1="96" x2="538" y2="96" stroke="var(--accent,#0ea5e9)" stroke-width="5" marker-end="url(#dt-arr-r)"/>
+  <line x1="322" y1="96" x2="534" y2="96" stroke="var(--surface,#fff)" stroke-width="1.5" opacity="0.5"/>
+  <text x="430" y="82" text-anchor="middle" class="edge" fill="var(--accent,#0ea5e9)">weight sync</text>
+  <text x="430" y="95" text-anchor="middle" class="tiny" fill="var(--accent,#0ea5e9)">(NCCL bcast / IPC / ckpt)</text>
+
+
+  <line x1="538" y1="148" x2="322" y2="148" stroke="var(--ink-soft,#777)" stroke-width="3" marker-end="url(#dt-arr-l)"/>
+  <line x1="538" y1="148" x2="326" y2="148" stroke="var(--surface,#fff)" stroke-width="1.2" opacity="0.4"/>
+  <text x="430" y="143" text-anchor="middle" class="edge">experience (rollouts)</text>
+  <text x="430" y="162" text-anchor="middle" class="tiny v-muted">via Ray / queue</text>
+
+
+  <rect x="300" y="300" width="260" height="70" rx="8" fill="var(--surface,#f8f9fa)" stroke="var(--border-2,#aaa)" stroke-width="1.5" class="v-fill v-stroke"/>
+  <text x="430" y="333" text-anchor="middle" class="lbl">reward workers</text>
+  <text x="430" y="352" text-anchor="middle" class="sub v-muted">/ sandbox / verifier</text>
+  <text x="430" y="368" text-anchor="middle" class="tiny v-muted">scores completions, computes advantages</text>
+
+
+  <line x1="650" y1="200" x2="560" y2="298" stroke="var(--muted,#999)" stroke-width="1.5" marker-end="url(#dt-arr-m)"/>
+  <text x="648" y="255" text-anchor="start" class="tiny v-muted">completions</text>
+
+
+  <line x1="300" y1="330" x2="210" y2="202" stroke="var(--muted,#999)" stroke-width="1.5" marker-end="url(#dt-arr-m)"/>
+  <text x="218" y="275" text-anchor="end" class="tiny v-muted">advantages</text>
+  <text x="218" y="288" text-anchor="end" class="tiny v-muted">/ reward</text>
+
+
+  <text x="430" y="398" text-anchor="middle" class="tiny v-muted">pools sized independently — e.g. 8 train : 16 rollout for rollout-bound runs</text>
+
+</svg>
+<figcaption><b>Disaggregated RL topology: two independently-sized GPU pools exchange weights and experience over dedicated channels.</b> The training pool (left, orange) runs FSDP/Megatron and holds optimizer state; the larger rollout pool (right, teal) runs vLLM and holds the KV cache. The emphasized weight-sync rail (top, left-to-right) is the bottleneck this chapter analyzes; the experience rail (bottom, right-to-left) carries rollout tokens back for training. A reward-worker tier scores completions and routes advantages to the trainer, completing the loop.</figcaption>
+</figure>
+
+<p>The two pools can be sized independently. If a run is rollout-bound (long generations, small policy updates), you give the rollout pool more GPUs — say 16 inference GPUs feeding 8 training GPUs. If it is training-bound (huge model, short completions), you flip the ratio. This <strong>independent scaling</strong> is the headline advantage of disaggregation and is impossible under strict colocation, where the ratio is forced to 1:1.</p>
+<p>The second advantage is <strong>pipelining</strong>. Because the pools are separate, the rollout cluster can be generating the <em>next</em> batch of experience while the training cluster is still doing gradient steps on the <em>current</em> batch. This overlap is exactly what colocated time-slicing cannot do. But it comes with a subtle cost: the rollouts generated by the inference pool were produced by a policy that is now <em>one step stale</em> relative to the trainer. We have crossed from on-policy into <strong>off-policy</strong> territory.</p>
+<h3 id="on-policy-vs-off-policy-the-staleness-knob">On-policy vs off-policy: the staleness knob<a class="headerlink" href="#on-policy-vs-off-policy-the-staleness-knob" title="Permanent link">¶</a></h3>
+<p>If the trainer waits for the rollout pool to finish before each update, and the rollout pool always uses the latest weights, the system is <strong>synchronous</strong> and <strong>on-policy</strong> — exactly equivalent to colocated time-slicing, just on separate hardware (and with one pool idle while the other works). To get overlap you must let the rollout pool run ahead, producing experience under policy <span class="arithmatex">\(\pi_{\theta_{t-k}}\)</span> while the trainer is at <span class="arithmatex">\(\theta_t\)</span>. The lag <span class="arithmatex">\(k\)</span> is the <strong>staleness</strong>.</p>
+<figure class="viz" id="fig-colodis-sync-vs-async-timeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 900 460" role="img" aria-label="Two RL execution timelines: synchronous on-policy at top where generation and update blocks alternate with no overlap and idle gaps; asynchronous off-policy at bottom where rollout and train lanes run simultaneously with no gaps, but rollout data is one step stale.">
+  <defs>
+    <marker id="sv-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
+    </marker>
+    <style>
+      @keyframes sv-playhead {
+        0%   { transform: translateX(-10px); opacity: 1; }
+        92%  { transform: translateX(780px); opacity: 1; }
+        95%  { transform: translateX(780px); opacity: 0; }
+        100% { transform: translateX(-10px); opacity: 0; }
+      }
+      @keyframes sv-block-reveal {
+        0%, var(--t0) { opacity: 0.2; }
+        var(--t1)     { opacity: 1; }
+        100%          { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .sv-playhead { display: none !important; }
+        .sv-block    { opacity: 1 !important; animation: none !important; }
+      }
+      #fig-colodis-sync-vs-async-timeline .title { font: 700 13px var(--sans,sans-serif); }
+      #fig-colodis-sync-vs-async-timeline .lane  { font: 600 11px var(--sans,sans-serif); }
+      #fig-colodis-sync-vs-async-timeline .blk   { font: 600 11px var(--sans,sans-serif); }
+      #fig-colodis-sync-vs-async-timeline .tiny  { font: 400 10px var(--sans,sans-serif); }
+      #fig-colodis-sync-vs-async-timeline .ann   { font: 500 10px var(--sans,sans-serif); }
+      #fig-colodis-sync-vs-async-timeline text   { fill: var(--ink-soft,#333); }
+      #fig-colodis-sync-vs-async-timeline .v-muted { fill: var(--muted,#888); }
+    </style>
+  </defs>
+
+
+
+  <g stroke="var(--border-2,#ccc)" stroke-width="0.8" opacity="0.6">
+    <line x1="90"  y1="60" x2="90"  y2="430"/>
+    <line x1="220" y1="60" x2="220" y2="430"/>
+    <line x1="350" y1="60" x2="350" y2="430"/>
+    <line x1="480" y1="60" x2="480" y2="430"/>
+    <line x1="610" y1="60" x2="610" y2="430"/>
+    <line x1="740" y1="60" x2="740" y2="430"/>
+    <line x1="870" y1="60" x2="870" y2="430"/>
+  </g>
+
+
+
+
+  <text x="14" y="50" class="title">SYNCHRONOUS (on-policy, no overlap)</text>
+
+
+  <text x="14" y="84" class="lane v-muted">GPU</text>
+
+
+
+
+
+  <rect class="sv-block" x="90" y="64" width="130" height="44" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="155" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ0</text>
+
+
+  <rect class="sv-block" x="220" y="64" width="100" height="44" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="270" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">update</text>
+
+
+  <rect class="sv-block" x="320" y="64" width="130" height="44" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="385" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ1</text>
+
+
+  <rect class="sv-block" x="450" y="64" width="100" height="44" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="500" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">update</text>
+
+
+  <rect class="sv-block" x="550" y="64" width="130" height="44" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="615" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ2</text>
+
+
+  <rect class="sv-block" x="680" y="64" width="100" height="44" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="730" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">update</text>
+
+
+  <text x="430" y="128" text-anchor="middle" class="ann v-muted">rollout idles during update; train idles during gen — no overlap</text>
+
+
+  <line x1="14" y1="148" x2="886" y2="148" stroke="var(--border-2,#ccc)" stroke-width="1" stroke-dasharray="6 4"/>
+
+
+
+
+  <text x="14" y="170" class="title">ASYNCHRONOUS (off-policy, overlap, staleness=1)</text>
+
+
+  <text x="14" y="202" class="lane" fill="var(--accent,#0ea5e9)">rollout</text>
+
+
+  <rect class="sv-block" x="90"  y="182" width="195" height="38" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="187" y="205" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ0</text>
+
+  <rect class="sv-block" x="285" y="182" width="195" height="38" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="382" y="205" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ1</text>
+
+  <rect class="sv-block" x="480" y="182" width="195" height="38" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="577" y="205" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ2</text>
+
+  <rect class="sv-block" x="675" y="182" width="195" height="38" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="772" y="205" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ3</text>
+
+  <text x="880" y="202" text-anchor="end" class="tiny" fill="var(--accent,#0ea5e9)">never idle</text>
+
+
+  <text x="14" y="258" class="lane" fill="var(--accent-2,#c2410c)">train</text>
+
+  <rect class="sv-block" x="285" y="238" width="195" height="38" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="382" y="261" text-anchor="middle" class="blk" fill="var(--surface,#fff)">upd θ1</text>
+
+  <rect class="sv-block" x="480" y="238" width="195" height="38" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="577" y="261" text-anchor="middle" class="blk" fill="var(--surface,#fff)">upd θ2</text>
+
+  <rect class="sv-block" x="675" y="238" width="195" height="38" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="772" y="261" text-anchor="middle" class="blk" fill="var(--surface,#fff)">upd θ3</text>
+
+  <text x="880" y="258" text-anchor="end" class="tiny" fill="var(--accent-2,#c2410c)">never idle</text>
+
+
+  <line x1="187" y1="220" x2="382" y2="238" stroke="var(--muted,#999)" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <line x1="382" y1="220" x2="577" y2="238" stroke="var(--muted,#999)" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <line x1="577" y1="220" x2="772" y2="238" stroke="var(--muted,#999)" stroke-width="1.2" stroke-dasharray="4 3"/>
+
+
+  <text x="382" y="296" text-anchor="middle" class="tiny v-muted">uses θ0</text>
+  <text x="577" y="296" text-anchor="middle" class="tiny v-muted">uses θ1</text>
+  <text x="772" y="296" text-anchor="middle" class="tiny v-muted">uses θ2</text>
+  <text x="577" y="312" text-anchor="middle" class="ann v-muted">data is 1 step stale — corrected by PPO/GRPO importance ratio</text>
+
+
+  <line x1="70" y1="430" x2="880" y2="430" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#sv-arr)"/>
+  <text x="877" y="444" text-anchor="end" class="lane">time</text>
+
+
+
+  <g class="sv-playhead" style="animation: sv-playhead 5s ease-in-out 0.3s infinite;">
+
+    <line x1="0" y1="58" x2="0" y2="422" stroke="var(--warn,#e0a106)" stroke-width="2" opacity="0.85"/>
+    <polygon points="-5,56 5,56 0,64" fill="var(--warn,#e0a106)" opacity="0.9"/>
+  </g>
+
+</svg>
+<figcaption><b>Synchronous RL serializes rollout and training; asynchronous RL overlaps them on separate pools at the cost of one step of staleness.</b> In the synchronous (top) lane, generation blocks (teal) and update blocks (orange) strictly alternate — one role idles while the other works. In the asynchronous (bottom) panel, both the rollout lane and the train lane run continuously with no gaps; the dashed connectors show that each update consumes experience produced by the <em>previous</em> generation step (staleness=1), which the PPO/GRPO importance ratio corrects.</figcaption>
+</figure>
+
+<p>Staleness is a knob, not a free lunch. A small lag (<span class="arithmatex">\(k=1\)</span>) is usually harmless and is corrected by the importance-sampling ratio already present in PPO/GRPO (<span class="arithmatex">\(\rho = \pi_\theta / \pi_{\theta_\text{old}}\)</span>); the off-policy data is reweighted toward the current policy. Large lag degrades the gradient signal and can destabilize training. Managing this — importance correction, clipping, partial rollouts, and how much asynchrony is safe — is the subject of <a href="../06-rl-infra/06-prime-rl-async.html">Prime-RL, Async RL &amp; Decentralized Training</a> and the stability tricks in <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>. For our purposes the point is structural: <strong>disaggregation buys overlap at the price of off-policyness</strong>, and the weight-sync frequency is what controls the staleness.</p>
+<h3 id="cost-of-disaggregation">Cost of disaggregation<a class="headerlink" href="#cost-of-disaggregation" title="Permanent link">¶</a></h3>
+<p>The disadvantages are real. First, <strong>idle GPUs under perfect balance are impossible</strong> — there is always slack on one side, and you pay for both pools whether or not they are saturated. Second, you now ship two large things across the network every step: the <strong>experience</strong> (rollouts) from inference to training, and the <strong>weights</strong> from training to inference. The experience is cheap (token IDs and logprobs, megabytes). The weights are not (gigabytes), and getting them across efficiently is the whole next section. Third, the system is operationally more complex: two fleets, a queue/orchestrator (usually Ray, see <a href="../06-rl-infra/05-openrlhf-nemo-ray.html">OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a>), and a weight-sync protocol that must survive the resharding mismatch.</p>
+<h2 id="weight-synchronization-mechanisms">Weight Synchronization Mechanisms<a class="headerlink" href="#weight-synchronization-mechanisms" title="Permanent link">¶</a></h2>
+<p>After the optimizer step, the trainer holds the new policy <span class="arithmatex">\(\theta_{t+1}\)</span>. The rollout engine still holds <span class="arithmatex">\(\theta_t\)</span>. We must move the new weights into the inference engine&rsquo;s parameter buffers before (or for async, soon after) the next rollout. There are three transport mechanisms, in increasing order of speed and decreasing order of robustness.</p>
+<h3 id="mechanism-1-checkpoint-reload-slow-simple-robust">Mechanism 1: Checkpoint reload (slow, simple, robust)<a class="headerlink" href="#mechanism-1-checkpoint-reload-slow-simple-robust" title="Permanent link">¶</a></h3>
+<p>The trainer writes a full checkpoint to shared storage; the inference engine reloads it. This is the &ldquo;obviously correct&rdquo; baseline and the only mechanism that trivially handles <em>any</em> layout mismatch, because the checkpoint is a layout-independent <code>state_dict</code> and the inference engine loads it with its own sharding logic — the same path it uses at startup.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Mechanism 1: checkpoint reload. Correct, slow, layout-agnostic.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">sync_via_checkpoint</span><span class="p">(</span><span class="n">trainer</span><span class="p">,</span> <span class="n">rollout_engines</span><span class="p">,</span> <span class="n">path</span><span class="p">):</span>
+    <span class="c1"># 1. Gather the FULL (unsharded) fp32/bf16 state dict on rank 0.</span>
+    <span class="c1">#    Under FSDP this triggers an all-gather of every shard.</span>
+    <span class="n">full_state</span> <span class="o">=</span> <span class="n">trainer</span><span class="o">.</span><span class="n">get_full_state_dict</span><span class="p">()</span>          <span class="c1"># heavy: materializes 2P bytes</span>
+    <span class="k">if</span> <span class="n">trainer</span><span class="o">.</span><span class="n">is_rank0</span><span class="p">:</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">full_state</span><span class="p">,</span> <span class="n">path</span><span class="p">)</span>                    <span class="c1"># write 2P bytes to disk/NFS</span>
+    <span class="n">barrier</span><span class="p">()</span>
+    <span class="c1"># 2. Every inference engine reloads from disk and re-shards to its own TP layout.</span>
+    <span class="k">for</span> <span class="n">engine</span> <span class="ow">in</span> <span class="n">rollout_engines</span><span class="p">:</span>
+        <span class="n">engine</span><span class="o">.</span><span class="n">load_weights</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>                       <span class="c1"># read 2P bytes, reshard</span>
+</code></pre></div>
+<p>For a 7B model this is 14 GB written and re-read; on NFS that can be tens of seconds. For a 70B model (140 GB) it is minutes. Checkpoint reload is fine for <em>occasional</em> sync (e.g., DPO-style offline data refresh, or recovery) but far too slow to run every RL step. Its one irreplaceable virtue: it is the fallback that always works, including across nodes that share nothing but a filesystem, and it doubles as your <a href="../03-pretraining/12-checkpointing-fault-tolerance.html">fault-tolerance checkpoint</a>.</p>
+<h3 id="mechanism-2-nccl-broadcast-fast-in-band-the-workhorse">Mechanism 2: NCCL broadcast (fast, in-band, the workhorse)<a class="headerlink" href="#mechanism-2-nccl-broadcast-fast-in-band-the-workhorse" title="Permanent link">¶</a></h3>
+<p>The standard fast path is to keep the weights on the GPU the entire time and move them GPU-to-GPU over NVLink/InfiniBand using <strong>NCCL collectives</strong> (<a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a>). The trainer ranks that own each parameter shard <code>broadcast</code> it directly into the inference ranks&rsquo; parameter tensors, never touching disk or host memory.</p>
+<p>The trick is that the trainer and inference processes are <em>different process groups</em>. To make NCCL move a tensor from one to the other you build a <strong>shared communicator</strong> that spans both — a process group whose members are (training rank 0 …) ∪ (inference rank 0 …). NCCL needs a rendezvous: rank 0 creates a unique ID, distributes it (over Ray, a file, or a socket), and every participant calls <code>init_process_group</code> / <code>ncclCommInitRank</code> with it.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Mechanism 2: NCCL broadcast over a process group that SPANS trainer + inference.</span>
+<span class="c1"># Run on every rank in the combined group. We assume the param NAMES match and</span>
+<span class="c1"># we send one parameter at a time, broadcasting from the trainer rank that owns it.</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">WeightSyncGroup</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rank</span><span class="p">,</span> <span class="n">world_size</span><span class="p">,</span> <span class="n">master_addr</span><span class="p">,</span> <span class="n">master_port</span><span class="p">):</span>
+        <span class="c1"># ONE communicator that includes BOTH the training ranks and the</span>
+        <span class="c1"># inference ranks. The trainer is the &quot;source&quot; of every broadcast.</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">init_process_group</span><span class="p">(</span>
+            <span class="n">backend</span><span class="o">=</span><span class="s2">&quot;nccl&quot;</span><span class="p">,</span>
+            <span class="n">init_method</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;tcp://</span><span class="si">{</span><span class="n">master_addr</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">master_port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">rank</span><span class="o">=</span><span class="n">rank</span><span class="p">,</span>
+            <span class="n">world_size</span><span class="o">=</span><span class="n">world_size</span><span class="p">,</span>   <span class="c1"># = num_train_ranks + num_infer_ranks</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">src_rank</span> <span class="o">=</span> <span class="mi">0</span>            <span class="c1"># trainer rank 0 is the broadcast root</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">push</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">named_params</span><span class="p">):</span>
+        <span class="c1"># Called on the TRAINER. Broadcasts each weight to all inference ranks.</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">tensor</span> <span class="ow">in</span> <span class="n">named_params</span><span class="p">:</span>
+            <span class="c1"># tensor must be a full (gathered) parameter in the layout the</span>
+            <span class="c1"># inference engine expects. Resharding (§5) happens BEFORE this call.</span>
+            <span class="n">dist</span><span class="o">.</span><span class="n">broadcast</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="n">src</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">src_rank</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">pull</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">param_buffers</span><span class="p">):</span>
+        <span class="c1"># Called on each INFERENCE rank. Receives into its parameter buffers.</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">buf</span> <span class="ow">in</span> <span class="n">param_buffers</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">dist</span><span class="o">.</span><span class="n">broadcast</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="n">src</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">src_rank</span><span class="p">)</span>     <span class="c1"># buf filled in place</span>
+</code></pre></div>
+<p>In real systems (vLLM&rsquo;s <code>RLHFWorker</code> / collective-RPC interface, SGLang&rsquo;s weight-update API, OpenRLHF&rsquo;s <code>vllm_engine.update_weight</code>) this is wrapped so the trainer calls one RPC and the inference workers receive into their internal parameter storage. The transfer runs at NVLink/IB bandwidth: 14 GB of bf16 weights over a 900 GB/s NVLink fabric is <span class="arithmatex">\(14 / 900 \approx 16\)</span> ms — three orders of magnitude faster than NFS reload. This is why NCCL broadcast is the default in-band sync for every serious RL framework.</p>
+<p>Two practical wrinkles. First, <strong>bf16 vs fp32</strong>: broadcast in the dtype the inference engine consumes (usually bf16), halving the bytes versus fp32 master weights. Second, <strong>bucketing</strong>: broadcasting thousands of tiny tensors one at a time is latency-bound by kernel-launch and handshake overhead; frameworks flatten parameters into large contiguous buckets and broadcast a few big buffers instead, which is bandwidth-bound and far faster.</p>
+<h3 id="mechanism-3-cuda-ipc-zero-copy-same-node-fastest">Mechanism 3: CUDA IPC (zero-copy, same-node, fastest)<a class="headerlink" href="#mechanism-3-cuda-ipc-zero-copy-same-node-fastest" title="Permanent link">¶</a></h3>
+<p>When the trainer and inference engine are <em>different processes on the same node</em> sharing the same GPUs (the colocated case), you can avoid copying the weights at all. <strong>CUDA IPC</strong> (Inter-Process Communication) lets one process export a handle to a GPU allocation and another process map that exact device memory into its own address space. No bytes move over any link — the inference engine simply reads from the trainer&rsquo;s weight tensors.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Mechanism 3: CUDA IPC handle export. The trainer process exports a handle to</span>
+<span class="c1"># its weight tensor&#39;s device memory; the inference process imports it and gets a</span>
+<span class="c1"># tensor backed by the SAME physical GPU memory. Zero copy.</span>
+
+<span class="c1"># ---- TRAINER PROCESS ----</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.multiprocessing.reductions</span><span class="w"> </span><span class="kn">import</span> <span class="n">reduce_tensor</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">export_handles</span><span class="p">(</span><span class="n">named_params</span><span class="p">):</span>
+    <span class="n">handles</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">tensor</span> <span class="ow">in</span> <span class="n">named_params</span><span class="p">:</span>
+        <span class="c1"># reduce_tensor produces a picklable IPC handle (device ptr + metadata).</span>
+        <span class="c1"># Send `handles` to the inference process over a pipe / Ray object store.</span>
+        <span class="n">handles</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">reduce_tensor</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">handles</span>
+
+<span class="c1"># ---- INFERENCE PROCESS ----</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">import_handles</span><span class="p">(</span><span class="n">handles</span><span class="p">):</span>
+    <span class="n">mapped</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">handle</span> <span class="ow">in</span> <span class="n">handles</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">rebuild_fn</span><span class="p">,</span> <span class="n">args</span> <span class="o">=</span> <span class="n">handle</span>
+        <span class="c1"># Rebuilds a torch.Tensor whose storage points at the trainer&#39;s memory.</span>
+        <span class="n">mapped</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">rebuild_fn</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>     <span class="c1"># NO copy; aliases trainer&#39;s weights</span>
+    <span class="k">return</span> <span class="n">mapped</span>
+</code></pre></div>
+<p>In the most tightly colocated designs the inference engine does not even re-import after every step — the parameter tensors are <em>aliased once</em> at startup, and because the trainer writes its updates in place (<code>optimizer.step()</code> mutates the same <code>param.data</code>), the inference engine automatically &ldquo;sees&rdquo; the new weights with literally zero sync work. The catch is correctness: you must ensure the trainer&rsquo;s optimizer step has fully completed (CUDA stream synchronized) before the inference engine reads, and you must guarantee the two are not writing/reading the buffer concurrently. CUDA IPC is the fastest possible sync — effectively free — but only available on a single node and requiring that both processes can map the same memory.</p>
+<p>The decision tree:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Mechanism</th>
+<th>Order-of-magnitude cost (7B)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Same node, shared GPUs, aliased weights</td>
+<td>CUDA IPC</td>
+<td>~0 ms (no copy)</td>
+</tr>
+<tr>
+<td>Same/multi node, GPUs reachable by NCCL</td>
+<td>NCCL broadcast</td>
+<td>~10–50 ms</td>
+</tr>
+<tr>
+<td>Cross-cluster, no NCCL path, or recovery</td>
+<td>Checkpoint reload</td>
+<td>seconds–minutes</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: name and shape mismatch</p>
+<p>NCCL broadcast and IPC both assume the trainer&rsquo;s parameter you send and the inference buffer you receive into have the <strong>same name, shape, and dtype</strong>. They very often do not, because the inference engine fuses QKV projections, fuses gate+up in the MLP, transposes for its kernels, or uses a different tensor-parallel split. If you broadcast a 4096×4096 <code>q_proj</code> into an engine that expects a fused 12288×4096 <code>qkv_proj</code>, you get silent garbage (or a crash). A correct sync layer maintains an explicit <strong>name+shape mapping</strong> and reshapes/concatenates on the trainer side <em>before</em> the broadcast. This is the resharding problem, next.</p>
+</div>
+<h2 id="the-resharding-problem-training-vs-inference-layouts">The Resharding Problem: Training vs Inference Layouts<a class="headerlink" href="#the-resharding-problem-training-vs-inference-layouts" title="Permanent link">¶</a></h2>
+<p>Here is the part that makes weight sync genuinely hard rather than a memcpy. The trainer and the inference engine almost never store the parameters the same way. They differ along three axes, and the sync layer must reconcile all three.</p>
+<p><strong>Axis 1 — Sharding (parallelism layout).</strong> The trainer might use FSDP, which flattens every parameter and shards it into equal slices across all data-parallel ranks; the byte at offset <span class="arithmatex">\(i\)</span> on rank <span class="arithmatex">\(r\)</span> has no semantic meaning on its own. The inference engine uses <strong>tensor parallelism</strong>: it splits attention heads and MLP columns across its TP ranks in a <em>structured</em>, head-aligned way. These two shardings are incompatible. Even if both used tensor parallelism, the <em>degree</em> differs: the trainer might run TP=8 (to fit optimizer state) while inference runs TP=2 (to minimize decode latency and maximize KV cache). Going from TP=8 to TP=2 means each inference rank must <em>gather</em> the slices of four training ranks.</p>
+<p><strong>Axis 2 — Fusion.</strong> Inference engines fuse operations for kernel efficiency. The three separate projections <span class="arithmatex">\(W_Q, W_K, W_V\)</span> that the trainer stores are concatenated into one <code>qkv_proj</code> tensor in vLLM; <code>gate_proj</code> and <code>up_proj</code> become one <code>gate_up_proj</code>. Sync must concatenate (or split) accordingly. With GQA/MQA (<a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>) the concatenation is not even uniform — K and V have fewer heads than Q, so the fused tensor is laid out in a specific interleaved order that the sync code must replicate exactly.</p>
+<p><strong>Axis 3 — Dtype and quantization.</strong> The trainer holds bf16 (and fp32 master); the inference engine might run <strong>quantized</strong> weights — FP8, INT8, or INT4 (<a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II</a>). Sync then includes an on-the-fly quantization step: take the bf16 master, compute scales, pack to INT4, and write into the engine&rsquo;s quantized buffers. This is expensive and changes the sync from &ldquo;copy bytes&rdquo; to &ldquo;recompute the quantized representation,&rdquo; which is one reason RL on quantized inference engines is fiddly.</p>
+<figure class="viz" id="fig-colodis-reshard-tp8-to-tp2">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 1000 510" role="img" aria-label="Resharding: trainer stores Q, K, V separately across 8 tensor-parallel ranks; a gather-fuse-split operation collects all 8 shards, concatenates Q/K/V into one fused QKV tensor, then re-splits across 2 inference TP ranks.">
+<defs>
+  <marker id="rs-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="rs-arr-mk" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+  </marker>
+  <style>
+    @keyframes rs-fadein { from { opacity:0 } to { opacity:1 } }
+    @keyframes rs-pulse  { 0%,100%{ opacity:0.35 } 50%{ opacity:1 } }
+    @keyframes rs-march  { from { stroke-dashoffset:28 } to { stroke-dashoffset:0 } }
+    @keyframes rs-glow   { 0%,100%{ opacity:0.18 } 50%{ opacity:0.55 } }
+
+    #fig-colodis-reshard-tp8-to-tp2 .anim-stage1 { opacity:0.38; animation: rs-pulse 2.6s 0.3s ease-in-out 3 both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-fanin  { stroke-dasharray:7 4; stroke-dashoffset:28; opacity:0; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-fanin.d0 { animation: rs-march 0.5s 0.4s linear both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-fanin.d1 { animation: rs-march 0.5s 0.55s linear both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-fanin.d2 { animation: rs-march 0.5s 0.70s linear both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-fanin.d3 { animation: rs-march 0.5s 0.85s linear both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-fanin.d4 { animation: rs-march 0.5s 1.00s linear both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-fanin.d5 { animation: rs-march 0.5s 1.15s linear both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-fanin.d6 { animation: rs-march 0.5s 1.30s linear both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-fanin.d7 { animation: rs-march 0.5s 1.45s linear both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-concat  { animation: rs-glow 1.0s 2.2s ease-in-out 2 both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-fanout.d0 { stroke-dasharray:7 4; stroke-dashoffset:28; opacity:0; animation: rs-march 0.5s 3.3s linear both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-fanout.d1 { stroke-dasharray:7 4; stroke-dashoffset:28; opacity:0; animation: rs-march 0.5s 3.6s linear both; }
+    #fig-colodis-reshard-tp8-to-tp2 .anim-infer  { opacity:0; animation: rs-fadein 0.7s 4.1s ease-out both; }
+
+    @media (prefers-reduced-motion: reduce) {
+      #fig-colodis-reshard-tp8-to-tp2 .anim-stage1,
+      #fig-colodis-reshard-tp8-to-tp2 .anim-fanin,
+      #fig-colodis-reshard-tp8-to-tp2 .anim-fanout,
+      #fig-colodis-reshard-tp8-to-tp2 .anim-concat,
+      #fig-colodis-reshard-tp8-to-tp2 .anim-infer {
+        animation: none !important; opacity:1 !important; stroke-dashoffset:0 !important;
+      }
+    }
+
+    #fig-colodis-reshard-tp8-to-tp2 .lbl  { font: 600 12px var(--sans,sans-serif); }
+    #fig-colodis-reshard-tp8-to-tp2 .ttl  { font: 700 13px var(--sans,sans-serif); }
+    #fig-colodis-reshard-tp8-to-tp2 .mn   { font: 400 9.5px var(--mono,monospace); }
+    #fig-colodis-reshard-tp8-to-tp2 .clbl { font: 600 11px var(--sans,sans-serif); }
+    #fig-colodis-reshard-tp8-to-tp2 .ftl  { font: 500 11px var(--sans,sans-serif); }
+  </style>
+</defs>
+
+
+<text x="500" y="22" text-anchor="middle" class="ftl v-accent">FSDP/TP=8 separate  --&gt;&gt;  TP=2 fused</text>
+<line x1="215" y1="18" x2="768" y2="18" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#rs-arr)" opacity="0.5"/>
+
+
+<text x="155" y="48" text-anchor="middle" class="ttl v-label">TRAINER (TP=8, separate Q/K/V)</text>
+
+
+<g class="anim-stage1">
+
+  <rect x="16" y="60"  width="250" height="44" rx="5" class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-opacity="0.4"/>
+  <rect x="16" y="109" width="250" height="44" rx="5" class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-opacity="0.4"/>
+  <rect x="16" y="158" width="250" height="44" rx="5" class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-opacity="0.4"/>
+  <rect x="16" y="207" width="250" height="44" rx="5" class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-opacity="0.4"/>
+  <rect x="16" y="256" width="250" height="44" rx="5" class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-opacity="0.4"/>
+  <rect x="16" y="305" width="250" height="44" rx="5" class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-opacity="0.4"/>
+  <rect x="16" y="354" width="250" height="44" rx="5" class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-opacity="0.4"/>
+  <rect x="16" y="403" width="250" height="44" rx="5" class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-opacity="0.4"/>
+
+
+  <rect x="20"  y="64"  width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <rect x="20"  y="113" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <rect x="20"  y="162" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <rect x="20"  y="211" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <rect x="20"  y="260" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <rect x="20"  y="309" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <rect x="20"  y="358" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <rect x="20"  y="407" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+
+
+  <rect x="96"  y="64"  width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+  <rect x="96"  y="113" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+  <rect x="96"  y="162" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+  <rect x="96"  y="211" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+  <rect x="96"  y="260" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+  <rect x="96"  y="309" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+  <rect x="96"  y="358" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+  <rect x="96"  y="407" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+
+
+  <rect x="172" y="64"  width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.30"/>
+  <rect x="172" y="113" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.30"/>
+  <rect x="172" y="162" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.30"/>
+  <rect x="172" y="211" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.30"/>
+  <rect x="172" y="260" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.30"/>
+  <rect x="172" y="309" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.30"/>
+  <rect x="172" y="358" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.30"/>
+  <rect x="172" y="407" width="72" height="36" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.30"/>
+
+
+
+  <text x="56"  y="75"  text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">q[0:512]</text>
+  <text x="132" y="75"  text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">k[0:512]</text>
+  <text x="208" y="75"  text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">v[0:512]</text>
+  <text x="20"  y="91"  class="mn v-muted" style="font-size:8px">rank 0</text>
+
+  <text x="56"  y="124" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">q[512:1k]</text>
+  <text x="132" y="124" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">k[512:1k]</text>
+  <text x="208" y="124" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">v[512:1k]</text>
+  <text x="20"  y="140" class="mn v-muted" style="font-size:8px">rank 1</text>
+
+  <text x="56"  y="173" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">q[1k:1.5k]</text>
+  <text x="132" y="173" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">k[1k:1.5k]</text>
+  <text x="208" y="173" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">v[1k:1.5k]</text>
+  <text x="20"  y="189" class="mn v-muted" style="font-size:8px">rank 2</text>
+
+  <text x="56"  y="222" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">q[1.5k:2k]</text>
+  <text x="132" y="222" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">k[1.5k:2k]</text>
+  <text x="208" y="222" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">v[1.5k:2k]</text>
+  <text x="20"  y="238" class="mn v-muted" style="font-size:8px">rank 3</text>
+
+  <text x="56"  y="271" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">q[2k:2.5k]</text>
+  <text x="132" y="271" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">k[2k:2.5k]</text>
+  <text x="208" y="271" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">v[2k:2.5k]</text>
+  <text x="20"  y="287" class="mn v-muted" style="font-size:8px">rank 4</text>
+
+  <text x="56"  y="320" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">q[2.5k:3k]</text>
+  <text x="132" y="320" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">k[2.5k:3k]</text>
+  <text x="208" y="320" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">v[2.5k:3k]</text>
+  <text x="20"  y="336" class="mn v-muted" style="font-size:8px">rank 5</text>
+
+  <text x="56"  y="369" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">q[3k:3.5k]</text>
+  <text x="132" y="369" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">k[3k:3.5k]</text>
+  <text x="208" y="369" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">v[3k:3.5k]</text>
+  <text x="20"  y="385" class="mn v-muted" style="font-size:8px">rank 6</text>
+
+  <text x="56"  y="418" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">q[3.5k:4k]</text>
+  <text x="132" y="418" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">k[3.5k:4k]</text>
+  <text x="208" y="418" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.92">v[3.5k:4k]</text>
+  <text x="20"  y="434" class="mn v-muted" style="font-size:8px">rank 7</text>
+</g>
+
+
+<rect x="16" y="454" width="14" height="11" rx="2" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+<text x="34" y="463" class="mn v-label" style="font-size:9px">Q (full opacity)</text>
+<rect x="140" y="454" width="14" height="11" rx="2" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+<text x="158" y="463" class="mn v-muted" style="font-size:9px">K (0.55)</text>
+<rect x="210" y="454" width="14" height="11" rx="2" fill="var(--accent,#c15b39)" fill-opacity="0.30"/>
+<text x="228" y="463" class="mn v-muted" style="font-size:9px">V (0.30)</text>
+
+
+<path d="M269 60 L277 60 L277 447 L269 447" fill="none" stroke="var(--ink-soft,#45413a)" stroke-width="1.4"/>
+<text x="280" y="253" text-anchor="start" class="mn v-muted" style="font-size:8.5px;writing-mode:vertical-rl" transform="rotate(90,283,253)">8 TP ranks</text>
+
+
+<line x1="269" y1="82"  x2="370" y2="203" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#rs-arr)" class="anim-fanin d0"/>
+<line x1="269" y1="131" x2="370" y2="216" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#rs-arr)" class="anim-fanin d1"/>
+<line x1="269" y1="180" x2="370" y2="229" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#rs-arr)" class="anim-fanin d2"/>
+<line x1="269" y1="229" x2="370" y2="242" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#rs-arr)" class="anim-fanin d3"/>
+<line x1="269" y1="278" x2="370" y2="253" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#rs-arr)" class="anim-fanin d4"/>
+<line x1="269" y1="327" x2="370" y2="264" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#rs-arr)" class="anim-fanin d5"/>
+<line x1="269" y1="376" x2="370" y2="273" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#rs-arr)" class="anim-fanin d6"/>
+<line x1="269" y1="425" x2="370" y2="283" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#rs-arr)" class="anim-fanin d7"/>
+
+
+
+<rect x="340" y="155" width="272" height="210" rx="10"
+  class="v-fill"
+  stroke="var(--accent,#c15b39)" stroke-width="1.8" stroke-opacity="0.6"/>
+<text x="476" y="175" text-anchor="middle" class="ttl v-label">reshard: gather -&gt; fuse -&gt; split</text>
+
+
+<rect x="358" y="184" width="236" height="40" rx="7"
+  class="v-fill"
+  stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+<text x="476" y="209" text-anchor="middle" class="clbl v-label">1. GATHER all 8 shards (all-gather)</text>
+
+
+<line x1="476" y1="224" x2="476" y2="244" stroke="var(--ink-soft,#45413a)" stroke-width="1.2" marker-end="url(#rs-arr-mk)"/>
+
+
+<rect x="358" y="246" width="236" height="40" rx="7"
+  class="v-fill"
+  stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+
+<rect x="358" y="246" width="236" height="40" rx="7"
+  fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="none" class="anim-concat"/>
+<text x="476" y="263" text-anchor="middle" class="clbl v-label">2. CONCAT Q|K|V per head group</text>
+<text x="476" y="277" text-anchor="middle" class="clbl v-label">(fuse, honor GQA head layout)</text>
+
+
+<line x1="476" y1="286" x2="476" y2="306" stroke="var(--ink-soft,#45413a)" stroke-width="1.2" marker-end="url(#rs-arr-mk)"/>
+
+
+<rect x="358" y="308" width="236" height="36" rx="7"
+  class="v-fill"
+  stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+<text x="476" y="331" text-anchor="middle" class="clbl v-label">3. RE-SPLIT into 2 TP shards</text>
+
+
+<line x1="612" y1="325" x2="720" y2="288" stroke="var(--accent,#c15b39)" stroke-width="2.0" marker-end="url(#rs-arr)" class="anim-fanout d0"/>
+<line x1="612" y1="332" x2="720" y2="390" stroke="var(--accent,#c15b39)" stroke-width="2.0" marker-end="url(#rs-arr)" class="anim-fanout d1"/>
+
+
+<text x="856" y="48" text-anchor="middle" class="ttl v-label">INFERENCE (TP=2, fused QKV)</text>
+
+
+<path d="M722 246 L715 246 L715 438 L722 438" fill="none" stroke="var(--ink-soft,#45413a)" stroke-width="1.4"/>
+
+
+<g class="anim-infer">
+  <rect x="722" y="248" width="264" height="82" rx="7"
+    fill="var(--accent,#c15b39)" fill-opacity="0.12"
+    stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="854" y="268" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">infer rank 0: qkv[heads 0..h/2]</text>
+
+  <rect x="730" y="274" width="110" height="26" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <rect x="842" y="274" width="68"  height="26" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+  <rect x="912" y="274" width="60"  height="26" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.30"/>
+  <text x="785" y="291" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.95">Q</text>
+  <text x="876" y="291" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.95">K</text>
+  <text x="942" y="291" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.95">V</text>
+  <text x="854" y="320" text-anchor="middle" class="mn v-muted" style="font-size:8px">one fused QKV tensor</text>
+</g>
+
+
+<g class="anim-infer">
+  <rect x="722" y="358" width="264" height="82" rx="7"
+    fill="var(--accent,#c15b39)" fill-opacity="0.12"
+    stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="854" y="378" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">infer rank 1: qkv[heads h/2..h]</text>
+  <rect x="730" y="384" width="110" height="26" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <rect x="842" y="384" width="68"  height="26" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+  <rect x="912" y="384" width="60"  height="26" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.30"/>
+  <text x="785" y="401" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.95">Q</text>
+  <text x="876" y="401" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.95">K</text>
+  <text x="942" y="401" text-anchor="middle" class="mn" fill="#fff" fill-opacity="0.95">V</text>
+  <text x="854" y="430" text-anchor="middle" class="mn v-muted" style="font-size:8px">one fused QKV tensor</text>
+</g>
+
+
+<text x="854" y="458" text-anchor="middle" class="mn v-muted" style="font-size:8.5px">trainer: 3 separate tensors / 8 ranks  vs  inference: 1 fused tensor / 2 ranks</text>
+
+
+<text x="476" y="476" text-anchor="middle" class="mn v-muted" style="font-size:8.5px">streamed layer-by-layer to cap peak transient extra memory at one layer</text>
+<text x="476" y="490" text-anchor="middle" class="mn v-muted" style="font-size:8.5px">optional step 3b: quantize bf16 master to FP8/INT4 before sending</text>
+</svg>
+<figcaption><b>Resharding from trainer TP=8 (separate Q/K/V) to inference TP=2 (fused QKV).</b> The three steps — all-gather across 8 shards, concatenate Q/K/V into one fused tensor honoring GQA head grouping, then re-split across 2 inference ranks — are the core of the weight-sync resharding manager. The animation stages reveal each step in sequence; the inference rank boxes show a single contiguous fused tensor contrasting with the trainer's three separate sub-cells per rank.</figcaption>
+</figure>
+
+<p>The general recipe a correct resharding sync layer follows:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Resharding weight sync: from a sharded trainer layout to a fused, re-sharded</span>
+<span class="c1"># inference layout. Conceptual; real impls (veRL, OpenRLHF) are more optimized.</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">reshard_and_sync</span><span class="p">(</span><span class="n">trainer</span><span class="p">,</span> <span class="n">infer_engines</span><span class="p">,</span> <span class="n">name_map</span><span class="p">,</span> <span class="n">infer_tp</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    name_map: tells us how trainer param names map to inference param names,</span>
+<span class="sd">              including which trainer tensors fuse into one inference tensor.</span>
+<span class="sd">    infer_tp: tensor-parallel degree of the inference engine.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">infer_name</span><span class="p">,</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">name_map</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="c1"># 1) GATHER: materialize the FULL (unsharded) trainer tensor(s).</span>
+        <span class="c1">#    Under FSDP this all-gathers the flat shards and reshapes to 2D.</span>
+        <span class="n">full_tensors</span> <span class="o">=</span> <span class="p">[</span><span class="n">trainer</span><span class="o">.</span><span class="n">gather_full_param</span><span class="p">(</span><span class="n">tn</span><span class="p">)</span> <span class="k">for</span> <span class="n">tn</span> <span class="ow">in</span> <span class="n">spec</span><span class="o">.</span><span class="n">trainer_names</span><span class="p">]</span>
+
+        <span class="c1"># 2) FUSE: concatenate Q/K/V (or gate/up) into the engine&#39;s fused tensor,</span>
+        <span class="c1">#    honoring GQA head grouping if K/V have fewer heads than Q.</span>
+        <span class="n">fused</span> <span class="o">=</span> <span class="n">fuse_along</span><span class="p">(</span><span class="n">full_tensors</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">fuse_dim</span><span class="p">,</span> <span class="n">head_layout</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">heads</span><span class="p">)</span>
+
+        <span class="c1"># 3) (optional) QUANTIZE: if the engine runs FP8/INT4, compute scales &amp; pack.</span>
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">quantized</span><span class="p">:</span>
+            <span class="n">fused</span> <span class="o">=</span> <span class="n">quantize</span><span class="p">(</span><span class="n">fused</span><span class="p">,</span> <span class="n">scheme</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">quant_scheme</span><span class="p">)</span>
+
+        <span class="c1"># 4) RE-SHARD: split the fused tensor into `infer_tp` slices, one per</span>
+        <span class="c1">#    inference TP rank, along the engine&#39;s tensor-parallel dimension.</span>
+        <span class="n">shards</span> <span class="o">=</span> <span class="n">split_for_tp</span><span class="p">(</span><span class="n">fused</span><span class="p">,</span> <span class="n">tp</span><span class="o">=</span><span class="n">infer_tp</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">tp_dim</span><span class="p">)</span>
+
+        <span class="c1"># 5) SEND: broadcast/scatter each shard to its inference rank (Mechanism 2),</span>
+        <span class="c1">#    or copy in place if same-node aliasing (Mechanism 3).</span>
+        <span class="n">scatter_to_infer_ranks</span><span class="p">(</span><span class="n">shards</span><span class="p">,</span> <span class="n">infer_name</span><span class="p">,</span> <span class="n">infer_engines</span><span class="p">)</span>
+</code></pre></div>
+<p>Steps 1 and 2 are the expensive ones: gathering the full parameter undoes the trainer&rsquo;s sharding (an all-gather of <span class="arithmatex">\(2P\)</span> bytes), and you need transient memory to hold the full fused tensor. Good implementations do this <strong>layer by layer</strong>, streaming one fused tensor at a time so peak extra memory is one layer&rsquo;s worth, not the whole model. veRL&rsquo;s resharding manager and OpenRLHF&rsquo;s <code>update_weight</code> path both implement a version of this name-mapped, layer-streamed gather-fuse-reshard-broadcast pipeline. The single-controller architecture of <a href="../06-rl-infra/04-verl.html">veRL</a> is in part <em>designed</em> to make this resharding step expressible as one orchestrated collective rather than ad-hoc message passing.</p>
+<div class="admonition note">
+<p class="admonition-title">Why not just make the layouts identical?</p>
+<p>You can, sometimes: run the inference engine at the same TP degree as the trainer and disable fusion, so sync is a plain shard-to-shard broadcast with no gather. This is the fastest sync but the <em>slowest</em> everything-else — you have handcuffed your inference engine to the trainer&rsquo;s parallelism, losing the decode-latency and KV-cache tuning that motivated disaggregation. The resharding cost is the price of letting each engine pick its optimal layout. The right call depends on whether sync time or rollout time dominates your iteration.</p>
+</div>
+<h2 id="latency-utilization-and-a-worked-example">Latency, Utilization, and a Worked Example<a class="headerlink" href="#latency-utilization-and-a-worked-example" title="Permanent link">¶</a></h2>
+<p>We now have all the pieces to reason quantitatively. Define one RL iteration&rsquo;s wall-clock time. For a <strong>synchronous</strong> system (colocated time-sliced, or synchronous disaggregated):</p>
+<div class="arithmatex">\[
+T_\text{iter} = T_\text{rollout} + T_\text{reward} + T_\text{train} + T_\text{sync} + T_\text{offload}
+\]</div>
+<p>For an <strong>asynchronous</strong> disaggregated system with perfect pipelining, rollout overlaps training, so the iteration is bounded by the slower stage:</p>
+<div class="arithmatex">\[
+T_\text{iter}^\text{async} \approx \max\!\left(T_\text{rollout},\; T_\text{train}\right) + T_\text{sync}
+\]</div>
+<p>The <strong>GPU utilization</strong> of the colocated synchronous design, measured as useful-work fraction on the training-capable GPUs, is roughly the share of time spent in compute-bound work:</p>
+<div class="arithmatex">\[
+U_\text{colo} = \frac{T_\text{train}}{T_\text{rollout} + T_\text{reward} + T_\text{train} + T_\text{sync} + T_\text{offload}}
+\]</div>
+<p>When rollout dominates (long reasoning traces), <span class="arithmatex">\(U_\text{colo}\)</span> is small — your training cluster spends most of its life doing memory-bound decode. That is the central argument for disaggregation: move the long, cheap rollout onto cheaper/more-numerous inference GPUs and keep the expensive training GPUs busy with training.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: colocated vs disaggregated for a 7B reasoning run</p>
+<p>Setup: a 7B policy, GRPO with <span class="arithmatex">\(G=8\)</span> samples per prompt, average completion length 4000 tokens (long chain-of-thought). We have 16 H100-80GB GPUs and an NVLink fabric at ~900 GB/s intra-node. Per RL iteration we process a global batch of 256 prompts (= 2048 rollout sequences). Suppose the measured per-iteration stage times are:</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Time</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(T_\text{rollout}\)</span></td>
+<td>40 s</td>
+<td>decode 2048 × 4000 tokens, memory-bound</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(T_\text{reward}\)</span></td>
+<td>3 s</td>
+<td>math/code verifiers, partly overlappable</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(T_\text{train}\)</span></td>
+<td>8 s</td>
+<td>a few GRPO minibatch fwd+bwd steps</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(T_\text{offload}\)</span></td>
+<td>3 s</td>
+<td>Adam state out+in over PCIe per iter</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(T_\text{sync}\)</span></td>
+<td>0.02 s</td>
+<td>NCCL broadcast of 14 GB at 900 GB/s</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Colocated time-sliced (all 16 GPUs do everything, serially):</strong></p>
+<div class="arithmatex">\[T_\text{iter}^\text{colo} = 40 + 3 + 8 + 3 + 0.02 \approx 54\ \text{s}\]</div>
+<p>Training-GPU utilization:</p>
+<div class="arithmatex">\[U_\text{colo} = \frac{8}{54} \approx 15\%\]</div>
+<p>For 39 of every 54 seconds, 16 training-capable H100s are doing memory-bound decode — a poor use of tensor cores.</p>
+<p><strong>Disaggregated async (split 16 GPUs as 4 train + 12 rollout):</strong> With 12 GPUs on rollout instead of 16, raw rollout throughput drops to <span class="arithmatex">\(16/12\)</span> of before, so <span class="arithmatex">\(T_\text{rollout}' \approx 40 \times 16/12 \approx 53\)</span> s for the same batch. But rollout now overlaps training, and we can let the rollout pool stay full. With 4 training GPUs, <span class="arithmatex">\(T_\text{train}' \approx 8 \times 16/4 \approx 32\)</span> s (fewer GPUs, more time) — but training overlaps rollout. The iteration is bounded by the slower stage plus sync:</p>
+<div class="arithmatex">\[T_\text{iter}^\text{async} \approx \max(53,\ 32) + 0.02 \approx 53\ \text{s}\]</div>
+<p>That looks no better on wall-clock — and indeed for <em>this</em> split it is not, because we starved training. The real win is <strong>rebalancing</strong>: because rollout dominates, push more GPUs to rollout <em>and</em> size training so <span class="arithmatex">\(T_\text{train}' \le T_\text{rollout}'\)</span>. With, say, 6 train + 10 rollout: <span class="arithmatex">\(T_\text{rollout}' \approx 40 \times 16/10 = 64\)</span> s, <span class="arithmatex">\(T_\text{train}' \approx 8 \times 16/6 \approx 21\)</span> s, iteration <span class="arithmatex">\(\approx 64\)</span> s — still rollout-bound, training fully hidden. The lesson: disaggregation&rsquo;s value is not automatic speedup, it is the <em>freedom to size the two pools so the cheap, dominant stage is the only thing on the critical path</em>, while the training GPUs run at near-100% utilization instead of 15%. On a real cost model where rollout can run on cheaper inference GPUs, that reallocation is a large effective-cost win even when wall-clock is similar.</p>
+</div>
+<p>The example also exposes the staleness cost we hid: in the async case, the rollouts feeding each update were generated under weights one iteration old. If that staleness hurts sample efficiency by, say, 10%, you must weigh it against the utilization gain. This is the perennial RL-infra trade and why the choice is workload-dependent rather than universal.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are designing an RL system to post-train a 32B model with very long (8k-token) reasoning rollouts. You have a fixed budget of 64 H100s. Walk me through whether you colocate or disaggregate, how you sync weights, and what the resharding problem forces you to handle.</p>
+<p><strong>A:</strong> With 8k-token rollouts, the run is heavily rollout-bound — decode will dominate wall-clock — so I disaggregate. I split the 64 GPUs into a small training pool and a large rollout pool, e.g. 16 train + 48 rollout, sized so training time hides under rollout time. The trainer runs FSDP or Megatron TP+PP to fit optimizer state for 32B (~512 GB of Adam state alone); the rollout pool runs vLLM/SGLang at a low TP degree (TP=2 or 4) to maximize KV-cache headroom for the long sequences. I run <strong>asynchronous</strong> with staleness 1, relying on the PPO/GRPO importance ratio plus clipping to correct the off-policy lag.</p>
+<p>For weight sync I use <strong>NCCL broadcast</strong> over a process group spanning both pools — 64 GB of bf16 weights at NVLink/IB bandwidth is well under a second, so I can afford to sync every step. The <strong>resharding problem</strong> forces me to (1) gather the FSDP-sharded params into full tensors layer by layer, (2) fuse Q/K/V and gate/up into the engine&rsquo;s fused layout, honoring GQA head grouping, and (3) re-split from the trainer&rsquo;s TP degree to the inference TP degree before broadcasting. I keep an explicit name+shape map between the two layouts and stream one layer at a time to cap transient memory. If the inference engine runs FP8, sync also re-quantizes from the bf16 master on each push. I&rsquo;d checkpoint to disk periodically as the robust fallback and for fault tolerance, but never use checkpoint-reload on the hot sync path because it is orders of magnitude too slow.</p>
+</div>
+<h2 id="putting-it-together-a-decision-framework">Putting It Together: A Decision Framework<a class="headerlink" href="#putting-it-together-a-decision-framework" title="Permanent link">¶</a></h2>
+<p>There is no universally best design; there is a set of questions whose answers pick one for you.</p>
+<p><strong>Is the run rollout-bound or training-bound?</strong> Profile <span class="arithmatex">\(T_\text{rollout}\)</span> vs <span class="arithmatex">\(T_\text{train}\)</span>. Long generations (reasoning, agentic multi-turn rollouts, see <a href="../06-rl-infra/10-agentic-multiturn-rl.html">Agentic &amp; Multi-Turn RL</a>) are rollout-bound and favor disaggregation, where the cheap rollout pool can be scaled independently and the training GPUs stay saturated. Short completions with a huge model are training-bound and tolerate colocation, since rollout is a small slice of the iteration.</p>
+<p><strong>How much hardware do you have?</strong> On a single node (one machine, ≤8 GPUs), colocated time-slicing with CUDA-IPC or aliased weights is simplest and the sync cost is essentially zero. Disaggregation makes sense at multi-node scale where you can afford to dedicate fleets and the network supports fast NCCL sync.</p>
+<p><strong>How tolerant is your algorithm of staleness?</strong> Strictly on-policy methods, or runs where you have seen instability from off-policy data, push you toward synchronous designs (colocated, or synchronous disaggregated with the rollout pool idling during updates). If your importance correction and KL control (<a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>) are solid, async disaggregation unlocks far better utilization.</p>
+<p><strong>What is your weight-sync budget?</strong> If sync is cheap (same-node IPC, or fast NVLink/IB NCCL), you can sync every step and keep staleness at 1. If sync is expensive (cross-cluster, must reload checkpoints), you sync rarely, which <em>forces</em> higher staleness — the sync mechanism and the algorithm&rsquo;s off-policyness are coupled.</p>
+<figure class="viz" id="fig-colodis-decision-flow">
+<svg viewBox="0 0 900 720" role="img" aria-label="Decision tree for RL placement: three yes/no diamonds guide from rollout-bound? through multi-node hardware? and staleness-tolerant algo? to ASYNC DISAGGREGATED at the bottom, with three off-ramp terminals to the right.">
+<defs>
+  <marker id="df-arr-yes" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="df-arr-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+  </marker>
+  <style>
+    #fig-colodis-decision-flow .ttl    { font: 700 14px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .dlbl   { font: 700 11.5px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .dsub   { font: 400 9.5px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .yes-lbl { font: 700 11px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .no-lbl  { font: 700 11px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .th     { font: 700 11.5px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .tb     { font: 400 10px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .fh     { font: 800 14px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .fb     { font: 400 10.5px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .fi     { font: italic 400 10px var(--sans,sans-serif); }
+  </style>
+</defs>
+
+
+<text x="450" y="21" text-anchor="middle" class="ttl v-label">Placement Decision Framework</text>
+<line x1="130" y1="28" x2="770" y2="28" class="v-grid" stroke="currentColor" stroke-width="0.7" opacity="0.5"/>
+
+
+
+
+<polygon points="175,53 268,85 175,117 82,85"
+  class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="2.0"/>
+<text x="175" y="81" text-anchor="middle" class="dlbl v-label">rollout-bound?</text>
+<text x="175" y="95" text-anchor="middle" class="dsub v-muted">T_rollout &gt; T_train?</text>
+
+<line x1="175" y1="117" x2="175" y2="232" stroke="var(--accent,#c15b39)" stroke-width="2.0" marker-end="url(#df-arr-yes)"/>
+<text x="162" y="176" text-anchor="end" class="yes-lbl" fill="var(--accent,#c15b39)">yes</text>
+
+
+<polygon points="175,232 268,257 175,282 82,257"
+  class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="2.0"/>
+<text x="175" y="253" text-anchor="middle" class="dlbl v-label">multi-node hardware?</text>
+<text x="175" y="267" text-anchor="middle" class="dsub v-muted">&gt;1 node / &gt;8 GPUs?</text>
+
+<line x1="175" y1="282" x2="175" y2="402" stroke="var(--accent,#c15b39)" stroke-width="2.0" marker-end="url(#df-arr-yes)"/>
+<text x="162" y="344" text-anchor="end" class="yes-lbl" fill="var(--accent,#c15b39)">yes</text>
+
+
+<polygon points="175,402 268,427 175,452 82,427"
+  class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="2.0"/>
+<text x="175" y="423" text-anchor="middle" class="dlbl v-label">staleness-tolerant algo?</text>
+<text x="175" y="437" text-anchor="middle" class="dsub v-muted">PPO/GRPO + IS ratio?</text>
+
+<line x1="175" y1="452" x2="175" y2="534" stroke="var(--accent,#c15b39)" stroke-width="2.0" marker-end="url(#df-arr-yes)"/>
+<text x="162" y="495" text-anchor="end" class="yes-lbl" fill="var(--accent,#c15b39)">yes</text>
+
+
+<rect x="22" y="537" width="858" height="170" rx="10"
+  fill="var(--accent,#c15b39)" fill-opacity="0.12"
+  stroke="var(--accent,#c15b39)" stroke-width="2.2"/>
+<text x="450" y="561" text-anchor="middle" class="fh" fill="var(--accent,#c15b39)">ASYNC DISAGGREGATED</text>
+<line x1="270" y1="569" x2="630" y2="569" stroke="var(--accent,#c15b39)" stroke-width="1.2" opacity="0.5"/>
+<text x="450" y="588" text-anchor="middle" class="fb v-label">Independent pool sizing: allocate rollout GPUs so T_rollout is the sole critical-path stage.</text>
+<text x="450" y="606" text-anchor="middle" class="fb v-label">Pipelined overlap: rollout cluster generates the next batch while trainer computes gradient steps.</text>
+<text x="450" y="624" text-anchor="middle" class="fb v-label">Weight sync via NCCL broadcast every step with resharding (gather, fuse Q|K|V, re-split, scatter).</text>
+<text x="450" y="642" text-anchor="middle" class="fb v-label">Staleness = 1, corrected by PPO/GRPO importance ratio  rho = pi_theta / pi_theta_old.</text>
+<text x="450" y="660" text-anchor="middle" class="fi v-muted">Use when: rollout-bound + multi-node + staleness-tolerant algorithm (e.g. GRPO, PPO with clipping).</text>
+<text x="450" y="696" text-anchor="middle" class="fi v-muted">Frameworks: veRL (disaggregated mode), OpenRLHF (Ray+vLLM), Prime-RL (fully async decoupled).</text>
+
+
+
+
+<line x1="268" y1="85" x2="308" y2="85"
+  stroke="var(--ink-soft,#45413a)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#df-arr-no)"/>
+<text x="288" y="77" text-anchor="middle" class="no-lbl v-muted">no</text>
+
+
+<rect x="310" y="40" width="572" height="96" rx="8"
+  class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1.3"/>
+<text x="596" y="60" text-anchor="middle" class="th v-label">colocated time-slice + offload  (simple, ~1:1)</text>
+<text x="596" y="75" text-anchor="middle" class="tb v-muted">Trainer and rollout share GPUs; phases run serially via time-slicing.</text>
+<text x="596" y="89" text-anchor="middle" class="tb v-muted">Offload optimizer state (Adam m, v, fp32 master ~12P bytes) to host RAM.</text>
+<text x="596" y="103" text-anchor="middle" class="tb v-muted">Sync via CUDA IPC / aliased weight tensors (zero-copy, same-node).</text>
+<text x="596" y="117" text-anchor="middle" class="tb v-muted">Best for: single-node, short completions, strictly on-policy runs.</text>
+
+
+<polyline points="268,257 295,257 295,203 308,203"
+  fill="none" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#df-arr-no)"/>
+<text x="282" y="249" text-anchor="middle" class="no-lbl v-muted">no</text>
+
+
+<rect x="310" y="160" width="572" height="86" rx="8"
+  class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1.3"/>
+<text x="596" y="180" text-anchor="middle" class="th v-label">colocated; consider MPS / partition for small models</text>
+<text x="596" y="196" text-anchor="middle" class="tb v-muted">Small model or LoRA policy: simultaneous colocation via NVIDIA MPS or MIG.</text>
+<text x="596" y="211" text-anchor="middle" class="tb v-muted">Watch HBM bandwidth contention between the two co-resident workloads.</text>
+<text x="596" y="226" text-anchor="middle" class="tb v-muted">Sync via CUDA IPC. Confined to a single node; no network overhead.</text>
+
+
+<polyline points="268,427 295,427 295,384 308,384"
+  fill="none" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#df-arr-no)"/>
+<text x="282" y="419" text-anchor="middle" class="no-lbl v-muted">no</text>
+
+
+<rect x="310" y="310" width="572" height="120" rx="8"
+  class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1.3"/>
+<text x="596" y="330" text-anchor="middle" class="th v-label">synchronous disaggregated  (overlap off)</text>
+<text x="596" y="346" text-anchor="middle" class="tb v-muted">Separate training and rollout pools; no pipelining overlap between phases.</text>
+<text x="596" y="361" text-anchor="middle" class="tb v-muted">Rollout pool idles while trainer runs; trainer idles during rollout generation.</text>
+<text x="596" y="376" text-anchor="middle" class="tb v-muted">Sync via NCCL broadcast every step. Staleness = 0, strictly on-policy.</text>
+<text x="596" y="391" text-anchor="middle" class="tb v-muted">Cost: one pool always idle; pays disaggregation cost without the overlap win.</text>
+<text x="596" y="406" text-anchor="middle" class="tb v-muted">Use for: strictly on-policy algorithms or when off-policy data causes instability.</text>
+<text x="596" y="421" text-anchor="middle" class="tb v-muted">Sync mechanism: NCCL broadcast (not IPC — pools live on separate nodes).</text>
+</svg>
+<figcaption><b>Decision tree for colocated vs disaggregated RL placement.</b> Follow the spine downward: each "yes" advances toward the fully pipelined async disaggregated design (highlighted), while each "no" exits right to a simpler strategy. Long-chain reasoning runs on multi-node clusters with GRPO typically land at the ASYNC DISAGGREGATED terminal.</figcaption>
+</figure>
+
+<p>The frameworks map onto this flow. <a href="../06-rl-infra/03-trl.html">TRL</a> is colocated by default (with an optional vLLM server that nudges toward disaggregation). <a href="../06-rl-infra/04-verl.html">veRL</a> supports both: the hybrid engine for colocation and a disaggregated mode, with a single controller orchestrating the resharding sync. <a href="../06-rl-infra/05-openrlhf-nemo-ray.html">OpenRLHF</a> is Ray-native and leans disaggregated, with vLLM rollout workers receiving NCCL-broadcast weights. <a href="../06-rl-infra/06-prime-rl-async.html">Prime-RL</a> takes async disaggregation to its conclusion with deliberately decoupled, possibly geographically separated, trainer and rollout fleets. The scaling tricks that make the rollout pool itself efficient — load balancing across uneven-length generations, in-flight weight updates — are the subject of <a href="../06-rl-infra/11-scaling-rl-tricks.html">Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a>.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The trainer (compute-bound, <span class="arithmatex">\(\approx 16P\)</span> bytes of state, short bursts) and the rollout engine (memory-bandwidth-bound, <span class="arithmatex">\(\approx 2P\)</span> bytes + KV cache, long bursts) have opposite hardware appetites; how you place them is the central RL-infra decision.</li>
+<li><strong>Colocated</strong> shares GPUs via time-slicing and offloading (the &ldquo;hybrid engine&rdquo;): maximal per-GPU utilization within a phase, but strictly serial phases mean training-capable GPUs spend most of a rollout-bound run doing memory-bound decode at low FLOP utilization.</li>
+<li><strong>Disaggregated</strong> uses separate training and rollout pools that can be sized independently and pipelined to overlap; this buys utilization and throughput at the price of <strong>off-policy staleness</strong> (rollouts are produced under slightly stale weights).</li>
+<li>Weight sync has three mechanisms: <strong>CUDA IPC</strong> (zero-copy, same node, fastest), <strong>NCCL broadcast</strong> (GPU-to-GPU over NVLink/IB, the everyday workhorse at ~10s of ms for a 7B model), and <strong>checkpoint reload</strong> (seconds–minutes, layout-agnostic, the robust fallback and fault-tolerance path).</li>
+<li>The <strong>resharding problem</strong> is what makes sync hard: trainer and inference layouts differ in sharding (FSDP vs TP, and TP degree), fusion (separate vs fused QKV / gate-up, with GQA head grouping), and dtype (bf16 master vs FP8/INT4 inference). A correct sync layer gathers, fuses, optionally quantizes, re-shards, and broadcasts, streamed layer by layer.</li>
+<li>Sync mechanism and algorithm staleness are coupled: cheap sync lets you update the rollout policy every step (staleness 1, corrected by the PPO/GRPO importance ratio); expensive sync forces higher staleness.</li>
+<li>The right design is workload-dependent: rollout-bound + multi-node + staleness-tolerant ⇒ async disaggregation; small/single-node or strictly on-policy ⇒ colocated time-slicing. The win from disaggregation is not automatic wall-clock speedup but the freedom to size pools so the dominant stage is the only thing on the critical path.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Colocated vs disaggregated RL placement, the hybrid-engine, and weight-synchronization resharding are now well-defined systems problems with production-grade open-source tooling. The dominant trend through 2025–2026 is fully disaggregated, asynchronous training with NCCL-broadcast (or increasingly RDMA P2P) weight sync, driven by the long reasoning rollouts of GRPO-style training that make rollout-bound iteration times the bottleneck.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2409.19256">Sheng et al., <em>HybridFlow: A Flexible and Efficient RLHF Framework</em> (2024)</a> — introduces the single-controller hybrid engine, the 3D-HybridEngine for zero-redundancy weight resharding between FSDP training and TP inference, and the colocated vs disaggregated design space; the canonical systems paper for this chapter.</li>
+<li><a href="https://arxiv.org/abs/2405.11143">Hu et al., <em>OpenRLHF: An Easy-to-use, Scalable and High-performance RLHF Framework</em> (2024)</a> — Ray-native disaggregated architecture with vLLM rollout workers and NCCL weight broadcast; the reference implementation of the disaggregated pattern.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2410.18252">Noukhovitch et al., <em>Asynchronous RLHF: Faster and More Efficient Off-Policy RL for Language Models</em> (2024)</a> — ICLR 2025; rigorous treatment of staleness, importance-sampling correction, and the safety of off-policy data in async disaggregated training.</li>
+<li><a href="https://arxiv.org/abs/2504.15930">Zhong et al., <em>StreamRL: Scalable, Heterogeneous, and Elastic RL for LLMs with Disaggregated Stream Generation</em> (2025)</a> — tackles pipeline bubbles and long-tail skewness in disaggregated RL via stream generation and skewness-aware dispatching.</li>
+<li><a href="https://arxiv.org/abs/2505.24298">Fu et al., <em>AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning</em> (2025)</a> — fully decouples generation from training and reports up to 2.77× speedup over synchronous baselines.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/verl-project/verl">verl-project/verl</a> — the HybridFlow implementation; supports colocated hybrid engine and disaggregated mode, FSDP/Megatron training backends, vLLM/SGLang rollout, and a built-in resharding manager for gather-fuse-reshard-broadcast weight sync.</li>
+<li><a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF/OpenRLHF</a> — Ray + vLLM disaggregated RL framework supporting PPO, GRPO, REINFORCE++; the most widely adopted open-source disaggregated RL codebase.</li>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — high-performance inference engine with first-class RL support: sleep/wake APIs, three weight-refit strategies (disk, tensor, distributed NCCL), and generation pause/resume for weight updates; see also the <a href="https://sgl-project.github.io/advanced_features/sglang_for_rl.html">SGLang for RL docs</a>.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/blog/async-rl-training-landscape"><em>Keep the Tokens Flowing: Lessons from 16 Open-Source RL Libraries</em> — Hugging Face Blog (2026)</a> — surveys 16 frameworks across seven axes (orchestration, rollout buffer, weight sync protocol, staleness management, partial rollouts, LoRA support, training backend); the best single reference for comparing the async disaggregated landscape.</li>
+<li><a href="https://www.lmsys.org/blog/2026-04-29-p2p-update/"><em>Updating 1T Parameters in Seconds: P2P Weight Transfer in Large-Scale Distributed RL</em> — LMSYS Blog (2026)</a> — RDMA-based P2P weight sync via Mooncake TransferEngine reduces a 1T-model broadcast from 53 s to 7.2 s, pointing toward the next generation of weight-sync infrastructure.</li>
+<li><a href="https://vllm.ai/blog/2025-04-23-openrlhf-vllm"><em>Accelerating RLHF with vLLM: Best Practices from OpenRLHF</em> — vLLM Blog (2025)</a> — practical walkthrough of colocated IPC and disaggregated NCCL weight sync in the OpenRLHF + vLLM stack, with code examples.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Sheng et al., &ldquo;HybridFlow: A Flexible and Efficient RLHF Framework&rdquo; (veRL, 2024)</strong> — the single-controller architecture, the hybrid engine for colocation, and the resharding manager that reconciles training and inference layouts; the most directly relevant systems paper for this chapter.</li>
+<li><strong>Hu et al., &ldquo;OpenRLHF: An Easy-to-use, Scalable and High-performance RLHF Framework&rdquo;</strong> — Ray-based disaggregated rollout workers with vLLM and NCCL weight broadcast; a clear reference implementation of the disaggregated pattern.</li>
+<li><strong>Ren et al., &ldquo;ZeRO-Offload: Democratizing Billion-Scale Model Training&rdquo;</strong> — the optimizer-state-offload mechanism reused on a per-phase cadence in colocated time-slicing.</li>
+<li><strong>Kwon et al., &ldquo;Efficient Memory Management for Large Language Model Serving with PagedAttention&rdquo; (vLLM, 2023)</strong> — the rollout engine and its KV-cache memory model that determine what colocation must make room for.</li>
+<li><strong>Rajbhandari et al., &ldquo;ZeRO: Memory Optimizations Toward Training Trillion Parameter Models&rdquo;</strong> and <strong>Shoeybi et al., &ldquo;Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism&rdquo;</strong> — the two training-side layouts (sharded data parallel and tensor/pipeline parallel) whose mismatch with inference TP creates the resharding problem.</li>
+<li><strong>NVIDIA NCCL documentation and the CUDA IPC runtime API</strong> — the collective-communication and zero-copy-handle primitives underlying weight-sync Mechanisms 2 and 3.</li>
+<li><strong>DeepSeek-AI, &ldquo;DeepSeek-R1&rdquo; (2025)</strong> — a large-scale RLVR run whose long reasoning rollouts are the canonical rollout-bound workload motivating disaggregation.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="06-prime-rl-async.html"><span class="pn-label">← Previous</span><span class="pn-title">Prime-RL, Async RL &amp; Decentralized Training</span></a>
+<a class="next" href="08-reward-verifiers-sandboxes.html"><span class="pn-label">Next →</span><span class="pn-title">Reward Engineering, Verifiers &amp; Sandboxes</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-two-workloads-and-why-placement-matters">The Two Workloads and Why Placement Matters</a></li>
+<li class="toc-l2"><a href="#colocated-sharing-gpus-between-training-and-rollout">Colocated: Sharing GPUs Between Training and Rollout</a></li>
+<li class="toc-l3"><a href="#time-slicing-the-hybrid-engine">Time-slicing (the hybrid engine)</a></li>
+<li class="toc-l3"><a href="#offloading">Offloading</a></li>
+<li class="toc-l3"><a href="#memory-partitioning-true-simultaneous-colocation">Memory partitioning (true simultaneous colocation)</a></li>
+<li class="toc-l2"><a href="#disaggregated-separate-pools-for-training-and-rollout">Disaggregated: Separate Pools for Training and Rollout</a></li>
+<li class="toc-l3"><a href="#on-policy-vs-off-policy-the-staleness-knob">On-policy vs off-policy: the staleness knob</a></li>
+<li class="toc-l3"><a href="#cost-of-disaggregation">Cost of disaggregation</a></li>
+<li class="toc-l2"><a href="#weight-synchronization-mechanisms">Weight Synchronization Mechanisms</a></li>
+<li class="toc-l3"><a href="#mechanism-1-checkpoint-reload-slow-simple-robust">Mechanism 1: Checkpoint reload (slow, simple, robust)</a></li>
+<li class="toc-l3"><a href="#mechanism-2-nccl-broadcast-fast-in-band-the-workhorse">Mechanism 2: NCCL broadcast (fast, in-band, the workhorse)</a></li>
+<li class="toc-l3"><a href="#mechanism-3-cuda-ipc-zero-copy-same-node-fastest">Mechanism 3: CUDA IPC (zero-copy, same-node, fastest)</a></li>
+<li class="toc-l2"><a href="#the-resharding-problem-training-vs-inference-layouts">The Resharding Problem: Training vs Inference Layouts</a></li>
+<li class="toc-l2"><a href="#latency-utilization-and-a-worked-example">Latency, Utilization, and a Worked Example</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-decision-framework">Putting It Together: A Decision Framework</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

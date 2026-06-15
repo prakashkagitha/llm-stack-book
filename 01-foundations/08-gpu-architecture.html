@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU Architecture &amp; The Memory Hierarchy — The LLM Stack</title>
+<meta name="description" content="SMs, warps, threads, CUDA cores vs Tensor Cores; HBM vs L2 vs SMEM vs registers; memory bandwidth vs compute; occupancy; A100/H100/H200/B200 specs and NVLink; a">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="active" href="08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part I — Mathematical &amp; Systems Foundations</div>
+<h1 id="18-gpu-architecture-the-memory-hierarchy">1.8 GPU Architecture &amp; The Memory Hierarchy<a class="headerlink" href="#18-gpu-architecture-the-memory-hierarchy" title="Permanent link">¶</a></h1>
+<p>Every claim you will ever read about LLM training and inference — &ldquo;this kernel is memory-bound,&rdquo; &ldquo;decode is bandwidth-limited,&rdquo; &ldquo;we need to keep the tensor cores fed,&rdquo; &ldquo;the KV cache spilled to a slower tier&rdquo; — is downstream of the hardware described in this chapter. The GPU is not a magic box that does matrix multiplication fast. It is a very specific machine with a very specific shape: thousands of arithmetic units starved by a comparatively thin pipe to memory, organized into a strict hierarchy of caches and scratchpads, executing instructions in lockstep groups of 32. If you understand that shape, the entire performance-engineering half of this book becomes mechanical. If you do not, you will spend your career confused about why your &ldquo;compute-heavy&rdquo; workload runs at 5% of peak FLOPs.</p>
+<p>This is the single most important systems chapter in the book. Almost everything in <a href="../04-kernels-efficiency/01-roofline-performance.html">Part IV — Kernels, Efficiency &amp; Quantization</a> and <a href="../07-inference-serving/01-anatomy-inference.html">Part VII — Inference &amp; Serving</a> is an exercise in respecting the constraints we lay out here. We will build up the GPU from threads to warps to streaming multiprocessors (SMs); walk down the memory hierarchy from registers to high-bandwidth memory (HBM); develop the central concept of <strong>arithmetic intensity</strong> that decides whether you are compute-bound or memory-bound; and ground all of it in the concrete specifications of the NVIDIA A100, H100, H200, and B200 datacenter GPUs. We assume you know Python and the linear algebra of <a href="../01-foundations/01-linear-algebra.html">Linear Algebra for Deep Learning</a>; we explain everything GPU-specific.</p>
+<p>Cross-references: <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a> explains the FP16/BF16/FP8 number formats whose throughput we quote here; <a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a> takes the NVLink and multi-GPU story to the cluster scale; <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a> formalizes arithmetic intensity into the roofline; <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a> is the canonical case study of trading FLOPs for memory traffic; and <a href="../04-kernels-efficiency/05-cuda-essentials.html">CUDA Programming Essentials for ML Engineers</a> turns the execution model below into real kernels.</p>
+<hr />
+<h2 id="why-a-gpu-looks-the-way-it-does">Why a GPU Looks the Way It Does<a class="headerlink" href="#why-a-gpu-looks-the-way-it-does" title="Permanent link">¶</a></h2>
+<p>A CPU is optimized for <strong>latency</strong>: finish one thread&rsquo;s instruction stream as fast as possible. It spends most of its transistor budget on machinery to make a single thread fast — large caches, branch predictors, out-of-order execution, deep speculation. A modern CPU core might have a few hundred kilobytes of private cache and devote enormous silicon to <em>avoiding</em> memory stalls for one thread.</p>
+<p>A GPU is optimized for <strong>throughput</strong>: finish an enormous number of independent threads per second, and tolerate each individual thread being slow. It spends its transistor budget on arithmetic units and on the ability to keep thousands of threads in flight simultaneously. When one thread stalls waiting on memory, the hardware instantly switches to another ready thread. This is <strong>latency hiding through massive parallelism</strong>, and it is the single design decision from which everything else follows.</p>
+<p>The consequence: a GPU only goes fast when you give it tens of thousands of independent units of work. A matrix multiply of two large matrices is perfect — billions of independent multiply-accumulates. Autoregressive decode of one token at a time for a single request is nearly the worst case — almost no parallelism, so the machine sits idle hiding latency it cannot hide. Half of inference engineering (<a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>) is manufacturing parallelism the workload does not naturally have.</p>
+<div class="highlight"><pre><span></span><code>        CPU                                  GPU
+  +---------------+              +-------------------------------+
+  | big control   |              | tiny control, replicated many |
+  | huge caches   |              | small caches, many ALUs        |
+  | few fat cores |              | thousands of thin &quot;cores&quot;      |
+  +---------------+              +-------------------------------+
+  goal: 1 thread fast           goal: 10,000s of threads in flight
+  hides latency by              hides latency by SWITCHING to
+  predicting / caching          another ready warp every cycle
+</code></pre></div>
+<p>A GPU is also a <strong>co-processor</strong>. It hangs off the CPU (the &ldquo;host&rdquo;) over PCIe or, on Grace-Hopper-class systems, a fast chip-to-chip link. The host launches <strong>kernels</strong> (GPU functions) and shuffles data to and from GPU memory. A recurring performance bug is a workload that is secretly host-bound or PCIe-bound: the GPU is fast but it spends its life waiting for the CPU to feed it.</p>
+<hr />
+<h2 id="the-execution-model-threads-warps-blocks-and-sms">The Execution Model: Threads, Warps, Blocks, and SMs<a class="headerlink" href="#the-execution-model-threads-warps-blocks-and-sms" title="Permanent link">¶</a></h2>
+<p>NVIDIA&rsquo;s programming model (CUDA — Compute Unified Device Architecture) exposes a hierarchy of parallel work. Understanding it is non-negotiable.</p>
+<h3 id="threads-and-the-simt-model">Threads and the SIMT model<a class="headerlink" href="#threads-and-the-simt-model" title="Permanent link">¶</a></h3>
+<p>The smallest unit is a <strong>thread</strong>. A thread runs the kernel body once, with its own registers and its own index, and typically computes one element (or a few) of the output. You launch many thousands of them.</p>
+<p>Threads are grouped into <strong>warps</strong> of exactly <strong>32 threads</strong>. This number is a hardware constant on every NVIDIA GPU to date and it dominates everything. The 32 threads in a warp execute <strong>in lockstep</strong>: they share one instruction fetch/decode unit and one program counter, and on each cycle all 32 lanes execute the <em>same</em> instruction on <em>different</em> data. NVIDIA calls this <strong>SIMT</strong> — Single Instruction, Multiple Threads. It is SIMD (Single Instruction, Multiple Data) with a thread-shaped programming abstraction layered on top.</p>
+<p>Two consequences of the warp being the real unit of execution:</p>
+<ul>
+<li><strong>Warp divergence.</strong> If threads in a warp take different sides of an <code>if</code>, the warp executes <em>both</em> paths serially, masking off the inactive lanes on each path. A branch that splits a warp 50/50 can halve throughput. Branchy, data-dependent code is GPU-hostile.</li>
+<li><strong>Coalesced memory access.</strong> When a warp issues a load, the hardware tries to service all 32 lanes with as few memory transactions as possible. If lane <span class="arithmatex">\(i\)</span> reads address <code>base + i*4</code> (32 consecutive 4-byte words), the whole warp is satisfied by one or two 128-byte transactions — <strong>coalesced</strong>, near-peak bandwidth. If the 32 lanes read scattered addresses, you get up to 32 separate transactions and a 32× bandwidth penalty.</li>
+</ul>
+<h3 id="blocks-ctas-and-the-sm">Blocks (CTAs) and the SM<a class="headerlink" href="#blocks-ctas-and-the-sm" title="Permanent link">¶</a></h3>
+<p>Warps are grouped into a <strong>thread block</strong>, also called a <strong>cooperative thread array (CTA)</strong>. A block is the unit of scheduling and the unit of <em>cooperation</em>: threads within a block can synchronize with a barrier (<code>__syncthreads()</code>) and share data through a fast on-chip scratchpad called <strong>shared memory (SMEM)</strong>. Threads in <em>different</em> blocks cannot cheaply synchronize or share scratchpad; this isolation is what lets the GPU run blocks independently and scale.</p>
+<p>Each block is assigned to exactly one <strong>streaming multiprocessor (SM)</strong> for its entire life. The SM is the fundamental compute building block of the GPU — think of it as a core, but a wide, throughput-oriented one. An H100 has 132 SMs; an A100 has 108. Inside one SM you find:</p>
+<ul>
+<li>A register file (e.g. 65,536 32-bit registers — 256 KB — per SM), partitioned among all resident threads.</li>
+<li>A pool of <strong>CUDA cores</strong>: scalar ALUs for FP32/INT32 arithmetic.</li>
+<li><strong>Tensor Cores</strong>: dedicated matrix-multiply-accumulate units (more below).</li>
+<li>A block of on-chip SRAM split between <strong>shared memory</strong> and <strong>L1 cache</strong> (configurable, e.g. up to 228 KB total per SM on H100).</li>
+<li><strong>Warp schedulers</strong> (typically 4 per SM) that pick a ready warp each cycle and issue its next instruction.</li>
+</ul>
+<div class="highlight"><pre><span></span><code>              GPU (e.g. H100: 132 SMs)
+   +-----------------------------------------------+
+   |  SM 0   SM 1   SM 2   ...            SM 131    |
+   |   ||      ||                                   |
+   |   ||  shared by all SMs:  L2 cache (~50 MB)    |
+   |   ||              |                            |
+   +-----------------------------------------------+
+                       |
+                  HBM (off-chip DRAM, 80 GB)
+
+   Inside ONE SM:
+   +-----------------------------------------------+
+   |  4 warp schedulers                            |
+   |  Register file (256 KB)                       |
+   |  CUDA cores (FP32/INT)   Tensor Cores         |
+   |  Shared memory / L1 (configurable SRAM)       |
+   +-----------------------------------------------+
+
+   Software hierarchy:    Grid  &gt;  Block(CTA)  &gt;  Warp(32)  &gt;  Thread
+   Hardware mapping:      GPU   &gt;  SM          &gt;  scheduler &gt;  lane
+</code></pre></div>
+<h3 id="the-grid-and-the-launch">The grid and the launch<a class="headerlink" href="#the-grid-and-the-launch" title="Permanent link">¶</a></h3>
+<p>A kernel launch creates a <strong>grid</strong> of blocks. You choose the grid dimensions and block dimensions. The GPU&rsquo;s global scheduler hands blocks out to SMs as they free up. Because there are usually far more blocks than SMs, this gives automatic load balancing and forward scalability: the same kernel runs on a small GPU (few SMs) or a large one (many SMs) with no code change — bigger GPUs simply chew through more blocks concurrently.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># A from-scratch mental model of the GPU execution hierarchy in pure Python.</span>
+<span class="c1"># This is NOT how you run on a GPU (you&#39;d use CUDA/Triton) -- it is a faithful</span>
+<span class="c1"># simulation of the indexing and lockstep semantics so the model is concrete.</span>
+
+<span class="n">WARP_SIZE</span> <span class="o">=</span> <span class="mi">32</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">launch_kernel</span><span class="p">(</span><span class="n">grid_dim</span><span class="p">,</span> <span class="n">block_dim</span><span class="p">,</span> <span class="n">kernel</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Emulate a CUDA grid launch: grid_dim blocks, each of block_dim threads.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">block_id</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">grid_dim</span><span class="p">):</span>
+        <span class="c1"># Each block is independent -&gt; could run on any SM, in any order.</span>
+        <span class="n">block_threads</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">block_dim</span><span class="p">))</span>
+        <span class="c1"># Threads execute in warps of 32, in lockstep within a warp.</span>
+        <span class="k">for</span> <span class="n">warp_start</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">block_dim</span><span class="p">,</span> <span class="n">WARP_SIZE</span><span class="p">):</span>
+            <span class="n">warp</span> <span class="o">=</span> <span class="n">block_threads</span><span class="p">[</span><span class="n">warp_start</span><span class="p">:</span> <span class="n">warp_start</span> <span class="o">+</span> <span class="n">WARP_SIZE</span><span class="p">]</span>
+            <span class="c1"># All lanes in this warp run the SAME instruction stream together.</span>
+            <span class="k">for</span> <span class="n">thread_id</span> <span class="ow">in</span> <span class="n">warp</span><span class="p">:</span>               <span class="c1"># in HW: simultaneous, not serial</span>
+                <span class="n">global_tid</span> <span class="o">=</span> <span class="n">block_id</span> <span class="o">*</span> <span class="n">block_dim</span> <span class="o">+</span> <span class="n">thread_id</span>
+                <span class="n">kernel</span><span class="p">(</span><span class="n">global_tid</span><span class="p">,</span> <span class="n">block_id</span><span class="p">,</span> <span class="n">thread_id</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">saxpy</span><span class="p">(</span><span class="n">global_tid</span><span class="p">,</span> <span class="n">block_id</span><span class="p">,</span> <span class="n">thread_id</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="n">n</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;out[i] = a * x[i] + y[i], one element per thread (the classic &#39;SAXPY&#39;).&quot;&quot;&quot;</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="n">global_tid</span>
+    <span class="k">if</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">:</span>                                    <span class="c1"># guard: grid may overshoot n</span>
+        <span class="n">out</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">a</span> <span class="o">*</span> <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+</span> <span class="n">y</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+
+<span class="n">n</span> <span class="o">=</span> <span class="mi">100</span>
+<span class="n">x</span> <span class="o">=</span> <span class="p">[</span><span class="nb">float</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">)]</span>
+<span class="n">y</span> <span class="o">=</span> <span class="p">[</span><span class="mf">1.0</span><span class="p">]</span> <span class="o">*</span> <span class="n">n</span>
+<span class="n">out</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">]</span> <span class="o">*</span> <span class="n">n</span>
+<span class="n">block_dim</span> <span class="o">=</span> <span class="mi">32</span>                                   <span class="c1"># one warp per block here</span>
+<span class="n">grid_dim</span> <span class="o">=</span> <span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="n">block_dim</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="n">block_dim</span>      <span class="c1"># ceil-div = 4 blocks for n=100</span>
+<span class="n">launch_kernel</span><span class="p">(</span><span class="n">grid_dim</span><span class="p">,</span> <span class="n">block_dim</span><span class="p">,</span> <span class="n">saxpy</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">out</span><span class="p">[:</span><span class="mi">5</span><span class="p">])</span>     <span class="c1"># [1.0, 3.0, 5.0, 7.0, 9.0]  == 2*x + 1</span>
+</code></pre></div>
+<p>This <code>saxpy</code> is the canonical <em>memory-bound</em> kernel: for every element it does 2 FLOPs (one multiply, one add) but reads 8 bytes (<code>x[i]</code>, <code>y[i]</code>) and writes 4 bytes. We will quantify exactly why that is bad shortly.</p>
+<hr />
+<h2 id="cuda-cores-vs-tensor-cores">CUDA Cores vs Tensor Cores<a class="headerlink" href="#cuda-cores-vs-tensor-cores" title="Permanent link">¶</a></h2>
+<p>There are two fundamentally different arithmetic engines on a modern datacenter GPU, and conflating them is the most common beginner error in performance reasoning.</p>
+<h3 id="cuda-cores-scalar-general-purpose">CUDA cores: scalar, general-purpose<a class="headerlink" href="#cuda-cores-scalar-general-purpose" title="Permanent link">¶</a></h3>
+<p>A <strong>CUDA core</strong> is a scalar ALU. Each one does one fused multiply-add (FMA) per cycle on FP32 (or FP64 on the smaller FP64 units, or INT32). When you write <code>c = a * b + d</code> in a kernel on plain floats, that runs on CUDA cores. The FP32 throughput of a GPU is roughly (number of FP32 lanes) × (clock) × 2 (the FMA counts as 2 FLOPs). On an A100 this is on the order of 19.5 TFLOP/s of FP32. Respectable, but not where the headline numbers come from.</p>
+<h3 id="tensor-cores-matrix-multiply-accumulate-engines">Tensor Cores: matrix-multiply-accumulate engines<a class="headerlink" href="#tensor-cores-matrix-multiply-accumulate-engines" title="Permanent link">¶</a></h3>
+<p>A <strong>Tensor Core</strong> is a small systolic-array-like unit that computes an entire small matrix multiply-accumulate per operation: <span class="arithmatex">\(D = A \times B + C\)</span> where <span class="arithmatex">\(A\)</span>, <span class="arithmatex">\(B\)</span>, <span class="arithmatex">\(C\)</span>, <span class="arithmatex">\(D\)</span> are small tiles (e.g. <span class="arithmatex">\(16\times16\)</span>). Instead of issuing <span class="arithmatex">\(16^3\)</span> scalar FMAs, one Tensor Core instruction consumes whole tiles and produces a whole tile. This is why the BF16/FP16 Tensor Core throughput of an A100 (on the order of 312 TFLOP/s) is <strong>16×</strong> its FP32 CUDA-core throughput. The H100 pushes this further with FP8 Tensor Cores; the Blackwell B200 adds FP4. Every modern training and inference workload lives or dies on Tensor Core utilization.</p>
+<p>The catch: Tensor Cores only accelerate <strong>matrix multiplication</strong> (and operations you can phrase as one), and only in <strong>reduced precision</strong> (BF16/FP16/FP8/FP4 inputs, usually with FP32 accumulation). They want tile-shaped, contiguous data with dimensions that are multiples of 8 or 16. A pointwise operation (add, GELU, layernorm) gets <em>zero</em> benefit from Tensor Cores — it runs on CUDA cores and is almost always memory-bound. This split — matmuls on Tensor Cores, everything else on CUDA cores and bandwidth-limited — is the structural reason kernel fusion (<a href="../04-kernels-efficiency/09-compilers-fusion.html">Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a>) matters so much.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: how the throughput numbers multiply up</p>
+<p>Vendors quote &ldquo;sparse&rdquo; Tensor Core numbers (assuming 2:4 structured sparsity) that double the dense figure. Always check whether a headline TFLOP/s is dense or sparse, and which precision. A &ldquo;1979 TFLOP/s&rdquo; H100 number is FP16 <em>with sparsity</em>; the dense FP16 figure is about half. For honest roofline math, use dense numbers in the precision you actually run.</p>
+</div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># Demonstrate the CUDA-core vs Tensor-core gap empirically (run on a GPU).</span>
+<span class="c1"># FP32 matmul uses CUDA cores; BF16 matmul uses Tensor Cores.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">benchmark_matmul</span><span class="p">(</span><span class="n">dtype</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">8192</span><span class="p">,</span> <span class="n">iters</span><span class="o">=</span><span class="mi">50</span><span class="p">):</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">_</span> <span class="o">=</span> <span class="n">a</span> <span class="o">@</span> <span class="n">b</span>                                  <span class="c1"># warm up / autotune</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">iters</span><span class="p">):</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="n">a</span> <span class="o">@</span> <span class="n">b</span>
+    <span class="n">end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">ms</span> <span class="o">=</span> <span class="n">start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">end</span><span class="p">)</span> <span class="o">/</span> <span class="n">iters</span>
+    <span class="n">flops</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">n</span><span class="o">**</span><span class="mi">3</span>                           <span class="c1"># 2*n^3 FLOPs for n x n matmul</span>
+    <span class="n">tflops</span> <span class="o">=</span> <span class="n">flops</span> <span class="o">/</span> <span class="p">(</span><span class="n">ms</span> <span class="o">*</span> <span class="mf">1e-3</span><span class="p">)</span> <span class="o">/</span> <span class="mf">1e12</span>
+    <span class="k">return</span> <span class="n">ms</span><span class="p">,</span> <span class="n">tflops</span>
+
+<span class="c1"># On an A100 you would typically see something on the order of:</span>
+<span class="c1">#   FP32 : ~19  TFLOP/s   (CUDA cores)</span>
+<span class="c1">#   BF16 : ~280 TFLOP/s   (Tensor Cores) -- over 10x faster on the SAME hardware</span>
+<span class="k">for</span> <span class="n">dt</span> <span class="ow">in</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">):</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="n">benchmark_matmul</span><span class="p">(</span><span class="n">dt</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">res</span><span class="p">:</span>
+        <span class="n">ms</span><span class="p">,</span> <span class="n">tflops</span> <span class="o">=</span> <span class="n">res</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">dt</span><span class="p">)</span><span class="si">:</span><span class="s2">16s</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">ms</span><span class="si">:</span><span class="s2">7.2f</span><span class="si">}</span><span class="s2"> ms  </span><span class="si">{</span><span class="n">tflops</span><span class="si">:</span><span class="s2">7.1f</span><span class="si">}</span><span class="s2"> TFLOP/s&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The reason <code>torch.set_float32_matmul_precision("high")</code> and BF16 autocast exist is precisely to route FP32 <em>logical</em> math onto the Tensor Cores (via TF32 or BF16) and capture that order-of-magnitude speedup. See <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a>.</p>
+<hr />
+<h2 id="the-memory-hierarchy-registers-smem-l2-and-hbm">The Memory Hierarchy: Registers, SMEM, L2, and HBM<a class="headerlink" href="#the-memory-hierarchy-registers-smem-l2-and-hbm" title="Permanent link">¶</a></h2>
+<p>Compute is cheap; moving data is expensive. The GPU memory hierarchy is a series of tiers, each roughly an order of magnitude larger and an order of magnitude slower than the one above it. The art of GPU kernel writing is keeping data in the fast tiers and minimizing trips to the slow ones.</p>
+<figure class="viz" id="fig-memory-hierarchy">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 360" role="img" aria-label="The GPU memory hierarchy as four stacked bars from registers to shared memory to L2 to HBM: capacity grows from kilobytes to gigabytes while bandwidth falls off a cliff from tens of terabytes per second on-chip to a few terabytes per second off-chip.">
+  <defs>
+    <marker id="mh-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-memory-hierarchy text{ fill:var(--ink-soft); }
+    #fig-memory-hierarchy .tier{ font:600 14px var(--sans,sans-serif); }
+    #fig-memory-hierarchy .scope{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-memory-hierarchy .num{ font:600 12px var(--mono,monospace); }
+    #fig-memory-hierarchy .cap{ font:500 11px var(--mono,monospace); fill:var(--ink-soft); }
+    #fig-memory-hierarchy .hdr{ font:600 11px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-memory-hierarchy .note{ font:600 12px var(--sans,sans-serif); }
+    #fig-memory-hierarchy .small{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+  </style>
+
+
+  <text x="44"  y="30" class="hdr">tier</text>
+  <text x="200" y="30" text-anchor="middle" class="hdr">bandwidth  (bar length ∝ speed)</text>
+  <text x="612" y="30" class="hdr">capacity</text>
+  <text x="612" y="44" class="small">latency</text>
+
+
+  <g data-anim="1">
+    <path d="M22 56 h-8 v176 h8" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="1.3"/>
+    <text x="8" y="148" text-anchor="middle" transform="rotate(-90 8 148)" class="note v-accent" fill="var(--accent)">on-chip SRAM · tens of TB/s</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="40" y="58" width="500" height="34" rx="6" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <rect x="40" y="58" width="500" height="34" rx="6" class="v-accent viz-sweep" fill="var(--accent)" fill-opacity="0.30"/>
+    <text x="52" y="80" class="tier v-accent" fill="var(--accent)">Registers</text>
+    <text x="168" y="80" class="scope">per-thread</text>
+    <text x="528" y="76" text-anchor="end" class="num v-accent" fill="var(--accent)">~tens of TB/s</text>
+    <text x="556" y="76" class="cap">256 KB / SM</text>
+    <text x="556" y="89" class="small">~1 cyc</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="40" y="104" width="476" height="34" rx="6" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <rect x="40" y="104" width="476" height="34" rx="6" class="v-accent viz-sweep" fill="var(--accent)" fill-opacity="0.30"/>
+    <text x="52" y="126" class="tier v-accent" fill="var(--accent)">SMEM / L1</text>
+    <text x="168" y="126" class="scope">per-block</text>
+    <text x="504" y="122" text-anchor="end" class="num v-accent" fill="var(--accent)">~tens of TB/s</text>
+    <text x="556" y="122" class="cap">~228 KB / SM</text>
+    <text x="556" y="135" class="small">~30 cyc</text>
+  </g>
+
+
+  <g data-anim="4">
+    <rect x="40" y="150" width="452" height="34" rx="6" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <rect x="40" y="150" width="452" height="34" rx="6" class="v-accent viz-sweep" fill="var(--accent)" fill-opacity="0.30"/>
+    <text x="52" y="172" class="tier v-accent" fill="var(--accent)">L2 cache</text>
+    <text x="168" y="172" class="scope">whole GPU</text>
+    <text x="480" y="168" text-anchor="end" class="num v-accent" fill="var(--accent)">~tens of TB/s</text>
+    <text x="556" y="168" class="cap">~50 MB</text>
+    <text x="556" y="181" class="small">~200 cyc</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="138" y1="190" x2="138" y2="222" class="v-stroke" stroke="var(--warn,#e0a106)" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <path d="M138 196 L150 196" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.6" marker-end="url(#mh-arr)" opacity="0"/>
+    <text x="150" y="208" class="note" fill="var(--warn,#e0a106)">bandwidth cliff</text>
+    <text x="150" y="221" class="small">on-chip → off-chip: ~10×</text>
+  </g>
+
+
+  <g data-anim="5">
+    <path d="M22 230 h-8 v34 h8" fill="none" class="v-stroke" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="8" y="247" text-anchor="middle" transform="rotate(-90 8 247)" class="note" fill="var(--warn,#e0a106)">off-chip DRAM</text>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="40" y="230" width="112" height="34" rx="6" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <rect x="40" y="230" width="112" height="34" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.28" class="viz-pulse"/>
+    <text x="52" y="252" class="tier" fill="var(--warn,#e0a106)">HBM</text>
+    <text x="168" y="245" class="scope">whole GPU ·</text>
+    <text x="168" y="258" class="scope">off-chip DRAM</text>
+    <text x="300" y="252" class="num" fill="var(--warn,#e0a106)">~3.35 TB/s</text>
+    <text x="556" y="248" class="cap">80 GB</text>
+    <text x="556" y="261" class="small">~500 cyc</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="40" y1="296" x2="700" y2="296" class="v-grid" stroke-width="1.2" marker-end="url(#mh-arr)"/>
+    <text x="40"  y="312" class="small">registers · KB</text>
+    <text x="700" y="312" text-anchor="end" class="small">HBM · tens of GB</text>
+    <text x="370" y="312" text-anchor="middle" class="hdr">capacity: each tier ≈ 10× larger going down  →</text>
+  </g>
+</svg>
+<figcaption><b>Fast and tiny, or slow and huge — never both.</b> The three on-chip SRAM tiers (registers, SMEM/L1, L2) all deliver <b>tens of TB/s</b> but hold only kilobytes to tens of megabytes; the step to off-chip <b>HBM</b> drops bandwidth roughly 10× to a few TB/s while capacity jumps to tens of gigabytes. Kernel performance is the art of keeping reused data above that bandwidth cliff. (Illustrative H100-class orders of magnitude.)</figcaption>
+</figure>
+
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Scope</th>
+<th>Approx. size (H100-class)</th>
+<th>Approx. bandwidth</th>
+<th>Approx. latency</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Registers</td>
+<td>per-thread</td>
+<td>256 KB / SM (65,536 × 32-bit)</td>
+<td>~tens of TB/s (per SM)</td>
+<td>~1 cycle</td>
+</tr>
+<tr>
+<td>Shared memory / L1</td>
+<td>per-block (per-SM SRAM)</td>
+<td>up to ~228 KB / SM</td>
+<td>~tens of TB/s (per SM)</td>
+<td>~20–30 cycles</td>
+</tr>
+<tr>
+<td>L2 cache</td>
+<td>whole GPU</td>
+<td>~50 MB</td>
+<td>~tens of TB/s aggregate</td>
+<td>~200 cycles</td>
+</tr>
+<tr>
+<td>HBM (global/DRAM)</td>
+<td>whole GPU</td>
+<td>80 GB</td>
+<td>~3.35 TB/s</td>
+<td>~400–800 cycles</td>
+</tr>
+<tr>
+<td>NVLink (to peer GPU)</td>
+<td>node</td>
+<td>—</td>
+<td>~450–900 GB/s/dir</td>
+<td>microseconds</td>
+</tr>
+<tr>
+<td>PCIe (to host)</td>
+<td>node</td>
+<td>—</td>
+<td>~32–64 GB/s</td>
+<td>microseconds</td>
+</tr>
+</tbody>
+</table>
+<p>The numbers are illustrative and vary by exact SKU and clock, but the <em>ratios</em> are the point: SMEM is roughly an order of magnitude faster than L2, which is faster than HBM, which dwarfs PCIe. Each step down is a cliff.</p>
+<h3 id="registers">Registers<a class="headerlink" href="#registers" title="Permanent link">¶</a></h3>
+<p>Each thread has private registers. These are the only operands the ALUs read directly, and accessing them is effectively free. The register file is a fixed resource per SM (e.g. 65,536 32-bit registers). If each thread uses 64 registers, an SM can host at most <span class="arithmatex">\(65536 / 64 = 1024\)</span> threads. Use too many registers per thread and you reduce <strong>occupancy</strong> (next section). &ldquo;Register spilling&rdquo; — when the compiler runs out of registers and pushes variables to slow &ldquo;local memory&rdquo; (which actually lives in L1/L2/HBM) — is a silent performance killer.</p>
+<h3 id="shared-memory-smem-the-programmer-managed-scratchpad">Shared memory (SMEM): the programmer-managed scratchpad<a class="headerlink" href="#shared-memory-smem-the-programmer-managed-scratchpad" title="Permanent link">¶</a></h3>
+<p><strong>Shared memory</strong> is fast on-chip SRAM, private to a thread block, and — crucially — <strong>explicitly managed by you</strong>, the kernel author. It is not a cache that fills automatically; you stage data into it on purpose. The canonical use is <strong>tiling</strong> a matrix multiply: cooperatively load a tile of <span class="arithmatex">\(A\)</span> and a tile of <span class="arithmatex">\(B\)</span> from HBM into SMEM once, then have all threads in the block reuse those tiles many times from the fast scratchpad before fetching the next tile. This converts a flood of redundant HBM reads into a trickle. SMEM is physically banked (32 banks); if two lanes of a warp hit the same bank with different addresses you get a <strong>bank conflict</strong> and serialized access — the SMEM analogue of uncoalesced HBM access.</p>
+<p>This staged reuse is the entire mechanism behind FlashAttention: keep the attention computation&rsquo;s working set in SMEM and registers, never materialize the full <span class="arithmatex">\(S \times S\)</span> attention matrix in HBM. See <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a>.</p>
+<h3 id="l2-cache">L2 cache<a class="headerlink" href="#l2-cache" title="Permanent link">¶</a></h3>
+<p>The <strong>L2 cache</strong> is shared by all SMs and caches HBM transparently. You do not manage it directly, but you exploit it by structuring access patterns so that data fetched by one SM is reused by another while still resident. On Hopper, the <strong>L2 cache residency controls</strong> and the new <strong>thread block clusters / distributed shared memory</strong> let blocks on nearby SMs share SMEM, effectively a programmable extension of the SMEM tier.</p>
+<h3 id="hbm-the-headline-gpu-memory">HBM: the headline &ldquo;GPU memory&rdquo;<a class="headerlink" href="#hbm-the-headline-gpu-memory" title="Permanent link">¶</a></h3>
+<p>When someone says &ldquo;an 80 GB H100,&rdquo; they mean its <strong>HBM</strong> — High Bandwidth Memory, stacked DRAM sitting on the same package as the GPU die, connected by an extremely wide bus. HBM is where your model weights, activations, optimizer states, and KV cache live. Its capacity bounds how big a model you can hold; its <strong>bandwidth</strong> bounds how fast you can stream those weights through the compute units. For LLM <em>decode</em>, HBM bandwidth is almost always the binding constraint, because each generated token must read the entire model&rsquo;s weights from HBM at least once and does very little arithmetic with them. This is the central fact of inference economics (<a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>).</p>
+<div class="highlight"><pre><span></span><code>   fast &amp; tiny  -----------------------------------------&gt;  slow &amp; huge
+   +-----------+   +------------+   +--------+   +-----------------+
+   | registers | &lt; | SMEM / L1  | &lt; |   L2   | &lt; |   HBM (DRAM)    |
+   | 256 KB/SM |   | ~228 KB/SM |   | ~50 MB |   |     80 GB       |
+   |  ~1 cyc   |   |  ~30 cyc   |   |~200 cyc|   |   ~500 cyc      |
+   +-----------+   +------------+   +--------+   +-----------------+
+        ^                ^                            |
+        |   you stage    |   you cache-friendly       |  you minimize
+        |   explicitly   |   structure access         |  total bytes moved
+</code></pre></div>
+<hr />
+<h2 id="occupancy-keeping-the-machine-busy">Occupancy: Keeping the Machine Busy<a class="headerlink" href="#occupancy-keeping-the-machine-busy" title="Permanent link">¶</a></h2>
+<p>The GPU hides memory latency by having many warps resident on each SM: when one warp stalls on a load, a warp scheduler instantly issues from another ready warp. <strong>Occupancy</strong> is the ratio of resident warps to the hardware maximum per SM. Higher occupancy generally means more latency-hiding headroom.</p>
+<p>Occupancy is bounded by whichever per-SM resource runs out first:</p>
+<ul>
+<li><strong>Registers.</strong> Resident threads × registers/thread ≤ register file size.</li>
+<li><strong>Shared memory.</strong> Resident blocks × SMEM/block ≤ SMEM size per SM.</li>
+<li><strong>Block/warp slots.</strong> A hardware cap on resident blocks and warps per SM.</li>
+</ul>
+<div class="arithmatex">\[
+\text{occupancy} = \frac{\text{active warps per SM}}{\text{max warps per SM}}, \qquad \text{max warps per SM} = \frac{\text{max threads per SM}}{32}
+\]</div>
+<p>A worked occupancy calculation makes the trade-offs concrete.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: occupancy as a resource-packing problem</p>
+<p>Consider an SM with these (representative) limits: 65,536 32-bit registers, 100 KB of shared memory available, a cap of 2,048 resident threads (= 64 warps), and a cap of 32 resident blocks.</p>
+<p>You launch a kernel with <strong>256 threads per block</strong>, using <strong>48 registers per thread</strong> and <strong>24 KB of shared memory per block</strong>. How many blocks fit?</p>
+<ul>
+<li>Register limit: each block needs <span class="arithmatex">\(256 \times 48 = 12{,}288\)</span> registers. The file holds <span class="arithmatex">\(65{,}536\)</span>, so at most <span class="arithmatex">\(\lfloor 65536 / 12288 \rfloor = 5\)</span> blocks.</li>
+<li>Shared-memory limit: <span class="arithmatex">\(\lfloor 100{,}000 / 24{,}000 \rfloor = 4\)</span> blocks.</li>
+<li>Thread/block-count limit: <span class="arithmatex">\(\lfloor 2048 / 256 \rfloor = 8\)</span> blocks, well under the 32-block cap.</li>
+</ul>
+<p>The binding constraint is <strong>shared memory</strong>: 4 blocks fit. That is <span class="arithmatex">\(4 \times 256 = 1{,}024\)</span> threads <span class="arithmatex">\(= 32\)</span> warps resident, out of a maximum of 64. So <strong>occupancy = 32 / 64 = 50%</strong>.</p>
+<p>Want higher occupancy? Cut shared memory per block to 16 KB and now <span class="arithmatex">\(\lfloor 100000/16000 \rfloor = 6\)</span> blocks fit, but registers now bind at 5 blocks → <span class="arithmatex">\(5\times256=1280\)</span> threads = 20 warps&hellip; wait, 5 blocks of 256 = 1280 threads = 40 warps = <strong>62.5% occupancy</strong>. Drop registers to 32/thread and the register limit becomes <span class="arithmatex">\(\lfloor 65536/(256\times32)\rfloor = 8\)</span> blocks, which hits the thread cap at 8 blocks = 2,048 threads = <strong>100% occupancy</strong>. This is the daily reality of kernel tuning: you trade registers and shared memory against occupancy.</p>
+</div>
+<p>The crucial subtlety, established by Vasily Volkov&rsquo;s work, is that <strong>maximum occupancy is not the goal — performance is</strong>. A kernel that uses lots of registers per thread to hold a big accumulator tile (low occupancy) can dramatically outperform a high-occupancy kernel, because it gets more reuse per byte loaded. FlashAttention and high-performance GEMM kernels deliberately run at modest occupancy. Occupancy buys you <em>latency hiding</em>; if you already hide latency another way (instruction-level parallelism, big register tiles), you do not need much of it. Treat occupancy as one lever, not the objective.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">max_blocks_per_sm</span><span class="p">(</span><span class="n">threads_per_block</span><span class="p">,</span> <span class="n">regs_per_thread</span><span class="p">,</span> <span class="n">smem_per_block_bytes</span><span class="p">,</span>
+                      <span class="n">regfile</span><span class="o">=</span><span class="mi">65536</span><span class="p">,</span> <span class="n">smem_per_sm</span><span class="o">=</span><span class="mi">101376</span><span class="p">,</span>
+                      <span class="n">max_threads</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span> <span class="n">max_blocks</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">warp</span><span class="o">=</span><span class="mi">32</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replicate NVIDIA&#39;s occupancy calculator logic: the min over all limits.&quot;&quot;&quot;</span>
+    <span class="n">regs_per_block</span> <span class="o">=</span> <span class="n">threads_per_block</span> <span class="o">*</span> <span class="n">regs_per_thread</span>
+    <span class="n">by_regs</span>   <span class="o">=</span> <span class="n">regfile</span> <span class="o">//</span> <span class="n">regs_per_block</span> <span class="k">if</span> <span class="n">regs_per_block</span> <span class="k">else</span> <span class="n">max_blocks</span>
+    <span class="n">by_smem</span>   <span class="o">=</span> <span class="n">smem_per_sm</span> <span class="o">//</span> <span class="n">smem_per_block_bytes</span> <span class="k">if</span> <span class="n">smem_per_block_bytes</span> <span class="k">else</span> <span class="n">max_blocks</span>
+    <span class="n">by_threads</span> <span class="o">=</span> <span class="n">max_threads</span> <span class="o">//</span> <span class="n">threads_per_block</span>
+    <span class="n">blocks</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">by_regs</span><span class="p">,</span> <span class="n">by_smem</span><span class="p">,</span> <span class="n">by_threads</span><span class="p">,</span> <span class="n">max_blocks</span><span class="p">)</span>
+    <span class="n">warps</span>  <span class="o">=</span> <span class="n">blocks</span> <span class="o">*</span> <span class="n">threads_per_block</span> <span class="o">//</span> <span class="n">warp</span>
+    <span class="n">occupancy</span> <span class="o">=</span> <span class="n">warps</span> <span class="o">/</span> <span class="p">(</span><span class="n">max_threads</span> <span class="o">//</span> <span class="n">warp</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">blocks</span><span class="p">,</span> <span class="n">warps</span><span class="p">,</span> <span class="n">occupancy</span>
+
+<span class="k">for</span> <span class="n">regs</span><span class="p">,</span> <span class="n">smem</span> <span class="ow">in</span> <span class="p">[(</span><span class="mi">48</span><span class="p">,</span> <span class="mi">24</span><span class="o">*</span><span class="mi">1024</span><span class="p">),</span> <span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">16</span><span class="o">*</span><span class="mi">1024</span><span class="p">),</span> <span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="o">*</span><span class="mi">1024</span><span class="p">)]:</span>
+    <span class="n">b</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="n">occ</span> <span class="o">=</span> <span class="n">max_blocks_per_sm</span><span class="p">(</span><span class="mi">256</span><span class="p">,</span> <span class="n">regs</span><span class="p">,</span> <span class="n">smem</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;regs/thread=</span><span class="si">{</span><span class="n">regs</span><span class="si">:</span><span class="s2">2d</span><span class="si">}</span><span class="s2"> smem=</span><span class="si">{</span><span class="n">smem</span><span class="o">//</span><span class="mi">1024</span><span class="si">:</span><span class="s2">2d</span><span class="si">}</span><span class="s2">KB -&gt; &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">b</span><span class="si">}</span><span class="s2"> blocks, </span><span class="si">{</span><span class="n">w</span><span class="si">}</span><span class="s2"> warps, occupancy=</span><span class="si">{</span><span class="n">occ</span><span class="si">:</span><span class="s2">.0%</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="arithmetic-intensity-the-master-concept">Arithmetic Intensity: The Master Concept<a class="headerlink" href="#arithmetic-intensity-the-master-concept" title="Permanent link">¶</a></h2>
+<p>Here is the idea that unifies this entire chapter and most of Part IV. Every kernel does some amount of arithmetic and moves some number of bytes. The ratio is its <strong>arithmetic intensity</strong> (also called operational intensity):</p>
+<div class="arithmatex">\[
+I = \frac{\text{FLOPs performed}}{\text{bytes moved to/from HBM}} \quad \left[\frac{\text{FLOP}}{\text{byte}}\right]
+\]</div>
+<p>The hardware has a fixed peak compute <span class="arithmatex">\(\pi\)</span> (FLOP/s) and a fixed peak bandwidth <span class="arithmatex">\(\beta\)</span> (byte/s). Their ratio defines the <strong>machine balance</strong> or <strong>ridge point</strong>:</p>
+<div class="arithmatex">\[
+I_{\text{ridge}} = \frac{\pi}{\beta} \quad \left[\frac{\text{FLOP}}{\text{byte}}\right]
+\]</div>
+<p>The achievable performance of a kernel is bounded by:</p>
+<div class="arithmatex">\[
+P \le \min\!\big(\pi,\; I \cdot \beta\big)
+\]</div>
+<p>This is the <strong>roofline</strong> (<a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>). Read it as a simple dichotomy:</p>
+<ul>
+<li>If <span class="arithmatex">\(I &lt; I_{\text{ridge}}\)</span>, the kernel is <strong>memory-bound</strong>: it would finish faster if HBM were faster, and adding more FLOPs (e.g. recomputation) is &ldquo;free.&rdquo; You are bandwidth-limited.</li>
+<li>If <span class="arithmatex">\(I &gt; I_{\text{ridge}}\)</span>, the kernel is <strong>compute-bound</strong>: it is limited by the arithmetic units. You are FLOP-limited.</li>
+</ul>
+<p>For an A100, <span class="arithmatex">\(\pi \approx 312\,\text{TFLOP/s}\)</span> (BF16) and <span class="arithmatex">\(\beta \approx 2.0\,\text{TB/s}\)</span>, so <span class="arithmatex">\(I_{\text{ridge}} \approx 156\)</span> FLOP/byte. For an H100 with <span class="arithmatex">\(\pi \approx 990\,\text{TFLOP/s}\)</span> (BF16, dense) and <span class="arithmatex">\(\beta \approx 3.35\,\text{TB/s}\)</span>, <span class="arithmatex">\(I_{\text{ridge}} \approx 295\)</span> FLOP/byte. <strong>The ridge point has been climbing every GPU generation</strong> — compute grows faster than bandwidth — which means more and more kernels fall on the memory-bound side over time. This is <em>the</em> secular trend in ML systems: we are increasingly bandwidth-starved, and techniques that trade FLOPs for bytes keep winning.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: why decode is memory-bound and matmul is not</p>
+<p><strong>Large square matmul.</strong> Multiply two <span class="arithmatex">\(N \times N\)</span> BF16 matrices, <span class="arithmatex">\(N = 8192\)</span>. FLOPs <span class="arithmatex">\(= 2N^3 = 2 \cdot 8192^3 \approx 1.10 \times 10^{12}\)</span>. Bytes moved (read both inputs, write output, ignoring reuse caching for a lower bound) <span class="arithmatex">\(= 3 N^2 \cdot 2 = 3 \cdot 8192^2 \cdot 2 \approx 4.0 \times 10^{8}\)</span> bytes. Arithmetic intensity <span class="arithmatex">\(I = 1.10\times10^{12} / 4.0\times10^{8} \approx 2{,}700\)</span> FLOP/byte. That is <em>far</em> above the A100 ridge of 156, so a big matmul is solidly <strong>compute-bound</strong> — exactly why it can approach peak Tensor Core throughput.</p>
+<p><strong>Autoregressive decode (one token, one request).</strong> A dense 7B model in BF16 holds about <span class="arithmatex">\(7\times10^9 \times 2 = 1.4\times10^{10}\)</span> bytes of weights. To generate one token you must read essentially all of them from HBM once: bytes <span class="arithmatex">\(\approx 1.4\times10^{10}\)</span>. The arithmetic is roughly <span class="arithmatex">\(2 \times \text{params} = 2 \times 7\times10^9 = 1.4\times10^{10}\)</span> FLOPs (two FLOPs per parameter for the matrix-vector products). So <span class="arithmatex">\(I = 1.4\times10^{10} / 1.4\times10^{10} = 1\)</span> FLOP/byte. That is <em>vastly</em> below the ridge — decode is profoundly <strong>memory-bound</strong>.</p>
+<p>The consequence is brutal and beautiful: per-token decode latency for a 7B model on an A100 is roughly <span class="arithmatex">\(\frac{1.4\times10^{10}\,\text{bytes}}{2.0\times10^{12}\,\text{byte/s}} \approx 7\,\text{ms}\)</span> — set entirely by bandwidth, with the Tensor Cores 99% idle. To use those idle Tensor Cores you must <strong>batch</strong>: process many requests&rsquo; tokens together so the same weight bytes, read once, do work for many tokens. Batching raises <span class="arithmatex">\(I\)</span> until decode becomes compute-bound. This is the whole reason continuous batching exists, and why throughput-per-dollar and per-request latency are in tension. Speculative decoding (<a href="../07-inference-serving/06-speculative-decoding.html">Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a>) attacks the same wall from a different angle: verify several tokens per weight-load.</p>
+</div>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">arithmetic_intensity</span><span class="p">(</span><span class="n">flops</span><span class="p">,</span> <span class="n">bytes_moved</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">flops</span> <span class="o">/</span> <span class="n">bytes_moved</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">roofline_perf</span><span class="p">(</span><span class="n">intensity</span><span class="p">,</span> <span class="n">peak_flops</span><span class="p">,</span> <span class="n">peak_bw</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Attainable FLOP/s under the roofline model.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">min</span><span class="p">(</span><span class="n">peak_flops</span><span class="p">,</span> <span class="n">intensity</span> <span class="o">*</span> <span class="n">peak_bw</span><span class="p">)</span>
+
+<span class="c1"># A100-class numbers (BF16 Tensor Core peak, HBM2e bandwidth).</span>
+<span class="n">PEAK_FLOPS</span> <span class="o">=</span> <span class="mf">312e12</span>      <span class="c1"># 312 TFLOP/s</span>
+<span class="n">PEAK_BW</span>    <span class="o">=</span> <span class="mf">2.0e12</span>      <span class="c1"># 2.0 TB/s</span>
+<span class="n">ridge</span> <span class="o">=</span> <span class="n">PEAK_FLOPS</span> <span class="o">/</span> <span class="n">PEAK_BW</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;A100 ridge point: </span><span class="si">{</span><span class="n">ridge</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> FLOP/byte&quot;</span><span class="p">)</span>
+
+<span class="c1"># Case 1: 8192^3 BF16 matmul</span>
+<span class="n">N</span> <span class="o">=</span> <span class="mi">8192</span>
+<span class="n">mm_flops</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">N</span><span class="o">**</span><span class="mi">3</span>
+<span class="n">mm_bytes</span> <span class="o">=</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">N</span><span class="o">**</span><span class="mi">2</span> <span class="o">*</span> <span class="mi">2</span>          <span class="c1"># 2 bytes/elem, read A,B write C</span>
+<span class="n">I_mm</span> <span class="o">=</span> <span class="n">arithmetic_intensity</span><span class="p">(</span><span class="n">mm_flops</span><span class="p">,</span> <span class="n">mm_bytes</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;matmul  I=</span><span class="si">{</span><span class="n">I_mm</span><span class="si">:</span><span class="s2">8.0f</span><span class="si">}</span><span class="s2"> FLOP/byte -&gt; &quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;COMPUTE&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">I_mm</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">ridge</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;MEMORY&#39;</span><span class="si">}</span><span class="s2">-bound, &quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">roofline_perf</span><span class="p">(</span><span class="n">I_mm</span><span class="p">,</span><span class="w"> </span><span class="n">PEAK_FLOPS</span><span class="p">,</span><span class="w"> </span><span class="n">PEAK_BW</span><span class="p">)</span><span class="o">/</span><span class="mf">1e12</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> TFLOP/s attainable&quot;</span><span class="p">)</span>
+
+<span class="c1"># Case 2: 7B decode, batch=1</span>
+<span class="n">params</span> <span class="o">=</span> <span class="mf">7e9</span>
+<span class="n">dec_bytes</span> <span class="o">=</span> <span class="n">params</span> <span class="o">*</span> <span class="mi">2</span>           <span class="c1"># BF16 weights, read once</span>
+<span class="n">dec_flops</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">params</span>           <span class="c1"># ~2 FLOPs/param for the matrix-vector products</span>
+<span class="n">I_dec</span> <span class="o">=</span> <span class="n">arithmetic_intensity</span><span class="p">(</span><span class="n">dec_flops</span><span class="p">,</span> <span class="n">dec_bytes</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;decode  I=</span><span class="si">{</span><span class="n">I_dec</span><span class="si">:</span><span class="s2">8.1f</span><span class="si">}</span><span class="s2"> FLOP/byte -&gt; &quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;COMPUTE&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">I_dec</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">ridge</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;MEMORY&#39;</span><span class="si">}</span><span class="s2">-bound, &quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;per-token &gt;= </span><span class="si">{</span><span class="n">dec_bytes</span><span class="o">/</span><span class="n">PEAK_BW</span><span class="o">*</span><span class="mf">1e3</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> ms (bandwidth-bound)&quot;</span><span class="p">)</span>
+
+<span class="c1"># Case 3: decode at batch B reuses the SAME weight bytes for B tokens</span>
+<span class="k">for</span> <span class="n">B</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">):</span>
+    <span class="n">I_b</span> <span class="o">=</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">params</span> <span class="o">*</span> <span class="n">B</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">params</span> <span class="o">*</span> <span class="mi">2</span><span class="p">)</span>   <span class="c1"># bytes constant, flops scale with B</span>
+    <span class="n">bound</span> <span class="o">=</span> <span class="s1">&#39;COMPUTE&#39;</span> <span class="k">if</span> <span class="n">I_b</span> <span class="o">&gt;</span> <span class="n">ridge</span> <span class="k">else</span> <span class="s1">&#39;MEMORY&#39;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  batch=</span><span class="si">{</span><span class="n">B</span><span class="si">:</span><span class="s2">4d</span><span class="si">}</span><span class="s2">: I=</span><span class="si">{</span><span class="n">I_b</span><span class="si">:</span><span class="s2">6.0f</span><span class="si">}</span><span class="s2"> FLOP/byte -&gt; </span><span class="si">{</span><span class="n">bound</span><span class="si">}</span><span class="s2">-bound&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The third loop above shows the magic of batching in one line: weight bytes read are constant in batch size, but useful FLOPs scale linearly with it, so arithmetic intensity scales linearly with batch size until you cross the ridge and finally light up the Tensor Cores.</p>
+<hr />
+<h2 id="the-datacenter-gpus-a100-h100-h200-b200-and-nvlink">The Datacenter GPUs: A100, H100, H200, B200, and NVLink<a class="headerlink" href="#the-datacenter-gpus-a100-h100-h200-b200-and-nvlink" title="Permanent link">¶</a></h2>
+<p>You will reason about these chips constantly. Here are the load-bearing specs and what each generation changed. Treat the figures as representative of the SXM datacenter variants; exact numbers vary by SKU, clock, and whether sparsity is assumed (we quote <em>dense</em> compute unless noted).</p>
+<table>
+<thead>
+<tr>
+<th>Spec</th>
+<th>A100 (Ampere)</th>
+<th>H100 (Hopper)</th>
+<th>H200 (Hopper)</th>
+<th>B200 (Blackwell)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SMs</td>
+<td>108</td>
+<td>132</td>
+<td>132</td>
+<td>(two dies, ~2×)</td>
+</tr>
+<tr>
+<td>HBM type</td>
+<td>HBM2e</td>
+<td>HBM3</td>
+<td>HBM3e</td>
+<td>HBM3e</td>
+</tr>
+<tr>
+<td>HBM capacity</td>
+<td>40 / 80 GB</td>
+<td>80 GB</td>
+<td>141 GB</td>
+<td>~192 GB</td>
+</tr>
+<tr>
+<td>HBM bandwidth</td>
+<td>~1.6 / 2.0 TB/s</td>
+<td>~3.35 TB/s</td>
+<td>~4.8 TB/s</td>
+<td>~8 TB/s</td>
+</tr>
+<tr>
+<td>L2 cache</td>
+<td>40 MB</td>
+<td>50 MB</td>
+<td>50 MB</td>
+<td>larger</td>
+</tr>
+<tr>
+<td>BF16/FP16 dense</td>
+<td>~312 TFLOP/s</td>
+<td>~990 TFLOP/s</td>
+<td>~990 TFLOP/s</td>
+<td>higher</td>
+</tr>
+<tr>
+<td>FP8 dense</td>
+<td>—</td>
+<td>~1979 TFLOP/s</td>
+<td>~1979 TFLOP/s</td>
+<td>much higher</td>
+</tr>
+<tr>
+<td>FP4</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>yes (new)</td>
+</tr>
+<tr>
+<td>NVLink BW/GPU</td>
+<td>~600 GB/s</td>
+<td>~900 GB/s</td>
+<td>~900 GB/s</td>
+<td>~1.8 TB/s</td>
+</tr>
+</tbody>
+</table>
+<h3 id="what-each-generation-actually-changed">What each generation actually changed<a class="headerlink" href="#what-each-generation-actually-changed" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>A100 (Ampere, 2020).</strong> Established the modern recipe: BF16/TF32 Tensor Cores, 2:4 structured sparsity, and large HBM. The reference point for almost all published scaling-law and kernel work. Ridge point ≈ 156 FLOP/byte.</li>
+<li><strong>H100 (Hopper, 2022).</strong> Roughly tripled BF16 Tensor Core throughput and added <strong>FP8</strong> Tensor Cores, doubling effective matmul throughput again for models that tolerate FP8 (<a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a>). Introduced the <strong>Transformer Engine</strong> (automatic per-tensor FP8 scaling), <strong>thread block clusters</strong> with <strong>distributed shared memory</strong> (blocks on neighboring SMs share SMEM), and the <strong>Tensor Memory Accelerator (TMA)</strong> for asynchronous bulk copies between HBM and SMEM that free the warps from address arithmetic. FlashAttention-3 (<a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2 &amp; 3</a>) is built specifically to exploit TMA, warp specialization, and FP8 on Hopper. But bandwidth only went from 2.0 to 3.35 TB/s while compute tripled — so the ridge point jumped to ≈295, and <em>more</em> workloads became memory-bound.</li>
+<li><strong>H200 (Hopper refresh, 2024).</strong> Same compute die as H100 but with <strong>HBM3e</strong>: 141 GB at ~4.8 TB/s. The extra capacity and bandwidth are aimed squarely at LLM inference, where you are bandwidth- and KV-cache-capacity-bound. More memory means longer contexts and bigger batches per GPU; more bandwidth directly speeds up decode (which is bandwidth-bound, as we computed). Same FLOPs, but materially faster and roomier serving.</li>
+<li><strong>B200 (Blackwell, 2024).</strong> A <strong>two-die</strong> package presented as one logical GPU, with much higher HBM3e capacity (~192 GB) and bandwidth (~8 TB/s), a second-generation Transformer Engine, and new low-precision formats including <strong>FP4</strong> for inference. NVLink jumps to ~1.8 TB/s per GPU. The design philosophy is unchanged but the dials are turned up, and FP4 pushes effective inference throughput much higher for models that survive 4-bit (<a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a>).</li>
+</ul>
+<h3 id="nvlink-and-nvswitch-the-intra-node-fabric">NVLink and NVSwitch: the intra-node fabric<a class="headerlink" href="#nvlink-and-nvswitch-the-intra-node-fabric" title="Permanent link">¶</a></h3>
+<p>A single GPU cannot hold a frontier model, and even when it can, you want many GPUs cooperating on one forward/backward pass. The link between GPUs <em>inside a server</em> is <strong>NVLink</strong> — a dedicated high-bandwidth, low-latency interconnect far faster than PCIe. NVLink generations scale from ~600 GB/s per GPU on A100 to ~900 GB/s on H100/H200 to ~1.8 TB/s on B200 (bidirectional aggregate). An <strong>NVSwitch</strong> is a crossbar that connects all 8 GPUs in a node so any pair gets full NVLink bandwidth — an <strong>all-to-all</strong> topology rather than a ring.</p>
+<p>Why this matters: <strong>tensor parallelism</strong> (<a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II</a>) splits each weight matrix across GPUs and must do an all-reduce on activations <em>every layer</em>, which is only viable over NVLink, not PCIe — hence tensor parallelism stays within an NVLink domain (typically 8 GPUs), while pipeline and data parallelism span the slower inter-node network (<a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a>). The Grace-Hopper and Blackwell systems extend this with <strong>NVLink-C2C</strong> (a coherent CPU–GPU link) and <strong>NVLink Switch</strong> fabrics that let dozens of GPUs share memory at NVLink-class bandwidth, blurring the line between &ldquo;one big GPU&rdquo; and &ldquo;a node.&rdquo;</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Where does your 70B model physically fit? A capacity + bandwidth sanity check.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">model_footprint_gb</span><span class="p">(</span><span class="n">params_b</span><span class="p">,</span> <span class="n">bytes_per_param</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">params_b</span> <span class="o">*</span> <span class="mf">1e9</span> <span class="o">*</span> <span class="n">bytes_per_param</span> <span class="o">/</span> <span class="mf">1e9</span>   <span class="c1"># -&gt; GB</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">kv_cache_gb</span><span class="p">(</span><span class="n">layers</span><span class="p">,</span> <span class="n">kv_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">,</span> <span class="n">seq</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">bytes_per_elem</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+    <span class="c1"># K and V, both, per layer, per (kv) head: factor of 2 for K&amp;V.</span>
+    <span class="n">elems</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">layers</span> <span class="o">*</span> <span class="n">kv_heads</span> <span class="o">*</span> <span class="n">head_dim</span> <span class="o">*</span> <span class="n">seq</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="k">return</span> <span class="n">elems</span> <span class="o">*</span> <span class="n">bytes_per_elem</span> <span class="o">/</span> <span class="mf">1e9</span>
+
+<span class="c1"># Llama-70B-ish: 70B params, 80 layers, 8 KV heads (GQA), head_dim 128.</span>
+<span class="k">for</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">bpp</span> <span class="ow">in</span> <span class="p">[(</span><span class="s2">&quot;bf16&quot;</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;fp8&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;int4&quot;</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)]:</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">model_footprint_gb</span><span class="p">(</span><span class="mi">70</span><span class="p">,</span> <span class="n">bpp</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;70B weights in </span><span class="si">{</span><span class="n">dtype</span><span class="si">:</span><span class="s2">5s</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">w</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> GB&quot;</span><span class="p">)</span>
+
+<span class="n">kv</span> <span class="o">=</span> <span class="n">kv_cache_gb</span><span class="p">(</span><span class="n">layers</span><span class="o">=</span><span class="mi">80</span><span class="p">,</span> <span class="n">kv_heads</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">head_dim</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span>
+                 <span class="n">seq</span><span class="o">=</span><span class="mi">8192</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">bytes_per_elem</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;KV cache (8k ctx, batch 32, GQA-8, bf16): </span><span class="si">{</span><span class="n">kv</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> GB&quot;</span><span class="p">)</span>
+<span class="c1"># 70B bf16 weights ~140 GB -&gt; does NOT fit one 80GB H100; fits one 192GB B200,</span>
+<span class="c1"># or shards across 2x H100 / 1x via int4. Bandwidth then sets decode speed.</span>
+</code></pre></div>
+<p>This snippet captures the two questions you ask of every (model, GPU) pair: <strong>does it fit</strong> (HBM capacity, including the KV cache that grows with batch × context — see <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>), and <strong>how fast does it decode</strong> (HBM bandwidth). H200&rsquo;s jump to 141 GB and B200&rsquo;s to 192 GB are aimed directly at the first question; their bandwidth bumps at the second.</p>
+<hr />
+<h2 id="putting-it-together-reading-a-workload-like-the-hardware-does">Putting It Together: Reading a Workload Like the Hardware Does<a class="headerlink" href="#putting-it-together-reading-a-workload-like-the-hardware-does" title="Permanent link">¶</a></h2>
+<p>When you profile or design a kernel, walk the hierarchy top-down and ask the questions the hardware forces on you:</p>
+<ol>
+<li><strong>Is this op a matmul?</strong> If yes, it can use Tensor Cores — aim for peak by tiling through SMEM and feeding contiguous, well-shaped BF16/FP8 tiles. If no (pointwise, normalization, softmax, reductions), it runs on CUDA cores and is almost certainly memory-bound; your only lever is to <strong>fuse</strong> it with neighbors so intermediate tensors never round-trip to HBM.</li>
+<li><strong>What is its arithmetic intensity?</strong> Estimate FLOPs and HBM bytes. Compare to the chip&rsquo;s ridge point. This single ratio tells you whether to optimize for compute (better tiling, higher Tensor Core utilization) or for memory (fewer bytes moved: fusion, recomputation, lower precision, better reuse).</li>
+<li><strong>Is the working set staying in fast tiers?</strong> A memory-bound kernel that re-reads the same HBM data many times is leaving enormous performance on the table. Stage reused data into SMEM/registers (the FlashAttention insight).</li>
+<li><strong>Are the warps full and busy?</strong> Check for warp divergence, uncoalesced loads, and shared-memory bank conflicts. Check occupancy — but only to confirm you have <em>enough</em> latency-hiding, not to maximize it blindly.</li>
+<li><strong>Is the GPU even the bottleneck?</strong> Profile end-to-end. Host-side Python overhead, tiny serialized kernels (launch latency), and PCIe transfers routinely cap throughput well below the GPU&rsquo;s capability. CUDA graphs and <code>torch.compile</code> exist to kill launch overhead (<a href="../04-kernels-efficiency/09-compilers-fusion.html">Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a>).</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">classify_op</span><span class="p">(</span><span class="n">flops</span><span class="p">,</span> <span class="n">hbm_bytes</span><span class="p">,</span> <span class="n">peak_flops</span><span class="o">=</span><span class="mf">990e12</span><span class="p">,</span> <span class="n">peak_bw</span><span class="o">=</span><span class="mf">3.35e12</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A 30-second back-of-envelope to decide where to spend optimization effort.&quot;&quot;&quot;</span>
+    <span class="n">intensity</span> <span class="o">=</span> <span class="n">flops</span> <span class="o">/</span> <span class="n">hbm_bytes</span>
+    <span class="n">ridge</span> <span class="o">=</span> <span class="n">peak_flops</span> <span class="o">/</span> <span class="n">peak_bw</span>
+    <span class="n">attainable</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">peak_flops</span><span class="p">,</span> <span class="n">intensity</span> <span class="o">*</span> <span class="n">peak_bw</span><span class="p">)</span>
+    <span class="n">bound</span> <span class="o">=</span> <span class="s2">&quot;compute&quot;</span> <span class="k">if</span> <span class="n">intensity</span> <span class="o">&gt;</span> <span class="n">ridge</span> <span class="k">else</span> <span class="s2">&quot;memory&quot;</span>
+    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="n">intensity</span><span class="o">=</span><span class="nb">round</span><span class="p">(</span><span class="n">intensity</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+                <span class="n">ridge</span><span class="o">=</span><span class="nb">round</span><span class="p">(</span><span class="n">ridge</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+                <span class="n">bound</span><span class="o">=</span><span class="n">bound</span><span class="p">,</span>
+                <span class="n">attainable_TFLOPs</span><span class="o">=</span><span class="nb">round</span><span class="p">(</span><span class="n">attainable</span> <span class="o">/</span> <span class="mf">1e12</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+                <span class="n">advice</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;tile/fuse-for-TC; you can chase peak FLOPs&quot;</span>
+                        <span class="k">if</span> <span class="n">bound</span> <span class="o">==</span> <span class="s2">&quot;compute&quot;</span>
+                        <span class="k">else</span> <span class="s2">&quot;cut bytes: fuse, recompute, lower precision, reuse&quot;</span><span class="p">))</span>
+
+<span class="c1"># Example: a fused LayerNorm over a (batch*seq, hidden) tensor, bf16.</span>
+<span class="n">rows</span><span class="p">,</span> <span class="n">hidden</span> <span class="o">=</span> <span class="mi">4096</span> <span class="o">*</span> <span class="mi">2048</span><span class="p">,</span> <span class="mi">8192</span>       <span class="c1"># tokens x hidden</span>
+<span class="n">elems</span> <span class="o">=</span> <span class="n">rows</span> <span class="o">*</span> <span class="n">hidden</span>
+<span class="c1"># LayerNorm: ~a handful of FLOPs/elem; reads + writes the tensor once each.</span>
+<span class="n">ln</span> <span class="o">=</span> <span class="n">classify_op</span><span class="p">(</span><span class="n">flops</span><span class="o">=</span><span class="mi">8</span> <span class="o">*</span> <span class="n">elems</span><span class="p">,</span> <span class="n">hbm_bytes</span><span class="o">=</span><span class="mi">2</span> <span class="o">*</span> <span class="n">elems</span> <span class="o">*</span> <span class="mi">2</span><span class="p">)</span>   <span class="c1"># read+write, 2B/elem</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;LayerNorm:&quot;</span><span class="p">,</span> <span class="n">ln</span><span class="p">)</span>   <span class="c1"># -&gt; memory-bound: the reason norms get fused into matmuls</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: &lsquo;my model has lots of FLOPs so it must be compute-bound&rsquo;</p>
+<p>Total FLOPs tells you almost nothing about whether you are compute- or memory-bound; <strong>arithmetic intensity</strong> does. A transformer forward pass is a mix: the big QKV/MLP matmuls are compute-bound, but the attention softmax, the residual adds, the norms, the activation functions, the embedding lookups, and (especially) single-token decode are all memory-bound. A &ldquo;compute-heavy&rdquo; model can spend the majority of its wall-clock time in memory-bound glue. Always profile, always compute intensity per op, and remember the ridge point keeps rising — so assume memory-bound until proven otherwise.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: the three knobs that actually move the needle</p>
+<p>When a real LLM kernel is slow, in order of frequency the fix is: (1) <strong>use Tensor Cores</strong> — make sure your matmuls run in BF16/FP8 with shapes that are multiples of 8/16, not FP32 on CUDA cores; (2) <strong>stop round-tripping HBM</strong> — fuse pointwise ops into the producing matmul, and stage reused data in SMEM (use a compiler/<code>torch.compile</code> or a Triton kernel rather than hand-CUDA when you can); (3) <strong>batch to raise arithmetic intensity</strong> for decode. Reach for exotic occupancy tuning only after these three are exhausted.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You serve a 13B-parameter model on a single H100 (80 GB HBM, ~3.35 TB/s bandwidth, ~990 TFLOP/s BF16). At batch size 1, decode throughput is far below the GPU&rsquo;s FLOP capacity, and the Tensor Cores show near-zero utilization. Explain precisely why, and give two distinct ways to fix it. What is the fundamental limit each one runs into?</p>
+<p><strong>A:</strong> Single-request decode is <strong>memory-bandwidth-bound</strong>, not compute-bound. Generating one token requires reading essentially all 13B weights from HBM once — about <span class="arithmatex">\(13\times10^9 \times 2 = 2.6\times10^{10}\)</span> bytes in BF16 — while doing only ~<span class="arithmatex">\(2\times13\times10^9 = 2.6\times10^{10}\)</span> FLOPs of matrix-vector work. That is an arithmetic intensity of ~1 FLOP/byte, versus the H100&rsquo;s ridge point of ~<span class="arithmatex">\(990/3.35 \approx 295\)</span> FLOP/byte. We are roughly 300× below the ridge, so the Tensor Cores sit idle while we wait on HBM. The bandwidth floor on per-token latency is <span class="arithmatex">\(2.6\times10^{10}\,\text{B} / 3.35\times10^{12}\,\text{B/s} \approx 7.8\,\text{ms}\)</span>, independent of how fast the math units are.</p>
+<p>Two fixes: <strong>(1) Increase batch size</strong> (continuous batching). The weight bytes are read once but now do work for <span class="arithmatex">\(B\)</span> tokens, so arithmetic intensity scales linearly with <span class="arithmatex">\(B\)</span>. Once <span class="arithmatex">\(B\)</span> pushes intensity past the ridge (~hundreds), decode becomes compute-bound and the Tensor Cores light up — throughput rises with no extra weight traffic. The fundamental limit: <strong>HBM capacity for the KV cache</strong>, which grows with batch × context length and eventually fills the 80 GB, and <strong>per-request latency</strong>, since large batches increase queuing/step time. <strong>(2) Reduce bytes moved per token</strong> via quantization — INT4/FP8 weights cut weight traffic 2–4×, directly cutting decode latency since it is bandwidth-bound. The fundamental limit: <strong>accuracy degradation</strong> at low precision, and that activations/KV may still dominate traffic. A third, orthogonal answer interviewers love: <strong>speculative decoding</strong>, which verifies several draft tokens per single weight-load, amortizing the bandwidth cost across multiple accepted tokens.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The GPU is a <strong>throughput</strong> machine that hides memory latency with massive parallelism. It runs fast only when fed tens of thousands of independent units of work; single-stream, serialized, or branchy workloads waste it.</li>
+<li>The execution hierarchy is <strong>thread → warp (32, lockstep SIMT) → block/CTA (one SM, shares SMEM) → grid</strong>. Warp divergence and uncoalesced memory access are the two most common silent throughput killers.</li>
+<li><strong>CUDA cores</strong> do scalar FP32/INT math; <strong>Tensor Cores</strong> do tile-shaped reduced-precision matmul-accumulate and are ~16× faster — but only for matmuls in BF16/FP16/FP8/FP4. Everything else (norms, activations, softmax) runs on CUDA cores and is usually memory-bound.</li>
+<li>The memory hierarchy — <strong>registers → SMEM/L1 → L2 → HBM</strong> — drops roughly an order of magnitude in speed and rises an order of magnitude in size at each step. Kernel performance is largely the art of keeping reused data in the fast tiers (SMEM tiling, the FlashAttention insight).</li>
+<li><strong>Occupancy</strong> is the ratio of resident warps to the SM maximum, bounded by registers, shared memory, and slot limits. More occupancy buys latency-hiding, but <strong>maximum occupancy is not the goal</strong> — high-register, low-occupancy GEMM/attention kernels often win.</li>
+<li><strong>Arithmetic intensity</strong> <span class="arithmatex">\(I = \text{FLOPs}/\text{HBM bytes}\)</span> versus the <strong>ridge point</strong> <span class="arithmatex">\(\pi/\beta\)</span> decides compute- vs memory-bound. Large matmuls are compute-bound (<span class="arithmatex">\(I \sim 10^3\)</span>); single-token decode is memory-bound (<span class="arithmatex">\(I \sim 1\)</span>). Total FLOPs alone tells you nothing.</li>
+<li>Across <strong>A100 → H100 → H200 → B200</strong>, compute (and low precision: FP8, then FP4) grew faster than bandwidth, so the <strong>ridge point keeps rising</strong> and more workloads become memory-bound. H200/B200&rsquo;s big HBM3e capacity and bandwidth target inference&rsquo;s two limits: fitting the model+KV cache, and bandwidth-bound decode.</li>
+<li><strong>NVLink/NVSwitch</strong> give all-to-all, multi-hundred-GB/s intra-node bandwidth that makes tensor parallelism viable inside an 8-GPU domain; PCIe and inter-node networks are an order of magnitude slower, which is why parallelism strategies map onto the interconnect tiers.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>GPU architecture for LLM workloads is defined today by the Hopper/Blackwell lineage: widening HBM3e bandwidth, FP8/FP4 Tensor Cores, and hardware-managed async copies (TMA) that let kernels overlap compute and data movement. The central tension — compute growing faster than bandwidth, raising the ridge point each generation — continues to make memory-hierarchy awareness the dominant skill in ML systems engineering.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2205.14135">Dao et al., <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022)</a> — the canonical proof that SMEM-tiling to avoid HBM round-trips is worth more than extra FLOPs.</li>
+<li><a href="https://people.eecs.berkeley.edu/~kubitron/cs252/handouts/papers/RooflineVyNoYellow.pdf">Williams, Waterman &amp; Patterson, <em>Roofline: An Insightful Visual Performance Model for Multicore Architectures</em> (2009)</a> — the original arithmetic-intensity / ridge-point framework used throughout this chapter.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2407.08608">Shah et al., <em>FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision</em> (2024)</a> — exploits Hopper&rsquo;s TMA and warp-specialization to reach 75 % of H100 FP16 peak; the state-of-the-art attention kernel.</li>
+<li><a href="https://arxiv.org/abs/2501.12084">Luo et al., <em>Dissecting the NVIDIA Hopper Architecture through Microbenchmarking and Multiple Level Analysis</em> (2025)</a> — quantitative measurements of H100 L2, HBM, and Tensor Core pipelines that put concrete numbers on the specs in this chapter.</li>
+<li><a href="https://arxiv.org/abs/2512.02189">Jarmusch &amp; Chandrasekaran, <em>Microbenchmarking NVIDIA&rsquo;s Blackwell Architecture: An in-depth Architectural Analysis</em> (2025)</a> — first detailed characterization of B200 TMEM, FP4 tensor cores, and the decompression engine.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/NVIDIA/cutlass">NVIDIA/cutlass</a> — production C++ template library and CuTe DSL for tiled GEMM across Ampere through Blackwell; the reference for hand-written Tensor Core kernels.</li>
+<li><a href="https://github.com/triton-lang/triton">triton-lang/triton</a> — Python-level GPU kernel authoring language that compiles tile programs to Tensor Core PTX; lower barrier than CUDA for experimenting with the tiling ideas in this chapter.</li>
+<li><a href="https://developer.nvidia.com/nsight-compute">NVIDIA Nsight Compute</a> — the official interactive profiler for CUDA kernels; surfaces occupancy, memory throughput, and Tensor Core utilization to verify roofline predictions.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/">NVIDIA, <em>Hopper Architecture In-Depth</em> (2022)</a> — official deep-dive on H100&rsquo;s Transformer Engine, TMA, thread-block clusters, and FP8; required reading before writing Hopper-specific kernels.</li>
+<li><a href="https://resources.nvidia.com/en-us-blackwell-architecture">NVIDIA, <em>Blackwell Architecture Technical Overview</em> (2024)</a> — covers B200&rsquo;s dual-die design, FP4 Tensor Cores, and NVLink 5 specs.</li>
+<li><a href="https://horace.io/brrr_intro.html">Horace He, <em>Making Deep Learning Go Brrrr From First Principles</em> (2022)</a> — concise engineer&rsquo;s guide to the compute / memory-bandwidth / overhead trifecta, with worked PyTorch examples.</li>
+<li><a href="https://docs.nvidia.com/cuda/cuda-programming-guide/index.html">NVIDIA, <em>CUDA Programming Guide</em> (continuously updated)</a> — authoritative reference for the execution model, memory hierarchy, and warp semantics described in this chapter.</li>
+</ul>
+</div>
+<hr />
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>NVIDIA, <em>CUDA C++ Programming Guide</em> and the per-architecture whitepapers (Ampere GA100, Hopper GH100, Blackwell)</strong> — The authoritative source for the execution model, memory hierarchy, and the per-generation specs summarized in this chapter. Read the architecture whitepapers for the &ldquo;what changed&rdquo; story.</li>
+<li><strong>Williams, Waterman &amp; Patterson, <em>Roofline: An Insightful Visual Performance Model for Multicore Architectures</em> (2009)</strong> — The original roofline paper that formalizes arithmetic intensity, the ridge point, and the compute- vs memory-bound dichotomy.</li>
+<li><strong>Vasily Volkov, <em>Better Performance at Lower Occupancy</em> (GTC 2010)</strong> — The classic demonstration that maximizing occupancy is not the same as maximizing performance; essential context for the occupancy section.</li>
+<li><strong>Dao et al., <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022)</strong> and <strong>Dao, <em>FlashAttention-2</em> (2023)</strong> — The canonical case studies in trading FLOPs for HBM traffic by keeping the working set in SMEM/registers; the practical payoff of everything in this chapter.</li>
+<li><strong>Horace He, <em>Making Deep Learning Go Brrrr From First Principles</em> (2022)</strong> — A widely-cited engineer&rsquo;s walkthrough of compute-bound vs memory-bound vs overhead-bound regimes in PyTorch, with the same intensity-first mindset.</li>
+<li><strong>NVIDIA <em>CUTLASS</em> and OpenAI <em>Triton</em> repositories</strong> — Production and pedagogical implementations of tiled, Tensor-Core GEMM and fused kernels; the best way to see the SMEM-tiling and warp-level mechanics described here turned into real code (see <a href="../04-kernels-efficiency/04-triton-kernels.html">Writing GPU Kernels with Triton</a>).</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="07-autodiff-pytorch.html"><span class="pn-label">← Previous</span><span class="pn-title">Automatic Differentiation &amp; PyTorch Internals</span></a>
+<a class="next" href="09-parallel-collectives.html"><span class="pn-label">Next →</span><span class="pn-title">Parallel Computing &amp; Collective Communication</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-a-gpu-looks-the-way-it-does">Why a GPU Looks the Way It Does</a></li>
+<li class="toc-l2"><a href="#the-execution-model-threads-warps-blocks-and-sms">The Execution Model: Threads, Warps, Blocks, and SMs</a></li>
+<li class="toc-l3"><a href="#threads-and-the-simt-model">Threads and the SIMT model</a></li>
+<li class="toc-l3"><a href="#blocks-ctas-and-the-sm">Blocks (CTAs) and the SM</a></li>
+<li class="toc-l3"><a href="#the-grid-and-the-launch">The grid and the launch</a></li>
+<li class="toc-l2"><a href="#cuda-cores-vs-tensor-cores">CUDA Cores vs Tensor Cores</a></li>
+<li class="toc-l3"><a href="#cuda-cores-scalar-general-purpose">CUDA cores: scalar, general-purpose</a></li>
+<li class="toc-l3"><a href="#tensor-cores-matrix-multiply-accumulate-engines">Tensor Cores: matrix-multiply-accumulate engines</a></li>
+<li class="toc-l2"><a href="#the-memory-hierarchy-registers-smem-l2-and-hbm">The Memory Hierarchy: Registers, SMEM, L2, and HBM</a></li>
+<li class="toc-l3"><a href="#registers">Registers</a></li>
+<li class="toc-l3"><a href="#shared-memory-smem-the-programmer-managed-scratchpad">Shared memory (SMEM): the programmer-managed scratchpad</a></li>
+<li class="toc-l3"><a href="#l2-cache">L2 cache</a></li>
+<li class="toc-l3"><a href="#hbm-the-headline-gpu-memory">HBM: the headline &amp;ldquo;GPU memory&amp;rdquo;</a></li>
+<li class="toc-l2"><a href="#occupancy-keeping-the-machine-busy">Occupancy: Keeping the Machine Busy</a></li>
+<li class="toc-l2"><a href="#arithmetic-intensity-the-master-concept">Arithmetic Intensity: The Master Concept</a></li>
+<li class="toc-l2"><a href="#the-datacenter-gpus-a100-h100-h200-b200-and-nvlink">The Datacenter GPUs: A100, H100, H200, B200, and NVLink</a></li>
+<li class="toc-l3"><a href="#what-each-generation-actually-changed">What each generation actually changed</a></li>
+<li class="toc-l3"><a href="#nvlink-and-nvswitch-the-intra-node-fabric">NVLink and NVSwitch: the intra-node fabric</a></li>
+<li class="toc-l2"><a href="#putting-it-together-reading-a-workload-like-the-hardware-does">Putting It Together: Reading a Workload Like the Hardware Does</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

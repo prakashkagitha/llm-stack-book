@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>veRL: HybridFlow &amp; The Single-Controller Architecture — The LLM Stack</title>
+<meta name="description" content="veRL (volcano engine RL): the HybridFlow paper&#x27;s single-controller + multi-controller hybrid, the 3D-HybridEngine, resharding between train (FSDP/Megatron) and ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="active" href="04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VI — RL Infrastructure (Deep Dive)</div>
+<h1 id="64-verl-hybridflow-the-single-controller-architecture">6.4 veRL: HybridFlow &amp; The Single-Controller Architecture<a class="headerlink" href="#64-verl-hybridflow-the-single-controller-architecture" title="Permanent link">¶</a></h1>
+<p>In <a href="../06-rl-infra/01-anatomy-rl-system.html">The Anatomy of an RL-for-LLM System</a> we drew the box diagram: a policy that generates rollouts, a reward source that scores them, and a trainer that turns rewards into gradients. In <a href="../06-rl-infra/02-generation-training-loop.html">The Generation–Training Loop &amp; Rollout Engines</a> we saw that the <em>generation</em> half wants an inference engine (vLLM/SGLang) with PagedAttention and continuous batching, while the <em>training</em> half wants a distributed-training engine (FSDP or Megatron) with sharded optimizer state. And in <a href="../06-rl-infra/03-trl.html">TRL: HuggingFace&rsquo;s RL Library</a> we used a library that runs both halves inside a <em>single Python process</em> on each GPU — simple, hackable, and a perfect teaching tool, but one that hits a wall when you want to mix tensor parallelism in the trainer with a different parallelism in the rollout engine, or scale a 70B-policy GRPO run across 64 GPUs.</p>
+<p>This chapter is about the framework that broke that wall and became the default substrate for serious RL-for-LLM research and production in 2024–2026: <strong>veRL</strong> (the &ldquo;volcano engine Reinforcement Learning&rdquo; library, often stylized <code>verl</code>), built on the ideas in the <strong>HybridFlow</strong> paper (Sheng et al., 2024). veRL&rsquo;s central thesis is deceptively small and enormously consequential: <strong>the <em>control flow</em> of an RL algorithm and the <em>computation</em> of each stage live at different scales, so they should be programmed at different scales.</strong> The high-level dataflow — &ldquo;generate, score, compute advantages, update&rdquo; — is written <em>once</em>, as ordinary single-threaded Python on a driver process (the <strong>single controller</strong>). Each heavy stage — generation, the actor forward/backward, the critic, the reference log-probs — runs as a SPMD (single-program-multiple-data) program across many GPUs (the <strong>multi-controller</strong> workers). HybridFlow is the glue that lets a single line of driver code like <code>advantages = compute_advantage(rewards, values)</code> dispatch onto, and gather results from, hundreds of GPU workers, <em>and</em> lets the system <strong>reshard</strong> a model&rsquo;s weights between the layout the trainer wants and the layout the rollout engine wants — without ever round-tripping through disk.</p>
+<p>By the end you will understand: why naive single-controller and naive multi-controller architectures each fail; what the <code>WorkerGroup</code> / <code>ResourcePool</code> / <code>@register(dispatch=...)</code> machinery actually does; how the <strong>3D-HybridEngine</strong> reshards FSDP/Megatron training weights into vLLM&rsquo;s tensor-parallel inference layout with near-zero redundant memory; how Ray placement groups colocate the actor, critic, and rollout engine on the same GPUs; and why this design is what lets veRL scale where a TRL-style monolith cannot. We will write a miniature single-controller dispatcher and a from-scratch resharding routine so the mechanism is concrete, not magic.</p>
+<h2 id="two-architectures-two-failure-modes">Two architectures, two failure modes<a class="headerlink" href="#two-architectures-two-failure-modes" title="Permanent link">¶</a></h2>
+<p>Before veRL, every distributed RL system sat at one of two extremes. Understanding <em>why both are wrong</em> is the fastest route to understanding why HybridFlow&rsquo;s hybrid is right.</p>
+<h3 id="the-single-controller-extreme">The single-controller extreme<a class="headerlink" href="#the-single-controller-extreme" title="Permanent link">¶</a></h3>
+<p>A <strong>single-controller</strong> system has one process — call it the <em>driver</em> — that holds the algorithm logic and issues every operation as a remote call. This is how classic RL frameworks (and a lot of Ray code) are written: the driver says &ldquo;actor, generate&rdquo;; &ldquo;reward model, score&rdquo;; &ldquo;trainer, take a step&rdquo;, and each call ships data to a remote actor and waits for the result. The dataflow reads exactly like the math:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Single-controller pseudo-code: the WHOLE algorithm in one readable loop.</span>
+<span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">prompts</span><span class="p">:</span>
+    <span class="n">responses</span> <span class="o">=</span> <span class="n">rollout_worker</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>          <span class="c1"># remote call</span>
+    <span class="n">rewards</span>   <span class="o">=</span> <span class="n">reward_worker</span><span class="o">.</span><span class="n">score</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">responses</span><span class="p">)</span>   <span class="c1"># remote call</span>
+    <span class="n">values</span>    <span class="o">=</span> <span class="n">critic_worker</span><span class="o">.</span><span class="n">value</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">responses</span><span class="p">)</span>   <span class="c1"># remote call</span>
+    <span class="n">advantages</span><span class="p">,</span> <span class="n">returns</span> <span class="o">=</span> <span class="n">compute_gae</span><span class="p">(</span><span class="n">rewards</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span>  <span class="c1"># LOCAL on the driver</span>
+    <span class="n">actor_worker</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">responses</span><span class="p">,</span> <span class="n">advantages</span><span class="p">)</span>   <span class="c1"># remote call</span>
+    <span class="n">critic_worker</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">responses</span><span class="p">,</span> <span class="n">returns</span><span class="p">)</span>     <span class="c1"># remote call</span>
+</code></pre></div>
+<p>This is gorgeous to read and trivial to modify — swap GAE for GRPO&rsquo;s group baseline by editing one line. The problem is <strong>what flows through the driver</strong>. For a single update of a 7B policy with a batch of, say, 1024 prompts × 8 samples × 2048 tokens, the per-token log-probs, the hidden-state-free tensors, the response token ids, and the masks are <em>hundreds of megabytes to gigabytes per step</em>, and in a naive single-controller design they are gathered to the driver, sliced, and re-scattered. The driver becomes a serialization bottleneck and a single point of network congestion. Worse, the <em>intra-stage</em> parallelism (the all-reduces inside the actor&rsquo;s backward, the all-gathers inside generation) cannot be expressed at all — the driver only knows how to call &ldquo;the actor,&rdquo; not how 8 actor shards talk to each other. So pure single-controller systems are either slow (everything funnels through the driver) or they cheat by hiding the parallelism inside opaque workers, losing the ability to compose parallelisms.</p>
+<h3 id="the-multi-controller-extreme">The multi-controller extreme<a class="headerlink" href="#the-multi-controller-extreme" title="Permanent link">¶</a></h3>
+<p>A <strong>multi-controller</strong> system is the opposite: there is <em>no</em> central driver. Every GPU runs the <em>same</em> program (SPMD), and the RL algorithm is expressed as collective operations that all ranks execute in lockstep. This is exactly how Megatron-LM and DeepSpeed pretraining work (see <a href="../03-pretraining/07-megatron-deepspeed.html">Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a>), and it is <em>maximally efficient</em>: there is no driver to bottleneck, and tensor/pipeline/data parallelism are native because every rank knows its place in the mesh.</p>
+<p>The catch is that <strong>the RL control flow now lives inside the SPMD program</strong>, replicated across every rank, and it is a nightmare to write and change. Consider what &ldquo;compute GRPO advantages, then take a PPO step&rdquo; looks like when there is no privileged process: every rank must agree on which prompts are in the batch, the group reductions for the advantage must be done with explicit collectives, and crucially, the <em>boundaries between stages</em> — where generation ends and training begins, where the rollout engine&rsquo;s parallelism (TP=2) differs from the trainer&rsquo;s (FSDP across 8) — must be hand-coded as resharding collectives interleaved with the algorithm. A researcher who wants to try a new advantage estimator must now edit SPMD code full of <code>torch.distributed.all_gather</code> calls and rank arithmetic. Multi-controller is fast but rigid; every new algorithm is a distributed-systems project.</p>
+<figure class="viz" id="fig-verl-single-vs-multi-controller">
+<svg viewBox="0 0 1000 456" role="img" aria-label="Side-by-side comparison of single-controller architecture (one driver, data funnels back through driver) versus multi-controller SPMD architecture (every rank runs the same code, connected by an all-reduce bus).">
+  <defs>
+    <marker id="smc-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#475569)"/>
+    </marker>
+    <marker id="smc-arrow-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--warn,#dc2626)" opacity="0.9"/>
+    </marker>
+    <marker id="smc-arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+    <marker id="smc-arrow-dbl-l" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)" opacity="0.7"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-verl-single-vs-multi-controller .ttl { font: 700 14px var(--sans,sans-serif); }
+    #fig-verl-single-vs-multi-controller .sub { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-verl-single-vs-multi-controller .lbl { font: 600 12px var(--sans,sans-serif); }
+    #fig-verl-single-vs-multi-controller .mono { font: 400 10px var(--mono,monospace); }
+    #fig-verl-single-vs-multi-controller .mono-sm { font: 400 9px var(--mono,monospace); }
+    #fig-verl-single-vs-multi-controller .verdict { font: italic 500 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-verl-single-vs-multi-controller .warn-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--warn,#dc2626); }
+    #fig-verl-single-vs-multi-controller .leg { font: 400 10.5px var(--sans,sans-serif); }
+    #fig-verl-single-vs-multi-controller text { fill: var(--ink-soft,#1e293b); }
+  </style>
+
+
+  <line x1="500" y1="20" x2="500" y2="420" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" stroke-dasharray="6 4"/>
+
+
+  <text x="250" y="42" text-anchor="middle" class="ttl">SINGLE-CONTROLLER</text>
+  <text x="250" y="58" text-anchor="middle" class="sub">one driver issues all ops</text>
+
+
+  <rect x="130" y="72" width="240" height="105" rx="8" fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="250" y="95" text-anchor="middle" class="lbl" fill="white">driver</text>
+  <text x="175" y="113" text-anchor="start" class="mono-sm" fill="rgba(255,255,255,0.9)">for batch:</text>
+  <text x="175" y="128" text-anchor="start" class="mono-sm" fill="rgba(255,255,255,0.9)">gen / score / update</text>
+  <text x="250" y="156" text-anchor="middle" class="mono-sm" fill="rgba(255,255,255,0.82)">algorithm lives here</text>
+
+
+  <line x1="250" y1="177" x2="250" y2="205" stroke="var(--ink-soft,#475569)" stroke-width="1.4" marker-end="url(#smc-arrow)"/>
+
+
+
+  <line x1="100" y1="207" x2="400" y2="207" stroke="var(--ink-soft,#475569)" stroke-width="1.2"/>
+  <line x1="100" y1="207" x2="100" y2="228" stroke="var(--ink-soft,#475569)" stroke-width="1.2" marker-end="url(#smc-arrow)"/>
+  <line x1="183" y1="207" x2="183" y2="228" stroke="var(--ink-soft,#475569)" stroke-width="1.2" marker-end="url(#smc-arrow)"/>
+  <line x1="316" y1="207" x2="316" y2="228" stroke="var(--ink-soft,#475569)" stroke-width="1.2" marker-end="url(#smc-arrow)"/>
+  <line x1="400" y1="207" x2="400" y2="228" stroke="var(--ink-soft,#475569)" stroke-width="1.2" marker-end="url(#smc-arrow)"/>
+
+
+  <rect x="65" y="228" width="70" height="50" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="100" y="258" text-anchor="middle" class="lbl">w0</text>
+
+  <rect x="148" y="228" width="70" height="50" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="183" y="258" text-anchor="middle" class="lbl">w1</text>
+
+  <rect x="281" y="228" width="70" height="50" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="316" y="258" text-anchor="middle" class="lbl">w2</text>
+
+  <rect x="365" y="228" width="70" height="50" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="400" y="258" text-anchor="middle" class="lbl">w3</text>
+
+
+  <path d="M 447 265 C 470 265 475 130 375 120" fill="none" stroke="var(--warn,#dc2626)" stroke-width="2.2" stroke-opacity="0.85" marker-end="url(#smc-arrow-warn)"/>
+  <text x="415" y="295" text-anchor="middle" class="warn-lbl">data funnels</text>
+  <text x="415" y="309" text-anchor="middle" class="warn-lbl">back through driver</text>
+
+
+  <text x="250" y="322" text-anchor="middle" class="verdict">easy to read, hard to scale</text>
+
+
+  <text x="750" y="42" text-anchor="middle" class="ttl">MULTI-CONTROLLER (SPMD)</text>
+  <text x="750" y="58" text-anchor="middle" class="sub">every rank runs the same code</text>
+
+
+
+  <rect x="530" y="72" width="88" height="88" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="574" y="95" text-anchor="middle" class="lbl">rank0</text>
+  <text x="574" y="112" text-anchor="middle" class="mono-sm" fill="var(--muted,#64748b)">for batch</text>
+  <text x="574" y="125" text-anchor="middle" class="mono-sm" fill="var(--muted,#64748b)">+ coll.</text>
+
+
+  <rect x="630" y="72" width="88" height="88" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="674" y="95" text-anchor="middle" class="lbl">rank1</text>
+  <text x="674" y="112" text-anchor="middle" class="mono-sm" fill="var(--muted,#64748b)">for batch</text>
+  <text x="674" y="125" text-anchor="middle" class="mono-sm" fill="var(--muted,#64748b)">+ coll.</text>
+
+
+  <rect x="730" y="72" width="88" height="88" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="774" y="95" text-anchor="middle" class="lbl">rank2</text>
+  <text x="774" y="112" text-anchor="middle" class="mono-sm" fill="var(--muted,#64748b)">for batch</text>
+  <text x="774" y="125" text-anchor="middle" class="mono-sm" fill="var(--muted,#64748b)">+ coll.</text>
+
+
+  <rect x="830" y="72" width="88" height="88" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="874" y="95" text-anchor="middle" class="lbl">rank3</text>
+  <text x="874" y="112" text-anchor="middle" class="mono-sm" fill="var(--muted,#64748b)">for batch</text>
+  <text x="874" y="125" text-anchor="middle" class="mono-sm" fill="var(--muted,#64748b)">+ coll.</text>
+
+
+  <text x="921" y="110" text-anchor="start" class="sub" font-size="8.5">algorithm</text>
+  <text x="921" y="122" text-anchor="start" class="sub" font-size="8.5">replicated</text>
+  <text x="921" y="134" text-anchor="start" class="sub" font-size="8.5">+ collectives</text>
+  <text x="921" y="146" text-anchor="start" class="sub" font-size="8.5">everywhere</text>
+
+
+  <line x1="574" y1="160" x2="574" y2="218" stroke="var(--ink-soft,#475569)" stroke-width="1.3" marker-end="url(#smc-arrow)"/>
+  <line x1="674" y1="160" x2="674" y2="218" stroke="var(--ink-soft,#475569)" stroke-width="1.3" marker-end="url(#smc-arrow)"/>
+  <line x1="774" y1="160" x2="774" y2="218" stroke="var(--ink-soft,#475569)" stroke-width="1.3" marker-end="url(#smc-arrow)"/>
+  <line x1="874" y1="160" x2="874" y2="218" stroke="var(--ink-soft,#475569)" stroke-width="1.3" marker-end="url(#smc-arrow)"/>
+
+
+  <rect x="520" y="220" width="390" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="715" y="247" text-anchor="middle" class="mono" font-size="11" font-weight="600">all-reduce / all-gather</text>
+
+
+  <line x1="560" y1="242" x2="660" y2="242" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-start="url(#smc-arrow-dbl-l)" marker-end="url(#smc-arrow-accent)" opacity="0.7"/>
+  <line x1="670" y1="242" x2="760" y2="242" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-start="url(#smc-arrow-dbl-l)" marker-end="url(#smc-arrow-accent)" opacity="0.7"/>
+  <line x1="770" y1="242" x2="868" y2="242" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-start="url(#smc-arrow-dbl-l)" marker-end="url(#smc-arrow-accent)" opacity="0.7"/>
+
+
+  <text x="715" y="280" text-anchor="middle" class="sub" font-size="9.5">(efficient, but the RL logic is buried in here)</text>
+
+
+  <text x="750" y="322" text-anchor="middle" class="verdict">hard to read, easy to scale</text>
+
+
+  <rect x="20" y="340" width="960" height="106" rx="7" fill="var(--surface-3,#f1f5f9)" fill-opacity="0.7" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+
+  <circle cx="40" cy="368" r="6" fill="var(--accent,#6366f1)"/>
+  <text x="54" y="373" class="leg" font-size="10"><tspan font-weight="600">Single-controller:</tspan> readable dataflow, BUT driver is a bottleneck and cannot compose intra-stage parallelism</text>
+
+
+  <circle cx="40" cy="394" r="6" fill="var(--ink-soft,#475569)"/>
+  <text x="54" y="399" class="leg" font-size="10"><tspan font-weight="600">Multi-controller:</tspan> native TP/PP/DP &amp; no driver bottleneck, BUT RL control flow is replicated SPMD code, rigid to change</text>
+
+
+  <line x1="32" y1="418" x2="968" y2="418" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+  <text x="500" y="438" text-anchor="middle" class="leg" font-size="10" fill="var(--muted,#64748b)">HybridFlow: single-controller BETWEEN stages + multi-controller WITHIN stages</text>
+
+</svg>
+<figcaption><b>Two architectures, two failure modes.</b> A single-controller system puts all RL logic in one readable driver loop but funnels all batch data back through the driver, creating a serialization bottleneck that prevents composing intra-stage parallelism. A multi-controller SPMD system eliminates the driver bottleneck and natively supports TP/PP/DP, but buries the RL control flow in replicated SPMD code full of explicit collectives, making algorithm iteration painful. HybridFlow resolves this by using single-controller <em>between</em> stages and multi-controller <em>within</em> each stage.</figcaption>
+</figure>
+
+<h3 id="hybridflows-resolution-single-controller-between-stages-multi-controller-within">HybridFlow&rsquo;s resolution: single-controller <em>between</em> stages, multi-controller <em>within</em><a class="headerlink" href="#hybridflows-resolution-single-controller-between-stages-multi-controller-within" title="Permanent link">¶</a></h3>
+<p>HybridFlow&rsquo;s insight is that these two regimes operate at <strong>different granularities</strong>, and you can have both:</p>
+<ul>
+<li><strong>Between stages</strong> (generate → score → advantage → update) the data volume is large but the number of &ldquo;operations&rdquo; is tiny (a handful per step) and the logic changes constantly as researchers experiment. Use a <strong>single controller</strong>: one driver runs the readable Python loop.</li>
+<li><strong>Within a stage</strong> (the actor&rsquo;s forward/backward, vLLM generation) the operation count is enormous (millions of CUDA kernels) and the logic is stable (it&rsquo;s just a transformer). Use <strong>multi-controller SPMD</strong>: each stage is a <code>WorkerGroup</code> of ranks running an efficient parallel program.</li>
+</ul>
+<p>The driver issues <em>one</em> logical instruction per stage — <code>actor.generate_sequences(batch)</code> — and a <strong>dispatch layer</strong> fans that single call out to all ranks of the actor&rsquo;s <code>WorkerGroup</code>, each of which runs its slice of the SPMD program, then a <strong>collect layer</strong> gathers the results back to the driver. The driver never touches the intra-stage collectives; the workers never touch the inter-stage control flow. The data that flows to the driver is only the <em>logical batch</em> (prompts, responses, rewards, advantages) — not the activations or gradients, which stay sharded inside the workers. This is the whole architecture in one sentence: <strong>a single-controller dataflow program orchestrating multi-controller SPMD computation graphs.</strong></p>
+<h2 id="the-hybridflow-programming-model">The HybridFlow programming model<a class="headerlink" href="#the-hybridflow-programming-model" title="Permanent link">¶</a></h2>
+<p>Let us make the abstraction concrete with the actual building blocks veRL exposes. There are four that you must understand: <code>ResourcePool</code>, <code>Worker</code> / <code>WorkerGroup</code>, the <code>@register(dispatch=...)</code> decorator, and the <code>DataProto</code> container.</p>
+<h3 id="resource-pools-and-worker-groups">Resource pools and worker groups<a class="headerlink" href="#resource-pools-and-worker-groups" title="Permanent link">¶</a></h3>
+<p>A <strong><code>ResourcePool</code></strong> is a reservation of GPUs — for example &ldquo;8 GPUs, as 1 node of 8.&rdquo; A <strong><code>Worker</code></strong> is a class whose instances each occupy one GPU (one rank). A <strong><code>WorkerGroup</code></strong> binds a <code>Worker</code> class to a <code>ResourcePool</code>: it spins up one Ray actor per rank, sets each rank&rsquo;s <code>RANK</code>, <code>WORLD_SIZE</code>, <code>MASTER_ADDR</code>, etc., and initializes <code>torch.distributed</code> so the group can run SPMD. Critically, <strong>multiple worker groups can share the same resource pool</strong> — this is how veRL <em>colocates</em> the actor, the rollout engine, the critic, and the reference model on the <em>same</em> physical GPUs, time-slicing them. We will return to colocation; for now the mental model is:</p>
+<figure class="viz" id="fig-verl-resourcepool-colocation">
+<svg viewBox="0 0 920 520" role="img" aria-label="Hierarchy diagram showing one ResourcePool of 8 GPUs shared by three WorkerGroups (ActorRolloutWorkerGroup, CriticWorkerGroup, RefWorkerGroup), all bound to the same 8 GPUs and activated one stage at a time via time-slicing.">
+  <style>
+    #fig-verl-resourcepool-colocation .ttl   { font: 700 14px var(--sans,sans-serif); }
+    #fig-verl-resourcepool-colocation .lbl   { font: 600 12px var(--sans,sans-serif); }
+    #fig-verl-resourcepool-colocation .lbl-sm{ font: 600 10.5px var(--sans,sans-serif); }
+    #fig-verl-resourcepool-colocation .ann   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-verl-resourcepool-colocation .ann-i { font: italic 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-verl-resourcepool-colocation .mono  { font: 400 9.5px var(--mono,monospace); fill: var(--muted,#64748b); }
+    #fig-verl-resourcepool-colocation .gpu-lbl { font: 600 9px var(--mono,monospace); }
+    #fig-verl-resourcepool-colocation .rank-lbl { font: 500 8.5px var(--mono,monospace); }
+    #fig-verl-resourcepool-colocation text   { fill: var(--ink-soft,#1e293b); }
+  </style>
+
+
+  <rect x="14" y="14" width="892" height="436" rx="10" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="2"/>
+  <text x="460" y="40" text-anchor="middle" class="ttl">ResourcePool (8 GPUs)</text>
+
+
+
+
+
+
+
+
+
+
+  <rect x="63"   y="54" width="70" height="44" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="98"   y="74" text-anchor="middle" class="gpu-lbl">GPU0</text>
+  <rect x="165"  y="54" width="70" height="44" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="200"  y="74" text-anchor="middle" class="gpu-lbl">GPU1</text>
+  <rect x="267"  y="54" width="70" height="44" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="302"  y="74" text-anchor="middle" class="gpu-lbl">GPU2</text>
+  <rect x="369"  y="54" width="70" height="44" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="404"  y="74" text-anchor="middle" class="gpu-lbl">GPU3</text>
+  <rect x="471"  y="54" width="70" height="44" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="506"  y="74" text-anchor="middle" class="gpu-lbl">GPU4</text>
+  <rect x="573"  y="54" width="70" height="44" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="608"  y="74" text-anchor="middle" class="gpu-lbl">GPU5</text>
+  <rect x="675"  y="54" width="70" height="44" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="710"  y="74" text-anchor="middle" class="gpu-lbl">GPU6</text>
+  <rect x="777"  y="54" width="70" height="44" rx="5" fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="812"  y="74" text-anchor="middle" class="gpu-lbl">GPU7</text>
+
+
+  <text x="460" y="112" text-anchor="middle" class="ann">one placement group, PACK strategy — rank i lands on GPU i (shared via NVLink within node)</text>
+
+
+
+  <line x1="98"  y1="118" x2="98"  y2="390" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 4"/>
+  <line x1="200" y1="118" x2="200" y2="390" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 4"/>
+  <line x1="302" y1="118" x2="302" y2="390" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 4"/>
+  <line x1="404" y1="118" x2="404" y2="390" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 4"/>
+  <line x1="506" y1="118" x2="506" y2="390" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 4"/>
+  <line x1="608" y1="118" x2="608" y2="390" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 4"/>
+  <line x1="710" y1="118" x2="710" y2="390" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 4"/>
+  <line x1="812" y1="118" x2="812" y2="390" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 4"/>
+
+
+  <rect x="30" y="126" width="856" height="72" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="42" y="152" text-anchor="start" class="lbl-sm">ActorRolloutWorkerGroup (8 ranks)</text>
+
+  <rect x="63"  y="162" width="70" height="26" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="98"  y="179" text-anchor="middle" class="rank-lbl">rank0</text>
+  <rect x="165" y="162" width="70" height="26" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="200" y="179" text-anchor="middle" class="rank-lbl">rank1</text>
+  <rect x="267" y="162" width="70" height="26" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="302" y="179" text-anchor="middle" class="rank-lbl">rank2</text>
+  <rect x="369" y="162" width="70" height="26" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="404" y="179" text-anchor="middle" class="rank-lbl">rank3</text>
+  <rect x="471" y="162" width="70" height="26" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="506" y="179" text-anchor="middle" class="rank-lbl">rank4</text>
+  <rect x="573" y="162" width="70" height="26" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="608" y="179" text-anchor="middle" class="rank-lbl">rank5</text>
+  <rect x="675" y="162" width="70" height="26" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="710" y="179" text-anchor="middle" class="rank-lbl">rank6</text>
+  <rect x="777" y="162" width="70" height="26" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="812" y="179" text-anchor="middle" class="rank-lbl">rank7</text>
+
+  <text x="855" y="144" text-anchor="end" class="ann">training (FSDP) + generation (vLLM)</text>
+
+
+  <rect x="30" y="208" width="856" height="72" rx="7" fill="var(--accent2,#3b82f6)" fill-opacity="0.10" stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+  <text x="42" y="234" text-anchor="start" class="lbl-sm">CriticWorkerGroup (8 ranks)</text>
+
+  <rect x="63"  y="244" width="70" height="26" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.18" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="98"  y="261" text-anchor="middle" class="rank-lbl">rank0</text>
+  <rect x="165" y="244" width="70" height="26" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.18" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="200" y="261" text-anchor="middle" class="rank-lbl">rank1</text>
+  <rect x="267" y="244" width="70" height="26" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.18" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="302" y="261" text-anchor="middle" class="rank-lbl">rank2</text>
+  <rect x="369" y="244" width="70" height="26" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.18" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="404" y="261" text-anchor="middle" class="rank-lbl">rank3</text>
+  <rect x="471" y="244" width="70" height="26" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.18" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="506" y="261" text-anchor="middle" class="rank-lbl">rank4</text>
+  <rect x="573" y="244" width="70" height="26" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.18" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="608" y="261" text-anchor="middle" class="rank-lbl">rank5</text>
+  <rect x="675" y="244" width="70" height="26" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.18" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="710" y="261" text-anchor="middle" class="rank-lbl">rank6</text>
+  <rect x="777" y="244" width="70" height="26" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.18" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="812" y="261" text-anchor="middle" class="rank-lbl">rank7</text>
+
+  <text x="855" y="226" text-anchor="end" class="ann">value model train / infer</text>
+
+
+  <rect x="30" y="290" width="856" height="72" rx="7" fill="var(--muted,#64748b)" fill-opacity="0.08" stroke="var(--muted,#64748b)" stroke-width="1.8"/>
+  <text x="42" y="316" text-anchor="start" class="lbl-sm">RefWorkerGroup (8 ranks)</text>
+
+  <rect x="63"  y="326" width="70" height="26" rx="3" fill="var(--muted,#64748b)" fill-opacity="0.14" stroke="var(--muted,#64748b)" stroke-width="1"/>
+  <text x="98"  y="343" text-anchor="middle" class="rank-lbl">rank0</text>
+  <rect x="165" y="326" width="70" height="26" rx="3" fill="var(--muted,#64748b)" fill-opacity="0.14" stroke="var(--muted,#64748b)" stroke-width="1"/>
+  <text x="200" y="343" text-anchor="middle" class="rank-lbl">rank1</text>
+  <rect x="267" y="326" width="70" height="26" rx="3" fill="var(--muted,#64748b)" fill-opacity="0.14" stroke="var(--muted,#64748b)" stroke-width="1"/>
+  <text x="302" y="343" text-anchor="middle" class="rank-lbl">rank2</text>
+  <rect x="369" y="326" width="70" height="26" rx="3" fill="var(--muted,#64748b)" fill-opacity="0.14" stroke="var(--muted,#64748b)" stroke-width="1"/>
+  <text x="404" y="343" text-anchor="middle" class="rank-lbl">rank3</text>
+  <rect x="471" y="326" width="70" height="26" rx="3" fill="var(--muted,#64748b)" fill-opacity="0.14" stroke="var(--muted,#64748b)" stroke-width="1"/>
+  <text x="506" y="343" text-anchor="middle" class="rank-lbl">rank4</text>
+  <rect x="573" y="326" width="70" height="26" rx="3" fill="var(--muted,#64748b)" fill-opacity="0.14" stroke="var(--muted,#64748b)" stroke-width="1"/>
+  <text x="608" y="343" text-anchor="middle" class="rank-lbl">rank5</text>
+  <rect x="675" y="326" width="70" height="26" rx="3" fill="var(--muted,#64748b)" fill-opacity="0.14" stroke="var(--muted,#64748b)" stroke-width="1"/>
+  <text x="710" y="343" text-anchor="middle" class="rank-lbl">rank6</text>
+  <rect x="777" y="326" width="70" height="26" rx="3" fill="var(--muted,#64748b)" fill-opacity="0.14" stroke="var(--muted,#64748b)" stroke-width="1"/>
+  <text x="812" y="343" text-anchor="middle" class="rank-lbl">rank7</text>
+
+  <text x="855" y="308" text-anchor="end" class="ann">frozen reference log-probs (offloadable)</text>
+
+
+  <text x="460" y="406" text-anchor="middle" class="ann">all three groups bound to the SAME 8 GPUs</text>
+
+
+  <rect x="14" y="456" width="892" height="50" rx="7" fill="var(--muted,#64748b)" fill-opacity="0.08" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <text x="24" y="477" class="ann-i">Colocated: the three groups cannot all run at once — veRL TIME-SLICES them. No GPU sits idle.</text>
+
+
+
+  <rect x="24"  y="484" width="58" height="14" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.8"/>
+  <text x="53"  y="494" text-anchor="middle" class="rank-lbl" fill="white" font-size="8">rollout</text>
+  <rect x="86"  y="484" width="68" height="14" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.5"/>
+  <text x="120" y="494" text-anchor="middle" class="rank-lbl" fill="var(--ink-soft,#1e293b)" font-size="8">actor upd</text>
+  <rect x="158" y="484" width="52" height="14" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.7"/>
+  <text x="184" y="494" text-anchor="middle" class="rank-lbl" fill="white" font-size="8">critic</text>
+  <rect x="214" y="484" width="44" height="14" rx="3" fill="var(--muted,#64748b)" fill-opacity="0.55"/>
+  <text x="236" y="494" text-anchor="middle" class="rank-lbl" fill="white" font-size="8">ref</text>
+  <text x="268" y="494" class="ann" font-size="9"> — one stage at a time</text>
+
+</svg>
+<figcaption><b>One ResourcePool, three colocated WorkerGroups time-sliced on the same 8 GPUs.</b> A single placement group of 8 GPUs is bound to all three WorkerGroups simultaneously — ActorRolloutWorkerGroup (training via FSDP + generation via vLLM), CriticWorkerGroup (value model), and RefWorkerGroup (frozen reference log-probs, offloadable to CPU). Because only one group runs at a time, GPU utilization stays high: veRL sequences rollout → actor update → critic → reference across the same physical hardware, with the KV-cache peak and the training-activation peak falling at different moments.</figcaption>
+</figure>
+
+<p>The single driver holds <em>handles</em> to these worker groups and calls methods on them. Here is the shape of veRL&rsquo;s main PPO/GRPO loop, lightly simplified to show the single-controller structure. Read it as ordinary Python — that is the point.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># The driver process (single controller). This is the ENTIRE RL algorithm.</span>
+<span class="c1"># Each `*.method(...)` is one logical instruction that fans out to all ranks</span>
+<span class="c1"># of that worker group and gathers the result back as a DataProto.</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fit</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">step</span><span class="p">,</span> <span class="n">prompt_batch</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dataloader</span><span class="p">):</span>
+        <span class="c1"># 1) ROLLOUT: actor weights are resharded into the vLLM layout and we</span>
+        <span class="c1">#    generate G samples per prompt. Returns responses + per-token logprobs.</span>
+        <span class="n">batch</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">actor_rollout_wg</span><span class="o">.</span><span class="n">generate_sequences</span><span class="p">(</span><span class="n">prompt_batch</span><span class="p">)</span>
+
+        <span class="c1"># 2) RECOMPUTE old log-probs under the TRAIN-layout actor (numerical</span>
+        <span class="c1">#    consistency with the trainer; see the inference/train mismatch note).</span>
+        <span class="n">batch</span> <span class="o">=</span> <span class="n">batch</span><span class="o">.</span><span class="n">union</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">actor_rollout_wg</span><span class="o">.</span><span class="n">compute_log_prob</span><span class="p">(</span><span class="n">batch</span><span class="p">))</span>
+
+        <span class="c1"># 3) REFERENCE log-probs for the KL term (frozen model).</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_reference_policy</span><span class="p">:</span>
+            <span class="n">batch</span> <span class="o">=</span> <span class="n">batch</span><span class="o">.</span><span class="n">union</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ref_policy_wg</span><span class="o">.</span><span class="n">compute_ref_log_prob</span><span class="p">(</span><span class="n">batch</span><span class="p">))</span>
+
+        <span class="c1"># 4) REWARD: rule-based verifier and/or a reward model.</span>
+        <span class="n">batch</span> <span class="o">=</span> <span class="n">batch</span><span class="o">.</span><span class="n">union</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">reward_fn</span><span class="p">(</span><span class="n">batch</span><span class="p">))</span>
+
+        <span class="c1"># 5) VALUES (PPO only; GRPO skips this — no critic).</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_critic</span><span class="p">:</span>
+            <span class="n">batch</span> <span class="o">=</span> <span class="n">batch</span><span class="o">.</span><span class="n">union</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">critic_wg</span><span class="o">.</span><span class="n">compute_values</span><span class="p">(</span><span class="n">batch</span><span class="p">))</span>
+
+        <span class="c1"># 6) ADVANTAGE: pure LOCAL computation on the driver. Tiny tensors.</span>
+        <span class="n">batch</span> <span class="o">=</span> <span class="n">compute_advantage</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">adv_estimator</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">adv_estimator</span><span class="p">)</span>
+
+        <span class="c1"># 7) UPDATE: scatter the batch to the actor (and critic) workers; each</span>
+        <span class="c1">#    runs its sharded forward/backward; gradients stay inside the group.</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_critic</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">critic_wg</span><span class="o">.</span><span class="n">update_critic</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">actor_rollout_wg</span><span class="o">.</span><span class="n">update_actor</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>
+</code></pre></div>
+<p>Notice that step 6 — the part researchers most want to change — is <em>local, single-threaded Python on small tensors</em>. Swapping PPO&rsquo;s GAE for GRPO&rsquo;s group baseline, or for RLOO, or for a brand-new estimator, is a one-function edit with no distributed code in sight. That is the productivity win of the single controller. Steps 1, 2, 5, and 7 are the heavy SPMD stages, each hidden behind one method call.</p>
+<h3 id="the-dispatch-decorator-how-one-call-becomes-n">The dispatch decorator: how one call becomes N<a class="headerlink" href="#the-dispatch-decorator-how-one-call-becomes-n" title="Permanent link">¶</a></h3>
+<p>The magic that turns <code>self.actor_rollout_wg.generate_sequences(prompt_batch)</code> (one call on the driver) into &ldquo;run the SPMD generate program on all 8 ranks and gather&rdquo; is the <strong><code>@register(dispatch=...)</code></strong> decorator on the worker method. It declares <em>how the input should be split across ranks</em> and <em>how the outputs should be combined</em>. veRL ships a small set of dispatch modes; the important ones:</p>
+<table>
+<thead>
+<tr>
+<th>Dispatch mode</th>
+<th>Input handling</th>
+<th>Output handling</th>
+<th>Used for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ONE_TO_ALL</code></td>
+<td>broadcast the same args to every rank</td>
+<td>take rank 0&rsquo;s result</td>
+<td>broadcasts, barriers, config</td>
+</tr>
+<tr>
+<td><code>ALL_TO_ALL</code></td>
+<td>pass args through unchanged</td>
+<td>return list from all ranks</td>
+<td>generic collectives</td>
+</tr>
+<tr>
+<td><code>DP_COMPUTE_PROTO</code></td>
+<td><strong>shard the batch along the data-parallel dim</strong>, one slice per DP rank</td>
+<td><strong>concatenate</strong> the per-rank <code>DataProto</code>s back into one</td>
+<td>the workhorse: generation, log-prob, update</td>
+</tr>
+<tr>
+<td><code>MEGATRON_COMPUTE_PROTO</code></td>
+<td>shard over DP, replicate within TP/PP groups</td>
+<td>gather from DP ranks only</td>
+<td>Megatron-backed workers</td>
+</tr>
+</tbody>
+</table>
+<p>The cleverness of <code>DP_COMPUTE_PROTO</code> is that it understands the worker&rsquo;s <em>parallelism topology</em>: it splits the batch only across the <strong>data-parallel</strong> ranks and <em>replicates</em> it across the <strong>tensor/pipeline-parallel</strong> ranks (which all need the same data to cooperate on one micro-batch). The driver does not know or care about TP — it just hands over a batch and gets back a batch. Here is a from-scratch sketch of what the decorator does, so the mechanism is not a black box:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># A miniature reconstruction of veRL&#39;s dispatch mechanism. The real one is more</span>
+<span class="c1"># careful about padding, async futures, and TP/PP replication, but this captures</span>
+<span class="c1"># the single-controller -&gt; multi-controller fan-out/fan-in exactly.</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">functools</span>
+
+<span class="c1"># Dispatch functions: given a WorkerGroup and the call&#39;s args, return a LIST of</span>
+<span class="c1"># (args, kwargs) — one entry per rank.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">dispatch_dp_compute_proto</span><span class="p">(</span><span class="n">worker_group</span><span class="p">,</span> <span class="n">batch</span><span class="p">):</span>
+    <span class="n">dp_size</span> <span class="o">=</span> <span class="n">worker_group</span><span class="o">.</span><span class="n">dp_size</span>            <span class="c1"># number of data-parallel groups</span>
+    <span class="n">tp_size</span> <span class="o">=</span> <span class="n">worker_group</span><span class="o">.</span><span class="n">tp_size</span>            <span class="c1"># ranks per DP group (TP * PP)</span>
+    <span class="n">chunks</span> <span class="o">=</span> <span class="n">batch</span><span class="o">.</span><span class="n">chunk</span><span class="p">(</span><span class="n">dp_size</span><span class="p">)</span>             <span class="c1"># split the BATCH across DP groups only</span>
+    <span class="n">per_rank</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">dp_rank</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">dp_size</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">tp_size</span><span class="p">):</span>              <span class="c1"># replicate the chunk to every TP rank</span>
+            <span class="n">per_rank</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">chunks</span><span class="p">[</span><span class="n">dp_rank</span><span class="p">],))</span>   <span class="c1"># in this DP group</span>
+    <span class="k">return</span> <span class="n">per_rank</span>                            <span class="c1"># length == world_size</span>
+
+<span class="c1"># Collect functions: given the list of per-rank outputs, fold them into one result.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">collect_dp_compute_proto</span><span class="p">(</span><span class="n">worker_group</span><span class="p">,</span> <span class="n">outputs</span><span class="p">):</span>
+    <span class="n">dp_size</span> <span class="o">=</span> <span class="n">worker_group</span><span class="o">.</span><span class="n">dp_size</span>
+    <span class="n">tp_size</span> <span class="o">=</span> <span class="n">worker_group</span><span class="o">.</span><span class="n">tp_size</span>
+    <span class="c1"># Keep only ONE representative per DP group (TP ranks computed identical batch</span>
+    <span class="c1"># outputs); concatenate across DP groups to reconstruct the full batch order.</span>
+    <span class="n">reps</span> <span class="o">=</span> <span class="p">[</span><span class="n">outputs</span><span class="p">[</span><span class="n">dp_rank</span> <span class="o">*</span> <span class="n">tp_size</span><span class="p">]</span> <span class="k">for</span> <span class="n">dp_rank</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">dp_size</span><span class="p">)]</span>
+    <span class="k">return</span> <span class="n">DataProto</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span><span class="n">reps</span><span class="p">)</span>
+
+<span class="n">DISPATCH</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;DP_COMPUTE_PROTO&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">dispatch_dp_compute_proto</span><span class="p">,</span> <span class="n">collect_dp_compute_proto</span><span class="p">),</span>
+<span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">register</span><span class="p">(</span><span class="n">dispatch</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Decorator placed on Worker methods. Records the dispatch mode so the</span>
+<span class="sd">    WorkerGroup proxy knows how to fan out / fan in when the DRIVER calls it.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">decorator</span><span class="p">(</span><span class="n">fn</span><span class="p">):</span>
+        <span class="n">fn</span><span class="o">.</span><span class="n">_dispatch_mode</span> <span class="o">=</span> <span class="n">dispatch</span>
+        <span class="nd">@functools</span><span class="o">.</span><span class="n">wraps</span><span class="p">(</span><span class="n">fn</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">inner</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>     <span class="c1"># runs ON the worker (one rank)</span>
+            <span class="k">return</span> <span class="n">fn</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">inner</span>
+    <span class="k">return</span> <span class="n">decorator</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">WorkerGroupProxy</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Lives on the DRIVER. `self.workers` are Ray actor handles (one per rank).&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">workers</span><span class="p">,</span> <span class="n">dp_size</span><span class="p">,</span> <span class="n">tp_size</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">workers</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">dp_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">tp_size</span> <span class="o">=</span> <span class="n">workers</span><span class="p">,</span> <span class="n">dp_size</span><span class="p">,</span> <span class="n">tp_size</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">call</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">method_name</span><span class="p">,</span> <span class="n">batch</span><span class="p">):</span>
+        <span class="n">dispatch_fn</span><span class="p">,</span> <span class="n">collect_fn</span> <span class="o">=</span> <span class="n">DISPATCH</span><span class="p">[</span>
+            <span class="nb">getattr</span><span class="p">(</span><span class="n">WorkerClass</span><span class="p">,</span> <span class="n">method_name</span><span class="p">)</span><span class="o">.</span><span class="n">_dispatch_mode</span><span class="p">]</span>
+        <span class="n">per_rank_args</span> <span class="o">=</span> <span class="n">dispatch_fn</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">)</span>            <span class="c1"># split + replicate</span>
+        <span class="c1"># Launch the SAME method on every rank in parallel (Ray remote calls).</span>
+        <span class="n">futures</span> <span class="o">=</span> <span class="p">[</span><span class="n">w</span><span class="o">.</span><span class="fm">__getattr__</span><span class="p">(</span><span class="n">method_name</span><span class="p">)</span><span class="o">.</span><span class="n">remote</span><span class="p">(</span><span class="o">*</span><span class="n">a</span><span class="p">)</span>
+                   <span class="k">for</span> <span class="n">w</span><span class="p">,</span> <span class="p">(</span><span class="n">a</span><span class="p">,)</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">workers</span><span class="p">,</span> <span class="n">per_rank_args</span><span class="p">)]</span>
+        <span class="n">outputs</span> <span class="o">=</span> <span class="n">ray</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">futures</span><span class="p">)</span>                          <span class="c1"># gather all ranks</span>
+        <span class="k">return</span> <span class="n">collect_fn</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">outputs</span><span class="p">)</span>                    <span class="c1"># fold into one DataProto</span>
+</code></pre></div>
+<p>So when the driver writes <code>actor_rollout_wg.generate_sequences(batch)</code>, under the hood the proxy (1) consults the dispatch mode registered on <code>generate_sequences</code>, (2) splits the batch across DP groups and replicates within TP, (3) launches the method on all ranks via Ray, (4) gathers, and (5) concatenates. The driver wrote one line; 8 GPUs ran an SPMD generation. <strong>That is HybridFlow.</strong></p>
+<h3 id="dataproto-the-typed-batch-that-flows-between-stages">DataProto: the typed batch that flows between stages<a class="headerlink" href="#dataproto-the-typed-batch-that-flows-between-stages" title="Permanent link">¶</a></h3>
+<p>The object passed around — <code>DataProto</code> — is veRL&rsquo;s batch container: a dict of named tensors (<code>prompts</code>, <code>responses</code>, <code>attention_mask</code>, <code>old_log_probs</code>, <code>ref_log_probs</code>, <code>rewards</code>, <code>advantages</code>, …) plus non-tensor metadata. It supports <code>chunk</code> (for dispatch), <code>concat</code> (for collect), and <code>union</code> (to merge in new columns each stage produces). It is the <em>only</em> thing that crosses the single-/multi-controller boundary, and it is deliberately small: logical batch data, never activations or optimizer state. Keeping the boundary data minimal is what prevents the single-controller bottleneck that sinks naive designs.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: why Ray and not just torchrun</p>
+<p>veRL uses <strong>Ray</strong> as the actor/scheduling substrate, not because Ray is faster at collectives (it isn&rsquo;t — the heavy collectives still go through NCCL inside each worker group), but because Ray gives you <em>named, addressable, individually-callable</em> worker processes with <strong>placement groups</strong> for GPU pinning. The single-controller driver needs to hold a handle to &ldquo;the actor worker group&rdquo; and call methods on it heterogeneously (generate, then update), interleaved with calls to the critic and reward groups. <code>torchrun</code> gives you a flat SPMD world with no such addressability. Ray is the abstraction that makes the <em>between-stage</em> single-controller possible; NCCL remains the abstraction that makes the <em>within-stage</em> multi-controller fast. See <a href="../06-rl-infra/05-openrlhf-nemo-ray.html">OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a> for the broader Ray-RL ecosystem.</p>
+</div>
+<h2 id="the-3d-hybridengine-resharding-between-train-and-rollout">The 3D-HybridEngine: resharding between train and rollout<a class="headerlink" href="#the-3d-hybridengine-resharding-between-train-and-rollout" title="Permanent link">¶</a></h2>
+<p>We now reach the part of veRL that is the most technically interesting and the source of much of its performance: the <strong>3D-HybridEngine</strong>. The problem it solves is unavoidable in any colocated RL system. The actor model must live in <em>two different parallel layouts</em>:</p>
+<ul>
+<li><strong>Training layout.</strong> During the update, the actor is sharded for training — typically <strong>FSDP</strong> (parameters, gradients, and optimizer state sharded across all data-parallel ranks; see <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a>) or <strong>Megatron 3D parallelism</strong> (tensor × pipeline × data; see <a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a>). Optimizer state dominates memory: Adam needs two moments per parameter, so the training engine holds roughly <span class="arithmatex">\(4\times\)</span>–<span class="arithmatex">\(6\times\)</span> the raw parameter bytes.</li>
+<li><strong>Rollout layout.</strong> During generation, the <em>same</em> weights must feed <strong>vLLM</strong> or <strong>SGLang</strong>, which shard the model purely with <strong>tensor parallelism</strong> (TP) for low-latency decode and use PagedAttention for the KV cache (see <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a> and <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>). The rollout engine needs <em>no</em> optimizer state and <em>no</em> gradients — just the bf16 weights and a big KV cache.</li>
+</ul>
+<p>Every RL step must convert the actor weights from the training layout to the rollout layout (before generation) and conceptually back (the trainer just keeps its own copy and updates it in place). The naive way to do this is catastrophic: gather the full weights to every rank, write a checkpoint, and have vLLM load it — disk round-trips of tens of gigabytes per step, plus a full unsharded copy of the model materialized in memory. The 3D-HybridEngine does it <strong>in GPU memory, in place, with a clever rank arrangement that minimizes redundant copies.</strong></p>
+<h3 id="why-resharding-is-non-trivial-a-tp-degree-mismatch">Why resharding is non-trivial: a TP-degree mismatch<a class="headerlink" href="#why-resharding-is-non-trivial-a-tp-degree-mismatch" title="Permanent link">¶</a></h3>
+<p>The core difficulty is that the training TP degree and the rollout TP degree usually differ. Suppose training uses Megatron with tensor-parallel degree <span class="arithmatex">\(p\)</span> (each weight matrix is split column- or row-wise across <span class="arithmatex">\(p\)</span> ranks) and rollout uses vLLM with tensor-parallel degree <span class="arithmatex">\(q\)</span>, where often <span class="arithmatex">\(q &lt; p\)</span> (inference wants fewer, fatter shards for decode efficiency). To form the rollout shards you must <strong>re-partition</strong> the parameter tensors: gather the <span class="arithmatex">\(p\)</span> training shards of each layer and re-split them into <span class="arithmatex">\(q\)</span> rollout shards. Done naively across all GPUs, this is an all-gather of the <em>entire model</em> followed by a re-scatter — <span class="arithmatex">\(O(\text{model size})\)</span> communication and a transient full copy on each rank.</p>
+<p>The HybridFlow trick is to arrange the training and rollout parallel <em>groups</em> so that resharding is a <strong>local regrouping</strong> within small sets of GPUs rather than a global all-gather. Concretely, the 3D-HybridEngine keeps the training and inference TP groups <em>nested on the same physical GPUs</em> so that the gather-and-resplit only ever happens among the <span class="arithmatex">\(\max(p,q)\)</span> GPUs that already share those parameters — never across the whole cluster. The redundant memory is bounded by one TP group&rsquo;s worth of weights, not the whole model, and the communication is one <em>intra-node</em> all-gather per layer, overlapped with compute.</p>
+<h3 id="a-from-scratch-resharding-routine">A from-scratch resharding routine<a class="headerlink" href="#a-from-scratch-resharding-routine" title="Permanent link">¶</a></h3>
+<p>To demystify it, here is a self-contained reconstruction of the central operation: take a weight matrix that is tensor-parallel-sharded <span class="arithmatex">\(p\)</span> ways (training) and re-shard it <span class="arithmatex">\(q\)</span> ways (rollout). This is exactly the per-layer kernel the 3D-HybridEngine runs, minus the cross-rank choreography.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">reshard_column_parallel</span><span class="p">(</span><span class="n">local_shard</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+                            <span class="n">train_tp_group</span><span class="p">,</span> <span class="n">train_tp_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                            <span class="n">rollout_tp_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">rank_in_group</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Reshard one COLUMN-parallel weight (e.g. an MLP up-projection, split along the</span>
+<span class="sd">    OUTPUT dim) from train_tp_size shards to rollout_tp_size shards, IN GPU MEMORY.</span>
+
+<span class="sd">    local_shard : this rank&#39;s slice of the full weight, shape (in_dim, out_dim/p).</span>
+<span class="sd">    Returns this rank&#39;s rollout slice, shape (in_dim, out_dim/q), or None if this</span>
+<span class="sd">    rank is not used by the rollout engine (q &lt; p case).</span>
+
+<span class="sd">    Mechanism:</span>
+<span class="sd">      1. all-gather the p training shards WITHIN the (small) TP group -&gt; full weight.</span>
+<span class="sd">      2. re-split the full weight into q rollout shards.</span>
+<span class="sd">      3. each rank keeps the rollout shard it is responsible for.</span>
+<span class="sd">    The all-gather is bounded by ONE TP group (intra-node), not the whole cluster.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">p</span><span class="p">,</span> <span class="n">q</span> <span class="o">=</span> <span class="n">train_tp_size</span><span class="p">,</span> <span class="n">rollout_tp_size</span>
+
+    <span class="c1"># --- Step 1: gather the p column-shards into the full output dimension. ---</span>
+    <span class="n">gathered</span> <span class="o">=</span> <span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">local_shard</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">p</span><span class="p">)]</span>
+    <span class="n">dist</span><span class="o">.</span><span class="n">all_gather</span><span class="p">(</span><span class="n">gathered</span><span class="p">,</span> <span class="n">local_shard</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="n">train_tp_group</span><span class="p">)</span>
+    <span class="n">full_weight</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">gathered</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>         <span class="c1"># (in_dim, out_dim) full, on every rank</span>
+
+    <span class="c1"># --- Step 2: re-split into q rollout shards along the same (output) dim. ---</span>
+    <span class="n">out_dim</span> <span class="o">=</span> <span class="n">full_weight</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">assert</span> <span class="n">out_dim</span> <span class="o">%</span> <span class="n">q</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;output dim must be divisible by rollout TP degree&quot;</span>
+    <span class="n">rollout_shards</span> <span class="o">=</span> <span class="n">full_weight</span><span class="o">.</span><span class="n">chunk</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>     <span class="c1"># list of q tensors</span>
+
+    <span class="c1"># --- Step 3: which rollout shard does THIS physical GPU own? ---</span>
+    <span class="c1"># The 3D-HybridEngine maps rank_in_group -&gt; a rollout shard id so that the</span>
+    <span class="c1"># first q ranks of the training group become the q rollout ranks. Ranks &gt;= q</span>
+    <span class="c1"># are idle during rollout (their weights were gathered above and can be freed).</span>
+    <span class="k">if</span> <span class="n">rank_in_group</span> <span class="o">&lt;</span> <span class="n">q</span><span class="p">:</span>
+        <span class="n">my_rollout_shard</span> <span class="o">=</span> <span class="n">rollout_shards</span><span class="p">[</span><span class="n">rank_in_group</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">my_rollout_shard</span>                      <span class="c1"># (in_dim, out_dim/q)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>                                  <span class="c1"># not a rollout rank</span>
+
+<span class="c1"># Row-parallel weights (split along the INPUT dim) are symmetric: all-gather along</span>
+<span class="c1"># dim=0 instead of dim=1, then re-chunk along dim=0. Attention QKV and o_proj need</span>
+<span class="c1"># head-aware regrouping so that whole heads stay together after re-sharding.</span>
+</code></pre></div>
+<p>The thing to internalize: resharding is <strong>gather-within-a-small-group, then re-split</strong> — purely arithmetic on the partition boundaries — and the <em>engineering</em> is making sure (a) the gather is intra-node, (b) only one TP group&rsquo;s worth of extra memory is ever live, and &copy; the optimizer state and gradients are <em>not</em> gathered (they stay in the training layout untouched; only the bf16 parameters are copied into the rollout engine&rsquo;s weight buffers). After resharding, vLLM&rsquo;s weight tensors are <em>updated in place</em> via its <code>load_weights</code> / <code>update_weights</code> API — no disk, no checkpoint.</p>
+<h3 id="weight-synchronization-in-place">Weight synchronization, in place<a class="headerlink" href="#weight-synchronization-in-place" title="Permanent link">¶</a></h3>
+<p>Once weights are resharded into the rollout layout, they must be <em>injected</em> into the running vLLM engine. vLLM exposes a path to overwrite its model parameters from in-memory tensors (in recent versions via a collective <code>update_weights</code> or by directly assigning into the model&rsquo;s parameters and refreshing any quantization/caches). veRL&rsquo;s actor-rollout worker calls this every step, so the rollout engine always generates with the <em>latest</em> policy. Because the rollout engine is colocated on the same GPUs, the transfer is a device-to-device copy (or even a no-copy view when layouts align), not a network or PCIe transfer.</p>
+<figure class="viz" id="fig-verl-colocated-rl-step">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 900 580" role="img" aria-label="Animated diagram of one colocated RL step: training layout holds FSDP params and Adam state permanently; 3D-HybridEngine reshards only the bf16 params into the rollout layout where vLLM generates (KV-cache memory peak 1); responses then flow through reward, advantage, and update_actor backward (training-activation memory peak 2); optimizer step loops back to the training layout. The two peaks are non-coincident.">
+  <defs>
+    <marker id="crl-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#475569)"/>
+    </marker>
+    <marker id="crl-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+    <marker id="crl-arr-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#64748b)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-verl-colocated-rl-step .ttl    { font: 700 12.5px var(--sans,sans-serif); }
+    #fig-verl-colocated-rl-step .body   { font: 400 10px var(--mono,monospace); fill: var(--muted,#64748b); }
+    #fig-verl-colocated-rl-step .ann    { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-verl-colocated-rl-step .ann-b  { font: 600 9.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-verl-colocated-rl-step .albl   { font: 600 9.5px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+    #fig-verl-colocated-rl-step .asub   { font: 400 8.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-verl-colocated-rl-step .stglbl { font: 600 11px var(--sans,sans-serif); }
+    #fig-verl-colocated-rl-step .peak   { font: 700 8.5px var(--sans,sans-serif); }
+    #fig-verl-colocated-rl-step text    { fill: var(--ink-soft,#1e293b); }
+
+    /* animated token travels down and across the pipeline */
+    #fig-verl-colocated-rl-step #crl-token {
+      offset-path: path('M 420 95 L 420 143 L 420 200 L 420 250 L 220 270 L 320 270 L 420 270 L 520 270 L 620 270 L 700 270 C 740 270 760 240 780 210 C 800 180 810 140 780 110 C 760 95 700 88 580 84 C 530 82 480 80 420 80');
+      animation: crl-travel 8s ease-in-out infinite;
+    }
+    @keyframes crl-travel {
+      0%   { offset-distance: 0%;   opacity: 1; }
+      12%  { offset-distance: 9%;   opacity: 1; }
+      22%  { offset-distance: 17%;  opacity: 1; }
+      35%  { offset-distance: 27%;  opacity: 1; }
+      45%  { offset-distance: 38%;  opacity: 1; }
+      55%  { offset-distance: 48%;  opacity: 1; }
+      65%  { offset-distance: 57%;  opacity: 1; }
+      75%  { offset-distance: 66%;  opacity: 1; }
+      88%  { offset-distance: 82%;  opacity: 1; }
+      96%  { offset-distance: 94%;  opacity: 0.6; }
+      100% { offset-distance: 100%; opacity: 0.2; }
+    }
+
+    /* KV cache peak: lights up during rollout */
+    #fig-verl-colocated-rl-step #peak-kv {
+      animation: crl-pkv 8s ease-in-out infinite;
+    }
+    @keyframes crl-pkv {
+      0%,  22% { opacity: 0.2; }
+      33%       { opacity: 1;   }
+      50%       { opacity: 1;   }
+      60%       { opacity: 0.2; }
+      100%      { opacity: 0.2; }
+    }
+
+    /* Training activation peak: lights up during update_actor */
+    #fig-verl-colocated-rl-step #peak-act {
+      animation: crl-pact 8s ease-in-out infinite;
+    }
+    @keyframes crl-pact {
+      0%,  60% { opacity: 0.2; }
+      72%       { opacity: 1;   }
+      88%       { opacity: 1;   }
+      96%       { opacity: 0.2; }
+      100%      { opacity: 0.2; }
+    }
+
+    /* Reshard arrow pulses on transit A→B */
+    #fig-verl-colocated-rl-step #reshard-seg {
+      animation: crl-reshard 8s ease-in-out infinite;
+    }
+    @keyframes crl-reshard {
+      0%,  8%  { stroke-width: 2;   opacity: 0.7; }
+      14%       { stroke-width: 3.5; opacity: 1;   }
+      24%       { stroke-width: 3.5; opacity: 1;   }
+      32%       { stroke-width: 2;   opacity: 0.7; }
+      100%      { stroke-width: 2;   opacity: 0.7; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #fig-verl-colocated-rl-step #crl-token  { animation: none; opacity: 0; }
+      #fig-verl-colocated-rl-step #peak-kv    { animation: none; opacity: 1; }
+      #fig-verl-colocated-rl-step #peak-act   { animation: none; opacity: 1; }
+      #fig-verl-colocated-rl-step #reshard-seg{ animation: none; }
+      #fig-verl-colocated-rl-step .badge      { display: inline; }
+    }
+  </style>
+
+
+
+  <rect x="40" y="20" width="680" height="92" rx="8"
+        fill="var(--surface,#f5f7fa)" stroke="var(--accent,#6366f1)" stroke-width="2.2"/>
+  <text x="380" y="45" text-anchor="middle" class="ttl">[TRAIN LAYOUT]</text>
+  <text x="380" y="63" text-anchor="middle" class="body">FSDP / Megatron params + Adam optimizer state</text>
+  <text x="380" y="79" text-anchor="middle" class="body">optimizer state &amp; gradients NEVER move — only bf16 params are copied out</text>
+
+
+  <text x="888" y="44" text-anchor="end" class="ann">lives the WHOLE step</text>
+
+
+  <line id="reshard-seg" x1="380" y1="112" x2="380" y2="148"
+        stroke="var(--accent,#6366f1)" stroke-width="2" marker-end="url(#crl-arr-acc)" opacity="0.85"/>
+  <text x="390" y="126" text-anchor="start" class="albl">3D-HybridEngine: gather within TP group, re-split to rollout TP</text>
+  <text x="390" y="140" text-anchor="start" class="asub">bounded by one TP group of weights — intra-node, no disk</text>
+
+
+
+  <rect x="40" y="150" width="680" height="80" rx="8"
+        fill="var(--surface,#f5f7fa)" stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+  <text x="380" y="175" text-anchor="middle" class="ttl">[ROLLOUT LAYOUT]</text>
+  <text x="380" y="193" text-anchor="middle" class="body">bf16 params injected into vLLM via update_weights (in place)</text>
+  <text x="380" y="209" text-anchor="middle" class="body">device-to-device copy — no checkpoint, no PCIe/network</text>
+
+
+  <line x1="380" y1="230" x2="380" y2="256"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.6" marker-end="url(#crl-arr)"/>
+  <text x="390" y="248" text-anchor="start" class="ann">vLLM generates G samples/prompt with PagedAttention KV cache</text>
+
+
+  <g id="peak-kv">
+    <circle cx="48" cy="244" r="9" fill="var(--warn,#e0a106)"/>
+    <text x="48" y="248" text-anchor="middle" class="peak" fill="white">!</text>
+    <text x="60" y="237" text-anchor="start" class="peak" fill="var(--warn,#e0a106)">peak 1: KV cache (tens of GB)</text>
+
+    <text class="badge peak" x="60" y="250" text-anchor="start" fill="var(--warn,#e0a106)" display="none" font-size="8">[1st peak]</text>
+  </g>
+
+
+
+
+
+
+
+  <rect x="25" y="260" width="148" height="68" rx="6"
+        fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="99" y="284" text-anchor="middle" class="stglbl">responses</text>
+  <text x="99" y="299" text-anchor="middle" class="body">+ logprobs</text>
+  <text x="99" y="313" text-anchor="middle" class="body">(from vLLM)</text>
+
+  <line x1="173" y1="294" x2="185" y2="294"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#crl-arr)"/>
+
+
+  <rect x="187" y="260" width="120" height="68" rx="6"
+        fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="247" y="284" text-anchor="middle" class="stglbl">reward</text>
+  <text x="247" y="300" text-anchor="middle" class="body">rule-based</text>
+  <text x="247" y="314" text-anchor="middle" class="body">/ RM</text>
+
+  <line x1="307" y1="294" x2="319" y2="294"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#crl-arr)"/>
+
+
+  <rect x="321" y="260" width="148" height="68" rx="6"
+        fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="395" y="281" text-anchor="middle" class="stglbl">advantage</text>
+  <text x="395" y="297" text-anchor="middle" class="body">local on driver</text>
+  <text x="395" y="311" text-anchor="middle" class="body">tiny tensors</text>
+  <text x="395" y="324" text-anchor="middle" class="ann" font-size="8">[single-controller]</text>
+
+  <line x1="469" y1="294" x2="481" y2="294"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#crl-arr)"/>
+
+
+  <rect x="483" y="260" width="156" height="68" rx="6"
+        fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="561" y="281" text-anchor="middle" class="stglbl">update_actor</text>
+  <text x="561" y="297" text-anchor="middle" class="body">FSDP backward</text>
+  <text x="561" y="311" text-anchor="middle" class="body">all-reduces inside</text>
+
+
+  <g id="peak-act">
+    <circle cx="561" cy="346" r="9" fill="var(--warn,#e0a106)"/>
+    <text x="561" y="350" text-anchor="middle" class="peak" fill="white">!</text>
+    <text x="575" y="341" text-anchor="start" class="peak" fill="var(--warn,#e0a106)">peak 2: training activations</text>
+    <text class="badge peak" x="575" y="354" fill="var(--warn,#e0a106)" display="none" font-size="8">[2nd peak]</text>
+  </g>
+
+
+
+  <path d="M 639 275 C 680 260 700 210 700 160 C 700 110 680 75 720 66"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.8"
+        marker-end="url(#crl-arr-acc)"/>
+
+  <text x="705" y="192" text-anchor="start" class="albl" font-size="9">optimizer step</text>
+  <text x="705" y="205" text-anchor="start" class="asub">mutates TRAIN-LAYOUT</text>
+  <text x="705" y="217" text-anchor="start" class="asub">state never moved</text>
+
+
+  <path d="M 25 328 C 14 328 10 390 10 420 C 10 455 14 480 60 485 L 840 485 C 870 485 876 460 876 440 C 876 410 865 380 840 360 L 640 328"
+        fill="none" stroke="var(--muted,#64748b)" stroke-width="1.4"
+        stroke-dasharray="6 4" marker-end="url(#crl-arr-muted)"/>
+  <text x="440" y="482" text-anchor="middle" class="ann">next step</text>
+
+
+  <rect x="10" y="502" width="880" height="66" rx="7"
+        fill="var(--muted,#64748b)" fill-opacity="0.08"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <text x="450" y="522" text-anchor="middle" class="ann-b" fill="var(--ink-soft,#1e293b)">The two peaks happen at DIFFERENT times:</text>
+  <text x="450" y="538" text-anchor="middle" class="ann">rollout peak (KV cache) is released before the training peak (activations) — which is exactly why colocation fits.</text>
+  <text x="450" y="554" text-anchor="middle" class="ann">Optimizer state stays in TRAIN LAYOUT the entire step; only bf16 params flow into the rollout engine.</text>
+
+
+  <circle id="crl-token" r="8" fill="var(--accent,#6366f1)" opacity="0.9"/>
+
+</svg>
+<figcaption><b>One colocated RL step: train layout, 3D-HybridEngine reshard, rollout, update.</b> The optimizer state and gradients stay in the FSDP training layout for the entire step and never move; only bf16 parameters are resharded (gathered within a TP group, re-split for vLLM's tensor-parallel layout) via the 3D-HybridEngine. The animated token traces the sequence: params flow into the rollout layout where vLLM generates with a PagedAttention KV cache (peak 1, shown in yellow), then responses travel through reward and advantage (driver-local, no collectives) to the FSDP backward pass (peak 2), and the optimizer step writes directly back into the training layout. The two memory peaks are non-coincident — that is the core colocation argument.</figcaption>
+</figure>
+
+<p>The disaggregated alternative — putting the rollout engine on <em>separate</em> GPUs and streaming weights over the network — is covered in <a href="../06-rl-infra/07-colocated-vs-disaggregated.html">Colocated vs Disaggregated RL &amp; Weight Synchronization</a>. veRL supports both; the colocated path with the 3D-HybridEngine is its signature and is what most single-cluster runs use.</p>
+<h2 id="placement-colocation-and-ray-mechanics">Placement, colocation, and Ray mechanics<a class="headerlink" href="#placement-colocation-and-ray-mechanics" title="Permanent link">¶</a></h2>
+<p>We have said the actor, critic, reference, and rollout engine <em>colocate</em> on the same GPUs. Let us make that precise, because it is where Ray placement groups earn their keep and where most real-world veRL configuration bugs hide.</p>
+<h3 id="placement-groups-pinning-ranks-to-gpus">Placement groups: pinning ranks to GPUs<a class="headerlink" href="#placement-groups-pinning-ranks-to-gpus" title="Permanent link">¶</a></h3>
+<p>Ray&rsquo;s <strong>placement group</strong> is a reservation of &ldquo;bundles,&rdquo; where each bundle requests resources (e.g. <code>{"GPU": 1, "CPU": 8}</code>) and a <em>strategy</em> governs how bundles are packed onto nodes. veRL uses these to lay out worker groups deterministically:</p>
+<ul>
+<li><strong><code>STRICT_PACK</code> / <code>PACK</code></strong> — put all bundles on as few nodes as possible. Good for tensor parallelism (TP ranks must be on the same node for fast NVLink all-reduces).</li>
+<li><strong><code>STRICT_SPREAD</code> / <code>SPREAD</code></strong> — distribute bundles across nodes (for data parallelism that tolerates inter-node bandwidth).</li>
+</ul>
+<p>A typical single-node 8-GPU setup creates one placement group with 8 GPU bundles, packed on the node. The <code>ActorRolloutWorkerGroup</code>, <code>CriticWorkerGroup</code>, and <code>RefWorkerGroup</code> are all bound to <em>that same placement group</em> — meaning their rank-<span class="arithmatex">\(i\)</span> Ray actors all land on GPU <span class="arithmatex">\(i\)</span>. Because they share GPUs, they cannot all be active at once; veRL <strong>time-slices</strong> them: during rollout the actor-rollout group&rsquo;s vLLM engine owns the GPU compute and the bulk of memory (KV cache), then it is paused/offloaded and the actor&rsquo;s training forward/backward runs, then the critic, then the reference. This is the colocated design, and its big win is <strong>GPU utilization</strong>: no GPU sits idle waiting for another stage, because every stage runs on every GPU.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Sketch of veRL&#39;s resource/placement configuration (conceptual).</span>
+<span class="c1"># One node, 8 GPUs. Actor+rollout colocated; critic and ref share the same GPUs.</span>
+<span class="nt">resource_pool</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">process_on_nodes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">8</span><span class="p p-Indicator">]</span><span class="w">          </span><span class="c1"># 8 ranks on 1 node -&gt; one placement group, PACK</span>
+<span class="nt">actor_rollout_ref</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">actor</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fsdp</span><span class="w">               </span><span class="c1"># training engine: FSDP (or &quot;megatron&quot;)</span>
+<span class="w">    </span><span class="nt">fsdp_config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> param_offload</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="p p-Indicator">,</span><span class="nt"> optimizer_offload</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">  </span><span class="nt">rollout</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vllm</span><span class="w">                   </span><span class="c1"># rollout engine: vLLM (or &quot;sglang&quot;)</span>
+<span class="w">    </span><span class="nt">tensor_model_parallel_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span><span class="w">   </span><span class="c1"># rollout TP degree q (train uses FSDP, &quot;p&quot;=1 view)</span>
+<span class="w">    </span><span class="nt">gpu_memory_utilization</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.5</span><span class="w">     </span><span class="c1"># fraction of GPU mem vLLM may use for weights+KV</span>
+<span class="w">    </span><span class="nt">n</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span><span class="w">                            </span><span class="c1"># G: samples per prompt (the group size)</span>
+<span class="w">  </span><span class="nt">ref</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">fsdp_config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> param_offload</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w">   </span><span class="c1"># ref is frozen -&gt; offload to CPU when idle</span>
+<span class="nt">critic</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fsdp</span>
+</code></pre></div>
+<h3 id="the-memory-budget-of-colocation">The memory budget of colocation<a class="headerlink" href="#the-memory-budget-of-colocation" title="Permanent link">¶</a></h3>
+<p>Colocation is powerful but it forces a tight memory budget: at any instant the GPU must hold whatever the <em>currently active</em> stage needs, and weights/state for the <em>inactive</em> stages either stay resident (cheap, e.g. bf16 actor params) or get <strong>offloaded to CPU</strong> (the <code>param_offload</code>/<code>optimizer_offload</code> flags above). The single biggest knob is <code>gpu_memory_utilization</code> for vLLM — it tells the rollout engine how much VRAM to claim for weights plus KV cache, and it must leave room for the trainer&rsquo;s optimizer state when training resumes.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: will a 7B GRPO run fit on 8×80GB?</p>
+<p>Take a 7B-parameter actor, bf16 weights, trained with FSDP across 8×A100-80GB, rollout via vLLM with TP=2, group size <span class="arithmatex">\(G=8\)</span>, GRPO (so <strong>no critic</strong>). Let us budget per GPU.</p>
+<p><strong>Training-side resident memory (FSDP, sharded across 8 ranks):</strong></p>
+<ul>
+<li>Parameters (bf16): <span class="arithmatex">\(7\text{B}\times 2\text{ B} = 14\text{ GB}\)</span> total <span class="arithmatex">\(\Rightarrow 14/8 = 1.75\text{ GB}\)</span> per rank.</li>
+<li>Gradients (bf16): another <span class="arithmatex">\(1.75\text{ GB}\)</span> per rank.</li>
+<li>Adam optimizer state in fp32 (master weights + two moments): roughly <span class="arithmatex">\(7\text{B}\times(4+4+4)\text{ B} = 84\text{ GB}\)</span> total <span class="arithmatex">\(\Rightarrow 84/8 = 10.5\text{ GB}\)</span> per rank.</li>
+<li>Subtotal training state: <span class="arithmatex">\(\approx 14\text{ GB}\)</span> per rank, <em>persistently sharded</em>.</li>
+</ul>
+<p><strong>Rollout-side memory (vLLM, TP=2):</strong> the rollout engine needs a <em>full</em> bf16 copy of the model split across its TP group. With TP=2, each rollout rank holds <span class="arithmatex">\(14\text{ GB}/2 = 7\text{ GB}\)</span> of weights. The KV cache then uses whatever <code>gpu_memory_utilization</code> leaves. With a 32k-token context budget across the batched group samples, the KV cache can easily want <strong>tens of GB</strong> — this is usually the dominant rollout cost. (For the KV-cache size formula, see <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>.)</p>
+<p><strong>The resharding transient:</strong> when the 3D-HybridEngine gathers a layer to re-split it, the live extra memory is bounded by <em>one TP group&rsquo;s</em> weights for <em>one layer</em> at a time (a few hundred MB), not the whole 14 GB model — that bound is the entire point of the nested-group arrangement.</p>
+<p><strong>Does it fit?</strong> Per 80 GB GPU during rollout: <span class="arithmatex">\(\sim 14\text{ GB}\)</span> (training state, kept resident) <span class="arithmatex">\(+ \sim 7\text{ GB}\)</span> (rollout weights) <span class="arithmatex">\(\approx 21\text{ GB}\)</span> baseline, leaving <span class="arithmatex">\(\sim 59\text{ GB}\)</span> for the KV cache and activations — comfortable. During the update stage, vLLM&rsquo;s KV cache is released, freeing tens of GB for training activations. The colocation works because <em>the two stages&rsquo; peak memories don&rsquo;t coincide</em>: rollout&rsquo;s peak is KV cache, training&rsquo;s peak is activations, and they happen at different times. <strong>If you instead ran PPO with a 7B critic</strong>, you would add another <span class="arithmatex">\(\sim 14\text{ GB}\)</span>/rank of critic training state, and the budget tightens enough that you would likely enable <code>optimizer_offload</code>. This is one concrete, mechanical reason the field prefers critic-free GRPO/RLOO for large policies (see <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>).</p>
+</div>
+<h3 id="hybrid-sharding-for-very-large-models">Hybrid sharding for very large models<a class="headerlink" href="#hybrid-sharding-for-very-large-models" title="Permanent link">¶</a></h3>
+<p>For models too large for a single node, veRL combines parallelisms: FSDP or Megatron across nodes for training, and vLLM TP/PP within nodes for rollout, with the 3D-HybridEngine resharding between them. The &ldquo;3D&rdquo; in 3D-HybridEngine refers precisely to managing the <em>three</em> parallel dimensions (data, tensor, pipeline) consistently across the train↔rollout boundary so that a parameter living at training coordinate <span class="arithmatex">\((\text{dp}, \text{tp}, \text{pp})\)</span> knows exactly which rollout coordinate it must land at. This is the generalization of the single-matrix resharding routine above to the full 3D mesh.</p>
+<h2 id="why-verl-scales-the-throughput-argument">Why veRL scales: the throughput argument<a class="headerlink" href="#why-verl-scales-the-throughput-argument" title="Permanent link">¶</a></h2>
+<p>Put the pieces together and you can state precisely <em>why</em> veRL scales where a TRL-style monolith stalls.</p>
+<ol>
+<li><strong>No driver bottleneck.</strong> Only the small logical batch (prompts, responses, rewards, advantages) crosses the single-controller boundary; activations, gradients, and optimizer state never leave the worker groups. The driver&rsquo;s per-step data is megabytes, not the hundreds of GB that move <em>inside</em> the SPMD stages.</li>
+<li><strong>Native parallelism composition.</strong> Because each stage is its own SPMD <code>WorkerGroup</code>, you can independently choose the trainer&rsquo;s parallelism (FSDP, or Megatron TP×PP×DP) and the rollout engine&rsquo;s parallelism (vLLM TP), and the 3D-HybridEngine bridges them. A monolith that runs train and generate in one process is stuck with one parallel layout for both — the wrong layout for at least one of them.</li>
+<li><strong>Colocation kills idle GPUs.</strong> With actor, rollout, critic, and reference time-sliced on the same GPUs via placement groups, no GPU waits on another machine. In a <em>disaggregated</em> design, generation GPUs idle while training GPUs work and vice versa unless you carefully pipeline; colocation sidesteps that for single-cluster runs.</li>
+<li><strong>In-memory resharding, no disk.</strong> Weight sync between train and rollout is a device-to-device regroup, not a checkpoint write/read. At 70B scale, the difference between an in-memory regroup and a disk round-trip per step is the difference between a step taking seconds versus minutes.</li>
+<li><strong>The expensive engines are best-of-breed and unmodified.</strong> veRL does not reimplement attention or a sampler; it <em>orchestrates</em> vLLM/SGLang for generation and FSDP/Megatron for training. You inherit PagedAttention, continuous batching, FlashAttention, and FSDP&rsquo;s sharding for free, and upgrade them independently.</li>
+</ol>
+<h3 id="what-still-bottlenecks-verl">What still bottlenecks veRL<a class="headerlink" href="#what-still-bottlenecks-verl" title="Permanent link">¶</a></h3>
+<p>No system is free. The dominant cost in synchronous veRL is the <strong>generation stage&rsquo;s tail latency</strong>: a batched group rollout finishes only when its <em>slowest, longest</em> sample finishes, so a few very long responses stall the whole step (&ldquo;straggler&rdquo; or &ldquo;long-tail&rdquo; effect). Mitigations include the async and disaggregated designs of <a href="../06-rl-infra/06-prime-rl-async.html">Prime-RL, Async RL &amp; Decentralized Training</a> and load-balancing tricks in <a href="../06-rl-infra/11-scaling-rl-tricks.html">Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a>. veRL has steadily added asynchronous rollout and partial-rollout features to attack exactly this. The second cost is the <strong>train/inference numerical mismatch</strong>: vLLM&rsquo;s generation kernels and the trainer&rsquo;s forward pass compute log-probs with different code paths, so the <code>old_log_prob</code> used in the importance ratio can disagree with what the sampler actually used. veRL recomputes <code>old_log_prob</code> under the <em>training</em> engine (step 2 of the driver loop) to keep the ratio self-consistent; this is a subtle but load-bearing correctness detail discussed in <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>.</p>
+<h2 id="a-worked-example-writing-a-custom-reward-and-advantage-in-verl">A worked example: writing a custom reward and advantage in veRL<a class="headerlink" href="#a-worked-example-writing-a-custom-reward-and-advantage-in-verl" title="Permanent link">¶</a></h2>
+<p>The single-controller design&rsquo;s biggest practical payoff is that the parts you want to customize — the <strong>reward</strong> and the <strong>advantage</strong> — are plain Python on small tensors, requiring zero distributed code. Here is a realistic sketch of plugging a verifiable math reward and a custom advantage into veRL&rsquo;s driver-side hooks. This is the shape of an actual veRL extension.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1) A custom reward function. veRL calls this on the DRIVER with a DataProto of</span>
+<span class="c1">#    decoded responses. No GPUs, no collectives — just scoring strings. In a real</span>
+<span class="c1">#    run the verifier might call a sandboxed code runner (see chapter 6.8).</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">math_verifiable_reward</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a per-sample scalar reward tensor for a DataProto batch.&quot;&quot;&quot;</span>
+    <span class="n">rewards</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">responses</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">batch_decode</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">batch</span><span class="p">[</span><span class="s2">&quot;responses&quot;</span><span class="p">],</span>
+                                       <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">golds</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">non_tensor_batch</span><span class="p">[</span><span class="s2">&quot;ground_truth&quot;</span><span class="p">]</span>      <span class="c1"># parallel list of answers</span>
+    <span class="k">for</span> <span class="n">resp</span><span class="p">,</span> <span class="n">gold</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">responses</span><span class="p">,</span> <span class="n">golds</span><span class="p">):</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">boxed\{([^}]*)\}&quot;</span><span class="p">,</span> <span class="n">resp</span><span class="p">)</span>     <span class="c1"># parse the boxed answer</span>
+        <span class="n">pred</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">m</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="n">correct</span> <span class="o">=</span> <span class="p">(</span><span class="n">pred</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">and</span> <span class="n">is_math_equiv</span><span class="p">(</span><span class="n">pred</span><span class="p">,</span> <span class="n">gold</span><span class="p">)</span>  <span class="c1"># symbolic check</span>
+        <span class="n">fmt</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="p">(</span><span class="s2">&quot;&lt;think&gt;&quot;</span> <span class="ow">in</span> <span class="n">resp</span> <span class="ow">and</span> <span class="s2">&quot;&lt;/think&gt;&quot;</span> <span class="ow">in</span> <span class="n">resp</span><span class="p">)</span> <span class="k">else</span> <span class="mf">0.0</span>
+        <span class="n">rewards</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">*</span> <span class="n">correct</span> <span class="o">+</span> <span class="mf">0.1</span> <span class="o">*</span> <span class="n">fmt</span><span class="p">)</span>      <span class="c1"># correctness dominates</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">rewards</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+<span class="c1"># 2) A custom advantage estimator, registered with veRL&#39;s advantage dispatcher.</span>
+<span class="c1">#    This is the GRPO group-baseline, written as ordinary local Python. Because it</span>
+<span class="c1">#    runs on the DRIVER over tiny per-sample reward tensors, there is NOTHING</span>
+<span class="c1">#    distributed here — contrast with a multi-controller system where this same</span>
+<span class="c1">#    computation would require explicit all-gathers across ranks.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">grpo_group_advantage</span><span class="p">(</span><span class="n">rewards</span><span class="p">,</span> <span class="n">group_size</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span> <span class="n">normalize_std</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;rewards: (B,) with B = n_prompts * group_size, grouped contiguously.&quot;&quot;&quot;</span>
+    <span class="n">g</span> <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">group_size</span><span class="p">)</span>                   <span class="c1"># (n_prompts, G)</span>
+    <span class="n">adv</span> <span class="o">=</span> <span class="n">g</span> <span class="o">-</span> <span class="n">g</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>              <span class="c1"># group-mean baseline</span>
+    <span class="k">if</span> <span class="n">normalize_std</span><span class="p">:</span>                                  <span class="c1"># Dr.GRPO recommends FALSE</span>
+        <span class="n">adv</span> <span class="o">=</span> <span class="n">adv</span> <span class="o">/</span> <span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">+</span> <span class="n">eps</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">adv</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>                             <span class="c1"># one scalar advantage / sample</span>
+<span class="c1"># (See chapter 5.8 for the full GRPO/RLOO/Dr.GRPO derivations and trade-offs.)</span>
+
+<span class="c1"># 3) Wiring: in the YAML config you point veRL at these. The driver loop&#39;s</span>
+<span class="c1">#    step 4 (reward) and step 6 (advantage) call them; steps 1/2/5/7 (the heavy</span>
+<span class="c1">#    SPMD stages) are untouched. You changed the algorithm without writing a single</span>
+<span class="c1">#    line of torch.distributed code. THAT is the HybridFlow productivity win.</span>
+</code></pre></div>
+<p>Compare the effort: in a pure multi-controller system, changing the advantage estimator means editing SPMD code, getting the group reductions right with collectives, and worrying about which rank holds which sample. In veRL, it is the function above, run once on the driver over a <code>(B,)</code> tensor. The heavy lifting (generation across 8 GPUs, FSDP backward across 8 GPUs) is unchanged and invisible to you.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: match the rollout TP degree to your decode shape, not your train shape</p>
+<p>A common veRL misconfiguration is setting the rollout <code>tensor_model_parallel_size</code> equal to whatever the trainer uses. They are independent knobs. The rollout TP degree should be chosen for <em>decode efficiency and KV-cache headroom</em>: too high and you pay all-reduce latency on every decode step for a model that already fits; too low and the KV cache can&rsquo;t hold your group-of-<span class="arithmatex">\(G\)</span> long generations. Start with the smallest TP that fits the model plus a generous KV budget, and let the 3D-HybridEngine handle the train→rollout regroup. Watching the vLLM &ldquo;KV cache usage&rdquo; and &ldquo;preemption&rdquo; metrics tells you immediately if TP is too small.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: gpu_memory_utilization starves the trainer</p>
+<p><code>rollout.gpu_memory_utilization</code> tells vLLM how much VRAM to <em>claim and hold</em>. Set it too high (say 0.9) and vLLM&rsquo;s KV cache pool eats memory that the trainer needs for activations and optimizer state when the step switches to the update stage — you get an OOM <em>after</em> a successful rollout, which is confusing because generation worked. In colocated runs, leave clear headroom (often 0.4–0.6) so the trainer&rsquo;s peak fits alongside vLLM&rsquo;s reserved pool, or enable <code>param_offload</code>/<code>optimizer_offload</code> to spill training state to CPU during rollout. The two stages share one GPU; budget for the <em>max</em> of their peaks at every switch point, not the sum, but only if you actually free each stage&rsquo;s memory at the boundary.</p>
+</div>
+<h2 id="how-verl-relates-to-the-rest-of-the-ecosystem">How veRL relates to the rest of the ecosystem<a class="headerlink" href="#how-verl-relates-to-the-rest-of-the-ecosystem" title="Permanent link">¶</a></h2>
+<p>It helps to place veRL on the same map as the other frameworks in this Part.</p>
+<table>
+<thead>
+<tr>
+<th>Framework</th>
+<th>Controller model</th>
+<th>Train engine</th>
+<th>Rollout engine</th>
+<th>Resharding</th>
+<th>Best at</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>TRL</strong> (ch. 6.3)</td>
+<td>single process per GPU (monolith)</td>
+<td>Accelerate/FSDP, DeepSpeed</td>
+<td>vLLM (colocated or server)</td>
+<td>simple weight load</td>
+<td>hackability, small/medium scale, research velocity</td>
+</tr>
+<tr>
+<td><strong>veRL</strong> (this ch.)</td>
+<td><strong>single-controller + multi-controller (HybridFlow)</strong></td>
+<td>FSDP <strong>or</strong> Megatron</td>
+<td>vLLM <strong>or</strong> SGLang</td>
+<td><strong>3D-HybridEngine, in-memory</strong></td>
+<td>scaling, composable parallelism, large policies</td>
+</tr>
+<tr>
+<td><strong>OpenRLHF</strong> (ch. 6.5)</td>
+<td>Ray multi-controller, disaggregated</td>
+<td>DeepSpeed ZeRO</td>
+<td>vLLM</td>
+<td>weight broadcast over Ray/NCCL</td>
+<td>Ray-native disaggregated PPO</td>
+</tr>
+<tr>
+<td><strong>NeMo-Aligner</strong> (ch. 6.5)</td>
+<td>Megatron-centric</td>
+<td>Megatron-Core</td>
+<td>TRT-LLM / in-framework</td>
+<td>Megatron-aware</td>
+<td>NVIDIA stack, max Megatron scale</td>
+</tr>
+<tr>
+<td><strong>Prime-RL</strong> (ch. 6.6)</td>
+<td>async, decentralized</td>
+<td>FSDP</td>
+<td>vLLM</td>
+<td>async weight sync</td>
+<td>async / cross-datacenter RL</td>
+</tr>
+</tbody>
+</table>
+<p>The throughline: TRL optimizes for <em>velocity at modest scale</em> by keeping everything in one process; veRL optimizes for <em>scale with flexibility</em> by separating the single-controller dataflow from multi-controller SPMD computation and bridging layouts with the 3D-HybridEngine. If you outgrow TRL because you need Megatron-scale training <em>and</em> a different vLLM rollout layout <em>and</em> 70B policies, veRL is where you go. If you need fully asynchronous or geographically distributed training, you reach further to the systems in <a href="../06-rl-infra/06-prime-rl-async.html">Prime-RL, Async RL &amp; Decentralized Training</a>.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Explain HybridFlow&rsquo;s &ldquo;single-controller + multi-controller&rdquo; hybrid. Why is <em>neither</em> extreme good enough on its own, and give one concrete operation that lives on each side of the boundary.</p>
+<p><strong>A:</strong> The two design extremes each fail in a complementary way. A pure <strong>single-controller</strong> system (one driver issues every op as a remote call) makes the RL algorithm trivially readable and editable, but it funnels all the batch data — log-probs, masks, response ids — through the driver, which becomes a serialization and network bottleneck, and it cannot express the <em>intra-stage</em> collectives (the all-reduces inside the actor&rsquo;s backward), so it can&rsquo;t compose parallelism. A pure <strong>multi-controller</strong> SPMD system (every GPU runs the same program, like Megatron) is maximally efficient and composes tensor/pipeline/data parallelism natively, but it buries the RL control flow inside replicated SPMD code, so changing the advantage estimator means editing distributed code full of explicit collectives and rank arithmetic. HybridFlow uses <strong>single-controller between stages</strong> (one driver runs the readable <code>generate → score → advantage → update</code> loop; only the small logical batch crosses this boundary) and <strong>multi-controller within each stage</strong> (each stage is a <code>WorkerGroup</code> of SPMD ranks; the heavy collectives stay inside). A <code>@register(dispatch=DP_COMPUTE_PROTO)</code> decorator fans one driver call out to all ranks (splitting the batch across data-parallel ranks, replicating within tensor-parallel ranks) and gathers results back. Concrete examples: <strong>on the single-controller side</strong>, <code>advantages = compute_advantage(rewards, values)</code> — tiny tensors, local Python, no collectives. <strong>On the multi-controller side</strong>, <code>actor.update_actor(batch)</code> — a sharded FSDP/Megatron forward-backward whose all-reduces never touch the driver. The 3D-HybridEngine additionally reshards the actor between the trainer&rsquo;s FSDP/Megatron layout and vLLM&rsquo;s tensor-parallel rollout layout <em>in GPU memory</em>, so the same weights serve both stages without a disk round-trip.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> In a colocated veRL run, the actor trains with FSDP and generates with vLLM at TP=2. Walk through what physically happens to the weights and optimizer state in one RL step, and where the memory peaks are.</p>
+<p><strong>A:</strong> The optimizer state (fp32 master weights + Adam moments) and gradients live the <em>entire</em> step in the <strong>FSDP training layout</strong>, sharded across all data-parallel ranks, and are <em>never moved</em> — only the bf16 parameters are copied for rollout. At the start of the step, the <strong>3D-HybridEngine</strong> reshards those bf16 params from the FSDP/training partition into vLLM&rsquo;s TP=2 rollout partition: it gathers each layer&rsquo;s shards <em>within a small TP group</em> (intra-node, bounded by one TP group&rsquo;s weights, not the whole model) and re-splits them into the TP=2 layout, then injects them into vLLM&rsquo;s parameter buffers in place via <code>update_weights</code> — no disk. vLLM then generates <span class="arithmatex">\(G\)</span> samples per prompt; here the memory peak is the <strong>PagedAttention KV cache</strong>, which can be tens of GB. After generation, the KV cache is released; the driver computes rewards and advantages locally; then <code>update_actor</code> runs the FSDP forward/backward, whose memory peak is <strong>training activations</strong>. The key is that the rollout peak (KV cache) and the training peak (activations) occur at <em>different times</em>, so colocation fits as long as you don&rsquo;t hold both — which is why <code>gpu_memory_utilization</code> must leave headroom and why you may offload optimizer state to CPU during rollout. With GRPO there is no critic, so you avoid a second full set of training state; that is part of why critic-free methods scale better in colocated setups.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>HybridFlow = single-controller <em>between</em> stages + multi-controller <em>within</em> stages.</strong> The driver runs the readable <code>generate → score → advantage → update</code> loop on small logical batches; each heavy stage runs as an SPMD <code>WorkerGroup</code>. This beats both pure single-controller (driver bottleneck, can&rsquo;t compose parallelism) and pure multi-controller (RL logic buried in distributed code).</li>
+<li><strong>The <code>@register(dispatch=...)</code> decorator</strong> turns one driver method call into a fan-out across all ranks of a worker group and a fan-in of the results. <code>DP_COMPUTE_PROTO</code> shards the batch across data-parallel ranks and replicates within tensor-parallel ranks — the driver never sees the intra-stage collectives.</li>
+<li><strong>The 3D-HybridEngine reshards the actor in GPU memory</strong> between the trainer&rsquo;s FSDP/Megatron layout and the rollout engine&rsquo;s vLLM/SGLang tensor-parallel layout. It gathers-within-a-TP-group then re-splits, bounding the transient memory to one TP group&rsquo;s weights and avoiding any disk checkpoint round-trip per step.</li>
+<li><strong>Optimizer state never moves.</strong> Only bf16 parameters are copied for rollout; gradients and Adam state stay in the training layout. The train peak (activations) and rollout peak (KV cache) happen at different times, which is what makes colocation fit.</li>
+<li><strong>Ray provides placement groups and addressable workers</strong>, enabling colocation of the actor, critic, reference, and rollout engine on the <em>same</em> GPUs (time-sliced). This maximizes GPU utilization. NCCL still does the fast collectives inside each worker group.</li>
+<li><strong>veRL scales because</strong> no large data crosses the driver, parallelisms compose freely across stages, colocation eliminates idle GPUs, resharding is in-memory, and best-of-breed engines (vLLM, FSDP, Megatron) are orchestrated unmodified.</li>
+<li><strong>Customizing reward and advantage is plain local Python on tiny tensors</strong> — the single-controller payoff. Changing the algorithm requires zero <code>torch.distributed</code> code, unlike a multi-controller system.</li>
+<li><strong>Known bottlenecks:</strong> synchronous rollout tail-latency (stragglers) and the train/inference log-prob mismatch (mitigated by recomputing <code>old_log_prob</code> under the training engine). Async and disaggregated designs address the former.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>veRL / HybridFlow has become the dominant open-source substrate for serious RL-for-LLM work; its single-controller + multi-controller hybrid and 3D-HybridEngine are now the reference architecture, with the framework scaling past 671B models and hundreds of GPUs as of 2026.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2409.19256">Sheng et al., <em>HybridFlow: A Flexible and Efficient RLHF Framework</em> (2024)</a> — the EuroSys 2025 paper introducing the single/multi-controller hybrid and 3D-HybridEngine; the direct foundation of veRL.</li>
+<li><a href="https://arxiv.org/abs/1712.05889">Moritz et al., <em>Ray: A Distributed Framework for Emerging AI Applications</em> (2018)</a> — the actor-model and placement-group substrate that makes veRL&rsquo;s single controller possible; still the canonical Ray reference.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI, <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em> (2025)</a> — the high-profile GRPO run that popularized veRL-scale critic-free RL for reasoning; demonstrated pure-RL emergent self-reflection.</li>
+<li><a href="https://arxiv.org/abs/2503.14476">Yu et al., <em>DAPO: An Open-Source LLM Reinforcement Learning System at Scale</em> (2025)</a> — fully open-source GRPO variant (Decoupled Clip + Dynamic Sampling) built on veRL; achieves 50 pts on AIME 2024 with Qwen2.5-32B.</li>
+<li><a href="https://arxiv.org/abs/2502.01456">Cui et al., <em>Process Reinforcement through Implicit Rewards</em> (2025)</a> — PRIME: dense process rewards from policy rollouts alone, implemented as a veRL extension; shows +15% reasoning improvement from a 7B base.</li>
+<li><a href="https://arxiv.org/abs/2405.11143">Hu et al., <em>OpenRLHF: An Easy-to-use, Scalable and High-performance RLHF Framework</em> (2024)</a> — the main Ray-based disaggregated alternative to veRL; useful for comparing colocated vs. disaggregated design choices.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/volcengine/verl">volcengine/verl</a> — the production veRL library: WorkerGroup, ResourcePool, DataProto, FSDP/Megatron actor backends, vLLM/SGLang rollout backends, and all supported algorithms (PPO, GRPO, DAPO, PRIME, RLOO, …).</li>
+<li><a href="https://github.com/PRIME-RL/PRIME">PRIME-RL/PRIME</a> — open-source online RL with implicit process rewards; built on veRL and scales to multi-node clusters.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://verl.readthedocs.io/en/latest/hybrid_flow.html">veRL HybridFlow Programming Guide</a> — official docs walking through ResourcePool, WorkerGroup, and the dispatch decorator with code examples.</li>
+<li><a href="https://verl.readthedocs.io/en/latest/blog/v0.7.html">veRL v0.7 Release Blog</a> — covers the Hybrid-Controller architecture evolution, rollout-server mode, TransferQueue, and async pipeline support added in 2026.</li>
+<li><a href="https://blog.skypilot.co/verl-rl-training/">SkyPilot Blog: <em>How to train and scale AI math/coding agents using VeRL</em> (2025)</a> — practical end-to-end tutorial for launching veRL RL training on any cloud or Kubernetes cluster.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Sheng, Zhang, Ye, et al., <strong>HybridFlow: A Flexible and Efficient RLHF Framework</strong> (2024) — the paper that introduces the single-controller/multi-controller hybrid and the 3D-HybridEngine; the foundation of veRL.</li>
+<li>The <strong><code>volcengine/verl</code></strong> repository — the production implementation: <code>WorkerGroup</code>, <code>ResourcePool</code>, <code>DataProto</code>, the <code>@register</code> dispatch layer, FSDP/Megatron actor backends, and vLLM/SGLang rollout backends.</li>
+<li>Rajbhandari, Rasley, Ruwase, He, <strong>ZeRO: Memory Optimizations Toward Training Trillion Parameter Models</strong> (2020) — the sharding ideas behind FSDP that veRL&rsquo;s training engine uses; see <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a>.</li>
+<li>Shoeybi, Patwary, Puri, et al., <strong>Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism</strong> (2019) — the tensor/pipeline parallelism that the Megatron actor backend and the resharding logic build on.</li>
+<li>Kwon, Li, Zhuang, et al., <strong>Efficient Memory Management for Large Language Model Serving with PagedAttention</strong> (vLLM, 2023) — the rollout engine veRL drives; see <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a>.</li>
+<li>Moritz, Nishihara, Wang, et al., <strong>Ray: A Distributed Framework for Emerging AI Applications</strong> (2018) — the actor and placement-group substrate underneath veRL&rsquo;s single controller.</li>
+<li>Shao, Wang, Zhu, et al., <strong>DeepSeekMath</strong> (2024) and DeepSeek-AI, <strong>DeepSeek-R1</strong> (2025) — the GRPO algorithm most veRL runs implement; see <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="03-trl.html"><span class="pn-label">← Previous</span><span class="pn-title">TRL: HuggingFace&#x27;s RL Library</span></a>
+<a class="next" href="05-openrlhf-nemo-ray.html"><span class="pn-label">Next →</span><span class="pn-title">OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#two-architectures-two-failure-modes">Two architectures, two failure modes</a></li>
+<li class="toc-l3"><a href="#the-single-controller-extreme">The single-controller extreme</a></li>
+<li class="toc-l3"><a href="#the-multi-controller-extreme">The multi-controller extreme</a></li>
+<li class="toc-l3"><a href="#hybridflows-resolution-single-controller-between-stages-multi-controller-within">HybridFlow&amp;rsquo;s resolution: single-controller between stages, multi-controller within</a></li>
+<li class="toc-l2"><a href="#the-hybridflow-programming-model">The HybridFlow programming model</a></li>
+<li class="toc-l3"><a href="#resource-pools-and-worker-groups">Resource pools and worker groups</a></li>
+<li class="toc-l3"><a href="#the-dispatch-decorator-how-one-call-becomes-n">The dispatch decorator: how one call becomes N</a></li>
+<li class="toc-l3"><a href="#dataproto-the-typed-batch-that-flows-between-stages">DataProto: the typed batch that flows between stages</a></li>
+<li class="toc-l2"><a href="#the-3d-hybridengine-resharding-between-train-and-rollout">The 3D-HybridEngine: resharding between train and rollout</a></li>
+<li class="toc-l3"><a href="#why-resharding-is-non-trivial-a-tp-degree-mismatch">Why resharding is non-trivial: a TP-degree mismatch</a></li>
+<li class="toc-l3"><a href="#a-from-scratch-resharding-routine">A from-scratch resharding routine</a></li>
+<li class="toc-l3"><a href="#weight-synchronization-in-place">Weight synchronization, in place</a></li>
+<li class="toc-l2"><a href="#placement-colocation-and-ray-mechanics">Placement, colocation, and Ray mechanics</a></li>
+<li class="toc-l3"><a href="#placement-groups-pinning-ranks-to-gpus">Placement groups: pinning ranks to GPUs</a></li>
+<li class="toc-l3"><a href="#the-memory-budget-of-colocation">The memory budget of colocation</a></li>
+<li class="toc-l3"><a href="#hybrid-sharding-for-very-large-models">Hybrid sharding for very large models</a></li>
+<li class="toc-l2"><a href="#why-verl-scales-the-throughput-argument">Why veRL scales: the throughput argument</a></li>
+<li class="toc-l3"><a href="#what-still-bottlenecks-verl">What still bottlenecks veRL</a></li>
+<li class="toc-l2"><a href="#a-worked-example-writing-a-custom-reward-and-advantage-in-verl">A worked example: writing a custom reward and advantage in veRL</a></li>
+<li class="toc-l2"><a href="#how-verl-relates-to-the-rest-of-the-ecosystem">How veRL relates to the rest of the ecosystem</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

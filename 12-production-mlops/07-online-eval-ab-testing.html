@@ -1,0 +1,1430 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics — The LLM Stack</title>
+<meta name="description" content="Connecting offline benchmarks to live signal: designing A/B and interleaving experiments for LLM features, proxy/guardrail metrics (resolution rate, deflection,">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="active" href="07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XII — Production, Systems &amp; MLOps</div>
+<h1 id="127-online-evaluation-ab-testing-canaries-guardrail-metrics">12.7 Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics<a class="headerlink" href="#127-online-evaluation-ab-testing-canaries-guardrail-metrics" title="Permanent link">¶</a></h1>
+<p>Offline benchmarks are necessary but not sufficient. A model that tops your held-out evaluation set may still lose you users, inflate costs, or silently regress on edge cases that only emerge at production scale. The gap between an offline MMLU score and real user satisfaction is not a failure of offline evaluation — it is a structural property: users are not IID draws from a benchmark corpus, and the distribution of inputs, intents, and behaviors that matter commercially is only observable in production.</p>
+<p>This chapter closes the loop. We cover how to design statistically sound A/B and interleaving experiments for LLM features, which guardrail metrics to instrument and how to prevent them from being gamed, how to make decisions faster with CUPED variance reduction and sequential testing, how to roll out safely via shadow deployments and canaries, and how to keep live judges scoring sampled traffic so you stay honest about quality even after launch. We also examine the systematic biases — novelty effects, feedback loops, position bias — that corrupt online signals if left unaddressed.</p>
+<p>Related chapters that provide useful context: <a href="../11-evaluation/01-eval-landscape.html">The Evaluation Problem &amp; Benchmark Landscape</a>, <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a>, <a href="../11-evaluation/06-statistical-rigor-eval.html">Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a>, <a href="../12-production-mlops/05-data-flywheel.html">Data Flywheels &amp; Continuous Improvement</a>, and <a href="../12-production-mlops/02-observability-llmops.html">Observability, Logging &amp; LLMOps</a>.</p>
+<hr />
+<h2 id="the-offlineonline-gap-and-why-it-exists">The Offline–Online Gap and Why It Exists<a class="headerlink" href="#the-offlineonline-gap-and-why-it-exists" title="Permanent link">¶</a></h2>
+<p>Before designing experiments, we need to understand why offline metrics so often disagree with online outcomes.</p>
+<p><strong>Distribution shift.</strong> A benchmark is a frozen snapshot. Real users evolve: they learn to phrase queries that exploit a new model&rsquo;s strengths, or they hit topics that weren&rsquo;t in your eval set. A model fine-tuned on last quarter&rsquo;s support tickets may degrade subtly on the new product surface launched this quarter.</p>
+<p><strong>Task proxies are imperfect.</strong> ROUGE-L measures n-gram overlap; users care about whether the answer resolved their problem. Perplexity on a held-out set predicts coherence but not helpfulness. Even carefully designed human evals may not reflect actual user intent distributions.</p>
+<p><strong>Unobservable label noise.</strong> Offline evals often rely on human annotations, which have inter-annotator disagreement, recency bias, and annotator fatigue. The &ldquo;ground truth&rdquo; is fuzzier than it appears.</p>
+<p><strong>Survivor bias in retrieval.</strong> In RAG systems, offline retrieval evals are run on queries that have known relevant documents. Live traffic contains queries for which no document exists — a silent failure mode invisible in offline settings.</p>
+<p>The practical implication: offline improvements should be treated as <em>evidence</em> for online experiments, not as proof. The question is never &ldquo;did our offline eval improve?&rdquo; but &ldquo;does our offline eval predict online outcomes?&rdquo;</p>
+<p>A useful diagnostic is the <strong>offline–online correlation coefficient</strong>: track, across many launches, whether a 1% offline improvement predicts a positive online signal. If this correlation is weak (below ~0.5), your offline eval is not a reliable proxy and you are flying blind between offline and live.</p>
+<hr />
+<h2 id="guardrail-metrics-what-to-measure-and-why">Guardrail Metrics: What to Measure and Why<a class="headerlink" href="#guardrail-metrics-what-to-measure-and-why" title="Permanent link">¶</a></h2>
+<p>Before running experiments, you must decide what you are measuring. For LLM products, metrics fall into three tiers.</p>
+<h3 id="primary-metrics-goal-metrics">Primary metrics (goal metrics)<a class="headerlink" href="#primary-metrics-goal-metrics" title="Permanent link">¶</a></h3>
+<p>These are the business outcomes you ultimately care about:</p>
+<ul>
+<li><strong>Resolution rate</strong>: the fraction of user sessions in which the user&rsquo;s problem was solved without escalation, re-query, or abandonment. For a customer support bot, this is the north star.</li>
+<li><strong>Task success rate</strong>: for agent or coding assistant products, automated verification that the task was completed (tests pass, form submitted, booking confirmed).</li>
+<li><strong>Session engagement</strong>: downstream engagement signals (clicks, purchases, return visits) in contexts where helpfulness precedes a downstream action.</li>
+</ul>
+<h3 id="guardrail-metrics-do-no-harm-metrics">Guardrail metrics (do-no-harm metrics)<a class="headerlink" href="#guardrail-metrics-do-no-harm-metrics" title="Permanent link">¶</a></h3>
+<p>These must not regress below a defined threshold, even if the primary metric improves. Violating a guardrail halts a rollout regardless of primary metric performance.</p>
+<table>
+<thead>
+<tr>
+<th>Guardrail metric</th>
+<th>What it catches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Deflection rate (support context)</td>
+<td>Model is telling users to &ldquo;contact a human&rdquo; too aggressively</td>
+</tr>
+<tr>
+<td>Hallucination rate (sampled + judged)</td>
+<td>Model generating factually incorrect content at elevated rate</td>
+</tr>
+<tr>
+<td>Toxicity / safety policy violations</td>
+<td>Guardrail model flags on sampled responses</td>
+</tr>
+<tr>
+<td>Latency P99 (time-to-first-token)</td>
+<td>Slower model degrading user experience</td>
+</tr>
+<tr>
+<td>Cost per session</td>
+<td>More expensive model offsetting quality gains</td>
+</tr>
+<tr>
+<td>Regeneration rate</td>
+<td>Users clicking &ldquo;regenerate&rdquo; — a soft dislike signal</td>
+</tr>
+<tr>
+<td>Thumb-down rate</td>
+<td>Explicit negative user feedback</td>
+</tr>
+</tbody>
+</table>
+<p>The regeneration rate deserves special attention: it is a behavioral signal that does not require users to explicitly rate anything, making it much higher-coverage than explicit thumbs-up/down while still directionally reliable.</p>
+<h3 id="sensitivity-metrics-canary-signals">Sensitivity metrics (canary signals)<a class="headerlink" href="#sensitivity-metrics-canary-signals" title="Permanent link">¶</a></h3>
+<p>These are leading indicators with lower latency than the primary metric. Because resolution rate may take days or weeks of data to reach significance (a user may not return to signal resolution), you need sensitive proxies that respond within hours:</p>
+<ul>
+<li><strong>Thumbs-up/thumbs-down ratio</strong>: available immediately after each session.</li>
+<li><strong>Session depth</strong>: number of follow-up turns (more turns often indicates confusion or failure).</li>
+<li><strong>Copy rate</strong>: users copying model output — a strong positive behavioral signal.</li>
+<li><strong>Share rate</strong> (where applicable): users sharing the response externally.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: metric gaming</p>
+<p>Once an engineer knows a metric is being measured, the system — and the feature — may be inadvertently optimized against it. A model trained to maximize thumbs-up rate may learn to be sycophantic (tell users what they want to hear) rather than accurate. Regeneration rate can drop if you simply hide the regenerate button. Resolution rate can be gamed by filtering out unresolved sessions from the denominator. The defense: maintain a diverse metric portfolio; if primary and guardrail metrics diverge in unexpected directions, investigate before concluding success.</p>
+</div>
+<hr />
+<h2 id="designing-ab-experiments-for-llm-features">Designing A/B Experiments for LLM Features<a class="headerlink" href="#designing-ab-experiments-for-llm-features" title="Permanent link">¶</a></h2>
+<h3 id="randomization-unit">Randomization unit<a class="headerlink" href="#randomization-unit" title="Permanent link">¶</a></h3>
+<p>For LLM features, randomization is almost always at the <strong>user-session level</strong> (randomly assign each user to a variant, then serve that variant consistently throughout the experiment). Randomizing at the request level within a user session violates the stable unit treatment value assumption (SUTVA): a model swap mid-conversation changes the distribution of subsequent turns, introducing contamination.</p>
+<p>For products without user identity (anonymous API access), randomize on a stable session token or a hashed combination of IP + user agent. The key property is that the same user sees the same variant across multiple requests in a session.</p>
+<h3 id="control-and-treatment-specification">Control and treatment specification<a class="headerlink" href="#control-and-treatment-specification" title="Permanent link">¶</a></h3>
+<p>An A/B experiment compares a <strong>control</strong> (the current production model) against one or more <strong>treatments</strong> (candidate models or features). Common structures:</p>
+<figure class="viz" id="fig-online-eval-ab-traffic-split">
+<svg viewBox="0 0 640 560" role="img" aria-label="A/B experiment traffic split: all live traffic passes through a randomization layer that splits 50/50 into Control (v1) and Treatment (v2) arms, each with a logger, both feeding into a shared metrics pipeline.">
+  <defs>
+    <marker id="ab-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-online-eval-ab-traffic-split text { fill: var(--ink-soft,#334155); font-family: var(--sans,sans-serif); }
+    #fig-online-eval-ab-traffic-split .title { font: 600 13px var(--sans,sans-serif); }
+    #fig-online-eval-ab-traffic-split .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-online-eval-ab-traffic-split .pct { font: 600 11px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+    #fig-online-eval-ab-traffic-split .italic { font: italic 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  </style>
+
+
+  <rect x="160" y="16" width="320" height="46" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="320" y="44" text-anchor="middle" class="title">All live traffic (100%)</text>
+
+
+  <line x1="320" y1="62" x2="320" y2="104" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ab-arrow)"/>
+
+
+  <rect x="190" y="104" width="260" height="52" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="320" y="126" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Randomization layer</text>
+  <text x="320" y="142" text-anchor="middle" class="sub">deterministic user-session hash</text>
+
+
+  <line x1="280" y1="156" x2="220" y2="230" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ab-arrow)"/>
+
+  <line x1="360" y1="156" x2="430" y2="230" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ab-arrow)"/>
+
+
+  <text x="228" y="204" text-anchor="middle" class="pct">50%</text>
+  <text x="408" y="204" text-anchor="middle" class="pct">50%</text>
+
+
+  <rect x="105" y="232" width="170" height="58" rx="8" fill="var(--surface,#f1f5f9)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="190" y="256" text-anchor="middle" class="title">Control (v1)</text>
+  <text x="190" y="272" text-anchor="middle" class="italic">current production model</text>
+
+
+  <rect x="365" y="232" width="170" height="58" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="450" y="256" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Treatment (v2)</text>
+  <text x="450" y="272" text-anchor="middle" class="italic">candidate model / feature</text>
+
+
+  <line x1="190" y1="290" x2="190" y2="334" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ab-arrow)"/>
+
+  <line x1="450" y1="290" x2="450" y2="334" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ab-arrow)"/>
+
+
+  <rect x="130" y="336" width="120" height="40" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="190" y="361" text-anchor="middle" class="title">Logger</text>
+
+
+  <rect x="390" y="336" width="120" height="40" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="450" y="361" text-anchor="middle" class="title">Logger</text>
+
+
+  <line x1="190" y1="376" x2="288" y2="454" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ab-arrow)"/>
+  <line x1="450" y1="376" x2="352" y2="454" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ab-arrow)"/>
+
+
+  <rect x="160" y="456" width="320" height="70" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="320" y="482" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Metrics pipeline</text>
+  <text x="320" y="498" text-anchor="middle" class="sub">primary · guardrail · sensitivity signals</text>
+</svg>
+<figcaption><b>A/B experiment traffic split and shared metrics pipeline.</b> All live traffic enters a deterministic hash-based randomization layer that assigns each user session to either the control (current production model) or treatment (candidate) arm at a 50/50 split. Both arms log independently, and their outputs are merged into a shared metrics pipeline that computes primary, guardrail, and sensitivity signals.</figcaption>
+</figure>
+
+<p>For a new product with no established baseline, use an <strong>A/A test</strong> first: split traffic into two identical control arms and verify that your metrics show no significant difference. An A/A test failing is a red flag for systematic logging errors, selection bias, or a broken randomization layer.</p>
+<h3 id="sample-size-and-statistical-power">Sample size and statistical power<a class="headerlink" href="#sample-size-and-statistical-power" title="Permanent link">¶</a></h3>
+<p>For a two-sided test at significance level <span class="arithmatex">\(\alpha\)</span> and power <span class="arithmatex">\(1 - \beta\)</span>, the required number of users per arm is:</p>
+<div class="arithmatex">\[
+n = \frac{(z_{\alpha/2} + z_\beta)^2 \cdot 2\sigma^2}{\delta^2}
+\]</div>
+<p>where <span class="arithmatex">\(\delta\)</span> is the minimum detectable effect (MDE) you care about, <span class="arithmatex">\(\sigma^2\)</span> is the within-arm variance of the metric, and <span class="arithmatex">\(z_{\alpha/2}\)</span>, <span class="arithmatex">\(z_\beta\)</span> are the corresponding normal quantiles (<span class="arithmatex">\(z_{0.025} \approx 1.96\)</span>, <span class="arithmatex">\(z_{0.2} \approx 0.84\)</span> for 80% power).</p>
+<div class="admonition example">
+<p class="admonition-title">Sample size worked example</p>
+<p>Suppose your thumbs-up rate is currently 0.40 with standard deviation 0.49 (Bernoulli), and you want to detect a 2-percentage-point improvement (MDE = 0.02) with 80% power at <span class="arithmatex">\(\alpha = 0.05\)</span>.</p>
+<div class="arithmatex">\[
+n = \frac{(1.96 + 0.84)^2 \cdot 2 \times 0.49^2}{0.02^2}
+= \frac{7.84 \times 0.4802}{0.0004}
+= \frac{3.765}{0.0004} \approx 9{,}413 \text{ users per arm}
+\]</div>
+<p>At 100,000 active daily users split 50/50, you reach this in under 4 hours. At 1,000 active daily users, it takes roughly 19 days. This illustrates why low-traffic products need either a higher MDE (coarser test) or variance reduction techniques (see CUPED below).</p>
+</div>
+<h3 id="running-the-test">Running the test<a class="headerlink" href="#running-the-test" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+
+<span class="c1"># -------------------------------------------------------------------------</span>
+<span class="c1"># Deterministic user assignment: same user → same variant every call.</span>
+<span class="c1"># We use a SHA-256 hash of (experiment_id + user_id) for uniform assignment.</span>
+<span class="c1"># -------------------------------------------------------------------------</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Experiment</span><span class="p">:</span>
+    <span class="n">experiment_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">traffic_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>   <span class="c1"># fraction of total traffic to enroll</span>
+    <span class="n">treatment_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span>  <span class="c1"># of enrolled users, fraction to treatment</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">assign_variant</span><span class="p">(</span>
+    <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">experiment</span><span class="p">:</span> <span class="n">Experiment</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;control&quot;</span><span class="p">,</span> <span class="s2">&quot;treatment&quot;</span><span class="p">,</span> <span class="s2">&quot;holdout&quot;</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns the arm assignment for a given user in a given experiment.</span>
+<span class="sd">    &#39;holdout&#39; means the user is not enrolled (outside traffic_fraction).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Hash to [0, 1) using experiment_id as salt so different experiments</span>
+    <span class="c1"># produce independent assignments for the same user.</span>
+    <span class="n">digest</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">experiment</span><span class="o">.</span><span class="n">experiment_id</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">user_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+    <span class="n">bucket</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">digest</span><span class="p">[:</span><span class="mi">8</span><span class="p">],</span> <span class="mi">16</span><span class="p">)</span> <span class="o">/</span> <span class="mh">0xFFFFFFFF</span>  <span class="c1"># uniform [0, 1)</span>
+
+    <span class="k">if</span> <span class="n">bucket</span> <span class="o">&gt;=</span> <span class="n">experiment</span><span class="o">.</span><span class="n">traffic_fraction</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;holdout&quot;</span>
+
+    <span class="c1"># Re-hash to assign within enrolled users (avoids correlation between</span>
+    <span class="c1"># enrollment and treatment assignment).</span>
+    <span class="n">digest2</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">experiment</span><span class="o">.</span><span class="n">experiment_id</span><span class="si">}</span><span class="s2">:assign:</span><span class="si">{</span><span class="n">user_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+    <span class="n">bucket2</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">digest2</span><span class="p">[:</span><span class="mi">8</span><span class="p">],</span> <span class="mi">16</span><span class="p">)</span> <span class="o">/</span> <span class="mh">0xFFFFFFFF</span>
+
+    <span class="k">return</span> <span class="s2">&quot;treatment&quot;</span> <span class="k">if</span> <span class="n">bucket2</span> <span class="o">&lt;</span> <span class="n">experiment</span><span class="o">.</span><span class="n">treatment_fraction</span> <span class="k">else</span> <span class="s2">&quot;control&quot;</span>
+
+
+<span class="c1"># -------------------------------------------------------------------------</span>
+<span class="c1"># Simple two-proportion z-test for a Bernoulli metric (e.g. thumbs-up rate).</span>
+<span class="c1"># -------------------------------------------------------------------------</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy</span><span class="w"> </span><span class="kn">import</span> <span class="n">stats</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">two_proportion_z_test</span><span class="p">(</span>
+    <span class="n">n_control</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">k_control</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>   <span class="c1"># successes in control</span>
+    <span class="n">n_treatment</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">k_treatment</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns p-value, confidence interval, and relative lift.</span>
+<span class="sd">    Uses the pooled proportion for the null hypothesis.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">p_c</span> <span class="o">=</span> <span class="n">k_control</span> <span class="o">/</span> <span class="n">n_control</span>
+    <span class="n">p_t</span> <span class="o">=</span> <span class="n">k_treatment</span> <span class="o">/</span> <span class="n">n_treatment</span>
+    <span class="n">p_pool</span> <span class="o">=</span> <span class="p">(</span><span class="n">k_control</span> <span class="o">+</span> <span class="n">k_treatment</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">n_control</span> <span class="o">+</span> <span class="n">n_treatment</span><span class="p">)</span>
+
+    <span class="n">se</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">p_pool</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p_pool</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span><span class="o">/</span><span class="n">n_control</span> <span class="o">+</span> <span class="mi">1</span><span class="o">/</span><span class="n">n_treatment</span><span class="p">))</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="p">(</span><span class="n">p_t</span> <span class="o">-</span> <span class="n">p_c</span><span class="p">)</span> <span class="o">/</span> <span class="n">se</span> <span class="k">if</span> <span class="n">se</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+    <span class="n">p_value</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">stats</span><span class="o">.</span><span class="n">norm</span><span class="o">.</span><span class="n">cdf</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">z</span><span class="p">)))</span>
+
+    <span class="c1"># 95% CI on absolute difference using unpooled SE</span>
+    <span class="n">se_unpooled</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span>
+        <span class="n">p_c</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p_c</span><span class="p">)</span> <span class="o">/</span> <span class="n">n_control</span> <span class="o">+</span> <span class="n">p_t</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p_t</span><span class="p">)</span> <span class="o">/</span> <span class="n">n_treatment</span>
+    <span class="p">)</span>
+    <span class="n">diff</span> <span class="o">=</span> <span class="n">p_t</span> <span class="o">-</span> <span class="n">p_c</span>
+    <span class="n">ci_lo</span> <span class="o">=</span> <span class="n">diff</span> <span class="o">-</span> <span class="mf">1.96</span> <span class="o">*</span> <span class="n">se_unpooled</span>
+    <span class="n">ci_hi</span> <span class="o">=</span> <span class="n">diff</span> <span class="o">+</span> <span class="mf">1.96</span> <span class="o">*</span> <span class="n">se_unpooled</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;p_control&quot;</span><span class="p">:</span> <span class="n">p_c</span><span class="p">,</span>
+        <span class="s2">&quot;p_treatment&quot;</span><span class="p">:</span> <span class="n">p_t</span><span class="p">,</span>
+        <span class="s2">&quot;absolute_lift&quot;</span><span class="p">:</span> <span class="n">diff</span><span class="p">,</span>
+        <span class="s2">&quot;relative_lift&quot;</span><span class="p">:</span> <span class="n">diff</span> <span class="o">/</span> <span class="n">p_c</span> <span class="k">if</span> <span class="n">p_c</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;nan&quot;</span><span class="p">),</span>
+        <span class="s2">&quot;z_statistic&quot;</span><span class="p">:</span> <span class="n">z</span><span class="p">,</span>
+        <span class="s2">&quot;p_value&quot;</span><span class="p">:</span> <span class="n">p_value</span><span class="p">,</span>
+        <span class="s2">&quot;ci_95&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">ci_lo</span><span class="p">,</span> <span class="n">ci_hi</span><span class="p">),</span>
+        <span class="s2">&quot;significant&quot;</span><span class="p">:</span> <span class="n">p_value</span> <span class="o">&lt;</span> <span class="mf">0.05</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="c1"># Example usage:</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">two_proportion_z_test</span><span class="p">(</span>
+    <span class="n">n_control</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span> <span class="n">k_control</span><span class="o">=</span><span class="mi">4_000</span><span class="p">,</span>
+    <span class="n">n_treatment</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span> <span class="n">k_treatment</span><span class="o">=</span><span class="mi">4_200</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="c1"># Expected: ~+5% relative lift, p ≈ 0.001 → significant</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="interleaving-a-faster-alternative-to-ab-for-preference-signals">Interleaving: A Faster Alternative to A/B for Preference Signals<a class="headerlink" href="#interleaving-a-faster-alternative-to-ab-for-preference-signals" title="Permanent link">¶</a></h2>
+<p>Traditional A/B tests require large samples to detect small effects because the between-user variance dominates. <strong>Interleaving</strong> (also called interleaved comparison) sidesteps this by showing outputs from both models <em>within the same user session</em>, then measuring which model&rsquo;s outputs users prefer.</p>
+<h3 id="how-interleaving-works-for-llm-outputs">How interleaving works for LLM outputs<a class="headerlink" href="#how-interleaving-works-for-llm-outputs" title="Permanent link">¶</a></h3>
+<p>In search/recommendation, interleaving mixes ranked lists. For LLM chat products, one variant is: present two completions side-by-side (a &ldquo;compare&rdquo; UI) and record which the user acts on. A more subtle variant records which completion a user copies, continues the conversation from, or clicks &ldquo;insert&rdquo; on in a coding assistant.</p>
+<p>For document editing or summarization, you can show two alternative completions and ask the user to select or edit one. The fraction of users who prefer treatment over control — the <strong>win rate</strong> — is the primary signal.</p>
+<p>The statistical efficiency gain is substantial. Because each user sees both models, within-user variance is eliminated. Empirically, interleaving experiments have been reported to require on the order of 100x fewer user-sessions to detect the same effect size as a parallel A/B test for ranking systems (Radlinski &amp; Craswell, &ldquo;Optimized Interleaving for Online Retrieval Evaluation,&rdquo; WSDM 2013). The gain for LLM completions is product-dependent but typically a factor of 10–30x.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">NamedTuple</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">InterleavingSession</span><span class="p">(</span><span class="n">NamedTuple</span><span class="p">):</span>
+    <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">control_response</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">treatment_response</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="c1"># Which response did the user take a positive action on?</span>
+    <span class="c1"># &#39;control&#39;, &#39;treatment&#39;, or &#39;none&#39;</span>
+    <span class="n">preferred</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_interleaving_win_rate</span><span class="p">(</span>
+    <span class="n">sessions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">InterleavingSession</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute treatment win rate and a two-sided binomial test.</span>
+<span class="sd">    Only sessions with a preference (not &#39;none&#39;) are counted.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">decisive</span> <span class="o">=</span> <span class="p">[</span><span class="n">s</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">sessions</span> <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="n">preferred</span> <span class="o">!=</span> <span class="s2">&quot;none&quot;</span><span class="p">]</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">decisive</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">n</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;win_rate&quot;</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;nan&quot;</span><span class="p">),</span> <span class="s2">&quot;n_decisive&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">}</span>
+
+    <span class="n">wins_treatment</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">decisive</span> <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="n">preferred</span> <span class="o">==</span> <span class="s2">&quot;treatment&quot;</span><span class="p">)</span>
+    <span class="n">win_rate</span> <span class="o">=</span> <span class="n">wins_treatment</span> <span class="o">/</span> <span class="n">n</span>
+
+    <span class="c1"># Under H0: win_rate = 0.5; use binomial test</span>
+    <span class="n">p_value</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">binom_test</span><span class="p">(</span><span class="n">wins_treatment</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">p</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">alternative</span><span class="o">=</span><span class="s2">&quot;two-sided&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;win_rate&quot;</span><span class="p">:</span> <span class="n">win_rate</span><span class="p">,</span>
+        <span class="s2">&quot;n_decisive&quot;</span><span class="p">:</span> <span class="n">n</span><span class="p">,</span>
+        <span class="s2">&quot;p_value&quot;</span><span class="p">:</span> <span class="n">p_value</span><span class="p">,</span>
+        <span class="s2">&quot;significant&quot;</span><span class="p">:</span> <span class="n">p_value</span> <span class="o">&lt;</span> <span class="mf">0.05</span><span class="p">,</span>
+    <span class="p">}</span>
+</code></pre></div>
+<p>Interleaving is best suited for <em>preference</em> signals (which response is better?) rather than <em>outcome</em> signals (did the user&rsquo;s problem get resolved?). For resolution rate and similar task-completion metrics, you still need an A/B test since both models cannot solve the same problem simultaneously in a meaningful way.</p>
+<hr />
+<h2 id="cuped-and-sequential-testing-for-low-traffic-products">CUPED and Sequential Testing for Low-Traffic Products<a class="headerlink" href="#cuped-and-sequential-testing-for-low-traffic-products" title="Permanent link">¶</a></h2>
+<p>Many LLM products do not have the luxury of millions of daily users. A specialized enterprise copilot may have a few thousand active users. The standard A/B test becomes impractically slow — waiting weeks for significance means slow iteration velocity.</p>
+<h3 id="cuped-controlled-experiment-using-pre-experiment-data">CUPED: Controlled-experiment Using Pre-Experiment Data<a class="headerlink" href="#cuped-controlled-experiment-using-pre-experiment-data" title="Permanent link">¶</a></h3>
+<p>CUPED (Deng et al., &ldquo;Improving the Sensitivity of Online Controlled Experiments by Utilizing Pre-Experiment Data,&rdquo; WSDM 2013) exploits pre-experiment covariate information to reduce variance in the metric estimator.</p>
+<p>The idea: compute the user&rsquo;s metric value in the period <em>before</em> the experiment. This pre-period value is strongly correlated with the in-experiment value (users who frequently gave thumbs-up before the experiment are likely to do so again). By subtracting the projection of the metric onto this covariate, we obtain a lower-variance estimator of the treatment effect.</p>
+<p>The CUPED-adjusted estimator for user <span class="arithmatex">\(i\)</span> in arm <span class="arithmatex">\(a\)</span> is:</p>
+<div class="arithmatex">\[
+\tilde{Y}_i = Y_i - \theta (X_i - \bar{X})
+\]</div>
+<p>where <span class="arithmatex">\(Y_i\)</span> is the in-experiment metric, <span class="arithmatex">\(X_i\)</span> is the pre-experiment covariate, <span class="arithmatex">\(\bar{X}\)</span> is the covariate mean (pooled across arms), and the optimal coefficient is:</p>
+<div class="arithmatex">\[
+\theta^* = \frac{\text{Cov}(Y, X)}{\text{Var}(X)}
+\]</div>
+<p>The variance of the adjusted estimator is:</p>
+<div class="arithmatex">\[
+\text{Var}(\tilde{Y}) = \text{Var}(Y)(1 - \rho^2)
+\]</div>
+<p>where <span class="arithmatex">\(\rho\)</span> is the Pearson correlation between <span class="arithmatex">\(Y\)</span> and <span class="arithmatex">\(X\)</span>. If <span class="arithmatex">\(\rho = 0.7\)</span> (typical for behavioral metrics), variance drops by <span class="arithmatex">\(1 - 0.49 = 51\%\)</span>, and required sample size drops by half.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy</span><span class="w"> </span><span class="kn">import</span> <span class="n">stats</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">cuped_estimate</span><span class="p">(</span>
+    <span class="n">y_control</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">y_treatment</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">x_control</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>    <span class="c1"># pre-experiment covariate, control arm</span>
+    <span class="n">x_treatment</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>  <span class="c1"># pre-experiment covariate, treatment arm</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute CUPED-adjusted treatment effect and t-test p-value.</span>
+
+<span class="sd">    y_*: in-experiment metric values per user</span>
+<span class="sd">    x_*: pre-experiment metric values for the same users</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Pool covariate mean and compute theta using pooled data</span>
+    <span class="n">x_all</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">x_control</span><span class="p">,</span> <span class="n">x_treatment</span><span class="p">])</span>
+    <span class="n">y_all</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">y_control</span><span class="p">,</span> <span class="n">y_treatment</span><span class="p">])</span>
+    <span class="n">x_bar</span> <span class="o">=</span> <span class="n">x_all</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+    <span class="n">theta</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cov</span><span class="p">(</span><span class="n">y_all</span><span class="p">,</span> <span class="n">x_all</span><span class="p">,</span> <span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">x_all</span><span class="p">,</span> <span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># Adjust each user&#39;s metric</span>
+    <span class="n">y_control_adj</span> <span class="o">=</span> <span class="n">y_control</span> <span class="o">-</span> <span class="n">theta</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_control</span> <span class="o">-</span> <span class="n">x_bar</span><span class="p">)</span>
+    <span class="n">y_treatment_adj</span> <span class="o">=</span> <span class="n">y_treatment</span> <span class="o">-</span> <span class="n">theta</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_treatment</span> <span class="o">-</span> <span class="n">x_bar</span><span class="p">)</span>
+
+    <span class="c1"># Two-sample t-test on adjusted values</span>
+    <span class="n">t_stat</span><span class="p">,</span> <span class="n">p_value</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">ttest_ind</span><span class="p">(</span><span class="n">y_treatment_adj</span><span class="p">,</span> <span class="n">y_control_adj</span><span class="p">)</span>
+
+    <span class="n">delta</span> <span class="o">=</span> <span class="n">y_treatment_adj</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span> <span class="o">-</span> <span class="n">y_control_adj</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="n">se</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">y_treatment_adj</span><span class="p">,</span> <span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">y_treatment_adj</span><span class="p">)</span>
+        <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">y_control_adj</span><span class="p">,</span> <span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">y_control_adj</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Variance reduction achieved</span>
+    <span class="n">var_unadjusted</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">y_control</span><span class="p">,</span> <span class="n">y_treatment</span><span class="p">]),</span> <span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">var_adjusted</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">y_control_adj</span><span class="p">,</span> <span class="n">y_treatment_adj</span><span class="p">]),</span> <span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">rho_sq</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">var_adjusted</span> <span class="o">/</span> <span class="n">var_unadjusted</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;delta&quot;</span><span class="p">:</span> <span class="n">delta</span><span class="p">,</span>
+        <span class="s2">&quot;p_value&quot;</span><span class="p">:</span> <span class="n">p_value</span><span class="p">,</span>
+        <span class="s2">&quot;ci_95&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">delta</span> <span class="o">-</span> <span class="mf">1.96</span> <span class="o">*</span> <span class="n">se</span><span class="p">,</span> <span class="n">delta</span> <span class="o">+</span> <span class="mf">1.96</span> <span class="o">*</span> <span class="n">se</span><span class="p">),</span>
+        <span class="s2">&quot;theta&quot;</span><span class="p">:</span> <span class="n">theta</span><span class="p">,</span>
+        <span class="s2">&quot;variance_reduction_fraction&quot;</span><span class="p">:</span> <span class="n">rho_sq</span><span class="p">,</span>
+        <span class="s2">&quot;significant&quot;</span><span class="p">:</span> <span class="n">p_value</span> <span class="o">&lt;</span> <span class="mf">0.05</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="c1"># Simulate: 500 users per arm, thumbs-up rate 0.40 control / 0.42 treatment</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+<span class="n">n</span> <span class="o">=</span> <span class="mi">500</span>
+<span class="n">x_c</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">binomial</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mf">0.40</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span>  <span class="c1"># pre-exp covariate</span>
+<span class="n">x_t</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">binomial</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mf">0.40</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span>
+<span class="c1"># In-experiment: add treatment effect + correlation with pre-exp</span>
+<span class="n">y_c</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">x_c</span> <span class="o">*</span> <span class="mf">0.7</span> <span class="o">+</span> <span class="n">rng</span><span class="o">.</span><span class="n">binomial</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mf">0.12</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="n">y_t</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">x_t</span> <span class="o">*</span> <span class="mf">0.7</span> <span class="o">+</span> <span class="n">rng</span><span class="o">.</span><span class="n">binomial</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mf">0.14</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">cuped_estimate</span><span class="p">(</span><span class="n">y_c</span><span class="p">,</span> <span class="n">y_t</span><span class="p">,</span> <span class="n">x_c</span><span class="p">,</span> <span class="n">x_t</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Delta: </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">&#39;delta&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, p=</span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">&#39;p_value&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, &quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;variance reduction: </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">&#39;variance_reduction_fraction&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.1%</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="sequential-testing-always-valid-p-values">Sequential testing (always-valid p-values)<a class="headerlink" href="#sequential-testing-always-valid-p-values" title="Permanent link">¶</a></h3>
+<p>The temptation with slow experiments is to peek repeatedly at the p-value and stop early if <span class="arithmatex">\(p &lt; 0.05\)</span>. This inflates the false positive rate dramatically: peeking daily for 14 days at <span class="arithmatex">\(\alpha = 0.05\)</span> yields an actual false positive rate of roughly 20–25%.</p>
+<p><strong>Sequential testing</strong> (also called always-valid inference) provides a test statistic that can be evaluated at any time without type-I error inflation. The mSPRT (mixture Sequential Probability Ratio Test, Johari et al., 2017) and e-values framework guarantee that at any stopping time <span class="arithmatex">\(\tau\)</span>:</p>
+<div class="arithmatex">\[
+P\!\left(\text{reject } H_0 \text{ at any time } t \leq \tau \mid H_0\right) \leq \alpha
+\]</div>
+<p>For Bernoulli outcomes, a practical implementation uses the Robbins confidence sequence — an always-valid confidence interval that shrinks as data accumulates. Many experimentation platforms (Statsig, Optimizely) now implement this by default.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">always_valid_ci</span><span class="p">(</span>
+    <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">k</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>       <span class="c1"># successes so far</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Approximate always-valid (anytime) confidence interval for a</span>
+<span class="sd">    Bernoulli proportion using the Howard et al. (2021) normal-mixture bound.</span>
+
+<span class="sd">    This CI is valid at any sample size n ≥ 1 without correction for peeking.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">p_hat</span> <span class="o">=</span> <span class="n">k</span> <span class="o">/</span> <span class="n">n</span>
+    <span class="c1"># Confidence sequence width parameter (from Howard et al., 2021, eq. 1)</span>
+    <span class="c1"># rho: mixing parameter, typical value 0.5 for balanced experiments</span>
+    <span class="n">rho</span> <span class="o">=</span> <span class="mf">0.5</span>
+    <span class="n">log_term</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">alpha</span><span class="p">)</span>
+    <span class="n">width</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span>
+        <span class="p">(</span><span class="n">p_hat</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">p_hat</span><span class="p">)</span> <span class="o">/</span> <span class="n">n</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">log_term</span> <span class="o">+</span> <span class="n">rho</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">log_term</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">p_hat</span> <span class="o">-</span> <span class="n">width</span><span class="p">),</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">p_hat</span> <span class="o">+</span> <span class="n">width</span><span class="p">))</span>
+
+<span class="c1"># Compare width at n=100 vs n=1000 for p≈0.4</span>
+<span class="k">for</span> <span class="n">n</span><span class="p">,</span> <span class="n">k</span> <span class="ow">in</span> <span class="p">[(</span><span class="mi">100</span><span class="p">,</span> <span class="mi">40</span><span class="p">),</span> <span class="p">(</span><span class="mi">1000</span><span class="p">,</span> <span class="mi">400</span><span class="p">),</span> <span class="p">(</span><span class="mi">5000</span><span class="p">,</span> <span class="mi">2000</span><span class="p">)]:</span>
+    <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="n">always_valid_ci</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">k</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;n=</span><span class="si">{</span><span class="n">n</span><span class="si">:</span><span class="s2">5d</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">lo</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> – </span><span class="si">{</span><span class="n">hi</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  (width </span><span class="si">{</span><span class="n">hi</span><span class="o">-</span><span class="n">lo</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="shadow-deployments-and-canary-rollouts">Shadow Deployments and Canary Rollouts<a class="headerlink" href="#shadow-deployments-and-canary-rollouts" title="Permanent link">¶</a></h2>
+<p>Statistical significance tells you the <em>effect</em> is real; it does not tell you the system is <em>safe</em> to deploy at scale. Canary and shadow deployments are the operational complement to experiment design.</p>
+<h3 id="shadow-mode">Shadow mode<a class="headerlink" href="#shadow-mode" title="Permanent link">¶</a></h3>
+<p>In shadow mode, you run the candidate model on all production traffic but <em>discard its responses</em> — users never see them. Shadow mode lets you:</p>
+<ol>
+<li><strong>Profile latency and cost</strong> at realistic load without user impact. You discover that the new model has 40% higher P99 latency under batch pressure before any user is affected.</li>
+<li><strong>Run offline judges on shadow outputs.</strong> Sample shadow responses at, say, 1% and run your LLM-as-judge pipeline (see <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a>) to get a quality distribution before traffic exposure.</li>
+<li><strong>Test infrastructure integration</strong> — does the new model endpoint return the expected JSON schema? Are there new failure modes (timeout patterns, empty responses on edge inputs)?</li>
+</ol>
+<figure class="viz" id="fig-online-eval-shadow-deployment">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 532" role="img" aria-label="Shadow deployment architecture: a production router fans each user request to both the production model (response served to the user) and a shadow model (response discarded), with the shadow branch logging outputs through an offline judge to a quality dashboard.">
+  <defs>
+    <marker id="sd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+    </marker>
+    <marker id="sd-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-online-eval-shadow-deployment text { fill: var(--ink-soft,#334155); font-family: var(--sans,sans-serif); }
+    #fig-online-eval-shadow-deployment .title { font: 600 13px var(--sans,sans-serif); }
+    #fig-online-eval-shadow-deployment .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-online-eval-shadow-deployment .lbl { font: 600 11px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+    #fig-online-eval-shadow-deployment .lbl-muted { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+    #fig-online-eval-shadow-deployment .discard { font: italic 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+
+    /* animated dot */
+    @media (prefers-reduced-motion: no-preference) {
+      #fig-online-eval-shadow-deployment .dot-live {
+        animation: sd-live 3.6s ease-in-out infinite;
+        offset-path: path("M 85 86 L 85 150 L 85 182 L 268 182 L 360 146 L 530 146 L 665 146");
+        offset-distance: 0%;
+      }
+      #fig-online-eval-shadow-deployment .dot-shadow {
+        animation: sd-shadow 3.6s ease-in-out infinite;
+        offset-path: path("M 85 86 L 85 150 L 85 182 L 268 182 L 360 276 L 530 276");
+        offset-distance: 0%;
+      }
+      #fig-online-eval-shadow-deployment .dot-log {
+        animation: sd-log 3.6s ease-in-out infinite;
+        offset-path: path("M 455 302 L 455 366 L 455 426 L 455 486");
+        offset-distance: 0%;
+      }
+      @keyframes sd-live {
+        0%   { offset-distance: 0%;   opacity: 0; }
+        5%   { opacity: 1; }
+        50%  { offset-distance: 100%; opacity: 1; }
+        60%  { offset-distance: 100%; opacity: 0; }
+        100% { offset-distance: 100%; opacity: 0; }
+      }
+      @keyframes sd-shadow {
+        0%   { offset-distance: 0%;   opacity: 0; }
+        5%   { opacity: 1; }
+        50%  { offset-distance: 100%; opacity: 1; }
+        55%  { offset-distance: 100%; opacity: 0; }
+        100% { offset-distance: 100%; opacity: 0; }
+      }
+      @keyframes sd-log {
+        30%  { offset-distance: 0%;   opacity: 0; }
+        38%  { opacity: 1; }
+        75%  { offset-distance: 100%; opacity: 1; }
+        85%  { offset-distance: 100%; opacity: 0; }
+        100% { offset-distance: 100%; opacity: 0; }
+      }
+    }
+  </style>
+
+
+  <rect x="10" y="40" width="150" height="46" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="85" y="68" text-anchor="middle" class="title">User request</text>
+
+
+  <line x1="85" y1="86" x2="85" y2="148" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#sd-arrow)"/>
+
+
+  <rect x="10" y="150" width="190" height="64" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="105" y="176" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Production router</text>
+  <text x="105" y="192" text-anchor="middle" class="sub">request fanout</text>
+
+
+  <line x1="200" y1="175" x2="342" y2="146" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#sd-arrow)"/>
+  <text x="272" y="150" text-anchor="middle" class="lbl">(1)</text>
+
+
+  <line x1="200" y1="196" x2="342" y2="262" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#sd-arrow)"/>
+  <text x="272" y="246" text-anchor="middle" class="lbl">(2)</text>
+
+
+  <rect x="342" y="120" width="190" height="52" rx="8" fill="var(--surface,#f1f5f9)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="437" y="142" text-anchor="middle" class="title">Production model (v1)</text>
+  <text x="437" y="158" text-anchor="middle" class="sub">live path</text>
+
+
+  <line x1="532" y1="146" x2="598" y2="146" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#sd-arrow)"/>
+  <text x="565" y="138" text-anchor="middle" class="lbl-muted">served</text>
+
+
+  <rect x="598" y="120" width="130" height="52" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="663" y="150" text-anchor="middle" class="title">User response</text>
+
+
+  <rect x="342" y="250" width="190" height="52" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="437" y="272" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Shadow model (v2)</text>
+  <text x="437" y="288" text-anchor="middle" class="sub">candidate — not served</text>
+
+
+  <line x1="532" y1="276" x2="598" y2="276" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#sd-arrow-muted)"/>
+
+
+  <rect x="598" y="250" width="130" height="52" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.65"/>
+  <text x="663" y="272" text-anchor="middle" class="discard">/dev/null</text>
+  <text x="663" y="288" text-anchor="middle" class="discard">(discarded)</text>
+
+
+  <line x1="437" y1="302" x2="437" y2="356" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#sd-arrow)"/>
+
+
+  <rect x="342" y="358" width="190" height="44" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="437" y="385" text-anchor="middle" class="title">Shadow logger</text>
+
+
+  <line x1="437" y1="402" x2="437" y2="424" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#sd-arrow)"/>
+
+
+  <rect x="342" y="426" width="190" height="48" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="437" y="447" text-anchor="middle" class="title">Offline judge</text>
+  <text x="437" y="462" text-anchor="middle" class="sub">sampled 1%</text>
+
+
+  <line x1="437" y1="474" x2="437" y2="492" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#sd-arrow)"/>
+
+
+  <rect x="342" y="494" width="190" height="32" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="437" y="514" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Quality dashboard</text>
+
+
+  <circle class="dot-live" r="5" fill="var(--ink-soft,#475569)" opacity="0"/>
+
+  <circle class="dot-shadow" r="5" fill="var(--accent,#6366f1)" opacity="0"/>
+
+  <circle class="dot-log" r="4" fill="var(--accent,#6366f1)" opacity="0"/>
+
+
+  <text x="437" y="232" text-anchor="middle" class="lbl-muted">shadow path</text>
+  <text x="663" y="112" text-anchor="middle" class="lbl-muted" fill="var(--ink-soft,#475569)">live path</text>
+</svg>
+<figcaption><b>Shadow deployment: evaluate the candidate without user exposure.</b> The production router fans every incoming request to both the live production model and the shadow candidate; only the production response reaches the user. The shadow response is silently logged, sampled at 1%, and scored by an offline judge, so quality and latency can be compared before any user sees the new model.</figcaption>
+</figure>
+
+<h3 id="canary-rollout">Canary rollout<a class="headerlink" href="#canary-rollout" title="Permanent link">¶</a></h3>
+<p>A canary routes a small, controllable fraction of real traffic to the new model, with automatic rollback triggers tied to guardrail metrics.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Example: canary rollout configuration (Kubernetes + Argo Rollouts style)</span>
+<span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">argoproj.io/v1alpha1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Rollout</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">llm-api-server</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">strategy</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">canary</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">steps</span><span class="p">:</span>
+<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">setWeight</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span><span class="w">       </span><span class="c1"># 1% canary</span>
+<span class="w">          </span><span class="nt">pause</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">duration</span><span class="p">:</span><span class="w"> </span><span class="nv">30m</span><span class="p p-Indicator">}</span>
+<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">analysis</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">templates</span><span class="p">:</span>
+<span class="w">              </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">templateName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">guardrail-check</span>
+<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">setWeight</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span><span class="w">      </span><span class="c1"># 10% canary</span>
+<span class="w">          </span><span class="nt">pause</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">duration</span><span class="p">:</span><span class="w"> </span><span class="nv">2h</span><span class="p p-Indicator">}</span>
+<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">analysis</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">templates</span><span class="p">:</span>
+<span class="w">              </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">templateName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">guardrail-check</span>
+<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">setWeight</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50</span><span class="w">      </span><span class="c1"># 50% — effective A/B</span>
+<span class="w">          </span><span class="nt">pause</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">duration</span><span class="p">:</span><span class="w"> </span><span class="nv">24h</span><span class="p p-Indicator">}</span>
+<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">setWeight</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span><span class="w">     </span><span class="c1"># full rollout</span>
+<span class="w">      </span><span class="c1"># Automatic rollback if any guardrail fires</span>
+<span class="w">      </span><span class="nt">autoPromotionEnabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># Guardrail check logic that would back the AnalysisTemplate above</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">statistics</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">should_rollback</span><span class="p">(</span>
+    <span class="n">canary_metrics</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+    <span class="n">baseline_metrics</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+    <span class="n">thresholds</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns (rollback, reason) based on guardrail metric comparisons.</span>
+<span class="sd">    Thresholds define maximum *relative* degradation allowed.</span>
+
+<span class="sd">    Example thresholds:</span>
+<span class="sd">      {</span>
+<span class="sd">        &quot;thumb_down_rate&quot;: 0.20,     # allow up to 20% increase</span>
+<span class="sd">        &quot;latency_p99_ms&quot;: 0.30,      # allow up to 30% increase</span>
+<span class="sd">        &quot;cost_per_session_usd&quot;: 0.15,</span>
+<span class="sd">        &quot;safety_violation_rate&quot;: 0.0, # zero tolerance</span>
+<span class="sd">      }</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">metric</span><span class="p">,</span> <span class="n">max_relative_increase</span> <span class="ow">in</span> <span class="n">thresholds</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">baseline_val</span> <span class="o">=</span> <span class="n">baseline_metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">metric</span><span class="p">)</span>
+        <span class="n">canary_val</span> <span class="o">=</span> <span class="n">canary_metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">metric</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">baseline_val</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">canary_val</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="n">baseline_val</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">canary_val</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">return</span> <span class="kc">True</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">metric</span><span class="si">}</span><span class="s2">: baseline=0, canary=</span><span class="si">{</span><span class="n">canary_val</span><span class="si">}</span><span class="s2"> (zero tolerance)&quot;</span>
+            <span class="k">continue</span>
+
+        <span class="n">relative_change</span> <span class="o">=</span> <span class="p">(</span><span class="n">canary_val</span> <span class="o">-</span> <span class="n">baseline_val</span><span class="p">)</span> <span class="o">/</span> <span class="n">baseline_val</span>
+        <span class="k">if</span> <span class="n">relative_change</span> <span class="o">&gt;</span> <span class="n">max_relative_increase</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">True</span><span class="p">,</span> <span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">metric</span><span class="si">}</span><span class="s2">: baseline=</span><span class="si">{</span><span class="n">baseline_val</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, canary=</span><span class="si">{</span><span class="n">canary_val</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;relative increase=</span><span class="si">{</span><span class="n">relative_change</span><span class="si">:</span><span class="s2">.1%</span><span class="si">}</span><span class="s2"> &gt; threshold=</span><span class="si">{</span><span class="n">max_relative_increase</span><span class="si">:</span><span class="s2">.1%</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+
+    <span class="k">return</span> <span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;all guardrails passed&quot;</span>
+
+
+<span class="c1"># Example call</span>
+<span class="n">rollback</span><span class="p">,</span> <span class="n">reason</span> <span class="o">=</span> <span class="n">should_rollback</span><span class="p">(</span>
+    <span class="n">canary_metrics</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;thumb_down_rate&quot;</span><span class="p">:</span> <span class="mf">0.062</span><span class="p">,</span>
+        <span class="s2">&quot;latency_p99_ms&quot;</span><span class="p">:</span> <span class="mi">1850</span><span class="p">,</span>
+        <span class="s2">&quot;cost_per_session_usd&quot;</span><span class="p">:</span> <span class="mf">0.041</span><span class="p">,</span>
+        <span class="s2">&quot;safety_violation_rate&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span>
+    <span class="p">},</span>
+    <span class="n">baseline_metrics</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;thumb_down_rate&quot;</span><span class="p">:</span> <span class="mf">0.055</span><span class="p">,</span>
+        <span class="s2">&quot;latency_p99_ms&quot;</span><span class="p">:</span> <span class="mi">1420</span><span class="p">,</span>
+        <span class="s2">&quot;cost_per_session_usd&quot;</span><span class="p">:</span> <span class="mf">0.038</span><span class="p">,</span>
+        <span class="s2">&quot;safety_violation_rate&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span>
+    <span class="p">},</span>
+    <span class="n">thresholds</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;thumb_down_rate&quot;</span><span class="p">:</span> <span class="mf">0.20</span><span class="p">,</span>
+        <span class="s2">&quot;latency_p99_ms&quot;</span><span class="p">:</span> <span class="mf">0.30</span><span class="p">,</span>
+        <span class="s2">&quot;cost_per_session_usd&quot;</span><span class="p">:</span> <span class="mf">0.15</span><span class="p">,</span>
+        <span class="s2">&quot;safety_violation_rate&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rollback: </span><span class="si">{</span><span class="n">rollback</span><span class="si">}</span><span class="s2">, reason: </span><span class="si">{</span><span class="n">reason</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># Rollback: False, reason: all guardrails passed</span>
+<span class="c1"># (P99 latency increased 30.3% — just barely passes; in practice, tighten to 0.25)</span>
+</code></pre></div>
+<p>A well-run canary pipeline can catch regressions within minutes. The 1% initial stage exists specifically for catastrophic failures (model returns empty strings, crashes with certain inputs). The 10% stage provides the first statistically meaningful read on behavioral metrics. The 50% stage is where you run the full hypothesis test.</p>
+<hr />
+<h2 id="live-judges-scoring-sampled-production-traffic">Live Judges: Scoring Sampled Production Traffic<a class="headerlink" href="#live-judges-scoring-sampled-production-traffic" title="Permanent link">¶</a></h2>
+<p>Even with good behavioral metrics, they are <em>proxies</em>. The only way to know whether output quality has changed is to evaluate outputs directly. Live judges do this continuously.</p>
+<h3 id="the-pipeline">The pipeline<a class="headerlink" href="#the-pipeline" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-online-eval-live-judge-pipeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 660 660" role="img" aria-label="Live judge pipeline: all production requests enter a sampler that filters to 0.5%, sampled pairs flow through an async queue to a judge dispatcher that routes most to LLM-as-judge (high coverage) and a trickle to human raters (high fidelity), both feeding a quality score DB and real-time dashboard.">
+  <defs>
+    <marker id="lj-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-online-eval-live-judge-pipeline text { fill: var(--ink-soft,#334155); font-family: var(--sans,sans-serif); }
+    #fig-online-eval-live-judge-pipeline .title { font: 600 13px var(--sans,sans-serif); }
+    #fig-online-eval-live-judge-pipeline .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-online-eval-live-judge-pipeline .edge-lbl { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+
+    /* request dots */
+    @media (prefers-reduced-motion: no-preference) {
+      /* dot 1 — passes sampler */
+      #fig-online-eval-live-judge-pipeline .pass1 {
+        animation: lj-pass 4s 0s ease-in-out infinite;
+        offset-path: path("M 330 84 L 330 148 L 330 202 L 330 258 L 330 322 L 215 402 L 215 456 L 215 506 L 330 560 L 330 618");
+        offset-distance: 0%;
+      }
+      /* dot 2 — passes sampler (human path) */
+      #fig-online-eval-live-judge-pipeline .pass2 {
+        animation: lj-pass 4s 0.4s ease-in-out infinite;
+        offset-path: path("M 330 84 L 330 148 L 330 202 L 330 258 L 330 322 L 445 402 L 445 456 L 445 506 L 330 560 L 330 618");
+        offset-distance: 0%;
+      }
+      /* dot A — filtered out left */
+      #fig-online-eval-live-judge-pipeline .drop1 {
+        animation: lj-drop 4s 0.1s ease-in-out infinite;
+        offset-path: path("M 330 84 L 330 148 L 240 200");
+        offset-distance: 0%;
+      }
+      /* dot B — filtered out right */
+      #fig-online-eval-live-judge-pipeline .drop2 {
+        animation: lj-drop 4s 0.6s ease-in-out infinite;
+        offset-path: path("M 330 84 L 330 148 L 420 200");
+        offset-distance: 0%;
+      }
+      @keyframes lj-pass {
+        0%   { offset-distance: 0%;   opacity: 0; }
+        4%   { opacity: 1; }
+        82%  { offset-distance: 100%; opacity: 1; }
+        90%  { offset-distance: 100%; opacity: 0; }
+        100% { offset-distance: 100%; opacity: 0; }
+      }
+      @keyframes lj-drop {
+        0%   { offset-distance: 0%;   opacity: 0; }
+        4%   { opacity: 1; }
+        30%  { offset-distance: 100%; opacity: 0.7; }
+        45%  { offset-distance: 100%; opacity: 0; }
+        100% { offset-distance: 100%; opacity: 0; }
+      }
+    }
+  </style>
+
+
+  <rect x="180" y="18" width="300" height="44" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="330" y="45" text-anchor="middle" class="title">All production requests</text>
+
+
+  <line x1="330" y1="62" x2="330" y2="106" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+
+
+  <rect x="210" y="108" width="240" height="56" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="330" y="130" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Sampler</text>
+  <text x="330" y="147" text-anchor="middle" class="sub">0.5% uniform + oversampled edge cases</text>
+
+
+  <line x1="214" y1="136" x2="165" y2="136" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="130" y="139" text-anchor="middle" class="edge-lbl" fill="var(--muted,#94a3b8)">filtered</text>
+  <line x1="446" y1="136" x2="495" y2="136" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="530" y="139" text-anchor="middle" class="edge-lbl" fill="var(--muted,#94a3b8)">filtered</text>
+
+
+  <line x1="330" y1="164" x2="330" y2="204" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+  <text x="330" y="195" text-anchor="middle" class="edge-lbl">sampled (request, response) pairs</text>
+
+
+  <rect x="210" y="206" width="240" height="44" rx="8" fill="var(--surface,#f1f5f9)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="330" y="233" text-anchor="middle" class="title">Async judging queue</text>
+
+
+  <line x1="330" y1="250" x2="330" y2="294" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+
+
+  <rect x="190" y="296" width="280" height="56" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="330" y="318" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Judge dispatcher</text>
+  <text x="330" y="334" text-anchor="middle" class="sub">round-robin or model-specific routing</text>
+
+
+  <line x1="290" y1="352" x2="215" y2="400" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+
+  <line x1="370" y1="352" x2="445" y2="400" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+
+
+  <rect x="120" y="402" width="190" height="64" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="215" y="424" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">LLM-as-Judge</text>
+  <text x="215" y="440" text-anchor="middle" class="sub">high coverage</text>
+  <text x="215" y="454" text-anchor="middle" class="sub">low cost</text>
+
+
+  <rect x="350" y="402" width="190" height="64" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="445" y="424" text-anchor="middle" class="title">Human raters</text>
+  <text x="445" y="440" text-anchor="middle" class="sub">high fidelity</text>
+  <text x="445" y="454" text-anchor="middle" class="sub">low coverage</text>
+
+
+  <line x1="215" y1="466" x2="290" y2="514" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+  <line x1="445" y1="466" x2="370" y2="514" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+
+
+  <rect x="220" y="516" width="220" height="46" rx="8" fill="var(--surface,#f1f5f9)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="330" y="544" text-anchor="middle" class="title">Quality score DB</text>
+
+
+  <line x1="330" y1="562" x2="330" y2="596" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+
+
+  <rect x="200" y="598" width="260" height="46" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="330" y="618" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Real-time dashboard</text>
+  <text x="330" y="634" text-anchor="middle" class="sub">rolling 24h window</text>
+
+
+  <circle class="pass1" r="5" fill="var(--accent,#6366f1)" opacity="0"/>
+  <circle class="pass2" r="5" fill="var(--ink-soft,#475569)" opacity="0"/>
+  <circle class="drop1" r="4" fill="var(--muted,#94a3b8)" opacity="0"/>
+  <circle class="drop2" r="4" fill="var(--muted,#94a3b8)" opacity="0"/>
+</svg>
+<figcaption><b>Live judge pipeline: continuous quality measurement on sampled production traffic.</b> A stratified sampler passes roughly 0.5% of live requests downstream; most filtered requests are dropped. Surviving pairs are queued, then dispatched — most to the LLM judge for broad coverage, a small trickle to human raters for ground-truth calibration. Both feed a quality score database surfaced on a rolling 24-hour dashboard.</figcaption>
+</figure>
+
+<p>The LLM judge rates each sampled response on a rubric (helpfulness, accuracy, safety, format). Human raters review a smaller fraction (on the order of 0.05–0.1% of traffic) to calibrate judge accuracy and detect drift in judge behavior. See <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a> for the judge design.</p>
+<h3 id="stratified-sampling">Stratified sampling<a class="headerlink" href="#stratified-sampling" title="Permanent link">¶</a></h3>
+<p>Uniform sampling misses tail behaviors. A stratified sampler over-represents:</p>
+<ul>
+<li><strong>New users</strong> (first-session queries are often unusual)</li>
+<li><strong>Long sessions</strong> (users who are stuck)</li>
+<li><strong>Queries with low confidence</strong> (model&rsquo;s own log-probability is low)</li>
+<li><strong>Queries triggering guardrails</strong> (safety classifier near-misses)</li>
+<li><strong>Queries in underrepresented categories</strong> (rare intents)</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">stratified_sampler</span><span class="p">(</span>
+    <span class="n">request</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+    <span class="n">base_rate</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.005</span><span class="p">,</span>  <span class="c1"># 0.5% baseline</span>
+    <span class="n">boost_rules</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="nb">dict</span><span class="p">],</span> <span class="nb">bool</span><span class="p">],</span> <span class="nb">float</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns True if this request should be sampled for judging.</span>
+
+<span class="sd">    boost_rules: list of (predicate, multiplier) pairs. The highest</span>
+<span class="sd">    applicable multiplier is used (not additive, to avoid double-counting).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">boost_rules</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">boost_rules</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="n">effective_rate</span> <span class="o">=</span> <span class="n">base_rate</span>
+    <span class="k">for</span> <span class="n">predicate</span><span class="p">,</span> <span class="n">multiplier</span> <span class="ow">in</span> <span class="n">boost_rules</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">predicate</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+            <span class="n">effective_rate</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">effective_rate</span><span class="p">,</span> <span class="n">base_rate</span> <span class="o">*</span> <span class="n">multiplier</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">effective_rate</span>
+
+<span class="c1"># Example configuration</span>
+<span class="n">boost_rules</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">(</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;session_turn_count&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">,</span> <span class="mf">5.0</span><span class="p">),</span>    <span class="c1"># first turn</span>
+    <span class="p">(</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;session_length&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">10</span><span class="p">,</span> <span class="mf">4.0</span><span class="p">),</span>         <span class="c1"># long session</span>
+    <span class="p">(</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model_log_prob&quot;</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span> <span class="o">&lt;</span> <span class="o">-</span><span class="mf">2.5</span><span class="p">,</span> <span class="mf">8.0</span><span class="p">),</span>     <span class="c1"># low-confidence</span>
+    <span class="p">(</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;safety_score&quot;</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">0.4</span><span class="p">,</span> <span class="mf">20.0</span><span class="p">),</span>       <span class="c1"># near-miss safety</span>
+    <span class="p">(</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user_is_new&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">),</span> <span class="mf">3.0</span><span class="p">),</span>              <span class="c1"># new user</span>
+<span class="p">]</span>
+
+<span class="c1"># Simulate over 1M requests</span>
+<span class="n">sample_count</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span>
+    <span class="mi">1</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1_000_000</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">stratified_sampler</span><span class="p">(</span>
+        <span class="p">{</span><span class="s2">&quot;session_turn_count&quot;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">15</span><span class="p">),</span>
+         <span class="s2">&quot;model_log_prob&quot;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">gauss</span><span class="p">(</span><span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.5</span><span class="p">)},</span>
+        <span class="n">boost_rules</span><span class="o">=</span><span class="n">boost_rules</span><span class="p">,</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Estimated sample rate: </span><span class="si">{</span><span class="n">sample_count</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">1_000_000</span><span class="si">:</span><span class="s2">.2%</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="monitoring-quality-metrics-over-time">Monitoring quality metrics over time<a class="headerlink" href="#monitoring-quality-metrics-over-time" title="Permanent link">¶</a></h3>
+<p>Rather than a single pass/fail, maintain rolling statistics so regressions are visible as trends:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">deque</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RollingQualityMonitor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Maintains a sliding window of judge scores and raises an alert</span>
+<span class="sd">    when the mean score drops below a configurable threshold.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">window_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span><span class="p">,</span> <span class="n">alert_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scores</span> <span class="o">=</span> <span class="n">deque</span><span class="p">(</span><span class="n">maxlen</span><span class="o">=</span><span class="n">window_size</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">alert_threshold</span> <span class="o">=</span> <span class="n">alert_threshold</span>  <span class="c1"># max allowed drop from baseline</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">baseline_mean</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_baseline</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scores</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Call once with initial production scores to establish baseline.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">baseline_mean</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">scores</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_score</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">score</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Add a new judge score; returns alert status.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scores</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">score</span><span class="p">)</span>
+        <span class="n">current_mean</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">scores</span><span class="p">))</span>
+        <span class="n">alert</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="n">reason</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">baseline_mean</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">scores</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">50</span><span class="p">:</span>
+            <span class="n">drop</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">baseline_mean</span> <span class="o">-</span> <span class="n">current_mean</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">baseline_mean</span>
+            <span class="k">if</span> <span class="n">drop</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">alert_threshold</span><span class="p">:</span>
+                <span class="n">alert</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="n">reason</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;Mean quality dropped </span><span class="si">{</span><span class="n">drop</span><span class="si">:</span><span class="s2">.1%</span><span class="si">}</span><span class="s2"> below baseline &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;(current=</span><span class="si">{</span><span class="n">current_mean</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">, baseline=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">baseline_mean</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">)&quot;</span>
+                <span class="p">)</span>
+
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;current_mean&quot;</span><span class="p">:</span> <span class="n">current_mean</span><span class="p">,</span>
+            <span class="s2">&quot;n_samples&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">scores</span><span class="p">),</span>
+            <span class="s2">&quot;alert&quot;</span><span class="p">:</span> <span class="n">alert</span><span class="p">,</span>
+            <span class="s2">&quot;reason&quot;</span><span class="p">:</span> <span class="n">reason</span><span class="p">,</span>
+        <span class="p">}</span>
+</code></pre></div>
+<hr />
+<h2 id="biases-that-corrupt-online-signals">Biases That Corrupt Online Signals<a class="headerlink" href="#biases-that-corrupt-online-signals" title="Permanent link">¶</a></h2>
+<p>Online experiments are not automatically reliable. Several systematic biases can lead to wrong conclusions.</p>
+<h3 id="novelty-effect">Novelty effect<a class="headerlink" href="#novelty-effect" title="Permanent link">¶</a></h3>
+<p>Users often engage more positively with any change, simply because it is new. A new UI for the LLM chat box may generate elevated thumbs-up rates for the first few days regardless of underlying quality. The novelty effect typically decays over one to two weeks.</p>
+<p><strong>Defense:</strong> Run experiments for at least two weeks, and segment by user tenure (days since first use). If new users show higher lift than returning users, novelty is likely the confounder. Report the effect separately for users who have been in the experiment for more than one week.</p>
+<h3 id="feedback-loop-bias">Feedback-loop bias<a class="headerlink" href="#feedback-loop-bias" title="Permanent link">¶</a></h3>
+<p>In many LLM applications, model outputs become inputs to future sessions: documents users compose with an AI, code they commit, answers they cite. Over time, the model trained on data from production begins to see its own outputs in training data, creating a feedback loop. Metrics may improve because the world has shifted to match the model, not because the model has improved.</p>
+<p><strong>Defense:</strong> Maintain a <strong>holdout cohort</strong> — a randomly selected 1–5% of users who are never exposed to any treatment variant. Compare the holdout&rsquo;s metric trajectory over months to detect secular trends in the overall user base.</p>
+<h3 id="position-and-presentation-bias">Position and presentation bias<a class="headerlink" href="#position-and-presentation-bias" title="Permanent link">¶</a></h3>
+<p>If your experiment changes how responses are presented (length, formatting, bullet points vs. prose), behavioral metrics like copy rate and click-through can change for presentation reasons unrelated to quality.</p>
+<p><strong>Defense:</strong> Separate model quality experiments from UI experiments. Run them sequentially, not simultaneously, unless your experiment platform supports factorial designs and you have sufficient traffic for interaction terms.</p>
+<h3 id="selection-bias-from-opt-in-feedback">Selection bias from opt-in feedback<a class="headerlink" href="#selection-bias-from-opt-in-feedback" title="Permanent link">¶</a></h3>
+<p>Thumb ratings are provided by a self-selected subset of users — typically those with strong opinions (very positive or very negative). The non-response majority may have different preferences. A treatment that increases the thumbs-up <em>count</em> may simply be eliciting more feedback, not improving quality.</p>
+<p><strong>Defense:</strong> Track the feedback <em>rate</em> (what fraction of sessions result in any rating) alongside the <em>conditional</em> thumbs-up rate. A rising feedback rate with stable conditional thumbs-up rate signals more engagement, not more satisfaction.</p>
+<h3 id="peeking-and-multiple-testing">Peeking and multiple testing<a class="headerlink" href="#peeking-and-multiple-testing" title="Permanent link">¶</a></h3>
+<p>See the sequential testing discussion above. Additionally, if you are running 10 simultaneous A/B experiments (common in fast-moving teams), the probability that at least one shows a false positive at <span class="arithmatex">\(\alpha = 0.05\)</span> is <span class="arithmatex">\(1 - 0.95^{10} \approx 40\%\)</span>. Apply Bonferroni correction or control the False Discovery Rate (Benjamini-Hochberg) when reporting across many simultaneous tests.</p>
+<hr />
+<h2 id="connecting-the-pieces-the-evaluation-lifecycle">Connecting the Pieces: The Evaluation Lifecycle<a class="headerlink" href="#connecting-the-pieces-the-evaluation-lifecycle" title="Permanent link">¶</a></h2>
+<p>A mature evaluation stack is not a collection of ad-hoc tests — it is a pipeline that continuously validates every change.</p>
+<figure class="viz" id="fig-online-eval-lifecycle-stages">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 850" role="img" aria-label="Full evaluation lifecycle as five sequential filter stages: Offline phase, Shadow phase, Canary rollout, Full A/B experiment, and Full rollout with live judge monitoring. Each stage is gated before the next begins.">
+  <defs>
+    <marker id="lc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+
+    <filter id="lc-glow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <style>
+    #fig-online-eval-lifecycle-stages text { fill: var(--ink-soft,#334155); font-family: var(--sans,sans-serif); }
+    #fig-online-eval-lifecycle-stages .stage-title { font: 700 15px var(--sans,sans-serif); }
+    #fig-online-eval-lifecycle-stages .item { font: 400 11.5px var(--sans,sans-serif); }
+    #fig-online-eval-lifecycle-stages .gate-txt { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-online-eval-lifecycle-stages .passes { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+    #fig-online-eval-lifecycle-stages .dot-marker { r: 8; }
+
+    @media (prefers-reduced-motion: no-preference) {
+      /* The feature dot descends stage by stage */
+      #fig-online-eval-lifecycle-stages .feat-dot {
+        animation: lc-descend 5.5s ease-in-out infinite;
+      }
+      @keyframes lc-descend {
+        0%   { cy: 60;  opacity: 0; }
+        4%   { cy: 60;  opacity: 1; }
+        10%  { cy: 100; opacity: 1; }
+        18%  { cy: 100; opacity: 1; }  /* pause in stage 1 */
+        25%  { cy: 240; opacity: 1; }  /* drop to stage 2 */
+        33%  { cy: 240; opacity: 1; }  /* pause */
+        40%  { cy: 400; opacity: 1; }  /* drop to stage 3 */
+        48%  { cy: 400; opacity: 1; }  /* pause */
+        55%  { cy: 560; opacity: 1; }  /* drop to stage 4 */
+        62%  { cy: 560; opacity: 1; }  /* pause */
+        70%  { cy: 730; opacity: 1; }  /* drop to stage 5 */
+        80%  { cy: 730; opacity: 1; }  /* pause */
+        90%  { cy: 730; opacity: 0; }
+        100% { cy: 730; opacity: 0; }
+      }
+
+      /* Card highlight — each fires once while dot is in it */
+      #fig-online-eval-lifecycle-stages .hl1 { animation: lc-hl 5.5s ease-in-out infinite; animation-delay: 0.2s; }
+      #fig-online-eval-lifecycle-stages .hl2 { animation: lc-hl 5.5s ease-in-out infinite; animation-delay: 1.32s; }
+      #fig-online-eval-lifecycle-stages .hl3 { animation: lc-hl 5.5s ease-in-out infinite; animation-delay: 2.20s; }
+      #fig-online-eval-lifecycle-stages .hl4 { animation: lc-hl 5.5s ease-in-out infinite; animation-delay: 3.0s; }
+      #fig-online-eval-lifecycle-stages .hl5 { animation: lc-hl 5.5s ease-in-out infinite; animation-delay: 3.85s; }
+      @keyframes lc-hl {
+        0%    { opacity: 0; }
+        1%    { opacity: 0.55; }
+        10%   { opacity: 0.0; }
+        100%  { opacity: 0; }
+      }
+
+      /* Gate pill lights up */
+      #fig-online-eval-lifecycle-stages .gate1 { animation: lc-gate 5.5s ease-in-out 1.1s infinite; }
+      #fig-online-eval-lifecycle-stages .gate2 { animation: lc-gate 5.5s ease-in-out 2.0s infinite; }
+      #fig-online-eval-lifecycle-stages .gate3 { animation: lc-gate 5.5s ease-in-out 2.8s infinite; }
+      #fig-online-eval-lifecycle-stages .gate4 { animation: lc-gate 5.5s ease-in-out 3.6s infinite; }
+      @keyframes lc-gate {
+        0%   { opacity: 0.4; }
+        1%   { opacity: 1.0; }
+        8%   { opacity: 0.4; }
+        100% { opacity: 0.4; }
+      }
+    }
+  </style>
+
+
+
+  <rect class="hl1" x="60" y="30" width="600" height="150" rx="10"
+    fill="var(--accent,#6366f1)" opacity="0" filter="url(#lc-glow)"/>
+
+  <rect x="60" y="30" width="600" height="150" rx="10"
+    fill="var(--surface,#f1f5f9)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="360" y="56" text-anchor="middle" class="stage-title">Offline phase</text>
+
+  <line x1="80" y1="64" x2="640" y2="64" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+  <text x="90" y="83" class="item">1. Automated benchmark suite (MMLU, MT-Bench, domain evals)</text>
+  <text x="90" y="100" class="item">2. LLM-judge on held-out golden set</text>
+  <text x="90" y="117" class="item">3. Regression suite (top failure modes from past incidents)</text>
+
+  <line x1="80" y1="128" x2="640" y2="128" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 3"/>
+  <text x="90" y="147" class="gate-txt">Gating: must pass all offline checks before deployment</text>
+
+
+  <line x1="360" y1="180" x2="360" y2="204" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#lc-arrow)"/>
+  <rect class="gate1" x="320" y="188" width="80" height="18" rx="9"
+    fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1" opacity="0.4"/>
+  <text x="360" y="201" text-anchor="middle" class="passes">passes</text>
+
+
+  <rect class="hl2" x="60" y="208" width="600" height="140" rx="10"
+    fill="var(--accent,#6366f1)" opacity="0" filter="url(#lc-glow)"/>
+  <rect x="60" y="208" width="600" height="140" rx="10"
+    fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="360" y="234" text-anchor="middle" class="stage-title">Shadow phase (24-48 h)</text>
+  <line x1="80" y1="242" x2="640" y2="242" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+  <text x="90" y="261" class="item">Judge scores on shadow outputs (0.5% sample)</text>
+  <text x="90" y="278" class="item">Latency / cost profiling at realistic load</text>
+  <text x="90" y="295" class="item">Infrastructure sanity check</text>
+  <line x1="80" y1="305" x2="640" y2="305" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 3"/>
+  <text x="90" y="324" class="gate-txt">Gating: judge score >= baseline, P99 latency within budget</text>
+
+
+  <line x1="360" y1="348" x2="360" y2="372" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#lc-arrow)"/>
+  <rect class="gate2" x="320" y="356" width="80" height="18" rx="9"
+    fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1" opacity="0.4"/>
+  <text x="360" y="369" text-anchor="middle" class="passes">passes</text>
+
+
+  <rect class="hl3" x="60" y="376" width="600" height="130" rx="10"
+    fill="var(--accent,#6366f1)" opacity="0" filter="url(#lc-glow)"/>
+  <rect x="60" y="376" width="600" height="130" rx="10"
+    fill="var(--accent,#e8eaff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="360" y="402" text-anchor="middle" class="stage-title" fill="var(--accent,#6366f1)">Canary rollout (1% -> 10% -> 50%)</text>
+  <line x1="80" y1="410" x2="640" y2="410" stroke="var(--accent,#6366f1)" stroke-width="0.8" opacity="0.3"/>
+  <text x="90" y="429" class="item">Guardrail metrics: auto-rollback on violation</text>
+  <text x="90" y="446" class="item">Interleaving: quick preference signal</text>
+  <line x1="80" y1="458" x2="640" y2="458" stroke="var(--accent,#6366f1)" stroke-width="0.8" opacity="0.3" stroke-dasharray="4 3"/>
+  <text x="90" y="477" class="gate-txt">Gating: no guardrail violations, positive or neutral preference</text>
+
+
+  <line x1="360" y1="506" x2="360" y2="530" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#lc-arrow)"/>
+  <rect class="gate3" x="320" y="514" width="80" height="18" rx="9"
+    fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1" opacity="0.4"/>
+  <text x="360" y="527" text-anchor="middle" class="passes">passes</text>
+
+
+  <rect class="hl4" x="60" y="534" width="600" height="150" rx="10"
+    fill="var(--accent,#6366f1)" opacity="0" filter="url(#lc-glow)"/>
+  <rect x="60" y="534" width="600" height="150" rx="10"
+    fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="360" y="560" text-anchor="middle" class="stage-title" fill="var(--accent,#6366f1)">Full A/B experiment (50/50 or 90/10)</text>
+  <line x1="80" y1="568" x2="640" y2="568" stroke="var(--accent,#6366f1)" stroke-width="0.8" opacity="0.3"/>
+  <text x="90" y="587" class="item">CUPED-adjusted primary metric</text>
+  <text x="90" y="604" class="item">Sequential test for anytime peeking</text>
+  <text x="90" y="621" class="item">Holdout cohort monitors long-run trajectory</text>
+  <line x1="80" y1="633" x2="640" y2="633" stroke="var(--accent,#6366f1)" stroke-width="0.8" opacity="0.3" stroke-dasharray="4 3"/>
+  <text x="90" y="652" class="gate-txt">Gating: primary metric +, guardrails ok, novelty checked</text>
+
+
+  <line x1="360" y1="684" x2="360" y2="708" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#lc-arrow)"/>
+  <rect class="gate4" x="320" y="692" width="80" height="18" rx="9"
+    fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1" opacity="0.4"/>
+  <text x="360" y="705" text-anchor="middle" class="passes">passes</text>
+
+
+  <rect class="hl5" x="60" y="712" width="600" height="120" rx="10"
+    fill="var(--accent,#6366f1)" opacity="0" filter="url(#lc-glow)"/>
+  <rect x="60" y="712" width="600" height="120" rx="10"
+    fill="var(--accent,#d6dbff)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="360" y="740" text-anchor="middle" class="stage-title" fill="var(--accent,#6366f1)">Full rollout + continuous live judge monitoring</text>
+  <line x1="80" y1="748" x2="640" y2="748" stroke="var(--accent,#6366f1)" stroke-width="0.8" opacity="0.4"/>
+  <text x="90" y="767" class="item">Live judge rolling window (24h) alerts on regression</text>
+  <text x="90" y="784" class="item">Holdout comparison validates long-run causal effect</text>
+
+
+
+  <circle class="feat-dot" cx="360" cy="60" r="8"
+    fill="var(--warn,#e0a106)" stroke="var(--surface,#fff)" stroke-width="2" opacity="0"/>
+</svg>
+<figcaption><b>Evaluation lifecycle as five sequential filters.</b> Every LLM feature must traverse offline benchmarks, shadow-mode profiling, graduated canary rollout, a full A/B experiment, and finally continuous live-judge monitoring. Each stage catches distinct failure modes; a gate between stages enforces the condition that must hold before traffic exposure can widen.</figcaption>
+</figure>
+
+<p>The lifecycle makes explicit that offline evaluation, shadow testing, canaries, A/B experiments, and live judging are not alternatives — they are sequential filters. Each stage catches different failure modes, and bypassing any stage (usually in the name of speed) shifts the risk onto downstream stages or onto users.</p>
+<hr />
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re a PM at a company running an A/B test for a new LLM feature. After 3 days, the treatment arm shows a statistically significant 8% lift in thumbs-up rate (p = 0.02). Your manager wants to ship immediately. What do you tell them?</p>
+<p><strong>A:</strong> Three days is almost certainly too short for three reasons. First, there is a novelty effect: users engage more positively with any change for the first week; the real signal may be much smaller or even negative once novelty decays. Second, three days may not capture weekly usage patterns — if thumbs-up rates differ between weekdays and weekends, a three-day window is biased by which days are included. Third, we need to check guardrail metrics: did latency, safety violation rate, or cost change? An 8% lift in thumbs-up is worthless if safety violations increased 50%. The recommendation is to run the experiment for at least two weeks, check guardrails, and segment the effect by user tenure in the experiment. Additionally, if we care about resolution rate (not just thumbs-up, which is a proxy), we may need even longer to observe enough resolved sessions for significance.</p>
+</div>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Offline metrics are proxies for online outcomes, not substitutes. Track the offline-online correlation across launches to know how much to trust your evaluation suite.</li>
+<li>Guardrail metrics (safety, latency, cost, regeneration rate) should be defined <em>before</em> the experiment and treated as hard blockers, not advisory.</li>
+<li>Randomize at the user-session level, not the request level, to satisfy SUTVA and avoid contamination within sessions.</li>
+<li>CUPED can halve required sample sizes by exploiting pre-experiment correlations; sequential testing (always-valid p-values) allows anytime peeking without inflating false positive rates.</li>
+<li>Interleaving surfaces preference signals with 10–30x fewer user-sessions than parallel A/B; use it for quick directional reads on completion quality.</li>
+<li>Shadow deployments let you profile latency, cost, and judge scores at production scale before any user sees the new model.</li>
+<li>Canary rollouts with automated guardrail-based rollback catch infrastructure and behavioral regressions at 1% traffic before they become incidents.</li>
+<li>Novelty effects, feedback-loop bias, and selection bias in opt-in feedback can all produce misleading online signals; hold-out cohorts and segmentation by user tenure are the primary defenses.</li>
+<li>Live LLM judges scoring sampled production traffic provide continuous quality monitoring even after full rollout, decoupling quality assurance from the experiment lifecycle.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Online evaluation of LLM systems is a mature engineering discipline: production teams routinely combine sequential testing (always-valid p-values), CUPED variance reduction, interleaving preference signals, and canary rollouts with automated guardrail-based rollback. Open-source experimentation platforms and LLM-observability frameworks have made these techniques accessible to teams of any size.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://dl.acm.org/doi/10.1145/2433396.2433413">Deng et al., <em>Improving the Sensitivity of Online Controlled Experiments by Utilizing Pre-Experiment Data</em> (WSDM 2013)</a> — the original CUPED paper; still the canonical reference for variance reduction in A/B tests.</li>
+<li><a href="https://dl.acm.org/doi/10.1145/2433396.2433429">Radlinski &amp; Craswell, <em>Optimized Interleaving for Online Retrieval Evaluation</em> (WSDM 2013)</a> — formalises interleaving as an optimisation problem; underpins the 10–100× efficiency gains over parallel A/B for preference signals.</li>
+<li><a href="https://academic.oup.com/jrsssb/article/57/1/289/7035855">Benjamini &amp; Hochberg, <em>Controlling the False Discovery Rate</em> (JRSS-B 1995)</a> — the FDR correction used when running many simultaneous experiments.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1512.04922">Johari et al., <em>Always Valid Inference: Bringing Sequential Analysis to A/B Testing</em> (2015/2019)</a> — derives always-valid p-values from mSPRT, enabling anytime peeking without type-I error inflation; deployed by Optimizely and Statsig.</li>
+<li><a href="https://arxiv.org/abs/1810.08240">Howard, Ramdas et al., <em>Time-uniform, nonparametric, nonasymptotic confidence sequences</em> (Annals of Statistics 2021)</a> — the theoretical backbone for Robbins confidence sequences used in sequential A/B testing.</li>
+<li><a href="https://dl.acm.org/doi/10.1145/3097983.3097992">Johari, Koomen, Pekelis &amp; Walsh, <em>Peeking at A/B Tests: Why It Matters, and What to Do About It</em> (KDD 2017)</a> — practical treatment of the peeking problem with mSPRT; the industry reference for always-valid experimentation.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/argoproj/argo-rollouts">argoproj/argo-rollouts</a> — Kubernetes progressive delivery controller; canary and blue-green rollouts with metric-based automatic promotion/rollback as shown in the chapter.</li>
+<li><a href="https://github.com/evidentlyai/evidently">evidentlyai/evidently</a> — open-source ML and LLM observability framework with 100+ metrics for continuous quality monitoring of production traffic.</li>
+<li><a href="https://github.com/growthbook/growthbook">growthbook/growthbook</a> — open-source A/B testing and feature-flag platform with built-in CUPED, Bayesian, and sequential statistics; used by several major LLM companies.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.cambridge.org/core/books/trustworthy-online-controlled-experiments/D97B26382EB0EB2DC2019A7A7B518F59">Kohavi, Tang &amp; Xu, <em>Trustworthy Online Controlled Experiments: A Practical Guide to A/B Testing</em> (Cambridge UP, 2020)</a> — the definitive practitioner book on running experiments at scale, written by leaders from Microsoft, Google, and LinkedIn.</li>
+<li><a href="https://www.statsig.com/blog/llm-optimization-online-experimentation">Statsig, <em>Beyond Prompts: A Data-Driven Approach to LLM Optimization</em> (2024)</a> — end-to-end walkthrough of applying online A/B experimentation to prompt, model, and parameter tuning for LLM products.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Deng, A., Xu, Y., Kohavi, R., Walker, T. — &ldquo;Improving the Sensitivity of Online Controlled Experiments by Utilizing Pre-Experiment Data&rdquo; (CUPED), <em>WSDM 2013</em>.</li>
+<li>Johari, R., Koomen, P., Pekelis, L., Walsh, D. — &ldquo;Peeking at A/B Tests: Why It Matters, and What to Do About It&rdquo; (mSPRT), <em>KDD 2017</em>.</li>
+<li>Howard, S. R., Ramdas, A., McAuliffe, J., Sekhon, J. — &ldquo;Time-uniform, nonparametric, nonasymptotic confidence sequences,&rdquo; <em>Annals of Statistics 2021</em>.</li>
+<li>Radlinski, F., Craswell, N. — &ldquo;Optimized Interleaving for Online Retrieval Evaluation,&rdquo; <em>WSDM 2013</em>.</li>
+<li>Kohavi, R., Tang, D., Xu, Y. — <em>Trustworthy Online Controlled Experiments: A Practical Guide to A/B Testing</em>, Cambridge University Press, 2020.</li>
+<li>Benjamini, Y., Hochberg, Y. — &ldquo;Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing,&rdquo; <em>Journal of the Royal Statistical Society B, 1995</em>.</li>
+<li>Gu, Y. et al. — &ldquo;A Survey of LLM Evaluation&rdquo; (covers live evaluation methodology), arXiv, 2024.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="06-security-prompt-injection.html"><span class="pn-label">← Previous</span><span class="pn-title">Security: Prompt Injection, Jailbreaks &amp; Defenses</span></a>
+<a class="next" href="08-reliability-engineering.html"><span class="pn-label">Next →</span><span class="pn-title">Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-offlineonline-gap-and-why-it-exists">The Offline–Online Gap and Why It Exists</a></li>
+<li class="toc-l2"><a href="#guardrail-metrics-what-to-measure-and-why">Guardrail Metrics: What to Measure and Why</a></li>
+<li class="toc-l3"><a href="#primary-metrics-goal-metrics">Primary metrics (goal metrics)</a></li>
+<li class="toc-l3"><a href="#guardrail-metrics-do-no-harm-metrics">Guardrail metrics (do-no-harm metrics)</a></li>
+<li class="toc-l3"><a href="#sensitivity-metrics-canary-signals">Sensitivity metrics (canary signals)</a></li>
+<li class="toc-l2"><a href="#designing-ab-experiments-for-llm-features">Designing A/B Experiments for LLM Features</a></li>
+<li class="toc-l3"><a href="#randomization-unit">Randomization unit</a></li>
+<li class="toc-l3"><a href="#control-and-treatment-specification">Control and treatment specification</a></li>
+<li class="toc-l3"><a href="#sample-size-and-statistical-power">Sample size and statistical power</a></li>
+<li class="toc-l3"><a href="#running-the-test">Running the test</a></li>
+<li class="toc-l2"><a href="#interleaving-a-faster-alternative-to-ab-for-preference-signals">Interleaving: A Faster Alternative to A/B for Preference Signals</a></li>
+<li class="toc-l3"><a href="#how-interleaving-works-for-llm-outputs">How interleaving works for LLM outputs</a></li>
+<li class="toc-l2"><a href="#cuped-and-sequential-testing-for-low-traffic-products">CUPED and Sequential Testing for Low-Traffic Products</a></li>
+<li class="toc-l3"><a href="#cuped-controlled-experiment-using-pre-experiment-data">CUPED: Controlled-experiment Using Pre-Experiment Data</a></li>
+<li class="toc-l3"><a href="#sequential-testing-always-valid-p-values">Sequential testing (always-valid p-values)</a></li>
+<li class="toc-l2"><a href="#shadow-deployments-and-canary-rollouts">Shadow Deployments and Canary Rollouts</a></li>
+<li class="toc-l3"><a href="#shadow-mode">Shadow mode</a></li>
+<li class="toc-l3"><a href="#canary-rollout">Canary rollout</a></li>
+<li class="toc-l2"><a href="#live-judges-scoring-sampled-production-traffic">Live Judges: Scoring Sampled Production Traffic</a></li>
+<li class="toc-l3"><a href="#the-pipeline">The pipeline</a></li>
+<li class="toc-l3"><a href="#stratified-sampling">Stratified sampling</a></li>
+<li class="toc-l3"><a href="#monitoring-quality-metrics-over-time">Monitoring quality metrics over time</a></li>
+<li class="toc-l2"><a href="#biases-that-corrupt-online-signals">Biases That Corrupt Online Signals</a></li>
+<li class="toc-l3"><a href="#novelty-effect">Novelty effect</a></li>
+<li class="toc-l3"><a href="#feedback-loop-bias">Feedback-loop bias</a></li>
+<li class="toc-l3"><a href="#position-and-presentation-bias">Position and presentation bias</a></li>
+<li class="toc-l3"><a href="#selection-bias-from-opt-in-feedback">Selection bias from opt-in feedback</a></li>
+<li class="toc-l3"><a href="#peeking-and-multiple-testing">Peeking and multiple testing</a></li>
+<li class="toc-l2"><a href="#connecting-the-pieces-the-evaluation-lifecycle">Connecting the Pieces: The Evaluation Lifecycle</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

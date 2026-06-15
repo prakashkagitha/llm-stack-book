@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory Systems for Agents — The LLM Stack</title>
+<meta name="description" content="Short-term (context) vs long-term (external) memory, memory stores (vector, file, graph), write/read/reflect, episodic vs semantic, memory compaction, the file-">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="active" href="05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VIII — Agents &amp; Harness Engineering</div>
+<h1 id="85-memory-systems-for-agents">8.5 Memory Systems for Agents<a class="headerlink" href="#85-memory-systems-for-agents" title="Permanent link">¶</a></h1>
+<p>Every human expert you have ever admired carries three things into a meeting: working notes they can reference in real time, a personal knowledge base built from years of experience, and an episodic record of what happened last time they worked with you. LLM agents need the same three things — and the context window alone cannot provide all of them. Without external memory, an agent reset to a blank context after 200,000 tokens is not a persistent assistant; it is a brilliant amnesiac.</p>
+<p>This chapter maps the full memory stack for LLM agents: from the in-context scratch pad to durable vector stores, file systems, and knowledge graphs. We cover how to architect write, read, and reflect operations; the distinction between episodic and semantic memory; memory compaction strategies that fight context-window limits; and the file-as-memory pattern that many production agents rely on. We close with a fully runnable from-scratch implementation you can drop into your own harness.</p>
+<p>Related chapters: this one focuses on the <em>memory layer</em> of agents. For the broader agentic loop, see <a href="../08-agents-harness/02-agentic-loop.html">The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a>. For how retrieved text gets injected back into the model, see <a href="../08-agents-harness/04-context-engineering.html">Context Engineering &amp; Management</a>. For the vector database machinery underneath, see <a href="../09-rag-retrieval/02-vector-databases-ann.html">Vector Databases &amp; Approximate Nearest Neighbor Search</a>.</p>
+<hr />
+<h2 id="851-the-two-memory-horizons">8.5.1 The Two Memory Horizons<a class="headerlink" href="#851-the-two-memory-horizons" title="Permanent link">¶</a></h2>
+<p>We can draw a clean axis: memory that lives <em>inside</em> the context window versus memory that lives <em>outside</em> it. Everything inside is available on every token prediction; everything outside must be explicitly fetched.</p>
+<figure class="viz" id="fig-agentmem-two-horizons">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 460" role="img" aria-label="Two memory horizons: the finite context window (top panel) holds system prompt, tool results, conversation history, injected memory snippets, and current plan; a write arrow carries compacted summaries down to unlimited external memory stores, while a read arrow carries retrieved snippets back up into the context window.">
+<defs>
+  <marker id="th-arr-down" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="th-arr-up" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+  <marker id="th-arr-down-tok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)" opacity="0.9"/>
+  </marker>
+  <marker id="th-arr-up-tok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)" opacity="0.9"/>
+  </marker>
+</defs>
+<style>
+  #fig-agentmem-two-horizons .panel-title {
+    font: 700 15px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-two-horizons .panel-sub {
+    font: 400 italic 12px var(--sans,sans-serif);
+    fill: var(--muted,#64748b);
+  }
+  #fig-agentmem-two-horizons .chip-label {
+    font: 500 11px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-two-horizons .arrow-label {
+    font: 600 12px var(--sans,sans-serif);
+  }
+  #fig-agentmem-two-horizons .annot {
+    font: 400 10px var(--sans,sans-serif);
+    fill: var(--muted,#64748b);
+  }
+  #fig-agentmem-two-horizons .tag {
+    font: 700 9px var(--sans,sans-serif);
+    letter-spacing: 0.06em;
+  }
+
+  /* Animated token that travels down the write path */
+  #fig-agentmem-two-horizons #th-token-down {
+    opacity: 0;
+    animation: th-travel-down 6s ease-in-out infinite;
+  }
+  #fig-agentmem-two-horizons #th-token-up {
+    opacity: 0;
+    animation: th-travel-up 6s ease-in-out infinite;
+  }
+  #fig-agentmem-two-horizons #th-highlight-store {
+    opacity: 0;
+    animation: th-flash-store 6s ease-in-out infinite;
+  }
+  #fig-agentmem-two-horizons #th-highlight-inject {
+    opacity: 0;
+    animation: th-flash-inject 6s ease-in-out infinite;
+  }
+
+  @keyframes th-travel-down {
+    0%   { opacity: 0; transform: translateY(0px); }
+    5%   { opacity: 1; transform: translateY(0px); }
+    35%  { opacity: 1; transform: translateY(130px); }
+    40%  { opacity: 0; transform: translateY(130px); }
+    100% { opacity: 0; transform: translateY(130px); }
+  }
+  @keyframes th-flash-store {
+    0%   { opacity: 0; }
+    38%  { opacity: 0; }
+    42%  { opacity: 0.55; }
+    52%  { opacity: 0.55; }
+    57%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes th-travel-up {
+    0%   { opacity: 0; transform: translateY(0px); }
+    50%  { opacity: 0; transform: translateY(0px); }
+    55%  { opacity: 1; transform: translateY(0px); }
+    85%  { opacity: 1; transform: translateY(-130px); }
+    90%  { opacity: 0; transform: translateY(-130px); }
+    100% { opacity: 0; transform: translateY(-130px); }
+  }
+  @keyframes th-flash-inject {
+    0%   { opacity: 0; }
+    83%  { opacity: 0; }
+    87%  { opacity: 0.55; }
+    96%  { opacity: 0.55; }
+    100% { opacity: 0; }
+  }
+</style>
+
+
+<g data-anim="1">
+
+  <rect x="30" y="18" width="700" height="148" rx="10"
+        fill="var(--accent,#4f46e5)" fill-opacity="0.10"
+        stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+
+
+  <text x="380" y="44" text-anchor="middle" class="panel-title">CONTEXT WINDOW</text>
+  <text x="532" y="44" text-anchor="start" class="panel-sub">(finite)</text>
+
+
+  <line x1="30" y1="52" x2="730" y2="52" stroke="var(--accent,#4f46e5)" stroke-width="0.8" stroke-opacity="0.35"/>
+
+
+
+  <rect x="46" y="64" width="118" height="28" rx="6"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="105" y="82" text-anchor="middle" class="chip-label">system prompt</text>
+
+
+  <rect x="176" y="64" width="100" height="28" rx="6"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="226" y="82" text-anchor="middle" class="chip-label">tool results</text>
+
+
+  <rect x="288" y="64" width="156" height="28" rx="6"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="366" y="82" text-anchor="middle" class="chip-label">conversation history</text>
+
+
+
+  <rect x="44" y="102" width="188" height="28" rx="6"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+
+  <rect id="th-highlight-inject" x="44" y="102" width="188" height="28" rx="6"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0"/>
+  <text x="138" y="120" text-anchor="middle" class="chip-label">injected memory snippets</text>
+
+
+  <rect x="242" y="102" width="196" height="28" rx="6"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="340" y="120" text-anchor="middle" class="chip-label">current plan / scratchpad</text>
+
+
+  <text x="718" y="80" text-anchor="end" class="annot">available on every</text>
+  <text x="718" y="93" text-anchor="end" class="annot">token prediction</text>
+</g>
+
+
+<g data-anim="2">
+
+  <line x1="220" y1="170" x2="220" y2="290"
+        stroke="var(--accent,#4f46e5)" stroke-width="2.4"
+        marker-end="url(#th-arr-down)"/>
+  <text x="214" y="233" text-anchor="end" class="arrow-label" fill="var(--accent,#4f46e5)">write</text>
+  <text x="214" y="249" text-anchor="end" class="annot">(compaction /</text>
+  <text x="214" y="263" text-anchor="end" class="annot">summarise)</text>
+
+
+  <line x1="540" y1="296" x2="540" y2="174"
+        stroke="var(--accent2,#3b82f6)" stroke-width="2.4"
+        marker-end="url(#th-arr-up)"/>
+  <text x="546" y="233" text-anchor="start" class="arrow-label" fill="var(--accent2,#3b82f6)">read</text>
+  <text x="546" y="249" text-anchor="start" class="annot">(retrieve /</text>
+  <text x="546" y="263" text-anchor="start" class="annot">inject)</text>
+
+
+  <g id="th-token-down" transform="translate(207,172)">
+    <rect x="0" y="0" width="54" height="20" rx="5"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.85"/>
+    <text x="27" y="14" text-anchor="middle"
+          font="500 9px var(--mono,monospace)" fill="#fff" style="font:500 9px var(--mono,monospace)">summary</text>
+  </g>
+
+
+  <g id="th-token-up" transform="translate(510,288)">
+    <rect x="0" y="0" width="54" height="20" rx="5"
+          fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+    <text x="27" y="14" text-anchor="middle"
+          font="500 9px var(--mono,monospace)" fill="#fff" style="font:500 9px var(--mono,monospace)">snippet</text>
+  </g>
+</g>
+
+
+<g data-anim="3">
+
+  <rect x="30" y="302" width="700" height="136" rx="10"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.8"/>
+
+
+  <text x="380" y="328" text-anchor="middle" class="panel-title">EXTERNAL MEMORY</text>
+  <text x="568" y="328" text-anchor="start" class="panel-sub">(unlimited)</text>
+
+
+  <line x1="30" y1="336" x2="730" y2="336" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+
+
+
+  <rect x="46" y="346" width="100" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <rect id="th-highlight-store" x="46" y="346" width="100" height="26" rx="6"
+        fill="var(--accent,#4f46e5)" fill-opacity="0"/>
+  <text x="96" y="364" text-anchor="middle" class="chip-label">vector store</text>
+
+  <rect x="158" y="346" width="106" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="211" y="364" text-anchor="middle" class="chip-label">key-value store</text>
+
+  <rect x="276" y="346" width="96" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="324" y="364" text-anchor="middle" class="chip-label">file system</text>
+
+  <rect x="384" y="346" width="56" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="412" y="364" text-anchor="middle" class="chip-label">SQL</text>
+
+
+  <rect x="46" y="384" width="116" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="104" y="402" text-anchor="middle" class="chip-label">property graph</text>
+
+  <rect x="174" y="384" width="100" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="224" y="402" text-anchor="middle" class="chip-label">episodic log</text>
+
+  <rect x="286" y="384" width="96" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="334" y="402" text-anchor="middle" class="chip-label">user profile</text>
+
+
+  <text x="718" y="358" text-anchor="end" class="annot">persists across sessions</text>
+  <text x="718" y="372" text-anchor="end" class="annot">shared across agents</text>
+  <text x="718" y="386" text-anchor="end" class="annot">not bounded by</text>
+  <text x="718" y="400" text-anchor="end" class="annot">context length</text>
+</g>
+</svg>
+<figcaption><b>The two memory horizons govern every agent memory design decision.</b> Information inside the context window is immediately available to every token prediction but capacity is finite; information in external stores is unlimited and durable but must be explicitly fetched. The <span style="color:var(--accent,#4f46e5)">write</span> operation compacts or summarises context into the store; the <span style="color:var(--accent2,#3b82f6)">read</span> operation retrieves relevant snippets back into the context window.</figcaption>
+</figure>
+
+<p><strong>Short-term (in-context) memory</strong> is the running conversation: system prompt, prior turns, tool call/result pairs, and any snippets the agent has fetched. Its capacity is bounded by the context length and its cost by the token budget. A 128 k-token model at on the order of $3 per million output tokens will spend roughly $0.04 per completely filled context — cheap per call, but it accumulates fast in long-running sessions. See <a href="../08-agents-harness/04-context-engineering.html">Context Engineering &amp; Management</a> for how to manage what goes into this budget.</p>
+<p><strong>Long-term (external) memory</strong> is any storage system the agent can query and update. It is not bounded by the context window, persists across sessions, and can be shared across many agent instances. Its cost is dominated by embedding latency (for vector retrieval) and I/O rather than per-token model pricing.</p>
+<p>The fundamental design challenge: you must decide <em>what</em> to commit to external memory, <em>when</em>, <em>in what form</em>, and <em>how to retrieve it later accurately</em>. Getting any one of these wrong produces either a useless store (nothing relevant comes back on retrieval) or a poisoned store (stale or contradictory facts pollute the context).</p>
+<hr />
+<h2 id="852-episodic-vs-semantic-memory">8.5.2 Episodic vs Semantic Memory<a class="headerlink" href="#852-episodic-vs-semantic-memory" title="Permanent link">¶</a></h2>
+<p>Psychology distinguishes two kinds of long-term memory in humans; the same distinction is useful for agents.</p>
+<p><strong>Episodic memory</strong> records <em>events with their temporal context</em> — &ldquo;on 2025-11-04, the user asked me to refactor the authentication module and I found the JWT library had a bug.&rdquo; Each entry is a timestamped, situated record of a specific interaction. Episodic stores are append-only by nature, grow monotonically, and are queried with temporal or situational cues (&ldquo;what did we decide last Tuesday?&rdquo;).</p>
+<p><strong>Semantic memory</strong> records <em>general knowledge and facts</em> — &ldquo;the production database uses PostgreSQL 15; the API gateway rate-limits at 1 000 req/s; the user prefers British English.&rdquo; Semantic entries are facts that should be true across sessions. They are updated (overwritten) when new information supersedes old, and queried with content-based cues (&ldquo;what do I know about the database?&rdquo;).</p>
+<p>In practice, most memory systems blend both types. A common architecture uses:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Type</th>
+<th>Store</th>
+<th>Update rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Session transcript</td>
+<td>Episodic</td>
+<td>Append-only log (file / DB)</td>
+<td>Never delete, only append</td>
+</tr>
+<tr>
+<td>Distilled facts</td>
+<td>Semantic</td>
+<td>Key-value or vector store</td>
+<td>Upsert on new evidence</td>
+</tr>
+<tr>
+<td>User preferences</td>
+<td>Semantic</td>
+<td>Structured record</td>
+<td>Overwrite on explicit correction</td>
+</tr>
+<tr>
+<td>Task outcomes</td>
+<td>Episodic + semantic</td>
+<td>Vector store</td>
+<td>Append event; update fact on success</td>
+</tr>
+</tbody>
+</table>
+<p>The key insight: do not collapse both into a single vector store with no separation. Mixing a &ldquo;2025-11-04: JWT bug&rdquo; episodic entry with a &ldquo;the JWT library version is 4.1.0&rdquo; semantic fact produces a store where date-specific noise pollutes general-knowledge queries.</p>
+<hr />
+<h2 id="853-memory-store-types">8.5.3 Memory Store Types<a class="headerlink" href="#853-memory-store-types" title="Permanent link">¶</a></h2>
+<h3 id="8531-vector-stores">8.5.3.1 Vector Stores<a class="headerlink" href="#8531-vector-stores" title="Permanent link">¶</a></h3>
+<p>A vector store encodes each memory as a dense embedding vector and supports approximate nearest-neighbour (ANN) retrieval. This is the most common substrate for agent memory because natural language is naturally suited to embedding-based similarity.</p>
+<p>Given a query <span class="arithmatex">\(q\)</span> and a corpus of stored memories <span class="arithmatex">\(\{m_1, m_2, \ldots, m_N\}\)</span>, the retrieval objective is:</p>
+<div class="arithmatex">\[
+\text{retrieve}(q) = \arg\!\max_{m_i \in \mathcal{M}} \cos\!\left(\mathbf{e}(q),\, \mathbf{e}(m_i)\right)
+\]</div>
+<p>where <span class="arithmatex">\(\mathbf{e}(\cdot)\)</span> is an embedding model and <span class="arithmatex">\(\cos\)</span> is cosine similarity. In practice we retrieve the top-<span class="arithmatex">\(k\)</span> memories and re-rank them. See <a href="../09-rag-retrieval/01-embeddings-representation.html">Embeddings &amp; Representation Learning</a> for embedding model choices and <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a> for re-ranking strategies.</p>
+<p><strong>Strengths:</strong> fuzzy matching, handles paraphrase, scales to millions of entries with HNSW or IVF indexes.</p>
+<p><strong>Weaknesses:</strong> exact-match failure (&ldquo;what is the API key for service X?&rdquo;), no structured filtering without metadata, embedding drift if you change embedding models.</p>
+<h3 id="8532-key-value-and-structured-stores">8.5.3.2 Key-Value and Structured Stores<a class="headerlink" href="#8532-key-value-and-structured-stores" title="Permanent link">¶</a></h3>
+<p>For structured facts — user preferences, configuration, task state — a simple key-value store or a relational database is superior. SQLite is an excellent single-agent choice: it is serverless, ACID-compliant, and has a negligible setup cost. A Redis or DynamoDB instance suits multi-agent setups.</p>
+<p>Pattern: store semantic facts with a canonical key (for example, <code>db.engine</code>, <code>user.language</code>) and retrieve deterministically. No embedding required; latency is sub-millisecond.</p>
+<h3 id="8533-property-graphs">8.5.3.3 Property Graphs<a class="headerlink" href="#8533-property-graphs" title="Permanent link">¶</a></h3>
+<p>A property graph (Neo4j, Kuzu, or even NetworkX for small deployments) represents knowledge as nodes and labelled edges: <code>(User)--[PREFERS]--&gt;(BritishEnglish)</code>, <code>(Service:AuthAPI)--[RATE_LIMITED_AT]--&gt;(1000 req/s)</code>. Graph stores shine when relationships between entities matter — &ldquo;which services depend on the authentication module?&rdquo; is a graph traversal, not a similarity search.</p>
+<p>Agents that build knowledge graphs over multiple sessions can answer multi-hop queries that purely flat memory architectures cannot, at the cost of a more complex write pipeline that must extract entities and relationships before storing.</p>
+<h3 id="8534-file-system-as-memory">8.5.3.4 File System as Memory<a class="headerlink" href="#8534-file-system-as-memory" title="Permanent link">¶</a></h3>
+<p>The simplest form of persistent memory is a structured file system directory. The agent writes markdown files, JSON blobs, or code artefacts; a lightweight indexer (even a plain <code>find</code> + <code>grep</code>) serves retrieval. This is the <em>file-as-memory</em> pattern: the working directory is the agent&rsquo;s notebook.</p>
+<figure class="viz" id="fig-agentmem-file-as-memory-tree">
+<svg viewBox="0 0 700 420" role="img" aria-label="File-as-memory directory tree: .agent/ contains memory/ (with episodes/, facts/, and reflections/ subdirectories holding timestamped logs, JSON and markdown files) and scratchpad.md at the root level. Episodic subtree is tinted indigo, semantic subtree blue, and scratchpad is labelled short-term.">
+<style>
+  #fig-agentmem-file-as-memory-tree .mono {
+    font: 500 12px var(--mono,monospace);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-file-as-memory-tree .mono-sm {
+    font: 400 11px var(--mono,monospace);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-file-as-memory-tree .callout {
+    font: 400 10.5px var(--sans,sans-serif);
+    fill: var(--muted,#64748b);
+  }
+  #fig-agentmem-file-as-memory-tree .tag {
+    font: 700 8.5px var(--sans,sans-serif);
+    letter-spacing: 0.07em;
+  }
+</style>
+
+
+<text x="20" y="22" style="font:700 13px var(--sans,sans-serif)" fill="var(--ink-soft)">File-as-Memory: .agent/ directory layout</text>
+
+
+
+
+<polyline points="56,56 56,88 82,88"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none"/>
+
+<polyline points="56,56 56,368 82,368"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none"/>
+
+
+<polyline points="108,104 108,136 134,136"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none"/>
+
+<polyline points="108,104 108,224 134,224"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none"/>
+
+<polyline points="108,104 108,312 134,312"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none"/>
+
+
+<polyline points="158,152 158,168 184,168"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none"/>
+
+<polyline points="158,152 158,200 184,200"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none"/>
+
+
+<polyline points="158,240 158,256 184,256"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none"/>
+
+<polyline points="158,240 158,288 184,288"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none"/>
+
+
+<polyline points="158,328 158,344 184,344"
+          stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none"/>
+
+
+<rect x="20" y="38" width="90" height="28" rx="5"
+      fill="var(--surface,#f5f5f7)" stroke="var(--accent,#4f46e5)" stroke-width="1.6"/>
+<rect x="20" y="33" width="30" height="8" rx="3"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.35"/>
+<text x="65" y="56" text-anchor="middle" class="mono">.agent/</text>
+
+
+<rect x="82" y="74" width="90" height="28" rx="5"
+      fill="var(--surface,#f5f5f7)" stroke="var(--accent,#4f46e5)" stroke-width="1.4"/>
+<rect x="82" y="69" width="26" height="8" rx="3"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.3"/>
+<text x="127" y="92" text-anchor="middle" class="mono">memory/</text>
+
+
+<rect x="134" y="122" width="104" height="28" rx="5"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.09"
+      stroke="var(--accent,#4f46e5)" stroke-width="1.4"/>
+<rect x="134" y="117" width="26" height="8" rx="3"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.4"/>
+<text x="186" y="140" text-anchor="middle" class="mono">episodes/</text>
+
+
+<rect x="246" y="124" width="62" height="16" rx="3"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.15"/>
+<text x="277" y="136" text-anchor="middle" class="tag" fill="var(--accent,#4f46e5)">EPISODIC</text>
+<text x="320" y="136" text-anchor="start" class="callout">append-only</text>
+
+
+<rect x="184" y="156" width="188" height="24" rx="4"
+      fill="var(--surface,#f5f5f7)" stroke="var(--accent,#4f46e5)" stroke-width="1" stroke-opacity="0.6"/>
+<text x="278" y="173" text-anchor="middle" class="mono-sm">2025-11-04T14:32:00.md</text>
+
+<line x1="372" y1="168" x2="410" y2="168"
+      stroke="var(--muted,#94a3b8)" stroke-width="0.9" stroke-dasharray="4 3"/>
+<text x="413" y="172" class="callout">episodic log entry</text>
+
+
+<rect x="184" y="188" width="188" height="24" rx="4"
+      fill="var(--surface,#f5f5f7)" stroke="var(--accent,#4f46e5)" stroke-width="1" stroke-opacity="0.6"/>
+<text x="278" y="205" text-anchor="middle" class="mono-sm">2025-11-05T09:10:00.md</text>
+
+
+<rect x="134" y="210" width="86" height="28" rx="5"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.09"
+      stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<rect x="134" y="205" width="22" height="8" rx="3"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.4"/>
+<text x="177" y="228" text-anchor="middle" class="mono">facts/</text>
+
+
+<rect x="228" y="212" width="62" height="16" rx="3"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.15"/>
+<text x="259" y="224" text-anchor="middle" class="tag" fill="var(--accent2,#3b82f6)">SEMANTIC</text>
+
+
+<rect x="184" y="244" width="152" height="24" rx="4"
+      fill="var(--surface,#f5f5f7)" stroke="var(--accent2,#3b82f6)" stroke-width="1" stroke-opacity="0.7"/>
+<text x="260" y="261" text-anchor="middle" class="mono-sm">user_profile.json</text>
+<line x1="336" y1="256" x2="374" y2="256"
+      stroke="var(--muted,#94a3b8)" stroke-width="0.9" stroke-dasharray="4 3"/>
+<text x="377" y="260" class="callout">structured semantic facts</text>
+
+
+<rect x="184" y="276" width="168" height="24" rx="4"
+      fill="var(--surface,#f5f5f7)" stroke="var(--accent2,#3b82f6)" stroke-width="1" stroke-opacity="0.7"/>
+<text x="268" y="293" text-anchor="middle" class="mono-sm">project_context.md</text>
+<line x1="352" y1="288" x2="374" y2="288"
+      stroke="var(--muted,#94a3b8)" stroke-width="0.9" stroke-dasharray="4 3"/>
+<text x="377" y="292" class="callout">freeform semantic facts</text>
+
+
+<rect x="134" y="298" width="116" height="28" rx="5"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.09"
+      stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<rect x="134" y="293" width="28" height="8" rx="3"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.35"/>
+<text x="192" y="316" text-anchor="middle" class="mono">reflections/</text>
+
+
+<rect x="184" y="332" width="186" height="24" rx="4"
+      fill="var(--surface,#f5f5f7)" stroke="var(--accent2,#3b82f6)" stroke-width="1" stroke-opacity="0.7"/>
+<text x="277" y="349" text-anchor="middle" class="mono-sm">weekly_2025-11-03.md</text>
+<line x1="370" y1="344" x2="394" y2="344"
+      stroke="var(--muted,#94a3b8)" stroke-width="0.9" stroke-dasharray="4 3"/>
+<text x="397" y="348" class="callout">distilled reflections</text>
+
+
+<rect x="82" y="356" width="134" height="24" rx="4"
+      fill="var(--surface,#f5f5f7)" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+<text x="149" y="373" text-anchor="middle" class="mono">scratchpad.md</text>
+
+
+<rect x="83" y="386" width="110" height="16" rx="3"
+      fill="var(--warn,#e0a106)" fill-opacity="0.15"/>
+<text x="138" y="398" text-anchor="middle" class="tag" fill="var(--warn,#e0a106)">SHORT-TERM / live</text>
+
+<line x1="216" y1="368" x2="280" y2="368"
+      stroke="var(--muted,#94a3b8)" stroke-width="0.9" stroke-dasharray="4 3"/>
+<text x="283" y="372" class="callout">current working notes</text>
+
+
+<rect x="430" y="38" width="260" height="100" rx="6"
+      fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="560" y="56" text-anchor="middle" style="font:600 11px var(--sans,sans-serif)" fill="var(--muted,#64748b)">Memory taxonomy</text>
+<rect x="438" y="66" width="10" height="10" rx="2" fill="var(--accent,#4f46e5)" fill-opacity="0.5"/>
+<text x="453" y="76" class="callout">Episodic: events, timestamped</text>
+<rect x="438" y="84" width="10" height="10" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.5"/>
+<text x="453" y="94" class="callout">Semantic: stable facts</text>
+<rect x="438" y="102" width="10" height="10" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.5"/>
+<text x="453" y="112" class="callout">Working / short-term</text>
+
+</svg>
+<figcaption><b>The file-as-memory pattern turns a structured directory into a persistent agent notebook.</b> The <code>episodes/</code> subtree holds append-only timestamped logs (episodic memory); <code>facts/</code> and <code>reflections/</code> hold stable, updatable knowledge (semantic memory); <code>scratchpad.md</code> is the live working buffer. No external database is required — a plain filesystem is auditable, version-controllable, and retrievable with a vector index over file contents.</figcaption>
+</figure>
+
+<p>Several production agents (including early versions of Devin and Claude Code&rsquo;s memory feature) use precisely this pattern. It requires no external database, is human-readable and auditable, and integrates with version control. Retrieval is handled either by fuzzy search over the file tree or by maintaining a separate vector index of file contents.</p>
+<hr />
+<h2 id="854-the-write-read-reflect-triad">8.5.4 The Write / Read / Reflect Triad<a class="headerlink" href="#854-the-write-read-reflect-triad" title="Permanent link">¶</a></h2>
+<p>Every memory operation falls into one of three categories.</p>
+<h3 id="8541-write">8.5.4.1 Write<a class="headerlink" href="#8541-write" title="Permanent link">¶</a></h3>
+<p>A memory <em>write</em> commits information from the current context to external storage. Writes happen:</p>
+<ul>
+<li><strong>After a significant discovery</strong> — the agent learned something new (a fact, a bug, a user preference).</li>
+<li><strong>At session boundaries</strong> — before the context is cleared, the agent saves a summary.</li>
+<li><strong>On task completion</strong> — the outcome of a sub-task is logged for future reference.</li>
+<li><strong>On explicit instruction</strong> — the user says &ldquo;remember this.&rdquo;</li>
+</ul>
+<p>The write step must decide <em>what</em> to save, <em>how to format it</em>, and <em>what metadata to attach</em> (timestamp, session ID, confidence, topic tags). Writes that are too verbose pollute the store; writes that are too sparse lose signal.</p>
+<h3 id="8542-read">8.5.4.2 Read<a class="headerlink" href="#8542-read" title="Permanent link">¶</a></h3>
+<p>A memory <em>read</em> queries external storage and injects the result into the current context. Reads happen:</p>
+<ul>
+<li><strong>At session start</strong> — bootstrap the context with relevant prior knowledge.</li>
+<li><strong>Before a tool call</strong> — check whether the agent already knows the answer.</li>
+<li><strong>When the agent signals uncertainty</strong> — &ldquo;I don&rsquo;t remember whether&hellip;&rdquo; triggers a retrieval.</li>
+<li><strong>Proactively, by the harness</strong> — the orchestrating code detects topic shifts and retrieves matching memories.</li>
+</ul>
+<p>The retrieved snippets must be ranked and filtered: if you inject the top-20 vector matches unfiltered, you fill the context with noise. A conservative top-<span class="arithmatex">\(k\)</span> of 3–5 with a relevance threshold works well for most agents.</p>
+<h3 id="8543-reflect">8.5.4.3 Reflect<a class="headerlink" href="#8543-reflect" title="Permanent link">¶</a></h3>
+<p>Reflection is the highest-value memory operation and the most commonly skipped. A <em>reflect</em> operation asks the agent to read a batch of recent episodes and distil new semantic facts or updated beliefs:</p>
+<div class="highlight"><pre><span></span><code>&quot;Given the last 10 interactions with this user, what are the three most important
+ things to know about their preferences, working style, and current project state?&quot;
+</code></pre></div>
+<p>Reflection produces compact, high-signal semantic memories from noisy episodic records. Generative Agents (Park et al., 2023) showed that reflection loops dramatically improve the coherence of long-running simulated agents. The reflect step should run: (a) periodically (every N episodes), (b) before a session ends, or &copy; when a new episode contradicts an existing fact.</p>
+<hr />
+<h2 id="855-memory-compaction">8.5.5 Memory Compaction<a class="headerlink" href="#855-memory-compaction" title="Permanent link">¶</a></h2>
+<p>Even with external memory, the in-context portion — the conversation so far — grows unboundedly in a long session. <em>Memory compaction</em> is the process of replacing a long conversation prefix with a shorter, lossier representation while keeping the most important information.</p>
+<h3 id="8551-summarisation-based-compaction">8.5.5.1 Summarisation-Based Compaction<a class="headerlink" href="#8551-summarisation-based-compaction" title="Permanent link">¶</a></h3>
+<p>The simplest approach: when the conversation exceeds a threshold (say, 80% of the context window), ask the model to summarise the prefix into a bullet list, then discard the prefix and replace it with the summary.</p>
+<div class="arithmatex">\[
+C_{\text{new}} = [\text{system prompt},\; \text{summary}(C_{1:t-k}),\; C_{t-k+1:t}]
+\]</div>
+<p>This preserves recent turns verbatim and compresses older turns. The rolling-summary pattern applies this recursively: the next time you compact, you summarise the previous summary plus the new window.</p>
+<p><strong>Loss is guaranteed.</strong> You must accept that some information will not survive compaction. This is the right trade-off for most tasks, but you should write high-value facts to the external store <em>before</em> compacting, not after.</p>
+<h3 id="8552-hierarchical-compaction">8.5.5.2 Hierarchical Compaction<a class="headerlink" href="#8552-hierarchical-compaction" title="Permanent link">¶</a></h3>
+<p>For very long sessions, a two-level hierarchy works well:</p>
+<ol>
+<li><strong>Micro-summaries:</strong> every 20 turns, summarise into a 200-word snippet and push to the episodic log.</li>
+<li><strong>Macro-summaries:</strong> every 10 micro-summaries, distil into a semantic fact update via a reflect call.</li>
+</ol>
+<p>The context then always contains: system prompt + macro-summary + recent micro-summary + last N turns. This is bounded in size regardless of session length.</p>
+<h3 id="8553-structured-compaction">8.5.5.3 Structured Compaction<a class="headerlink" href="#8553-structured-compaction" title="Permanent link">¶</a></h3>
+<p>Rather than free-text summaries, some agents compact into structured formats:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;task_state&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;In progress — refactoring auth module&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;decisions_made&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;Use JWT HS256&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;Add rate limiting at 500 req/s&quot;</span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;open_questions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;How to handle token refresh for mobile clients?&quot;</span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;user_preferences&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;language&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;TypeScript&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;style_guide&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Google&quot;</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;next_steps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;Implement refresh endpoint&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;Write integration tests&quot;</span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>This structured compaction is more retrievable and less prone to hallucination than free-text summaries because the agent is filling in a schema rather than generating freely.</p>
+<hr />
+<h2 id="856-session-persistence-how-agents-survive-restarts">8.5.6 Session Persistence: How Agents Survive Restarts<a class="headerlink" href="#856-session-persistence-how-agents-survive-restarts" title="Permanent link">¶</a></h2>
+<p>A naive agent starts each session with a blank context. A persistent agent carries its prior self into every new session. The architecture has four moving parts:</p>
+<ol>
+<li>
+<p><strong>Session ID:</strong> a stable identifier for this user/project/thread. Every memory write tags itself with the session ID; every session-start retrieval filters by it.</p>
+</li>
+<li>
+<p><strong>Bootstrap read:</strong> the first thing the harness does is query external memory for entries relevant to this session, and prepend them to the system prompt. This gives the agent an immediate sense of continuity.</p>
+</li>
+<li>
+<p><strong>Graceful shutdown write:</strong> when a session ends (timeout, user exit, token limit), the harness triggers a compaction pass that writes a session summary to the episodic store and updates any semantic facts that changed.</p>
+</li>
+<li>
+<p><strong>Cross-session reflection:</strong> periodically (for example, at the start of a new week), a background job runs a reflection pass over all episodes, updates semantic facts, and prunes redundant episodic entries. This is the equivalent of sleeping — the agent consolidates its knowledge.</p>
+</li>
+</ol>
+<figure class="viz" id="fig-agentmem-session-persistence-flow">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 490" role="img" aria-label="Session persistence flow: Session N-1 runs an agent then writes a shutdown summary down to the External Memory rail; a continuity hand-off arrow leads to Session N which does a bootstrap read (pulling state up from External Memory), runs the agent, writes a shutdown summary, and conditionally reflects if a threshold is reached.">
+<defs>
+  <marker id="sp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft)" opacity="0.7"/>
+  </marker>
+  <marker id="sp-arr-write" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="sp-arr-read" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+  <marker id="sp-arr-handoff" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-agentmem-session-persistence-flow .step-box {
+    font: 600 12px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-session-persistence-flow .step-sub {
+    font: 400 10px var(--mono,monospace);
+    fill: var(--muted,#64748b);
+  }
+  #fig-agentmem-session-persistence-flow .lbl {
+    font: 500 11px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-session-persistence-flow .annot {
+    font: 400 10px var(--sans,sans-serif);
+    fill: var(--muted,#64748b);
+  }
+  #fig-agentmem-session-persistence-flow .lane-title {
+    font: 700 14px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-session-persistence-flow .rail-title {
+    font: 700 13px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-session-persistence-flow .rail-sub {
+    font: 400 10px var(--sans,sans-serif);
+    fill: var(--muted,#64748b);
+  }
+
+  /* ─── Animation tokens ─── */
+  #fig-agentmem-session-persistence-flow #sp-tok-write-n1 {
+    opacity: 0;
+    animation: sp-drop-n1 8s ease-in-out infinite;
+  }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n1-run { animation: sp-flash-step 8s ease-in-out infinite; animation-delay: 0s; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n1-shut { animation: sp-flash-step 8s ease-in-out infinite; animation-delay: -6.5s; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-handoff { animation: sp-flash-handoff 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-tok-read-n { opacity: 0; animation: sp-rise-n 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n-boot { animation: sp-flash-step-n-boot 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n-run { animation: sp-flash-step-n-run 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n-shut { animation: sp-flash-step-n-shut 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n-reflect { animation: sp-flash-step-n-ref 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-tok-write-n {
+    opacity: 0;
+    animation: sp-drop-n 8s ease-in-out infinite;
+  }
+
+  @keyframes sp-drop-n1 {
+    0%   { opacity:0; transform:translateY(0); }
+    8%   { opacity:1; transform:translateY(0); }
+    22%  { opacity:1; transform:translateY(96px); }
+    27%  { opacity:0; transform:translateY(96px); }
+    100% { opacity:0; transform:translateY(96px); }
+  }
+  @keyframes sp-flash-step {
+    0%   { opacity:0; }
+    2%   { opacity:0.45; }
+    10%  { opacity:0.45; }
+    14%  { opacity:0; }
+    100% { opacity:0; }
+  }
+  @keyframes sp-flash-handoff {
+    0%   { opacity:0; }
+    26%  { opacity:0; }
+    30%  { opacity:1; }
+    38%  { opacity:1; }
+    43%  { opacity:0; }
+    100% { opacity:0; }
+  }
+  @keyframes sp-rise-n {
+    0%   { opacity:0; transform:translateY(0); }
+    42%  { opacity:0; transform:translateY(0); }
+    47%  { opacity:1; transform:translateY(0); }
+    60%  { opacity:1; transform:translateY(-96px); }
+    65%  { opacity:0; transform:translateY(-96px); }
+    100% { opacity:0; transform:translateY(-96px); }
+  }
+  @keyframes sp-flash-step-n-boot {
+    0%   { opacity:0; }
+    40%  { opacity:0; }
+    44%  { opacity:0.45; }
+    55%  { opacity:0.45; }
+    59%  { opacity:0; }
+    100% { opacity:0; }
+  }
+  @keyframes sp-flash-step-n-run {
+    0%   { opacity:0; }
+    55%  { opacity:0; }
+    59%  { opacity:0.45; }
+    66%  { opacity:0.45; }
+    70%  { opacity:0; }
+    100% { opacity:0; }
+  }
+  @keyframes sp-flash-step-n-shut {
+    0%   { opacity:0; }
+    67%  { opacity:0; }
+    71%  { opacity:0.45; }
+    78%  { opacity:0.45; }
+    82%  { opacity:0; }
+    100% { opacity:0; }
+  }
+  @keyframes sp-drop-n {
+    0%   { opacity:0; transform:translateY(0); }
+    70%  { opacity:0; transform:translateY(0); }
+    74%  { opacity:1; transform:translateY(0); }
+    84%  { opacity:1; transform:translateY(80px); }
+    89%  { opacity:0; transform:translateY(80px); }
+    100% { opacity:0; transform:translateY(80px); }
+  }
+  @keyframes sp-flash-step-n-ref {
+    0%   { opacity:0; }
+    82%  { opacity:0; }
+    86%  { opacity:0.45; }
+    95%  { opacity:0.45; }
+    99%  { opacity:0; }
+    100% { opacity:0; }
+  }
+</style>
+
+
+<text x="170" y="28" text-anchor="middle" class="lane-title">Session N-1</text>
+<text x="530" y="28" text-anchor="middle" class="lane-title">Session N</text>
+
+
+<rect x="60" y="36" width="218" height="280" rx="8"
+      fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2" stroke-dasharray="0"/>
+
+
+<rect x="440" y="36" width="236" height="352" rx="8"
+      fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+
+
+
+
+<rect x="88" y="60" width="164" height="44" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+
+<rect id="sp-highlight-n1-run" x="88" y="60" width="164" height="44" rx="6"
+      fill="var(--accent,#4f46e5)" fill-opacity="0"/>
+<text x="170" y="85" text-anchor="middle" class="step-box">[run agent]</text>
+
+
+<line x1="170" y1="104" x2="170" y2="152"
+      stroke="var(--ink-soft)" stroke-width="1.6" stroke-opacity="0.5"
+      marker-end="url(#sp-arr)"/>
+
+
+<rect x="88" y="154" width="164" height="54" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<rect id="sp-highlight-n1-shut" x="88" y="154" width="164" height="54" rx="6"
+      fill="var(--accent,#4f46e5)" fill-opacity="0"/>
+<text x="170" y="177" text-anchor="middle" class="step-box">[shutdown write]</text>
+<text x="170" y="198" text-anchor="middle" class="step-sub">[summary -&gt; store]</text>
+
+
+<line x1="170" y1="210" x2="170" y2="390"
+      stroke="var(--accent,#4f46e5)" stroke-width="1.8" stroke-dasharray="5 3"
+      marker-end="url(#sp-arr-write)"/>
+<text x="156" y="302" text-anchor="end" class="annot" fill="var(--accent,#4f46e5)">write</text>
+<text x="156" y="314" text-anchor="end" class="annot" fill="var(--accent,#4f46e5)">summary</text>
+
+
+
+<g id="sp-tok-write-n1" transform="translate(148,208)">
+  <rect x="0" y="0" width="50" height="18" rx="4"
+        fill="var(--accent,#4f46e5)" fill-opacity="0.85"/>
+  <text x="25" y="13" text-anchor="middle"
+        style="font:500 8.5px var(--mono,monospace);fill:#fff">summary</text>
+</g>
+
+
+<line x1="260" y1="82" x2="440" y2="82"
+      stroke="var(--good,#2f9e6e)" stroke-width="2.2"
+      marker-end="url(#sp-arr-handoff)"/>
+
+<rect id="sp-highlight-handoff" x="260" y="70" width="180" height="26" rx="4"
+      fill="var(--good,#2f9e6e)" fill-opacity="0"/>
+<text x="350" y="68" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">continuity</text>
+
+
+
+
+<rect x="466" y="60" width="184" height="44" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<rect id="sp-highlight-n-boot" x="466" y="60" width="184" height="44" rx="6"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0"/>
+<text x="558" y="83" text-anchor="middle" class="step-box">[bootstrap read]</text>
+
+
+<text x="656" y="108" text-anchor="end" class="annot" fill="var(--accent2,#3b82f6)">inject prior context</text>
+
+
+<line x1="558" y1="104" x2="558" y2="142"
+      stroke="var(--ink-soft)" stroke-width="1.6" stroke-opacity="0.5"
+      marker-end="url(#sp-arr)"/>
+
+
+<rect x="466" y="144" width="184" height="44" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect id="sp-highlight-n-run" x="466" y="144" width="184" height="44" rx="6"
+      fill="var(--accent,#4f46e5)" fill-opacity="0"/>
+<text x="558" y="170" text-anchor="middle" class="step-box">[run agent]</text>
+
+
+<line x1="558" y1="188" x2="558" y2="226"
+      stroke="var(--ink-soft)" stroke-width="1.6" stroke-opacity="0.5"
+      marker-end="url(#sp-arr)"/>
+
+
+<rect x="466" y="228" width="184" height="44" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<rect id="sp-highlight-n-shut" x="466" y="228" width="184" height="44" rx="6"
+      fill="var(--accent,#4f46e5)" fill-opacity="0"/>
+<text x="558" y="251" text-anchor="middle" class="step-box">[shutdown write]</text>
+<text x="558" y="264" text-anchor="middle" class="step-sub">[summary -&gt; store]</text>
+
+
+<line x1="558" y1="272" x2="558" y2="314"
+      stroke="var(--ink-soft)" stroke-width="1.6" stroke-opacity="0.5"
+      marker-end="url(#sp-arr)"/>
+
+
+<rect x="466" y="316" width="184" height="52" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--muted,#64748b)" stroke-width="1.5" stroke-dasharray="6 4"/>
+<rect id="sp-highlight-n-reflect" x="466" y="316" width="184" height="52" rx="6"
+      fill="var(--warn,#e0a106)" fill-opacity="0"/>
+<text x="558" y="339" text-anchor="middle" class="step-box">[reflect if threshold]</text>
+<text x="558" y="358" text-anchor="middle" class="step-sub">periodic / conditional</text>
+
+
+<line x1="554" y1="272" x2="554" y2="390"
+      stroke="var(--accent,#4f46e5)" stroke-width="1.8" stroke-dasharray="5 3"
+      marker-end="url(#sp-arr-write)"/>
+
+
+<line x1="576" y1="388" x2="576" y2="108"
+      stroke="var(--accent2,#3b82f6)" stroke-width="1.8" stroke-dasharray="5 3"
+      marker-end="url(#sp-arr-read)"/>
+<text x="710" y="200" text-anchor="end" class="annot" fill="var(--accent2,#3b82f6)">session summary</text>
+<text x="710" y="213" text-anchor="end" class="annot" fill="var(--accent2,#3b82f6)">+ top-k memories</text>
+
+
+<g id="sp-tok-read-n" transform="translate(551,382)">
+  <rect x="0" y="0" width="50" height="18" rx="4"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+  <text x="25" y="13" text-anchor="middle"
+        style="font:500 8.5px var(--mono,monospace);fill:#fff">context</text>
+</g>
+
+
+<g id="sp-tok-write-n" transform="translate(529,270)">
+  <rect x="0" y="0" width="50" height="18" rx="4"
+        fill="var(--accent,#4f46e5)" fill-opacity="0.85"/>
+  <text x="25" y="13" text-anchor="middle"
+        style="font:500 8.5px var(--mono,monospace);fill:#fff">summary</text>
+</g>
+
+
+<rect x="30" y="396" width="660" height="68" rx="8"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.10"
+      stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+<text x="360" y="421" text-anchor="middle" class="rail-title">EXTERNAL MEMORY</text>
+<text x="360" y="438" text-anchor="middle" class="rail-sub">episodic log  ·  semantic facts  ·  open task state</text>
+<text x="30" y="456" text-anchor="start" class="rail-sub" fill="var(--muted,#64748b)">  persists across sessions  ·  shared across agents</text>
+
+
+<text x="68" y="420" text-anchor="middle" class="annot" fill="var(--accent,#4f46e5)">write</text>
+
+
+<text x="614" y="420" text-anchor="middle" class="annot" fill="var(--accent2,#3b82f6)">read</text>
+</svg>
+<figcaption><b>Session persistence bridges restarts through external memory, not in-memory state.</b> When Session N-1 ends, a shutdown write persists a summary and any updated facts to the external memory rail; when Session N starts, a bootstrap read pulls that state back up into context so the agent continues seamlessly. The conditional <em>reflect</em> step (dashed border) periodically distils accumulated episodes into compact semantic facts, consolidating knowledge across many sessions.</figcaption>
+</figure>
+
+<p>The inter-session state that must be persisted is at minimum: the session summary, any newly learned facts, and any open task state (what was in progress when the session ended).</p>
+<hr />
+<h2 id="857-a-from-scratch-memory-store-implementation">8.5.7 A From-Scratch Memory Store Implementation<a class="headerlink" href="#857-a-from-scratch-memory-store-implementation" title="Permanent link">¶</a></h2>
+<p>The following implementation is a self-contained, runnable memory system using only Python standard library plus <code>numpy</code> and <code>sentence-transformers</code>. It implements all three memory types: episodic log (append-only), semantic facts (key-value), and a vector store for similarity search. It is designed to be readable and hackable rather than production-hardened.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">agent_memory.py  —  A complete from-scratch memory store for LLM agents.</span>
+
+<span class="sd">Requires:</span>
+<span class="sd">    pip install numpy sentence-transformers</span>
+
+<span class="sd">The design:</span>
+<span class="sd">  - EpisodicLog:   append-only JSONL file, timestamped entries.</span>
+<span class="sd">  - SemanticStore: JSON key-value for structured facts.</span>
+<span class="sd">  - VectorMemory:  numpy-backed cosine similarity search over embedded entries.</span>
+<span class="sd">  - AgentMemory:   unified facade that orchestrates all three.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">asdict</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="c1"># We use sentence-transformers for embeddings; swap in any provider.</span>
+<span class="c1"># lazy-import to avoid paying the cost when not using vector retrieval.</span>
+<span class="n">_embedder</span> <span class="o">=</span> <span class="kc">None</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_get_embedder</span><span class="p">():</span>
+    <span class="k">global</span> <span class="n">_embedder</span>
+    <span class="k">if</span> <span class="n">_embedder</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">sentence_transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">SentenceTransformer</span>
+        <span class="c1"># &#39;all-MiniLM-L6-v2&#39; produces 384-dim vectors; small but fast.</span>
+        <span class="n">_embedder</span> <span class="o">=</span> <span class="n">SentenceTransformer</span><span class="p">(</span><span class="s2">&quot;all-MiniLM-L6-v2&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_embedder</span>
+
+
+<span class="c1"># ─────────────────────────── Data structures ───────────────────────────</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">MemoryEntry</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A single memory item stored in the vector index.&quot;&quot;&quot;</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">str</span>                    <span class="c1"># UUID or hash</span>
+    <span class="n">text</span><span class="p">:</span> <span class="nb">str</span>                  <span class="c1"># The content to embed and return</span>
+    <span class="n">metadata</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>   <span class="c1"># timestamp, session_id, topic, type, etc.</span>
+    <span class="c1"># The vector is stored separately in the numpy array; not serialised here.</span>
+
+
+<span class="c1"># ─────────────────────────── Episodic log ──────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">EpisodicLog</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Append-only JSONL log of interaction episodes.</span>
+<span class="sd">    Each entry has: timestamp, session_id, role, content, metadata.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="c1"># Create file if it does not exist.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">touch</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">append</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">role</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+               <span class="n">metadata</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Write one episode entry. Thread-safe via append mode + file lock.&quot;&quot;&quot;</span>
+        <span class="n">entry</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">(),</span>
+            <span class="s2">&quot;iso_time&quot;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">T%H:%M:%SZ&quot;</span><span class="p">,</span> <span class="n">time</span><span class="o">.</span><span class="n">gmtime</span><span class="p">()),</span>
+            <span class="s2">&quot;session_id&quot;</span><span class="p">:</span> <span class="n">session_id</span><span class="p">,</span>
+            <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="n">role</span><span class="p">,</span>           <span class="c1"># &#39;user&#39;, &#39;assistant&#39;, &#39;tool&#39;, &#39;system&#39;</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">content</span><span class="p">,</span>
+            <span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="n">metadata</span> <span class="ow">or</span> <span class="p">{},</span>
+        <span class="p">}</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">tail</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">20</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Return the last n entries, optionally filtered by session_id.</span>
+<span class="sd">        We read the whole file; for production, use a proper DB.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">entries</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">read_text</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="p">]</span>
+        <span class="k">if</span> <span class="n">session_id</span><span class="p">:</span>
+            <span class="n">entries</span> <span class="o">=</span> <span class="p">[</span><span class="n">e</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">entries</span> <span class="k">if</span> <span class="n">e</span><span class="p">[</span><span class="s2">&quot;session_id&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="n">session_id</span><span class="p">]</span>
+        <span class="k">return</span> <span class="n">entries</span><span class="p">[</span><span class="o">-</span><span class="n">n</span><span class="p">:]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return all entries for a given session, in order.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">[</span>
+            <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">read_text</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="ow">and</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;session_id&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="n">session_id</span>
+        <span class="p">]</span>
+
+
+<span class="c1"># ─────────────────────────── Semantic store ────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SemanticStore</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A key-value store for structured semantic facts.</span>
+<span class="sd">    Backed by a single JSON file. Keys are canonical strings like</span>
+<span class="sd">    &#39;user.language&#39; or &#39;project.database.engine&#39;.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_data</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">read_text</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_data</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">set</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">source</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;agent&quot;</span><span class="p">,</span>
+            <span class="n">confidence</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Upsert a semantic fact. Records the update time, source, and</span>
+<span class="sd">        confidence score alongside the value.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_data</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;value&quot;</span><span class="p">:</span> <span class="n">value</span><span class="p">,</span>
+            <span class="s2">&quot;updated_at&quot;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">T%H:%M:%SZ&quot;</span><span class="p">,</span> <span class="n">time</span><span class="o">.</span><span class="n">gmtime</span><span class="p">()),</span>
+            <span class="s2">&quot;source&quot;</span><span class="p">:</span> <span class="n">source</span><span class="p">,</span>
+            <span class="s2">&quot;confidence&quot;</span><span class="p">:</span> <span class="n">confidence</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_flush</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the value for key, or default if not found.&quot;&quot;&quot;</span>
+        <span class="n">entry</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">entry</span><span class="p">[</span><span class="s2">&quot;value&quot;</span><span class="p">]</span> <span class="k">if</span> <span class="n">entry</span> <span class="k">else</span> <span class="n">default</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_all</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return all facts as {key: value} (stripping metadata).&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="p">[</span><span class="s2">&quot;value&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_data</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">delete</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Remove a fact.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_data</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_flush</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_flush</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_data</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">as_context_string</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Format all facts as a human-readable block suitable for injection</span>
+<span class="sd">        into a system prompt.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_data</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">&quot;(no semantic facts stored)&quot;</span>
+        <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;## Known facts&quot;</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_data</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">conf_note</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot; (confidence: </span><span class="si">{</span><span class="n">v</span><span class="p">[</span><span class="s1">&#39;confidence&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.0%</span><span class="si">}</span><span class="s2">)&quot;</span> \
+                        <span class="k">if</span> <span class="n">v</span><span class="p">[</span><span class="s2">&quot;confidence&quot;</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mf">0.9</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+            <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- **</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">**: </span><span class="si">{</span><span class="n">v</span><span class="p">[</span><span class="s1">&#39;value&#39;</span><span class="p">]</span><span class="si">}{</span><span class="n">conf_note</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
+
+
+<span class="c1"># ─────────────────────────── Vector memory ─────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">VectorMemory</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Cosine-similarity vector store backed by numpy arrays.</span>
+<span class="sd">    For production, replace the numpy backend with FAISS, Qdrant, or Chroma.</span>
+
+<span class="sd">    Storage format (one directory):</span>
+<span class="sd">      vectors.npy    — float32 array, shape [N, D]</span>
+<span class="sd">      entries.jsonl  — one JSON entry per line (id, text, metadata)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">directory</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">384</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">directory</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dim</span> <span class="o">=</span> <span class="n">dim</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_vectors</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># shape [N, D]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_entries</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">MemoryEntry</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_load</span><span class="p">()</span>
+
+    <span class="c1"># ── Persistence ──────────────────────────────────────────────────</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_load</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">vec_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dir</span> <span class="o">/</span> <span class="s2">&quot;vectors.npy&quot;</span>
+        <span class="n">ent_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dir</span> <span class="o">/</span> <span class="s2">&quot;entries.jsonl&quot;</span>
+        <span class="k">if</span> <span class="n">vec_path</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> <span class="ow">and</span> <span class="n">ent_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_vectors</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">vec_path</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_entries</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="n">MemoryEntry</span><span class="p">(</span><span class="o">**</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">))</span>
+                <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">ent_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_vectors</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">dim</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_entries</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_save</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dir</span> <span class="o">/</span> <span class="s2">&quot;vectors.npy&quot;</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_vectors</span><span class="p">)</span>
+        <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">asdict</span><span class="p">(</span><span class="n">e</span><span class="p">))</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_entries</span><span class="p">]</span>
+        <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dir</span> <span class="o">/</span> <span class="s2">&quot;entries.jsonl&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">),</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+
+    <span class="c1"># ── Write ─────────────────────────────────────────────────────────</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">metadata</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">entry_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Embed text and add it to the store. Returns the entry ID.</span>
+<span class="sd">        If an entry with the same ID already exists, it is replaced.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+        <span class="n">metadata</span> <span class="o">=</span> <span class="n">metadata</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="n">entry_id</span> <span class="o">=</span> <span class="n">entry_id</span> <span class="ow">or</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span>
+            <span class="p">(</span><span class="n">text</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()))</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()[:</span><span class="mi">16</span><span class="p">]</span>
+
+        <span class="c1"># Embed the text (normalise to unit sphere for cosine = dot product).</span>
+        <span class="n">embedder</span> <span class="o">=</span> <span class="n">_get_embedder</span><span class="p">()</span>
+        <span class="n">vec</span> <span class="o">=</span> <span class="n">embedder</span><span class="o">.</span><span class="n">encode</span><span class="p">([</span><span class="n">text</span><span class="p">],</span> <span class="n">normalize_embeddings</span><span class="o">=</span><span class="kc">True</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="c1"># If ID already exists, overwrite.</span>
+        <span class="n">existing_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span>
+            <span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">e</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_entries</span><span class="p">)</span> <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">id</span> <span class="o">==</span> <span class="n">entry_id</span><span class="p">),</span> <span class="kc">None</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">existing_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_vectors</span><span class="p">[</span><span class="n">existing_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">vec</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_entries</span><span class="p">[</span><span class="n">existing_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">MemoryEntry</span><span class="p">(</span>
+                <span class="nb">id</span><span class="o">=</span><span class="n">entry_id</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="n">text</span><span class="p">,</span> <span class="n">metadata</span><span class="o">=</span><span class="n">metadata</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_vectors</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">vstack</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">_vectors</span><span class="p">,</span> <span class="n">vec</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">newaxis</span><span class="p">]])</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_entries</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">MemoryEntry</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">entry_id</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="n">text</span><span class="p">,</span> <span class="n">metadata</span><span class="o">=</span><span class="n">metadata</span><span class="p">)</span>
+            <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_save</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">entry_id</span>
+
+    <span class="c1"># ── Read ──────────────────────────────────────────────────────────</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">search</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
+               <span class="n">min_score</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+               <span class="n">filter_metadata</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+               <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="n">MemoryEntry</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Return the top_k most similar entries to query, with their scores.</span>
+<span class="sd">        Optionally filter by exact metadata key-value pairs.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_entries</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[]</span>
+
+        <span class="n">embedder</span> <span class="o">=</span> <span class="n">_get_embedder</span><span class="p">()</span>
+        <span class="n">q_vec</span> <span class="o">=</span> <span class="n">embedder</span><span class="o">.</span><span class="n">encode</span><span class="p">([</span><span class="n">query</span><span class="p">],</span> <span class="n">normalize_embeddings</span><span class="o">=</span><span class="kc">True</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="c1"># Dot product = cosine similarity when both vectors are L2-normalised.</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_vectors</span> <span class="o">@</span> <span class="n">q_vec</span>  <span class="c1"># shape [N]</span>
+
+        <span class="c1"># Apply metadata filter.</span>
+        <span class="k">if</span> <span class="n">filter_metadata</span><span class="p">:</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span>
+                <span class="nb">all</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="o">==</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">filter_metadata</span><span class="o">.</span><span class="n">items</span><span class="p">())</span>
+                <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_entries</span>
+            <span class="p">])</span>
+            <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span> <span class="o">*</span> <span class="n">mask</span> <span class="o">+</span> <span class="p">(</span><span class="n">mask</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">1e9</span>  <span class="c1"># push filtered out to -inf</span>
+
+        <span class="c1"># Rank and return.</span>
+        <span class="n">ranked_idx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="o">-</span><span class="n">scores</span><span class="p">)</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">idx</span> <span class="ow">in</span> <span class="n">ranked_idx</span><span class="p">[:</span><span class="n">top_k</span><span class="p">]:</span>
+            <span class="n">score</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">scores</span><span class="p">[</span><span class="n">idx</span><span class="p">])</span>
+            <span class="k">if</span> <span class="n">score</span> <span class="o">&lt;</span> <span class="n">min_score</span><span class="p">:</span>
+                <span class="k">break</span>
+            <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">_entries</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span> <span class="n">score</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">results</span>
+
+    <span class="c1"># ── Delete ─────────────────────────────────────────────────────────</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">delete</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entry_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Remove an entry by ID. Returns True if found.&quot;&quot;&quot;</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span>
+            <span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">e</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_entries</span><span class="p">)</span> <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">id</span> <span class="o">==</span> <span class="n">entry_id</span><span class="p">),</span> <span class="kc">None</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_vectors</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_vectors</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_entries</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">idx</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_save</span><span class="p">()</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_entries</span><span class="p">)</span>
+
+
+<span class="c1"># ─────────────────────────── Unified facade ────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">AgentMemory</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Unified memory facade for an LLM agent.</span>
+
+<span class="sd">    Usage pattern:</span>
+<span class="sd">        mem = AgentMemory(base_dir=&quot;.agent/memory&quot;, session_id=&quot;sess-001&quot;)</span>
+
+<span class="sd">        # At session start: bootstrap context</span>
+<span class="sd">        context_str = mem.bootstrap_context()</span>
+
+<span class="sd">        # During session: log episodes, store facts</span>
+<span class="sd">        mem.log(&quot;user&quot;, &quot;I prefer TypeScript&quot;)</span>
+<span class="sd">        mem.remember(&quot;user.language&quot;, &quot;TypeScript&quot;)</span>
+
+<span class="sd">        # After an important finding: add to vector store</span>
+<span class="sd">        mem.store(&quot;JWT library has a bug in token refresh endpoint&quot;,</span>
+<span class="sd">                  metadata={&quot;topic&quot;: &quot;auth&quot;, &quot;type&quot;: &quot;bug&quot;})</span>
+
+<span class="sd">        # Retrieve relevant memories</span>
+<span class="sd">        hits = mem.recall(&quot;token refresh&quot;, top_k=3)</span>
+
+<span class="sd">        # At session end: write summary</span>
+<span class="sd">        mem.close_session(summary=&quot;Refactored auth module; found JWT bug.&quot;)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">base_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">base_dir</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">session_id</span> <span class="o">=</span> <span class="n">session_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">episodic</span> <span class="o">=</span> <span class="n">EpisodicLog</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base_dir</span> <span class="o">/</span> <span class="s2">&quot;episodes.jsonl&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">semantic</span>  <span class="o">=</span> <span class="n">SemanticStore</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base_dir</span> <span class="o">/</span> <span class="s2">&quot;facts.json&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">vectors</span>   <span class="o">=</span> <span class="n">VectorMemory</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base_dir</span> <span class="o">/</span> <span class="s2">&quot;vectors&quot;</span><span class="p">)</span>
+
+    <span class="c1"># ── Write ─────────────────────────────────────────────────────────</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">role</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+            <span class="n">metadata</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Append an episode to the episodic log.&quot;&quot;&quot;</span>
+        <span class="n">meta</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;session_id&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">session_id</span><span class="p">,</span> <span class="o">**</span><span class="p">(</span><span class="n">metadata</span> <span class="ow">or</span> <span class="p">{})}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">episodic</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="n">session_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">session_id</span><span class="p">,</span> <span class="n">role</span><span class="o">=</span><span class="n">role</span><span class="p">,</span>
+            <span class="n">content</span><span class="o">=</span><span class="n">content</span><span class="p">,</span> <span class="n">metadata</span><span class="o">=</span><span class="n">meta</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">remember</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+                 <span class="n">confidence</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Upsert a semantic fact.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">semantic</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">source</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">session_id</span><span class="p">,</span>
+                          <span class="n">confidence</span><span class="o">=</span><span class="n">confidence</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">store</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+              <span class="n">metadata</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Add a free-text memory to the vector store.&quot;&quot;&quot;</span>
+        <span class="n">meta</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;session_id&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">session_id</span><span class="p">,</span>
+                <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">T%H:%M:%SZ&quot;</span><span class="p">,</span> <span class="n">time</span><span class="o">.</span><span class="n">gmtime</span><span class="p">()),</span>
+                <span class="o">**</span><span class="p">(</span><span class="n">metadata</span> <span class="ow">or</span> <span class="p">{})}</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">vectors</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">metadata</span><span class="o">=</span><span class="n">meta</span><span class="p">)</span>
+
+    <span class="c1"># ── Read ──────────────────────────────────────────────────────────</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">recall</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
+               <span class="n">min_score</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.3</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Query the vector store. Returns list of (text, score) tuples.</span>
+<span class="sd">        Score is cosine similarity in [0, 1] (since vectors are normalised).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">hits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">vectors</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="n">top_k</span><span class="p">,</span> <span class="n">min_score</span><span class="o">=</span><span class="n">min_score</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">[(</span><span class="n">entry</span><span class="o">.</span><span class="n">text</span><span class="p">,</span> <span class="n">score</span><span class="p">)</span> <span class="k">for</span> <span class="n">entry</span><span class="p">,</span> <span class="n">score</span> <span class="ow">in</span> <span class="n">hits</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">bootstrap_context</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">top_k_memories</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Build the context injection string for session start.</span>
+<span class="sd">        Combines semantic facts + recent episodes + vector-recalled memories.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">parts</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="c1"># 1. Semantic facts (always include all of them if small).</span>
+        <span class="n">facts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">semantic</span><span class="o">.</span><span class="n">as_context_string</span><span class="p">()</span>
+        <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">facts</span><span class="p">)</span>
+
+        <span class="c1"># 2. Recent episodic entries (last 5 from this session).</span>
+        <span class="n">recent</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">episodic</span><span class="o">.</span><span class="n">tail</span><span class="p">(</span><span class="n">n</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">session_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">session_id</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">recent</span><span class="p">:</span>
+            <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;## Recent episode summary&quot;</span><span class="p">]</span>
+            <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">recent</span><span class="p">:</span>
+                <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">e</span><span class="p">[</span><span class="s1">&#39;iso_time&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">e</span><span class="p">[</span><span class="s1">&#39;role&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">][:</span><span class="mi">200</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">))</span>
+
+        <span class="c1"># 3. Cross-session vector memories (not filtered to session).</span>
+        <span class="n">hits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">vectors</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+            <span class="s2">&quot;recent tasks and important findings&quot;</span><span class="p">,</span>
+            <span class="n">top_k</span><span class="o">=</span><span class="n">top_k_memories</span><span class="p">,</span>
+            <span class="n">min_score</span><span class="o">=</span><span class="mf">0.25</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">hits</span><span class="p">:</span>
+            <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;## Recalled memories&quot;</span><span class="p">]</span>
+            <span class="k">for</span> <span class="n">entry</span><span class="p">,</span> <span class="n">score</span> <span class="ow">in</span> <span class="n">hits</span><span class="p">:</span>
+                <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- [</span><span class="si">{</span><span class="n">score</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">entry</span><span class="o">.</span><span class="n">text</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">close_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">summary</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Write a session-end summary to both the episodic log and vector store.</span>
+<span class="sd">        Call this before clearing the context window.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;[SESSION SUMMARY] </span><span class="si">{</span><span class="n">summary</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                 <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;session_summary&quot;</span><span class="p">})</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="p">(</span><span class="n">summary</span><span class="p">,</span>
+                   <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;session_summary&quot;</span><span class="p">,</span>
+                             <span class="s2">&quot;session_id&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">session_id</span><span class="p">})</span>
+</code></pre></div>
+<p>This gives you an immediately usable memory layer. The vector backend is pure numpy — swap in <code>faiss.IndexFlatIP</code> or <code>qdrant_client</code> for production with millions of entries.</p>
+<hr />
+<h2 id="858-worked-example-memory-budget-and-retrieval-magnitudes">8.5.8 Worked Example: Memory Budget and Retrieval Magnitudes<a class="headerlink" href="#858-worked-example-memory-budget-and-retrieval-magnitudes" title="Permanent link">¶</a></h2>
+<div class="admonition example">
+<p class="admonition-title">Worked example: sizing an agent memory system</p>
+<p>Suppose you are building an agent that handles long-running software projects.
+You want to understand the memory budget and retrieval latency at scale.</p>
+<p><strong>Configuration:</strong>
+- Embedding model: <code>all-MiniLM-L6-v2</code>, output dimension <span class="arithmatex">\(D = 384\)</span>, float32.
+- Target store size: <span class="arithmatex">\(N = 100{,}000\)</span> memories (about 3 years of daily use at ~100 entries/day).
+- Context window budget for injected memories: 2 000 tokens, roughly 1 500 words.</p>
+<p><strong>Storage cost:</strong>
+$$
+\text{vector storage} = N \times D \times 4 \text{ bytes}
+= 100{,}000 \times 384 \times 4 = 153.6 \text{ MB}
+$$</p>
+<p>That is well within RAM for a desktop machine. A numpy brute-force search over
+100 k vectors (one dot-product scan) takes on the order of 5–15 ms on a modern
+CPU — acceptable for a human-in-the-loop agent but worth caching if the agent
+calls recall() in a tight loop. Switching to a FAISS HNSW index drops search to
+under 1 ms at the same recall@10 level.</p>
+<p><strong>Text storage:</strong>
+If each memory entry averages 100 tokens, that is <span class="arithmatex">\(100{,}000 \times 100 = 10 \text{ M tokens}\)</span>.
+At 4 bytes per token in UTF-8: roughly <strong>40 MB</strong> for all text. Well within a
+SQLite file or a directory of JSONL files.</p>
+<p><strong>Injection budget:</strong>
+With 2 000 tokens injected and an average entry length of 100 tokens, we can
+inject at most 20 memories per call. In practice, top-<span class="arithmatex">\(k = 5\)</span> to <span class="arithmatex">\(10\)</span> is enough
+to avoid diluting the context with low-relevance entries. At a minimum
+cosine-similarity threshold of 0.4, typical agents inject 3–6 entries per turn.</p>
+<p><strong>Cost implication:</strong>
+If the model charges on the order of $1.50 per million input tokens, injecting
+5 entries × 100 tokens = 500 extra tokens per call costs <span class="arithmatex">\(\approx\)</span> $0.00075 per
+call. Over 10 000 agent calls, that is <strong>$7.50</strong> — negligible against the
+productivity gain from accurate memory recall.</p>
+</div>
+<hr />
+<h2 id="859-the-reflect-step-distilling-episodic-to-semantic">8.5.9 The Reflect Step: Distilling Episodic to Semantic<a class="headerlink" href="#859-the-reflect-step-distilling-episodic-to-semantic" title="Permanent link">¶</a></h2>
+<p>The reflect step is a scheduled LLM call over recent episodic entries. Here is the pattern as a Python function that fits into the <code>AgentMemory</code> facade:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">reflect</span><span class="p">(</span>
+    <span class="n">mem</span><span class="p">:</span> <span class="n">AgentMemory</span><span class="p">,</span>
+    <span class="n">llm_call</span><span class="p">:</span> <span class="nb">callable</span><span class="p">,</span>          <span class="c1"># func(prompt: str) -&gt; str</span>
+    <span class="n">n_recent_episodes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run a reflection pass: read recent episodes, ask the LLM to distil</span>
+<span class="sd">    facts, and write them back to the semantic store.</span>
+
+<span class="sd">    Returns a list of (key, value) pairs that were upserted.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">episodes</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">episodic</span><span class="o">.</span><span class="n">tail</span><span class="p">(</span><span class="n">n</span><span class="o">=</span><span class="n">n_recent_episodes</span><span class="p">,</span>
+                                 <span class="n">session_id</span><span class="o">=</span><span class="n">mem</span><span class="o">.</span><span class="n">session_id</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">episodes</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[]</span>
+
+    <span class="c1"># Format episodes as a readable transcript.</span>
+    <span class="n">transcript</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">e</span><span class="p">[</span><span class="s1">&#39;iso_time&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">e</span><span class="p">[</span><span class="s1">&#39;role&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">episodes</span>
+    <span class="p">)</span>
+
+    <span class="n">prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;&quot;&quot;You are reviewing the following conversation transcript.</span>
+<span class="s2">Extract a list of lasting facts, preferences, or decisions that should</span>
+<span class="s2">be remembered for future sessions. Format your response as JSON:</span>
+<span class="s2">[</span>
+<span class="s2">  </span><span class="se">{{</span><span class="s2">&quot;key&quot;: &quot;canonical.key&quot;, &quot;value&quot;: &quot;concise fact&quot;, &quot;confidence&quot;: 0.9</span><span class="se">}}</span><span class="s2">,</span>
+<span class="s2">  ...</span>
+<span class="s2">]</span>
+<span class="s2">Only include facts that are stable across sessions, not one-off details.</span>
+
+<span class="s2">TRANSCRIPT:</span>
+<span class="si">{</span><span class="n">transcript</span><span class="si">}</span>
+
+<span class="s2">JSON output:&quot;&quot;&quot;</span>
+
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">llm_call</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+
+    <span class="c1"># Robust parse: look for the JSON array in the response.</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">re</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">_json</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\[.*\]&quot;</span><span class="p">,</span> <span class="n">raw</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">match</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[]</span>
+
+    <span class="n">facts</span> <span class="o">=</span> <span class="n">_json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">())</span>
+    <span class="n">updated</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">fact</span> <span class="ow">in</span> <span class="n">facts</span><span class="p">:</span>
+        <span class="n">key</span>   <span class="o">=</span> <span class="n">fact</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="n">fact</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;value&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="n">conf</span>  <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">fact</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;confidence&quot;</span><span class="p">,</span> <span class="mf">0.8</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">and</span> <span class="n">value</span><span class="p">:</span>
+            <span class="n">mem</span><span class="o">.</span><span class="n">remember</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">conf</span><span class="p">)</span>
+            <span class="n">updated</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">updated</span>
+</code></pre></div>
+<p>This is the core of the Generative Agents reflection loop made concrete. A typical agent running on a personal software project might call <code>reflect()</code> at the end of each work session, discovering and persisting things like &ldquo;user prefers composable functions over class hierarchies&rdquo; from 30 episodes of code review feedback.</p>
+<hr />
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> An LLM agent is running a multi-day research task. The user comes back after two days and the context window is empty. How do you design the memory system to give the agent continuity across sessions?</p>
+<p><strong>A:</strong> The solution requires four pieces working together.</p>
+<p>First, an <strong>episodic log</strong>: every agent turn is appended to a durable append-only store (JSONL file or DB) tagged with a session ID. This gives us a ground-truth record.</p>
+<p>Second, a <strong>semantic store</strong>: at the end of each session, a reflect call distils the most important facts (task state, decisions made, user preferences) into a key-value or vector store. These are stable facts, not raw transcripts.</p>
+<p>Third, a <strong>bootstrap read</strong>: at the start of every new session, the harness queries both stores and prepends a compact summary to the system prompt — typically the last session summary plus top-<span class="arithmatex">\(k\)</span> relevant vector memories. This is bounded in size regardless of how long the project has been running.</p>
+<p>Fourth, a <strong>session-end write</strong>: before clearing context, the agent (or the harness) writes a structured session summary: what was in progress, what was decided, what the next steps are. This is the most important single artifact for continuity.</p>
+<p>The key insight is that you never rely on the model&rsquo;s weights to carry state between sessions — that is fine-tuning, which is too slow. Instead, you externalise state explicitly and inject it deterministically at session start.</p>
+</div>
+<hr />
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: writing everything verbatim</p>
+<p>Many teams start by logging every message verbatim to a vector store and
+retrieving the top-20 similar entries. This produces two failure modes.
+First, recent repetitive messages (boilerplate system prompt text, repeated
+clarification questions) crowd out genuinely informative memories because
+their text appears many times and therefore scores high on any query. Second,
+injecting 20 verbose entries at once consumes 2 000+ tokens of context budget.
+Fix: (a) filter what you write to the vector store — only write entries with
+genuine informational value; (b) cap injection at top-<span class="arithmatex">\(k = 5\)</span> with a
+minimum cosine-similarity threshold; &copy; run a deduplication pass that
+merges near-identical memories.</p>
+</div>
+<hr />
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: use structured compaction before the context is full</p>
+<p>Do not wait until the context window is 100% full to compact. Set a threshold
+at 70–80% of capacity and trigger a structured compaction pass that serialises
+the current task state to the semantic store before any information is lost.
+The compacted JSON blob is then prepended to the new context, giving the agent
+continuity with a deterministic (not lossy free-text) representation.</p>
+</div>
+<hr />
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">¶</a></h2>
+<p>Memory is the difference between a stateless chatbot and a persistent agent. We have covered the full stack:</p>
+<ul>
+<li><strong>Short-term vs long-term memory</strong> — the context window is the working memory; external stores are the long-term memory.</li>
+<li><strong>Episodic vs semantic</strong> — timestamped events vs stable facts; do not mix them indiscriminately.</li>
+<li><strong>Store types</strong> — vector stores for fuzzy similarity, key-value for deterministic retrieval, graphs for relational knowledge, file systems for human-readable persistence.</li>
+<li><strong>Write / read / reflect</strong> — three operations that every memory-capable agent must implement.</li>
+<li><strong>Compaction</strong> — you must proactively manage context size or the window fills and information is lost.</li>
+<li><strong>Session persistence</strong> — bootstrap read, in-session writes, graceful shutdown, and periodic reflection.</li>
+</ul>
+<p>The code in this chapter gives you a concrete starting point. In the next chapter we look at how the <a href="../08-agents-harness/06-mcp.html">Model Context Protocol (MCP)</a> standardises the interface through which agents access both memory and tools. For retrieval-heavy applications, the detailed treatment of ANN indexes and hybrid search in <a href="../09-rag-retrieval/02-vector-databases-ann.html">Vector Databases &amp; Approximate Nearest Neighbor Search</a> and <a href="../09-rag-retrieval/05-advanced-rag.html">Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a> will be essential.</p>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The context window is short-term working memory; anything that must survive a context clear or a session boundary needs an external store.</li>
+<li>Episodic memory records events with time context; semantic memory records stable facts. Keep them separate to avoid retrieval noise.</li>
+<li>The three memory operations are <strong>write</strong> (commit to store), <strong>read</strong> (retrieve into context), and <strong>reflect</strong> (distil episodes into facts) — reflect is the highest-value operation and the most often omitted.</li>
+<li>Memory compaction must happen <em>before</em> the context is full; a structured JSON schema compacts more reliably than free-text summaries.</li>
+<li>Session persistence requires four steps: stable session ID, bootstrap read at start, graceful shutdown write at end, and periodic cross-session reflection.</li>
+<li>Vector stores excel at fuzzy similarity retrieval but fail on exact-match queries; supplement with a structured key-value store for deterministic fact lookup.</li>
+<li>File-as-memory (structured directories of markdown/JSON) is a production-proven pattern that requires no external database and is human-auditable.</li>
+<li>Injection budget matters: at top-<span class="arithmatex">\(k = 5\)</span> and 100 tokens per entry, 500 extra input tokens per call costs under $0.001 at typical API prices — memory retrieval is cheap relative to its value.</li>
+<li>The reflect step should be triggered periodically (every <span class="arithmatex">\(N\)</span> episodes) and at session boundaries; it is the mechanism by which short-term experience becomes long-term knowledge.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Agent memory is an active research frontier: production systems now combine episodic logs, semantic key-value stores, and temporally-aware knowledge graphs, while recent surveys (2026) have formalised the write–manage–read loop and introduced multi-session agentic benchmarks that go well beyond static retrieval tests.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2304.03442">Park et al., <em>Generative Agents: Interactive Simulacra of Human Behavior</em> (2023)</a> — introduced the episodic-log + reflection + recency/importance/relevance retrieval architecture; the landmark paper that defined modern LLM agent memory.</li>
+<li><a href="https://arxiv.org/abs/2310.08560">Packer et al., <em>MemGPT: Towards LLMs as Operating Systems</em> (2023)</a> — framed memory management as OS-style virtual paging, introducing the virtual-context-manager pattern for infinite-length agent conversations.</li>
+<li><a href="https://arxiv.org/abs/2309.02427">Sumers et al., <em>Cognitive Architectures for Language Agents</em> (CoALA, 2023)</a> — comprehensive taxonomy of agent memory across working/long-term stores and internal/external action spaces; useful conceptual framework for system design.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2501.13956">Rasmussen et al., <em>Zep: A Temporal Knowledge Graph Architecture for Agent Memory</em> (2025)</a> — Graphiti-powered temporal KG that retains historical context across updates; outperforms MemGPT on Deep Memory Retrieval benchmarks.</li>
+<li><a href="https://arxiv.org/abs/2502.12110">Xu et al., <em>A-MEM: Agentic Memory for LLM Agents</em> (2025)</a> — Zettelkasten-inspired dynamic indexing that creates interconnected memory networks; accepted NeurIPS 2025.</li>
+<li><a href="https://arxiv.org/abs/2603.07670">Du, <em>Memory for Autonomous LLM Agents: Mechanisms, Evaluation, and Emerging Frontiers</em> (2026)</a> — survey covering 2022–2026 work; formalises the write–manage–read loop and five mechanism families from context compression to policy-learned management.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/mem0ai/mem0">mem0ai/mem0</a> — 57k-star &ldquo;universal memory layer&rdquo; combining vector, graph, and key-value stores; production-ready Python/TypeScript SDK.</li>
+<li><a href="https://github.com/letta-ai/letta">letta-ai/letta</a> — formerly MemGPT; stateful-agent platform with built-in virtual context management and a REST API for persistent agent services.</li>
+<li><a href="https://github.com/topoteretes/cognee">topoteretes/cognee</a> — open-source memory control plane with remember/recall/forget/improve operations backed by embeddings and knowledge graphs.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://towardsdatascience.com/a-practical-guide-to-memory-for-autonomous-llm-agents/">Lawson, <em>A Practical Guide to Memory for Autonomous LLM Agents</em> (Towards Data Science, 2026)</a> — practitioner-oriented walkthrough of the four temporal memory scopes, five mechanism families, and common failure modes drawn from real distributed-agent deployments.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Park et al., &ldquo;Generative Agents: Interactive Simulacra of Human Behavior,&rdquo; 2023</strong> — introduced the episodic + reflection + retrieval architecture for persistent agent behaviour; the landmark paper on LLM memory systems.</li>
+<li><strong>Zep — the Memory Layer for AI</strong> (getzep.com) — production system implementing temporal knowledge graphs and semantic extraction; useful reference architecture.</li>
+<li><strong>MemGPT: Towards LLMs as Operating Systems, Packer et al., 2023</strong> — framed memory management as an OS paging problem; introduced the virtual-context-manager pattern for infinite-length conversations.</li>
+<li><strong>LangGraph (LangChain)</strong> — open-source agent framework with first-class support for persistent state stores across agent steps; good reference implementation of session persistence.</li>
+<li><strong>Cognee</strong> (topoteretes/cognee on GitHub) — open-source memory layer with knowledge-graph extraction from unstructured text; shows a practical graph-memory pipeline.</li>
+<li><strong>Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks, Lewis et al., 2020</strong> — the foundational RAG paper; motivates why external retrieval beats storing everything in weights.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="04-context-engineering.html"><span class="pn-label">← Previous</span><span class="pn-title">Context Engineering &amp; Management</span></a>
+<a class="next" href="06-mcp.html"><span class="pn-label">Next →</span><span class="pn-title">The Model Context Protocol (MCP)</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#851-the-two-memory-horizons">8.5.1 The Two Memory Horizons</a></li>
+<li class="toc-l2"><a href="#852-episodic-vs-semantic-memory">8.5.2 Episodic vs Semantic Memory</a></li>
+<li class="toc-l2"><a href="#853-memory-store-types">8.5.3 Memory Store Types</a></li>
+<li class="toc-l3"><a href="#8531-vector-stores">8.5.3.1 Vector Stores</a></li>
+<li class="toc-l3"><a href="#8532-key-value-and-structured-stores">8.5.3.2 Key-Value and Structured Stores</a></li>
+<li class="toc-l3"><a href="#8533-property-graphs">8.5.3.3 Property Graphs</a></li>
+<li class="toc-l3"><a href="#8534-file-system-as-memory">8.5.3.4 File System as Memory</a></li>
+<li class="toc-l2"><a href="#854-the-write-read-reflect-triad">8.5.4 The Write / Read / Reflect Triad</a></li>
+<li class="toc-l3"><a href="#8541-write">8.5.4.1 Write</a></li>
+<li class="toc-l3"><a href="#8542-read">8.5.4.2 Read</a></li>
+<li class="toc-l3"><a href="#8543-reflect">8.5.4.3 Reflect</a></li>
+<li class="toc-l2"><a href="#855-memory-compaction">8.5.5 Memory Compaction</a></li>
+<li class="toc-l3"><a href="#8551-summarisation-based-compaction">8.5.5.1 Summarisation-Based Compaction</a></li>
+<li class="toc-l3"><a href="#8552-hierarchical-compaction">8.5.5.2 Hierarchical Compaction</a></li>
+<li class="toc-l3"><a href="#8553-structured-compaction">8.5.5.3 Structured Compaction</a></li>
+<li class="toc-l2"><a href="#856-session-persistence-how-agents-survive-restarts">8.5.6 Session Persistence: How Agents Survive Restarts</a></li>
+<li class="toc-l2"><a href="#857-a-from-scratch-memory-store-implementation">8.5.7 A From-Scratch Memory Store Implementation</a></li>
+<li class="toc-l2"><a href="#858-worked-example-memory-budget-and-retrieval-magnitudes">8.5.8 Worked Example: Memory Budget and Retrieval Magnitudes</a></li>
+<li class="toc-l2"><a href="#859-the-reflect-step-distilling-episodic-to-semantic">8.5.9 The Reflect Step: Distilling Episodic to Semantic</a></li>
+<li class="toc-l2"><a href="#summary">Summary</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

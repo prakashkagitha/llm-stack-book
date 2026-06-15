@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reasoning, Chain-of-Thought &amp; Test-Time Compute — The LLM Stack</title>
+<meta name="description" content="CoT prompting, self-consistency, ToT/graph-of-thought, process vs outcome reward models (PRM/ORM), search (MCTS, best-of-n, beam), test-time scaling laws, o1/R1">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="active" href="10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part V — Post-Training &amp; Alignment</div>
+<h1 id="510-reasoning-chain-of-thought-test-time-compute">5.10 Reasoning, Chain-of-Thought &amp; Test-Time Compute<a class="headerlink" href="#510-reasoning-chain-of-thought-test-time-compute" title="Permanent link">¶</a></h1>
+<p>For the first few years of the transformer era, the recipe for better performance was simple: train a larger model on more data. The <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a> chapter covers that axis in detail. But around 2022–2024, a second axis emerged: <strong>test-time compute</strong> — spending more computation at <em>inference time</em> to improve answer quality, independent of the model&rsquo;s parameter count. Chain-of-thought prompting was the first crack in the wall. The o1/R1 family of models turned it into a new scaling regime. This chapter explains the full arc: from a three-word prompt trick to Monte Carlo Tree Search over reasoning trajectories, process reward models, and budget-forcing strategies.</p>
+<h2 id="why-reasoning-needs-more-than-a-single-forward-pass">Why Reasoning Needs More Than a Single Forward Pass<a class="headerlink" href="#why-reasoning-needs-more-than-a-single-forward-pass" title="Permanent link">¶</a></h2>
+<p>A 7B-parameter model and a 70B-parameter model both produce their answers in a single autoregressive forward pass per token. For factual recall or simple summarization that is often enough. But consider a multi-step math problem or a competitive programming task: the answer depends on a <em>chain</em> of interdependent deductions, and a single pass cannot &ldquo;look back&rdquo; and correct early errors. The architecture (see <a href="../02-transformer/03-attention-from-scratch.html">The Attention Mechanism From Scratch</a>) does not have a recurrent error-correction mechanism; each token is generated by attending to the preceding context, not by iteratively refining a hypothesis.</p>
+<p>The core insight behind test-time scaling is: <strong>reasoning is a search problem</strong>. Given a question, the solution is not at the top of a probability distribution — it is at the end of a <em>path</em> through a reasoning tree. More compute at test time lets us search that tree more thoroughly.</p>
+<figure class="viz" id="fig-reasoning-search-tree">
+<svg viewBox="0 0 640 420" role="img" aria-label="A top-down reasoning tree showing a Question at the root branching into three candidate steps A1, A2, A3; only A1 and A3 continue to a second level; A1 leads to WRONG and A3 leads to CORRECT, illustrating that the correct answer lies at the end of a path through the tree.">
+  <defs>
+    <marker id="rst-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-reasoning-search-tree text { fill: var(--ink-soft, #374151); }
+    #fig-reasoning-search-tree .node-title { font: 700 13px var(--sans, sans-serif); }
+    #fig-reasoning-search-tree .node-sub  { font: 400 11px var(--sans, sans-serif); }
+    #fig-reasoning-search-tree .ann-text  { font: 400 11px var(--sans, sans-serif); fill: var(--muted, #6b7280); }
+    #fig-reasoning-search-tree .edge      { stroke: var(--border-2, #94a3b8); stroke-width: 1.8; fill: none; }
+    #fig-reasoning-search-tree .edge-dead { stroke: var(--border-2, #94a3b8); stroke-width: 1.4; stroke-dasharray: 4 3; fill: none; opacity: 0.4; }
+  </style>
+
+
+  <rect x="245" y="18" width="150" height="44" rx="8"
+        fill="var(--accent, #6366f1)" stroke="var(--accent, #6366f1)" stroke-width="1.5"/>
+  <text x="320" y="44" text-anchor="middle" class="node-title" fill="#fff">Question</text>
+
+
+  <line x1="320" y1="62" x2="130" y2="132" class="edge" marker-end="url(#rst-arrow)"/>
+  <line x1="320" y1="62" x2="320" y2="132" class="edge" marker-end="url(#rst-arrow)"/>
+  <line x1="320" y1="62" x2="510" y2="132" class="edge" marker-end="url(#rst-arrow)"/>
+
+
+
+  <rect x="55" y="132" width="150" height="44" rx="8"
+        fill="var(--surface, #f8fafc)" stroke="var(--border-2, #94a3b8)" stroke-width="1.5"/>
+  <text x="130" y="158" text-anchor="middle" class="node-title">Step A1</text>
+
+
+  <rect x="245" y="132" width="150" height="44" rx="8"
+        fill="var(--surface, #f8fafc)" stroke="var(--border-2, #94a3b8)" stroke-width="1.5"/>
+  <text x="320" y="158" text-anchor="middle" class="node-title">Step A2</text>
+
+
+  <rect x="435" y="132" width="150" height="44" rx="8"
+        fill="var(--surface, #f8fafc)" stroke="var(--border-2, #94a3b8)" stroke-width="1.5"/>
+  <text x="510" y="158" text-anchor="middle" class="node-title">Step A3</text>
+
+
+
+  <path d="M55,192 Q55,204 82,204 L297,204 Q320,204 320,218 Q320,204 343,204 L558,204 Q585,204 585,192"
+        fill="none" stroke="var(--muted, #9ca3af)" stroke-width="1.2"/>
+  <text x="320" y="234" text-anchor="middle" class="ann-text">beam width / branching factor</text>
+
+
+  <line x1="320" y1="176" x2="320" y2="218" class="edge-dead"/>
+
+
+  <line x1="130" y1="176" x2="130" y2="246" class="edge" marker-end="url(#rst-arrow)"/>
+  <line x1="510" y1="176" x2="510" y2="246" class="edge" marker-end="url(#rst-arrow)"/>
+
+
+
+  <rect x="55" y="246" width="150" height="44" rx="8"
+        fill="var(--surface, #f8fafc)" stroke="var(--border-2, #94a3b8)" stroke-width="1.5"/>
+  <text x="130" y="272" text-anchor="middle" class="node-title">Step B1</text>
+
+
+  <rect x="435" y="246" width="150" height="44" rx="8"
+        fill="var(--surface, #f8fafc)" stroke="var(--border-2, #94a3b8)" stroke-width="1.5"/>
+  <text x="510" y="272" text-anchor="middle" class="node-title">Step B2</text>
+
+
+  <line x1="130" y1="290" x2="130" y2="356" class="edge" marker-end="url(#rst-arrow)"/>
+  <line x1="510" y1="290" x2="510" y2="356" class="edge" marker-end="url(#rst-arrow)"/>
+
+
+  <rect x="55" y="356" width="150" height="44" rx="8"
+        fill="var(--danger, #dc2626)" stroke="var(--danger, #dc2626)" stroke-width="1.5"/>
+  <text x="130" y="382" text-anchor="middle" class="node-title" fill="#fff">WRONG</text>
+
+
+  <rect x="435" y="356" width="150" height="44" rx="8"
+        fill="var(--good, #16a34a)" stroke="var(--good, #16a34a)" stroke-width="1.5"/>
+  <text x="510" y="382" text-anchor="middle" class="node-title" fill="#fff">CORRECT</text>
+</svg>
+<figcaption><b>Reasoning is a search problem over a tree of steps.</b> From the root question, multiple candidate reasoning steps branch out (the branching factor); only some branches continue — A2 is abandoned as a dead end. The path A3 → B2 → CORRECT demonstrates that the right answer is found by searching the tree, not by reading off a single probability distribution. Allocating more test-time compute lets us explore more paths and find the correct one more reliably.</figcaption>
+</figure>
+
+<p>The rest of this chapter follows the historical progression: prompting tricks → voting → tree search → learned process rewards → trained reasoning models → scaling laws.</p>
+<h2 id="chain-of-thought-prompting">Chain-of-Thought Prompting<a class="headerlink" href="#chain-of-thought-prompting" title="Permanent link">¶</a></h2>
+<h3 id="the-basic-technique">The Basic Technique<a class="headerlink" href="#the-basic-technique" title="Permanent link">¶</a></h3>
+<p>Wei et al. (<em>Chain-of-Thought Prompting Elicits Reasoning in Large Language Models</em>, 2022) showed that prepending a few worked-out examples — where each example shows the reasoning <em>steps</em>, not just the answer — dramatically improved accuracy on arithmetic and commonsense benchmarks. The prompt change is minimal:</p>
+<div class="highlight"><pre><span></span><code># Standard prompt (answer only)
+Q: Roger has 5 tennis balls. He buys 2 more cans of tennis balls.
+   Each can has 3 balls. How many tennis balls does he have now?
+A: 11
+
+# Chain-of-thought prompt (steps shown)
+Q: Roger has 5 tennis balls. He buys 2 more cans of tennis balls.
+   Each can has 3 balls. How many tennis balls does he have now?
+A: Roger starts with 5 balls. 2 cans × 3 balls/can = 6 balls.
+   5 + 6 = 11. The answer is 11.
+</code></pre></div>
+<p>When the model sees several such examples in the few-shot context, it learns to &ldquo;show its work.&rdquo; Zero-shot CoT (Kojima et al., 2022) found that simply appending the phrase <strong>&ldquo;Let&rsquo;s think step by step.&rdquo;</strong> to the question substantially improves accuracy even without worked examples.</p>
+<h3 id="why-it-works">Why It Works<a class="headerlink" href="#why-it-works" title="Permanent link">¶</a></h3>
+<p>The mechanistic explanation: CoT <em>externalises intermediate state</em> into the context window. A transformer cannot do multi-hop reasoning in depth in a single forward pass, but it <em>can</em> condition on previously generated text. By emitting intermediate calculations into the token stream, the model has those values available as attention targets for subsequent tokens. Each reasoning step is a shallow computation; chaining many shallow steps achieves deep computation.</p>
+<p>This is directly analogous to the difference between a bounded-depth circuit (a single-pass model) and an unbounded sequential program. CoT effectively converts the fixed-depth network into a variable-depth one, governed by the length of the reasoning trace rather than the number of transformer layers.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">openai</span>  <span class="c1"># or any compatible client</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">chain_of_thought_query</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Zero-shot chain-of-thought using the &#39;Let&#39;s think step by step&#39; trick.</span>
+<span class="sd">    The two-stage approach first elicits reasoning, then extracts the answer.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Stage 1: elicit reasoning</span>
+    <span class="n">reasoning_prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Let&#39;s think step by step.&quot;</span>
+    <span class="n">stage1</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">reasoning_prompt</span><span class="p">}],</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+        <span class="n">max_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">reasoning_trace</span> <span class="o">=</span> <span class="n">stage1</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>
+
+    <span class="c1"># Stage 2: extract final answer from the trace</span>
+    <span class="n">extraction_prompt</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="se">\n\n</span><span class="si">{</span><span class="n">reasoning_trace</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;Therefore, the final answer (just the number/word) is:&quot;</span>
+    <span class="p">)</span>
+    <span class="n">stage2</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">extraction_prompt</span><span class="p">}],</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+        <span class="n">max_tokens</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">stage2</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+</code></pre></div>
+<h2 id="self-consistency-marginalising-over-reasoning-paths">Self-Consistency: Marginalising Over Reasoning Paths<a class="headerlink" href="#self-consistency-marginalising-over-reasoning-paths" title="Permanent link">¶</a></h2>
+<p>A single CoT trace can still hallucinate. Wang et al. (<em>Self-Consistency Improves Chain of Thought Reasoning in Language Models</em>, 2022) proposed <strong>self-consistency</strong>: sample <span class="arithmatex">\(N\)</span> independent reasoning traces at temperature <span class="arithmatex">\(T &gt; 0\)</span>, then take a majority vote over the final answers. Because different traces reach the correct answer via different paths, incorrect paths tend to disagree, while the correct answer clusters.</p>
+<p>Formally, let <span class="arithmatex">\(\mathcal{R} = \{r_1, r_2, \ldots, r_N\}\)</span> be <span class="arithmatex">\(N\)</span> sampled reasoning chains and <span class="arithmatex">\(a_i = f(r_i)\)</span> the extracted answer from chain <span class="arithmatex">\(i\)</span>. The self-consistent answer is:</p>
+<div class="arithmatex">\[
+\hat{a} = \operatorname*{arg\,max}_{a} \sum_{i=1}^{N} \mathbf{1}[a_i = a]
+\]</div>
+<p>This is equivalent to <strong>best-of-N</strong> or <strong>majority voting</strong> at the output level.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">self_consistent_answer</span><span class="p">(</span>
+    <span class="n">client</span><span class="p">,</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">n_samples</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.8</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Sample N reasoning chains; return the most common final answer.</span>
+<span class="sd">    For math: parse the last number. For MCQ: parse the letter.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">answers</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_samples</span><span class="p">):</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+            <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+            <span class="n">messages</span><span class="o">=</span><span class="p">[</span>
+                <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">question</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Think step by step.&quot;</span><span class="p">}</span>
+            <span class="p">],</span>
+            <span class="n">temperature</span><span class="o">=</span><span class="n">temperature</span><span class="p">,</span>
+            <span class="n">max_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">trace</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>
+        <span class="c1"># Heuristic: last boxed number or last line</span>
+        <span class="n">answer</span> <span class="o">=</span> <span class="n">extract_final_answer</span><span class="p">(</span><span class="n">trace</span><span class="p">)</span>
+        <span class="n">answers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">answer</span><span class="p">)</span>
+
+    <span class="c1"># Majority vote</span>
+    <span class="n">vote_counts</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="n">answers</span><span class="p">)</span>
+    <span class="n">winner</span><span class="p">,</span> <span class="n">count</span> <span class="o">=</span> <span class="n">vote_counts</span><span class="o">.</span><span class="n">most_common</span><span class="p">(</span><span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Votes: </span><span class="si">{</span><span class="nb">dict</span><span class="p">(</span><span class="n">vote_counts</span><span class="p">)</span><span class="si">}</span><span class="s2">, winner=</span><span class="si">{</span><span class="n">winner</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">n_samples</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">winner</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_final_answer</span><span class="p">(</span><span class="n">trace</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Attempt to find &#39;\\boxed{...}&#39; (LaTeX), then &#39;The answer is X&#39;,</span>
+<span class="sd">    then fall back to the last line.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+    <span class="n">boxed</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">boxed\{([^}]+)\}&quot;</span><span class="p">,</span> <span class="n">trace</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">boxed</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">boxed</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="n">answer_line</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;[Tt]he answer is[:\s]+(\S+)&quot;</span><span class="p">,</span> <span class="n">trace</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">answer_line</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">answer_line</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">&quot; .,&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">trace</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: self-consistency improvement</p>
+<p>Suppose we have a model that answers a given math problem correctly 60 % of the time on a single sample. What accuracy do we get with majority vote over N=16 samples?</p>
+<p>We want <span class="arithmatex">\(P(\text{majority correct})\)</span>, where each sample is correct with <span class="arithmatex">\(p = 0.60\)</span> and we need <span class="arithmatex">\(k &gt; N/2 = 8\)</span> correct out of 16.</p>
+<div class="arithmatex">\[
+P(\hat{a} = \text{correct}) = \sum_{k=9}^{16} \binom{16}{k} (0.6)^k (0.4)^{16-k}
+\]</div>
+<p>Computing: <span class="arithmatex">\(\approx 0.825\)</span>.</p>
+<p>With 64 samples (<span class="arithmatex">\(N=64\)</span>, <span class="arithmatex">\(k &gt; 32\)</span> needed):</p>
+<div class="arithmatex">\[
+P \approx 0.955
+\]</div>
+<p>For a harder problem where single-shot accuracy is <span class="arithmatex">\(p = 0.30\)</span>, even 64 samples gives:</p>
+<div class="arithmatex">\[
+P(\text{majority correct}) = \sum_{k=33}^{64} \binom{64}{k} (0.3)^k (0.7)^{64-k} \approx 0.047
+\]</div>
+<p>Majority vote amplifies a <em>strong</em> signal but cannot rescue a <em>weak</em> one. This motivates better search — weighted by quality, not just count.</p>
+</div>
+<h2 id="tree-of-thought-and-graph-of-thought">Tree-of-Thought and Graph-of-Thought<a class="headerlink" href="#tree-of-thought-and-graph-of-thought" title="Permanent link">¶</a></h2>
+<p>Self-consistency searches the answer space at the <em>leaf</em> level. <strong>Tree of Thoughts</strong> (Yao et al., 2023) searches the <em>reasoning process</em> itself. The key idea: a solution can branch at any intermediate step, and we can evaluate each partial reasoning path before committing to it.</p>
+<h3 id="tree-of-thoughts-tot">Tree of Thoughts (ToT)<a class="headerlink" href="#tree-of-thoughts-tot" title="Permanent link">¶</a></h3>
+<p>ToT treats reasoning as a tree where:</p>
+<ul>
+<li><strong>Nodes</strong> are partial solution states (think: &ldquo;after 2 reasoning steps&rdquo;).</li>
+<li><strong>Edges</strong> are model-generated next-step candidates.</li>
+<li><strong>Value function</strong> <span class="arithmatex">\(V(s)\)</span> scores whether a partial state looks promising.</li>
+<li><strong>Search algorithm</strong> is BFS, DFS, or beam search over this tree.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">heapq</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">order</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ThoughtNode</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A node in the Tree-of-Thought search. Lower neg_value = higher priority.&quot;&quot;&quot;</span>
+    <span class="n">neg_value</span><span class="p">:</span> <span class="nb">float</span>            <span class="c1"># for min-heap: negate the value</span>
+    <span class="n">depth</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">compare</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">thought</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">compare</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">parent</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;ThoughtNode&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">compare</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">trace</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Reconstruct the full reasoning chain from root to this node.&quot;&quot;&quot;</span>
+        <span class="n">steps</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">node</span> <span class="o">=</span> <span class="bp">self</span>
+        <span class="k">while</span> <span class="n">node</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">steps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">thought</span><span class="p">)</span>
+            <span class="n">node</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">parent</span>
+        <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">reversed</span><span class="p">(</span><span class="n">steps</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">tot_beam_search</span><span class="p">(</span>
+    <span class="n">client</span><span class="p">,</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">problem</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">beam_width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+    <span class="n">max_depth</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
+    <span class="n">n_candidates_per_node</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    BFS-style Tree-of-Thought beam search.</span>
+
+<span class="sd">    At each depth level we:</span>
+<span class="sd">      1. Generate `n_candidates_per_node` next thoughts for each beam node.</span>
+<span class="sd">      2. Score every candidate with the value model.</span>
+<span class="sd">      3. Keep the top `beam_width` nodes to form the next beam.</span>
+<span class="sd">    Returns the highest-scoring terminal node&#39;s full trace.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Initialize beam with the problem as context</span>
+    <span class="n">root</span> <span class="o">=</span> <span class="n">ThoughtNode</span><span class="p">(</span><span class="n">neg_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">depth</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">thought</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Problem: </span><span class="si">{</span><span class="n">problem</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">beam</span> <span class="o">=</span> <span class="p">[</span><span class="n">root</span><span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">depth</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_depth</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">candidates</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">parent_node</span> <span class="ow">in</span> <span class="n">beam</span><span class="p">:</span>
+            <span class="c1"># Generate candidate next thoughts</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_candidates_per_node</span><span class="p">):</span>
+                <span class="n">thought</span> <span class="o">=</span> <span class="n">generate_next_thought</span><span class="p">(</span>
+                    <span class="n">client</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">parent_node</span><span class="o">.</span><span class="n">trace</span><span class="p">(),</span> <span class="n">depth</span>
+                <span class="p">)</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="n">score_thought</span><span class="p">(</span>
+                    <span class="n">client</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">parent_node</span><span class="o">.</span><span class="n">trace</span><span class="p">(),</span> <span class="n">thought</span><span class="p">,</span> <span class="n">problem</span>
+                <span class="p">)</span>
+                <span class="n">candidates</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="n">ThoughtNode</span><span class="p">(</span>
+                        <span class="n">neg_value</span><span class="o">=-</span><span class="n">value</span><span class="p">,</span>
+                        <span class="n">depth</span><span class="o">=</span><span class="n">depth</span><span class="p">,</span>
+                        <span class="n">thought</span><span class="o">=</span><span class="n">thought</span><span class="p">,</span>
+                        <span class="n">parent</span><span class="o">=</span><span class="n">parent_node</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+        <span class="c1"># Keep top beam_width by value</span>
+        <span class="n">candidates</span><span class="o">.</span><span class="n">sort</span><span class="p">()</span>
+        <span class="n">beam</span> <span class="o">=</span> <span class="n">candidates</span><span class="p">[:</span><span class="n">beam_width</span><span class="p">]</span>
+
+        <span class="c1"># Early termination if top node has a final answer</span>
+        <span class="k">if</span> <span class="n">is_terminal</span><span class="p">(</span><span class="n">beam</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">thought</span><span class="p">):</span>
+            <span class="k">break</span>
+
+    <span class="k">return</span> <span class="n">beam</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">trace</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">generate_next_thought</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">depth</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Ask the model for the next reasoning step given current context.&quot;&quot;&quot;</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">context</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Step </span><span class="si">{</span><span class="n">depth</span><span class="si">}</span><span class="s2">: What is the next logical reasoning step? &quot;</span>
+        <span class="s2">&quot;Be concise and specific.&quot;</span>
+    <span class="p">)</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">prompt</span><span class="p">}],</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">r</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">score_thought</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">thought</span><span class="p">,</span> <span class="n">problem</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Value model: ask the LM to rate the current partial solution on 0-10.</span>
+<span class="sd">    In production, this would be a fine-tuned process reward model.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Problem: </span><span class="si">{</span><span class="n">problem</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Partial solution so far:</span><span class="se">\n</span><span class="si">{</span><span class="n">context</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Proposed next step: </span><span class="si">{</span><span class="n">thought</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;On a scale of 0 to 10, how promising is this partial solution? &quot;</span>
+        <span class="s2">&quot;Answer with just a number.&quot;</span>
+    <span class="p">)</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">prompt</span><span class="p">}],</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+    <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">5.0</span>  <span class="c1"># default if parse fails</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">is_terminal</span><span class="p">(</span><span class="n">thought</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Check if a thought contains a final answer marker.&quot;&quot;&quot;</span>
+    <span class="n">markers</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;final answer&quot;</span><span class="p">,</span> <span class="s2">&quot;therefore&quot;</span><span class="p">,</span> <span class="s2">&quot;the answer is&quot;</span><span class="p">,</span> <span class="s2">&quot;</span><span class="se">\\</span><span class="s2">boxed&quot;</span><span class="p">]</span>
+    <span class="k">return</span> <span class="nb">any</span><span class="p">(</span><span class="n">m</span> <span class="ow">in</span> <span class="n">thought</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">markers</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="graph-of-thought">Graph of Thought<a class="headerlink" href="#graph-of-thought" title="Permanent link">¶</a></h3>
+<p><strong>Graph of Thoughts</strong> (Besta et al., 2023) generalises ToT by allowing reasoning states to <em>merge</em>: two branches that arrive at a compatible sub-conclusion can be combined into a single node, avoiding re-exploration. This is especially useful for problems with independent sub-problems (e.g., multi-step proofs where different lemmas can be proved in parallel).</p>
+<p>The search graph is a DAG: nodes are reasoning states, directed edges are operations (Generate, Score, Aggregate), and the planner selects which operations to execute. In practice, for most LLM tasks ToT suffices; GoT matters when sub-problems are truly decomposable.</p>
+<h2 id="process-reward-models-vs-outcome-reward-models">Process Reward Models vs. Outcome Reward Models<a class="headerlink" href="#process-reward-models-vs-outcome-reward-models" title="Permanent link">¶</a></h2>
+<p>Self-consistency and ToT still need a <em>quality signal</em> to guide search. Two families of reward models have emerged:</p>
+<h3 id="outcome-reward-models-orm">Outcome Reward Models (ORM)<a class="headerlink" href="#outcome-reward-models-orm" title="Permanent link">¶</a></h3>
+<p>An ORM takes the full solution trace and scores it based on the final answer alone:</p>
+<div class="arithmatex">\[
+r_\text{ORM}(x, y) = r_\theta(\text{problem}=x, \text{solution}=y) \in \mathbb{R}
+\]</div>
+<p>Training is simple: label full solutions as correct/incorrect (binary) and train a scalar-output classifier. ORMs are easier to collect data for — you just need a ground-truth answer checker. However, they provide no <em>intermediate</em> signal; they cannot distinguish a flawed-reasoning-but-lucky answer from a sound proof.</p>
+<h3 id="process-reward-models-prm">Process Reward Models (PRM)<a class="headerlink" href="#process-reward-models-prm" title="Permanent link">¶</a></h3>
+<p>A PRM assigns a scalar reward to each <em>reasoning step</em>:</p>
+<div class="arithmatex">\[
+r_\text{PRM}(x, y_{1:t}) = r_\theta(\text{problem}=x, \text{steps so far}=y_1, \ldots, y_t) \in \mathbb{R}
+\]</div>
+<p>Lightman et al. (<em>Let&rsquo;s Verify Step by Step</em>, 2023) trained a step-level verifier on human-annotated mathematics solutions and showed it substantially outperforms ORM for guiding best-of-N search. The intuition: a bad reasoning step early can doom a solution even if the final answer is guessed correctly, and PRM catches this.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ProcessRewardModel</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Lightweight PRM: finetune a language model backbone to predict</span>
+<span class="sd">    per-step correctness. At inference, we score each step independently.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">backbone_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;meta-llama/Llama-3-8B&quot;</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">backbone</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">backbone_name</span><span class="p">)</span>
+        <span class="n">hidden_dim</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">backbone</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">hidden_size</span>
+        <span class="c1"># Scalar head: predicts P(step is correct | problem, steps so far)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">hidden_dim</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">input_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>       <span class="c1"># [B, T]</span>
+        <span class="n">attention_mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># [B, T]</span>
+        <span class="n">step_boundary_positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># [B] — index of last token in current step</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>  <span class="c1"># [B] logits</span>
+        <span class="n">outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">backbone</span><span class="p">(</span>
+            <span class="n">input_ids</span><span class="o">=</span><span class="n">input_ids</span><span class="p">,</span>
+            <span class="n">attention_mask</span><span class="o">=</span><span class="n">attention_mask</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">hidden</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">last_hidden_state</span>  <span class="c1"># [B, T, H]</span>
+        <span class="c1"># Extract hidden state at the step boundary token</span>
+        <span class="n">step_hidden</span> <span class="o">=</span> <span class="n">hidden</span><span class="p">[</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">hidden</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)),</span> <span class="n">step_boundary_positions</span>
+        <span class="p">]</span>  <span class="c1"># [B, H]</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="n">step_hidden</span><span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># [B]</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">score_steps</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">tokenizer</span><span class="p">:</span> <span class="n">AutoTokenizer</span><span class="p">,</span>
+        <span class="n">problem</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">steps</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Score each prefix (problem + steps[:k]) and return per-step probabilities.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">context</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Problem: </span><span class="si">{</span><span class="n">problem</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="n">steps</span><span class="p">:</span>
+            <span class="n">context</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">&quot;Step: </span><span class="si">{</span><span class="n">step</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="n">enc</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">boundary</span> <span class="o">=</span> <span class="n">enc</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span>  <span class="c1"># last token position</span>
+            <span class="n">logit</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span>
+                <span class="n">enc</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">],</span>
+                <span class="n">enc</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">],</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">boundary</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">),</span>
+            <span class="p">)</span>
+            <span class="n">prob</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">logit</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+            <span class="n">scores</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">prob</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">scores</span>
+</code></pre></div>
+<h3 id="prm-guided-best-of-n">PRM-Guided Best-of-N<a class="headerlink" href="#prm-guided-best-of-n" title="Permanent link">¶</a></h3>
+<p>Given a PRM, best-of-N search becomes:</p>
+<ol>
+<li>Sample <span class="arithmatex">\(N\)</span> full solution traces.</li>
+<li>Score each trace: <span class="arithmatex">\(s_i = \min_{t} r_\text{PRM}(x, y_{1:t})\)</span> (the minimum step score — the weakest link).</li>
+<li>Return the trace with the highest <span class="arithmatex">\(s_i\)</span>.</li>
+</ol>
+<p>Using minimum is conservative; alternatives include product of step scores, or the score of the final step only.</p>
+<div class="arithmatex">\[
+\hat{y} = \operatorname*{arg\,max}_{y_i \in \mathcal{Y}} \prod_{t=1}^{|y_i|} r_\text{PRM}(x, y_{i,1:t})
+\]</div>
+<h2 id="mcts-for-language-model-reasoning">MCTS for Language Model Reasoning<a class="headerlink" href="#mcts-for-language-model-reasoning" title="Permanent link">¶</a></h2>
+<p><strong>Monte Carlo Tree Search (MCTS)</strong> provides a principled way to allocate search budget. It is the algorithm behind AlphaGo/AlphaZero, and it adapts naturally to reasoning trees.</p>
+<h3 id="the-four-phases">The Four Phases<a class="headerlink" href="#the-four-phases" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-mcts-four-phase-loop">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 520" role="img" aria-label="Cyclic process diagram of the four MCTS phases arranged clockwise: SELECT at top, EXPAND at right, SIMULATE at bottom, BACKPROP at left, with a center hub labeled MCTS Loop, and arrows showing the iterative sequential execution order.">
+  <defs>
+    <marker id="mcts-arr" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+    <marker id="mcts-arr-acc" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-mcts-four-phase-loop text        { fill: var(--ink-soft,#374151); }
+    #fig-mcts-four-phase-loop .pt         { font: 700 14px var(--sans,sans-serif); }
+    #fig-mcts-four-phase-loop .ps         { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-mcts-four-phase-loop .pm         { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+    #fig-mcts-four-phase-loop .hub-t      { font: 600 12px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-mcts-four-phase-loop .hub-s      { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+    #fig-mcts-four-phase-loop .arr-lbl    { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-mcts-four-phase-loop .acc-bar    { fill: var(--accent,#6366f1); }
+    #fig-mcts-four-phase-loop .hl-overlay { opacity: 0; fill: var(--accent,#6366f1); }
+
+    /* Animation keyframes */
+    @keyframes mcts-sel { 0%,9%{opacity:0} 11%,23%{opacity:.18} 25%,100%{opacity:0} }
+    @keyframes mcts-exp { 0%,32%{opacity:0} 34%,46%{opacity:.18} 48%,100%{opacity:0} }
+    @keyframes mcts-sim { 0%,55%{opacity:0} 57%,69%{opacity:.18} 71%,100%{opacity:0} }
+    @keyframes mcts-bck { 0%,74%{opacity:0} 76%,88%{opacity:.18} 90%,100%{opacity:0} }
+
+    #fig-mcts-four-phase-loop.is-playing #hl-sel { animation: mcts-sel 4.8s linear infinite; }
+    #fig-mcts-four-phase-loop.is-playing #hl-exp { animation: mcts-exp 4.8s linear infinite; }
+    #fig-mcts-four-phase-loop.is-playing #hl-sim { animation: mcts-sim 4.8s linear infinite; }
+    #fig-mcts-four-phase-loop.is-playing #hl-bck { animation: mcts-bck 4.8s linear infinite; }
+
+    /* Traveling dot */
+    @keyframes mcts-dot {
+      0%   { cx:380; cy:116; }
+      24%  { cx:622; cy:248; }
+      49%  { cx:380; cy:402; }
+      74%  { cx:138; cy:248; }
+      100% { cx:380; cy:116; }
+    }
+    #fig-mcts-four-phase-loop.is-playing #mdot { animation: mcts-dot 4.8s linear infinite; }
+  </style>
+
+
+
+
+  <path d="M 524,116 C 580,116 622,180 622,222"
+        fill="none" stroke="var(--border-2,#94a3b8)" stroke-width="1.8"
+        marker-end="url(#mcts-arr)"/>
+
+
+  <path d="M 622,352 C 622,390 570,406 528,406"
+        fill="none" stroke="var(--border-2,#94a3b8)" stroke-width="1.8"
+        marker-end="url(#mcts-arr)"/>
+
+
+  <path d="M 232,406 C 190,406 138,390 138,352"
+        fill="none" stroke="var(--border-2,#94a3b8)" stroke-width="1.8"
+        marker-end="url(#mcts-arr)"/>
+
+
+  <path d="M 138,222 C 138,160 230,116 236,116"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="2"
+        stroke-dasharray="6 4"
+        marker-end="url(#mcts-arr-acc)"/>
+  <text x="134" y="144" text-anchor="middle" class="arr-lbl">next</text>
+  <text x="134" y="157" text-anchor="middle" class="arr-lbl">iteration</text>
+
+
+  <circle id="mdot" cx="380" cy="68" r="7"
+          fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+
+
+  <rect x="278" y="214" width="204" height="68" rx="10"
+        fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.4"/>
+  <text x="380" y="240" text-anchor="middle" class="hub-t">MCTS Loop</text>
+  <text x="380" y="256" text-anchor="middle" class="hub-s">repeat for budget</text>
+  <text x="380" y="270" text-anchor="middle" class="hub-s">iterations</text>
+
+
+  <g>
+    <rect x="236" y="20" width="6" height="96" rx="3" fill="var(--accent,#6366f1)" class="acc-bar"/>
+    <rect x="242" y="20" width="282" height="96" rx="8"
+          fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+    <rect id="hl-sel" x="242" y="20" width="282" height="96" rx="8"
+          class="hl-overlay" opacity="0"/>
+    <text x="383" y="46" text-anchor="middle" class="pt">1. SELECT</text>
+    <text x="383" y="68" text-anchor="middle" class="ps">traverse tree via UCB1/PUCT policy</text>
+    <text x="383" y="82" text-anchor="middle" class="ps">until a leaf or unexpanded node</text>
+    <text x="383" y="100" text-anchor="middle" class="pm">balances exploration vs. exploitation</text>
+  </g>
+
+
+  <g>
+    <rect x="500" y="196" width="6" height="156" rx="3" fill="var(--accent,#6366f1)" class="acc-bar"/>
+    <rect x="506" y="196" width="242" height="156" rx="8"
+          fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+    <rect id="hl-exp" x="506" y="196" width="242" height="156" rx="8"
+          class="hl-overlay" opacity="0"/>
+    <text x="627" y="230" text-anchor="middle" class="pt">2. EXPAND</text>
+    <text x="627" y="252" text-anchor="middle" class="ps">generate K children from</text>
+    <text x="627" y="266" text-anchor="middle" class="ps">the leaf using the LM</text>
+    <text x="627" y="280" text-anchor="middle" class="ps">as the policy network</text>
+    <text x="627" y="306" text-anchor="middle" class="pm">branching factor K</text>
+    <text x="627" y="320" text-anchor="middle" class="pm">exploration vs. coverage</text>
+    <text x="627" y="334" text-anchor="middle" class="pm">trade-off</text>
+  </g>
+
+
+  <g>
+    <rect x="158" y="406" width="6" height="90" rx="3" fill="var(--accent,#6366f1)" class="acc-bar"/>
+    <rect x="164" y="406" width="364" height="90" rx="8"
+          fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+    <rect id="hl-sim" x="164" y="406" width="364" height="90" rx="8"
+          class="hl-overlay" opacity="0"/>
+    <text x="346" y="436" text-anchor="middle" class="pt">3. SIMULATE (evaluate)</text>
+    <text x="346" y="455" text-anchor="middle" class="ps">roll out to a terminal state,</text>
+    <text x="346" y="469" text-anchor="middle" class="ps">OR use PRM as value function (skip rollout)</text>
+    <text x="346" y="487" text-anchor="middle" class="pm">PRM = faster; rollout = unbiased</text>
+  </g>
+
+
+  <g>
+    <rect x="12" y="196" width="6" height="156" rx="3" fill="var(--accent,#6366f1)" class="acc-bar"/>
+    <rect x="18" y="196" width="222" height="156" rx="8"
+          fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+    <rect id="hl-bck" x="18" y="196" width="222" height="156" rx="8"
+          class="hl-overlay" opacity="0"/>
+    <text x="129" y="230" text-anchor="middle" class="pt">4. BACKPROP</text>
+    <text x="129" y="252" text-anchor="middle" class="ps">update visit counts N(s,a)</text>
+    <text x="129" y="266" text-anchor="middle" class="ps">and values Q(s,a)</text>
+    <text x="129" y="280" text-anchor="middle" class="ps">up the traversed path</text>
+    <text x="129" y="306" text-anchor="middle" class="pm">focuses future SELECT</text>
+    <text x="129" y="320" text-anchor="middle" class="pm">toward high-value branches</text>
+    <text x="129" y="334" text-anchor="middle" class="pm">via updated Q estimates</text>
+  </g>
+
+</svg>
+<figcaption><b>MCTS iterates four phases in sequence, repeating until the compute budget is exhausted.</b> <b>SELECT</b> descends the tree using UCB1/PUCT to balance exploration and exploitation; <b>EXPAND</b> calls the LM to generate K candidate next steps; <b>SIMULATE</b> scores the leaf via rollout or a PRM value function; <b>BACKPROP</b> updates visit counts and Q-values up the path. The dashed return arrow emphasizes the loop — more iterations focus search on the highest-value subtrees, making MCTS more sample-efficient than flat best-of-N sampling.</figcaption>
+</figure>
+
+<p>The selection uses the UCB1 formula adapted for trees (PUCT, as in AlphaZero):</p>
+<div class="arithmatex">\[
+a^* = \operatorname*{arg\,max}_{a} \left[ Q(s, a) + c_\text{puct} \cdot P(a|s) \cdot \frac{\sqrt{N(s)}}{1 + N(s,a)} \right]
+\]</div>
+<p>where <span class="arithmatex">\(Q(s,a)\)</span> is the mean value of subtree rooted at child <span class="arithmatex">\(a\)</span>, <span class="arithmatex">\(P(a|s)\)</span> is the LM&rsquo;s prior probability for that action, <span class="arithmatex">\(N(s)\)</span> is the visit count of the parent, and <span class="arithmatex">\(c_\text{puct}\)</span> is an exploration constant (typically 1–5).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">MCTSNode</span><span class="p">:</span>
+    <span class="n">state</span><span class="p">:</span> <span class="nb">str</span>            <span class="c1"># reasoning context so far</span>
+    <span class="n">parent</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;MCTSNode&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">children</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="s2">&quot;MCTSNode&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">N</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>            <span class="c1"># visit count</span>
+    <span class="n">Q</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>        <span class="c1"># mean value</span>
+    <span class="n">P</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>        <span class="c1"># prior from LM (log-prob of this branch)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">ucb_score</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">c_puct</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">N</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;inf&quot;</span><span class="p">)</span>
+        <span class="n">parent_N</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">N</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">parent</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">N</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">Q</span> <span class="o">+</span> <span class="n">c_puct</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">P</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">parent_N</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">N</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_leaf</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">mcts_search</span><span class="p">(</span>
+    <span class="n">lm_policy</span><span class="p">,</span>       <span class="c1"># callable(state) -&gt; list[(next_thought, log_prob)]</span>
+    <span class="n">value_fn</span><span class="p">,</span>        <span class="c1"># callable(state) -&gt; float  (PRM or rollout)</span>
+    <span class="n">root_state</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">n_iterations</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">50</span><span class="p">,</span>
+    <span class="n">expansion_width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+    <span class="n">c_puct</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">MCTSNode</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Minimal MCTS for LLM reasoning. Returns the root node; caller can</span>
+<span class="sd">    extract the best path by following max-Q children.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">root</span> <span class="o">=</span> <span class="n">MCTSNode</span><span class="p">(</span><span class="n">state</span><span class="o">=</span><span class="n">root_state</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_iterations</span><span class="p">):</span>
+        <span class="c1"># --- SELECT ---</span>
+        <span class="n">node</span> <span class="o">=</span> <span class="n">root</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="p">[</span><span class="n">node</span><span class="p">]</span>
+        <span class="k">while</span> <span class="ow">not</span> <span class="n">node</span><span class="o">.</span><span class="n">is_leaf</span><span class="p">():</span>
+            <span class="n">node</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">c</span><span class="p">:</span> <span class="n">c</span><span class="o">.</span><span class="n">ucb_score</span><span class="p">(</span><span class="n">c_puct</span><span class="p">))</span>
+            <span class="n">path</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+
+        <span class="c1"># --- EXPAND ---</span>
+        <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">N</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">node</span> <span class="o">==</span> <span class="n">root</span><span class="p">:</span>  <span class="c1"># expand visited nodes or root</span>
+            <span class="n">candidates</span> <span class="o">=</span> <span class="n">lm_policy</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">state</span><span class="p">)</span>  <span class="c1"># [(thought, log_prob), ...]</span>
+            <span class="k">for</span> <span class="n">thought</span><span class="p">,</span> <span class="n">log_prob</span> <span class="ow">in</span> <span class="n">candidates</span><span class="p">[:</span><span class="n">expansion_width</span><span class="p">]:</span>
+                <span class="n">child</span> <span class="o">=</span> <span class="n">MCTSNode</span><span class="p">(</span>
+                    <span class="n">state</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">state</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="n">thought</span><span class="p">,</span>
+                    <span class="n">parent</span><span class="o">=</span><span class="n">node</span><span class="p">,</span>
+                    <span class="n">P</span><span class="o">=</span><span class="n">math</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">log_prob</span><span class="p">),</span>
+                <span class="p">)</span>
+                <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">child</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+                <span class="c1"># Descend into first unexplored child</span>
+                <span class="n">node</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="n">path</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+
+        <span class="c1"># --- SIMULATE (evaluate) ---</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="n">value_fn</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">state</span><span class="p">)</span>
+
+        <span class="c1"># --- BACKPROP ---</span>
+        <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">reversed</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+            <span class="n">n</span><span class="o">.</span><span class="n">N</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="n">n</span><span class="o">.</span><span class="n">Q</span> <span class="o">+=</span> <span class="p">(</span><span class="n">value</span> <span class="o">-</span> <span class="n">n</span><span class="o">.</span><span class="n">Q</span><span class="p">)</span> <span class="o">/</span> <span class="n">n</span><span class="o">.</span><span class="n">N</span>  <span class="c1"># running mean update</span>
+
+    <span class="k">return</span> <span class="n">root</span>
+</code></pre></div>
+<p>MCTS is notably more sample-efficient than naive best-of-N: it focuses computation on promising subtrees rather than wasting samples on dead ends. The tradeoff is latency — MCTS is sequential whereas best-of-N is trivially parallelisable.</p>
+<h2 id="test-time-scaling-laws">Test-Time Scaling Laws<a class="headerlink" href="#test-time-scaling-laws" title="Permanent link">¶</a></h2>
+<p>The observation that &ldquo;more test-time compute improves accuracy&rdquo; raises the natural question: <em>at what rate</em>? Snell et al. (<em>Scaling LLM Test-Time Compute Optimally</em>, 2024) and related work characterise this empirically.</p>
+<p>The key findings:</p>
+<ol>
+<li>
+<p><strong>Power-law scaling.</strong> For best-of-N, accuracy improves roughly as <span class="arithmatex">\(1 - \epsilon \cdot N^{-\alpha}\)</span>, where <span class="arithmatex">\(\alpha\)</span> depends on problem difficulty and the model&rsquo;s base capability. Typical values of <span class="arithmatex">\(\alpha\)</span> are on the order of 0.1–0.3.</p>
+</li>
+<li>
+<p><strong>Compute-optimal frontier.</strong> For a fixed inference FLOPs budget, there is an optimal allocation between model size and number of samples. Smaller models with more samples can outperform larger models with fewer samples on many reasoning tasks.</p>
+</li>
+<li>
+<p><strong>PRM unlocks steeper scaling.</strong> Best-of-N with an ORM saturates quickly (the verifier cannot discriminate among many similar wrong answers). PRM-guided search exhibits steeper and longer scaling before saturation.</p>
+</li>
+<li>
+<p><strong>Difficulty modulates the return.</strong> Easy problems saturate quickly; hard problems continue to benefit from more compute. This motivates <em>adaptive</em> test-time compute: route easy queries to cheap paths, hard ones to expensive tree search.</p>
+</li>
+</ol>
+<div class="admonition example">
+<p class="admonition-title">Worked example: test-time compute budget</p>
+<p>Suppose we have a 7B-parameter model that generates reasoning tokens at 5,000 tokens/second on a single A100 (batch=1). A typical math solution is 200 tokens, so one sample costs <span class="arithmatex">\(200 / 5000 = 40\text{ ms}\)</span>.</p>
+<ul>
+<li><strong>N=1 (greedy):</strong> 40 ms, assume 55 % accuracy.</li>
+<li><strong>N=16 (parallel best-of-N):</strong> on 16 parallel requests on 1 GPU (approximately 16× throughput hit at batch=1, but batch=16 uses full GPU bandwidth) ≈ 200 ms wall-clock, assume 78 % accuracy.</li>
+<li><strong>N=64 with PRM:</strong> ≈ 600 ms, assume 88 % accuracy.</li>
+<li><strong>MCTS 100 iterations, expansion=3:</strong> ≈ 2 s, assume 91 % accuracy.</li>
+</ul>
+<p>Compared to a 70B model at greedy (≈ 350 ms, 82 % accuracy), the 7B + best-of-64 configuration achieves similar accuracy at roughly 2× the cost, while the 7B model alone costs 8.75× <em>less</em> in memory.</p>
+<p>The crossover point is task-dependent: for tasks with reliable verifiers (math, code), test-time scaling is very effective. For open-ended tasks without a verifier, ORM quality becomes the bottleneck.</p>
+</div>
+<h2 id="long-thinking-models-o1-deepseek-r1-and-the-reasoning-era">Long-Thinking Models: o1, DeepSeek-R1, and the Reasoning Era<a class="headerlink" href="#long-thinking-models-o1-deepseek-r1-and-the-reasoning-era" title="Permanent link">¶</a></h2>
+<p>OpenAI&rsquo;s o1 (September 2024) was the first publicly released model designed around extended internal reasoning — a &ldquo;thinking&rdquo; trace visible to the model but (in the initial release) hidden from users. DeepSeek-R1 (January 2025) reproduced and open-sourced the training recipe. The key innovations:</p>
+<h3 id="training-reasoning-models">Training Reasoning Models<a class="headerlink" href="#training-reasoning-models" title="Permanent link">¶</a></h3>
+<p>Rather than prompting an existing model to produce CoT at inference time, reasoning models are <em>trained</em> to generate long, high-quality internal reasoning traces, guided by RL. The pipeline typically combines:</p>
+<ol>
+<li><strong>SFT warm-up</strong>: fine-tune on human-written or distilled CoT traces to establish the format.</li>
+<li><strong>RL with verifiable rewards (RLVR)</strong>: the policy is reinforced when the final answer (extracted from the reasoning trace) is verifiable-correct. See <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a> for the training details.</li>
+<li><strong>PRM integration</strong>: some systems include a learned process reward to shape the <em>quality</em> of intermediate steps, not just final correctness.</li>
+</ol>
+<p>The RL algorithm itself can be PPO (see <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>), GRPO (see <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>), or simpler outcome-only methods.</p>
+<h3 id="what-emerges-aha-moments">What Emerges: &ldquo;Aha&rdquo; Moments<a class="headerlink" href="#what-emerges-aha-moments" title="Permanent link">¶</a></h3>
+<p>DeepSeek-R1 reports that with sufficient RL training, models develop <strong>self-reflection</strong> behaviors: recognising mid-trace that a path is wrong, backtracking, and retrying — without being explicitly supervised to do so. The model also learns to allocate more tokens to harder sub-problems. These behaviors are not hand-coded; they emerge from the gradient signal.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Illustration: a reasoning trace from an R1-style model</span>
+<span class="c1"># (simplified; real traces are much longer and more varied)</span>
+
+<span class="n">EXAMPLE_REASONING_TRACE</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">&lt;think&gt;</span>
+<span class="s2">Let me work through this step by step.</span>
+
+<span class="s2">The problem asks for the number of ways to arrange 5 distinct books</span>
+<span class="s2">on a shelf such that two specific books (A and B) are never adjacent.</span>
+
+<span class="s2">First, let me count total arrangements: 5! = 120.</span>
+
+<span class="s2">Now, let me count arrangements where A and B ARE adjacent.</span>
+<span class="s2">Treat A+B as a single &quot;super-book&quot;: 4! arrangements × 2 (AB or BA) = 48.</span>
+
+<span class="s2">Wait, let me double-check: treating [AB] as one unit, we have 4 units total.</span>
+<span class="s2">4! = 24 arrangements, and we can have AB or BA so ×2 = 48. Yes, that&#39;s right.</span>
+
+<span class="s2">Therefore, arrangements where A and B are NOT adjacent = 120 - 48 = 72.</span>
+<span class="s2">&lt;/think&gt;</span>
+
+<span class="s2">The answer is **72**.</span>
+<span class="s2">&quot;&quot;&quot;</span>
+</code></pre></div>
+<h3 id="budget-forcing">Budget Forcing<a class="headerlink" href="#budget-forcing" title="Permanent link">¶</a></h3>
+<p><strong>Budget forcing</strong> (introduced in the Snell et al. and related work) is a test-time control mechanism: you instruct the model to use <em>at most</em> <span class="arithmatex">\(B\)</span> thinking tokens, or you truncate the thinking trace at <span class="arithmatex">\(B\)</span> tokens and force a conclusion. It allows trading off accuracy for latency in a <em>continuous</em> way:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">forced_budget_inference</span><span class="p">(</span>
+    <span class="n">client</span><span class="p">,</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">budget_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Budget-forced inference: append a budget instruction to the system prompt.</span>
+<span class="sd">    The model will attempt to reason within the token limit.</span>
+
+<span class="sd">    For thinking models that expose a `thinking_tokens` parameter,</span>
+<span class="sd">    use that directly. This shows the prompting-based variant.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">system</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;You are a careful reasoning assistant. &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;You have a thinking budget of approximately </span><span class="si">{</span><span class="n">budget_tokens</span><span class="si">}</span><span class="s2"> tokens. &quot;</span>
+        <span class="s2">&quot;Think concisely, prioritise the most important reasoning steps, &quot;</span>
+        <span class="s2">&quot;and then give the final answer.&quot;</span>
+    <span class="p">)</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[</span>
+            <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">system</span><span class="p">},</span>
+            <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">question</span><span class="p">},</span>
+        <span class="p">],</span>
+        <span class="n">max_tokens</span><span class="o">=</span><span class="n">budget_tokens</span> <span class="o">+</span> <span class="mi">128</span><span class="p">,</span>  <span class="c1"># +128 for the answer after thinking</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">adaptive_budget_routing</span><span class="p">(</span>
+    <span class="n">client</span><span class="p">,</span>
+    <span class="n">model_fast</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">model_slow</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">difficulty_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.7</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Route to fast (small budget) or slow (large budget) based on estimated</span>
+<span class="sd">    problem difficulty. Returns (answer, model_used).</span>
+
+<span class="sd">    A real system would use a small classifier to estimate difficulty.</span>
+<span class="sd">    Here we use a heuristic: question length + keyword presence.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">hard_keywords</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;prove&quot;</span><span class="p">,</span> <span class="s2">&quot;derive&quot;</span><span class="p">,</span> <span class="s2">&quot;optimal&quot;</span><span class="p">,</span> <span class="s2">&quot;complexity&quot;</span><span class="p">,</span> <span class="s2">&quot;algorithm&quot;</span><span class="p">]</span>
+    <span class="n">difficulty_score</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span>
+        <span class="mf">1.0</span><span class="p">,</span>
+        <span class="nb">len</span><span class="p">(</span><span class="n">question</span><span class="p">)</span> <span class="o">/</span> <span class="mi">500</span> <span class="o">+</span> <span class="mf">0.15</span> <span class="o">*</span> <span class="nb">sum</span><span class="p">(</span><span class="n">k</span> <span class="ow">in</span> <span class="n">question</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">hard_keywords</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">difficulty_score</span> <span class="o">&lt;</span> <span class="n">difficulty_threshold</span><span class="p">:</span>
+        <span class="n">answer</span> <span class="o">=</span> <span class="n">forced_budget_inference</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">model_fast</span><span class="p">,</span> <span class="n">question</span><span class="p">,</span> <span class="n">budget_tokens</span><span class="o">=</span><span class="mi">256</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">answer</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">model_fast</span><span class="si">}</span><span class="s2"> (fast path)&quot;</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">answer</span> <span class="o">=</span> <span class="n">forced_budget_inference</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">model_slow</span><span class="p">,</span> <span class="n">question</span><span class="p">,</span> <span class="n">budget_tokens</span><span class="o">=</span><span class="mi">4096</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">answer</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">model_slow</span><span class="si">}</span><span class="s2"> (slow path)&quot;</span>
+</code></pre></div>
+<h3 id="the-scaling-picture">The Scaling Picture<a class="headerlink" href="#the-scaling-picture" title="Permanent link">¶</a></h3>
+<p>Test-time compute as a scaling axis has now been confirmed empirically: holding model parameters fixed, reasoning accuracy can be improved by increasing the number of tokens spent thinking. The shape of this scaling curve differs from the training-time curve (loss ∝ <span class="arithmatex">\(C^{-0.07}\)</span> in Chinchilla). Test-time scaling is typically steeper initially (large gains from 1→16 samples) but saturates more quickly at the extreme (diminishing returns after thousands of tokens).</p>
+<p>Critically, training-time and test-time scaling <strong>compose</strong>: a model trained with more compute also benefits more from test-time search, so the frontier model uses <em>both</em> axes.</p>
+<h2 id="putting-it-all-together-a-taxonomy-of-test-time-strategies">Putting It All Together: A Taxonomy of Test-Time Strategies<a class="headerlink" href="#putting-it-all-together-a-taxonomy-of-test-time-strategies" title="Permanent link">¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Search type</th>
+<th>Verifier needed</th>
+<th>Parallelisable</th>
+<th>Typical gain</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Greedy CoT</td>
+<td>None</td>
+<td>No</td>
+<td>—</td>
+<td>baseline</td>
+</tr>
+<tr>
+<td>Self-consistency / majority vote</td>
+<td>Output-level</td>
+<td>No (majority vote)</td>
+<td>Yes</td>
+<td>+10–20 %</td>
+</tr>
+<tr>
+<td>Best-of-N (ORM)</td>
+<td>Output-level</td>
+<td>ORM</td>
+<td>Yes</td>
+<td>+15–30 %</td>
+</tr>
+<tr>
+<td>Best-of-N (PRM)</td>
+<td>Step-level</td>
+<td>PRM</td>
+<td>Yes</td>
+<td>+20–40 %</td>
+</tr>
+<tr>
+<td>Beam search</td>
+<td>Prefix-level</td>
+<td>PRM</td>
+<td>Partial</td>
+<td>+25–40 %</td>
+</tr>
+<tr>
+<td>ToT beam search</td>
+<td>Tree</td>
+<td>Value model (LM)</td>
+<td>Partial</td>
+<td>+30–50 %</td>
+</tr>
+<tr>
+<td>MCTS</td>
+<td>Tree</td>
+<td>PRM / rollout</td>
+<td>Sequential</td>
+<td>+35–55 %</td>
+</tr>
+<tr>
+<td>Long-thinking (o1/R1 style)</td>
+<td>Internal</td>
+<td>Trained-in</td>
+<td>Yes</td>
+<td>varies</td>
+</tr>
+</tbody>
+</table>
+<p>Gains are highly task-dependent and model-dependent; treat them as order-of-magnitude intuitions, not precise figures.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: ORM reward hacking at scale</p>
+<p>When you run best-of-N with an ORM for large N (e.g., N=256), the model samples increasingly improbable but &ldquo;ORM-fooling&rdquo; outputs. A solution that pattern-matches to correct-looking formatting can score highly even if the reasoning is circular. Switch to PRM or step-level verification once N &gt; ~32. See <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a> for the general problem.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> An interviewer asks: &ldquo;What is the difference between a process reward model and an outcome reward model, and when would you choose one over the other?&rdquo;</p>
+<p><strong>A:</strong> An ORM scores the <em>final answer</em> of a solution — it sees the full trace and outputs a single scalar. It is easy to train: you just need ground-truth correct/incorrect labels on complete solutions. An PRM scores each <em>intermediate reasoning step</em>, requiring step-level annotations (human labels or heuristic derivations). Choose ORM when: (1) data collection is constrained, (2) only final correctness matters, or (3) the solution space is small enough that majority vote works. Choose PRM when: (1) you are doing tree search (MCTS, ToT) that needs to prune bad branches early, (2) you want to explain <em>why</em> a solution is wrong, or (3) you have observed ORM reward hacking in your best-of-N evaluation. In practice, R1-style systems often use RL with an outcome-only verifiable reward during training but may incorporate PRM-style credit assignment for harder tasks.</p>
+</div>
+<h2 id="infrastructure-and-production-considerations">Infrastructure and Production Considerations<a class="headerlink" href="#infrastructure-and-production-considerations" title="Permanent link">¶</a></h2>
+<p>Long reasoning traces change the inference serving problem. A trace that is 4,000 tokens long generates a KV cache 20× larger than a 200-token response. See <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a> for how vLLM handles this, and <a href="../07-inference-serving/12-inference-economics.html">Inference Economics: Latency, Throughput &amp; Cost</a> for cost modeling.</p>
+<p>Key practical points:</p>
+<ul>
+<li><strong>Parallelise best-of-N</strong> across model replicas, not within a single model. Each sample is fully independent.</li>
+<li><strong>Disaggregate thinking from answering</strong>: in prefill-decode disaggregated systems (see <a href="../07-inference-serving/08-disaggregated-chunked-prefill.html">Disaggregated Prefill/Decode &amp; Chunked Prefill</a>), the thinking phase is a long decode run. Route thinking requests to throughput-optimised nodes.</li>
+<li><strong>Caching reasoning prefixes</strong>: if many queries share a problem preamble, prefix KV caching (see <a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>) provides significant savings.</li>
+<li><strong>Budget forcing at the API level</strong>: expose <code>thinking_tokens</code> as a first-class parameter so product teams can tune the cost-accuracy tradeoff per use case.</li>
+</ul>
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Chain-of-thought prompting improves accuracy by externalising intermediate state into the context window, converting a fixed-depth circuit into a variable-depth sequential computation.</li>
+<li>Self-consistency (majority vote over N samples) is a simple, highly parallelisable way to trade inference cost for accuracy; it amplifies strong signals but cannot rescue a fundamentally weak model.</li>
+<li>Process Reward Models score each reasoning step independently, providing a richer training and search signal than Outcome Reward Models, which only evaluate final answers.</li>
+<li>Tree-of-Thoughts and MCTS extend the search to the reasoning <em>process</em> itself, pruning dead branches early and focusing compute on promising subtrees.</li>
+<li>Test-time scaling obeys an approximate power law: accuracy improves as <span class="arithmatex">\(O(N^{-\alpha})\)</span> diminishes, with PRM-guided search exhibiting longer and steeper scaling before saturation.</li>
+<li>o1/R1-style long-thinking models are trained (not just prompted) to produce extended reasoning traces via RL with verifiable rewards; emergent self-reflection and backtracking arise from the gradient signal.</li>
+<li>Budget forcing is a continuous knob for trading accuracy against latency: short budgets give fast answers, long budgets yield higher accuracy on hard problems.</li>
+<li>Training-time and test-time scaling <em>compose</em>: a stronger pretrained model benefits more from test-time search, so frontier models exploit both axes simultaneously.</li>
+<li>Production deployment of reasoning models requires careful KV-cache memory management and disaggregated infrastructure due to the large token footprints of thinking traces.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Test-time compute has become a first-class scaling axis: o1, DeepSeek-R1, and Claude 3.7 Sonnet all demonstrate that spending more tokens thinking — guided by process reward models and tree search — reliably improves accuracy on hard reasoning tasks, composing with (not replacing) training-time scale.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2201.11903">Wei et al., <em>Chain-of-Thought Prompting Elicits Reasoning in Large Language Models</em> (2022)</a> — the paper that showed few-shot CoT dramatically improves arithmetic and commonsense benchmarks.</li>
+<li><a href="https://arxiv.org/abs/2205.11916">Kojima et al., <em>Large Language Models are Zero-Shot Reasoners</em> (2022)</a> — &ldquo;Let&rsquo;s think step by step&rdquo; as a universal zero-shot CoT trigger.</li>
+<li><a href="https://arxiv.org/abs/2203.11171">Wang et al., <em>Self-Consistency Improves Chain of Thought Reasoning in Language Models</em> (2023)</a> — majority vote over N sampled reasoning traces; the canonical best-of-N baseline.</li>
+<li><a href="https://arxiv.org/abs/2305.20050">Lightman et al., <em>Let&rsquo;s Verify Step by Step</em> (2023)</a> — human-annotated step-level supervision; showed process reward models outperform outcome reward models for guiding search.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2305.10601">Yao et al., <em>Tree of Thoughts: Deliberate Problem Solving with Large Language Models</em> (2023)</a> — extends search from output-level voting to the reasoning tree itself using BFS/DFS with a value model.</li>
+<li><a href="https://arxiv.org/abs/2408.03314">Snell et al., <em>Scaling LLM Test-Time Compute Optimally</em> (2024)</a> — power-law characterisation of test-time scaling; shows compute-optimal frontier between model size and number of samples.</li>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI, <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em> (2025)</a> — open-weights reasoning model trained with pure RL; demonstrates emergent self-reflection and backtracking.</li>
+<li><a href="https://arxiv.org/abs/2501.02497">Ji et al., <em>A Survey of Test-Time Compute: From Intuitive Inference to Deliberate Reasoning</em> (2025)</a> — comprehensive taxonomy covering self-correction, tree search, and process supervision across System-1 and System-2 paradigms.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/openreasoner/openr">openreasoner/openr</a> — end-to-end framework for training reasoning models with PRM supervision and MCTS/beam search at inference.</li>
+<li><a href="https://github.com/huggingface/open-r1">huggingface/open-r1</a> — Hugging Face&rsquo;s fully open reproduction of DeepSeek-R1, including GRPO training code and distilled reasoning datasets.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.anthropic.com/news/visible-extended-thinking">Anthropic, <em>Claude&rsquo;s extended thinking</em> (2025)</a> — product write-up and benchmark results for extended thinking with a configurable token budget; illustrates the industry state of the art.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Wei et al., <em>Chain-of-Thought Prompting Elicits Reasoning in Large Language Models</em>, NeurIPS 2022.</li>
+<li>Wang et al., <em>Self-Consistency Improves Chain of Thought Reasoning in Language Models</em>, ICLR 2023.</li>
+<li>Kojima et al., <em>Large Language Models are Zero-Shot Reasoners</em>, NeurIPS 2022.</li>
+<li>Yao et al., <em>Tree of Thoughts: Deliberate Problem Solving with Large Language Models</em>, NeurIPS 2023.</li>
+<li>Besta et al., <em>Graph of Thoughts: Solving Elaborate Problems with Large Language Models</em>, AAAI 2024.</li>
+<li>Lightman et al., <em>Let&rsquo;s Verify Step by Step</em>, ICLR 2024.</li>
+<li>Snell et al., <em>Scaling LLM Test-Time Compute Optimally</em>, arXiv 2024.</li>
+<li>DeepSeek-AI, <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em>, arXiv 2025.</li>
+<li>Schulman et al., <em>Proximal Policy Optimization Algorithms</em>, arXiv 2017 (the RL backbone for many reasoning training pipelines).</li>
+<li>Silver et al., <em>Mastering the Game of Go without Human Knowledge</em> (AlphaGo Zero), Nature 2017 (MCTS/PUCT foundations).</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="09-rlvr-reasoning.html"><span class="pn-label">← Previous</span><span class="pn-title">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</span></a>
+<a class="next" href="11-constitutional-rlaif.html"><span class="pn-label">Next →</span><span class="pn-title">Constitutional AI, RLAIF &amp; Self-Improvement</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-reasoning-needs-more-than-a-single-forward-pass">Why Reasoning Needs More Than a Single Forward Pass</a></li>
+<li class="toc-l2"><a href="#chain-of-thought-prompting">Chain-of-Thought Prompting</a></li>
+<li class="toc-l3"><a href="#the-basic-technique">The Basic Technique</a></li>
+<li class="toc-l3"><a href="#why-it-works">Why It Works</a></li>
+<li class="toc-l2"><a href="#self-consistency-marginalising-over-reasoning-paths">Self-Consistency: Marginalising Over Reasoning Paths</a></li>
+<li class="toc-l2"><a href="#tree-of-thought-and-graph-of-thought">Tree-of-Thought and Graph-of-Thought</a></li>
+<li class="toc-l3"><a href="#tree-of-thoughts-tot">Tree of Thoughts (ToT)</a></li>
+<li class="toc-l3"><a href="#graph-of-thought">Graph of Thought</a></li>
+<li class="toc-l2"><a href="#process-reward-models-vs-outcome-reward-models">Process Reward Models vs. Outcome Reward Models</a></li>
+<li class="toc-l3"><a href="#outcome-reward-models-orm">Outcome Reward Models (ORM)</a></li>
+<li class="toc-l3"><a href="#process-reward-models-prm">Process Reward Models (PRM)</a></li>
+<li class="toc-l3"><a href="#prm-guided-best-of-n">PRM-Guided Best-of-N</a></li>
+<li class="toc-l2"><a href="#mcts-for-language-model-reasoning">MCTS for Language Model Reasoning</a></li>
+<li class="toc-l3"><a href="#the-four-phases">The Four Phases</a></li>
+<li class="toc-l2"><a href="#test-time-scaling-laws">Test-Time Scaling Laws</a></li>
+<li class="toc-l2"><a href="#long-thinking-models-o1-deepseek-r1-and-the-reasoning-era">Long-Thinking Models: o1, DeepSeek-R1, and the Reasoning Era</a></li>
+<li class="toc-l3"><a href="#training-reasoning-models">Training Reasoning Models</a></li>
+<li class="toc-l3"><a href="#what-emerges-aha-moments">What Emerges: &amp;ldquo;Aha&amp;rdquo; Moments</a></li>
+<li class="toc-l3"><a href="#budget-forcing">Budget Forcing</a></li>
+<li class="toc-l3"><a href="#the-scaling-picture">The Scaling Picture</a></li>
+<li class="toc-l2"><a href="#putting-it-all-together-a-taxonomy-of-test-time-strategies">Putting It All Together: A Taxonomy of Test-Time Strategies</a></li>
+<li class="toc-l2"><a href="#infrastructure-and-production-considerations">Infrastructure and Production Considerations</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

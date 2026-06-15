@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Building a GPT From Scratch (nanoGPT-style) — The LLM Stack</title>
+<meta name="description" content="Assemble everything into a working decoder-only GPT: config, blocks, weight init, forward, training loop on tiny data, sampling/generation. Complete, runnable, ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="active" href="07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part II — The Transformer Architecture</div>
+<h1 id="27-building-a-gpt-from-scratch-nanogpt-style">2.7 Building a GPT From Scratch (nanoGPT-style)<a class="headerlink" href="#27-building-a-gpt-from-scratch-nanogpt-style" title="Permanent link">¶</a></h1>
+<p>This is the chapter where the parts become a machine. Over the last several chapters we forged components in isolation: a <a href="../02-transformer/01-tokenization.html">tokenizer</a> that turns text into integers, an <a href="../02-transformer/02-embeddings-input.html">embedding table</a> that turns those integers into vectors, <a href="../02-transformer/03-attention-from-scratch.html">scaled dot-product attention</a> that mixes information across positions, <a href="../02-transformer/04-mha-gqa-mla.html">multi-head attention</a> that lets it mix in several subspaces at once, <a href="../02-transformer/05-positional-encoding.html">positional encodings</a> that break attention&rsquo;s permutation symmetry, and <a href="../02-transformer/06-transformer-block.html">the Transformer block</a> that wraps attention and an MLP in norms and residuals. Each was a sharpened tool on the bench. Now we assemble them into a working, trainable, text-generating decoder-only GPT — the architecture behind GPT-2, GPT-3, Llama, and (with refinements) every frontier model.</p>
+<p>We are deliberately following the spirit of Andrej Karpathy&rsquo;s <strong>nanoGPT</strong>: a single, readable file you can hold in your head, that trains on a laptop, and that scales — without structural changes — to a real run on a cluster. By the end you will have (1) a <code>GPTConfig</code> dataclass that names every architectural knob, (2) the full module hierarchy from token IDs to logits, (3) a principled weight-initialization scheme and an explanation of <em>why</em> it matters at depth, (4) a complete training loop on a tiny character-level dataset, and (5) an autoregressive <code>generate</code> method with temperature, top-k, and top-p sampling. Everything is runnable PyTorch, heavily commented, and small enough to actually understand. This is the capstone of Part II: the chapter that proves the preceding theory composes into something that <em>learns language</em>.</p>
+<p>We assume you are fluent with <a href="../01-foundations/07-autodiff-pytorch.html">PyTorch and autograd</a> and have read the block chapter; we will reference but not re-derive attention internals.</p>
+<h2 id="the-anatomy-of-a-gpt-from-token-ids-to-next-token-logits">The Anatomy of a GPT: From Token IDs to Next-Token Logits<a class="headerlink" href="#the-anatomy-of-a-gpt-from-token-ids-to-next-token-logits" title="Permanent link">¶</a></h2>
+<p>Before any code, fix the shape of the whole computation in your mind. A decoder-only GPT is a function</p>
+<div class="arithmatex">\[
+f_\theta : \{0, 1, \dots, V-1\}^{T} \longrightarrow \mathbb{R}^{T \times V},
+\]</div>
+<p>mapping a sequence of <span class="arithmatex">\(T\)</span> token IDs (drawn from a vocabulary of size <span class="arithmatex">\(V\)</span>) to a <span class="arithmatex">\(T \times V\)</span> matrix of <strong>logits</strong>: for <em>every</em> position <span class="arithmatex">\(t\)</span>, an unnormalized score for every possible next token. Position <span class="arithmatex">\(t\)</span>&rsquo;s logits are the model&rsquo;s prediction of token <span class="arithmatex">\(t+1\)</span>. That single design decision — predict the next token at <em>every</em> position simultaneously — is what lets us extract <span class="arithmatex">\(T\)</span> training signals from one sequence in one forward pass, and it is enforced entirely by the <a href="../02-transformer/03-attention-from-scratch.html">causal mask</a> inside attention.</p>
+<p>The data flows through six stages. Read this diagram top to bottom; the rest of the chapter is just filling in each box with code.</p>
+<figure class="viz" id="fig-buildgpt-data-flow-stages">
+<svg viewBox="0 0 760 860" role="img" aria-label="Anatomy of a GPT: token IDs flow top-to-bottom through token and positional embeddings, a stack of n_layer Transformer blocks each with pre-norm attention and MLP sublayers that add onto the residual stream, a final layer norm, and a linear lm_head projecting to next-token logits.">
+<defs>
+  <marker id="bgpt-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#334155)"/>
+  </marker>
+  <marker id="bgpt-arr-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#777)"/>
+  </marker>
+</defs>
+<style>
+  #fig-buildgpt-data-flow-stages text        { fill: var(--ink-soft,#111); }
+  #fig-buildgpt-data-flow-stages .slbl       { font: 700 13px var(--sans,sans-serif); }
+  #fig-buildgpt-data-flow-stages .dim        { font: 400 10px var(--mono,monospace); fill: var(--muted,#777); }
+  #fig-buildgpt-data-flow-stages .eq         { font: 400 10px var(--mono,monospace); fill: var(--muted,#777); }
+  #fig-buildgpt-data-flow-stages .sub        { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#777); }
+  #fig-buildgpt-data-flow-stages .ilbl       { font: 600 11px var(--sans,sans-serif); }
+  #fig-buildgpt-data-flow-stages .isub       { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#777); }
+  #fig-buildgpt-data-flow-stages .hlbl       { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#e8743b); }
+</style>
+
+
+<line x1="380" y1="230" x2="380" y2="632"
+      stroke="var(--accent,#e8743b)" stroke-width="6" opacity="0.30"/>
+
+
+<text transform="translate(18,500) rotate(-90)" text-anchor="middle" class="hlbl">
+  residual stream (width n_embd)
+</text>
+
+
+<rect x="230" y="22" width="300" height="52" rx="8"
+      fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#333)" stroke-width="1.5"/>
+<text x="380" y="46"  text-anchor="middle" class="slbl">token IDs</text>
+<text x="380" y="63"  text-anchor="middle" class="dim">(B, T)  integers in [0, V)</text>
+
+
+<line x1="380" y1="74" x2="380" y2="102"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.5" marker-end="url(#bgpt-arr)"/>
+
+
+
+<rect x="232" y="104" width="190" height="46" rx="6"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.12"
+      stroke="var(--accent-2,#3b82f6)" stroke-width="1.5"/>
+<text x="327" y="125" text-anchor="middle" class="ilbl">token embedding  wte</text>
+<text x="327" y="141" text-anchor="middle" class="dim">(B, T, n_embd)</text>
+
+
+<text x="428" y="122" class="dim">look up a learned</text>
+<text x="428" y="134" class="dim">vector per token ID</text>
+
+
+<rect x="232" y="158" width="190" height="46" rx="6"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.12"
+      stroke="var(--accent-2,#3b82f6)" stroke-width="1.5"/>
+<text x="327" y="179" text-anchor="middle" class="ilbl">positional info  wpe</text>
+<text x="327" y="195" text-anchor="middle" class="dim">(B, T, n_embd)</text>
+
+
+<text x="428" y="176" class="dim">"where am I?"</text>
+<text x="428" y="188" class="dim">(learned wpe / RoPE)</text>
+
+
+<line x1="380" y1="150" x2="380" y2="158"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.2"/>
+<line x1="380" y1="204" x2="380" y2="218"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.2"/>
+
+
+<circle cx="380" cy="228" r="10"
+        fill="var(--accent,#e8743b)" stroke="var(--ink-soft,#333)" stroke-width="1.2"/>
+<text x="380" y="233" text-anchor="middle"
+      style="font:700 14px var(--sans,sans-serif); fill:#fff;">+</text>
+
+
+<line x1="380" y1="238" x2="380" y2="256"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.5" marker-end="url(#bgpt-arr)"/>
+
+
+
+<rect x="208" y="264" width="348" height="282" rx="10"
+      fill="var(--surface-3,#eef3ff)" stroke="var(--accent-2,#3b82f6)" stroke-width="1"
+      opacity="0.45"/>
+<rect x="204" y="260" width="348" height="282" rx="10"
+      fill="var(--surface-3,#eef3ff)" stroke="var(--accent-2,#3b82f6)" stroke-width="1"
+      opacity="0.6"/>
+
+<rect x="200" y="256" width="348" height="282" rx="10"
+      fill="var(--surface-3,#eef3ff)" stroke="var(--accent-2,#3b82f6)" stroke-width="2"/>
+
+
+<text x="374" y="278" text-anchor="middle" class="slbl">Transformer block  x n_layer</text>
+
+
+
+<path d="M380,302 C425,302 428,314 448,314" fill="none"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#bgpt-arr)"/>
+
+<rect x="450" y="298" width="88" height="34" rx="5"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.16"
+      stroke="var(--accent-2,#3b82f6)" stroke-width="1.5"/>
+<text x="494" y="312" text-anchor="middle" class="ilbl" style="font-size:10px;">ln_1, attn</text>
+<text x="494" y="325" text-anchor="middle" class="isub">mixes ACROSS tokens</text>
+
+<path d="M450,316 C428,316 424,338 400,338" fill="none"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#bgpt-arr)"/>
+
+<circle cx="380" cy="348" r="9"
+        fill="var(--accent,#e8743b)" stroke="var(--ink-soft,#333)" stroke-width="1.2"/>
+<text x="380" y="353" text-anchor="middle"
+      style="font:700 12px var(--sans,sans-serif); fill:#fff;">+</text>
+
+
+<text x="214" y="314" class="eq">x = x +</text>
+<text x="214" y="326" class="eq">attn(ln_1(x))</text>
+
+
+<line x1="380" y1="357" x2="380" y2="386"
+      stroke="var(--accent,#e8743b)" stroke-width="6" opacity="0.30"/>
+
+
+<path d="M380,386 C425,386 428,398 448,398" fill="none"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#bgpt-arr)"/>
+
+<rect x="450" y="382" width="88" height="34" rx="5"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.16"
+      stroke="var(--accent-2,#3b82f6)" stroke-width="1.5"/>
+<text x="494" y="396" text-anchor="middle" class="ilbl" style="font-size:10px;">ln_2, mlp</text>
+<text x="494" y="409" text-anchor="middle" class="isub">processes EACH token</text>
+
+<path d="M450,400 C428,400 424,420 400,420" fill="none"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#bgpt-arr)"/>
+
+<circle cx="380" cy="430" r="9"
+        fill="var(--accent,#e8743b)" stroke="var(--ink-soft,#333)" stroke-width="1.2"/>
+<text x="380" y="435" text-anchor="middle"
+      style="font:700 12px var(--sans,sans-serif); fill:#fff;">+</text>
+
+
+<text x="214" y="398" class="eq">x = x +</text>
+<text x="214" y="410" class="eq">mlp(ln_2(x))</text>
+
+
+<line x1="380" y1="439" x2="380" y2="538"
+      stroke="var(--accent,#e8743b)" stroke-width="6" opacity="0.30"/>
+
+
+<path d="M548,272 C592,272 602,400 582,492 C570,530 548,538 548,538"
+      fill="none" stroke="var(--muted,#777)" stroke-width="1.2"
+      stroke-dasharray="5 3" marker-end="url(#bgpt-arr-muted)"/>
+<text x="608" y="396" class="sub" style="font-size:9px;">repeat</text>
+<text x="608" y="409" class="sub" style="font-size:9px;">n_layer</text>
+<text x="608" y="422" class="sub" style="font-size:9px;">times</text>
+
+
+<line x1="380" y1="538" x2="380" y2="558"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.5" marker-end="url(#bgpt-arr)"/>
+
+<rect x="230" y="560" width="300" height="50" rx="8"
+      fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#333)" stroke-width="1.5"/>
+<text x="380" y="581" text-anchor="middle" class="slbl">final layernorm  ln_f</text>
+<text x="380" y="598" text-anchor="middle" class="dim">(B, T, n_embd)</text>
+
+
+<line x1="380" y1="610" x2="380" y2="633"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.5" marker-end="url(#bgpt-arr)"/>
+
+<rect x="230" y="635" width="300" height="50" rx="8"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.12"
+      stroke="var(--accent-2,#3b82f6)" stroke-width="1.8"/>
+<text x="380" y="656" text-anchor="middle" class="slbl">lm_head  (linear)</text>
+<text x="380" y="673" text-anchor="middle" class="dim">(B, T, V)  project to vocabulary logits</text>
+
+
+<path d="M230,660 C165,660 155,128 232,128"
+      fill="none" stroke="var(--muted,#777)" stroke-width="1.1"
+      stroke-dasharray="4 3" marker-end="url(#bgpt-arr-muted)"/>
+<text x="110" y="385" text-anchor="middle" class="sub" style="font-size:9px;">weight</text>
+<text x="110" y="397" text-anchor="middle" class="sub" style="font-size:9px;">tying</text>
+<text x="110" y="409" text-anchor="middle" class="sub" style="font-size:9px;">(shared</text>
+<text x="110" y="421" text-anchor="middle" class="sub" style="font-size:9px;">matrix)</text>
+
+
+<line x1="380" y1="685" x2="380" y2="708"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.5" marker-end="url(#bgpt-arr)"/>
+
+
+<rect x="225" y="710" width="82" height="42" rx="6"
+      fill="var(--accent,#e8743b)" fill-opacity="0.15"
+      stroke="var(--accent,#e8743b)" stroke-width="1.5"/>
+<text x="266" y="728" text-anchor="middle" class="ilbl">logits</text>
+<text x="266" y="743" text-anchor="middle" class="dim">(B,T,V)</text>
+
+
+<line x1="307" y1="731" x2="338" y2="731"
+      stroke="var(--ink-soft,#334155)" stroke-width="1.4" marker-end="url(#bgpt-arr)"/>
+<text x="323" y="724" text-anchor="middle" class="sub" style="font-size:9px;">softmax</text>
+
+
+<rect x="340" y="710" width="192" height="42" rx="6"
+      fill="var(--surface,#f5f5f5)" stroke="var(--accent,#e8743b)" stroke-width="1.5"/>
+
+<rect x="350" y="737" width="8" height="9"  fill="var(--accent,#e8743b)" fill-opacity="0.7"/>
+<rect x="362" y="724" width="8" height="22" fill="var(--accent,#e8743b)" fill-opacity="0.7"/>
+<rect x="374" y="733" width="8" height="13" fill="var(--accent,#e8743b)" fill-opacity="0.7"/>
+<rect x="386" y="730" width="8" height="16" fill="var(--accent,#e8743b)" fill-opacity="0.7"/>
+<rect x="398" y="739" width="8" height="7"  fill="var(--accent,#e8743b)" fill-opacity="0.7"/>
+
+<line x1="347" y1="746" x2="410" y2="746"
+      stroke="var(--muted,#777)" stroke-width="0.8"/>
+
+<text x="464" y="726" text-anchor="middle" class="ilbl" style="font-size:11px;">next-token</text>
+<text x="464" y="743" text-anchor="middle" class="dim">prob. distribution</text>
+
+</svg>
+<figcaption><b>Anatomy of a GPT: from token IDs to next-token logits.</b> Token and positional embeddings are summed to start the <em>residual stream</em> — a width-<code>n_embd</code> highway (orange) that is never overwritten. Each Transformer block branches two sublayers off that highway and adds their outputs back via the circled&amp;nbsp;<b>+</b>&amp;nbsp;nodes; after <code>n_layer</code> such additions the stream passes through a final layer norm and a linear <code>lm_head</code> (weight-tied to the token embedding table) to yield per-position logits over the full vocabulary.</figcaption>
+</figure>
+
+<p>The <strong>residual stream</strong> is the central object. A vector of width <code>n_embd</code> enters at the embedding, and every block <em>reads from it and adds back to it</em> — attention adds a &ldquo;what other tokens told me&rdquo; term, the MLP adds a &ldquo;what I computed from myself&rdquo; term. Nothing overwrites; everything accumulates. By the final layer the residual stream at position <span class="arithmatex">\(t\)</span> is a rich summary of the prefix <span class="arithmatex">\(1{:}t\)</span>, and a single linear map (<code>lm_head</code>) reads off the next-token distribution. Keep this picture — <em>width-<code>n_embd</code> highway with additive on-ramps</em> — and the code below will feel inevitable.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: why decoder-only, and why this is the dominant design</p>
+<p>A GPT is the <em>decoder-only</em> member of the Transformer family: one stack, causal masking, trained on plain next-token prediction. It has no encoder and no cross-attention. The competing designs — encoder-only (BERT) and encoder–decoder (T5) — are covered in <a href="../02-transformer/08-architecture-variants.html">Architecture Variants</a>. Decoder-only won the scaling race because it is the simplest thing that does <em>everything</em>: the same next-token objective subsumes generation, in-context learning, and (after <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">post-training</a>) instruction following, all without architectural specialization.</p>
+</div>
+<h2 id="the-config-naming-every-knob">The Config: Naming Every Knob<a class="headerlink" href="#the-config-naming-every-knob" title="Permanent link">¶</a></h2>
+<p>A model is a few hyperparameters plus a fixed wiring. Putting every architectural choice into one <code>dataclass</code> is not bureaucracy — it is the difference between a script and a <em>system</em>. The config is what you serialize into a checkpoint, what you sweep over in experiments, and what a teammate reads to understand your model in thirty seconds. We will mirror GPT-2&rsquo;s parameterization.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">GPTConfig</span><span class="p">:</span>
+    <span class="c1"># --- Sequence / vocabulary ---</span>
+    <span class="n">block_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">256</span>     <span class="c1"># max context length T (positions the model can see)</span>
+    <span class="n">vocab_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">65</span>      <span class="c1"># size of the token vocabulary V</span>
+
+    <span class="c1"># --- Model shape ---</span>
+    <span class="n">n_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">6</span>          <span class="c1"># number of Transformer blocks stacked</span>
+    <span class="n">n_head</span><span class="p">:</span>  <span class="nb">int</span> <span class="o">=</span> <span class="mi">6</span>          <span class="c1"># attention heads per block (must divide n_embd)</span>
+    <span class="n">n_embd</span><span class="p">:</span>  <span class="nb">int</span> <span class="o">=</span> <span class="mi">384</span>        <span class="c1"># residual-stream width (a.k.a. d_model)</span>
+
+    <span class="c1"># --- Regularization / numerics ---</span>
+    <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>      <span class="c1"># dropout prob (0.0 for small/clean data; 0.1+ to regularize)</span>
+    <span class="n">bias</span><span class="p">:</span>    <span class="nb">bool</span>  <span class="o">=</span> <span class="kc">False</span>    <span class="c1"># use bias terms in Linear / LayerNorm? (False = modern default)</span>
+</code></pre></div>
+<p>A few of these deserve a sentence of justification, because interviewers love to ask &ldquo;what is <code>n_embd</code> and how does it relate to <code>n_head</code>?&rdquo;</p>
+<ul>
+<li><strong><code>n_embd</code> (the residual-stream width, often written <span class="arithmatex">\(d_\text{model}\)</span>)</strong> is the single most important capacity knob. Doubling it roughly quadruples the parameters in every linear layer and is the primary lever in <a href="../03-pretraining/04-scaling-laws.html">scaling laws</a>.</li>
+<li><strong><code>n_head</code> must divide <code>n_embd</code>.</strong> Each head operates in a subspace of dimension <code>head_dim = n_embd / n_head</code>. With <code>n_embd=384, n_head=6</code> we get <code>head_dim=64</code> — and 64 is a near-universal sweet spot (it is what the <span class="arithmatex">\(\sqrt{d_k}\)</span> analysis in <a href="../02-transformer/03-attention-from-scratch.html">the attention chapter</a> was tuned around).</li>
+<li><strong><code>block_size</code></strong> caps the context. It sets the size of the learned positional table and the <span class="arithmatex">\(T \times T\)</span> attention matrix. It is a hard limit at train time but can be extended afterward (see <a href="../03-pretraining/13-long-context-pretraining.html">Long-Context Pretraining</a>).</li>
+<li><strong><code>bias=False</code></strong> drops bias terms from linear layers and LayerNorms. Modern models (Llama, etc.) omit them: they barely help, and removing them slightly speeds training and simplifies the math. We follow that convention.</li>
+</ul>
+<p>The defaults above describe a ~10M-parameter model — small enough to train on a single GPU (or patiently on CPU) on a toy corpus, large enough to learn real structure. We will compute the exact parameter count in a worked example below.</p>
+<h2 id="building-the-modules-bottom-up">Building the Modules, Bottom-Up<a class="headerlink" href="#building-the-modules-bottom-up" title="Permanent link">¶</a></h2>
+<p>We now write the model as four nested modules: <code>LayerNorm</code> (so we can toggle bias), <code>CausalSelfAttention</code>, <code>MLP</code>, and <code>Block</code>. Each is a faithful, from-scratch implementation; together they are the body of the GPT. (For the deep <em>why</em> behind pre-norm placement, GELU, and the 4× MLP expansion, see <a href="../02-transformer/06-transformer-block.html">The Transformer Block</a>; here we focus on assembling correct, runnable code.)</p>
+<h3 id="layernorm-with-an-optional-bias">LayerNorm with an optional bias<a class="headerlink" href="#layernorm-with-an-optional-bias" title="Permanent link">¶</a></h3>
+<p>PyTorch&rsquo;s <code>nn.LayerNorm</code> always has a bias. We want the option to drop it, so we write our own thin wrapper. The math is the standard per-token normalization:</p>
+<div class="arithmatex">\[
+\operatorname{LN}(x) = \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} \odot \gamma + \beta,
+\qquad \mu = \tfrac{1}{d}\textstyle\sum_i x_i, \quad \sigma^2 = \tfrac{1}{d}\textstyle\sum_i (x_i - \mu)^2,
+\]</div>
+<p>where the mean and variance are computed over the <strong>feature</strong> dimension (the last axis, width <code>n_embd</code>), independently for every token.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LayerNorm</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;LayerNorm with an optional bias. PyTorch&#39;s built-in does not allow bias=None.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ndim</span><span class="p">,</span> <span class="n">bias</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">ndim</span><span class="p">))</span>               <span class="c1"># gamma, scale</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bias</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">ndim</span><span class="p">))</span> <span class="k">if</span> <span class="n">bias</span> <span class="k">else</span> <span class="kc">None</span>  <span class="c1"># beta, shift</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="c1"># Normalize over the last dim only. eps keeps us safe when variance ~ 0.</span>
+        <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">layer_norm</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">bias</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="causal-self-attention-all-heads-in-one-matmul">Causal self-attention (all heads in one matmul)<a class="headerlink" href="#causal-self-attention-all-heads-in-one-matmul" title="Permanent link">¶</a></h3>
+<p>This is the heart of the model. We compute Q, K, V for <em>all heads at once</em> via a single fused linear layer of width <code>3 * n_embd</code>, reshape into <code>(B, n_head, T, head_dim)</code>, run masked scaled-dot-product attention, then project back. Computing all heads in one matmul (rather than a Python loop over heads) is the standard performance trick — it keeps the GPU busy with one large GEMM instead of many small ones.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">CausalSelfAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">config</span><span class="o">.</span><span class="n">n_embd</span> <span class="o">%</span> <span class="n">config</span><span class="o">.</span><span class="n">n_head</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;n_embd must be divisible by n_head&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_head</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">n_head</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_embd</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">n_embd</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">dropout</span>
+
+        <span class="c1"># One projection produces Q, K, V together: output width = 3 * n_embd.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">c_attn</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+        <span class="c1"># Output projection W_O: mixes the per-head results back into the stream.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">c_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attn_dropout</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">dropout</span><span class="p">)</span>   <span class="c1"># on the attention weights</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resid_dropout</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">dropout</span><span class="p">)</span>   <span class="c1"># on the block output</span>
+
+        <span class="c1"># Use PyTorch&#39;s fused (FlashAttention-style) kernel when available.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">flash</span> <span class="o">=</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">F</span><span class="p">,</span> <span class="s2">&quot;scaled_dot_product_attention&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">flash</span><span class="p">:</span>
+            <span class="c1"># Fallback: precompute a (1,1,T,T) causal mask buffer for manual attention.</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tril</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">block_size</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">block_size</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">&quot;bias&quot;</span><span class="p">,</span> <span class="n">mask</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">block_size</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">block_size</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">C</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">size</span><span class="p">()</span>            <span class="c1"># batch, sequence length, embedding dim (= n_embd)</span>
+
+        <span class="c1"># Project once, then split into the three roles along the feature axis.</span>
+        <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">c_attn</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>   <span class="c1"># each (B, T, C)</span>
+
+        <span class="c1"># Reshape (B, T, C) -&gt; (B, n_head, T, head_dim) so heads run in parallel.</span>
+        <span class="n">hd</span> <span class="o">=</span> <span class="n">C</span> <span class="o">//</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_head</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_head</span><span class="p">,</span> <span class="n">hd</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>    <span class="c1"># (B, nh, T, hd)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">k</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_head</span><span class="p">,</span> <span class="n">hd</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_head</span><span class="p">,</span> <span class="n">hd</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">flash</span><span class="p">:</span>
+            <span class="c1"># Fused kernel: applies the causal mask, scaling, softmax, and dropout.</span>
+            <span class="n">y</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">scaled_dot_product_attention</span><span class="p">(</span>
+                <span class="n">q</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">attn_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+                <span class="n">dropout_p</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">training</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+                <span class="n">is_causal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Manual path — identical math, written out so you can read it.</span>
+            <span class="n">att</span> <span class="o">=</span> <span class="p">(</span><span class="n">q</span> <span class="o">@</span> <span class="n">k</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">k</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">))</span>   <span class="c1"># (B,nh,T,T)</span>
+            <span class="n">att</span> <span class="o">=</span> <span class="n">att</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bias</span><span class="p">[:,</span> <span class="p">:,</span> <span class="p">:</span><span class="n">T</span><span class="p">,</span> <span class="p">:</span><span class="n">T</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">))</span>
+            <span class="n">att</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">att</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">att</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn_dropout</span><span class="p">(</span><span class="n">att</span><span class="p">)</span>
+            <span class="n">y</span> <span class="o">=</span> <span class="n">att</span> <span class="o">@</span> <span class="n">v</span>                                                     <span class="c1"># (B,nh,T,hd)</span>
+
+        <span class="c1"># Re-assemble heads: (B, nh, T, hd) -&gt; (B, T, C). contiguous() before view.</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">y</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">C</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">resid_dropout</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">c_proj</span><span class="p">(</span><span class="n">y</span><span class="p">))</span>            <span class="c1"># output projection + dropout</span>
+</code></pre></div>
+<p>Two things to internalize. First, <code>c_attn</code> having output width <code>3 * n_embd</code> and <code>c_proj</code> having width <code>n_embd</code> are <em>exactly</em> where the bulk of attention&rsquo;s parameters live — <span class="arithmatex">\(4\,n_\text{embd}^2\)</span> per block (three for QKV, one for the output projection). Second, the <code>is_causal=True</code> flag is doing the autoregressive masking; without it the model would see the future and the training loss would be a meaningless near-zero.</p>
+<h3 id="the-mlp-position-wise-feedforward">The MLP (position-wise feedforward)<a class="headerlink" href="#the-mlp-position-wise-feedforward" title="Permanent link">¶</a></h3>
+<p>After mixing information <em>across</em> positions with attention, each token is processed <em>independently</em> by a two-layer MLP. The hidden layer is 4× wider than the residual stream — a ratio that has held remarkably constant across model generations. The nonlinearity is GELU.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MLP</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">c_fc</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>  <span class="c1"># expand</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">gelu</span>   <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">GELU</span><span class="p">()</span>                                                       <span class="c1"># nonlinearity</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">c_proj</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">4</span> <span class="o">*</span> <span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>  <span class="c1"># contract</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">dropout</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">c_fc</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>      <span class="c1"># (B, T, 4*n_embd)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">gelu</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>      <span class="c1"># smooth, differentiable ReLU-like activation</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">c_proj</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>    <span class="c1"># back down to (B, T, n_embd)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</code></pre></div>
+<p>The two linear layers hold <span class="arithmatex">\(2 \times (4\,n_\text{embd}^2) = 8\,n_\text{embd}^2\)</span> parameters per block — <strong>twice</strong> what attention uses. In a standard GPT, the MLPs are where most of the parameters (and, the <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">interpretability</a> literature argues, most of the stored &ldquo;knowledge&rdquo;) live.</p>
+<h3 id="the-block-pre-norm-residual-repeat">The Block: pre-norm, residual, repeat<a class="headerlink" href="#the-block-pre-norm-residual-repeat" title="Permanent link">¶</a></h3>
+<p>A block wires attention and MLP into the residual stream with <strong>pre-normalization</strong> — LayerNorm is applied <em>before</em> each sublayer, and the sublayer&rsquo;s output is <em>added</em> to the input:</p>
+<div class="arithmatex">\[
+x \leftarrow x + \operatorname{Attn}(\operatorname{LN}_1(x)), \qquad
+x \leftarrow x + \operatorname{MLP}(\operatorname{LN}_2(x)).
+\]</div>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Block</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ln_1</span> <span class="o">=</span> <span class="n">LayerNorm</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attn</span> <span class="o">=</span> <span class="n">CausalSelfAttention</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ln_2</span> <span class="o">=</span> <span class="n">LayerNorm</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mlp</span>  <span class="o">=</span> <span class="n">MLP</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ln_1</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>   <span class="c1"># pre-norm attention, residual add</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ln_2</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>    <span class="c1"># pre-norm MLP,       residual add</span>
+        <span class="k">return</span> <span class="n">x</span>
+</code></pre></div>
+<p>Pre-norm (normalize the <em>input</em> to each sublayer, leave the residual path a clean identity) is the single most important stability change between the original 2017 Transformer (which used post-norm) and every modern LLM. Because the residual path is never normalized, gradients flow straight from the loss to the embedding with no attenuation, letting you stack dozens of layers without the loss exploding. The block chapter derives this; here we just rely on it.</p>
+<h2 id="the-full-gpt-module">The Full GPT Module<a class="headerlink" href="#the-full-gpt-module" title="Permanent link">¶</a></h2>
+<p>Now we assemble the body, the embeddings, the head, and — crucially — the weight initialization and parameter sharing. This single class <em>is</em> the model.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">GPT</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">config</span><span class="o">.</span><span class="n">vocab_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">config</span><span class="o">.</span><span class="n">block_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleDict</span><span class="p">(</span><span class="nb">dict</span><span class="p">(</span>
+            <span class="n">wte</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">vocab_size</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">),</span>   <span class="c1"># token embeddings</span>
+            <span class="n">wpe</span>  <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">block_size</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">),</span>   <span class="c1"># learned positions</span>
+            <span class="n">drop</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">dropout</span><span class="p">),</span>
+            <span class="n">h</span>    <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">([</span><span class="n">Block</span><span class="p">(</span><span class="n">config</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">n_layer</span><span class="p">)]),</span>
+            <span class="n">ln_f</span> <span class="o">=</span> <span class="n">LayerNorm</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">bias</span><span class="p">),</span>       <span class="c1"># final layernorm</span>
+        <span class="p">))</span>
+        <span class="c1"># Language-model head: residual stream -&gt; vocabulary logits.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lm_head</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">n_embd</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">vocab_size</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="c1"># WEIGHT TYING: share the token-embedding matrix with the output head.</span>
+        <span class="c1"># wte maps id -&gt; vector; lm_head maps vector -&gt; id-logits. Same V×n_embd</span>
+        <span class="c1"># matrix (transposed), so we tie them: saves V*n_embd params and helps.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">wte</span><span class="o">.</span><span class="n">weight</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">lm_head</span><span class="o">.</span><span class="n">weight</span>
+
+        <span class="c1"># Initialize all weights (see _init_weights), then apply a special</span>
+        <span class="c1"># scaled init to the residual output projections (GPT-2 trick).</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_init_weights</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">pn</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">pn</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;c_proj.weight&quot;</span><span class="p">):</span>
+                <span class="c1"># Scale residual-path projections by 1/sqrt(2 * n_layer). Explained below.</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">mean</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">config</span><span class="o">.</span><span class="n">n_layer</span><span class="p">)</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_init_weights</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">module</span><span class="p">):</span>
+        <span class="c1"># Linear and Embedding weights ~ N(0, 0.02^2); biases zeroed. The 0.02 std</span>
+        <span class="c1"># is the GPT-2 convention — small enough to keep early activations tame.</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">):</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="n">module</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">mean</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">module</span><span class="o">.</span><span class="n">bias</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">zeros_</span><span class="p">(</span><span class="n">module</span><span class="o">.</span><span class="n">bias</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">):</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">normal_</span><span class="p">(</span><span class="n">module</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="n">mean</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.02</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">targets</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">idx</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span> <span class="o">=</span> <span class="n">idx</span><span class="o">.</span><span class="n">size</span><span class="p">()</span>
+        <span class="k">assert</span> <span class="n">T</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">block_size</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;sequence length </span><span class="si">{</span><span class="n">T</span><span class="si">}</span><span class="s2"> &gt; block_size&quot;</span>
+        <span class="n">pos</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>   <span class="c1"># (T,) position ids</span>
+
+        <span class="c1"># 1) Embed tokens and positions, then sum into the residual stream.</span>
+        <span class="n">tok_emb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">wte</span><span class="p">(</span><span class="n">idx</span><span class="p">)</span>    <span class="c1"># (B, T, n_embd)</span>
+        <span class="n">pos_emb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">wpe</span><span class="p">(</span><span class="n">pos</span><span class="p">)</span>    <span class="c1"># (T, n_embd), broadcasts over batch</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">drop</span><span class="p">(</span><span class="n">tok_emb</span> <span class="o">+</span> <span class="n">pos_emb</span><span class="p">)</span>
+
+        <span class="c1"># 2) Run the stack of Transformer blocks.</span>
+        <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">h</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">block</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">ln_f</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>           <span class="c1"># final layernorm</span>
+
+        <span class="c1"># 3) Project to logits and, if training, compute the loss.</span>
+        <span class="k">if</span> <span class="n">targets</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">lm_head</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>           <span class="c1"># (B, T, vocab_size) — all positions</span>
+            <span class="c1"># Cross-entropy over the vocabulary, flattening batch &amp; time together.</span>
+            <span class="c1"># ignore_index=-1 lets us mask out padding positions in the targets.</span>
+            <span class="n">loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span>
+                <span class="n">logits</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">logits</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)),</span>
+                <span class="n">targets</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span>
+                <span class="n">ignore_index</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Inference: we only need the LAST position&#39;s logits to predict next token.</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">lm_head</span><span class="p">(</span><span class="n">x</span><span class="p">[:,</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="p">:])</span>  <span class="c1"># (B, 1, vocab_size) — saves compute</span>
+            <span class="n">loss</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="n">logits</span><span class="p">,</span> <span class="n">loss</span>
+</code></pre></div>
+<h3 id="weight-tying-and-the-two-headed-init-explained">Weight tying and the two-headed init, explained<a class="headerlink" href="#weight-tying-and-the-two-headed-init-explained" title="Permanent link">¶</a></h3>
+<p>Two non-obvious lines in that constructor carry real weight (pun intended).</p>
+<p><strong>Weight tying</strong> sets <code>self.transformer.wte.weight = self.lm_head.weight</code>. The input embedding maps a token ID to a vector; the output head maps a vector to a logit per token. These are inverse operations over the <em>same</em> vocabulary, and tying their matrices both <strong>saves <span class="arithmatex">\(V \times n_\text{embd}\)</span> parameters</strong> (for a 50k vocab and 768-dim model, that is ~38M parameters — a huge fraction of a small model) and acts as a regularizer that empirically improves perplexity. It traces to Press &amp; Wolf, <em>Using the Output Embedding to Tie Word Vectors</em> (2017).</p>
+<p><strong>The scaled residual init</strong> (<code>std = 0.02 / sqrt(2 * n_layer)</code> on every <code>c_proj.weight</code>) addresses a subtle problem with deep residual networks. Each block adds two terms to the residual stream. If every addition has variance <span class="arithmatex">\(\approx \sigma^2\)</span>, then after <span class="arithmatex">\(n_\text{layer}\)</span> blocks the stream&rsquo;s variance grows like <span class="arithmatex">\(2\,n_\text{layer}\,\sigma^2\)</span> — it accumulates with depth. To keep the residual stream&rsquo;s scale roughly constant, GPT-2 shrinks the <em>output</em> projection of each sublayer (the matrices feeding the residual add) by <span class="arithmatex">\(1/\sqrt{2\,n_\text{layer}}\)</span>, so the <span class="arithmatex">\(2\,n_\text{layer}\)</span> contributions sum back to a sane variance. The factor of 2 is because each block has two residual adds (attention and MLP). This is initialization-time hygiene, but it markedly improves the stability of deep models.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: forgetting <code>model.eval()</code> flips dropout and changes your numbers</p>
+<p>Dropout and any norm with running statistics behave differently in train vs. eval mode. Generating text or measuring validation loss without calling <code>model.eval()</code> leaves dropout <em>active</em>, injecting noise and corrupting your samples and metrics. Symmetrically, forgetting <code>model.train()</code> afterward disables dropout during training. Wrap evaluation in <code>model.eval()</code> + <code>torch.no_grad()</code> and restore <code>model.train()</code> when done — and remember our config defaults to <code>dropout=0.0</code>, which hides this bug until you turn dropout on.</p>
+</div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: counting the parameters of our default GPT</p>
+<p>Take <code>n_layer=6, n_head=6, n_embd=384, block_size=256, vocab_size=65</code>. Let <span class="arithmatex">\(d = n_\text{embd} = 384\)</span>.</p>
+<p><strong>Per block</strong> (ignoring tiny LayerNorm params and biases, since <code>bias=False</code>):</p>
+<ul>
+<li>Attention: <code>c_attn</code> is <span class="arithmatex">\(d \times 3d\)</span> and <code>c_proj</code> is <span class="arithmatex">\(d \times d\)</span>, so <span class="arithmatex">\(4d^2 = 4 \cdot 384^2 = 589{,}824\)</span>.</li>
+<li>MLP: <code>c_fc</code> is <span class="arithmatex">\(d \times 4d\)</span> and <code>c_proj</code> is <span class="arithmatex">\(4d \times d\)</span>, so <span class="arithmatex">\(8d^2 = 8 \cdot 384^2 = 1{,}179{,}648\)</span>.</li>
+<li>Block total: <span class="arithmatex">\(12 d^2 = 1{,}769{,}472\)</span>.</li>
+</ul>
+<p><strong>All 6 blocks:</strong> <span class="arithmatex">\(6 \times 12 d^2 = 72 d^2 = 10{,}616{,}832 \approx 10.6\text{M}\)</span>.</p>
+<p><strong>Embeddings:</strong> token table <span class="arithmatex">\(V \times d = 65 \times 384 = 24{,}960\)</span>; position table <span class="arithmatex">\(256 \times 384 = 98{,}304\)</span>. The <code>lm_head</code> is <strong>tied</strong> to <code>wte</code>, so it costs zero extra. Embedding total <span class="arithmatex">\(\approx 123{,}264\)</span>.</p>
+<p><strong>Grand total:</strong> <span class="arithmatex">\(\approx 10.74\text{M}\)</span> parameters. The blocks dominate (<span class="arithmatex">\(\sim 99\%\)</span>); embeddings are a rounding error here <em>because the vocab is tiny</em>. Flip to a 50k BPE vocab and the (tied) embedding becomes <span class="arithmatex">\(50{,}000 \times 384 \approx 19\text{M}\)</span> — now larger than the entire transformer body. The general rule: <span class="arithmatex">\(N \approx 12 \, n_\text{layer}\, n_\text{embd}^2\)</span> for the body, a formula worth memorizing for <a href="../03-pretraining/04-scaling-laws.html">scaling-law</a> and <a href="../04-kernels-efficiency/01-roofline-performance.html">FLOP</a> estimates.</p>
+</div>
+<h2 id="data-the-training-loop-and-a-real-run-on-tiny-shakespeare">Data, the Training Loop, and a Real Run on Tiny Shakespeare<a class="headerlink" href="#data-the-training-loop-and-a-real-run-on-tiny-shakespeare" title="Permanent link">¶</a></h2>
+<p>A model is inert without a loss surface to descend. We now build the smallest honest training setup: a character-level dataset, a batching function, an optimizer with the standard weight-decay split, and a loop that actually drives the loss down. We use the classic <strong>Tiny Shakespeare</strong> corpus (a ~1 MB text file of Shakespeare&rsquo;s plays) at the character level, so the tokenizer is trivial — every distinct character is a token — and we can watch the model learn from gibberish to plausible-looking English in minutes.</p>
+<h3 id="tokenizing-and-batching">Tokenizing and batching<a class="headerlink" href="#tokenizing-and-batching" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="c1"># --- Build a character-level vocabulary from the raw text ---</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;input.txt&quot;</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+<span class="n">chars</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">text</span><span class="p">)))</span>            <span class="c1"># e.g. 65 unique characters</span>
+<span class="n">vocab_size</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">chars</span><span class="p">)</span>
+<span class="n">stoi</span> <span class="o">=</span> <span class="p">{</span><span class="n">ch</span><span class="p">:</span> <span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">ch</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">chars</span><span class="p">)}</span>   <span class="c1"># string -&gt; int</span>
+<span class="n">itos</span> <span class="o">=</span> <span class="p">{</span><span class="n">i</span><span class="p">:</span> <span class="n">ch</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">ch</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">chars</span><span class="p">)}</span>   <span class="c1"># int    -&gt; string</span>
+<span class="n">encode</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">s</span><span class="p">:</span> <span class="p">[</span><span class="n">stoi</span><span class="p">[</span><span class="n">c</span><span class="p">]</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">s</span><span class="p">]</span>        <span class="c1"># text -&gt; list[int]</span>
+<span class="n">decode</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">l</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">itos</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">l</span><span class="p">)</span> <span class="c1"># list[int] -&gt; text</span>
+
+<span class="c1"># Encode the entire corpus once, then split 90/10 into train/val.</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">encode</span><span class="p">(</span><span class="n">text</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)</span>
+<span class="n">n</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="mf">0.9</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>
+<span class="n">train_data</span><span class="p">,</span> <span class="n">val_data</span> <span class="o">=</span> <span class="n">data</span><span class="p">[:</span><span class="n">n</span><span class="p">],</span> <span class="n">data</span><span class="p">[</span><span class="n">n</span><span class="p">:]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_batch</span><span class="p">(</span><span class="n">split</span><span class="p">,</span> <span class="n">block_size</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">device</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Sample `batch_size` random contiguous windows of length block_size.</span>
+<span class="sd">    x is tokens [i : i+T]; y is the SAME window shifted by one: [i+1 : i+1+T].</span>
+<span class="sd">    So y[t] is the next-token target for x[t] — the whole autoregressive labelling.&quot;&quot;&quot;</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">train_data</span> <span class="k">if</span> <span class="n">split</span> <span class="o">==</span> <span class="s2">&quot;train&quot;</span> <span class="k">else</span> <span class="n">val_data</span>
+    <span class="n">ix</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">d</span><span class="p">)</span> <span class="o">-</span> <span class="n">block_size</span><span class="p">,</span> <span class="p">(</span><span class="n">batch_size</span><span class="p">,))</span>   <span class="c1"># random start offsets</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">d</span><span class="p">[</span><span class="n">i</span>     <span class="p">:</span> <span class="n">i</span> <span class="o">+</span> <span class="n">block_size</span><span class="p">]</span>     <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">ix</span><span class="p">])</span>  <span class="c1"># (B, T)</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">d</span><span class="p">[</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span> <span class="p">:</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">block_size</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">ix</span><span class="p">])</span>  <span class="c1"># (B, T), shifted</span>
+    <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span> <span class="n">y</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+</code></pre></div>
+<p>The &ldquo;shift by one&rdquo; labelling is the entire supervised signal of language modeling: predicting <code>y</code> from <code>x</code> <em>is</em> next-token prediction, and because our <code>forward</code> computes a loss at every position, one <code>(B, T)</code> batch yields <span class="arithmatex">\(B \times T\)</span> next-token predictions. The loss is the mean cross-entropy across all of them, which equals the negative log-likelihood the <a href="../03-pretraining/03-pretraining-objective.html">pretraining objective chapter</a> formalizes:</p>
+<div class="arithmatex">\[
+\mathcal{L} = -\frac{1}{BT}\sum_{b=1}^{B}\sum_{t=1}^{T} \log p_\theta\big(y_{b,t} \mid x_{b, 1:t}\big).
+\]</div>
+<h3 id="the-optimizer-with-a-weight-decay-split">The optimizer with a weight-decay split<a class="headerlink" href="#the-optimizer-with-a-weight-decay-split" title="Permanent link">¶</a></h3>
+<p>A subtlety that separates toy code from real training: <strong>not all parameters should be weight-decayed.</strong> Matmul weights (2D tensors) benefit from L2 regularization; biases and LayerNorm gains (1D tensors) should <em>not</em> be decayed — shrinking them toward zero damages the model. We build two parameter groups accordingly. We use AdamW, the optimizer of choice for transformers (see <a href="../03-pretraining/09-optimizers.html">Optimizers</a>).</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">configure_optimizer</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">weight_decay</span><span class="p">,</span> <span class="n">lr</span><span class="p">,</span> <span class="n">betas</span><span class="p">,</span> <span class="n">device_type</span><span class="p">):</span>
+    <span class="c1"># Collect trainable params, then split by tensor dimensionality.</span>
+    <span class="n">params</span> <span class="o">=</span> <span class="p">{</span><span class="n">pn</span><span class="p">:</span> <span class="n">p</span> <span class="k">for</span> <span class="n">pn</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">}</span>
+    <span class="n">decay_params</span>   <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">params</span><span class="o">.</span><span class="n">values</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">dim</span><span class="p">()</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">]</span>   <span class="c1"># matmuls, embeddings</span>
+    <span class="n">nodecay_params</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">params</span><span class="o">.</span><span class="n">values</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">dim</span><span class="p">()</span> <span class="o">&lt;</span>  <span class="mi">2</span><span class="p">]</span>   <span class="c1"># biases, LN gains</span>
+    <span class="n">optim_groups</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="n">decay_params</span><span class="p">,</span>   <span class="s2">&quot;weight_decay&quot;</span><span class="p">:</span> <span class="n">weight_decay</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="n">nodecay_params</span><span class="p">,</span> <span class="s2">&quot;weight_decay&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">},</span>
+    <span class="p">]</span>
+    <span class="c1"># &#39;fused&#39; AdamW is a faster CUDA path when available.</span>
+    <span class="n">use_fused</span> <span class="o">=</span> <span class="p">(</span><span class="n">device_type</span> <span class="o">==</span> <span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+    <span class="n">extra</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">fused</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">if</span> <span class="n">use_fused</span> <span class="k">else</span> <span class="nb">dict</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">optim_groups</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="n">lr</span><span class="p">,</span> <span class="n">betas</span><span class="o">=</span><span class="n">betas</span><span class="p">,</span> <span class="o">**</span><span class="n">extra</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="the-loop-itself">The loop itself<a class="headerlink" href="#the-loop-itself" title="Permanent link">¶</a></h3>
+<p>Here is the complete, runnable training loop, with the gradient-clipping and periodic-evaluation machinery you would keep in a real run, but stripped of distributed-training plumbing (covered in <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I</a>).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="c1"># --- Hyperparameters (a small but real configuration) ---</span>
+<span class="n">device</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span>
+<span class="n">config</span> <span class="o">=</span> <span class="n">GPTConfig</span><span class="p">(</span><span class="n">block_size</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span> <span class="n">vocab_size</span><span class="o">=</span><span class="n">vocab_size</span><span class="p">,</span>
+                   <span class="n">n_layer</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span> <span class="n">n_head</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span> <span class="n">n_embd</span><span class="o">=</span><span class="mi">384</span><span class="p">,</span> <span class="n">dropout</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="n">batch_size</span>  <span class="o">=</span> <span class="mi">64</span>
+<span class="n">max_iters</span>   <span class="o">=</span> <span class="mi">5000</span>
+<span class="n">eval_iter</span>   <span class="o">=</span> <span class="mi">250</span>
+<span class="n">grad_clip</span>   <span class="o">=</span> <span class="mf">1.0</span>
+<span class="n">learning_rate</span> <span class="o">=</span> <span class="mf">3e-4</span>
+<span class="n">warmup_iters</span>  <span class="o">=</span> <span class="mi">200</span>       <span class="c1"># linear LR warmup</span>
+<span class="n">lr_decay_iters</span> <span class="o">=</span> <span class="n">max_iters</span>
+<span class="n">min_lr</span>        <span class="o">=</span> <span class="mf">3e-5</span>      <span class="c1"># cosine floor (~lr/10)</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">GPT</span><span class="p">(</span><span class="n">config</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="n">optimizer</span> <span class="o">=</span> <span class="n">configure_optimizer</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">weight_decay</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="n">learning_rate</span><span class="p">,</span>
+                                <span class="n">betas</span><span class="o">=</span><span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">),</span> <span class="n">device_type</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_lr</span><span class="p">(</span><span class="n">it</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Linear warmup then cosine decay to min_lr — the standard LLM schedule.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">it</span> <span class="o">&lt;</span> <span class="n">warmup_iters</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">learning_rate</span> <span class="o">*</span> <span class="p">(</span><span class="n">it</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">warmup_iters</span>
+    <span class="k">if</span> <span class="n">it</span> <span class="o">&gt;</span> <span class="n">lr_decay_iters</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">min_lr</span>
+    <span class="n">ratio</span> <span class="o">=</span> <span class="p">(</span><span class="n">it</span> <span class="o">-</span> <span class="n">warmup_iters</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">lr_decay_iters</span> <span class="o">-</span> <span class="n">warmup_iters</span><span class="p">)</span>   <span class="c1"># in [0, 1]</span>
+    <span class="n">coeff</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">ratio</span><span class="p">))</span>                 <span class="c1"># cosine 1 -&gt; 0</span>
+    <span class="k">return</span> <span class="n">min_lr</span> <span class="o">+</span> <span class="n">coeff</span> <span class="o">*</span> <span class="p">(</span><span class="n">learning_rate</span> <span class="o">-</span> <span class="n">min_lr</span><span class="p">)</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">estimate_loss</span><span class="p">(</span><span class="n">eval_batches</span><span class="o">=</span><span class="mi">50</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Average loss over several batches of train and val — a stable metric.&quot;&quot;&quot;</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">split</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;train&quot;</span><span class="p">,</span> <span class="s2">&quot;val&quot;</span><span class="p">):</span>
+        <span class="n">losses</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">eval_batches</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">eval_batches</span><span class="p">):</span>
+            <span class="n">X</span><span class="p">,</span> <span class="n">Y</span> <span class="o">=</span> <span class="n">get_batch</span><span class="p">(</span><span class="n">split</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">block_size</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+            <span class="n">_</span><span class="p">,</span> <span class="n">loss</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">Y</span><span class="p">)</span>
+            <span class="n">losses</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="n">out</span><span class="p">[</span><span class="n">split</span><span class="p">]</span> <span class="o">=</span> <span class="n">losses</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+<span class="c1"># --- Train ---</span>
+<span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">it</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_iters</span><span class="p">):</span>
+    <span class="c1"># Set this step&#39;s learning rate on every param group.</span>
+    <span class="n">lr</span> <span class="o">=</span> <span class="n">get_lr</span><span class="p">(</span><span class="n">it</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">param_groups</span><span class="p">:</span>
+        <span class="n">g</span><span class="p">[</span><span class="s2">&quot;lr&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">lr</span>
+
+    <span class="c1"># Periodically report train/val loss (catches overfitting early).</span>
+    <span class="k">if</span> <span class="n">it</span> <span class="o">%</span> <span class="n">eval_iter</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">it</span> <span class="o">==</span> <span class="n">max_iters</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">losses</span> <span class="o">=</span> <span class="n">estimate_loss</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;step </span><span class="si">{</span><span class="n">it</span><span class="si">:</span><span class="s2">5d</span><span class="si">}</span><span class="s2"> | train </span><span class="si">{</span><span class="n">losses</span><span class="p">[</span><span class="s1">&#39;train&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> | val </span><span class="si">{</span><span class="n">losses</span><span class="p">[</span><span class="s1">&#39;val&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> | lr </span><span class="si">{</span><span class="n">lr</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># One optimization step.</span>
+    <span class="n">X</span><span class="p">,</span> <span class="n">Y</span> <span class="o">=</span> <span class="n">get_batch</span><span class="p">(</span><span class="s2">&quot;train&quot;</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">block_size</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+    <span class="n">logits</span><span class="p">,</span> <span class="n">loss</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">Y</span><span class="p">)</span>            <span class="c1"># forward: compute loss</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">(</span><span class="n">set_to_none</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="c1"># clear stale grads (None is faster than 0)</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>                       <span class="c1"># backward: autograd fills .grad</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">grad_clip</span><span class="p">)</span>  <span class="c1"># tame loss spikes</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>                      <span class="c1"># AdamW update</span>
+</code></pre></div>
+<p>Four lines in that inner loop are the <em>entire</em> mechanics of training a neural network, and they recur unchanged in every model in this book: <code>forward → zero_grad → backward → step</code>. Everything else — the schedule, clipping, evaluation, distributed wrappers, mixed precision — is engineering around those four lines.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: what a healthy loss curve looks like here</p>
+<p>For character-level Tiny Shakespeare with this config, the loss starts near <span class="arithmatex">\(\ln(65) \approx 4.17\)</span> — that is exactly the loss of a uniform random guesser over 65 characters, and seeing your <em>first</em> logged loss land near it is the cheapest sanity check that your data, masking, and loss are wired correctly. A working run drops below ~1.5 within a couple thousand steps; below ~1.0 it produces Shakespeare-flavored text with real words and pseudo-grammar. If your loss <em>starts</em> far from <span class="arithmatex">\(\ln V\)</span>, suspect a labelling, masking, or initialization bug before you suspect the model.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: the off-by-one in targets, and a leaked causal mask</p>
+<p>Two bugs produce a loss that looks suspiciously <em>too good</em> (near zero) early on. (1) If <code>y</code> is not shifted by exactly one position relative to <code>x</code>, you are training the model to copy its input — trivial and useless. (2) If the causal mask is missing or wrong, each position can read the token it is supposed to predict, so the model cheats. Both are invisible in the code&rsquo;s shapes and silent in autograd; the only tell is an implausibly low training loss that does <em>not</em> generalize. Always reason about whether position <span class="arithmatex">\(t\)</span> can see token <span class="arithmatex">\(t+1\)</span>.</p>
+</div>
+<h2 id="sampling-turning-logits-into-text">Sampling: Turning Logits Into Text<a class="headerlink" href="#sampling-turning-logits-into-text" title="Permanent link">¶</a></h2>
+<p>A trained GPT is a next-token distribution. <strong>Generation</strong> is the loop that repeatedly samples a token, appends it, and feeds the extended sequence back in. This is the <em>autoregressive</em> loop, and it is where decoding strategy — temperature, top-k, top-p — lives. (The decoding chapter <a href="../07-inference-serving/09-sampling-decoding.html">Sampling Strategies &amp; Decoding Algorithms</a> goes deeper; here we implement the core ones from scratch.)</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">max_new_tokens</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">top_p</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Autoregressively extend idx (B, T) by max_new_tokens.</span>
+<span class="sd">       temperature: &gt;1 flattens the distribution (more random), &lt;1 sharpens it.</span>
+<span class="sd">       top_k: keep only the k highest-prob tokens before sampling.</span>
+<span class="sd">       top_p: nucleus sampling — keep the smallest set of tokens whose cumulative</span>
+<span class="sd">              probability exceeds p.&quot;&quot;&quot;</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_new_tokens</span><span class="p">):</span>
+        <span class="c1"># 1) Crop context to block_size — the model cannot attend beyond it.</span>
+        <span class="n">idx_cond</span> <span class="o">=</span> <span class="n">idx</span> <span class="k">if</span> <span class="n">idx</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">block_size</span> \
+                   <span class="k">else</span> <span class="n">idx</span><span class="p">[:,</span> <span class="o">-</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">block_size</span><span class="p">:]</span>
+
+        <span class="c1"># 2) Forward pass; take logits at the LAST position only.</span>
+        <span class="n">logits</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">idx_cond</span><span class="p">)</span>            <span class="c1"># (B, 1, vocab_size)</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">logits</span><span class="p">[:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span> <span class="o">/</span> <span class="n">temperature</span>  <span class="c1"># (B, vocab_size), temperature-scaled</span>
+
+        <span class="c1"># 3) Optional top-k filtering: zero out everything below the k-th best logit.</span>
+        <span class="k">if</span> <span class="n">top_k</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">v</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">top_k</span><span class="p">,</span> <span class="n">logits</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)))</span>
+            <span class="n">logits</span><span class="p">[</span><span class="n">logits</span> <span class="o">&lt;</span> <span class="n">v</span><span class="p">[:,</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]]]</span> <span class="o">=</span> <span class="o">-</span><span class="nb">float</span><span class="p">(</span><span class="s2">&quot;inf&quot;</span><span class="p">)</span>
+
+        <span class="c1"># 4) Convert to probabilities.</span>
+        <span class="n">probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>      <span class="c1"># (B, vocab_size)</span>
+
+        <span class="c1"># 5) Optional top-p (nucleus) filtering on the probabilities.</span>
+        <span class="k">if</span> <span class="n">top_p</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">sorted_probs</span><span class="p">,</span> <span class="n">sorted_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="n">descending</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">cumprobs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">sorted_probs</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="c1"># Mask tokens once cumulative prob has exceeded p (keep the boundary token).</span>
+            <span class="n">remove</span> <span class="o">=</span> <span class="n">cumprobs</span> <span class="o">-</span> <span class="n">sorted_probs</span> <span class="o">&gt;</span> <span class="n">top_p</span>
+            <span class="n">sorted_probs</span><span class="p">[</span><span class="n">remove</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="n">sorted_probs</span> <span class="o">/=</span> <span class="n">sorted_probs</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># renormalize</span>
+            <span class="c1"># Scatter the filtered probs back to vocabulary order.</span>
+            <span class="n">probs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">probs</span><span class="p">)</span><span class="o">.</span><span class="n">scatter_</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">sorted_idx</span><span class="p">,</span> <span class="n">sorted_probs</span><span class="p">)</span>
+
+        <span class="c1"># 6) Sample one token from the (filtered, renormalized) distribution.</span>
+        <span class="n">next_id</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">multinomial</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="n">num_samples</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># (B, 1)</span>
+
+        <span class="c1"># 7) Append and repeat. The new token becomes part of next step&#39;s context.</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">((</span><span class="n">idx</span><span class="p">,</span> <span class="n">next_id</span><span class="p">),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">idx</span>
+
+
+<span class="c1"># --- Generate from a single newline as the prompt ---</span>
+<span class="n">context</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="n">stoi</span><span class="p">[</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">]]],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="n">out_ids</span> <span class="o">=</span> <span class="n">generate</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">40</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">decode</span><span class="p">(</span><span class="n">out_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">()))</span>
+</code></pre></div>
+<h3 id="what-the-knobs-actually-do">What the knobs actually do<a class="headerlink" href="#what-the-knobs-actually-do" title="Permanent link">¶</a></h3>
+<p><strong>Temperature</strong> <span class="arithmatex">\(\tau\)</span> divides the logits before softmax: <span class="arithmatex">\(p_i \propto \exp(z_i / \tau)\)</span>. As <span class="arithmatex">\(\tau \to 0\)</span> the distribution collapses onto the single most likely token (greedy, deterministic); as <span class="arithmatex">\(\tau \to \infty\)</span> it approaches uniform (maximally random). <span class="arithmatex">\(\tau = 1\)</span> samples from the model&rsquo;s exact distribution. Practitioners use <span class="arithmatex">\(\tau \approx 0.7\)</span>–<span class="arithmatex">\(1.0\)</span> for creative text and lower for factual or code generation.</p>
+<p><strong>Top-k</strong> keeps only the <span class="arithmatex">\(k\)</span> highest-probability tokens and renormalizes, hard-truncating the long tail of garbage tokens. <strong>Top-p (nucleus)</strong> sampling, from Holtzman et al., instead keeps the smallest set of tokens whose cumulative probability reaches <span class="arithmatex">\(p\)</span> (e.g. 0.9) — an <em>adaptive</em> cutoff that keeps many tokens when the model is uncertain and few when it is confident. Top-p generally produces more natural text than a fixed top-k because the truncation adapts to the local entropy of the distribution.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: temperature on a 4-token distribution</p>
+<p>Suppose the model emits logits <span class="arithmatex">\(z = [3.0,\ 1.0,\ 0.5,\ -1.0]\)</span> for four candidate next characters.</p>
+<p>At <span class="arithmatex">\(\tau = 1.0\)</span>: softmax gives <span class="arithmatex">\(\approx [0.78,\ 0.105,\ 0.064,\ 0.014]\)</span>. The top token is likely but not certain.</p>
+<p>At <span class="arithmatex">\(\tau = 0.5\)</span> (sharper): logits become <span class="arithmatex">\([6,\ 2,\ 1,\ -2]\)</span>; softmax <span class="arithmatex">\(\approx [0.97,\ 0.018,\ 0.0066,\ 0.00033]\)</span>. Now the top token is nearly certain — text becomes repetitive and &ldquo;safe.&rdquo;</p>
+<p>At <span class="arithmatex">\(\tau = 2.0\)</span> (flatter): logits become <span class="arithmatex">\([1.5,\ 0.5,\ 0.25,\ -0.5]\)</span>; softmax <span class="arithmatex">\(\approx [0.46,\ 0.17,\ 0.13,\ 0.062]\)</span> (plus mass elsewhere) — the rare fourth token now has a real chance, so text gets more surprising and more error-prone. Same model, three very different writers, controlled by one scalar in the denominator.</p>
+</div>
+<h3 id="the-kv-cache-connection">The KV-cache connection<a class="headerlink" href="#the-kv-cache-connection" title="Permanent link">¶</a></h3>
+<p>Our <code>generate</code> recomputes attention over the <em>entire</em> growing prefix at every step — <span class="arithmatex">\(\mathcal{O}(T^2)\)</span> work to produce <span class="arithmatex">\(T\)</span> tokens. Real serving systems never do this: because the causal mask makes each token&rsquo;s keys and values independent of future tokens, you compute each position&rsquo;s K and V <em>once</em> and cache them, so each new token costs only <span class="arithmatex">\(\mathcal{O}(T)\)</span>. That <strong>KV cache</strong> is the single most important inference optimization, and it is the subject of <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference</a>. For learning and small-scale generation, the simple recompute-everything loop above is correct and clear; just know that production swaps it out.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You implemented a GPT and it trains, but generation produces repetitive, degenerate loops (&ldquo;the the the the&hellip;&rdquo;). The training loss is reasonable. What is going on, and how do you diagnose and fix it?</p>
+<p><strong>A:</strong> Low training loss only means the model is good at <em>next-token prediction under teacher forcing</em> — it always conditions on the ground-truth prefix. At generation time it conditions on its <em>own</em> outputs, and any small bias toward high-probability tokens compounds, a phenomenon called exposure bias. Degenerate repetition is the classic symptom of decoding too greedily: with low or zero temperature (or pure argmax), the model locks onto its single most-likely continuation, which is often a self-reinforcing loop because repeating a phrase makes that phrase even more likely under the model. <strong>Diagnosis:</strong> first confirm the model itself is fine by checking validation loss and by sampling at <span class="arithmatex">\(\tau = 1.0\)</span> with no truncation — if that is coherent, the problem is the decoding configuration, not the weights. <strong>Fixes, in order:</strong> raise temperature toward ~0.8–1.0; switch from greedy/top-k to <strong>top-p (nucleus) sampling</strong> (~0.9), which Holtzman et al. showed specifically cures the &ldquo;neural text degeneration&rdquo; loops; add a repetition penalty that down-weights recently emitted tokens. If repetition persists even at <span class="arithmatex">\(\tau = 1.0\)</span> with nucleus sampling, <em>then</em> suspect undertraining or a bug (e.g., a too-small <code>block_size</code> so the model cannot see far enough back to avoid repeating). The key insight an interviewer wants: training loss and generation quality are decoupled, and the most common cause of bad samples from a correctly-trained model is the sampling strategy.</p>
+</div>
+<h2 id="from-this-file-to-a-frontier-model">From This File to a Frontier Model<a class="headerlink" href="#from-this-file-to-a-frontier-model" title="Permanent link">¶</a></h2>
+<p>What we just built is, structurally, GPT-2. The leap from this 10M-parameter character model to a frontier system is almost entirely <em>scale and refinement</em>, not new ideas — which is precisely why building this from scratch is so clarifying. The components that change are localized and we have chapters for each:</p>
+<ul>
+<li><strong>Tokenizer:</strong> swap character-level for a <a href="../02-transformer/01-tokenization.html">BPE tokenizer</a> with a 50k–200k vocabulary.</li>
+<li><strong>Positions:</strong> replace the learned <code>wpe</code> table with <a href="../02-transformer/05-positional-encoding.html">RoPE</a>, which generalizes to longer contexts and is what every modern model uses.</li>
+<li><strong>Attention:</strong> replace dense multi-head attention with <a href="../02-transformer/04-mha-gqa-mla.html">GQA or MLA</a> to shrink the KV cache, and serve it with <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention</a>.</li>
+<li><strong>Norm &amp; activation:</strong> swap LayerNorm for RMSNorm and GELU for SwiGLU (see <a href="../02-transformer/10-modern-arch-improvements.html">Modern Architecture Improvements</a>).</li>
+<li><strong>MLP:</strong> optionally replace the dense MLP with a <a href="../02-transformer/09-mixture-of-experts.html">Mixture-of-Experts</a> layer to grow capacity without growing per-token FLOPs.</li>
+<li><strong>Scale:</strong> more layers, more width, vastly more data — governed by <a href="../03-pretraining/04-scaling-laws.html">scaling laws</a> and executed with <a href="../03-pretraining/05-distributed-data-parallel.html">distributed training</a> and <a href="../03-pretraining/08-mixed-precision-fp8.html">mixed precision</a>.</li>
+<li><strong>Behavior:</strong> the pretrained base model is then <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">supervised-fine-tuned</a> and <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">RLHF-aligned</a> into an assistant.</li>
+</ul>
+<p>Every one of those is a swap of a single module or a multiplication of a single number in our <code>GPTConfig</code>. The skeleton — embed, stack pre-norm blocks on a residual stream, project to logits, train with next-token cross-entropy, sample autoregressively — is the same skeleton at every scale. You have now built it end to end.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>A GPT is a function from token IDs to per-position next-token logits, built as: token + positional embeddings → a stack of pre-norm Transformer blocks on a shared <strong>residual stream</strong> → final LayerNorm → a linear <code>lm_head</code> to vocabulary logits.</li>
+<li>The <strong>residual stream</strong> is the organizing principle: every block <em>reads from and adds to</em> a width-<code>n_embd</code> highway. Attention mixes information <em>across</em> tokens; the MLP processes <em>each</em> token independently.</li>
+<li>The model body has <span class="arithmatex">\(\approx 12\,n_\text{layer}\,n_\text{embd}^2\)</span> parameters; MLPs hold <span class="arithmatex">\(8 n_\text{embd}^2\)</span> per block (twice attention&rsquo;s <span class="arithmatex">\(4 n_\text{embd}^2\)</span>). The tied embedding/<code>lm_head</code> matrix dominates only when the vocabulary is large.</li>
+<li><strong>Weight tying</strong> (share <code>wte</code> with <code>lm_head</code>) saves <span class="arithmatex">\(V \times n_\text{embd}\)</span> params and regularizes; the <strong>scaled residual init</strong> (<span class="arithmatex">\(\div\sqrt{2\,n_\text{layer}}\)</span> on output projections) keeps the residual stream&rsquo;s variance bounded as depth grows.</li>
+<li>Training is four lines — <code>forward → zero_grad → backward → step</code> — wrapped in a learning-rate schedule (warmup + cosine decay), gradient clipping, and a no-weight-decay group for 1-D parameters. The loss is mean next-token cross-entropy over all <span class="arithmatex">\(B\times T\)</span> positions.</li>
+<li>The first logged loss should be <span class="arithmatex">\(\approx \ln V\)</span> (uniform-guess baseline); a loss far from it signals a labelling, masking, or init bug <em>before</em> you blame the model.</li>
+<li><strong>Generation</strong> is the autoregressive sample-append loop; <strong>temperature</strong>, <strong>top-k</strong>, and <strong>top-p</strong> shape the distribution. Repetitive degenerate text is almost always a decoding (too-greedy) problem, not a weights problem — reach for nucleus sampling.</li>
+<li>Scaling this nanoGPT to a frontier model is mostly module swaps (BPE, RoPE, GQA, RMSNorm/SwiGLU, MoE) and more data/compute — the skeleton is invariant across scale.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>The decoder-only GPT architecture introduced in GPT-2 (2019) remains the structural blueprint for every frontier LLM — Llama 3, GPT-4, Gemini, Claude — with targeted module swaps (RoPE, GQA, RMSNorm/SwiGLU) rather than structural overhauls. Andrej Karpathy&rsquo;s nanoGPT is the canonical minimal reference implementation that makes this lineage directly readable.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al., <em>Attention Is All You Need</em> (2017)</a> — the original Transformer; the block structure assembled in this chapter descends directly from it.</li>
+<li><a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf">Radford et al., <em>Language Models are Unsupervised Multitask Learners</em> (GPT-2, 2019)</a> — establishes the pre-norm decoder-only architecture, the 0.02 init, and the scaled-residual initialization used here.</li>
+<li><a href="https://arxiv.org/abs/1608.05859">Press &amp; Wolf, <em>Using the Output Embedding to Improve Language Models</em> (2017)</a> — the justification for weight tying between the input embedding and the output head.</li>
+<li><a href="https://arxiv.org/abs/1904.09751">Holtzman et al., <em>The Curious Case of Neural Text Degeneration</em> (2020)</a> — diagnoses repetitive/degenerate sampling and introduces top-p (nucleus) sampling.</li>
+<li><a href="https://arxiv.org/abs/1711.05101">Loshchilov &amp; Hutter, <em>Decoupled Weight Decay Regularization</em> (AdamW, 2019)</a> — the optimizer and the matmul-vs-bias weight-decay split used in the training loop.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2407.21783">Grattafiori et al., <em>The Llama 3 Herd of Models</em> (Meta, 2024)</a> — shows how the nanoGPT skeleton scales to 405B parameters with RoPE, GQA, and SwiGLU, illustrating exactly the module-swap path described at the end of this chapter.</li>
+<li><a href="https://arxiv.org/abs/2205.14135">Dao et al., <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em> (2022)</a> — the IO-aware kernel that powers <code>F.scaled_dot_product_attention</code>; understanding it explains why the <code>is_causal=True</code> path in this chapter&rsquo;s code is fast in practice.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/karpathy/nanoGPT">karpathy/nanoGPT</a> — the minimal, readable GPT-2 training repo this chapter follows; ~300 lines each for the model and the training loop.</li>
+<li><a href="https://github.com/karpathy/build-nanogpt">karpathy/build-nanogpt</a> — step-by-step git history accompanying the video lecture, letting you replay the build commit by commit.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.youtube.com/watch?v=kCc8FmEb1nY">Karpathy, <em>Let&rsquo;s build GPT: from scratch, in code, spelled out</em> (2023)</a> — the ~2-hour video lecture that walks through every line of this chapter&rsquo;s code; the best single resource for internalizing how these pieces assemble.</li>
+<li><a href="https://karpathy.ai/zero-to-hero.html">Karpathy, <em>Neural Networks: Zero to Hero</em> (course)</a> — the full course building from backprop fundamentals up through GPT; this chapter is the capstone of that curriculum.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Karpathy — <em>nanoGPT</em> (code repository) and <em>Let&rsquo;s build GPT: from scratch, in code, spelled out</em> (video lecture). The minimal, readable GPT implementation this chapter follows; the canonical starting point.</li>
+<li>Radford, Wu, Child, Luan, Amodei, Sutskever — <em>Language Models are Unsupervised Multitask Learners</em> (GPT-2, 2019). Introduces the pre-norm decoder-only architecture, the 0.02 init, and the scaled-residual initialization we use.</li>
+<li>Vaswani et al. — <em>Attention Is All You Need</em> (2017). The original Transformer; the block structure assembled here descends directly from it.</li>
+<li>Press &amp; Wolf — <em>Using the Output Embedding to Tie Word Vectors</em> (2017). The justification for weight tying between the input embedding and output head.</li>
+<li>Holtzman, Buys, Du, Forbes, Choi — <em>The Curious Case of Neural Text Degeneration</em> (2020). Diagnoses repetitive/degenerate sampling and introduces top-p (nucleus) sampling.</li>
+<li>Loshchilov &amp; Hutter — <em>Decoupled Weight Decay Regularization</em> (AdamW, 2019). The optimizer and the matmul-vs-bias weight-decay split used in the training loop.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="06-transformer-block.html"><span class="pn-label">← Previous</span><span class="pn-title">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</span></a>
+<a class="next" href="08-architecture-variants.html"><span class="pn-label">Next →</span><span class="pn-title">Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-anatomy-of-a-gpt-from-token-ids-to-next-token-logits">The Anatomy of a GPT: From Token IDs to Next-Token Logits</a></li>
+<li class="toc-l2"><a href="#the-config-naming-every-knob">The Config: Naming Every Knob</a></li>
+<li class="toc-l2"><a href="#building-the-modules-bottom-up">Building the Modules, Bottom-Up</a></li>
+<li class="toc-l3"><a href="#layernorm-with-an-optional-bias">LayerNorm with an optional bias</a></li>
+<li class="toc-l3"><a href="#causal-self-attention-all-heads-in-one-matmul">Causal self-attention (all heads in one matmul)</a></li>
+<li class="toc-l3"><a href="#the-mlp-position-wise-feedforward">The MLP (position-wise feedforward)</a></li>
+<li class="toc-l3"><a href="#the-block-pre-norm-residual-repeat">The Block: pre-norm, residual, repeat</a></li>
+<li class="toc-l2"><a href="#the-full-gpt-module">The Full GPT Module</a></li>
+<li class="toc-l3"><a href="#weight-tying-and-the-two-headed-init-explained">Weight tying and the two-headed init, explained</a></li>
+<li class="toc-l2"><a href="#data-the-training-loop-and-a-real-run-on-tiny-shakespeare">Data, the Training Loop, and a Real Run on Tiny Shakespeare</a></li>
+<li class="toc-l3"><a href="#tokenizing-and-batching">Tokenizing and batching</a></li>
+<li class="toc-l3"><a href="#the-optimizer-with-a-weight-decay-split">The optimizer with a weight-decay split</a></li>
+<li class="toc-l3"><a href="#the-loop-itself">The loop itself</a></li>
+<li class="toc-l2"><a href="#sampling-turning-logits-into-text">Sampling: Turning Logits Into Text</a></li>
+<li class="toc-l3"><a href="#what-the-knobs-actually-do">What the knobs actually do</a></li>
+<li class="toc-l3"><a href="#the-kv-cache-connection">The KV-cache connection</a></li>
+<li class="toc-l2"><a href="#from-this-file-to-a-frontier-model">From This File to a Frontier Model</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

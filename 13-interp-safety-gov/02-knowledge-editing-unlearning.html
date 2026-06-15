@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowledge Editing &amp; Machine Unlearning — The LLM Stack</title>
+<meta name="description" content="Surgically changing what a model knows without full retraining: locate-then-edit (ROME, MEMIT, AlphaEdit), memory/adapter methods (GRACE, WISE), and failure mod">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="active" href="02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XIII — Interpretability, Safety &amp; Governance</div>
+<h1 id="132-knowledge-editing-machine-unlearning">13.2 Knowledge Editing &amp; Machine Unlearning<a class="headerlink" href="#132-knowledge-editing-machine-unlearning" title="Permanent link">¶</a></h1>
+<p>A deployed language model is, among other things, a lossy compression of a snapshot of the world. The snapshot rots. A prime minister loses an election; a company rebrands; a fact you trained on turns out to be wrong; a user invokes their right to be forgotten and demands that their leaked phone number stop appearing in completions. The brute-force fix — gather corrected data and retrain from scratch — costs millions of dollars and weeks of wall-clock time for a frontier model. We would like a scalpel instead of a sledgehammer: a way to change one specific thing the model &ldquo;knows&rdquo; while leaving the other billions of facts, the fluency, and the reasoning untouched.</p>
+<p>This is the domain of <strong>knowledge editing</strong> (deliberately overwriting a target fact) and its safety-critical cousin <strong>machine unlearning</strong> (provably removing the <em>influence</em> of specific training data, e.g. for copyright, privacy, or dangerous-capability removal). Both ask the same uncomfortable question: where, physically, inside a stack of transformer weights, does a fact live — and can we surgically rewrite it without collateral damage?</p>
+<p>We build up from the locate-then-edit hypothesis (causal tracing, ROME, MEMIT, AlphaEdit), through memory- and adapter-based editors that sidestep weight surgery entirely (GRACE, WISE), to the failure modes that make all of this hard in practice (ripple effects, locality violations, forgetting at scale). We then turn to unlearning for compliance — the TOFU and MUSE benchmarks, gradient-ascent recipes, editing-as-unlearning, and the gap between &ldquo;the model won&rsquo;t say it&rdquo; and &ldquo;the model provably never knew it.&rdquo; A from-scratch rank-one ROME-style edit anchors the mechanism in runnable code.</p>
+<p>This chapter assumes the transformer internals from <a href="../02-transformer/06-transformer-block.html">The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a> and the circuit-level view from <a href="../13-interp-safety-gov/01-mechanistic-interpretability.html">Mechanistic Interpretability &amp; Model Internals</a>. It connects forward to the legal framing in <a href="../13-interp-safety-gov/03-privacy-memorization-dp.html">Privacy, Memorization &amp; Differential Privacy for LLMs</a> and <a href="../13-interp-safety-gov/06-governance-compliance.html">AI Governance, Compliance &amp; Regulation</a>.</p>
+<hr />
+<h2 id="1-the-locate-then-edit-hypothesis">1. The Locate-Then-Edit Hypothesis<a class="headerlink" href="#1-the-locate-then-edit-hypothesis" title="Permanent link">¶</a></h2>
+<p>The foundational empirical claim, due to Meng et al. in <em>Locating and Editing Factual Associations in GPT</em> (ROME, 2022), is that simple subject–relation–object facts in autoregressive transformers are stored in a <strong>localized, additive, and editable</strong> way inside the feed-forward (MLP) sub-layers of the <em>middle</em> layers. If that claim holds even approximately, editing reduces to (a) finding the right weight matrix and (b) computing a small, targeted update to it.</p>
+<h3 id="11-the-mlp-as-a-keyvalue-memory">1.1 The MLP as a key–value memory<a class="headerlink" href="#11-the-mlp-as-a-keyvalue-memory" title="Permanent link">¶</a></h3>
+<p>Recall the transformer MLP at layer <span class="arithmatex">\(\ell\)</span> acting on a residual-stream vector <span class="arithmatex">\(h \in \mathbb{R}^{d}\)</span>:</p>
+<div class="arithmatex">\[
+m = W_{\text{down}}\,\sigma\!\left(W_{\text{up}}\, h\right),
+\]</div>
+<p>where <span class="arithmatex">\(W_{\text{up}} \in \mathbb{R}^{d_{\text{mlp}} \times d}\)</span>, <span class="arithmatex">\(W_{\text{down}} \in \mathbb{R}^{d \times d_{\text{mlp}}}\)</span>, and <span class="arithmatex">\(\sigma\)</span> is the nonlinearity (GELU/SwiGLU). Geva et al. (<em>Transformer Feed-Forward Layers Are Key-Value Memories</em>, 2021) reinterpret this: the rows of <span class="arithmatex">\(W_{\text{up}}\)</span> are <strong>keys</strong> that fire on particular input patterns, and the columns of <span class="arithmatex">\(W_{\text{down}}\)</span> are the <strong>values</strong> they write into the residual stream. The activation <span class="arithmatex">\(k = \sigma(W_{\text{up}} h)\)</span> is a sparse &ldquo;which memories fired&rdquo; vector, and the output is a key-weighted sum of value vectors,</p>
+<div class="arithmatex">\[
+m = W_{\text{down}}\,k = \sum_{i} k_i \,\big(W_{\text{down}}\big)_{:,i}.
+\]</div>
+<p>ROME zooms in on <span class="arithmatex">\(W_{\text{down}}\)</span> (it calls it <span class="arithmatex">\(W\)</span>) and treats it as a <strong>linear associative memory</strong>: a single matrix that maps a set of key vectors <span class="arithmatex">\(\{k_1,\dots,k_n\}\)</span> to value vectors <span class="arithmatex">\(\{v_1,\dots,v_n\}\)</span> via <span class="arithmatex">\(v \approx W k\)</span>. To insert a <em>new</em> association <span class="arithmatex">\((k_*, v_*)\)</span> — &ldquo;when you see the key for <em>the Space Needle is located in the city of</em> ___, write the value that produces <em>Paris</em>&rdquo; — we modify <span class="arithmatex">\(W\)</span> minimally.</p>
+<h3 id="12-causal-tracing-finding-the-layer">1.2 Causal tracing: finding the layer<a class="headerlink" href="#12-causal-tracing-finding-the-layer" title="Permanent link">¶</a></h3>
+<p>Before editing you must know <em>where</em>. ROME&rsquo;s localization tool is <strong>causal tracing</strong> (a form of activation patching; see <a href="../13-interp-safety-gov/01-mechanistic-interpretability.html">Mechanistic Interpretability &amp; Model Internals</a>). The recipe:</p>
+<ol>
+<li><strong>Clean run.</strong> Feed the factual prompt (&ldquo;The Space Needle is in downtown ___&rdquo;); record the probability the model assigns to the correct token (&ldquo;Seattle&rdquo;) and <em>cache every hidden state</em>.</li>
+<li><strong>Corrupted run.</strong> Add Gaussian noise to the <em>subject</em> token embeddings (&ldquo;The Space Needle&rdquo;) so the model loses the fact; the correct-token probability collapses.</li>
+<li><strong>Restoration sweep.</strong> Re-run corrupted, but at each (layer, token) position <em>patch in</em> the clean cached hidden state, one at a time. Measure how much the correct probability is restored.</li>
+</ol>
+<p>The cells that restore the most are where the fact is causally mediated. The robust finding: a band of <strong>middle-layer MLP outputs at the last subject token</strong> carries an outsized share of the causal effect. That last-subject-token position is exactly where the edit will be applied — the model has finished &ldquo;reading&rdquo; the subject and is about to look up its properties.</p>
+<figure class="viz" id="fig-kedit-causal-tracing-heatmap">
+<svg viewBox="0 0 900 440" role="img" aria-label="Causal tracing heatmap: restoration of P(correct) when patching clean cached states into a corrupted run. The peak causal effect is at the last subject token in middle-layer MLP outputs.">
+<defs>
+  <marker id="ct-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <marker id="ct-arrow-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#cbd5e1)"/>
+  </marker>
+</defs>
+<style>
+  #fig-kedit-causal-tracing-heatmap .title     { font: 600 11.5px var(--sans,sans-serif); }
+  #fig-kedit-causal-tracing-heatmap .tok-lbl   { font: 600 12px var(--sans,sans-serif); }
+  #fig-kedit-causal-tracing-heatmap .row-main  { font: 700 11px var(--sans,sans-serif); }
+  #fig-kedit-causal-tracing-heatmap .row-sub   { font: 400 10px var(--sans,sans-serif); }
+  #fig-kedit-causal-tracing-heatmap .axis-lbl  { font: 400 10px var(--sans,sans-serif); }
+  #fig-kedit-causal-tracing-heatmap .callout   { font: 400 10px var(--sans,sans-serif); }
+  #fig-kedit-causal-tracing-heatmap .legend-lbl{ font: 400 9.5px var(--sans,sans-serif); }
+  #fig-kedit-causal-tracing-heatmap text { fill: var(--ink-soft,#334155); }
+  #fig-kedit-causal-tracing-heatmap .muted { fill: var(--muted,#64748b); }
+</style>
+
+
+<text x="420" y="20" text-anchor="middle" class="title">Restoration of P(correct) when patching the clean cached state</text>
+<text x="420" y="34" text-anchor="middle" class="title">(darker = more causal effect)</text>
+
+
+
+<line x1="172" y1="52" x2="412" y2="52" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<line x1="172" y1="48" x2="172" y2="56" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<line x1="412" y1="48" x2="412" y2="56" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="292" y="48" text-anchor="middle" class="axis-lbl muted">subject</text>
+
+
+<text x="210" y="72" text-anchor="middle" class="tok-lbl">The</text>
+<text x="290" y="72" text-anchor="middle" class="tok-lbl">Space</text>
+<text x="370" y="72" text-anchor="middle" class="tok-lbl">Needle</text>
+<text x="450" y="72" text-anchor="middle" class="tok-lbl">is</text>
+<text x="530" y="72" text-anchor="middle" class="tok-lbl">in</text>
+<text x="610" y="72" text-anchor="middle" class="tok-lbl">___</text>
+
+
+<text x="660" y="72" class="axis-lbl muted">tokens</text>
+<line x1="700" y1="68" x2="716" y2="68" stroke="var(--muted,#64748b)" stroke-width="1" marker-end="url(#ct-arrow-m)"/>
+
+
+<text x="18" y="200" transform="rotate(-90,18,200)" text-anchor="middle" class="axis-lbl muted">layers</text>
+<line x1="18" y1="232" x2="18" y2="248" stroke="var(--muted,#64748b)" stroke-width="1" marker-end="url(#ct-arrow-m)"/>
+
+
+
+<text x="100" y="113" text-anchor="middle" class="row-main">layer 0</text>
+<text x="100" y="126" text-anchor="middle" class="row-sub muted">attn</text>
+
+<text x="100" y="185" text-anchor="middle" class="row-main">layer 5</text>
+<text x="100" y="198" text-anchor="middle" class="row-sub muted">mlp</text>
+
+<text x="100" y="257" text-anchor="middle" class="row-main">layer 8</text>
+<text x="100" y="270" text-anchor="middle" class="row-sub muted">mlp</text>
+
+<text x="100" y="329" text-anchor="middle" class="row-main">layer 18</text>
+<text x="100" y="342" text-anchor="middle" class="row-sub muted">attn</text>
+
+
+
+<rect x="170" y="82" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="250" y="82" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="330" y="82" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="410" y="82" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="490" y="82" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="570" y="82" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+
+
+<rect x="170" y="154" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="250" y="154" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="330" y="154" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="1.0"  stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="410" y="154" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="490" y="154" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="570" y="154" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+
+
+<rect x="170" y="226" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="250" y="226" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="330" y="226" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.70" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="410" y="226" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="490" y="226" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="570" y="226" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+
+
+<rect x="170" y="298" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="250" y="298" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="330" y="298" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="410" y="298" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="490" y="298" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.35" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="570" y="298" width="78" height="70" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+
+
+<line x1="408" y1="196" x2="658" y2="196" stroke="var(--accent,#6366f1)" stroke-width="1.1" stroke-dasharray="3 2" marker-end="url(#ct-arrow)"/>
+<text x="662" y="182" class="callout" fill="var(--accent,#6366f1)">peak: last subject token,</text>
+<text x="662" y="196" class="callout" fill="var(--accent,#6366f1)">middle-layer MLP —</text>
+<text x="662" y="210" class="callout" fill="var(--accent,#6366f1)">where the fact is read</text>
+
+
+<line x1="568" y1="333" x2="658" y2="333" stroke="var(--border-2,#cbd5e1)" stroke-width="1.1" stroke-dasharray="3 2" marker-end="url(#ct-arrow-m)"/>
+<text x="662" y="322" class="callout muted">later attention moves</text>
+<text x="662" y="336" class="callout muted">the fact toward</text>
+<text x="662" y="350" class="callout muted">the output position</text>
+
+
+<text x="170" y="394" class="legend-lbl muted">causal effect:</text>
+<rect x="254" y="382" width="32" height="14" fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="288" y="382" width="32" height="14" fill="var(--accent,#6366f1)" fill-opacity="0.25" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="322" y="382" width="32" height="14" fill="var(--accent,#6366f1)" fill-opacity="0.60" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<rect x="356" y="382" width="32" height="14" fill="var(--accent,#6366f1)" fill-opacity="1.00" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+<text x="254" y="408" class="legend-lbl muted">low</text>
+<text x="388" y="408" text-anchor="end" class="legend-lbl muted">high</text>
+
+</svg>
+<figcaption><b>Causal tracing reveals where facts are stored: middle-layer MLP at the last subject token.</b> Each cell shows how much the model's probability of the correct answer is restored when a clean hidden state is patched in at that (layer, token) position during a corrupted run. The deep purple cells at "Needle" in layers 5 and 8 show that the fact is causally mediated in middle-layer MLPs at the last subject token — the site ROME targets. A secondary effect in a later attention layer moves the retrieved fact toward the output position.</figcaption>
+</figure>
+
+<div class="admonition note">
+<p class="admonition-title">Aside: this is a hypothesis, not a law</p>
+<p>Locate-then-edit works <em>remarkably well on simple (subject, relation, object) facts</em> in GPT-2/GPT-J-scale models. Hase et al. (<em>Does Localization Inform Editing?</em>, 2023) showed a subtle and important caveat: the layer that causal tracing fingers as most &ldquo;causal&rdquo; is <strong>not necessarily</strong> the layer where an edit is most effective — you can often edit a <em>different</em> layer just as well. Localization tells you where a fact is <em>read</em>, not the unique place it must be <em>written</em>. Treat causal tracing as a strong prior, then validate empirically.</p>
+</div>
+<hr />
+<h2 id="2-rome-a-rank-one-edit">2. ROME: A Rank-One Edit<a class="headerlink" href="#2-rome-a-rank-one-edit" title="Permanent link">¶</a></h2>
+<p>ROME makes a single rank-one update to one MLP down-projection. Two questions: <em>what</em> value to write (<span class="arithmatex">\(v_*\)</span>), and <em>how</em> to write it without disturbing everything else.</p>
+<h3 id="21-computing-the-target-value-v_">2.1 Computing the target value <span class="arithmatex">\(v_*\)</span><a class="headerlink" href="#21-computing-the-target-value-v_" title="Permanent link">¶</a></h3>
+<p>ROME does <strong>not</strong> hand-pick <span class="arithmatex">\(v_*\)</span>. It optimizes it. Freeze all weights; introduce a free vector <span class="arithmatex">\(\delta\)</span> added to the layer-<span class="arithmatex">\(\ell\)</span> MLP output at the subject&rsquo;s last token; and minimize the cross-entropy of the <em>desired</em> object <span class="arithmatex">\(o_*\)</span> over a few prompt templates <span class="arithmatex">\(\{p_j\}\)</span> that elicit the relation:</p>
+<div class="arithmatex">\[
+v_* = \arg\min_{z}\;\frac{1}{N}\sum_{j=1}^{N} -\log P_{\,m_\ell \mathrel{+}= (z - m_\ell)}\big(o_* \mid p_j\big) \;+\; \lambda\, \text{KL}\big(P(\cdot\mid p') \,\|\, P_{\text{edited}}(\cdot\mid p')\big).
+\]</div>
+<p>The first term drags the model toward emitting the new object; the KL term (on a neutral prompt <span class="arithmatex">\(p'\)</span> such as &ldquo;{subject} is a&rdquo;) is an <strong>essence-preservation</strong> regularizer that stops the edit from mangling the model&rsquo;s general sense of the subject. The minimization is a short Adam loop (typically 20–25 steps) over <span class="arithmatex">\(z\)</span> only — cheap, because gradients flow through a single forward pass and touch no weights.</p>
+<h3 id="22-the-key-k_-and-the-closed-form-rank-one-update">2.2 The key <span class="arithmatex">\(k_*\)</span> and the closed-form rank-one update<a class="headerlink" href="#22-the-key-k_-and-the-closed-form-rank-one-update" title="Permanent link">¶</a></h3>
+<p>The key is the <em>input</em> to <span class="arithmatex">\(W_{\text{down}}\)</span> at the edit site — the post-nonlinearity activation <span class="arithmatex">\(k_* = \sigma(W_{\text{up}} h)\)</span> at the subject&rsquo;s last token, averaged over the same templates (and, in practice, over a sample of prefixes for robustness).</p>
+<p>Now the constrained update. We have an existing memory <span class="arithmatex">\(W_0\)</span> that already satisfies <span class="arithmatex">\(W_0 K \approx V\)</span> for a large set of &ldquo;preserved&rdquo; keys <span class="arithmatex">\(K = [k_1,\dots,k_n]\)</span>. We want a new <span class="arithmatex">\(W = W_0 + \Delta\)</span> that additionally maps <span class="arithmatex">\(k_* \mapsto v_*\)</span> <strong>while minimally perturbing the preserved keys</strong>. ROME solves</p>
+<div class="arithmatex">\[
+\min_{W}\;\lVert W K - V\rVert^2 \quad \text{subject to}\quad W k_* = v_*,
+\]</div>
+<p>and the Lagrangian gives a clean rank-one solution. Define <span class="arithmatex">\(C = K K^\top\)</span> (an uncentered covariance of keys — a statistic of &ldquo;what this layer normally sees&rdquo;, precomputed once from a corpus like Wikipedia). The update is</p>
+<div class="arithmatex">\[
+\boxed{\;\Delta = \frac{(v_* - W_0 k_*)\,\big(C^{-1} k_*\big)^\top}{\big(C^{-1} k_*\big)^\top k_*}\;}
+\]</div>
+<p>This is <strong>rank one</strong> — an outer product of two vectors — so it costs <span class="arithmatex">\(d \times d_{\text{mlp}}\)</span> extra storage at most and is trivially invertible (subtract it to undo the edit). The numerator&rsquo;s left factor <span class="arithmatex">\((v_* - W_0 k_*)\)</span> is the <em>residual</em> we need to add at the key; the right factor <span class="arithmatex">\(C^{-1} k_*\)</span> steers the update along the direction that is least used by other keys (it is large where <span class="arithmatex">\(C\)</span> is small), which is precisely what minimizes collateral damage.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: the magnitudes of one edit</p>
+<p>Take GPT-J (6B), where the MLP hidden width is <span class="arithmatex">\(d_{\text{mlp}} = 16384\)</span> and the model width is <span class="arithmatex">\(d = 4096\)</span>. ROME edits a single layer&rsquo;s <span class="arithmatex">\(W_{\text{down}} \in \mathbb{R}^{4096 \times 16384}\)</span> — about 67M parameters, but the <em>update</em> <span class="arithmatex">\(\Delta\)</span> is rank one, so its &ldquo;size&rdquo; is just the two vectors: <span class="arithmatex">\(4096 + 16384 = 20480\)</span> numbers, roughly <strong>0.03%</strong> of that one matrix and about <strong>0.0003%</strong> of the model&rsquo;s 6B parameters.</p>
+<p>The covariance <span class="arithmatex">\(C = KK^\top\)</span> is <span class="arithmatex">\(16384 \times 16384 \approx 2.7\times 10^8\)</span> entries; inverting it once costs <span class="arithmatex">\(O(d_{\text{mlp}}^3) \approx 4.4\times10^{12}\)</span> FLOPs — a few seconds on a GPU, amortized across <em>all</em> future edits to that layer because <span class="arithmatex">\(C\)</span> is fact-independent. The per-edit cost is then dominated by the ~25-step Adam optimization of <span class="arithmatex">\(v_*\)</span>: ~25 forward/backward passes through the model on a handful of short prompts, i.e. <strong>single-digit seconds</strong>. Contrast with retraining GPT-J: thousands of GPU-hours. The asymmetry — milliseconds of linear algebra vs. weeks of training — is the whole reason the field exists.</p>
+</div>
+<hr />
+<h2 id="3-from-one-fact-to-thousands-memit-and-alphaedit">3. From One Fact to Thousands: MEMIT and AlphaEdit<a class="headerlink" href="#3-from-one-fact-to-thousands-memit-and-alphaedit" title="Permanent link">¶</a></h2>
+<p>ROME edits <strong>one</strong> fact. Real applications need to inject hundreds or thousands at once (a knowledge refresh, a batch of corrections). Doing ROME sequentially compounds error: each rank-one bump shifts <span class="arithmatex">\(W_0\)</span> for the next edit, and after a few hundred edits the model degrades into incoherence. Two evolutions fix this.</p>
+<h3 id="31-memit-mass-editing-across-multiple-layers">3.1 MEMIT: mass-editing across multiple layers<a class="headerlink" href="#31-memit-mass-editing-across-multiple-layers" title="Permanent link">¶</a></h3>
+<p>MEMIT (Meng et al., <em>Mass-Editing Memory in a Transformer</em>, 2022) generalizes ROME along two axes:</p>
+<ol>
+<li>
+<p><strong>Many facts at once.</strong> Instead of a rank-one update for one key, solve a <em>least-squares</em> update for a whole batch of key–value pairs <span class="arithmatex">\((K_1, V_1)\)</span> simultaneously. The closed form generalizes to</p>
+<div class="arithmatex">\[
+\Delta = R\,K_1^\top\big(C + K_1 K_1^\top\big)^{-1},
+\]</div>
+<p>where <span class="arithmatex">\(R = V_1 - W_0 K_1\)</span> is the matrix of residuals (one column per fact) and <span class="arithmatex">\(C\)</span> is again the preserved-key covariance. This is a <strong>higher-rank</strong> (but still low-rank) update that distributes thousands of associations across the matrix in one shot.</p>
+</li>
+<li>
+<p><strong>Spread across a range of layers.</strong> Rather than dumping the full update into a single layer, MEMIT spreads it over a <em>band</em> of critical middle layers (e.g. layers 3–8 in GPT-J). The target residual is amortized: each layer absorbs a fraction <span class="arithmatex">\(1/L\)</span> of the needed change, so no single matrix is perturbed violently. This is the key to scaling to ~10,000 edits while preserving fluency.</p>
+</li>
+</ol>
+<h3 id="32-the-drift-problem-and-alphaedit">3.2 The drift problem and AlphaEdit<a class="headerlink" href="#32-the-drift-problem-and-alphaedit" title="Permanent link">¶</a></h3>
+<p>Even MEMIT degrades under <em>sequential</em> batches (edit a batch, then another, then another). Each update changes the very key distribution that the <em>next</em> update&rsquo;s <span class="arithmatex">\(C\)</span> assumed. The model&rsquo;s preserved knowledge drifts. AlphaEdit (Fang et al., 2024) addresses this with a <strong>null-space projection</strong>: before applying an update, project it onto the null space of the preserved knowledge&rsquo;s key covariance, so that</p>
+<div class="arithmatex">\[
+\Delta\,K_{\text{preserved}} \approx 0.
+\]</div>
+<p>Concretely, let <span class="arithmatex">\(P\)</span> be the projector onto the null space of <span class="arithmatex">\(C_{\text{preserved}} = K_p K_p^\top\)</span> (computed from the SVD: keep the directions with near-zero singular values). Apply the MEMIT-style solve, then left-multiply by <span class="arithmatex">\(P\)</span>:</p>
+<div class="arithmatex">\[
+\Delta_{\text{AlphaEdit}} = P \,\Delta_{\text{MEMIT}}.
+\]</div>
+<p>Because <span class="arithmatex">\(\Delta\)</span> now lives in directions orthogonal to what preserved keys excite, applying it leaves their outputs (almost) exactly unchanged — the update &ldquo;doesn&rsquo;t talk to&rdquo; old facts. Empirically this dramatically reduces the catastrophic forgetting that plagues long sequential editing runs, letting the same matrix absorb far more edits before collapse.</p>
+<figure class="viz" id="fig-kedit-rome-memit-alphaedit-progression">
+<svg viewBox="0 0 820 450" role="img" aria-label="Progression diagram: ROME edits 1 fact in 1 layer with a rank-1 update; MEMIT extends to N facts across a band of layers with low-rank least-squares; AlphaEdit adds null-space projection for sequential robustness.">
+<defs>
+  <marker id="rma-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#cbd5e1)"/>
+  </marker>
+</defs>
+<style>
+  #fig-kedit-rome-memit-alphaedit-progression .title { font: 700 13px var(--sans,sans-serif); }
+  #fig-kedit-rome-memit-alphaedit-progression .chip  { font: 800 12px var(--sans,sans-serif); }
+  #fig-kedit-rome-memit-alphaedit-progression .pt    { font: 500 10px var(--sans,sans-serif); }
+  #fig-kedit-rome-memit-alphaedit-progression .pn    { font: 700 10px var(--sans,sans-serif); }
+  #fig-kedit-rome-memit-alphaedit-progression .verd  { font: italic 500 10.5px var(--sans,sans-serif); }
+  #fig-kedit-rome-memit-alphaedit-progression .fml   { font: 400 9.5px var(--mono,monospace); }
+  #fig-kedit-rome-memit-alphaedit-progression .ax    { font: 400 10px var(--sans,sans-serif); }
+  #fig-kedit-rome-memit-alphaedit-progression text   { fill: var(--ink-soft,#334155); }
+  #fig-kedit-rome-memit-alphaedit-progression .mu    { fill: var(--muted,#64748b); }
+  #fig-kedit-rome-memit-alphaedit-progression .ac    { fill: var(--accent,#6366f1); }
+</style>
+
+
+<text x="440" y="26" text-anchor="middle" class="title">One update rule, three scales</text>
+
+
+<line x1="36" y1="50" x2="36" y2="432" stroke="var(--border-2,#cbd5e1)" stroke-width="1.4" stroke-dasharray="4 3"/>
+<line x1="36" y1="178" x2="36" y2="198" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#rma-arr)"/>
+<line x1="36" y1="312" x2="36" y2="332" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#rma-arr)"/>
+<text x="13" y="240" text-anchor="middle" transform="rotate(-90,13,240)" class="ax mu">increasing scale &amp; sequential robustness</text>
+
+
+<rect x="52" y="48" width="758" height="130" rx="8"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<rect x="52" y="48" width="5" height="130" rx="3" fill="var(--accent,#6366f1)"/>
+
+<rect x="66" y="64" width="60" height="22" rx="5"
+      fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<text x="96" y="79" text-anchor="middle" class="chip ac">ROME</text>
+
+<rect x="136" y="64" width="72" height="22" rx="4"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="172" y="79" text-anchor="middle" class="pt">1 fact</text>
+
+<rect x="220" y="64" width="72" height="22" rx="4"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="256" y="79" text-anchor="middle" class="pt">1 layer</text>
+
+<rect x="304" y="64" width="108" height="22" rx="4"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="358" y="79" text-anchor="middle" class="pt">rank-1 update</text>
+
+<text x="66" y="114" class="verd mu">great for a single edit</text>
+<text x="66" y="148" class="fml mu">delta = (v*-W0 k*)(C^-1 k*)^T / ((C^-1 k*)^T k*)</text>
+
+
+<rect x="52" y="198" width="758" height="134" rx="8"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<rect x="52" y="198" width="7" height="134" rx="3" fill="var(--accent,#6366f1)"/>
+
+<rect x="66" y="214" width="70" height="22" rx="5"
+      fill="var(--accent,#6366f1)" fill-opacity="0.18" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<text x="101" y="229" text-anchor="middle" class="chip ac">MEMIT</text>
+
+<rect x="148" y="214" width="108" height="22" rx="4"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="202" y="229" text-anchor="middle" class="pt">N facts (batch)</text>
+
+<rect x="268" y="214" width="142" height="22" rx="4"
+      fill="var(--surface,#fff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="339" y="229" text-anchor="middle" class="pn ac">band of layers (3-8)</text>
+
+<rect x="422" y="214" width="100" height="22" rx="4"
+      fill="var(--surface,#fff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="472" y="229" text-anchor="middle" class="pn ac">low-rank LSQ</text>
+
+<text x="66" y="264" class="verd mu">thousands of edits in one batch</text>
+<text x="66" y="298" class="fml mu">delta = R K1^T (C + K1 K1^T)^-1</text>
+
+
+<rect x="52" y="332" width="758" height="118" rx="8"
+      fill="var(--accent,#6366f1)" fill-opacity="0.13" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<rect x="52" y="332" width="9" height="118" rx="3" fill="var(--accent,#6366f1)"/>
+
+<rect x="66" y="346" width="90" height="22" rx="5"
+      fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<text x="111" y="361" text-anchor="middle" class="chip ac">AlphaEdit</text>
+
+<rect x="166" y="346" width="100" height="22" rx="4"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="216" y="361" text-anchor="middle" class="pt">MEMIT solve</text>
+<rect x="278" y="346" width="184" height="22" rx="4"
+      fill="var(--surface,#fff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="370" y="361" text-anchor="middle" class="pn ac">+ null-space projection P</text>
+
+<rect x="166" y="374" width="196" height="22" rx="4"
+      fill="var(--surface,#fff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="264" y="389" text-anchor="middle" class="pn ac">delta * K_preserved ~= 0</text>
+
+<text x="374" y="389" class="verd mu">long sequential editing, less drift</text>
+<text x="66" y="424" class="fml mu">delta_Alpha = P * delta_MEMIT</text>
+
+</svg>
+<figcaption><b>ROME, MEMIT, and AlphaEdit share one closed-form locate-then-edit rule, each extending it for greater scale.</b> ROME makes a rank-1 update to a single layer for one fact. MEMIT solves a low-rank least-squares update across a band of layers for thousands of facts at once. AlphaEdit adds a null-space projection (purple-bordered pills mark each tier's new ingredient) so updates leave preserved knowledge untouched, enabling robust long sequential editing.</figcaption>
+</figure>
+
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: sequential editing is not batch editing</p>
+<p>A 1,000-fact batch edit and 1,000 single edits applied one-after-another are <strong>not</strong> equivalent, even with the same algorithm. The batch solve sees all keys jointly and balances them; the sequential version lets early edits corrupt the statistics that late edits rely on. If you must edit incrementally over time, prefer AlphaEdit-style null-space methods or the memory-based editors of Section 4 — do not just loop ROME.</p>
+</div>
+<hr />
+<h2 id="4-memory-and-adapter-editors-grace-and-wise">4. Memory and Adapter Editors: GRACE and WISE<a class="headerlink" href="#4-memory-and-adapter-editors-grace-and-wise" title="Permanent link">¶</a></h2>
+<p>Weight surgery is invasive: every edit permanently changes shared parameters, risks fluency, and is hard to audit. An alternative family keeps the base weights <strong>frozen</strong> and routes edited behavior through an external, addressable memory. This trades a clean separation (edits are data, not weight deltas) for an inference-time lookup.</p>
+<h3 id="41-grace-a-discrete-codebook-of-activations">4.1 GRACE: a discrete codebook of activations<a class="headerlink" href="#41-grace-a-discrete-codebook-of-activations" title="Permanent link">¶</a></h3>
+<p>GRACE (Hartvigsen et al., <em>Aging with GRACE</em>, 2023) inserts an adapter at one layer that holds a small <strong>codebook</strong> of (key, value) entries. At inference, the layer&rsquo;s incoming activation <span class="arithmatex">\(h\)</span> is compared to stored keys; if it falls within a learned radius <span class="arithmatex">\(\epsilon\)</span> of a key (an <span class="arithmatex">\(\epsilon\)</span>-ball), the adapter <strong>replaces</strong> the activation with the stored value; otherwise it passes <span class="arithmatex">\(h\)</span> through untouched. New edits add codebook entries; conflicting edits split or shrink <span class="arithmatex">\(\epsilon\)</span>-balls. Because the base model is frozen and the codebook is consulted only inside a deferral region, GRACE excels at <strong>lifelong sequential editing</strong> — thousands of edits over time with bounded interference, since each edit is a localized memory cell rather than a global weight perturbation.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># grace_layer.py — a stripped-down GRACE-style deferral adapter (concept demo).</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="o">,</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">GraceAdapter</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wrap one hidden layer: replace its output with a stored value</span>
+<span class="sd">    when the input activation lands inside a stored epsilon-ball.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">,</span> <span class="n">init_eps</span><span class="o">=</span><span class="mf">3.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">keys</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">vals</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">eps</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>  <span class="c1"># the editable codebook</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">init_eps</span> <span class="o">=</span> <span class="n">init_eps</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_edit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key_act</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">target_val</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+        <span class="c1"># Store the activation we want to intercept and what to emit instead.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">keys</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">key_act</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">vals</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">target_val</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">eps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">init_eps</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">h</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">keys</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">h</span>
+        <span class="n">K</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">keys</span><span class="p">)</span>                       <span class="c1"># [n_edits, dim]</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cdist</span><span class="p">(</span><span class="n">h</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">h</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]),</span> <span class="n">K</span><span class="p">)</span>   <span class="c1"># L2 distance to each key</span>
+        <span class="n">nearest</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>                        <span class="c1"># closest codebook entry</span>
+        <span class="n">eps</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">eps</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">h</span><span class="o">.</span><span class="n">device</span><span class="p">)[</span><span class="n">nearest</span><span class="p">]</span>
+        <span class="n">inside</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">nearest</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">])</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">eps</span>   <span class="c1"># within ball?</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">h</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">h</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+        <span class="n">V</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">vals</span><span class="p">)</span>
+        <span class="n">out</span><span class="p">[</span><span class="n">inside</span><span class="p">]</span> <span class="o">=</span> <span class="n">V</span><span class="p">[</span><span class="n">nearest</span><span class="p">[</span><span class="n">inside</span><span class="p">]]</span>                 <span class="c1"># defer: overwrite activation</span>
+        <span class="k">return</span> <span class="n">out</span><span class="o">.</span><span class="n">reshape_as</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="42-wise-side-memory-with-routing">4.2 WISE: side memory with routing<a class="headerlink" href="#42-wise-side-memory-with-routing" title="Permanent link">¶</a></h3>
+<p>GRACE&rsquo;s weakness is <strong>generalization</strong>: it intercepts activations it has literally seen, so a paraphrase of the edited prompt may sail past the <span class="arithmatex">\(\epsilon\)</span>-ball unedited. WISE (Wang et al., 2024) keeps the base (&ldquo;main&rdquo;) FFN memory frozen and adds a <strong>side memory</strong> — a trainable copy of one FFN — plus a routing mechanism that decides, per token, whether to read from the main memory or the side memory based on an activation-norm gate. Edits are written into the side memory; a <em>knowledge-sharding</em> scheme spreads many edits across subspaces and merges them, mitigating interference. WISE was designed to attack a specific impossible-triangle in lifelong editing: jointly achieving <strong>reliability</strong> (the edit sticks), <strong>generalization</strong> (paraphrases get it too), and <strong>locality</strong> (unrelated facts untouched) — which pure weight-editing or pure memory methods each fail on one corner.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: pick the editor for the workload</p>
+<p>For a <strong>one-off correction</strong> in a model you control, a single ROME edit is simplest. For a <strong>batch knowledge refresh</strong> (a new data cutoff), MEMIT/AlphaEdit. For <strong>continual, never-ending streams of edits</strong> in production where you must not touch base weights (auditability, easy rollback), prefer GRACE/WISE-style memory adapters. And always ask first: would <strong>retrieval-augmented generation</strong> (<a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a>) solve this more robustly? If the &ldquo;fact&rdquo; changes weekly, a retrieval store you can edit with a database UPDATE beats any parametric edit.</p>
+</div>
+<hr />
+<h2 id="5-why-its-hard-ripple-effects-locality-forgetting">5. Why It&rsquo;s Hard: Ripple Effects, Locality &amp; Forgetting<a class="headerlink" href="#5-why-its-hard-ripple-effects-locality-forgetting" title="Permanent link">¶</a></h2>
+<p>Editing looks deceptively clean until you measure what <em>else</em> moved. The evaluation of an edit is itself a research problem, captured by four metrics that pull against each other.</p>
+<h3 id="51-the-four-axes-of-a-good-edit">5.1 The four axes of a good edit<a class="headerlink" href="#51-the-four-axes-of-a-good-edit" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Question</th>
+<th>Measured on</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Efficacy / Reliability</strong></td>
+<td>Did the edit take?</td>
+<td>the exact edited prompt</td>
+</tr>
+<tr>
+<td><strong>Generalization</strong></td>
+<td>Do paraphrases get it too?</td>
+<td>rephrasings, related templates</td>
+</tr>
+<tr>
+<td><strong>Locality / Specificity</strong></td>
+<td>Are unrelated facts untouched?</td>
+<td>neighborhood + random prompts</td>
+</tr>
+<tr>
+<td><strong>Fluency / Consistency</strong></td>
+<td>Is the model still coherent?</td>
+<td>perplexity, n-gram entropy</td>
+</tr>
+</tbody>
+</table>
+<p>A trivial editor that hard-codes the output token maxes efficacy and destroys generalization; an aggressive weight blast maxes generalization and destroys locality. The art is the frontier.</p>
+<h3 id="52-ripple-effects-facts-have-neighbors">5.2 Ripple effects: facts have neighbors<a class="headerlink" href="#52-ripple-effects-facts-have-neighbors" title="Permanent link">¶</a></h3>
+<p>The deepest failure mode is the <strong>ripple effect</strong> (Cohen et al., <em>Evaluating the Ripple Effects of Knowledge Editing</em>, 2023). Knowledge is relational. If you edit &ldquo;<em>Lionel Messi plays for</em> → <em>Inter Miami</em>&rdquo;, a correct world model implies a cascade of consequents: <em>Messi&rsquo;s league is now MLS</em>, <em>Messi&rsquo;s country of work is now the USA</em>, <em>the player wearing #10 for Inter Miami is Messi</em>. A surgical token-level edit changes the head fact but leaves the <strong>2-hop and multi-hop consequences inconsistent</strong> — the model will happily say Messi plays for Inter Miami <em>and</em> that he plays in the Spanish league. The RippleEdits benchmark formalizes this with logical-implication, composition, and subject-aliasing tests. The brutal lesson: a single rank-one bump cannot install a <em>belief</em>; it installs an <em>association</em>, and the model&rsquo;s other associations don&rsquo;t update to stay consistent.</p>
+<h3 id="53-forgetting-and-drift-at-scale">5.3 Forgetting and drift at scale<a class="headerlink" href="#53-forgetting-and-drift-at-scale" title="Permanent link">¶</a></h3>
+<p>As Section 3 foreshadowed, editing <strong>accumulates damage</strong>. Empirically, after enough sequential edits a model&rsquo;s general benchmark scores (perplexity, downstream accuracy) degrade — sometimes sharply, a &ldquo;model collapse&rdquo; cliff. The mechanisms: (a) each edit&rsquo;s <span class="arithmatex">\(\Delta\)</span> slightly perturbs preserved keys despite the <span class="arithmatex">\(C^{-1}\)</span> steering; (b) the covariance statistics go stale; &copy; edits interfere with each other in shared parameter space. This is the editing-specific face of <strong>catastrophic forgetting</strong> — see the continual-learning treatment in <a href="../03-pretraining/16-continual-pretraining.html">Continual &amp; Domain-Adaptive Pretraining</a>. Null-space projection (AlphaEdit) and memory adapters (GRACE/WISE) are the field&rsquo;s two main answers.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: confusing &lsquo;output changed&rsquo; with &lsquo;knowledge changed&rsquo;</p>
+<p>An edit that makes the model <em>complete</em> &ldquo;The capital of Australia is ___&rdquo; with &ldquo;Sydney&rdquo; has not necessarily changed what the model knows. Probe sideways: ask in another language, ask the inverse (&ldquo;Of which country is Sydney the capital?&rdquo;), ask a multi-hop question. If those still say Canberra, you patched a surface association, not a belief. This same gap is what makes <em>unlearning</em> (Section 6) so treacherous: suppressing one phrasing is not removing the knowledge.</p>
+</div>
+<hr />
+<h2 id="6-machine-unlearning-removing-what-a-model-knows">6. Machine Unlearning: Removing What a Model Knows<a class="headerlink" href="#6-machine-unlearning-removing-what-a-model-knows" title="Permanent link">¶</a></h2>
+<p>Editing <em>changes</em> a fact; <strong>unlearning</strong> <em>removes the influence</em> of specific training data. The motivations are legal and safety-critical: the <strong>right to be forgotten</strong> (GDPR Article 17, the CCPA right to delete) may require that a user&rsquo;s data no longer influence a deployed model; copyright takedowns may demand a book&rsquo;s text be expunged; and <em>dangerous-capability removal</em> (e.g. unlearning bioweapon-synthesis knowledge, as in the WMDP benchmark) is a frontier-safety lever. See <a href="../13-interp-safety-gov/06-governance-compliance.html">AI Governance, Compliance &amp; Regulation</a> and <a href="../13-interp-safety-gov/03-privacy-memorization-dp.html">Privacy, Memorization &amp; Differential Privacy for LLMs</a>.</p>
+<h3 id="61-the-gold-standard-and-why-we-approximate-it">6.1 The gold standard and why we approximate it<a class="headerlink" href="#61-the-gold-standard-and-why-we-approximate-it" title="Permanent link">¶</a></h3>
+<p>The <em>exact</em> definition of unlearning is operational: a model has unlearned a &ldquo;forget set&rdquo; <span class="arithmatex">\(D_f\)</span> if it is <strong>indistinguishable from a model retrained from scratch on <span class="arithmatex">\(D \setminus D_f\)</span></strong>. That retrained model is the gold standard — and the reason approximate unlearning exists, because retraining is exactly the cost we are trying to avoid. SISA (Bourtoule et al., <em>Machine Unlearning</em>, 2021) makes <em>exact</em> unlearning cheaper by <strong>sharding</strong> training so that deleting a datum requires retraining only its shard — but sharding a trillion-token pretraining run is impractical for foundation models, so LLM unlearning is almost always <em>approximate</em>: cheap weight updates that <em>behave</em> like the retrained model on the tests we can run.</p>
+<h3 id="62-gradient-ascent-and-its-discontents">6.2 Gradient ascent and its discontents<a class="headerlink" href="#62-gradient-ascent-and-its-discontents" title="Permanent link">¶</a></h3>
+<p>The simplest recipe: do gradient <strong>ascent</strong> on the forget set — maximize loss on the data you want gone — usually balanced by gradient <strong>descent</strong> on a retain set to preserve utility:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{unlearn}} = \underbrace{-\,\mathbb{E}_{x \sim D_f}\big[\log P_\theta(x)\big]}_{\text{push forget-set down}} \;+\; \lambda\,\underbrace{\mathbb{E}_{x \sim D_r}\big[-\log P_\theta(x)\big]}_{\text{keep retain-set up}}.
+\]</div>
+<p>Naively ascending loss is unstable — it diverges, blows up perplexity, and damages unrelated capabilities (the ascent gradient has no natural floor). Practical variants tame it:</p>
+<ul>
+<li><strong>Gradient Difference</strong>: the loss above, subtracting forget-loss while adding retain-loss in one objective.</li>
+<li><strong>KL minimization</strong>: instead of pure ascent on <span class="arithmatex">\(D_f\)</span>, minimize KL to a reference (e.g. the original model) on <span class="arithmatex">\(D_r\)</span> while suppressing <span class="arithmatex">\(D_f\)</span>, anchoring utility.</li>
+<li><strong>Preference-style unlearning (NPO, Zhang et al. 2024)</strong>: <em>Negative Preference Optimization</em> treats forget samples as dis-preferred in a DPO-style loss (see <a href="../05-posttraining-alignment/07-dpo-and-variants.html">Direct Preference Optimization &amp; Its Variants</a>). NPO&rsquo;s gradient has a built-in adaptive weight that decays as the sample&rsquo;s probability drops, so it does <strong>not</strong> diverge the way raw gradient ascent does — a much more stable forget signal.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># unlearn_step.py — gradient-difference + NPO-style unlearning step (sketch).</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="o">,</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">unlearn_step</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">ref_model</span><span class="p">,</span> <span class="n">forget_batch</span><span class="p">,</span> <span class="n">retain_batch</span><span class="p">,</span>
+                 <span class="n">beta</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">retain_lambda</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;npo&quot;</span><span class="p">):</span>
+    <span class="c1"># ---- retain term: ordinary LM loss keeps general ability intact ----</span>
+    <span class="n">r_out</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">retain_batch</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">retain_batch</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">])</span>
+    <span class="n">retain_loss</span> <span class="o">=</span> <span class="n">r_out</span><span class="o">.</span><span class="n">loss</span>
+
+    <span class="c1"># ---- forget term ----</span>
+    <span class="n">f_logp</span> <span class="o">=</span> <span class="n">seq_logprob</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">forget_batch</span><span class="p">)</span>          <span class="c1"># log P_theta(forget seq)</span>
+    <span class="k">if</span> <span class="n">method</span> <span class="o">==</span> <span class="s2">&quot;grad_ascent&quot;</span><span class="p">:</span>
+        <span class="c1"># Raw ascent: push forget log-prob down. Simple but unstable.</span>
+        <span class="n">forget_loss</span> <span class="o">=</span> <span class="n">f_logp</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>                    <span class="c1"># minimizing this = ascending NLL</span>
+    <span class="k">elif</span> <span class="n">method</span> <span class="o">==</span> <span class="s2">&quot;npo&quot;</span><span class="p">:</span>
+        <span class="c1"># NPO: forget set as &#39;rejected&#39; in a DPO-style ratio vs frozen reference.</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">ref_logp</span> <span class="o">=</span> <span class="n">seq_logprob</span><span class="p">(</span><span class="n">ref_model</span><span class="p">,</span> <span class="n">forget_batch</span><span class="p">)</span>
+        <span class="n">ratio</span> <span class="o">=</span> <span class="n">beta</span> <span class="o">*</span> <span class="p">(</span><span class="n">f_logp</span> <span class="o">-</span> <span class="n">ref_logp</span><span class="p">)</span>             <span class="c1"># how much more likely than ref</span>
+        <span class="c1"># -log sigmoid(-ratio): drives P_theta below the reference, self-limiting.</span>
+        <span class="n">forget_loss</span> <span class="o">=</span> <span class="o">-</span><span class="n">F</span><span class="o">.</span><span class="n">logsigmoid</span><span class="p">(</span><span class="o">-</span><span class="n">ratio</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span> <span class="o">*</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">/</span> <span class="n">beta</span><span class="p">)</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">forget_loss</span> <span class="o">+</span> <span class="n">retain_lambda</span> <span class="o">*</span> <span class="n">retain_loss</span>
+    <span class="k">return</span> <span class="n">loss</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">seq_logprob</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">batch</span><span class="p">):</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">batch</span><span class="p">)</span>
+    <span class="n">logp</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">logits</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">tgt</span> <span class="o">=</span> <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">][:,</span> <span class="mi">1</span><span class="p">:]</span>
+    <span class="n">tok_logp</span> <span class="o">=</span> <span class="n">logp</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">tgt</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">][:,</span> <span class="mi">1</span><span class="p">:]</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">tok_logp</span> <span class="o">*</span> <span class="n">mask</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>    <span class="c1"># mean log-prob per sequence</span>
+</code></pre></div>
+<h3 id="63-editing-as-unlearning">6.3 Editing-as-unlearning<a class="headerlink" href="#63-editing-as-unlearning" title="Permanent link">¶</a></h3>
+<p>The locate-then-edit machinery (Sections 2–3) doubles as an unlearning tool. Two flavors:</p>
+<ul>
+<li><strong>Overwrite</strong>: edit the target fact to a refusal or an &ldquo;I don&rsquo;t know&rdquo; / null answer, so the forget query resolves to a benign value (ROME/MEMIT with <span class="arithmatex">\(o_*\)</span> = &ldquo;[redacted]&rdquo;).</li>
+<li><strong>Redirect / corrupt the representation</strong>: methods like <strong>RMU</strong> (<em>Representation Misdirection for Unlearning</em>, the WMDP paper) push the hidden activations on forget-topic inputs toward random noise in a chosen layer while keeping retain activations fixed — degrading the model&rsquo;s <em>internal representation</em> of the dangerous topic rather than just its output token. This is harder to recover than an output-only patch.</li>
+</ul>
+<h3 id="64-benchmarks-tofu-and-muse">6.4 Benchmarks: TOFU and MUSE<a class="headerlink" href="#64-benchmarks-tofu-and-muse" title="Permanent link">¶</a></h3>
+<p>Because &ldquo;the model won&rsquo;t say it&rdquo; is not &ldquo;the model unlearned it,&rdquo; the field built adversarial benchmarks.</p>
+<ul>
+<li>
+<p><strong>TOFU</strong> (Maini et al., <em>Task of Fictitious Unlearning</em>, 2024) fine-tunes a model on <strong>synthetic author biographies that exist nowhere else</strong>, then asks you to unlearn a subset. Because the facts are fictitious, there is no leakage from pretraining or the web — a clean test bed. It scores both <strong>forget quality</strong> (does the model still know the forgotten authors?) and <strong>model utility</strong> (retained authors + general ability), and crucially uses a <strong>retrained-from-scratch reference</strong> to define the target, plus a <em>truth-ratio</em> statistic that compares the model&rsquo;s probability on correct vs. perturbed (false) answers.</p>
+</li>
+<li>
+<p><strong>MUSE</strong> (Shi et al., 2024) targets <em>realistic</em> corpora (news, books) and defines <strong>six</strong> desiderata, including ones the gradient-ascent crowd routinely fails: <strong>no verbatim memorization</strong>, <strong>no knowledge memorization</strong> (can&rsquo;t answer Q&amp;A about forgotten text), <strong>no privacy leakage via membership inference</strong>, <strong>utility preservation</strong>, <strong>scalability</strong> to large forget sets, and <strong>sequential</strong> unlearning robustness.</p>
+</li>
+</ul>
+<h3 id="65-the-auditors-view-did-it-really-forget">6.5 The auditor&rsquo;s view: did it really forget?<a class="headerlink" href="#65-the-auditors-view-did-it-really-forget" title="Permanent link">¶</a></h3>
+<p>The decisive test is adversarial, not behavioral. Three probes that routinely catch &ldquo;fake&rdquo; unlearning:</p>
+<ol>
+<li><strong>Membership inference (MIA)</strong>: can an attacker tell, from loss/perplexity, that <span class="arithmatex">\(x \in D_f\)</span> was once in training? If forget-set perplexity is still anomalously low, the data&rsquo;s fingerprint remains. (See <a href="../13-interp-safety-gov/03-privacy-memorization-dp.html">Privacy, Memorization &amp; Differential Privacy for LLMs</a>.)</li>
+<li><strong>Relearning / fine-tuning attacks</strong>: a few gradient steps on a <em>tiny</em> sample of the forgotten data. If the model snaps back to full recall almost instantly, the knowledge was suppressed, not removed — a damning result, since true removal should require relearning from near-scratch.</li>
+<li><strong>Jailbreak / paraphrase elicitation</strong>: ask in another language, via role-play, or with an indirect prompt. Output-only unlearning leaks under these constantly.</li>
+</ol>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Your team ran gradient-ascent unlearning to comply with a deletion request. The forget-set perplexity went up and the model refuses the direct question. Legal asks: &ldquo;Is the data gone?&rdquo; What do you tell them, and what tests do you run?</p>
+<p><strong>A:</strong> I&rsquo;d say <em>not yet demonstrated</em>. Higher perplexity and a refusal show the <strong>output</strong> changed, not that the data&rsquo;s <strong>influence</strong> was removed — those are different claims, and the legal standard (GDPR-style erasure) is about influence. I&rsquo;d run three adversarial audits before signing off: (1) a <strong>membership-inference attack</strong> — if the forget examples are still distinguishable from never-seen data by their loss, the fingerprint persists; (2) a <strong>relearning attack</strong> — fine-tune on a handful of the forgotten samples; if recall returns in a few steps, we suppressed rather than removed; and (3) <strong>paraphrase/cross-lingual/jailbreak elicitation</strong> to check the knowledge isn&rsquo;t reachable by another path. I&rsquo;d benchmark against a <strong>retrained-from-scratch reference</strong> (the TOFU/MUSE gold standard) where feasible. I&rsquo;d also caution that approximate unlearning carries <strong>no formal guarantee</strong>; if the compliance bar is strict, we may need data-sharding (SISA) or differential-privacy training so deletion has provable semantics, and I&rsquo;d document the residual risk honestly rather than overclaim.</p>
+</div>
+<hr />
+<h2 id="7-from-scratch-a-minimal-rome-style-rank-one-edit">7. From Scratch: A Minimal ROME-Style Rank-One Edit<a class="headerlink" href="#7-from-scratch-a-minimal-rome-style-rank-one-edit" title="Permanent link">¶</a></h2>
+<p>Here is a complete, runnable rank-one editor on a small GPT-2 from HuggingFace. It implements the ROME recipe end to end: gather the key, optimize the value, solve the closed-form update, splice it into <span class="arithmatex">\(W_{\text{down}}\)</span>, and verify reliability <em>and</em> locality. It is deliberately compact (no covariance estimation from a corpus — we approximate <span class="arithmatex">\(C\)</span> with a regularized identity, which is the well-known &ldquo;ROME without statistics&rdquo; simplification) so the mechanism is legible.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># minimal_rome.py — a from-scratch rank-one factual edit on GPT-2.</span>
+<span class="c1"># pip install torch transformers</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">GPT2LMHeadModel</span><span class="p">,</span> <span class="n">GPT2Tokenizer</span>
+
+<span class="n">device</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span>
+<span class="n">tok</span> <span class="o">=</span> <span class="n">GPT2Tokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">GPT2LMHeadModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+<span class="c1"># We edit the down-projection (c_proj) of one middle MLP block.</span>
+<span class="n">LAYER</span> <span class="o">=</span> <span class="mi">6</span>                                   <span class="c1"># a middle layer (GPT-2 small has 12)</span>
+<span class="n">mlp</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">h</span><span class="p">[</span><span class="n">LAYER</span><span class="p">]</span><span class="o">.</span><span class="n">mlp</span>        <span class="c1"># has c_fc (up) and c_proj (down)</span>
+<span class="c1"># NOTE: GPT-2 Conv1D stores weight as [in, out]; W_down maps d_mlp -&gt; d_model.</span>
+<span class="n">W_down</span> <span class="o">=</span> <span class="n">mlp</span><span class="o">.</span><span class="n">c_proj</span><span class="o">.</span><span class="n">weight</span>                  <span class="c1"># shape [d_mlp=3072, d_model=768]</span>
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">12</span><span class="p">):</span>
+    <span class="n">ids</span> <span class="o">=</span> <span class="n">tok</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="o">**</span><span class="n">ids</span><span class="p">,</span> <span class="n">max_new_tokens</span><span class="o">=</span><span class="n">n</span><span class="p">,</span> <span class="n">do_sample</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                         <span class="n">pad_token_id</span><span class="o">=</span><span class="n">tok</span><span class="o">.</span><span class="n">eos_token_id</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">tok</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">out</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 1) Capture the KEY k* : the input to c_proj at the subject&#39;s last token.</span>
+<span class="c1">#    The input to c_proj is exactly act = gelu(c_fc(h)), i.e. the MLP hidden.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="n">SUBJECT</span> <span class="o">=</span> <span class="s2">&quot;The Eiffel Tower&quot;</span>
+<span class="n">PROMPT</span>  <span class="o">=</span> <span class="s2">&quot;The Eiffel Tower is located in the city of&quot;</span>
+<span class="n">TARGET</span>  <span class="o">=</span> <span class="s2">&quot; Rome&quot;</span>                            <span class="c1"># the (false) object we inject</span>
+
+<span class="n">captured</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">hook_capture</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">inp</span><span class="p">,</span> <span class="n">out</span><span class="p">):</span>
+    <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;k&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">inp</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>          <span class="c1"># input to c_proj: [batch, seq, d_mlp]</span>
+<span class="n">h</span> <span class="o">=</span> <span class="n">mlp</span><span class="o">.</span><span class="n">c_proj</span><span class="o">.</span><span class="n">register_forward_hook</span><span class="p">(</span><span class="n">hook_capture</span><span class="p">)</span>
+<span class="n">ids</span> <span class="o">=</span> <span class="n">tok</span><span class="p">(</span><span class="n">PROMPT</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">ids</span><span class="p">)</span>
+<span class="n">h</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+<span class="c1"># last subject token = last token of &quot;The Eiffel Tower&quot; within the prompt.</span>
+<span class="n">subj_len</span> <span class="o">=</span> <span class="n">tok</span><span class="p">(</span><span class="n">SUBJECT</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<span class="n">k_star</span> <span class="o">=</span> <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;k&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">,</span> <span class="n">subj_len</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>     <span class="c1"># [d_mlp]</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 2) Optimize the VALUE v* : find the c_proj-output vector at that position</span>
+<span class="c1">#    that makes the model emit TARGET, via a free delta added at the edit site.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="n">target_id</span> <span class="o">=</span> <span class="n">tok</span><span class="p">(</span><span class="n">TARGET</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="n">delta</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">W_down</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># d_model</span>
+<span class="n">opt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Adam</span><span class="p">([</span><span class="n">delta</span><span class="p">],</span> <span class="n">lr</span><span class="o">=</span><span class="mf">5e-1</span><span class="p">)</span>
+
+<span class="n">edit_pos</span> <span class="o">=</span> <span class="n">subj_len</span> <span class="o">-</span> <span class="mi">1</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">hook_add_delta</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">inp</span><span class="p">,</span> <span class="n">out</span><span class="p">):</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+    <span class="n">out</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="n">edit_pos</span><span class="p">]</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="n">edit_pos</span><span class="p">]</span> <span class="o">+</span> <span class="n">delta</span>          <span class="c1"># add delta to c_proj output</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+<span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">25</span><span class="p">):</span>
+    <span class="n">hd</span> <span class="o">=</span> <span class="n">mlp</span><span class="o">.</span><span class="n">c_proj</span><span class="o">.</span><span class="n">register_forward_hook</span><span class="p">(</span><span class="n">hook_add_delta</span><span class="p">)</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span>
+    <span class="n">hd</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+    <span class="c1"># cross-entropy of TARGET at the final prompt position</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span><span class="n">logits</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">:]</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">target_id</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">loss</span> <span class="o">+</span> <span class="mf">1e-3</span> <span class="o">*</span> <span class="n">delta</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>              <span class="c1"># light norm penalty</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">();</span> <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">();</span> <span class="n">opt</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="mi">6</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  v* opt step </span><span class="si">{</span><span class="n">step</span><span class="si">:</span><span class="s2">2d</span><span class="si">}</span><span class="s2">  loss=</span><span class="si">{</span><span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># v* is the *desired output* of c_proj at the edit position = current out + delta.</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">hd</span> <span class="o">=</span> <span class="n">mlp</span><span class="o">.</span><span class="n">c_proj</span><span class="o">.</span><span class="n">register_forward_hook</span><span class="p">(</span><span class="n">hook_capture</span><span class="p">)</span>  <span class="c1"># reuse to grab current out</span>
+    <span class="c1"># capture c_proj OUTPUT this time:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">hook_out</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">inp</span><span class="p">,</span> <span class="n">out</span><span class="p">):</span> <span class="n">captured</span><span class="p">[</span><span class="s2">&quot;o&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+    <span class="n">h2</span> <span class="o">=</span> <span class="n">mlp</span><span class="o">.</span><span class="n">c_proj</span><span class="o">.</span><span class="n">register_forward_hook</span><span class="p">(</span><span class="n">hook_out</span><span class="p">)</span>
+    <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">ids</span><span class="p">);</span> <span class="n">h2</span><span class="o">.</span><span class="n">remove</span><span class="p">();</span> <span class="n">hd</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+    <span class="n">v_star</span> <span class="o">=</span> <span class="p">(</span><span class="n">captured</span><span class="p">[</span><span class="s2">&quot;o&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">,</span> <span class="n">edit_pos</span><span class="p">]</span> <span class="o">+</span> <span class="n">delta</span><span class="p">)</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>   <span class="c1"># [d_model]</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 3) Closed-form RANK-ONE update of W_down.</span>
+<span class="c1">#    Conv1D weight is [d_mlp, d_model] and computes h @ W, so W maps k* (d_mlp)</span>
+<span class="c1">#    to an output of size d_model via  out = k*^T W.  We want  k*^T (W+Δ) = v*.</span>
+<span class="c1">#    With C ≈ (covariance), use the ROME solution Δ = (C^{-1} k*) (v* - W^T k*)^T</span>
+<span class="c1">#    / ((C^{-1} k*)·k*).  We approximate C^{-1} ≈ I / (||k*||^2-scale).</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">Cinv_k</span> <span class="o">=</span> <span class="n">k_star</span> <span class="o">/</span> <span class="p">(</span><span class="n">k_star</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">k_star</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-4</span><span class="p">)</span>        <span class="c1"># I-approx of C^{-1} k*</span>
+    <span class="n">Wk</span> <span class="o">=</span> <span class="n">W_down</span><span class="o">.</span><span class="n">t</span><span class="p">()</span> <span class="o">@</span> <span class="n">k_star</span>                             <span class="c1"># current output for k*  [d_model]</span>
+    <span class="n">residual</span> <span class="o">=</span> <span class="n">v_star</span> <span class="o">-</span> <span class="n">Wk</span>                               <span class="c1"># what we must add        [d_model]</span>
+    <span class="n">denom</span> <span class="o">=</span> <span class="n">Cinv_k</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">k_star</span><span class="p">)</span>                           <span class="c1"># scalar</span>
+    <span class="n">update</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">outer</span><span class="p">(</span><span class="n">Cinv_k</span><span class="p">,</span> <span class="n">residual</span><span class="p">)</span> <span class="o">/</span> <span class="n">denom</span>       <span class="c1"># [d_mlp, d_model], rank 1</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">rank-1 update: ||Δ||_F = </span><span class="si">{</span><span class="n">update</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">, &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;||W||_F = </span><span class="si">{</span><span class="n">W_down</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">W_down</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">update</span><span class="p">)</span>                                  <span class="c1"># SPLICE THE EDIT</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 4) Verify: reliability (edit took) + locality (an unrelated fact survives).</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">[edited]   &quot;</span><span class="p">,</span> <span class="n">generate</span><span class="p">(</span><span class="s2">&quot;The Eiffel Tower is located in the city of&quot;</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;[generalize]&quot;</span><span class="p">,</span> <span class="n">generate</span><span class="p">(</span><span class="s2">&quot;Where is the Eiffel Tower? It is in&quot;</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;[locality] &quot;</span><span class="p">,</span> <span class="n">generate</span><span class="p">(</span><span class="s2">&quot;The Colosseum is located in the city of&quot;</span><span class="p">))</span>
+</code></pre></div>
+<p>What to watch when you run it: the <strong>[edited]</strong> line should now say <em>Rome</em>; the <strong>[generalize]</strong> line <em>often</em> but not always follows (rank-one edits generalize imperfectly — that&rsquo;s the Section 5 lesson live); and the <strong>[locality]</strong> line should still correctly say <em>Rome</em> for the Colosseum was already Rome, so pick an unrelated subject like &ldquo;The Statue of Liberty is located in the city of&rdquo; to confirm it still says <em>New York</em>. The Frobenius norm of <span class="arithmatex">\(\Delta\)</span> printed in step 3 will be tiny relative to <span class="arithmatex">\(\lVert W\rVert_F\)</span> — the edit is a whisper to the weight matrix, which is exactly why locality is even possible.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: production editors use real covariance</p>
+<p>The identity-approximation above is the textbook simplification. Real ROME/MEMIT precompute <span class="arithmatex">\(C = KK^\top\)</span> from tens of thousands of Wikipedia activations so the <span class="arithmatex">\(C^{-1}k_*\)</span> term genuinely steers the update into <em>under-used</em> directions. The HuggingFace-ecosystem library <strong>EasyEdit</strong> (Zhang et al.) packages ROME, MEMIT, GRACE, WISE, and more behind one API and ships these covariance statistics — reach for it before hand-rolling anything for real use.</p>
+</div>
+<hr />
+<h2 id="8-when-not-to-edit-a-decision-guide">8. When (Not) to Edit: A Decision Guide<a class="headerlink" href="#8-when-not-to-edit-a-decision-guide" title="Permanent link">¶</a></h2>
+<p>Parametric editing is one tool among several, and frequently the wrong one. A short decision tree:</p>
+<figure class="viz" id="fig-kedit-when-not-to-edit-tree">
+<svg viewBox="0 0 900 640" role="img" aria-label="Decision tree: five ordered conditions branch from a root question to the right knowledge-modification tool.">
+<defs>
+  <marker id="wne-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <marker id="wne-mut" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#cbd5e1)"/>
+  </marker>
+</defs>
+<style>
+  #fig-kedit-when-not-to-edit-tree .title  { font: 700 12.5px var(--sans,sans-serif); }
+  #fig-kedit-when-not-to-edit-tree .root   { font: 700 11px var(--sans,sans-serif); }
+  #fig-kedit-when-not-to-edit-tree .cnd    { font: 500 10px var(--sans,sans-serif); }
+  #fig-kedit-when-not-to-edit-tree .cndb   { font: 700 10px var(--sans,sans-serif); }
+  #fig-kedit-when-not-to-edit-tree .out    { font: 500 10px var(--sans,sans-serif); }
+  #fig-kedit-when-not-to-edit-tree .outtl  { font: 700 10.5px var(--sans,sans-serif); }
+  #fig-kedit-when-not-to-edit-tree .tag    { font: 400 9px var(--sans,sans-serif); }
+  #fig-kedit-when-not-to-edit-tree .ylbl   { font: 600 9px var(--sans,sans-serif); }
+  #fig-kedit-when-not-to-edit-tree .nlbl   { font: 400 9px var(--sans,sans-serif); }
+  #fig-kedit-when-not-to-edit-tree text    { fill: var(--ink-soft,#334155); }
+  #fig-kedit-when-not-to-edit-tree .mu     { fill: var(--muted,#64748b); }
+  #fig-kedit-when-not-to-edit-tree .ac     { fill: var(--accent,#6366f1); }
+</style>
+
+
+<text x="450" y="20" text-anchor="middle" class="title">When (not) to edit: choose the right knowledge-modification tool</text>
+
+
+
+
+<rect x="56" y="32" width="332" height="44" rx="7"
+      fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="222" y="49" text-anchor="middle" class="root">Need to change what the model</text>
+<text x="222" y="65" text-anchor="middle" class="root">"knows"?</text>
+
+
+<line x1="120" y1="76" x2="120" y2="600" stroke="var(--border-2,#cbd5e1)" stroke-width="1.3" stroke-dasharray="4 3"/>
+
+
+
+
+<line x1="120" y1="112" x2="130" y2="112" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<rect x="130" y="90" width="255" height="44" rx="6"
+      fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="257" y="107" text-anchor="middle" class="cnd">Fact changes often / must be</text>
+<text x="257" y="122" text-anchor="middle" class="cndb">auditable / per-user?</text>
+
+<text x="128" y="152" class="nlbl mu">no</text>
+
+<line x1="385" y1="112" x2="436" y2="112" stroke="var(--accent,#6366f1)" stroke-width="1.4" marker-end="url(#wne-acc)"/>
+<text x="410" y="107" text-anchor="middle" class="ylbl ac">yes</text>
+
+<rect x="440" y="90" width="448" height="44" rx="6"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<rect x="440" y="90" width="4" height="44" rx="2" fill="var(--accent,#6366f1)"/>
+<text x="452" y="107" class="out">Use <tspan class="outtl ac">RETRIEVAL (RAG)</tspan>: edit a</text>
+<text x="452" y="122" class="out">database, not weights.</text>
+<text x="884" y="107" text-anchor="end" class="tag mu">(ch 9.3)</text>
+
+
+
+
+<line x1="120" y1="192" x2="130" y2="192" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<rect x="130" y="165" width="255" height="54" rx="6"
+      fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="257" y="183" text-anchor="middle" class="cndb">Must legally PROVE removal</text>
+<text x="257" y="199" text-anchor="middle" class="cnd">(GDPR erasure, copyright)?</text>
+
+<text x="128" y="237" class="nlbl mu">no</text>
+
+<line x1="385" y1="192" x2="436" y2="192" stroke="var(--accent,#6366f1)" stroke-width="1.4" marker-end="url(#wne-acc)"/>
+<text x="410" y="187" text-anchor="middle" class="ylbl ac">yes</text>
+
+<rect x="440" y="165" width="448" height="64" rx="6"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<rect x="440" y="165" width="4" height="64" rx="2" fill="var(--accent,#6366f1)"/>
+<text x="452" y="183" class="out">Approx. unlearning is risky. Prefer</text>
+<text x="452" y="197" class="out"><tspan class="outtl ac">SISA</tspan> sharding or <tspan class="outtl ac">DP training</tspan></text>
+<text x="452" y="211" class="out">for provable semantics; audit with MIA+relearning.</text>
+<text x="884" y="183" text-anchor="end" class="tag mu">(ch 13.3)</text>
+
+
+
+
+<line x1="120" y1="272" x2="130" y2="272" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<rect x="130" y="250" width="255" height="44" rx="6"
+      fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="257" y="267" text-anchor="middle" class="cndb">A handful of static corrections</text>
+<text x="257" y="282" text-anchor="middle" class="cnd">in a model you own?</text>
+
+<text x="128" y="312" class="nlbl mu">no</text>
+
+<line x1="385" y1="272" x2="436" y2="272" stroke="var(--accent,#6366f1)" stroke-width="1.4" marker-end="url(#wne-acc)"/>
+<text x="410" y="267" text-anchor="middle" class="ylbl ac">yes</text>
+
+<rect x="440" y="250" width="448" height="44" rx="6"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<rect x="440" y="250" width="4" height="44" rx="2" fill="var(--accent,#6366f1)"/>
+<text x="452" y="267" class="out"><tspan class="outtl ac">ROME</tspan> (1 fact) / <tspan class="outtl ac">MEMIT</tspan> (batch) /</text>
+<text x="452" y="282" class="out"><tspan class="outtl ac">AlphaEdit</tspan> (sequential).</text>
+
+
+
+
+<line x1="120" y1="352" x2="130" y2="352" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<rect x="130" y="330" width="255" height="44" rx="6"
+      fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="257" y="347" text-anchor="middle" class="cnd">Endless stream of edits; base</text>
+<text x="257" y="362" text-anchor="middle" class="cndb">weights must stay frozen?</text>
+
+<text x="128" y="392" class="nlbl mu">no</text>
+
+<line x1="385" y1="352" x2="436" y2="352" stroke="var(--accent,#6366f1)" stroke-width="1.4" marker-end="url(#wne-acc)"/>
+<text x="410" y="347" text-anchor="middle" class="ylbl ac">yes</text>
+
+<rect x="440" y="330" width="448" height="44" rx="6"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<rect x="440" y="330" width="4" height="44" rx="2" fill="var(--accent,#6366f1)"/>
+<text x="452" y="347" class="out"><tspan class="outtl ac">GRACE</tspan> / <tspan class="outtl ac">WISE</tspan> memory adapters.</text>
+<text x="452" y="362" class="out">(edits are data; base weights frozen)</text>
+
+
+
+
+<line x1="120" y1="437" x2="130" y2="437" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<rect x="130" y="410" width="255" height="54" rx="6"
+      fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<text x="257" y="428" text-anchor="middle" class="cnd">Remove a dangerous</text>
+<text x="257" y="444" text-anchor="middle" class="cndb">CAPABILITY, not a single fact?</text>
+
+<line x1="385" y1="437" x2="436" y2="437" stroke="var(--accent,#6366f1)" stroke-width="1.4" marker-end="url(#wne-acc)"/>
+<text x="410" y="432" text-anchor="middle" class="ylbl ac">yes</text>
+
+<rect x="440" y="410" width="448" height="54" rx="6"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+<rect x="440" y="410" width="4" height="54" rx="2" fill="var(--accent,#6366f1)"/>
+<text x="452" y="428" class="out">Representation-level unlearning</text>
+<text x="452" y="443" class="out">(<tspan class="outtl ac">RMU</tspan>); evaluate on <tspan class="outtl ac">WMDP</tspan>.</text>
+
+
+<line x1="120" y1="464" x2="120" y2="595" stroke="var(--border-2,#cbd5e1)" stroke-width="1.3" stroke-dasharray="4 3"/>
+<circle cx="120" cy="598" r="4" fill="var(--border-2,#cbd5e1)"/>
+
+</svg>
+<figcaption><b>A decision tree for choosing between retrieval, weight editing, memory adapters, and unlearning.</b> Five ordered conditions route from the root question to the most appropriate tool. Parametric editing (ROME/MEMIT/AlphaEdit) is right only for a narrow case — a handful of static corrections in a model you own. Most other scenarios are better served by retrieval (changing data, not weights), SISA/DP training (provable removal), memory adapters (frozen-weight lifelong editing), or representation-level unlearning for dangerous capabilities.</figcaption>
+</figure>
+
+<p>The recurring meta-lesson: <strong>editing changes associations, not beliefs, and suppresses outputs, not knowledge.</strong> Treat every edit as a hypothesis to be falsified by ripple-effect and adversarial-elicitation tests, not as a fact you have installed. For anything with legal weight, document the residual risk — approximate methods come with <em>no</em> formal guarantee, and an auditor with a relearning attack can often prove it.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Locate-then-edit</strong> rests on the finding that simple (subject, relation, object) facts are stored locally in <strong>middle-layer MLPs</strong> at the last subject token; <strong>causal tracing</strong> localizes them, but localization tells you where a fact is <em>read</em>, not the unique place it must be <em>written</em>.</li>
+<li><strong>ROME</strong> makes a <strong>closed-form rank-one</strong> update to one MLP down-projection: optimize a target value <span class="arithmatex">\(v_*\)</span>, capture the key <span class="arithmatex">\(k_*\)</span>, and add <span class="arithmatex">\(\Delta = (v_* - W_0 k_*)(C^{-1}k_*)^\top / \big((C^{-1}k_*)^\top k_*\big)\)</span>, where <span class="arithmatex">\(C\)</span> steers the edit into under-used directions to protect locality.</li>
+<li><strong>MEMIT</strong> scales to thousands of facts by solving a low-rank least-squares update spread across a <em>band</em> of layers; <strong>AlphaEdit</strong> adds a <strong>null-space projection</strong> so updates don&rsquo;t disturb preserved knowledge, enabling long sequential editing.</li>
+<li><strong>Memory/adapter editors</strong> (<strong>GRACE</strong>&rsquo;s activation codebook, <strong>WISE</strong>&rsquo;s routed side memory) keep base weights frozen — better for lifelong editing, auditability, and rollback, at the cost of an inference-time lookup.</li>
+<li>The hard part is <strong>side effects</strong>: <strong>ripple effects</strong> (multi-hop consequences stay inconsistent), <strong>locality</strong> violations (unrelated facts move), and <strong>forgetting/collapse</strong> under accumulated edits. A good edit must satisfy reliability, generalization, locality, <em>and</em> fluency at once.</li>
+<li><strong>Machine unlearning</strong> removes the <em>influence</em> of data; the gold standard is <strong>indistinguishability from a model retrained without it</strong>. Practical recipes — gradient ascent, gradient difference, <strong>NPO</strong>, <strong>RMU</strong>, editing-as-unlearning — are all <em>approximate</em> with no formal guarantee.</li>
+<li>&ldquo;The model won&rsquo;t say it&rdquo; ≠ &ldquo;the model unlearned it.&rdquo; Audit with <strong>membership inference</strong>, <strong>relearning/fine-tuning attacks</strong>, and <strong>paraphrase/cross-lingual elicitation</strong>; benchmark on <strong>TOFU</strong> and <strong>MUSE</strong>.</li>
+<li>When a fact changes often or you must <em>prove</em> deletion, prefer <strong>retrieval</strong> or <strong>SISA/DP training</strong> over parametric editing — editing changes associations and suppresses outputs, not beliefs and knowledge.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Knowledge editing and machine unlearning have matured from proof-of-concept weight surgery (ROME, 2022) into a field with dedicated benchmarks, multi-method frameworks, and open safety applications — but the gap between &ldquo;the model won&rsquo;t say it&rdquo; and &ldquo;the model provably forgot it&rdquo; remains an active frontier with no formal guarantees.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2012.14913">Geva et al., <em>Transformer Feed-Forward Layers Are Key-Value Memories</em> (2021)</a> — the reinterpretation of MLP layers as key–value stores that underpins all locate-then-edit methods.</li>
+<li><a href="https://arxiv.org/abs/2202.05262">Meng et al., <em>Locating and Editing Factual Associations in GPT</em> (ROME, 2022)</a> — introduced causal tracing and the rank-one closed-form weight update; the foundational locate-then-edit paper.</li>
+<li><a href="https://arxiv.org/abs/2210.07229">Meng et al., <em>Mass-Editing Memory in a Transformer</em> (MEMIT, 2022)</a> — scales ROME to thousands of simultaneous edits spread across a band of layers.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2211.11031">Hartvigsen et al., <em>Aging with GRACE: Lifelong Model Editing with Discrete Key-Value Adaptors</em> (NeurIPS 2023)</a> — memory-adapter approach that enables thousands of sequential edits while keeping base weights frozen.</li>
+<li><a href="https://arxiv.org/abs/2307.12976">Cohen et al., <em>Evaluating the Ripple Effects of Knowledge Editing in Language Models</em> (TACL 2024)</a> — introduced the RippleEdits benchmark showing that editing one fact leaves multi-hop consequences inconsistent.</li>
+<li><a href="https://arxiv.org/abs/2410.02355">Fang et al., <em>AlphaEdit: Null-Space Constrained Knowledge Editing for Language Models</em> (2024)</a> — projects weight updates onto the null space of preserved-knowledge keys, dramatically reducing drift under long sequential editing.</li>
+<li><a href="https://arxiv.org/abs/2403.03218">Li et al., <em>The WMDP Benchmark: Measuring and Reducing Malicious Use With Unlearning</em> (ICML 2024)</a> — benchmark for hazardous-capability removal and source of the RMU representation-misdirection unlearning method.</li>
+<li><a href="https://arxiv.org/abs/2401.06121">Maini et al., <em>TOFU: A Task of Fictitious Unlearning for LLMs</em> (2024)</a> — clean-room unlearning benchmark using synthetic author biographies with retrained-from-scratch gold standard.</li>
+<li><a href="https://arxiv.org/abs/2407.06460">Shi et al., <em>MUSE: Machine Unlearning Six-Way Evaluation for Language Models</em> (ICML 2024)</a> — six-desiderata evaluation (verbatim memorization, knowledge memorization, privacy, utility, scalability, sequential robustness) on realistic corpora.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/zjunlp/EasyEdit">zjunlp/EasyEdit</a> — ACL 2024 framework unifying ROME, MEMIT, GRACE, WISE, and others behind one API, including precomputed layer statistics; the standard starting point for practitioners.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2401.01286">Zhang et al., <em>A Comprehensive Study of Knowledge Editing for Large Language Models</em> (2024)</a> — large-scale empirical comparison of 12 editing methods with the KnowEdit benchmark; essential reading before choosing an approach.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Meng, Bau, Andonian &amp; Belinkov — <em>Locating and Editing Factual Associations in GPT</em> (ROME), 2022.</li>
+<li>Meng, Sharma, Andonian, Belinkov &amp; Bau — <em>Mass-Editing Memory in a Transformer</em> (MEMIT), 2022.</li>
+<li>Geva, Schuster, Berant &amp; Levy — <em>Transformer Feed-Forward Layers Are Key-Value Memories</em>, 2021.</li>
+<li>Hase, Bansal et al. — <em>Does Localization Inform Editing?</em>, 2023.</li>
+<li>Cohen, Biran, Yoran, Globerson &amp; Geva — <em>Evaluating the Ripple Effects of Knowledge Editing in Language Models</em> (RippleEdits), 2023.</li>
+<li>Hartvigsen, Sankaranarayanan et al. — <em>Aging with GRACE: Lifelong Model Editing with Discrete Key-Value Adaptors</em>, 2023.</li>
+<li>Wang et al. — <em>WISE: Rethinking the Knowledge Memory for Lifelong Model Editing of LLMs</em>, 2024.</li>
+<li>Fang et al. — <em>AlphaEdit: Null-Space Constrained Knowledge Editing for Language Models</em>, 2024.</li>
+<li>Bourtoule et al. — <em>Machine Unlearning</em> (SISA), 2021.</li>
+<li>Maini, Feng, Schwarzschild, Lipton &amp; Kolter — <em>TOFU: A Task of Fictitious Unlearning for LLMs</em>, 2024.</li>
+<li>Shi et al. — <em>MUSE: Machine Unlearning Six-Way Evaluation for Language Models</em>, 2024.</li>
+<li>Zhang et al. — <em>Negative Preference Optimization</em> (NPO), 2024.</li>
+<li>Li et al. — <em>The WMDP Benchmark</em> (and RMU for unlearning), 2024.</li>
+<li>Zhang et al. — <em>EasyEdit: An Easy-to-use Knowledge Editing Framework for LLMs</em>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="01-mechanistic-interpretability.html"><span class="pn-label">← Previous</span><span class="pn-title">Mechanistic Interpretability &amp; Model Internals</span></a>
+<a class="next" href="03-privacy-memorization-dp.html"><span class="pn-label">Next →</span><span class="pn-title">Privacy, Memorization &amp; Differential Privacy for LLMs</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#1-the-locate-then-edit-hypothesis">1. The Locate-Then-Edit Hypothesis</a></li>
+<li class="toc-l3"><a href="#11-the-mlp-as-a-keyvalue-memory">1.1 The MLP as a key–value memory</a></li>
+<li class="toc-l3"><a href="#12-causal-tracing-finding-the-layer">1.2 Causal tracing: finding the layer</a></li>
+<li class="toc-l2"><a href="#2-rome-a-rank-one-edit">2. ROME: A Rank-One Edit</a></li>
+<li class="toc-l3"><a href="#21-computing-the-target-value-v_">2.1 Computing the target value \(v_*\)</a></li>
+<li class="toc-l3"><a href="#22-the-key-k_-and-the-closed-form-rank-one-update">2.2 The key \(k_*\) and the closed-form rank-one update</a></li>
+<li class="toc-l2"><a href="#3-from-one-fact-to-thousands-memit-and-alphaedit">3. From One Fact to Thousands: MEMIT and AlphaEdit</a></li>
+<li class="toc-l3"><a href="#31-memit-mass-editing-across-multiple-layers">3.1 MEMIT: mass-editing across multiple layers</a></li>
+<li class="toc-l3"><a href="#32-the-drift-problem-and-alphaedit">3.2 The drift problem and AlphaEdit</a></li>
+<li class="toc-l2"><a href="#4-memory-and-adapter-editors-grace-and-wise">4. Memory and Adapter Editors: GRACE and WISE</a></li>
+<li class="toc-l3"><a href="#41-grace-a-discrete-codebook-of-activations">4.1 GRACE: a discrete codebook of activations</a></li>
+<li class="toc-l3"><a href="#42-wise-side-memory-with-routing">4.2 WISE: side memory with routing</a></li>
+<li class="toc-l2"><a href="#5-why-its-hard-ripple-effects-locality-forgetting">5. Why It&amp;rsquo;s Hard: Ripple Effects, Locality &amp;amp; Forgetting</a></li>
+<li class="toc-l3"><a href="#51-the-four-axes-of-a-good-edit">5.1 The four axes of a good edit</a></li>
+<li class="toc-l3"><a href="#52-ripple-effects-facts-have-neighbors">5.2 Ripple effects: facts have neighbors</a></li>
+<li class="toc-l3"><a href="#53-forgetting-and-drift-at-scale">5.3 Forgetting and drift at scale</a></li>
+<li class="toc-l2"><a href="#6-machine-unlearning-removing-what-a-model-knows">6. Machine Unlearning: Removing What a Model Knows</a></li>
+<li class="toc-l3"><a href="#61-the-gold-standard-and-why-we-approximate-it">6.1 The gold standard and why we approximate it</a></li>
+<li class="toc-l3"><a href="#62-gradient-ascent-and-its-discontents">6.2 Gradient ascent and its discontents</a></li>
+<li class="toc-l3"><a href="#63-editing-as-unlearning">6.3 Editing-as-unlearning</a></li>
+<li class="toc-l3"><a href="#64-benchmarks-tofu-and-muse">6.4 Benchmarks: TOFU and MUSE</a></li>
+<li class="toc-l3"><a href="#65-the-auditors-view-did-it-really-forget">6.5 The auditor&amp;rsquo;s view: did it really forget?</a></li>
+<li class="toc-l2"><a href="#7-from-scratch-a-minimal-rome-style-rank-one-edit">7. From Scratch: A Minimal ROME-Style Rank-One Edit</a></li>
+<li class="toc-l2"><a href="#8-when-not-to-edit-a-decision-guide">8. When (Not) to Edit: A Decision Guide</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

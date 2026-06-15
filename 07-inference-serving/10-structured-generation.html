@@ -1,0 +1,1406 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Structured &amp; Constrained Generation — The LLM Stack</title>
+<meta name="description" content="JSON/grammar-constrained decoding via finite-state machines and pushdown automata; Outlines, XGrammar, llguidance, jsonformer; logit masking, the FSM compilatio">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="active" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="710-structured-constrained-generation">7.10 Structured &amp; Constrained Generation<a class="headerlink" href="#710-structured-constrained-generation" title="Permanent link">¶</a></h1>
+<p>Every production LLM application eventually runs into the same wall: the model generates nearly-correct JSON, and one missing closing brace breaks the downstream parser. Or a function-calling system gets a plausible-sounding tool name that doesn&rsquo;t exist. Or a safety filter needs the model to fill a template with exactly four enumerated values. The <em>free-text</em> generation pipeline we&rsquo;ve built in previous chapters simply wasn&rsquo;t designed to guarantee that the output satisfies a formal grammar. Structured and constrained generation is the discipline of enforcing these guarantees — not by prompting and hoping, but by hard-wiring the grammar into the decoding process itself.</p>
+<p>This chapter covers the full machinery: finite-state machines (FSMs) and pushdown automata for grammar enforcement, logit masking as the enforcement mechanism, how tools like Outlines, XGrammar, and llguidance implement this at production speed, and what it means for tool-call and function-calling workflows. We derive the key algorithms, work through concrete examples, and give you runnable code you can drop into a real inference server.</p>
+<p>The prerequisite for this chapter is a working understanding of the decoding loop, which we covered in <a href="../07-inference-serving/09-sampling-decoding.html">Sampling Strategies &amp; Decoding Algorithms</a>. If you have not read that chapter, do so first — we will assume fluency with the concepts of token logits, temperature scaling, and top-k/top-p filtering.</p>
+<h2 id="why-free-text-generation-breaks-on-schemas">Why Free-Text Generation Breaks on Schemas<a class="headerlink" href="#why-free-text-generation-breaks-on-schemas" title="Permanent link">¶</a></h2>
+<p>A language model trained on next-token prediction assigns probabilities to every token in its vocabulary at every step. Nothing in the training objective forces the sequence of chosen tokens to form valid JSON, match a regex, or satisfy a context-free grammar (CFG). The model learns implicit statistical tendencies from training data, but those tendencies are far from watertight.</p>
+<p>The failure modes are well-documented:</p>
+<ul>
+<li><strong>Missing or extra braces/brackets</strong> — the most common JSON failure; the model loses track of nesting depth.</li>
+<li><strong>Wrong type</strong> — an integer field gets a quoted string.</li>
+<li><strong>Hallucinated enum values</strong> — the model invents a value outside the allowed set.</li>
+<li><strong>Truncated output</strong> — the model emits an EOS token mid-object, yielding a partial parse.</li>
+<li><strong>Key name drift</strong> — field names shift under paraphrase pressure (<code>user_id</code> → <code>userId</code>).</li>
+</ul>
+<p>Post-hoc repair (parsing with fallback, asking the model to fix its own output) adds latency and is unreliable. The only robust solution is to prevent invalid token sequences from being sampled in the first place.</p>
+<p>The key insight that makes constrained generation tractable is this: <strong>we do not need to forbid bad sequences globally; we only need to forbid the single next token that, given what has been emitted so far, would make the sequence irrecoverable.</strong> This is exactly what an automaton state transition tells us.</p>
+<h2 id="finite-state-machines-and-regular-languages">Finite-State Machines and Regular Languages<a class="headerlink" href="#finite-state-machines-and-regular-languages" title="Permanent link">¶</a></h2>
+<h3 id="fsm-primer">FSM Primer<a class="headerlink" href="#fsm-primer" title="Permanent link">¶</a></h3>
+<p>A deterministic finite-state machine (FSM) is a 5-tuple <span class="arithmatex">\(M = (Q, \Sigma, \delta, q_0, F)\)</span> where:</p>
+<ul>
+<li><span class="arithmatex">\(Q\)</span> is a finite set of states.</li>
+<li><span class="arithmatex">\(\Sigma\)</span> is the input alphabet (here, individual <em>bytes</em> or <em>characters</em>).</li>
+<li><span class="arithmatex">\(\delta: Q \times \Sigma \to Q\)</span> is the transition function.</li>
+<li><span class="arithmatex">\(q_0 \in Q\)</span> is the start state.</li>
+<li><span class="arithmatex">\(F \subseteq Q\)</span> is the set of accepting states.</li>
+</ul>
+<p>The FSM reads one symbol at a time. Given current state <span class="arithmatex">\(q\)</span> and next symbol <span class="arithmatex">\(c\)</span>, it moves to <span class="arithmatex">\(\delta(q, c)\)</span> (or to a dead/error state if no transition exists). A string <span class="arithmatex">\(s\)</span> is accepted if the FSM ends in <span class="arithmatex">\(F\)</span> after reading all of <span class="arithmatex">\(s\)</span>.</p>
+<p>Regular expressions are exactly the languages recognizable by FSMs (Kleene&rsquo;s theorem). So any regex constraint — an ISO 8601 date, a UUID, a phone number — can be compiled into an FSM.</p>
+<p>For constrained token generation we need a slightly different object: a <strong>token-level FSM</strong>. Because a tokenizer operates over multi-character tokens rather than single characters, we need to pre-compute, for each FSM state and each vocabulary token, whether consuming that token (i.e., advancing the FSM by each character in the token string) leads to a valid (non-dead) state. This yields a boolean matrix:</p>
+<div class="arithmatex">\[
+\text{valid}[q][v] = \begin{cases} 1 &amp; \text{if } \delta^*(q, \text{decode}(v)) \neq \perp \\ 0 &amp; \text{otherwise} \end{cases}
+\]</div>
+<p>where <span class="arithmatex">\(\delta^*\)</span> is the extended transition function that applies <span class="arithmatex">\(\delta\)</span> character-by-character over a multi-character string, and <span class="arithmatex">\(\perp\)</span> denotes the dead state. The mask for state <span class="arithmatex">\(q\)</span> is simply the row <span class="arithmatex">\(\text{valid}[q]\)</span>, a binary vector of length <span class="arithmatex">\(|\mathcal{V}|\)</span> (vocabulary size).</p>
+<h3 id="logit-masking">Logit Masking<a class="headerlink" href="#logit-masking" title="Permanent link">¶</a></h3>
+<p>At each decoding step, after the model computes the raw logit vector <span class="arithmatex">\(\ell \in \mathbb{R}^{|\mathcal{V}|}\)</span>, we apply the mask:</p>
+<div class="arithmatex">\[
+\tilde{\ell}_v = \begin{cases} \ell_v &amp; \text{if } \text{valid}[q_t][v] = 1 \\ -\infty &amp; \text{otherwise} \end{cases}
+\]</div>
+<p>Feeding <span class="arithmatex">\(\tilde{\ell}\)</span> to softmax zeroes out the probability of every disallowed token. The sampler then operates on the masked distribution exactly as it would on an unconstrained one. Temperature scaling, top-p, and top-k all compose cleanly on top of the mask.</p>
+<p>After sampling token <span class="arithmatex">\(v_t\)</span> and appending it to the output, we advance the FSM:</p>
+<div class="arithmatex">\[
+q_{t+1} = \delta^*(q_t, \text{decode}(v_t))
+\]</div>
+<p>The loop continues until an EOS token is sampled <em>and</em> the FSM is in an accepting state, or until the FSM reaches an accepting state and we want to stop.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: masking a 4-digit integer</p>
+<p>Suppose our grammar requires exactly a 4-digit integer (regex <code>[0-9]{4}</code>).
+The vocabulary size is 32,000 tokens (roughly Llama-3 scale).</p>
+<p>The FSM has 5 states: <span class="arithmatex">\(q_0\)</span> (start, needs 4 digits), <span class="arithmatex">\(q_1\)</span> (1 digit seen), <span class="arithmatex">\(q_2\)</span> (2 digits),
+<span class="arithmatex">\(q_3\)</span> (3 digits), <span class="arithmatex">\(q_4\)</span> (accept, 4 digits). A dead state <span class="arithmatex">\(\perp\)</span> handles everything else.</p>
+<p>Suppose the model is at <span class="arithmatex">\(q_0\)</span> with logits <span class="arithmatex">\(\ell\)</span>.  We need to allow only tokens
+whose decoded text is a single decimal digit <code>0</code>–<code>9</code>. In a BPE vocabulary these
+are exactly the 10 single-digit tokens (often at indices like 15, 16, &hellip;, 24 — 
+exact positions depend on the tokenizer).</p>
+<p>Out of 32,000 tokens, at most 10 are allowed: masking ratio ≈ 99.97%.
+After one digit token, we&rsquo;re in <span class="arithmatex">\(q_1\)</span>; after two more we&rsquo;re in <span class="arithmatex">\(q_3\)</span>.
+At <span class="arithmatex">\(q_3\)</span>, multi-character tokens like <code>"42"</code> or <code>"123"</code> are now <em>also</em> valid
+(they consume 2 and 3 characters respectively and land in <span class="arithmatex">\(q_4\)</span> or advance
+through intermediate states). This is why the token-level pre-computation
+matters: character-by-character simulation handles multi-char tokens correctly.</p>
+</div>
+<h3 id="fsm-compilation-complexity">FSM Compilation Complexity<a class="headerlink" href="#fsm-compilation-complexity" title="Permanent link">¶</a></h3>
+<p>For a regex with <span class="arithmatex">\(s\)</span> states and vocabulary size <span class="arithmatex">\(V\)</span>:</p>
+<ul>
+<li>
+<p><strong>Naive per-step mask computation:</strong> For each token <span class="arithmatex">\(v\)</span>, simulate the FSM over <code>decode(v)</code> starting from the current state. Cost is <span class="arithmatex">\(O(V \cdot L_{\max})\)</span> per step, where <span class="arithmatex">\(L_{\max}\)</span> is the max token length in bytes (typically 6–8 bytes). For <span class="arithmatex">\(V = 128{,}000\)</span> and <span class="arithmatex">\(L_{\max} = 8\)</span> this is roughly 1M operations per step — acceptable for a single sequence but a bottleneck for batched serving.</p>
+</li>
+<li>
+<p><strong>Pre-compiled transition table:</strong> Pre-compute the full <span class="arithmatex">\(|Q| \times V\)</span> mask matrix once at load time. Lookup is <span class="arithmatex">\(O(1)\)</span> per step. Memory cost is <span class="arithmatex">\(|Q| \cdot V\)</span> bits. For 50 states and <span class="arithmatex">\(V = 128{,}000\)</span>, this is about 800 KB — completely negligible. Outlines and XGrammar both take this approach.</p>
+</li>
+</ul>
+<h2 id="beyond-regular-languages-pushdown-automata-and-cfgs">Beyond Regular Languages: Pushdown Automata and CFGs<a class="headerlink" href="#beyond-regular-languages-pushdown-automata-and-cfgs" title="Permanent link">¶</a></h2>
+<p>JSON is not a regular language. It is a context-free language (CFL) because of its arbitrary nesting depth: <code>{"a": {"b": {"c": ...}}}</code> requires a stack to track the nesting level. An FSM has no memory beyond its current state, so it cannot handle unbounded nesting. A pushdown automaton (PDA) adds a stack to an FSM, enabling it to recognize all CFLs.</p>
+<h3 id="the-pda-state">The PDA State<a class="headerlink" href="#the-pda-state" title="Permanent link">¶</a></h3>
+<p>At any point in JSON generation, the constraint automaton needs to track:</p>
+<ol>
+<li><strong>What kind of value is expected next</strong> (string, number, boolean, null, array, object).</li>
+<li><strong>The nesting stack</strong> — e.g., <code>[OBJECT, ARRAY, OBJECT]</code> means we&rsquo;re inside an object that&rsquo;s inside an array that&rsquo;s inside an object.</li>
+<li><strong>Whether we&rsquo;re at the start, middle, or end of a structural element</strong> (just opened an object, have written a key, awaiting a colon, etc.).</li>
+</ol>
+<div class="highlight"><pre><span></span><code>PDA stack state example while generating:
+  {&quot;users&quot;: [{&quot;id&quot;: 1, &quot;name&quot;: |  ← cursor here
+
+Stack (bottom to top):  OBJECT → ARRAY → OBJECT
+Current sub-state:      AFTER_KEY_COLON (expecting a string value for &quot;name&quot;)
+Allowed next chars:     &quot; (opening quote of a string)
+</code></pre></div>
+<p>The combined state space grows, but for any fixed grammar the number of reachable (stack prefix × sub-state) combinations is bounded. In practice, for JSON with a known schema (a JSON Schema object), the grammar is further restricted and the effective state count stays manageable.</p>
+<h3 id="grammar-based-constrained-decoding">Grammar-Based Constrained Decoding<a class="headerlink" href="#grammar-based-constrained-decoding" title="Permanent link">¶</a></h3>
+<p>Tools like Outlines (Willard &amp; Louf, 2023), XGrammar (MIT/CMU, 2024), and llguidance (Microsoft Research) convert a grammar specification into a token-level decision object:</p>
+<ol>
+<li><strong>Parse the schema/grammar</strong> — compile a JSON Schema, EBNF grammar, Pydantic model, or regex into an internal representation.</li>
+<li><strong>Derive the token-level automaton</strong> — expand the grammar into a state machine over the character-level alphabet, then lift it to the token level via pre-computation.</li>
+<li><strong>At each decode step</strong> — look up the current automaton state to get the valid-token bitmask; apply it as a logit mask; advance the automaton after sampling.</li>
+</ol>
+<p>The critical engineering challenge is Step 2: lifting a character-level grammar to token-level transitions efficiently. A naive approach simulates the full grammar for every possible token string, which is expensive for a large LLM vocabulary and a complex grammar. XGrammar introduced several optimizations we&rsquo;ll cover in detail.</p>
+<h2 id="outlines-the-foundational-library">Outlines: The Foundational Library<a class="headerlink" href="#outlines-the-foundational-library" title="Permanent link">¶</a></h2>
+<p>Outlines (Willard &amp; Louf, 2023, <em>Efficient Guided Generation for Large Language Models</em>) was the first widely-adopted library to formalize regex and CFG-constrained LLM generation. Its core contribution is converting a regex or EBNF grammar into an <strong>index</strong>: a mapping from FSM state to the set of vocabulary tokens valid in that state, pre-computed once.</p>
+<p>The Outlines index construction algorithm:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Conceptual pseudocode for Outlines-style FSM index construction</span>
+<span class="c1"># The actual library uses interegular and the tokenizers package</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Set</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_fsm_index</span><span class="p">(</span>
+    <span class="n">regex_pattern</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">vocab</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span>    <span class="c1"># token_id -&gt; decoded string</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">Set</span><span class="p">[</span><span class="nb">int</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns a dict: fsm_state -&gt; set of valid token_ids</span>
+<span class="sd">    Pre-computes the full transition table for constrained decoding.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Step 1: compile regex to NFA, convert to DFA (standard automaton ops)</span>
+    <span class="n">fsm</span> <span class="o">=</span> <span class="n">regex_to_dfa</span><span class="p">(</span><span class="n">regex_pattern</span><span class="p">)</span>  <span class="c1"># returns (states, transitions, start, accepts)</span>
+
+    <span class="n">index</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">Set</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">dead_state</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
+
+    <span class="k">for</span> <span class="n">state</span> <span class="ow">in</span> <span class="n">fsm</span><span class="o">.</span><span class="n">states</span><span class="p">:</span>
+        <span class="n">valid_tokens</span><span class="p">:</span> <span class="n">Set</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">token_id</span><span class="p">,</span> <span class="n">token_str</span> <span class="ow">in</span> <span class="n">vocab</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="c1"># Simulate the DFA over the token string, starting from `state`</span>
+            <span class="n">current</span> <span class="o">=</span> <span class="n">state</span>
+            <span class="n">reachable</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">for</span> <span class="n">char</span> <span class="ow">in</span> <span class="n">token_str</span><span class="p">:</span>
+                <span class="n">next_state</span> <span class="o">=</span> <span class="n">fsm</span><span class="o">.</span><span class="n">transitions</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">current</span><span class="p">,</span> <span class="n">char</span><span class="p">),</span> <span class="n">dead_state</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">next_state</span> <span class="o">==</span> <span class="n">dead_state</span><span class="p">:</span>
+                    <span class="n">reachable</span> <span class="o">=</span> <span class="kc">False</span>
+                    <span class="k">break</span>
+                <span class="n">current</span> <span class="o">=</span> <span class="n">next_state</span>
+
+            <span class="k">if</span> <span class="n">reachable</span><span class="p">:</span>
+                <span class="c1"># Token is valid: consuming it does not kill the FSM</span>
+                <span class="n">valid_tokens</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">token_id</span><span class="p">)</span>
+
+        <span class="n">index</span><span class="p">[</span><span class="n">state</span><span class="p">]</span> <span class="o">=</span> <span class="n">valid_tokens</span>
+
+    <span class="k">return</span> <span class="n">index</span>
+</code></pre></div>
+<p>At generation time, the guide maintains the current FSM state and calls <code>index[current_state]</code> to get the allowed token set, applies it as a logit mask, and advances the state.</p>
+<p>A critical subtlety is handling <em>partial tokens</em> — a token like <code>"wh"</code> might be valid mid-pattern even if <code>"what"</code> is the only completing sequence. Outlines handles this by also allowing tokens that lead to a non-dead state even if that state isn&rsquo;t an accepting state, because generation will continue. Only at EOS must the state be accepting.</p>
+<h2 id="xgrammar-overlap-aware-and-context-dependent-pushdown">XGrammar: Overlap-Aware and Context-Dependent Pushdown<a class="headerlink" href="#xgrammar-overlap-aware-and-context-dependent-pushdown" title="Permanent link">¶</a></h2>
+<p>XGrammar (Dong et al., 2024, from the MLC-LLM group) is the production-grade successor designed specifically for JSON Schema and EBNF grammars in batch serving environments. Its headline contribution is making constrained decoding nearly free at generation time by moving nearly all work into a preprocessing phase.</p>
+<h3 id="the-key-innovation-context-independent-tokens">The Key Innovation: Context-Independent Tokens<a class="headerlink" href="#the-key-innovation-context-independent-tokens" title="Permanent link">¶</a></h3>
+<p>XGrammar&rsquo;s insight is that for most grammars, a large fraction of vocabulary tokens are <strong>context-independent</strong>: their validity does not depend on the exact PDA stack state, only on the &ldquo;top-level&rdquo; grammar rule currently active. For example, whitespace tokens are almost always valid inside a JSON object (between key-value pairs). Number digit tokens are valid whenever a number is expected, regardless of nesting depth.</p>
+<p>XGrammar separates tokens into two classes:</p>
+<ol>
+<li><strong>Context-independent tokens</strong>: valid/invalid based only on the shallow grammatical position (which rule we&rsquo;re in, not the stack depth). These are pre-computed into a compact bitmask for each grammar rule.</li>
+<li><strong>Context-dependent tokens</strong>: require knowing the full stack state to determine validity (e.g., the closing <code>}</code> character, whose validity depends on whether there&rsquo;s a matching <code>{</code> on the stack).</li>
+</ol>
+<p>For a typical JSON schema, on the order of 95%+ of tokens fall into the context-independent class. This means the per-step work reduces to a bitmap OR of the context-independent mask plus a small correction for the handful of context-dependent tokens.</p>
+<figure class="viz" id="fig-structgen-xgrammar-mask-architecture">
+<svg viewBox="0 0 760 560" role="img" aria-label="XGrammar compiles a JSON Schema through EBNF into an Adaptive Token Mask Cache, which splits tokens into context-independent bitmasks (precomputed per rule, ~95%+ of tokens) and context-dependent tokens (computed per stack state), then combines them via bitmap OR into a per-step mask applied to logits, setting forbidden token positions to -inf.">
+  <defs>
+    <marker id="xg-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#374151)"/>
+    </marker>
+    <marker id="xg-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-structgen-xgrammar-mask-architecture text { fill: var(--ink-soft,#374151); }
+    #fig-structgen-xgrammar-mask-architecture .ttl { font: 700 13.5px var(--sans,sans-serif); }
+    #fig-structgen-xgrammar-mask-architecture .sub { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-structgen-xgrammar-mask-architecture .ann { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-structgen-xgrammar-mask-architecture .cap { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-structgen-xgrammar-mask-architecture .lbl { font: 400 11.5px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-structgen-xgrammar-mask-architecture .mono { font: 500 11px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+    #fig-structgen-xgrammar-mask-architecture .formula { font: 500 10.5px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+  </style>
+
+
+
+
+  <rect x="20" y="28" width="140" height="52" rx="7" class="v-fill" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/>
+  <text x="90" y="51" text-anchor="middle" class="ttl">JSON Schema</text>
+
+
+  <line x1="161" y1="54" x2="208" y2="54" stroke="var(--ink-soft,#374151)" stroke-width="1.5" marker-end="url(#xg-arrow)"/>
+
+
+  <rect x="210" y="28" width="150" height="52" rx="7" class="v-fill" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/>
+  <text x="285" y="51" text-anchor="middle" class="ttl">EBNF Grammar</text>
+
+
+  <line x1="361" y1="54" x2="420" y2="54" stroke="var(--ink-soft,#374151)" stroke-width="1.5" marker-end="url(#xg-arrow)"/>
+
+
+  <rect x="422" y="18" width="312" height="72" rx="7" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+  <text x="578" y="46" text-anchor="middle" class="ttl" fill="var(--accent,#4f46e5)">Adaptive Token Mask Cache</text>
+  <text x="578" y="63" text-anchor="middle" class="cap">built once per schema</text>
+
+
+
+
+  <line x1="578" y1="90" x2="578" y2="168" stroke="var(--ink-soft,#374151)" stroke-width="1.5"/>
+
+
+  <circle cx="578" cy="168" r="4" fill="var(--ink-soft,#374151)"/>
+
+
+  <polyline points="578,168 220,168 220,200" fill="none" stroke="var(--ink-soft,#374151)" stroke-width="1.5" marker-end="url(#xg-arrow)"/>
+
+
+  <polyline points="578,168 578,200" fill="none" stroke="var(--ink-soft,#374151)" stroke-width="1.5" marker-end="url(#xg-arrow)"/>
+
+
+
+
+  <rect x="60" y="200" width="320" height="72" rx="7" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+  <text x="220" y="224" text-anchor="middle" class="ttl" fill="var(--accent,#4f46e5)">Context-Independent Bitmask</text>
+  <text x="220" y="242" text-anchor="middle" class="sub">precomputed per grammar rule</text>
+  <text x="220" y="260" text-anchor="middle" class="ann">~95%+ of tokens for typical JSON</text>
+
+
+  <rect x="420" y="200" width="310" height="72" rx="7" fill="var(--warn,#e0a106)" fill-opacity="0.10" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+  <text x="575" y="224" text-anchor="middle" class="ttl" fill="var(--warn,#e0a106)">Context-Dependent Token Set</text>
+  <text x="575" y="242" text-anchor="middle" class="sub">computed per stack state</text>
+  <text x="575" y="260" text-anchor="middle" class="ann">e.g. closing } needs matching { on stack</text>
+
+
+
+
+  <line x1="220" y1="272" x2="220" y2="340" stroke="var(--ink-soft,#374151)" stroke-width="1.5"/>
+
+
+  <line x1="575" y1="272" x2="575" y2="340" stroke="var(--ink-soft,#374151)" stroke-width="1.5"/>
+
+
+  <line x1="220" y1="340" x2="575" y2="340" stroke="var(--ink-soft,#374151)" stroke-width="1.5"/>
+
+
+  <line x1="395" y1="340" x2="395" y2="358" stroke="var(--ink-soft,#374151)" stroke-width="1.5" marker-end="url(#xg-arrow)"/>
+
+
+  <circle cx="395" cy="340" r="4" fill="var(--ink-soft,#374151)"/>
+
+
+  <text x="290" y="332" text-anchor="middle" class="lbl">bitmap OR</text>
+
+
+
+
+  <rect x="255" y="358" width="280" height="62" rx="7" class="v-fill" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+  <text x="395" y="381" text-anchor="middle" class="ttl">Combined Mask</text>
+  <text x="395" y="397" text-anchor="middle" class="sub">per decode step</text>
+  <text x="395" y="412" text-anchor="middle" class="formula">mask = rule_mask[rule] | eval_ctx(stack)</text>
+
+
+  <line x1="395" y1="420" x2="395" y2="448" stroke="var(--accent,#4f46e5)" stroke-width="1.5" marker-end="url(#xg-arrow-acc)"/>
+  <text x="415" y="438" class="lbl" fill="var(--accent,#4f46e5)">apply</text>
+
+
+
+
+  <rect x="265" y="450" width="260" height="54" rx="7" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+  <text x="395" y="476" text-anchor="middle" class="ttl" fill="var(--accent,#4f46e5)">Logit Masking</text>
+  <text x="395" y="493" text-anchor="middle" class="sub">applied to raw model logits</text>
+
+
+  <text x="395" y="528" text-anchor="middle" class="ann">set -inf on invalid logit indices</text>
+
+</svg>
+<figcaption><b>XGrammar's compile-once, apply-fast mask pipeline.</b> A JSON Schema is compiled to EBNF and then to an Adaptive Token Mask Cache. The cache splits tokens into a context-independent bitmask (precomputed per grammar rule, covering ~95%+ of tokens) and a small context-dependent set (resolved per PDA stack state at decode time). Each step the two halves are OR-combined and applied to the logit vector, setting forbidden token positions to -inf.</figcaption>
+</figure>
+
+<p>The combined mask computation at each step is:</p>
+<div class="highlight"><pre><span></span><code>mask = precomputed_rule_mask[current_rule] | evaluate_context_dependent(stack)
+</code></pre></div>
+<p>The context-dependent evaluation traverses the stack but only touches a small set of tokens, keeping the amortized cost low.</p>
+<h3 id="xgrammar-performance-characteristics">XGrammar Performance Characteristics<a class="headerlink" href="#xgrammar-performance-characteristics" title="Permanent link">¶</a></h3>
+<p>XGrammar reports that on standard JSON-constrained decoding benchmarks, the overhead of constrained decoding over unconstrained decoding is reduced to below 5% of total decode time for sufficiently large models (where the model&rsquo;s forward pass dominates). For smaller models where memory bandwidth is less of a bottleneck, the overhead is somewhat larger but still sub-10% with proper batching.</p>
+<p>The key numbers to internalize:</p>
+<ul>
+<li>Mask application is a GPU kernel operating on the <span class="arithmatex">\(|\mathcal{V}|\)</span>-dimensional logit vector. For <span class="arithmatex">\(|\mathcal{V}| = 128{,}000\)</span> tokens stored as fp16 (2 bytes each), one logit vector is 256 KB. Setting <span class="arithmatex">\(-\infty\)</span> on invalid indices is a simple write operation — a handful of microseconds.</li>
+<li>For batched inference with batch size <span class="arithmatex">\(B\)</span>, each sequence has its own automaton state and its own mask. Mask application is embarrassingly parallel.</li>
+<li>FSM compilation from a typical JSON Schema takes on the order of tens of milliseconds on CPU, done once at request time or pre-cached per schema.</li>
+</ul>
+<h2 id="llguidance-microsofts-production-engine">llguidance: Microsoft&rsquo;s Production Engine<a class="headerlink" href="#llguidance-microsofts-production-engine" title="Permanent link">¶</a></h2>
+<p>llguidance is an open-source Rust library (and Python bindings) developed at Microsoft Research for high-throughput constrained generation. It supports EBNF grammars with recursive rules, JSON Schemas, and Lark-style grammar specifications.</p>
+<p>Key technical properties of llguidance:</p>
+<ul>
+<li><strong>Earley parser integration</strong>: rather than compiling the full grammar to a DFA (which can exponentially explode in states for complex grammars), llguidance runs an incremental Earley parser that computes the set of valid next tokens on-the-fly. The Earley parser processes partial parses and returns, for each position, the set of &ldquo;predict&rdquo; items — grammar rules that could validly continue.</li>
+<li><strong>Byte-level tokenization compatibility</strong>: properly handles tokenizers that merge bytes into tokens in non-obvious ways, a common source of bugs in regex-based approaches.</li>
+<li><strong>Integration with the llama.cpp and vLLM ecosystems</strong>: designed as a backend that serving frameworks can call via a simple <code>get_mask()</code> / <code>advance(token)</code> API.</li>
+</ul>
+<p>The Earley parser operates in <span class="arithmatex">\(O(n^3)\)</span> time in the worst case for ambiguous grammars, but for practical LLM grammars (JSON, SQL, function signatures) the parse is nearly linear. The dominant cost is the initial seeded chart construction.</p>
+<h2 id="jsonformer-the-simple-early-approach">jsonformer: The Simple Early Approach<a class="headerlink" href="#jsonformer-the-simple-early-approach" title="Permanent link">¶</a></h2>
+<p>Before FSM-based libraries became mature, jsonformer (2023) took a simpler approach: <strong>structural scaffolding</strong>. Rather than computing valid-token masks, jsonformer:</p>
+<ol>
+<li>Generates the structural tokens of the JSON (<code>{</code>, <code>}</code>, <code>[</code>, <code>]</code>, <code>:</code>, <code>,</code>, <code>"</code>, <code>"</code>, <code>true</code>, <code>false</code>, <code>null</code>) itself using deterministic rules based on the schema.</li>
+<li>Only asks the LLM to generate the <em>value content</em> — the actual strings, numbers, and booleans — with minimal structural overhead.</li>
+</ol>
+<p>This works well for simple flat schemas but fails for deeply nested or recursive structures. It also doesn&rsquo;t generalize beyond JSON. FSM-based approaches are strictly more general, and jsonformer&rsquo;s technique is largely superseded — though it is instructive as a motivation for why the automaton approach is needed.</p>
+<h2 id="a-regex-constrained-sampler-from-scratch">A Regex-Constrained Sampler From Scratch<a class="headerlink" href="#a-regex-constrained-sampler-from-scratch" title="Permanent link">¶</a></h2>
+<p>Let&rsquo;s build a complete, working regex-constrained sampler in PyTorch. This implements the core FSM + logit-masking loop without external libraries.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">regex_sampler.py — A complete regex-constrained token sampler from scratch.</span>
+
+<span class="sd">Requires: torch, transformers (for tokenizer + model), regex (pip install regex)</span>
+<span class="sd">Run:  python regex_sampler.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">FrozenSet</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Set</span><span class="p">,</span> <span class="n">Tuple</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoTokenizer</span>
+
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+<span class="c1"># Part 1: Regex → DFA using Python&#39;s `re` module (via simulation)</span>
+<span class="c1"># We build a minimal DFA simulator by treating the regex as a string pattern</span>
+<span class="c1"># and simulating NFA-style matching for the &quot;is this a valid prefix?&quot; question.</span>
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">can_extend</span><span class="p">(</span><span class="n">pattern</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">prefix</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns True if `prefix` is either a full match or a valid *prefix*</span>
+<span class="sd">    of a string that could match `pattern`.</span>
+
+<span class="sd">    We check prefix validity by attempting a partial match (ANCHORED start,</span>
+<span class="sd">    partial end). Python&#39;s re module supports this via re.match with a</span>
+<span class="sd">    modified pattern that allows trailing content.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Wrap pattern: the prefix must match the *start* of the pattern.</span>
+    <span class="c1"># We check if there exists some completion such that pattern matches.</span>
+    <span class="c1"># Approximation: check if `re.match(pattern, prefix)` succeeds OR</span>
+    <span class="c1"># if `re.match(pattern + &#39;.*&#39;, prefix)` would succeed — but this is tricky.</span>
+    <span class="c1"># Robust approach: use regex with partial matching via the `regex` library.</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">regex</span>  <span class="c1"># pip install regex</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">regex</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">prefix</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="n">regex</span><span class="o">.</span><span class="n">PARTIAL</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">m</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+        <span class="c1"># Fallback: check if the full pattern matches prefix exactly</span>
+        <span class="c1"># (handles only complete matches, not partial — use `regex` lib in prod)</span>
+        <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">fullmatch</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">prefix</span><span class="p">))</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">FSMState</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Tracks the current constrained generation state.&quot;&quot;&quot;</span>
+    <span class="n">emitted_so_far</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>        <span class="c1"># characters emitted since constraint start</span>
+    <span class="n">is_complete</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>       <span class="c1"># True when pattern is fully matched</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_token_mask</span><span class="p">(</span>
+    <span class="n">pattern</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">vocab</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span>          <span class="c1"># token_id -&gt; decoded text</span>
+    <span class="n">current_prefix</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>            <span class="c1"># text emitted so far under this constraint</span>
+    <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Builds a boolean mask (1 = allowed, 0 = forbidden) over the vocabulary</span>
+<span class="sd">    for the next token, given the regex `pattern` and what has been `current_prefix`emitted.</span>
+
+<span class="sd">    Returns a BoolTensor of shape [vocab_size].</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># We need the maximum token id to size the mask correctly.</span>
+    <span class="n">max_id</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">vocab</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">max_id</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">token_id</span><span class="p">,</span> <span class="n">token_str</span> <span class="ow">in</span> <span class="n">vocab</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">candidate</span> <span class="o">=</span> <span class="n">current_prefix</span> <span class="o">+</span> <span class="n">token_str</span>
+        <span class="c1"># A token is valid if the candidate string is either:</span>
+        <span class="c1"># (a) a full match of the pattern (we could stop here), or</span>
+        <span class="c1"># (b) a valid prefix that could lead to a full match (we continue).</span>
+        <span class="k">if</span> <span class="n">can_extend</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">candidate</span><span class="p">):</span>
+            <span class="n">mask</span><span class="p">[</span><span class="n">token_id</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="k">return</span> <span class="n">mask</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_mask_to_logits</span><span class="p">(</span>
+    <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>           <span class="c1"># shape [vocab_size] or [batch, vocab_size]</span>
+    <span class="n">mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>             <span class="c1"># bool tensor, same last dim as logits</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Sets logits of forbidden tokens to -inf. Operates in-place on a clone.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">masked</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+    <span class="n">masked</span><span class="p">[</span><span class="o">~</span><span class="n">mask</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s1">&#39;-inf&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">masked</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+<span class="c1"># Part 2: The constrained generation loop</span>
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">constrained_generate</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">,</span>
+    <span class="n">tokenizer</span><span class="p">,</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">pattern</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">max_new_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">64</span><span class="p">,</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cpu&quot;</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Greedy/sampling generation that constrains output to match `pattern`.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        model:          A HuggingFace CausalLM model (or any object with a</span>
+<span class="sd">                        forward() that returns logits).</span>
+<span class="sd">        tokenizer:      Corresponding HuggingFace tokenizer.</span>
+<span class="sd">        prompt:         Input text prefix.</span>
+<span class="sd">        pattern:        Python regex that the *entire generated portion* must match.</span>
+<span class="sd">        max_new_tokens: Maximum tokens to generate.</span>
+<span class="sd">        temperature:    Sampling temperature (1.0 = unscaled; set 0 for greedy).</span>
+<span class="sd">        device:         &quot;cpu&quot; or &quot;cuda&quot;.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The generated text (not including the prompt).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">dev</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dev</span><span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+    <span class="c1"># Build vocabulary mapping: id -&gt; decoded string</span>
+    <span class="c1"># We decode each single token to get its string representation.</span>
+    <span class="n">vocab</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">token_id</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">vocab_size</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="c1"># Decode without special tokens; skip_special_tokens=True prevents</span>
+            <span class="c1"># BOS/EOS from polluting the character strings.</span>
+            <span class="n">tok_str</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">decode</span><span class="p">([</span><span class="n">token_id</span><span class="p">],</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="n">vocab</span><span class="p">[</span><span class="n">token_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">tok_str</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="n">vocab</span><span class="p">[</span><span class="n">token_id</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>   <span class="c1"># fallback for malformed tokens</span>
+
+    <span class="c1"># Tokenize the prompt</span>
+    <span class="n">input_ids</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dev</span><span class="p">)</span>
+
+    <span class="c1"># State: track what we&#39;ve generated so far under the constraint</span>
+    <span class="n">fsm</span> <span class="o">=</span> <span class="n">FSMState</span><span class="p">()</span>
+
+    <span class="n">generated_ids</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">eos_token_id</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">eos_token_id</span>
+
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_new_tokens</span><span class="p">):</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">logits</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span>    <span class="c1"># shape: [vocab_size]</span>
+
+        <span class="c1"># Apply temperature scaling</span>
+        <span class="k">if</span> <span class="n">temperature</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="n">logits</span> <span class="o">/</span> <span class="n">temperature</span>
+
+        <span class="c1"># Build and apply the constraint mask</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">build_token_mask</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">vocab</span><span class="p">,</span> <span class="n">fsm</span><span class="o">.</span><span class="n">emitted_so_far</span><span class="p">,</span> <span class="n">dev</span><span class="p">)</span>
+
+        <span class="c1"># Handle vocabulary size mismatch (model logits may be larger than</span>
+        <span class="c1"># tokenizer.vocab_size due to padding)</span>
+        <span class="k">if</span> <span class="n">logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">mask</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+            <span class="n">pad</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+                <span class="n">logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="n">mask</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">dev</span>
+            <span class="p">)</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">mask</span><span class="p">,</span> <span class="n">pad</span><span class="p">])</span>
+
+        <span class="n">masked_logits</span> <span class="o">=</span> <span class="n">apply_mask_to_logits</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
+
+        <span class="c1"># Sample (greedy if temperature == 0)</span>
+        <span class="k">if</span> <span class="n">temperature</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">next_token_id</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">masked_logits</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">probs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">masked_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">next_token_id</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">multinomial</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+        <span class="c1"># Check if generation is complete</span>
+        <span class="k">if</span> <span class="n">next_token_id</span> <span class="o">==</span> <span class="n">eos_token_id</span><span class="p">:</span>
+            <span class="c1"># Only allow EOS if the current prefix fully matches the pattern</span>
+            <span class="k">if</span> <span class="n">re</span><span class="o">.</span><span class="n">fullmatch</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">fsm</span><span class="o">.</span><span class="n">emitted_so_far</span><span class="p">):</span>
+                <span class="k">break</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c1"># Force continuation: mask out EOS was already done via the</span>
+                <span class="c1"># grammar mask, so this branch should not be reached in</span>
+                <span class="c1"># a correct implementation. Include as defensive guard.</span>
+                <span class="k">continue</span>
+
+        <span class="c1"># Advance state</span>
+        <span class="n">next_token_str</span> <span class="o">=</span> <span class="n">vocab</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">next_token_id</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">fsm</span><span class="o">.</span><span class="n">emitted_so_far</span> <span class="o">+=</span> <span class="n">next_token_str</span>
+        <span class="n">generated_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">next_token_id</span><span class="p">)</span>
+
+        <span class="c1"># Append token to input for next forward pass</span>
+        <span class="n">next_tensor</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="n">next_token_id</span><span class="p">]],</span> <span class="n">device</span><span class="o">=</span><span class="n">dev</span><span class="p">)</span>
+        <span class="n">input_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">next_tensor</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># Check if pattern is fully satisfied</span>
+        <span class="k">if</span> <span class="n">re</span><span class="o">.</span><span class="n">fullmatch</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">fsm</span><span class="o">.</span><span class="n">emitted_so_far</span><span class="p">):</span>
+            <span class="n">fsm</span><span class="o">.</span><span class="n">is_complete</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">break</span>
+
+    <span class="k">return</span> <span class="n">fsm</span><span class="o">.</span><span class="n">emitted_so_far</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+<span class="c1"># Part 3: Demo — constrain a small model to generate a date in YYYY-MM-DD format</span>
+<span class="c1"># ─────────────────────────────────────────────────────────────────────────────</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="c1"># Use a small model for demonstration; swap for any HF model.</span>
+    <span class="n">MODEL_NAME</span> <span class="o">=</span> <span class="s2">&quot;gpt2&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loading </span><span class="si">{</span><span class="n">MODEL_NAME</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
+
+    <span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">GPT2LMHeadModel</span><span class="p">,</span> <span class="n">GPT2Tokenizer</span>
+
+    <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">GPT2Tokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">MODEL_NAME</span><span class="p">)</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">GPT2LMHeadModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">MODEL_NAME</span><span class="p">)</span>
+
+    <span class="c1"># Pattern: ISO date YYYY-MM-DD</span>
+    <span class="n">DATE_PATTERN</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">&quot;[12][0-9]</span><span class="si">{3}</span><span class="s2">-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])&quot;</span>
+
+    <span class="n">prompt</span> <span class="o">=</span> <span class="s2">&quot;The event is scheduled for &quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Prompt: &#39;</span><span class="si">{</span><span class="n">prompt</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Pattern: </span><span class="si">{</span><span class="n">DATE_PATTERN</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">result</span> <span class="o">=</span> <span class="n">constrained_generate</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+        <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+        <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
+        <span class="n">pattern</span><span class="o">=</span><span class="n">DATE_PATTERN</span><span class="p">,</span>
+        <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>     <span class="c1"># greedy for reproducibility</span>
+        <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Generated: &#39;</span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">re</span><span class="o">.</span><span class="n">fullmatch</span><span class="p">(</span><span class="n">DATE_PATTERN</span><span class="p">,</span> <span class="n">result</span><span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;Pattern not satisfied! Got: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Pattern constraint satisfied.&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Production note: vocabulary simulation is slow</p>
+<p>The <code>build_token_mask</code> function above iterates over all vocabulary tokens per
+decode step. For GPT-2 (vocab_size ≈ 50,000) and a simple pattern this takes
+~50–100 ms per step on CPU — unusable for production. Production systems
+(Outlines, XGrammar) pre-compute the full state × token mask matrix once,
+reducing per-step cost to a single table lookup costing microseconds.
+The code above is pedagogically correct; use Outlines or XGrammar in real deployments.</p>
+</div>
+<h2 id="using-outlines-in-production">Using Outlines in Production<a class="headerlink" href="#using-outlines-in-production" title="Permanent link">¶</a></h2>
+<p>Outlines provides a clean high-level API that wraps any HuggingFace or vLLM model with structured generation:</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">outlines_demo.py — Production-style structured generation with Outlines.</span>
+<span class="sd">pip install outlines pydantic transformers torch</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">outlines</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">List</span>
+
+<span class="c1"># ─── Define the output schema with Pydantic ───────────────────────────────────</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MovieReview</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Movie title&quot;</span><span class="p">)</span>
+    <span class="n">year</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Release year&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">1888</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">2030</span><span class="p">)</span>
+    <span class="n">sentiment</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;positive&quot;</span><span class="p">,</span> <span class="s2">&quot;negative&quot;</span><span class="p">,</span> <span class="s2">&quot;neutral&quot;</span><span class="p">]</span>
+    <span class="n">score</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Score from 0.0 to 10.0&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mf">10.0</span><span class="p">)</span>
+    <span class="n">summary</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;One-sentence summary&quot;</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+
+<span class="c1"># ─── Load model with Outlines ─────────────────────────────────────────────────</span>
+
+<span class="c1"># Outlines wraps any HF model; it pre-compiles the grammar on first call.</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">outlines</span><span class="o">.</span><span class="n">models</span><span class="o">.</span><span class="n">transformers</span><span class="p">(</span>
+    <span class="s2">&quot;meta-llama/Llama-3.1-8B-Instruct&quot;</span><span class="p">,</span>  <span class="c1"># replace with any available model</span>
+    <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># ─── Structured generation: Pydantic schema → guaranteed valid JSON ───────────</span>
+
+<span class="n">generator</span> <span class="o">=</span> <span class="n">outlines</span><span class="o">.</span><span class="n">generate</span><span class="o">.</span><span class="n">json</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">MovieReview</span><span class="p">)</span>
+
+<span class="n">prompt</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;Review the following movie and return a structured JSON review.</span>
+<span class="s2">Movie: Inception (2010)</span>
+<span class="s2">Review text: Mind-bending thriller, visually stunning. 9/10.</span>
+<span class="s2">Return only JSON:&quot;&quot;&quot;</span>
+
+<span class="c1"># This call guarantees that `result` is a valid `MovieReview` instance.</span>
+<span class="n">result</span><span class="p">:</span> <span class="n">MovieReview</span> <span class="o">=</span> <span class="n">generator</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">model_dump_json</span><span class="p">(</span><span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+
+<span class="c1"># ─── Regex-constrained generation ─────────────────────────────────────────────</span>
+
+<span class="c1"># Generate exactly a US phone number</span>
+<span class="n">phone_generator</span> <span class="o">=</span> <span class="n">outlines</span><span class="o">.</span><span class="n">generate</span><span class="o">.</span><span class="n">regex</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">,</span>
+    <span class="sa">r</span><span class="s2">&quot;\([0-9]</span><span class="si">{3}</span><span class="s2">\) [0-9]</span><span class="si">{3}</span><span class="s2">-[0-9]</span><span class="si">{4}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+
+<span class="n">phone</span> <span class="o">=</span> <span class="n">phone_generator</span><span class="p">(</span><span class="s2">&quot;Customer service number: &quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Phone: </span><span class="si">{</span><span class="n">phone</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># Guaranteed to match the regex</span>
+
+<span class="c1"># ─── Choice-constrained generation ───────────────────────────────────────────</span>
+
+<span class="c1"># Force the model to output one of a fixed set of options.</span>
+<span class="n">classifier</span> <span class="o">=</span> <span class="n">outlines</span><span class="o">.</span><span class="n">generate</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">,</span>
+    <span class="p">[</span><span class="s2">&quot;positive&quot;</span><span class="p">,</span> <span class="s2">&quot;negative&quot;</span><span class="p">,</span> <span class="s2">&quot;neutral&quot;</span><span class="p">]</span>
+<span class="p">)</span>
+
+<span class="n">sentiment</span> <span class="o">=</span> <span class="n">classifier</span><span class="p">(</span><span class="s2">&quot;The food was absolutely fantastic! Sentiment: &quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Sentiment: </span><span class="si">{</span><span class="n">sentiment</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># One of the three options, guaranteed.</span>
+</code></pre></div>
+<h2 id="tool-call-enforcement-and-function-calling">Tool-Call Enforcement and Function Calling<a class="headerlink" href="#tool-call-enforcement-and-function-calling" title="Permanent link">¶</a></h2>
+<p>Function calling (tool use) is the highest-stakes application of structured generation. When an LLM selects and parameterizes a tool, the call must match the tool&rsquo;s schema exactly: the function name must be one of the registered tools, and the arguments must conform to the parameter schema.</p>
+<p>The standard pattern in modern serving stacks (OpenAI, vLLM, SGLang) is:</p>
+<ol>
+<li><strong>Build a tool-call grammar</strong> at request time from the list of available tools and their JSON schemas. This is essentially a JSON Schema union:
+   <div class="highlight"><pre><span></span><code>{ &quot;name&quot;: &quot;&lt;one of the tool names&gt;&quot;, &quot;arguments&quot;: &lt;tool&#39;s parameter schema&gt; }
+</code></pre></div></li>
+<li><strong>Activate the grammar</strong> only when the model emits the tool-call start token (e.g., <code>&lt;|tool_call|&gt;</code> or a specific JSON prefix like <code>{"name":</code>).</li>
+<li><strong>Allow free text</strong> for the non-tool-call portion of the response (the conversational text before the tool call).</li>
+</ol>
+<p>This is more complex than pure JSON generation because the grammar is <em>partially applied</em>: free text until a trigger, then constrained.</p>
+<figure class="viz" id="fig-structgen-toolcall-constrained-flow">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 780 520" role="img" aria-label="Tool-call constrained decoding: free unconstrained generation until a tool_call token is emitted, at which point the engine switches to constrained mode enforcing the tool-call JSON schema via an FSM/PDA. Alternatively, emitting eot ends generation with no tool call.">
+  <defs>
+    <marker id="tc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#374151)"/>
+    </marker>
+    <marker id="tc-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+    </marker>
+    <marker id="tc-arrow-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#16a34a)"/>
+    </marker>
+    <marker id="tc-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-structgen-toolcall-constrained-flow text { fill: var(--ink-soft,#374151); }
+    #fig-structgen-toolcall-constrained-flow .ttl  { font: 700 13.5px var(--sans,sans-serif); }
+    #fig-structgen-toolcall-constrained-flow .sub  { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-structgen-toolcall-constrained-flow .lbl  { font: 400 11.5px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-structgen-toolcall-constrained-flow .badge { font: 700 9px var(--sans,sans-serif); }
+    #fig-structgen-toolcall-constrained-flow .mono  { font: 500 12px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+    #fig-structgen-toolcall-constrained-flow .cap   { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-structgen-toolcall-constrained-flow .panel-lbl { font: 700 12px var(--sans,sans-serif); fill: var(--accent,#4f46e5); }
+
+    /* Animation keyframes */
+    @keyframes tc-pulse-flow {
+      0%,100% { opacity: 0.25; r: 4; }
+      50%      { opacity: 1;    r: 6; }
+    }
+    @keyframes tc-flash-border {
+      0%,100% { stroke-opacity: 0.5; }
+      40%,60% { stroke-opacity: 1; stroke-width: 3; }
+    }
+    @keyframes tc-pill-glow {
+      0%,100% { fill-opacity: 0.15; }
+      50%      { fill-opacity: 0.55; }
+    }
+    @keyframes tc-appear {
+      0%   { opacity: 0; transform: translateY(4px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      #fig-structgen-toolcall-constrained-flow .anim-dot-free {
+        animation: tc-pulse-flow 1.8s ease-in-out infinite;
+      }
+      #fig-structgen-toolcall-constrained-flow .anim-switch-box {
+        animation: tc-flash-border 2.0s ease-in-out 0.6s infinite;
+      }
+      #fig-structgen-toolcall-constrained-flow .anim-pill-name {
+        animation: tc-pill-glow 2.2s ease-in-out 1.0s infinite;
+      }
+      #fig-structgen-toolcall-constrained-flow .anim-pill-args {
+        animation: tc-pill-glow 2.2s ease-in-out 1.6s infinite;
+      }
+    }
+  </style>
+
+
+
+
+  <rect x="14" y="56" width="148" height="56" rx="7" class="v-fill" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/>
+  <text x="88" y="81" text-anchor="middle" class="ttl">User message</text>
+  <text x="88" y="98" text-anchor="middle" class="sub">prompt + tools list</text>
+
+
+  <line x1="163" y1="84" x2="212" y2="84" stroke="var(--ink-soft,#374151)" stroke-width="1.5" marker-end="url(#tc-arrow)"/>
+
+
+  <circle class="anim-dot-free" cx="189" cy="84" r="4" fill="var(--good,#16a34a)"/>
+
+
+  <rect x="214" y="48" width="226" height="72" rx="7" fill="var(--good,#16a34a)" fill-opacity="0.10" stroke="var(--good,#16a34a)" stroke-width="1.8"/>
+
+  <rect x="344" y="54" width="90" height="16" rx="3" fill="var(--good,#16a34a)" fill-opacity="0.22"/>
+  <text x="389" y="65" text-anchor="middle" class="badge" fill="var(--good,#16a34a)">UNCONSTRAINED</text>
+  <text x="327" y="83" text-anchor="middle" class="ttl">Model generates</text>
+  <text x="327" y="100" text-anchor="middle" class="ttl">conversational response</text>
+
+
+  <circle cx="468" cy="84" r="5" fill="var(--ink-soft,#374151)"/>
+  <line x1="440" y1="84" x2="463" y2="84" stroke="var(--ink-soft,#374151)" stroke-width="1.5"/>
+
+
+
+  <polyline points="468,84 468,53 546,53" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="1.5" marker-end="url(#tc-arrow-acc)"/>
+  <text x="500" y="44" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">emits &lt;tool_call&gt; token</text>
+
+
+  <rect class="anim-switch-box" x="548" y="14" width="218" height="78" rx="7" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+  <text x="657" y="40" text-anchor="middle" class="ttl" fill="var(--accent,#4f46e5)">SWITCH TO</text>
+  <text x="657" y="57" text-anchor="middle" class="ttl" fill="var(--accent,#4f46e5)">CONSTRAINED MODE</text>
+  <text x="657" y="72" text-anchor="middle" class="sub">Grammar: JSON schema</text>
+  <text x="657" y="84" text-anchor="middle" class="sub">enforced by FSM/PDA</text>
+
+
+
+  <polyline points="468,84 468,130 546,130" fill="none" stroke="var(--muted,#6b7280)" stroke-width="1.5" marker-end="url(#tc-arrow-muted)"/>
+  <text x="504" y="122" text-anchor="middle" class="lbl">emits &lt;eot&gt;</text>
+
+
+  <rect x="548" y="108" width="218" height="52" rx="7" fill="var(--surface-3,#f3f4f6)" fill-opacity="0.6" stroke="var(--muted,#6b7280)" stroke-width="1.4"/>
+  <text x="657" y="131" text-anchor="middle" class="ttl" style="fill:var(--muted,#6b7280)">Response done</text>
+  <text x="657" y="148" text-anchor="middle" class="sub">no tool called</text>
+
+
+  <line x1="657" y1="92" x2="657" y2="230" stroke="var(--accent,#4f46e5)" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <polyline points="657,230 480,230" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="1.5" marker-end="url(#tc-arrow-acc)"/>
+  <text x="590" y="222" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">enter constrained decoding</text>
+
+
+
+
+  <rect x="34" y="240" width="700" height="228" rx="10" fill="var(--accent,#4f46e5)" fill-opacity="0.05" stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+  <text x="58" y="266" class="panel-lbl">CONSTRAINED MODE</text>
+
+
+  <text x="68" y="302" class="mono">{"name":</text>
+
+
+  <rect class="anim-pill-name" x="172" y="288" width="216" height="22" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="280" y="303" text-anchor="middle" class="mono" style="font-size:10.5px;fill:var(--warn,#e0a106)">MASK: only valid tool names</text>
+
+  <text x="390" y="302" class="mono">,</text>
+
+
+  <text x="68" y="336" class="mono">  "arguments":</text>
+
+
+  <rect class="anim-pill-args" x="198" y="322" width="244" height="22" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="320" y="337" text-anchor="middle" class="mono" style="font-size:10.5px;fill:var(--warn,#e0a106)">MASK: matches tool parameter schema</text>
+
+  <text x="444" y="336" class="mono">}</text>
+
+
+  <text x="68" y="370" class="cap">name = finite choice over registered tools (tiny FSM)</text>
+  <text x="68" y="386" class="cap">arguments = full JSON-Schema PDA</text>
+
+
+  <line x1="68" y1="400" x2="702" y2="400" stroke="var(--border-2,#d1d5db)" stroke-width="0.8"/>
+
+
+  <rect x="68" y="412" width="14" height="14" rx="2" fill="var(--good,#16a34a)" fill-opacity="0.25" stroke="var(--good,#16a34a)" stroke-width="1.2"/>
+  <text x="88" y="423" class="cap">Unconstrained (free)</text>
+
+  <rect x="248" y="412" width="14" height="14" rx="2" fill="var(--accent,#4f46e5)" fill-opacity="0.15" stroke="var(--accent,#4f46e5)" stroke-width="1.2"/>
+  <text x="268" y="423" class="cap">Constrained (grammar-enforced)</text>
+
+  <rect x="510" y="412" width="14" height="14" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.25" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="530" y="423" class="cap">Enforced MASK slots</text>
+
+
+  <text x="390" y="488" text-anchor="middle" class="cap">The &lt;eot&gt; branch (grey) shows the no-tool alternate path; constrained mode does not apply there.</text>
+
+</svg>
+<figcaption><b>Tool-call constrained decoding switches modes mid-response.</b> The model generates free conversational text (green, unconstrained) until it emits a <code>&lt;tool_call&gt;</code> trigger token; at that point the serving engine activates a grammar-enforced FSM/PDA for the tool-call JSON. The <code>name</code> field is constrained to registered tool names (a tiny finite-choice FSM) and <code>arguments</code> to the tool's full parameter schema (a PDA). Emitting <code>&lt;eot&gt;</code> instead ends generation with no tool called.</figcaption>
+</figure>
+
+<p>SGLang (covered in <a href="../07-inference-serving/04-sglang-radixattention.html">SGLang: RadixAttention &amp; Structured Programs</a>) implements this via its <code>constrained_decode</code> primitive, which can be composed with its programmatic generation API. The vLLM serving stack integrates Outlines or XGrammar as a backend, activated per-request when <code>guided_json</code> or <code>guided_regex</code> is set in the request parameters.</p>
+<div class="admonition note">
+<p class="admonition-title">Tool name as a vocabulary restriction</p>
+<p>The function name constraint is the simplest possible constrained generation
+problem: it&rsquo;s a choice among a finite set of strings. This compiles to a
+trivially small FSM (one state per character position in each name, with
+branches for each valid name). Performance is negligible compared to
+generating the arguments, which may require the full JSON schema machinery.</p>
+</div>
+<h2 id="performance-deep-dive-xgrammars-overlap-with-sampling">Performance Deep Dive: XGrammar&rsquo;s Overlap With Sampling<a class="headerlink" href="#performance-deep-dive-xgrammars-overlap-with-sampling" title="Permanent link">¶</a></h2>
+<p>A naive mental model suggests that constrained decoding adds latency to every decode step: compute the logits, compute the mask, apply the mask, sample. But XGrammar&rsquo;s design exploits a crucial structural property to amortize the mask computation.</p>
+<h3 id="overlap-with-the-model-forward-pass">Overlap With the Model Forward Pass<a class="headerlink" href="#overlap-with-the-model-forward-pass" title="Permanent link">¶</a></h3>
+<p>The model forward pass and the mask computation are on different hardware resources (GPU for the forward pass, CPU or GPU for the automaton logic). XGrammar is designed to run mask computation <em>concurrently</em> with the model forward pass using separate CPU threads. While the GPU executes the transformer layers for step <span class="arithmatex">\(t\)</span>, the CPU is computing the mask for step <span class="arithmatex">\(t+1\)</span> by advancing the automaton from step <span class="arithmatex">\(t-1\)</span>&rsquo;s sampled token.</p>
+<p>This overlap means the wall-clock cost of constrained decoding is approximately:</p>
+<div class="arithmatex">\[
+T_{\text{constrained}} \approx \max(T_{\text{model\_fwd}}, T_{\text{mask\_compute}})
+\]</div>
+<p>rather than the naive:</p>
+<div class="arithmatex">\[
+T_{\text{constrained, naive}} = T_{\text{model\_fwd}} + T_{\text{mask\_compute}}
+\]</div>
+<p>For large models where <span class="arithmatex">\(T_{\text{model\_fwd}}\)</span> dominates (<span class="arithmatex">\(\gg T_{\text{mask\_compute}}\)</span>), the overhead of constrained generation is near-zero.</p>
+<div class="admonition example">
+<p class="admonition-title">Throughput numbers in context</p>
+<p>For a 70B parameter model on a 4×H100 setup, a single decode step takes
+roughly 20–50 ms (model forward pass). XGrammar&rsquo;s mask computation for a
+complex JSON schema takes on the order of 0.1–1 ms on CPU. The ratio is
+20–500×, meaning the masking cost is completely hidden in the model&rsquo;s
+computation. For a 7B model on a single A100, the forward pass takes
+roughly 2–5 ms, and masking might be ~0.5 ms — still a small fraction.
+The overhead only becomes significant for very small models or trivially fast
+custom kernels.</p>
+</div>
+<h3 id="batch-heterogeneity">Batch Heterogeneity<a class="headerlink" href="#batch-heterogeneity" title="Permanent link">¶</a></h3>
+<p>In a batched serving scenario, different requests may have different grammar constraints. XGrammar handles this by maintaining a separate automaton state per sequence. Since mask application is per-sequence (each sequence has its own logit vector), there&rsquo;s no cross-sequence contention. The automaton state objects are lightweight CPU structures — a few hundred bytes each for typical JSON schemas.</p>
+<p>One complication: when a batch contains a mix of constrained and unconstrained requests, the serving engine must apply masks only to the constrained ones. vLLM implements this by computing a &ldquo;merged mask&rdquo; that is all-ones (no restriction) for unconstrained sequences and the FSM-derived mask for constrained ones, then applying a single batched mask operation.</p>
+<h2 id="grammar-specification-formats">Grammar Specification Formats<a class="headerlink" href="#grammar-specification-formats" title="Permanent link">¶</a></h2>
+<p>Different tools accept different input formats for expressing the constraint. Understanding these helps you choose the right tool.</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Example</th>
+<th>Tool Support</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Python regex</td>
+<td><code>r"\d{4}-\d{2}-\d{2}"</code></td>
+<td>Outlines, llguidance, XGrammar</td>
+</tr>
+<tr>
+<td>Pydantic model</td>
+<td><code>class Out(BaseModel): x: int</code></td>
+<td>Outlines, instructor</td>
+</tr>
+<tr>
+<td>JSON Schema</td>
+<td><code>{"type": "object", "properties": {...}}</code></td>
+<td>Outlines, XGrammar, vLLM guided JSON</td>
+</tr>
+<tr>
+<td>EBNF grammar</td>
+<td><code>rule ::= "a" rule "b" \| ""</code></td>
+<td>Outlines, llguidance, llama.cpp grammars</td>
+</tr>
+<tr>
+<td>Lark grammar</td>
+<td>Lark-style <code>.lark</code> syntax</td>
+<td>llguidance</td>
+</tr>
+<tr>
+<td>Choice list</td>
+<td><code>["opt1", "opt2", "opt3"]</code></td>
+<td>Outlines <code>.generate.choice()</code></td>
+</tr>
+</tbody>
+</table>
+<p>JSON Schema is the most practically important format because it bridges directly to OpenAPI specs (tool schemas) and Pydantic model serialization.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A candidate claims that constrained decoding &ldquo;doesn&rsquo;t change what the
+model would generate anyway&rdquo; because well-trained models already output valid
+JSON. Why is this claim wrong, and when does constrained decoding most affect
+the output distribution?</p>
+<p><strong>A:</strong> The claim is wrong for several reasons. First, even highly capable models
+fail at JSON validity with measurable frequency — especially for deeply nested
+schemas, long outputs, or schemas the model has not seen during training.
+Second, constrained decoding <em>does</em> change the probability distribution over
+valid completions: by zeroing out invalid tokens and renormalizing, the model
+effectively redistributes probability mass among only the valid options.
+This means constrained generation can produce different valid outputs than
+unconstrained generation (not just the same valid outputs minus the invalid ones).
+Third, constrained decoding matters most at structural boundaries — the opening
+of a nested object, the choice of enum value when several are plausible — where
+the model&rsquo;s probability mass is spread across valid and invalid options.
+At those points, the renormalization step meaningfully shifts which valid token
+wins. Fourth, constrained decoding provides a <em>hard guarantee</em> rather than a
+statistical tendency — critical for production systems where a single malformed
+output can crash a downstream service.</p>
+</div>
+<h2 id="edge-cases-pitfalls-and-practical-advice">Edge Cases, Pitfalls, and Practical Advice<a class="headerlink" href="#edge-cases-pitfalls-and-practical-advice" title="Permanent link">¶</a></h2>
+<h3 id="tokenization-boundary-mismatches">Tokenization Boundary Mismatches<a class="headerlink" href="#tokenization-boundary-mismatches" title="Permanent link">¶</a></h3>
+<p>The most insidious class of bugs in constrained generation arises from tokenization boundaries. Consider the pattern <code>r"true|false"</code> applied to a BPE tokenizer. The string <code>true</code> might be tokenized as a single token <code>true</code> (token ID 1234) or as the pair <code>tr</code> + <code>ue</code> depending on context. The FSM must be computed over the <em>decoded</em> token strings (bytes), not the token IDs directly. Libraries handle this, but custom implementations frequently get it wrong.</p>
+<p>A specific failure mode: a regex that allows the character sequence <code>t-r-u-e</code> might incorrectly allow token <code>"truth"</code> because after consuming <code>t</code>, <code>r</code>, <code>u</code>, the FSM is in a state that also accepts <code>th</code> — if the FSM is character-level but the token is <code>"tr"</code>, the simulation must verify that <code>"tr"</code> leaves the FSM in a live state (it does) <em>and</em> that the remaining suffix <code>"ue"</code> can continue from that live state.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Bug: naive check that doesn&#39;t properly simulate multi-char tokens</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">is_token_valid_BUGGY</span><span class="p">(</span><span class="n">fsm_state</span><span class="p">,</span> <span class="n">token_str</span><span class="p">,</span> <span class="n">fsm</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;BUG: only checks if the token_str matches as a prefix of a word,</span>
+<span class="sd">    not whether each character advances the FSM correctly.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">token_str</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">fsm</span><span class="o">.</span><span class="n">expected_prefix</span><span class="p">)</span>   <span class="c1"># WRONG</span>
+
+<span class="c1"># Correct: simulate the FSM character by character over the token</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">is_token_valid_CORRECT</span><span class="p">(</span><span class="n">fsm_state</span><span class="p">,</span> <span class="n">token_str</span><span class="p">,</span> <span class="n">fsm</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Simulates FSM transitions for every character in the token.&quot;&quot;&quot;</span>
+    <span class="n">current</span> <span class="o">=</span> <span class="n">fsm_state</span>
+    <span class="k">for</span> <span class="n">char</span> <span class="ow">in</span> <span class="n">token_str</span><span class="p">:</span>
+        <span class="n">current</span> <span class="o">=</span> <span class="n">fsm</span><span class="o">.</span><span class="n">transition</span><span class="p">(</span><span class="n">current</span><span class="p">,</span> <span class="n">char</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">current</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>      <span class="c1"># dead state</span>
+            <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">return</span> <span class="kc">True</span>  <span class="c1"># reached a live (non-dead) state; token is valid</span>
+</code></pre></div>
+<h3 id="empty-mask-infeasible-constraint">Empty Mask (Infeasible Constraint)<a class="headerlink" href="#empty-mask-infeasible-constraint" title="Permanent link">¶</a></h3>
+<p>If the grammar reaches a state where no token in the vocabulary is valid, the mask is all-zeros. After masking, <code>softmax</code> produces NaN because <span class="arithmatex">\(\exp(-\infty)\)</span> everywhere sums to zero. Production servers must detect this and either:</p>
+<ul>
+<li>Fall back to unconstrained generation (acceptable for non-critical constraints).</li>
+<li>Raise an error and return the partial output so far.</li>
+<li>Perform backtracking (expensive but possible with beam search or speculative approaches).</li>
+</ul>
+<p>This situation can arise legitimately when a schema has constraints that the model genuinely cannot satisfy given the prefix it has emitted. The solution at the system level is to catch the all-zero mask condition before calling softmax:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">safe_apply_mask</span><span class="p">(</span><span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply mask with fallback if all tokens are forbidden.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="c1"># All tokens forbidden: grammar is unsatisfiable at this point.</span>
+        <span class="c1"># Log a warning and fall back to unconstrained sampling.</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
+        <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+            <span class="s2">&quot;Constrained generation: no valid tokens in current FSM state. &quot;</span>
+            <span class="s2">&quot;Falling back to unconstrained sampling for this step.&quot;</span><span class="p">,</span>
+            <span class="ne">RuntimeWarning</span><span class="p">,</span>
+            <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">logits</span>   <span class="c1"># Return unmasked logits</span>
+    <span class="k">return</span> <span class="n">apply_mask_to_logits</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="schema-compilation-latency">Schema Compilation Latency<a class="headerlink" href="#schema-compilation-latency" title="Permanent link">¶</a></h3>
+<p>For services with many distinct schemas (e.g., one per user-defined tool), schema compilation can become a bottleneck. Each unique JSON Schema or EBNF grammar requires a compilation pass (typically 10–100 ms for complex schemas). The solution is an LRU-cached schema compiler, keyed by schema hash. vLLM&rsquo;s XGrammar integration includes such a cache.</p>
+<h3 id="interaction-with-speculative-decoding">Interaction With Speculative Decoding<a class="headerlink" href="#interaction-with-speculative-decoding" title="Permanent link">¶</a></h3>
+<p>Speculative decoding (covered in <a href="../07-inference-serving/06-speculative-decoding.html">Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a>) speculatively generates multiple tokens via a draft model, then verifies them with the target model. Constrained generation complicates this: the draft model&rsquo;s speculative tokens must also be valid under the grammar, and the FSM state must be advanced tentatively during speculation and rolled back on rejection.</p>
+<p>XGrammar and SGLang both support constrained speculative decoding. The FSM state is cloned before entering the speculative window and committed or rolled back based on the target model&rsquo;s acceptance decision. The overhead of state cloning is negligible compared to the draft inference.</p>
+<h2 id="relationship-to-other-inference-techniques">Relationship to Other Inference Techniques<a class="headerlink" href="#relationship-to-other-inference-techniques" title="Permanent link">¶</a></h2>
+<p>Constrained generation interacts with several other inference optimizations discussed in this part of the book:</p>
+<ul>
+<li>
+<p><strong>KV-cache and prefix caching</strong> (<a href="../07-inference-serving/07-prefix-caching.html">Prefix Caching &amp; KV-Cache Reuse</a>): The grammar state is deterministic given the output tokens, so it can be cached alongside the KV-cache key. If two requests share the same output prefix (unusual but possible for templated generation), the grammar state can be reused.</p>
+</li>
+<li>
+<p><strong>Continuous batching</strong> (<a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>): Each request in a batch has an independent grammar state. Constrained requests may have sparser logit vectors (many tokens masked), which does not affect the batching logic but can affect the softmax kernel behavior.</p>
+</li>
+<li>
+<p><strong>Sampling</strong> (<a href="../07-inference-serving/09-sampling-decoding.html">Sampling Strategies &amp; Decoding Algorithms</a>): Constrained generation composes with temperature, top-k, and top-p. The recommended order is: apply grammar mask first (hard constraint), then apply top-k/top-p to the allowed tokens (soft quality filter), then sample. Applying top-p before the grammar mask risks eliminating all valid tokens if the valid tokens collectively have less than <span class="arithmatex">\(p\)</span> probability mass.</p>
+</li>
+<li>
+<p><strong>Tool use and agents</strong> (<a href="../08-agents-harness/01-tool-use-function-calling.html">Tool Use &amp; Function Calling</a>): Constrained generation is the mechanism that makes reliable tool-call formatting possible. Without it, even good models occasionally emit malformed function calls.</p>
+</li>
+</ul>
+<h2 id="summary-choosing-a-library">Summary: Choosing a Library<a class="headerlink" href="#summary-choosing-a-library" title="Permanent link">¶</a></h2>
+<p>For a working engineer deploying constrained generation today, the decision tree is:</p>
+<figure class="viz" id="fig-structgen-library-decision-tree">
+<svg viewBox="0 0 820 480" role="img" aria-label="Decision tree mapping serving stack to constrained-generation library: vLLM and SGLang use XGrammar (built-in); llama.cpp uses GBNF grammar or llguidance; HuggingFace Transformers uses Outlines; custom server uses llguidance or Outlines.">
+  <defs>
+    <marker id="dt-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#374151)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-structgen-library-decision-tree text     { fill: var(--ink-soft,#374151); }
+    #fig-structgen-library-decision-tree .root    { font: 700 14px var(--sans,sans-serif); }
+    #fig-structgen-library-decision-tree .stack   { font: 700 13px var(--sans,sans-serif); }
+    #fig-structgen-library-decision-tree .rec     { font: 600 12.5px var(--sans,sans-serif); }
+    #fig-structgen-library-decision-tree .sub     { font: 500 10px var(--mono,monospace); fill: var(--muted,#6b7280); }
+    #fig-structgen-library-decision-tree .conn    { fill: none; stroke: var(--ink-soft,#374151); stroke-width: 1.4; }
+  </style>
+
+
+  <rect x="10" y="198" width="188" height="60" rx="8"
+        fill="var(--accent,#4f46e5)" fill-opacity="0.09"
+        stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+  <text x="104" y="222" text-anchor="middle" class="root" fill="var(--accent,#4f46e5)">What is your</text>
+  <text x="104" y="241" text-anchor="middle" class="root" fill="var(--accent,#4f46e5)">serving stack?</text>
+
+
+
+  <line x1="198" y1="228" x2="232" y2="228" class="conn"/>
+
+
+
+
+  <line x1="232" y1="36" x2="232" y2="420" class="conn"/>
+
+
+
+  <line x1="232" y1="36" x2="268" y2="36" class="conn"/>
+
+  <rect x="268" y="14" width="136" height="46" rx="6" class="v-fill" stroke="var(--border-2,#d1d5db)" stroke-width="1.4"/>
+  <text x="336" y="42" text-anchor="middle" class="stack">vLLM</text>
+
+  <line x1="404" y1="37" x2="456" y2="37" stroke="var(--ink-soft,#374151)" stroke-width="1.4" marker-end="url(#dt-arrow)"/>
+
+  <rect x="458" y="10" width="346" height="56" rx="6"
+        fill="var(--accent,#4f46e5)" fill-opacity="0.09"
+        stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+  <text x="631" y="32" text-anchor="middle" class="rec" fill="var(--accent,#4f46e5)">XGrammar backend (built-in, vLLM 0.5+)</text>
+  <text x="631" y="47" text-anchor="middle" class="sub">guided_json / guided_regex</text>
+  <text x="631" y="60" text-anchor="middle" class="sub">/ guided_grammar</text>
+
+
+
+  <line x1="232" y1="108" x2="268" y2="108" class="conn"/>
+
+  <rect x="268" y="86" width="136" height="46" rx="6" class="v-fill" stroke="var(--border-2,#d1d5db)" stroke-width="1.4"/>
+  <text x="336" y="114" text-anchor="middle" class="stack">SGLang</text>
+
+  <line x1="404" y1="109" x2="456" y2="109" stroke="var(--ink-soft,#374151)" stroke-width="1.4" marker-end="url(#dt-arrow)"/>
+
+  <rect x="458" y="83" width="346" height="50" rx="6"
+        fill="var(--accent,#4f46e5)" fill-opacity="0.09"
+        stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+  <text x="631" y="105" text-anchor="middle" class="rec" fill="var(--accent,#4f46e5)">Built-in constraint primitives</text>
+  <text x="631" y="122" text-anchor="middle" class="sub">(XGrammar backend)</text>
+
+
+  <line x1="232" y1="194" x2="268" y2="194" class="conn"/>
+
+  <rect x="268" y="172" width="136" height="46" rx="6" class="v-fill" stroke="var(--border-2,#d1d5db)" stroke-width="1.4"/>
+  <text x="336" y="200" text-anchor="middle" class="stack">llama.cpp</text>
+
+  <line x1="404" y1="195" x2="456" y2="195" stroke="var(--ink-soft,#374151)" stroke-width="1.4" marker-end="url(#dt-arrow)"/>
+
+  <rect x="458" y="163" width="346" height="62" rx="6"
+        fill="var(--warn,#e0a106)" fill-opacity="0.09"
+        stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <text x="631" y="184" text-anchor="middle" class="rec" fill="var(--warn,#e0a106)">GGUF/GBNF grammar (--grammar-file)</text>
+  <text x="631" y="200" text-anchor="middle" class="sub">or llguidance Python bindings</text>
+  <text x="631" y="216" text-anchor="middle" class="sub">llama.cpp native grammar format</text>
+
+
+  <line x1="232" y1="288" x2="268" y2="288" class="conn"/>
+
+  <rect x="268" y="258" width="136" height="62" rx="6" class="v-fill" stroke="var(--border-2,#d1d5db)" stroke-width="1.4"/>
+  <text x="336" y="284" text-anchor="middle" class="stack">HuggingFace</text>
+  <text x="336" y="302" text-anchor="middle" class="stack">Transformers</text>
+
+  <line x1="404" y1="289" x2="456" y2="289" stroke="var(--ink-soft,#374151)" stroke-width="1.4" marker-end="url(#dt-arrow)"/>
+
+  <rect x="458" y="258" width="346" height="62" rx="6"
+        fill="var(--good,#16a34a)" fill-opacity="0.08"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="631" y="280" text-anchor="middle" class="rec" fill="var(--good,#2f9e6e)">Outlines (pip install outlines)</text>
+  <text x="631" y="297" text-anchor="middle" class="sub">outlines.generate.json</text>
+  <text x="631" y="313" text-anchor="middle" class="sub">/ .regex / .choice</text>
+
+
+  <line x1="232" y1="396" x2="268" y2="396" class="conn"/>
+
+  <rect x="268" y="374" width="136" height="46" rx="6" class="v-fill" stroke="var(--border-2,#d1d5db)" stroke-width="1.4"/>
+  <text x="336" y="402" text-anchor="middle" class="stack">Custom server</text>
+
+  <line x1="404" y1="397" x2="456" y2="397" stroke="var(--ink-soft,#374151)" stroke-width="1.4" marker-end="url(#dt-arrow)"/>
+
+  <rect x="458" y="368" width="346" height="58" rx="6"
+        fill="var(--warn,#e0a106)" fill-opacity="0.09"
+        stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <text x="631" y="389" text-anchor="middle" class="rec" fill="var(--warn,#e0a106)">llguidance (Rust, Earley parser for CFGs)</text>
+  <text x="631" y="405" text-anchor="middle" class="sub">or Outlines (pure Python)</text>
+  <text x="631" y="419" text-anchor="middle" class="sub">simple get_mask() / advance(token) API</text>
+
+
+  <rect x="10" y="452" width="12" height="12" rx="2" fill="var(--accent,#4f46e5)" fill-opacity="0.25" stroke="var(--accent,#4f46e5)" stroke-width="1"/>
+  <text x="26" y="462" style="font:400 10.5px var(--sans,sans-serif);fill:var(--muted,#6b7280)">XGrammar</text>
+  <rect x="118" y="452" width="12" height="12" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.25" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+  <text x="134" y="462" style="font:400 10.5px var(--sans,sans-serif);fill:var(--muted,#6b7280)">llguidance / llama.cpp</text>
+  <rect x="276" y="452" width="12" height="12" rx="2" fill="var(--good,#16a34a)" fill-opacity="0.25" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+  <text x="292" y="462" style="font:400 10.5px var(--sans,sans-serif);fill:var(--muted,#6b7280)">Outlines</text>
+
+</svg>
+<figcaption><b>Choose your constrained-generation library based on your serving stack.</b> vLLM (0.5+) and SGLang both default to XGrammar; llama.cpp users reach for GBNF grammar files or llguidance bindings; HuggingFace Transformers integrates cleanly with Outlines; and custom server deployments can use llguidance's Rust core (fast Earley parser for full CFGs) or Outlines for pure-Python simplicity.</figcaption>
+</figure>
+
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Free-text generation does not guarantee output validity; constrained generation
+  hard-wires a formal grammar into the decoding process via logit masking.</li>
+<li>Finite-state machines (FSMs) handle regular languages (regexes, fixed schemas);
+  pushdown automata (PDAs) are needed for context-free languages like JSON.</li>
+<li>The core algorithm: pre-compute a <code>state × token_id</code> boolean mask matrix;
+  at each decode step, look up the current state&rsquo;s row and zero out forbidden logits.</li>
+<li>Outlines introduced the foundational token-level FSM index; XGrammar extended
+  this to context-free grammars with the context-independent/context-dependent
+  token split, achieving sub-5% overhead for large models.</li>
+<li>llguidance uses an incremental Earley parser to avoid DFA state explosion for
+  complex grammars while maintaining practical throughput.</li>
+<li>Constrained decoding changes the conditional distribution over valid tokens
+  (renormalization), not just the set of generated sequences.</li>
+<li>Apply grammar masking first, then top-k/top-p, to avoid scenarios where all
+  valid tokens fall below the top-p threshold.</li>
+<li>Token boundary mismatches are the most common implementation bug: always
+  simulate the FSM character-by-character over the decoded token string, not
+  over the token ID.</li>
+<li>XGrammar overlaps mask computation with the GPU forward pass, making the
+  runtime overhead near-zero for model sizes ≥ 7B.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Structured and constrained generation has matured into a standard component of production LLM serving: FSM-based logit masking is now the default backend in every major inference engine (vLLM, SGLang, TensorRT-LLM, llama.cpp), and the engineering focus has shifted toward near-zero overhead via overlap with the GPU forward pass and dynamic grammar switching for agentic workflows.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2307.09702">Willard &amp; Louf, <em>Efficient Guided Generation for Large Language Models</em> (2023)</a> — introduces the token-level FSM index that underlies Outlines and most subsequent systems.</li>
+<li><a href="https://arxiv.org/abs/2407.08103">Koo, Liu &amp; He, <em>Automata-based Constraints for Language Model Decoding</em> (2024)</a> — rigorous automata-theoretic treatment; achieves ~7,000× faster grammar compilation than prior methods and extends coverage to deterministic CFLs.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2411.15100">Dong et al., <em>XGrammar: Flexible and Efficient Structured Generation Engine for LLMs</em> (2024)</a> — context-independent/context-dependent token split reduces per-step masking cost to under 40 µs, now the default backend in vLLM and SGLang.</li>
+<li><a href="https://arxiv.org/abs/2601.04426">Li et al., <em>XGrammar-2: Efficient Dynamic Structured Generation Engine for Agentic LLMs</em> (2026)</a> — adds TagDispatch for mid-response grammar switching and Cross-Grammar Cache for substructure reuse; over 6× faster compilation than XGrammar-1.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/outlines-dev/outlines">dottxt-ai/outlines</a> — the original and most widely-used Python library for FSM-constrained generation; supports regex, JSON Schema, Pydantic models, and EBNF.</li>
+<li><a href="https://github.com/mlc-ai/xgrammar">mlc-ai/xgrammar</a> — production-grade structured generation engine; default backend in vLLM, SGLang, TensorRT-LLM, and MLC-LLM.</li>
+<li><a href="https://github.com/guidance-ai/llguidance">guidance-ai/llguidance</a> — Rust-core Earley-parser-based engine (~50 µs/token for 128k-vocab tokenizers); integrated into llama.cpp, vLLM, SGLang, Chromium, and OpenAI&rsquo;s own structured outputs.</li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md">ggml-org/llama.cpp GBNF grammar guide</a> — practical EBNF grammar format (GBNF) for the llama.cpp ecosystem; reference for writing JSON/SQL/custom grammars.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://docs.vllm.ai/en/latest/features/structured_outputs.html">vLLM structured outputs documentation</a> — official reference for <code>guided_json</code>, <code>guided_regex</code>, and <code>guided_grammar</code> parameters and XGrammar/guidance backend configuration.</li>
+<li><a href="https://dottxt-ai.github.io/outlines/welcome/">Outlines documentation</a> — official docs covering the full API: <code>.generate.json()</code>, <code>.generate.regex()</code>, <code>.generate.choice()</code>, and multi-backend support.</li>
+<li><a href="https://www.aidancooper.co.uk/constrained-decoding/">Cooper, <em>A Guide to Structured Generation Using Constrained Decoding</em> (2024)</a> — practitioner-focused explainer covering implementation patterns, pitfalls, and CFG extensions.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Willard &amp; Louf, &ldquo;Efficient Guided Generation for Large Language Models&rdquo; (2023)</strong> — the foundational Outlines paper; introduces the token-level FSM index and the Outlines library.</li>
+<li><strong>Dong et al., &ldquo;XGrammar: Flexible and Efficient Structured Generation Engine for Large Language Models&rdquo; (2024)</strong> — the context-independent/context-dependent token classification and overlap-with-sampling design.</li>
+<li><strong>Microsoft Research, llguidance (GitHub: microsoft/llguidance)</strong> — open-source Earley-parser-based constrained generation engine with Rust core.</li>
+<li><strong>Peng et al., &ldquo;LMQL: Programming Large Language Models&rdquo; (2022)</strong> — an early declarative constraint language for LLM queries; pioneered the idea of in-flight constraint enforcement.</li>
+<li><strong>llama.cpp GGUF grammar specification (GitHub: ggerganov/llama.cpp, <code>grammars/</code> directory)</strong> — practical EBNF grammar format used by the llama.cpp ecosystem; good reference for JSON/SQL grammar construction.</li>
+<li><strong>Guidance (GitHub: guidance-ai/guidance)</strong> — an alternative structured generation approach using a domain-specific templating language; predates Outlines and useful for understanding the design space.</li>
+<li><strong>Koo et al., &ldquo;Automata-based Constraints for Language Model Decoding&rdquo; (2024)</strong> — a theoretical treatment of the expressiveness and complexity of automaton-based constraints for LLM decoding.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="09-sampling-decoding.html"><span class="pn-label">← Previous</span><span class="pn-title">Sampling Strategies &amp; Decoding Algorithms</span></a>
+<a class="next" href="11-multi-gpu-inference.html"><span class="pn-label">Next →</span><span class="pn-title">Multi-GPU &amp; Multi-Node Inference</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-free-text-generation-breaks-on-schemas">Why Free-Text Generation Breaks on Schemas</a></li>
+<li class="toc-l2"><a href="#finite-state-machines-and-regular-languages">Finite-State Machines and Regular Languages</a></li>
+<li class="toc-l3"><a href="#fsm-primer">FSM Primer</a></li>
+<li class="toc-l3"><a href="#logit-masking">Logit Masking</a></li>
+<li class="toc-l3"><a href="#fsm-compilation-complexity">FSM Compilation Complexity</a></li>
+<li class="toc-l2"><a href="#beyond-regular-languages-pushdown-automata-and-cfgs">Beyond Regular Languages: Pushdown Automata and CFGs</a></li>
+<li class="toc-l3"><a href="#the-pda-state">The PDA State</a></li>
+<li class="toc-l3"><a href="#grammar-based-constrained-decoding">Grammar-Based Constrained Decoding</a></li>
+<li class="toc-l2"><a href="#outlines-the-foundational-library">Outlines: The Foundational Library</a></li>
+<li class="toc-l2"><a href="#xgrammar-overlap-aware-and-context-dependent-pushdown">XGrammar: Overlap-Aware and Context-Dependent Pushdown</a></li>
+<li class="toc-l3"><a href="#the-key-innovation-context-independent-tokens">The Key Innovation: Context-Independent Tokens</a></li>
+<li class="toc-l3"><a href="#xgrammar-performance-characteristics">XGrammar Performance Characteristics</a></li>
+<li class="toc-l2"><a href="#llguidance-microsofts-production-engine">llguidance: Microsoft&amp;rsquo;s Production Engine</a></li>
+<li class="toc-l2"><a href="#jsonformer-the-simple-early-approach">jsonformer: The Simple Early Approach</a></li>
+<li class="toc-l2"><a href="#a-regex-constrained-sampler-from-scratch">A Regex-Constrained Sampler From Scratch</a></li>
+<li class="toc-l2"><a href="#using-outlines-in-production">Using Outlines in Production</a></li>
+<li class="toc-l2"><a href="#tool-call-enforcement-and-function-calling">Tool-Call Enforcement and Function Calling</a></li>
+<li class="toc-l2"><a href="#performance-deep-dive-xgrammars-overlap-with-sampling">Performance Deep Dive: XGrammar&amp;rsquo;s Overlap With Sampling</a></li>
+<li class="toc-l3"><a href="#overlap-with-the-model-forward-pass">Overlap With the Model Forward Pass</a></li>
+<li class="toc-l3"><a href="#batch-heterogeneity">Batch Heterogeneity</a></li>
+<li class="toc-l2"><a href="#grammar-specification-formats">Grammar Specification Formats</a></li>
+<li class="toc-l2"><a href="#edge-cases-pitfalls-and-practical-advice">Edge Cases, Pitfalls, and Practical Advice</a></li>
+<li class="toc-l3"><a href="#tokenization-boundary-mismatches">Tokenization Boundary Mismatches</a></li>
+<li class="toc-l3"><a href="#empty-mask-infeasible-constraint">Empty Mask (Infeasible Constraint)</a></li>
+<li class="toc-l3"><a href="#schema-compilation-latency">Schema Compilation Latency</a></li>
+<li class="toc-l3"><a href="#interaction-with-speculative-decoding">Interaction With Speculative Decoding</a></li>
+<li class="toc-l2"><a href="#relationship-to-other-inference-techniques">Relationship to Other Inference Techniques</a></li>
+<li class="toc-l2"><a href="#summary-choosing-a-library">Summary: Choosing a Library</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

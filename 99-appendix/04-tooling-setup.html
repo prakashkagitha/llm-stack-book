@@ -1,0 +1,1343 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tooling &amp; Environment Setup Cheatsheet — The LLM Stack</title>
+<meta name="description" content="The practitioner&#x27;s toolbox: PyTorch, transformers, datasets, accelerate, deepspeed, vLLM, SGLang, TRL/veRL, flash-attn, bitsandbytes, wandb; environment/CUDA se">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="active" href="04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Appendix</div>
+<h1 id="tooling-environment-setup-cheatsheet">Tooling &amp; Environment Setup Cheatsheet<a class="headerlink" href="#tooling-environment-setup-cheatsheet" title="Permanent link">¶</a></h1>
+<p>The practitioner&rsquo;s most expensive mistakes rarely happen in the model architecture. They happen in the environment: a CUDA version mismatch that silently falls back to CPU, a tokenizer pad-token bug that corrupts gradients for days, or a logging setup that only captures half the metrics before a run crashes. This appendix is a dense, opinionated reference — the &ldquo;keep open in a tab&rdquo; companion to the rest of the book. We cover every major library in the modern LLM stack, the gotchas that cost real engineers real time, and the one-liners you will reach for constantly.</p>
+<p>The chapters on <a href="../01-foundations/07-autodiff-pytorch.html">Automatic Differentiation &amp; PyTorch Internals</a>, <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a>, and <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a> provide the conceptual substrate. This appendix is the <em>executable</em> layer on top.</p>
+<hr />
+<h2 id="the-library-landscape-at-a-glance">The Library Landscape at a Glance<a class="headerlink" href="#the-library-landscape-at-a-glance" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-tooling-library-stack">
+<style>
+  #fig-tooling-library-stack .lbl-main { font: 700 14px var(--sans,sans-serif); }
+  #fig-tooling-library-stack .lbl-sub  { font: 600 12.5px var(--sans,sans-serif); }
+  #fig-tooling-library-stack .lbl-desc { font: 400 10px var(--sans,sans-serif); }
+  #fig-tooling-library-stack .lbl-bracket { font: 400 9px var(--sans,sans-serif); }
+  #fig-tooling-library-stack text { fill: var(--ink-soft, #0f172a); }
+</style>
+<svg viewBox="0 0 820 530" role="img" aria-label="Layered architecture diagram of the modern LLM software stack from top (user Python script) through high-level libraries, PyTorch, performance libraries, CUDA/cuDNN/NCCL, down to the hardware driver and GPU at the bottom.">
+  <defs>
+    <marker id="ls-arrowl" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 5 L10 0 L10 10 z" fill="var(--muted,#94a3b8)"/>
+    </marker>
+    <marker id="ls-arrowr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+    </marker>
+    <marker id="ls-arrowr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+    </marker>
+  </defs>
+
+
+  <rect x="20" y="16" width="750" height="56" rx="4"
+        fill="var(--accent,#6366f1)" fill-opacity="0.15"
+        stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="395" y="40" text-anchor="middle" class="lbl-main" fill="var(--accent,#6366f1)">Your Python script</text>
+  <text x="395" y="57" text-anchor="middle" class="lbl-desc" fill="var(--ink-soft,#475569)">user-facing entry point</text>
+
+
+
+
+  <rect x="20" y="84" width="183" height="60" rx="4"
+        fill="var(--surface,#eef2ff)" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="111" y="107" text-anchor="middle" class="lbl-sub">transformers</text>
+  <text x="111" y="122" text-anchor="middle" class="lbl-desc" fill="var(--muted,#475569)">models, tokenizers</text>
+
+
+  <rect x="209" y="84" width="183" height="60" rx="4"
+        fill="var(--surface,#eef2ff)" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="300" y="107" text-anchor="middle" class="lbl-sub">datasets</text>
+  <text x="300" y="122" text-anchor="middle" class="lbl-desc" fill="var(--muted,#475569)">data loading</text>
+
+
+  <rect x="398" y="84" width="183" height="60" rx="4"
+        fill="var(--surface,#eef2ff)" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="489" y="107" text-anchor="middle" class="lbl-sub">TRL / veRL</text>
+  <text x="489" y="122" text-anchor="middle" class="lbl-desc" fill="var(--muted,#475569)">post-training SFT/RL</text>
+
+
+  <rect x="587" y="84" width="183" height="60" rx="4"
+        fill="var(--surface,#eef2ff)" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="678" y="107" text-anchor="middle" class="lbl-sub">accelerate</text>
+  <text x="678" y="122" text-anchor="middle" class="lbl-desc" fill="var(--muted,#475569)">multi-GPU launcher</text>
+
+
+  <rect x="20" y="156" width="750" height="60" rx="4"
+        fill="var(--accent,#6366f1)" fill-opacity="0.22"
+        stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="395" y="182" text-anchor="middle" class="lbl-main" fill="var(--accent,#6366f1)">PyTorch</text>
+  <text x="395" y="200" text-anchor="middle" class="lbl-desc" fill="var(--ink-soft,#475569)">autograd engine · optimizer · nn.Module</text>
+
+
+
+  <rect x="20" y="228" width="183" height="60" rx="4"
+        fill="var(--surface,#eef2ff)" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="111" y="251" text-anchor="middle" class="lbl-sub">flash-attn</text>
+  <text x="111" y="266" text-anchor="middle" class="lbl-desc" fill="var(--muted,#475569)">IO-aware attention</text>
+
+
+  <rect x="209" y="228" width="183" height="60" rx="4"
+        fill="var(--surface,#eef2ff)" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="300" y="251" text-anchor="middle" class="lbl-sub">bitsandbytes</text>
+  <text x="300" y="266" text-anchor="middle" class="lbl-desc" fill="var(--muted,#475569)">INT8/NF4 quantize</text>
+
+
+  <rect x="398" y="228" width="183" height="60" rx="4"
+        fill="var(--surface,#eef2ff)" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="489" y="251" text-anchor="middle" class="lbl-sub">DeepSpeed</text>
+  <text x="489" y="266" text-anchor="middle" class="lbl-desc" fill="var(--muted,#475569)">ZeRO-3, offload optim</text>
+
+
+  <rect x="587" y="228" width="183" height="60" rx="4"
+        fill="var(--surface,#eef2ff)" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="678" y="251" text-anchor="middle" class="lbl-sub">vLLM / SGLang</text>
+  <text x="678" y="266" text-anchor="middle" class="lbl-desc" fill="var(--muted,#475569)">inference serving</text>
+
+
+  <rect x="20" y="300" width="750" height="68" rx="4"
+        fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#64748b)" stroke-width="1"/>
+
+
+  <rect x="52" y="312" width="185" height="44" rx="4"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+  <text x="144" y="332" text-anchor="middle" class="lbl-sub">CUDA Runtime</text>
+  <text x="144" y="348" text-anchor="middle" class="lbl-desc" fill="var(--muted,#64748b)">GPU compute API</text>
+
+
+  <line x1="240" y1="334" x2="284" y2="334"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5"
+        marker-start="url(#ls-arrowl)" marker-end="url(#ls-arrowr2)"/>
+
+
+  <rect x="287" y="312" width="185" height="44" rx="4"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+  <text x="379" y="332" text-anchor="middle" class="lbl-sub">cuDNN</text>
+  <text x="379" y="348" text-anchor="middle" class="lbl-desc" fill="var(--muted,#64748b)">deep learning kernels</text>
+
+
+  <line x1="475" y1="334" x2="519" y2="334"
+        stroke="var(--muted,#94a3b8)" stroke-width="1.5"
+        marker-start="url(#ls-arrowl)" marker-end="url(#ls-arrowr2)"/>
+
+
+  <rect x="522" y="312" width="215" height="44" rx="4"
+        fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1"/>
+  <text x="629" y="332" text-anchor="middle" class="lbl-sub">NCCL</text>
+  <text x="629" y="348" text-anchor="middle" class="lbl-desc" fill="var(--muted,#64748b)">multi-GPU collective comms</text>
+
+
+
+  <rect x="20" y="380" width="750" height="60" rx="4"
+        fill="var(--surface-3,#e2e8f0)" stroke="var(--border-2,#64748b)" stroke-width="1"/>
+  <line x1="20" y1="380" x2="770" y2="380"
+        stroke="var(--border-2,#64748b)" stroke-width="2.5"/>
+  <text x="395" y="408" text-anchor="middle" class="lbl-main" fill="var(--ink-soft,#1e293b)">Driver  /  Kernel  /  Hardware (GPU)</text>
+  <text x="395" y="427" text-anchor="middle" class="lbl-desc" fill="var(--muted,#64748b)">OS driver · GPU silicon · PCIe/NVLink fabric</text>
+
+
+
+  <line x1="784" y1="38" x2="784" y2="432"
+        stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="4 3"/>
+
+  <polyline points="780,28 784,18 788,28"
+            stroke="var(--muted,#94a3b8)" stroke-width="1" fill="none"/>
+
+  <polyline points="780,442 784,452 788,442"
+            stroke="var(--muted,#94a3b8)" stroke-width="1" fill="none"/>
+
+
+  <text text-anchor="middle" class="lbl-bracket"
+        fill="var(--muted,#94a3b8)"
+        transform="translate(810,160) rotate(90)">higher level / more abstract</text>
+
+  <text text-anchor="middle" class="lbl-bracket"
+        fill="var(--muted,#94a3b8)"
+        transform="translate(810,360) rotate(90)">lower level / hardware</text>
+
+</svg>
+<figcaption><b>The modern LLM software stack is a strict vertical dependency chain.</b> Every layer above depends on the layer below: high-level libraries (transformers, datasets, TRL, accelerate) wrap PyTorch, which is the central pivot; performance libraries (flash-attn, bitsandbytes, DeepSpeed, vLLM) plug into PyTorch from below; CUDA Runtime, cuDNN, and NCCL are peer system libraries that interoperate horizontally; and the GPU driver plus hardware form the bedrock. Identifying which layer owns a failure — a kernel crash vs. an NCCL timeout vs. an OOM in the optimizer state — is the first step of any debugging session.</figcaption>
+</figure>
+
+<p>Understanding <em>which layer</em> owns a failure is half the debugging battle. A <code>CUDA error: device-side assert triggered</code> is almost always a PyTorch layer issue (wrong device, wrong dtype, invalid index); an <code>NCCL timeout</code> is a networking/driver issue; an <code>OutOfMemoryError</code> might be in the model layer, the optimizer state, or the KV cache.</p>
+<hr />
+<h2 id="cuda-driver-python-environment-setup">CUDA, Driver &amp; Python Environment Setup<a class="headerlink" href="#cuda-driver-python-environment-setup" title="Permanent link">¶</a></h2>
+<h3 id="choosing-a-cuda-version">Choosing a CUDA version<a class="headerlink" href="#choosing-a-cuda-version" title="Permanent link">¶</a></h3>
+<p>CUDA backward-compatibility is one-directional: a driver supports CUDA runtimes <em>up to</em> a certain version. Check compatibility with:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Check installed driver and maximum CUDA version it supports</span>
+nvidia-smi
+
+<span class="c1"># Check the CUDA runtime version (must be &lt;= driver&#39;s max)</span>
+nvcc<span class="w"> </span>--version
+
+<span class="c1"># Check that PyTorch sees the right CUDA</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import torch; print(torch.version.cuda, torch.cuda.get_device_name(0))&quot;</span>
+</code></pre></div>
+<p>A common trap: your system <code>nvcc</code> points to CUDA 11.x, but you installed <code>torch</code> built against CUDA 12.x. PyTorch ships its own CUDA runtime and does <em>not</em> use the system one, but <code>flash-attn</code> and <code>bitsandbytes</code> compile against the system CUDA. The solution is to pin everything:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Install the exact CUDA toolkit version your libraries need</span>
+<span class="c1"># (example: CUDA 12.1 on Ubuntu 22.04)</span>
+wget<span class="w"> </span>https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+sudo<span class="w"> </span>dpkg<span class="w"> </span>-i<span class="w"> </span>cuda-keyring_1.1-1_all.deb
+sudo<span class="w"> </span>apt-get<span class="w"> </span>update
+sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>cuda-toolkit-12-1
+<span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span>/usr/local/cuda-12.1/bin:<span class="nv">$PATH</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">LD_LIBRARY_PATH</span><span class="o">=</span>/usr/local/cuda-12.1/lib64:<span class="nv">$LD_LIBRARY_PATH</span>
+</code></pre></div>
+<h3 id="conda-environment-recipe">Conda environment recipe<a class="headerlink" href="#conda-environment-recipe" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Create a pinned environment — name encodes key versions</span>
+conda<span class="w"> </span>create<span class="w"> </span>-n<span class="w"> </span>llm-py311-cu121<span class="w"> </span><span class="nv">python</span><span class="o">=</span><span class="m">3</span>.11<span class="w"> </span>-y
+conda<span class="w"> </span>activate<span class="w"> </span>llm-py311-cu121
+
+<span class="c1"># Install PyTorch with the right CUDA build</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="nv">torch</span><span class="o">==</span><span class="m">2</span>.3.0<span class="w"> </span><span class="nv">torchvision</span><span class="o">==</span><span class="m">0</span>.18.0<span class="w"> </span><span class="nv">torchaudio</span><span class="o">==</span><span class="m">2</span>.3.0<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--index-url<span class="w"> </span>https://download.pytorch.org/whl/cu121
+
+<span class="c1"># Verify immediately — never skip this</span>
+python<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">import torch</span>
+<span class="s">assert torch.cuda.is_available(), &quot;CUDA not available!&quot;</span>
+<span class="s">print(f&quot;PyTorch {torch.__version__}, CUDA {torch.version.cuda}&quot;)</span>
+<span class="s">print(f&quot;Device: {torch.cuda.get_device_name(0)}&quot;)</span>
+<span class="s">t = torch.randn(4, 4, device=&#39;cuda&#39;)</span>
+<span class="s">print(f&quot;Tensor device: {t.device}, dtype: {t.dtype}&quot;)</span>
+<span class="s">EOF</span>
+</code></pre></div>
+<h3 id="environment-variables-every-llm-engineer-should-know">Environment variables every LLM engineer should know<a class="headerlink" href="#environment-variables-every-llm-engineer-should-know" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Distributed training: tell each process which GPU to use</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">CUDA_VISIBLE_DEVICES</span><span class="o">=</span><span class="m">0</span>,1,2,3<span class="w">  </span><span class="c1"># limit visibility to 4 GPUs</span>
+
+<span class="c1"># NCCL tuning for multi-node runs</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">NCCL_IB_DISABLE</span><span class="o">=</span><span class="m">0</span><span class="w">             </span><span class="c1"># enable InfiniBand</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">NCCL_DEBUG</span><span class="o">=</span>INFO<span class="w">               </span><span class="c1"># verbose NCCL logs for debugging</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">NCCL_SOCKET_IFNAME</span><span class="o">=</span>eth0<span class="w">       </span><span class="c1"># bind to a specific NIC</span>
+
+<span class="c1"># DeepSpeed / accelerate</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">DS_BUILD_OPS</span><span class="o">=</span><span class="m">1</span><span class="w">                </span><span class="c1"># pre-build DeepSpeed CUDA extensions</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">TOKENIZERS_PARALLELISM</span><span class="o">=</span><span class="nb">false</span><span class="w">  </span><span class="c1"># avoid HuggingFace tokenizer fork warnings</span>
+
+<span class="c1"># torch.compile / Triton</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">TORCHINDUCTOR_CACHE_DIR</span><span class="o">=</span>/tmp/inductor_cache<span class="w">  </span><span class="c1"># persist compiled kernels</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">TRITON_CACHE_DIR</span><span class="o">=</span>/tmp/triton_cache
+
+<span class="c1"># Hugging Face cache — avoid re-downloading 70 GB models every run</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">HF_HOME</span><span class="o">=</span>/data/hf_cache
+<span class="nb">export</span><span class="w"> </span><span class="nv">TRANSFORMERS_CACHE</span><span class="o">=</span>/data/hf_cache/transformers
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: CUDA_VISIBLE_DEVICES vs local_rank</p>
+<p>When launching with <code>torchrun</code>, the framework sets <code>LOCAL_RANK</code> automatically. If you <em>also</em> set <code>CUDA_VISIBLE_DEVICES=0,1</code>, then local rank 0 maps to physical GPU 0 and local rank 1 maps to physical GPU 1. If you set <code>CUDA_VISIBLE_DEVICES=2,3</code>, then local rank 0 maps to physical GPU 2. Never set <code>CUDA_VISIBLE_DEVICES</code> inside <code>torchrun</code> scripts — let the launcher control it.</p>
+</div>
+<hr />
+<h2 id="core-libraries-installation-version-pinning">Core Libraries: Installation &amp; Version Pinning<a class="headerlink" href="#core-libraries-installation-version-pinning" title="Permanent link">¶</a></h2>
+<h3 id="the-dependency-matrix">The dependency matrix<a class="headerlink" href="#the-dependency-matrix" title="Permanent link">¶</a></h3>
+<p>Certain libraries must be built against compatible versions of each other. This table reflects the state as of mid-2025:</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Recommended version</th>
+<th>Key constraint</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Python</td>
+<td>3.10 or 3.11</td>
+<td>3.12 has packaging incompatibilities</td>
+</tr>
+<tr>
+<td>PyTorch</td>
+<td>2.3.x or 2.4.x</td>
+<td>Pin CUDA build suffix</td>
+</tr>
+<tr>
+<td>CUDA toolkit</td>
+<td>12.1 or 12.4</td>
+<td>Must match <code>flash-attn</code> build</td>
+</tr>
+<tr>
+<td><code>transformers</code></td>
+<td>≥ 4.40</td>
+<td>Required for Llama-3, Gemma-2</td>
+</tr>
+<tr>
+<td><code>datasets</code></td>
+<td>≥ 2.18</td>
+<td>Arrow 15+ for large-scale streaming</td>
+</tr>
+<tr>
+<td><code>accelerate</code></td>
+<td>≥ 0.30</td>
+<td>FSDP v2 support</td>
+</tr>
+<tr>
+<td><code>flash-attn</code></td>
+<td>≥ 2.5</td>
+<td>FA3 kernels need Hopper GPU</td>
+</tr>
+<tr>
+<td><code>bitsandbytes</code></td>
+<td>≥ 0.43</td>
+<td>Multi-backend (CUDA + ROCm)</td>
+</tr>
+<tr>
+<td><code>deepspeed</code></td>
+<td>≥ 0.14</td>
+<td>ZeRO-3 + CPU offload fixes</td>
+</tr>
+<tr>
+<td><code>vllm</code></td>
+<td>≥ 0.4</td>
+<td>PagedAttention v2</td>
+</tr>
+<tr>
+<td><code>sglang</code></td>
+<td>≥ 0.2</td>
+<td>RadixAttention, constraint generation</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="c1"># Install everything in one shot (adjust CUDA suffix as needed)</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>transformers&gt;<span class="o">=</span><span class="m">4</span>.40<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>datasets&gt;<span class="o">=</span><span class="m">2</span>.18<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>accelerate&gt;<span class="o">=</span><span class="m">0</span>.30<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>trl&gt;<span class="o">=</span><span class="m">0</span>.8<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>deepspeed&gt;<span class="o">=</span><span class="m">0</span>.14<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>wandb<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>einops<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>sentencepiece<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>protobuf
+
+<span class="c1"># flash-attn must be installed AFTER torch — it compiles against installed torch</span>
+pip<span class="w"> </span>install<span class="w"> </span>flash-attn<span class="w"> </span>--no-build-isolation
+
+<span class="c1"># bitsandbytes: use the pre-built wheel for your CUDA version</span>
+pip<span class="w"> </span>install<span class="w"> </span>bitsandbytes&gt;<span class="o">=</span><span class="m">0</span>.43
+
+<span class="c1"># vLLM and SGLang are large and pin their own torch — install in separate envs</span>
+pip<span class="w"> </span>install<span class="w"> </span>vllm&gt;<span class="o">=</span><span class="m">0</span>.4
+<span class="c1"># OR</span>
+pip<span class="w"> </span>install<span class="w"> </span>sglang<span class="o">[</span>all<span class="o">]</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: flash-attn and &ndash;no-build-isolation</p>
+<p><code>flash-attn</code> needs to find your installed <code>torch</code> at compile time. Without <code>--no-build-isolation</code>, pip builds in an isolated environment where <code>torch</code> is not present and the build fails or produces a broken wheel. Always pass <code>--no-build-isolation</code> when installing <code>flash-attn</code>.</p>
+</div>
+<hr />
+<h2 id="pytorch-patterns-power-features">PyTorch: Patterns &amp; Power Features<a class="headerlink" href="#pytorch-patterns-power-features" title="Permanent link">¶</a></h2>
+<h3 id="dtype-cheatsheet-for-llm-work">dtype cheatsheet for LLM work<a class="headerlink" href="#dtype-cheatsheet-for-llm-work" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># Memory cost per parameter for common dtypes</span>
+<span class="n">dtype_bytes</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>   <span class="c1"># full precision (baseline)</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>  <span class="c1"># preferred for LLM training on Ampere+</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>   <span class="c1"># legacy; careful with gradient underflow</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">int8</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>      <span class="c1"># post-training quantization</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">float8_e4m3fn</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>  <span class="c1"># FP8, Hopper/Ada only (PyTorch &gt;= 2.1)</span>
+<span class="p">}</span>
+
+<span class="c1"># 7B model parameter memory at different dtypes</span>
+<span class="n">n_params</span> <span class="o">=</span> <span class="mi">7_000_000_000</span>
+<span class="k">for</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">bytes_per_param</span> <span class="ow">in</span> <span class="n">dtype_bytes</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="n">gb</span> <span class="o">=</span> <span class="n">n_params</span> <span class="o">*</span> <span class="n">bytes_per_param</span> <span class="o">/</span> <span class="mf">1e9</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">dtype</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">gb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> GB&quot;</span><span class="p">)</span>
+
+<span class="c1"># Output:</span>
+<span class="c1"># torch.float32:   28.0 GB</span>
+<span class="c1"># torch.bfloat16:  14.0 GB</span>
+<span class="c1"># torch.float16:   14.0 GB</span>
+<span class="c1"># torch.int8:       7.0 GB</span>
+<span class="c1"># torch.float8_e4m3fn: 7.0 GB</span>
+</code></pre></div>
+<p>See <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a> for a detailed treatment of dtype trade-offs, and <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a> for training recipes.</p>
+<h3 id="torchcompile-the-one-liner-speedup">torch.compile: the one-liner speedup<a class="headerlink" href="#torchcompile-the-one-liner-speedup" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;meta-llama/Meta-Llama-3-8B&quot;</span><span class="p">,</span>
+                                              <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>
+                                              <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+
+<span class="c1"># Compile the forward pass — typically 20-40% speedup on Ampere+ for decode</span>
+<span class="c1"># mode=&quot;reduce-overhead&quot; is best for inference (fixed shapes)</span>
+<span class="c1"># mode=&quot;max-autotune&quot; is best for training (more upfront compile time)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;reduce-overhead&quot;</span><span class="p">,</span> <span class="n">fullgraph</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="c1"># Warm up: the first few calls trigger JIT compilation</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">dummy</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">32000</span><span class="p">,</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">128</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>   <span class="c1"># warm-up passes</span>
+        <span class="n">_</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">dummy</span><span class="p">)</span>
+</code></pre></div>
+<p>See <a href="../04-kernels-efficiency/09-compilers-fusion.html">Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a> for the internals.</p>
+<h3 id="profiling-with-torchprofiler">Profiling with torch.profiler<a class="headerlink" href="#profiling-with-torchprofiler" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.profiler</span><span class="w"> </span><span class="kn">import</span> <span class="n">profile</span><span class="p">,</span> <span class="n">record_function</span><span class="p">,</span> <span class="n">ProfilerActivity</span>
+
+<span class="c1"># Profile a training step to find the bottleneck</span>
+<span class="k">with</span> <span class="n">profile</span><span class="p">(</span>
+    <span class="n">activities</span><span class="o">=</span><span class="p">[</span><span class="n">ProfilerActivity</span><span class="o">.</span><span class="n">CPU</span><span class="p">,</span> <span class="n">ProfilerActivity</span><span class="o">.</span><span class="n">CUDA</span><span class="p">],</span>
+    <span class="n">record_shapes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">profile_memory</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">with_stack</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="k">as</span> <span class="n">prof</span><span class="p">:</span>
+    <span class="k">with</span> <span class="n">record_function</span><span class="p">(</span><span class="s2">&quot;forward_pass&quot;</span><span class="p">):</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">record_function</span><span class="p">(</span><span class="s2">&quot;loss_backward&quot;</span><span class="p">):</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">output</span><span class="o">.</span><span class="n">loss</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+<span class="c1"># Print top 20 CUDA operations sorted by total CUDA time</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">prof</span><span class="o">.</span><span class="n">key_averages</span><span class="p">()</span><span class="o">.</span><span class="n">table</span><span class="p">(</span><span class="n">sort_by</span><span class="o">=</span><span class="s2">&quot;cuda_time_total&quot;</span><span class="p">,</span> <span class="n">row_limit</span><span class="o">=</span><span class="mi">20</span><span class="p">))</span>
+
+<span class="c1"># Export to Chrome trace for interactive visualization</span>
+<span class="n">prof</span><span class="o">.</span><span class="n">export_chrome_trace</span><span class="p">(</span><span class="s2">&quot;/tmp/trace.json&quot;</span><span class="p">)</span>
+<span class="c1"># Open chrome://tracing and load the file</span>
+</code></pre></div>
+<hr />
+<h2 id="huggingface-ecosystem-transformers-datasets-accelerate">HuggingFace Ecosystem: transformers, datasets, accelerate<a class="headerlink" href="#huggingface-ecosystem-transformers-datasets-accelerate" title="Permanent link">¶</a></h2>
+<h3 id="loading-and-inspecting-models">Loading and inspecting models<a class="headerlink" href="#loading-and-inspecting-models" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span><span class="p">,</span> <span class="n">BitsAndBytesConfig</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># --- Basic load ---</span>
+<span class="n">model_id</span> <span class="o">=</span> <span class="s2">&quot;meta-llama/Meta-Llama-3-8B-Instruct&quot;</span>
+<span class="n">tok</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_id</span><span class="p">)</span>
+
+<span class="c1"># Ensure pad_token is set — required for batched training</span>
+<span class="k">if</span> <span class="n">tok</span><span class="o">.</span><span class="n">pad_token</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">tok</span><span class="o">.</span><span class="n">pad_token</span> <span class="o">=</span> <span class="n">tok</span><span class="o">.</span><span class="n">eos_token</span>        <span class="c1"># most common fix</span>
+    <span class="n">tok</span><span class="o">.</span><span class="n">pad_token_id</span> <span class="o">=</span> <span class="n">tok</span><span class="o">.</span><span class="n">eos_token_id</span>
+
+<span class="c1"># --- 4-bit quantized load via bitsandbytes (for fine-tuning on one GPU) ---</span>
+<span class="n">bnb_config</span> <span class="o">=</span> <span class="n">BitsAndBytesConfig</span><span class="p">(</span>
+    <span class="n">load_in_4bit</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">bnb_4bit_compute_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>
+    <span class="n">bnb_4bit_quant_type</span><span class="o">=</span><span class="s2">&quot;nf4&quot;</span><span class="p">,</span>       <span class="c1"># NormalFloat4, recommended for LLMs</span>
+    <span class="n">bnb_4bit_use_double_quant</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># nested quantization saves ~0.4 bit/param</span>
+<span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="n">model_id</span><span class="p">,</span>
+    <span class="n">quantization_config</span><span class="o">=</span><span class="n">bnb_config</span><span class="p">,</span>
+    <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>  <span class="c1"># distributes layers across available GPUs/CPU</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Model footprint: </span><span class="si">{</span><span class="n">model</span><span class="o">.</span><span class="n">get_memory_footprint</span><span class="p">()</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mf">1e9</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB&quot;</span><span class="p">)</span>
+
+<span class="c1"># --- Inspect parameter counts ---</span>
+<span class="n">total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+<span class="n">trainable</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total params: </span><span class="si">{</span><span class="n">total</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">B, Trainable: </span><span class="si">{</span><span class="n">trainable</span><span class="o">/</span><span class="mf">1e9</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">B&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="datasets-streaming-shuffling-packing">datasets: streaming, shuffling, packing<a class="headerlink" href="#datasets-streaming-shuffling-packing" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datasets</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dataset</span><span class="p">,</span> <span class="n">DatasetDict</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">datasets</span>
+
+<span class="c1"># Stream a multi-hundred-GB dataset without downloading it fully</span>
+<span class="n">ds</span> <span class="o">=</span> <span class="n">load_dataset</span><span class="p">(</span><span class="s2">&quot;allenai/c4&quot;</span><span class="p">,</span> <span class="s2">&quot;en&quot;</span><span class="p">,</span> <span class="n">split</span><span class="o">=</span><span class="s2">&quot;train&quot;</span><span class="p">,</span> <span class="n">streaming</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Take a sample for iteration</span>
+<span class="n">sample_iter</span> <span class="o">=</span> <span class="n">ds</span><span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">example</span> <span class="ow">in</span> <span class="n">sample_iter</span><span class="p">:</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="n">example</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">]</span>
+    <span class="c1"># ... tokenize, pack, etc.</span>
+
+<span class="c1"># For training: load a local JSONL dataset</span>
+<span class="n">ds</span> <span class="o">=</span> <span class="n">load_dataset</span><span class="p">(</span><span class="s2">&quot;json&quot;</span><span class="p">,</span> <span class="n">data_files</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;train&quot;</span><span class="p">:</span> <span class="s2">&quot;/data/train.jsonl&quot;</span><span class="p">,</span>
+                                       <span class="s2">&quot;validation&quot;</span><span class="p">:</span> <span class="s2">&quot;/data/val.jsonl&quot;</span><span class="p">})</span>
+
+<span class="c1"># Tokenize in parallel using map()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">tokenize</span><span class="p">(</span><span class="n">example</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">tok</span><span class="p">(</span><span class="n">example</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">],</span>
+               <span class="n">truncation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+               <span class="n">max_length</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span>
+               <span class="n">return_overflowing_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># yields multiple chunks if long</span>
+               <span class="n">return_length</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">tokenized</span> <span class="o">=</span> <span class="n">ds</span><span class="o">.</span><span class="n">map</span><span class="p">(</span>
+    <span class="n">tokenize</span><span class="p">,</span>
+    <span class="n">batched</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">num_proc</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>                     <span class="c1"># use 16 CPU cores</span>
+    <span class="n">remove_columns</span><span class="o">=</span><span class="n">ds</span><span class="p">[</span><span class="s2">&quot;train&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">column_names</span><span class="p">,</span>
+    <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Tokenizing&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">tokenized</span><span class="o">.</span><span class="n">save_to_disk</span><span class="p">(</span><span class="s2">&quot;/data/tokenized_dataset&quot;</span><span class="p">)</span>  <span class="c1"># Arrow format, fast to reload</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: sequence packing for efficiency</p>
+<p>Padding wastes compute. Use <code>DataCollatorForSeq2Seq</code> with <code>padding=True</code> for small datasets, but for large pretraining runs, pack multiple short examples into a single sequence (e.g., separated by <code>&lt;|endoftext|&gt;</code>) to reach close to 100% token utilization. See <a href="../05-posttraining-alignment/02-chat-templates-packing.html">Chat Templates, Data Formatting &amp; Sequence Packing</a> for the full treatment.</p>
+</div>
+<h3 id="accelerate-the-multi-gpu-abstraction-layer">accelerate: the multi-GPU abstraction layer<a class="headerlink" href="#accelerate-the-multi-gpu-abstraction-layer" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">accelerate</span><span class="w"> </span><span class="kn">import</span> <span class="n">Accelerator</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.data</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataLoader</span>
+
+<span class="c1"># Accelerator detects the environment automatically:</span>
+<span class="c1"># - single GPU: wraps nothing</span>
+<span class="c1"># - multi-GPU DDP: wraps in DistributedDataParallel</span>
+<span class="c1"># - FSDP: shards the model</span>
+<span class="c1"># - DeepSpeed: delegates to DS engine</span>
+<span class="n">accelerator</span> <span class="o">=</span> <span class="n">Accelerator</span><span class="p">(</span>
+    <span class="n">mixed_precision</span><span class="o">=</span><span class="s2">&quot;bf16&quot;</span><span class="p">,</span>       <span class="c1"># automatic AMP</span>
+    <span class="n">gradient_accumulation_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">log_with</span><span class="o">=</span><span class="s2">&quot;wandb&quot;</span><span class="p">,</span>
+    <span class="n">project_dir</span><span class="o">=</span><span class="s2">&quot;./runs&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">dataloader</span><span class="p">,</span> <span class="n">scheduler</span> <span class="o">=</span> <span class="n">accelerator</span><span class="o">.</span><span class="n">prepare</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">dataloader</span><span class="p">,</span> <span class="n">scheduler</span>
+<span class="p">)</span>
+
+<span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">dataloader</span><span class="p">:</span>
+    <span class="k">with</span> <span class="n">accelerator</span><span class="o">.</span><span class="n">accumulate</span><span class="p">(</span><span class="n">model</span><span class="p">):</span>   <span class="c1"># handles grad accum across devices</span>
+        <span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">batch</span><span class="p">)</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">loss</span>
+        <span class="n">accelerator</span><span class="o">.</span><span class="n">backward</span><span class="p">(</span><span class="n">loss</span><span class="p">)</span>        <span class="c1"># replaces loss.backward()</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">accelerator</span><span class="o">.</span><span class="n">is_main_process</span><span class="p">:</span>
+        <span class="n">accelerator</span><span class="o">.</span><span class="n">log</span><span class="p">({</span><span class="s2">&quot;loss&quot;</span><span class="p">:</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()})</span>
+</code></pre></div>
+<p>Launch commands:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Single GPU</span>
+python<span class="w"> </span>train.py
+
+<span class="c1"># Multi-GPU on one node (4 GPUs)</span>
+accelerate<span class="w"> </span>launch<span class="w"> </span>--num_processes<span class="w"> </span><span class="m">4</span><span class="w"> </span>train.py
+
+<span class="c1"># Multi-GPU with DeepSpeed ZeRO-3</span>
+accelerate<span class="w"> </span>launch<span class="w"> </span>--config_file<span class="w"> </span>ds_zero3.yaml<span class="w"> </span>train.py
+
+<span class="c1"># torchrun equivalent (lower level)</span>
+torchrun<span class="w"> </span>--nproc_per_node<span class="o">=</span><span class="m">4</span><span class="w"> </span>--nnodes<span class="o">=</span><span class="m">1</span><span class="w"> </span>train.py
+</code></pre></div>
+<p>Configure accelerate once and reuse:</p>
+<div class="highlight"><pre><span></span><code>accelerate<span class="w"> </span>config<span class="w">   </span><span class="c1"># interactive wizard — writes ~/.cache/huggingface/accelerate/default_config.yaml</span>
+</code></pre></div>
+<hr />
+<h2 id="deepspeed-zero-offloading-config-files">DeepSpeed: ZeRO, Offloading &amp; Config Files<a class="headerlink" href="#deepspeed-zero-offloading-config-files" title="Permanent link">¶</a></h2>
+<p>DeepSpeed is the Swiss Army knife of large-model training. Its ZeRO optimizer stages progressively shard optimizer states (ZeRO-1), gradients (ZeRO-2), and model parameters (ZeRO-3) across GPUs, enabling models that would otherwise not fit.</p>
+<p>For the full treatment see <a href="../03-pretraining/05-distributed-data-parallel.html">Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a> and <a href="../03-pretraining/07-megatron-deepspeed.html">Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a>.</p>
+<h3 id="zero-2-config-training-fits-in-gpu-memory-optimizer-states-are-large">ZeRO-2 config (training fits in GPU memory, optimizer states are large)<a class="headerlink" href="#zero-2-config-training-fits-in-gpu-memory-optimizer-states-are-large" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;train_batch_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;train_micro_batch_size_per_gpu&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;gradient_accumulation_steps&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;fp16&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;bf16&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;zero_optimization&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;stage&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;allgather_partitions&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;reduce_scatter&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;allgather_bucket_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">2e8</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;reduce_bucket_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">2e8</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;overlap_comm&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;gradient_clipping&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;steps_per_print&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">50</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;wall_clock_breakdown&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="zero-3-with-cpu-offload-fine-tune-70b-on-4x80-gb-gpus">ZeRO-3 with CPU offload (fine-tune 70B on 4x80 GB GPUs)<a class="headerlink" href="#zero-3-with-cpu-offload-fine-tune-70b-on-4x80-gb-gpus" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;train_batch_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;train_micro_batch_size_per_gpu&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;gradient_accumulation_steps&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;bf16&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;zero_optimization&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;stage&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;offload_optimizer&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;device&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;pin_memory&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;offload_param&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;device&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;pin_memory&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;overlap_comm&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;contiguous_gradients&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;sub_group_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1e9</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;reduce_bucket_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1e9</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;stage3_prefetch_bucket_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">9e8</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;stage3_param_persistence_threshold&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1e6</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;stage3_max_live_parameters&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1e9</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;stage3_max_reuse_distance&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1e9</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;stage3_gather_16bit_weights_on_model_save&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;gradient_clipping&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span>
+<span class="p">}</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: ZeRO-3 memory savings for a 70B model</p>
+<p>A 70B parameter model in bf16 requires <span class="arithmatex">\(70 \times 10^9 \times 2 = 140 \text{ GB}\)</span> just for model weights.</p>
+<p>With a standard Adam optimizer in fp32, optimizer states (momentum + variance + master weights) require <span class="arithmatex">\(70 \times 10^9 \times (4 + 4 + 4) = 840 \text{ GB}\)</span>.</p>
+<p>With ZeRO-3 across <span class="arithmatex">\(N = 8\)</span> GPUs, each GPU holds <span class="arithmatex">\(\frac{1}{8}\)</span> of everything:</p>
+<div class="arithmatex">\[
+\text{per-GPU weight memory} = \frac{140}{8} = 17.5 \text{ GB}
+$$
+$$
+\text{per-GPU optimizer memory} = \frac{840}{8} = 105 \text{ GB}
+\]</div>
+<p>Adding CPU offload moves the optimizer states entirely off-GPU. The 80 GB GPU now only needs to hold:
+- The active parameter shard: ~17.5 GB
+- Gradients (also sharded): ~17.5 GB
+- Activations for a micro-batch of 2 at sequence length 2048: ~4–8 GB (model-dependent)</p>
+<p>Total GPU requirement: ~40–43 GB per GPU, well within an 80 GB A100 or H100.</p>
+</div>
+<hr />
+<h2 id="flash-attn-and-bitsandbytes-installation-verification">flash-attn and bitsandbytes: Installation &amp; Verification<a class="headerlink" href="#flash-attn-and-bitsandbytes-installation-verification" title="Permanent link">¶</a></h2>
+<h3 id="flash-attn">flash-attn<a class="headerlink" href="#flash-attn" title="Permanent link">¶</a></h3>
+<p>FlashAttention replaces the naive <span class="arithmatex">\(O(N^2)\)</span> memory attention with a tiled, IO-aware kernel that avoids materializing the full <span class="arithmatex">\(N \times N\)</span> attention matrix. See <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a> and <a href="../04-kernels-efficiency/03-flash-attention-2-3.html">FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a> for the theory.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Check your GPU compute capability first</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import torch; print(torch.cuda.get_device_capability())&quot;</span>
+<span class="c1"># (8, 0) = A100, (8, 6) = A10G, (9, 0) = H100 — FA3 needs (9,0)</span>
+
+<span class="c1"># Install (compiles in ~5-10 minutes)</span>
+pip<span class="w"> </span>install<span class="w"> </span>flash-attn<span class="w"> </span>--no-build-isolation
+
+<span class="c1"># Verify</span>
+python<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">import flash_attn</span>
+<span class="s">print(f&quot;flash-attn version: {flash_attn.__version__}&quot;)</span>
+
+<span class="s">import torch</span>
+<span class="s">from flash_attn import flash_attn_qkvpacked_func</span>
+
+<span class="s">B, S, H, D = 2, 512, 32, 64  # batch, seq, heads, head_dim</span>
+<span class="s">qkv = torch.randn(B, S, 3, H, D, dtype=torch.bfloat16, device=&quot;cuda&quot;)</span>
+<span class="s">out = flash_attn_qkvpacked_func(qkv, dropout_p=0.0, causal=True)</span>
+<span class="s">print(f&quot;Output shape: {out.shape}, dtype: {out.dtype}&quot;)</span>
+<span class="s"># Expected: torch.Size([2, 512, 32, 64])</span>
+<span class="s">EOF</span>
+</code></pre></div>
+<p>Enable FlashAttention in transformers by setting <code>attn_implementation</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="n">model_id</span><span class="p">,</span>
+    <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>
+    <span class="n">attn_implementation</span><span class="o">=</span><span class="s2">&quot;flash_attention_2&quot;</span><span class="p">,</span>  <span class="c1"># requires flash-attn installed</span>
+    <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="bitsandbytes">bitsandbytes<a class="headerlink" href="#bitsandbytes" title="Permanent link">¶</a></h3>
+<p><code>bitsandbytes</code> enables 8-bit optimizers (reducing optimizer memory by 50%) and 4-bit weight quantization (NF4/INT4) for loading and fine-tuning large models on consumer hardware. See <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a> for the quantization theory.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">bitsandbytes</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">bnb</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># 8-bit Adam — same API as torch.optim.Adam, half the memory</span>
+<span class="n">optimizer</span> <span class="o">=</span> <span class="n">bnb</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Adam8bit</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span>
+    <span class="n">lr</span><span class="o">=</span><span class="mf">2e-4</span><span class="p">,</span>
+    <span class="n">betas</span><span class="o">=</span><span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.999</span><span class="p">),</span>
+<span class="p">)</span>
+
+<span class="c1"># Check that quantized layers loaded correctly</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">BitsAndBytesConfig</span>
+
+<span class="n">bnb_config</span> <span class="o">=</span> <span class="n">BitsAndBytesConfig</span><span class="p">(</span>
+    <span class="n">load_in_4bit</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">bnb_4bit_quant_type</span><span class="o">=</span><span class="s2">&quot;nf4&quot;</span><span class="p">,</span>
+    <span class="n">bnb_4bit_compute_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>
+    <span class="n">bnb_4bit_use_double_quant</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;meta-llama/Meta-Llama-3-8B&quot;</span><span class="p">,</span>
+                                              <span class="n">quantization_config</span><span class="o">=</span><span class="n">bnb_config</span><span class="p">,</span>
+                                              <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">)</span>
+
+<span class="c1"># Verify quantization</span>
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">module</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_modules</span><span class="p">():</span>
+    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="s1">&#39;weight&#39;</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">module</span><span class="o">.</span><span class="n">weight</span><span class="p">,</span> <span class="s1">&#39;quant_type&#39;</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">module</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">quant_type</span><span class="si">}</span><span class="s2">, &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;shape=</span><span class="si">{</span><span class="n">module</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">break</span>  <span class="c1"># just show the first quantized layer</span>
+</code></pre></div>
+<hr />
+<h2 id="vllm-and-sglang-spinning-up-inference-servers">vLLM and SGLang: Spinning Up Inference Servers<a class="headerlink" href="#vllm-and-sglang-spinning-up-inference-servers" title="Permanent link">¶</a></h2>
+<h3 id="vllm">vLLM<a class="headerlink" href="#vllm" title="Permanent link">¶</a></h3>
+<p>vLLM is the de facto standard for high-throughput LLM serving. Its key innovation — PagedAttention — is covered in <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a> and <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Start an OpenAI-compatible server (drop-in replacement for OpenAI API)</span>
+python<span class="w"> </span>-m<span class="w"> </span>vllm.entrypoints.openai.api_server<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model<span class="w"> </span>meta-llama/Meta-Llama-3-8B-Instruct<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--tensor-parallel-size<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\ </span><span class="w">         </span><span class="c1"># split model across 2 GPUs</span>
+<span class="w">    </span>--max-model-len<span class="w"> </span><span class="m">8192</span><span class="w"> </span><span class="se">\ </span><span class="w">             </span><span class="c1"># cap context window</span>
+<span class="w">    </span>--gpu-memory-utilization<span class="w"> </span><span class="m">0</span>.90<span class="w"> </span><span class="se">\ </span><span class="w">   </span><span class="c1"># leave 10% headroom</span>
+<span class="w">    </span>--port<span class="w"> </span><span class="m">8000</span>
+
+<span class="c1"># Query the running server with curl</span>
+curl<span class="w"> </span>http://localhost:8000/v1/chat/completions<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<span class="s1">    &quot;model&quot;: &quot;meta-llama/Meta-Llama-3-8B-Instruct&quot;,</span>
+<span class="s1">    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Explain backpropagation.&quot;}],</span>
+<span class="s1">    &quot;max_tokens&quot;: 256</span>
+<span class="s1">  }&#39;</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># Use vLLM programmatically for offline batch inference</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">vllm</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLM</span><span class="p">,</span> <span class="n">SamplingParams</span>
+
+<span class="n">llm</span> <span class="o">=</span> <span class="n">LLM</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;meta-llama/Meta-Llama-3-8B-Instruct&quot;</span><span class="p">,</span>
+    <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;bfloat16&quot;</span><span class="p">,</span>
+    <span class="n">tensor_parallel_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">max_model_len</span><span class="o">=</span><span class="mi">8192</span><span class="p">,</span>
+    <span class="n">gpu_memory_utilization</span><span class="o">=</span><span class="mf">0.85</span><span class="p">,</span>
+    <span class="n">enable_prefix_caching</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># cache common prefixes (system prompts)</span>
+<span class="p">)</span>
+
+<span class="n">sampling_params</span> <span class="o">=</span> <span class="n">SamplingParams</span><span class="p">(</span>
+    <span class="n">temperature</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span>
+    <span class="n">top_p</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span>
+    <span class="n">max_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+    <span class="n">stop</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;&lt;|eot_id|&gt;&quot;</span><span class="p">],</span>   <span class="c1"># Llama-3 end-of-turn token</span>
+<span class="p">)</span>
+
+<span class="n">prompts</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;What is gradient descent?&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Explain the transformer architecture.&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+<span class="n">outputs</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">sampling_params</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">outputs</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span><span class="p">[:</span><span class="mi">100</span><span class="p">])</span>
+</code></pre></div>
+<h3 id="sglang">SGLang<a class="headerlink" href="#sglang" title="Permanent link">¶</a></h3>
+<p>SGLang adds a structured generation runtime and RadixAttention (prefix caching at the radix-tree level) on top of an efficient inference engine. See <a href="../07-inference-serving/04-sglang-radixattention.html">SGLang: RadixAttention &amp; Structured Programs</a>.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Launch SGLang server</span>
+python<span class="w"> </span>-m<span class="w"> </span>sglang.launch_server<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model-path<span class="w"> </span>meta-llama/Meta-Llama-3-8B-Instruct<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--tp<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--port<span class="w"> </span><span class="m">30000</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sglang</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sgl</span>
+
+<span class="c1"># SGLang&#39;s structured generation: constrain output to a JSON schema</span>
+<span class="nd">@sgl</span><span class="o">.</span><span class="n">function</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">classify_sentiment</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">review</span><span class="p">):</span>
+    <span class="n">s</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="s2">&quot;You are a sentiment classifier.&quot;</span><span class="p">)</span>
+    <span class="n">s</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">user</span><span class="p">(</span><span class="n">review</span><span class="p">)</span>
+    <span class="n">s</span> <span class="o">+=</span> <span class="n">sgl</span><span class="o">.</span><span class="n">assistant</span><span class="p">(</span>
+        <span class="n">sgl</span><span class="o">.</span><span class="n">gen</span><span class="p">(</span><span class="s2">&quot;sentiment&quot;</span><span class="p">,</span>
+                <span class="n">choices</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;positive&quot;</span><span class="p">,</span> <span class="s2">&quot;negative&quot;</span><span class="p">,</span> <span class="s2">&quot;neutral&quot;</span><span class="p">],</span>  <span class="c1"># constrained</span>
+                <span class="n">max_tokens</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="p">)</span>
+
+<span class="c1"># Fork for parallel evaluation of multiple reviews</span>
+<span class="n">reviews</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;This movie was great!&quot;</span><span class="p">,</span> <span class="s2">&quot;Terrible service.&quot;</span><span class="p">,</span> <span class="s2">&quot;It was okay.&quot;</span><span class="p">]</span>
+<span class="n">states</span> <span class="o">=</span> <span class="n">classify_sentiment</span><span class="o">.</span><span class="n">run_batch</span><span class="p">(</span>
+    <span class="p">[{</span><span class="s2">&quot;review&quot;</span><span class="p">:</span> <span class="n">r</span><span class="p">}</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">reviews</span><span class="p">],</span>
+    <span class="n">progress_bar</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="k">for</span> <span class="n">state</span><span class="p">,</span> <span class="n">review</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">states</span><span class="p">,</span> <span class="n">reviews</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">review</span><span class="si">!r}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="n">state</span><span class="p">[</span><span class="s1">&#39;sentiment&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="trl-and-verl-post-training-infrastructure">TRL and veRL: Post-Training Infrastructure<a class="headerlink" href="#trl-and-verl-post-training-infrastructure" title="Permanent link">¶</a></h2>
+<h3 id="trl-for-sft-and-rl">TRL for SFT and RL<a class="headerlink" href="#trl-for-sft-and-rl" title="Permanent link">¶</a></h3>
+<p>TRL (Transformer Reinforcement Learning) from HuggingFace is the most accessible entry point for post-training workflows. For the full conceptual treatment see <a href="../06-rl-infra/03-trl.html">TRL: HuggingFace&rsquo;s RL Library</a>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">trl</span><span class="w"> </span><span class="kn">import</span> <span class="n">SFTTrainer</span><span class="p">,</span> <span class="n">SFTConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datasets</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dataset</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">peft</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoraConfig</span><span class="p">,</span> <span class="n">get_peft_model</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="n">model_id</span> <span class="o">=</span> <span class="s2">&quot;meta-llama/Meta-Llama-3-8B&quot;</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="n">model_id</span><span class="p">,</span> <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span> <span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span>
+<span class="p">)</span>
+<span class="n">tok</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_id</span><span class="p">)</span>
+<span class="n">tok</span><span class="o">.</span><span class="n">pad_token</span> <span class="o">=</span> <span class="n">tok</span><span class="o">.</span><span class="n">eos_token</span>
+
+<span class="c1"># LoRA config: fine-tune only ~0.5% of parameters</span>
+<span class="n">lora_config</span> <span class="o">=</span> <span class="n">LoraConfig</span><span class="p">(</span>
+    <span class="n">r</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+    <span class="n">lora_alpha</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+    <span class="n">target_modules</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;q_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;k_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;v_proj&quot;</span><span class="p">,</span> <span class="s2">&quot;o_proj&quot;</span><span class="p">],</span>
+    <span class="n">lora_dropout</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+    <span class="n">bias</span><span class="o">=</span><span class="s2">&quot;none&quot;</span><span class="p">,</span>
+    <span class="n">task_type</span><span class="o">=</span><span class="s2">&quot;CAUSAL_LM&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">get_peft_model</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">lora_config</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">print_trainable_parameters</span><span class="p">()</span>
+<span class="c1"># Output: trainable params: 41,943,040 || all params: 8,072,220,672 || trainable%: 0.5196</span>
+
+<span class="n">ds</span> <span class="o">=</span> <span class="n">load_dataset</span><span class="p">(</span><span class="s2">&quot;HuggingFaceH4/ultrachat_200k&quot;</span><span class="p">,</span> <span class="n">split</span><span class="o">=</span><span class="s2">&quot;train_sft&quot;</span><span class="p">)</span>
+
+<span class="n">training_args</span> <span class="o">=</span> <span class="n">SFTConfig</span><span class="p">(</span>
+    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;./llama3-sft&quot;</span><span class="p">,</span>
+    <span class="n">num_train_epochs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">per_device_train_batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">gradient_accumulation_steps</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+    <span class="n">learning_rate</span><span class="o">=</span><span class="mf">2e-4</span><span class="p">,</span>
+    <span class="n">bf16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">logging_steps</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+    <span class="n">save_strategy</span><span class="o">=</span><span class="s2">&quot;epoch&quot;</span><span class="p">,</span>
+    <span class="n">report_to</span><span class="o">=</span><span class="s2">&quot;wandb&quot;</span><span class="p">,</span>
+    <span class="n">dataset_text_field</span><span class="o">=</span><span class="s2">&quot;prompt&quot;</span><span class="p">,</span>
+    <span class="n">max_seq_length</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span>
+    <span class="n">packing</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>                     <span class="c1"># pack short examples together</span>
+<span class="p">)</span>
+
+<span class="n">trainer</span> <span class="o">=</span> <span class="n">SFTTrainer</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+    <span class="n">args</span><span class="o">=</span><span class="n">training_args</span><span class="p">,</span>
+    <span class="n">train_dataset</span><span class="o">=</span><span class="n">ds</span><span class="p">,</span>
+    <span class="n">tokenizer</span><span class="o">=</span><span class="n">tok</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">trainer</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+<span class="n">trainer</span><span class="o">.</span><span class="n">save_model</span><span class="p">(</span><span class="s2">&quot;./llama3-sft-final&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># GRPO (Group Relative Policy Optimization) with TRL</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">trl</span><span class="w"> </span><span class="kn">import</span> <span class="n">GRPOTrainer</span><span class="p">,</span> <span class="n">GRPOConfig</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">reward_fn</span><span class="p">(</span><span class="n">completions</span><span class="p">,</span> <span class="n">prompts</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Custom reward: give +1 if response contains a number, else 0.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">[</span><span class="mf">1.0</span> <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">isdigit</span><span class="p">()</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">comp</span><span class="p">)</span> <span class="k">else</span> <span class="mf">0.0</span>
+            <span class="k">for</span> <span class="n">comp</span> <span class="ow">in</span> <span class="n">completions</span><span class="p">]</span>
+
+<span class="n">grpo_config</span> <span class="o">=</span> <span class="n">GRPOConfig</span><span class="p">(</span>
+    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;./llama3-grpo&quot;</span><span class="p">,</span>
+    <span class="n">num_train_epochs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">per_device_train_batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">learning_rate</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>
+    <span class="n">bf16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">num_generations</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>    <span class="c1"># G in GRPO: sample G completions per prompt</span>
+    <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>
+    <span class="n">report_to</span><span class="o">=</span><span class="s2">&quot;wandb&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">trainer</span> <span class="o">=</span> <span class="n">GRPOTrainer</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+    <span class="n">reward_funcs</span><span class="o">=</span><span class="n">reward_fn</span><span class="p">,</span>
+    <span class="n">args</span><span class="o">=</span><span class="n">grpo_config</span><span class="p">,</span>
+    <span class="n">train_dataset</span><span class="o">=</span><span class="n">ds</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">trainer</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+</code></pre></div>
+<p>For veRL (HybridFlow) and more complex multi-controller RL setups, see <a href="../06-rl-infra/04-verl.html">veRL: HybridFlow &amp; The Single-Controller Architecture</a>.</p>
+<hr />
+<h2 id="weights-biases-wandb-experiment-tracking">Weights &amp; Biases (wandb): Experiment Tracking<a class="headerlink" href="#weights-biases-wandb-experiment-tracking" title="Permanent link">¶</a></h2>
+<p>W&amp;B is the standard experiment tracker for LLM work. Getting logging right from the start saves enormous debugging time.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">wandb</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+
+<span class="c1"># --- Initialize a run ---</span>
+<span class="n">wandb</span><span class="o">.</span><span class="n">init</span><span class="p">(</span>
+    <span class="n">project</span><span class="o">=</span><span class="s2">&quot;llm-stack-experiments&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;llama3-sft-lora-r16&quot;</span><span class="p">,</span>
+    <span class="n">config</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;meta-llama/Meta-Llama-3-8B&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;lora_r&quot;</span><span class="p">:</span> <span class="mi">16</span><span class="p">,</span>
+        <span class="s2">&quot;lr&quot;</span><span class="p">:</span> <span class="mf">2e-4</span><span class="p">,</span>
+        <span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="mi">16</span><span class="p">,</span>
+        <span class="s2">&quot;epochs&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+        <span class="s2">&quot;dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;ultrachat_200k&quot;</span><span class="p">,</span>
+    <span class="p">},</span>
+    <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;sft&quot;</span><span class="p">,</span> <span class="s2">&quot;lora&quot;</span><span class="p">,</span> <span class="s2">&quot;llama3&quot;</span><span class="p">],</span>
+<span class="p">)</span>
+
+<span class="c1"># --- During training: log metrics ---</span>
+<span class="k">for</span> <span class="n">step</span><span class="p">,</span> <span class="n">batch</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">dataloader</span><span class="p">):</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">train_step</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="mi">10</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">wandb</span><span class="o">.</span><span class="n">log</span><span class="p">({</span>
+            <span class="s2">&quot;train/loss&quot;</span><span class="p">:</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+            <span class="s2">&quot;train/lr&quot;</span><span class="p">:</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">get_last_lr</span><span class="p">()[</span><span class="mi">0</span><span class="p">],</span>
+            <span class="s2">&quot;train/grad_norm&quot;</span><span class="p">:</span> <span class="n">grad_norm</span><span class="p">,</span>
+            <span class="s2">&quot;train/tokens_per_sec&quot;</span><span class="p">:</span> <span class="n">tokens_per_sec</span><span class="p">,</span>
+        <span class="p">},</span> <span class="n">step</span><span class="o">=</span><span class="n">step</span><span class="p">)</span>
+
+<span class="c1"># --- Log model outputs as a Table for qualitative eval ---</span>
+<span class="n">columns</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;prompt&quot;</span><span class="p">,</span> <span class="s2">&quot;generation&quot;</span><span class="p">,</span> <span class="s2">&quot;reward&quot;</span><span class="p">]</span>
+<span class="n">rows</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">for</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">gen</span><span class="p">,</span> <span class="n">reward</span> <span class="ow">in</span> <span class="n">eval_samples</span><span class="p">:</span>
+    <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">([</span><span class="n">prompt</span><span class="p">,</span> <span class="n">gen</span><span class="p">,</span> <span class="n">reward</span><span class="p">])</span>
+
+<span class="n">wandb</span><span class="o">.</span><span class="n">log</span><span class="p">({</span><span class="s2">&quot;eval/samples&quot;</span><span class="p">:</span> <span class="n">wandb</span><span class="o">.</span><span class="n">Table</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="n">columns</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">rows</span><span class="p">)})</span>
+
+<span class="c1"># --- Finish the run ---</span>
+<span class="n">wandb</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># Login once per machine</span>
+wandb<span class="w"> </span>login<span class="w">  </span><span class="c1"># prompts for API key from wandb.ai</span>
+
+<span class="c1"># Set offline mode for air-gapped clusters</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_MODE</span><span class="o">=</span>offline<span class="w">   </span><span class="c1"># logs to disk; sync later with `wandb sync`</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">WANDB_DIR</span><span class="o">=</span>/data/wandb_logs
+
+<span class="c1"># Resume a crashed run by its ID</span>
+wandb.init<span class="o">(</span><span class="nv">project</span><span class="o">=</span><span class="s2">&quot;...&quot;</span>,<span class="w"> </span><span class="nv">id</span><span class="o">=</span><span class="s2">&quot;abc123&quot;</span>,<span class="w"> </span><span class="nv">resume</span><span class="o">=</span><span class="s2">&quot;allow&quot;</span><span class="o">)</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: artifact versioning</p>
+<p>Use <code>wandb.Artifact</code> to version your datasets and model checkpoints. This creates a provenance trail that links every model version back to the exact data and code that produced it — invaluable when you need to diagnose a regression three months later.</p>
+</div>
+<div class="highlight"><pre><span></span><code><span class="c1"># Log a model checkpoint as a W&amp;B artifact</span>
+<span class="n">artifact</span> <span class="o">=</span> <span class="n">wandb</span><span class="o">.</span><span class="n">Artifact</span><span class="p">(</span><span class="s2">&quot;llama3-sft-checkpoint&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;model&quot;</span><span class="p">)</span>
+<span class="n">artifact</span><span class="o">.</span><span class="n">add_dir</span><span class="p">(</span><span class="s2">&quot;./llama3-sft-final&quot;</span><span class="p">)</span>
+<span class="n">wandb</span><span class="o">.</span><span class="n">log_artifact</span><span class="p">(</span><span class="n">artifact</span><span class="p">)</span>
+
+<span class="c1"># Later: download the exact checkpoint</span>
+<span class="n">api</span> <span class="o">=</span> <span class="n">wandb</span><span class="o">.</span><span class="n">Api</span><span class="p">()</span>
+<span class="n">artifact</span> <span class="o">=</span> <span class="n">api</span><span class="o">.</span><span class="n">artifact</span><span class="p">(</span><span class="s2">&quot;myteam/llm-experiments/llama3-sft-checkpoint:v3&quot;</span><span class="p">)</span>
+<span class="n">artifact</span><span class="o">.</span><span class="n">download</span><span class="p">(</span><span class="n">root</span><span class="o">=</span><span class="s2">&quot;./restored_checkpoint&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="debugging-profiling-common-gotchas">Debugging, Profiling &amp; Common Gotchas<a class="headerlink" href="#debugging-profiling-common-gotchas" title="Permanent link">¶</a></h2>
+<h3 id="the-diagnostic-toolkit">The diagnostic toolkit<a class="headerlink" href="#the-diagnostic-toolkit" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Check GPU utilization and memory in real time</span>
+watch<span class="w"> </span>-n<span class="w"> </span><span class="m">1</span><span class="w"> </span>nvidia-smi
+
+<span class="c1"># More detailed per-process GPU memory usage</span>
+nvidia-smi<span class="w"> </span>--query-compute-apps<span class="o">=</span>pid,used_memory<span class="w"> </span>--format<span class="o">=</span>csv,noheader
+
+<span class="c1"># Check GPU connectivity (NVLink, PCIe topology)</span>
+nvidia-smi<span class="w"> </span>topo<span class="w"> </span>-m
+
+<span class="c1"># Check NCCL version</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import torch; print(torch.cuda.nccl.version())&quot;</span>
+
+<span class="c1"># Check if all-reduce works across GPUs (basic connectivity test)</span>
+torchrun<span class="w"> </span>--nproc_per_node<span class="o">=</span><span class="m">4</span><span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">import torch, torch.distributed as dist</span>
+<span class="s">dist.init_process_group(&quot;nccl&quot;)</span>
+<span class="s">rank = dist.get_rank()</span>
+<span class="s">t = torch.tensor([rank], dtype=torch.float32, device=f&quot;cuda:{rank}&quot;)</span>
+<span class="s">dist.all_reduce(t, op=dist.ReduceOp.SUM)</span>
+<span class="s">expected = sum(range(dist.get_world_size()))</span>
+<span class="s">assert t.item() == expected, f&quot;Expected {expected}, got {t.item()}&quot;</span>
+<span class="s">if rank == 0:</span>
+<span class="s">    print(f&quot;All-reduce test passed! Sum = {t.item()}&quot;)</span>
+<span class="s">dist.destroy_process_group()</span>
+<span class="s">EOF</span>
+</code></pre></div>
+<h3 id="memory-profiling">Memory profiling<a class="headerlink" href="#memory-profiling" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># Snapshot GPU memory before and after a suspicious operation</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">reset_peak_memory_stats</span><span class="p">()</span>
+<span class="n">before</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">memory_allocated</span><span class="p">()</span> <span class="o">/</span> <span class="mf">1e9</span>
+
+<span class="n">output</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>   <span class="c1"># the operation under scrutiny</span>
+
+<span class="n">after</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">memory_allocated</span><span class="p">()</span> <span class="o">/</span> <span class="mf">1e9</span>
+<span class="n">peak</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">max_memory_allocated</span><span class="p">()</span> <span class="o">/</span> <span class="mf">1e9</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Before: </span><span class="si">{</span><span class="n">before</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB, After: </span><span class="si">{</span><span class="n">after</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB, Peak: </span><span class="si">{</span><span class="n">peak</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB&quot;</span><span class="p">)</span>
+
+<span class="c1"># Full memory snapshot (PyTorch &gt;= 2.1)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">_record_memory_history</span><span class="p">(</span><span class="n">max_entries</span><span class="o">=</span><span class="mi">100_000</span><span class="p">)</span>
+<span class="n">output</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>
+<span class="n">snapshot</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">_snapshot</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">_dump_snapshot</span><span class="p">(</span><span class="s2">&quot;/tmp/mem_snapshot.pickle&quot;</span><span class="p">)</span>
+<span class="c1"># Visualize at: https://pytorch.org/memory_viz</span>
+</code></pre></div>
+<h3 id="common-errors-and-their-fixes">Common errors and their fixes<a class="headerlink" href="#common-errors-and-their-fixes" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code>Error: CUDA error: device-side assert triggered
+Fix:  Run with CUDA_LAUNCH_BLOCKING=1 to get a synchronous stack trace.
+      Usually caused by out-of-range indices, wrong tensor shapes, or
+      loss computed on -100 labels (ignore_index) without proper masking.
+
+Error: RuntimeError: Expected all tensors to be on the same device
+Fix:  Print t.device for each tensor before the failing op.
+      Often caused by model on &#39;cuda:0&#39; but input on &#39;cpu&#39; or &#39;cuda:1&#39;.
+
+Error: torch.OutOfMemoryError: CUDA out of memory
+Fix:  (1) Reduce batch size or sequence length.
+      (2) Enable gradient checkpointing: model.gradient_checkpointing_enable()
+      (3) Use bitsandbytes 4-bit loading.
+      (4) Enable ZeRO-3 or FSDP.
+      (5) Check for tensor leaks: are you accumulating outputs in a list?
+
+Error: NCCL error: unhandled system error / Connection reset by peer
+Fix:  Usually a node failure or network partition. Check:
+      - All nodes reachable: ping / ssh
+      - NCCL_SOCKET_IFNAME points to the right NIC
+      - No firewall blocking NCCL ports (default: 29500)
+
+Error: ValueError: Tokenizer does not have a padding token
+Fix:  tokenizer.pad_token = tokenizer.eos_token
+      Always do this before creating a DataCollator.
+</code></pre></div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You launch a distributed training job with <code>torchrun --nproc_per_node=8</code> on a single 8xA100 node. After a few hundred steps, training hangs indefinitely with no error message. What are the most likely causes and how would you diagnose each?</p>
+<p><strong>A:</strong> The most common causes of a silent hang in distributed training are:</p>
+<ol>
+<li>
+<p><strong>NCCL deadlock from uneven collective calls.</strong> If one rank enters an <code>all_reduce</code> or <code>barrier</code> that others do not (e.g., due to a conditional branch gated on <code>rank == 0</code>), the job hangs waiting for the missing rank. Diagnosis: <code>NCCL_DEBUG=INFO</code> will show which rank is stuck on which collective. Fix: ensure all collectives are executed by all ranks unconditionally.</p>
+</li>
+<li>
+<p><strong>CPU-side data loading bottleneck.</strong> If <code>DataLoader</code> workers are slower than the GPU, the GPU stalls waiting for the next batch. Diagnosis: <code>nvidia-smi</code> shows near-zero GPU utilization. Fix: increase <code>num_workers</code>, pin memory with <code>pin_memory=True</code>, or use a faster data format (Arrow/HDF5 instead of JSONL).</p>
+</li>
+<li>
+<p><strong>Deadlock in custom forward/backward hooks.</strong> Certain Python-level locks (e.g., a shared queue between processes) can deadlock if one process raises an exception while holding the lock. Diagnosis: <code>py-spy dump --pid &lt;pid&gt;</code> shows the Python call stack of the hung process. Fix: use <code>torch.distributed</code> primitives rather than Python multiprocessing primitives for cross-rank communication.</p>
+</li>
+<li>
+<p><strong>NVLink or InfiniBand failure.</strong> A flaky interconnect causes one NCCL operation to time out. Diagnosis: <code>nvidia-smi nvlink -e</code> shows NVLink errors; <code>NCCL_DEBUG=WARN</code> shows IB errors. Fix: check hardware health with <code>ibdiagnet</code>; disable the faulty link.</p>
+</li>
+</ol>
+</div>
+<hr />
+<h2 id="useful-one-liners-quick-reference-commands">Useful One-Liners &amp; Quick-Reference Commands<a class="headerlink" href="#useful-one-liners-quick-reference-commands" title="Permanent link">¶</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># ── Model inspection ──────────────────────────────────────────────</span>
+<span class="c1"># Count parameters of any HF model without loading weights</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">from transformers import AutoConfig</span>
+<span class="s2">from transformers.utils import cached_file</span>
+<span class="s2">import json, math</span>
+<span class="s2">config = AutoConfig.from_pretrained(&#39;meta-llama/Meta-Llama-3-8B&#39;)</span>
+<span class="s2">print(config)</span>
+<span class="s2">&quot;</span>
+
+<span class="c1"># Download a model to local cache</span>
+huggingface-cli<span class="w"> </span>download<span class="w"> </span>meta-llama/Meta-Llama-3-8B<span class="w"> </span>--local-dir<span class="w"> </span>/data/llama3-8b
+
+<span class="c1"># Convert HF checkpoint to safetensors</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">from transformers import AutoModelForCausalLM</span>
+<span class="s2">import torch</span>
+<span class="s2">model = AutoModelForCausalLM.from_pretrained(&#39;/data/llama3-8b&#39;, torch_dtype=torch.bfloat16)</span>
+<span class="s2">model.save_pretrained(&#39;/data/llama3-8b-safetensors&#39;, safe_serialization=True)</span>
+<span class="s2">&quot;</span>
+
+<span class="c1"># ── GPU monitoring ─────────────────────────────────────────────────</span>
+<span class="c1"># Continuous GPU stats (refresh every 0.5s)</span>
+nvidia-smi<span class="w"> </span>dmon<span class="w"> </span>-s<span class="w"> </span>mu<span class="w"> </span>-d<span class="w"> </span><span class="m">0</span>.5
+
+<span class="c1"># GPU power consumption (useful for cost estimation)</span>
+nvidia-smi<span class="w"> </span>--query-gpu<span class="o">=</span>name,power.draw,power.limit<span class="w"> </span>--format<span class="o">=</span>csv
+
+<span class="c1"># ── Cluster / distributed ──────────────────────────────────────────</span>
+<span class="c1"># Launch 2-node job with torchrun (run on each node)</span>
+<span class="c1"># Node 0 (master):</span>
+torchrun<span class="w"> </span>--nproc_per_node<span class="o">=</span><span class="m">8</span><span class="w"> </span>--nnodes<span class="o">=</span><span class="m">2</span><span class="w"> </span>--node_rank<span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">         </span>--master_addr<span class="o">=</span><span class="m">10</span>.0.0.1<span class="w"> </span>--master_port<span class="o">=</span><span class="m">29500</span><span class="w"> </span>train.py
+<span class="c1"># Node 1:</span>
+torchrun<span class="w"> </span>--nproc_per_node<span class="o">=</span><span class="m">8</span><span class="w"> </span>--nnodes<span class="o">=</span><span class="m">2</span><span class="w"> </span>--node_rank<span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">         </span>--master_addr<span class="o">=</span><span class="m">10</span>.0.0.1<span class="w"> </span>--master_port<span class="o">=</span><span class="m">29500</span><span class="w"> </span>train.py
+
+<span class="c1"># ── Checkpoint utilities ───────────────────────────────────────────</span>
+<span class="c1"># Inspect a safetensors checkpoint (keys, shapes, dtypes)</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">from safetensors import safe_open</span>
+<span class="s2">with safe_open(&#39;/data/model.safetensors&#39;, framework=&#39;pt&#39;, device=&#39;cpu&#39;) as f:</span>
+<span class="s2">    for key in list(f.keys())[:10]:</span>
+<span class="s2">        t = f.get_tensor(key)</span>
+<span class="s2">        print(f&#39;{key}: {t.shape}, {t.dtype}&#39;)</span>
+<span class="s2">&quot;</span>
+
+<span class="c1"># ── Tokenizer debugging ────────────────────────────────────────────</span>
+<span class="c1"># Inspect how a string tokenizes</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">from transformers import AutoTokenizer</span>
+<span class="s2">tok = AutoTokenizer.from_pretrained(&#39;meta-llama/Meta-Llama-3-8B&#39;)</span>
+<span class="s2">text = &#39;Hello, world! The answer is 42.&#39;</span>
+<span class="s2">ids = tok.encode(text)</span>
+<span class="s2">tokens = tok.convert_ids_to_tokens(ids)</span>
+<span class="s2">print(list(zip(tokens, ids)))</span>
+<span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Pin the full CUDA/PyTorch/flash-attn/bitsandbytes version matrix at project start; mismatches are the single most common source of mysterious errors.</li>
+<li><code>flash-attn</code> must be installed with <code>--no-build-isolation</code> after PyTorch; it compiles against your installed torch headers, not an isolated build environment.</li>
+<li>Set <code>tokenizer.pad_token = tokenizer.eos_token</code> immediately after loading any decoder-only tokenizer; forgetting this corrupts batched training.</li>
+<li><code>accelerate launch</code> is the recommended single entry point for multi-GPU training — it handles DDP, FSDP, and DeepSpeed through the same training script with only a config change.</li>
+<li>ZeRO-3 with CPU offload trades GPU memory for CPU memory and PCIe bandwidth; it enables fine-tuning 70B+ models on 4–8 consumer A100s but slows iteration per step.</li>
+<li><code>torch.compile(mode="reduce-overhead")</code> gives 20–40% speedup on inference with nearly zero code change; warm up with a few dummy passes before benchmarking.</li>
+<li>W&amp;B artifacts link every model version to its training data and code — use them from day one to enable reproducibility and regression debugging months later.</li>
+<li>For silent hangs in distributed training, <code>NCCL_DEBUG=INFO</code> and <code>py-spy dump</code> are your first tools; the root cause is almost always an uneven collective or a CPU-side bottleneck.</li>
+<li>vLLM and SGLang require separate environments from training because they pin specific torch versions; maintain <code>train.yml</code> and <code>serve.yml</code> conda environments.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>PyTorch Documentation: torch.compile</strong> — official guide covering <code>mode=</code>, <code>fullgraph=</code>, and the TorchInductor backend. pytorch.org</li>
+<li><strong>DeepSpeed ZeRO: Memory Optimizations Toward Training Trillion Parameter Models</strong> — Rajbhandari et al., 2020. The foundational ZeRO paper.</li>
+<li><strong>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</strong> — Dao et al., 2022. Essential reading for understanding why flash-attn exists.</li>
+<li><strong>bitsandbytes: 8-bit Optimizers via Block-wise Quantization</strong> — Dettmers et al., 2021. The paper behind the 8-bit Adam optimizer.</li>
+<li><strong>QLoRA: Efficient Finetuning of Quantized LLMs</strong> — Dettmers et al., 2023. The canonical recipe combining NF4 quantization with LoRA.</li>
+<li><strong>TRL: Transformer Reinforcement Learning</strong> — HuggingFace, github.com/huggingface/trl. The library reference for SFT, GRPO, PPO trainers.</li>
+<li><strong>vLLM: Efficient Memory Management for Large Language Model Serving with PagedAttention</strong> — Kwon et al., 2023. The PagedAttention system paper.</li>
+<li><strong>Accelerate: Training and inference at scale made simple</strong> — HuggingFace, github.com/huggingface/accelerate.</li>
+<li><strong>NVIDIA Deep Learning Performance Guide</strong> — NVIDIA Developer documentation; covers <code>cudnn.benchmark</code>, TF32, and cuBLAS tuning flags.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="03-papers-reading-list.html"><span class="pn-label">← Previous</span><span class="pn-title">Key Papers: An Annotated Reading List</span></a>
+<a class="next" href="05-from-scratch-index.html"><span class="pn-label">Next →</span><span class="pn-title">From-Scratch Code Index</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-library-landscape-at-a-glance">The Library Landscape at a Glance</a></li>
+<li class="toc-l2"><a href="#cuda-driver-python-environment-setup">CUDA, Driver &amp;amp; Python Environment Setup</a></li>
+<li class="toc-l3"><a href="#choosing-a-cuda-version">Choosing a CUDA version</a></li>
+<li class="toc-l3"><a href="#conda-environment-recipe">Conda environment recipe</a></li>
+<li class="toc-l3"><a href="#environment-variables-every-llm-engineer-should-know">Environment variables every LLM engineer should know</a></li>
+<li class="toc-l2"><a href="#core-libraries-installation-version-pinning">Core Libraries: Installation &amp;amp; Version Pinning</a></li>
+<li class="toc-l3"><a href="#the-dependency-matrix">The dependency matrix</a></li>
+<li class="toc-l2"><a href="#pytorch-patterns-power-features">PyTorch: Patterns &amp;amp; Power Features</a></li>
+<li class="toc-l3"><a href="#dtype-cheatsheet-for-llm-work">dtype cheatsheet for LLM work</a></li>
+<li class="toc-l3"><a href="#torchcompile-the-one-liner-speedup">torch.compile: the one-liner speedup</a></li>
+<li class="toc-l3"><a href="#profiling-with-torchprofiler">Profiling with torch.profiler</a></li>
+<li class="toc-l2"><a href="#huggingface-ecosystem-transformers-datasets-accelerate">HuggingFace Ecosystem: transformers, datasets, accelerate</a></li>
+<li class="toc-l3"><a href="#loading-and-inspecting-models">Loading and inspecting models</a></li>
+<li class="toc-l3"><a href="#datasets-streaming-shuffling-packing">datasets: streaming, shuffling, packing</a></li>
+<li class="toc-l3"><a href="#accelerate-the-multi-gpu-abstraction-layer">accelerate: the multi-GPU abstraction layer</a></li>
+<li class="toc-l2"><a href="#deepspeed-zero-offloading-config-files">DeepSpeed: ZeRO, Offloading &amp;amp; Config Files</a></li>
+<li class="toc-l3"><a href="#zero-2-config-training-fits-in-gpu-memory-optimizer-states-are-large">ZeRO-2 config (training fits in GPU memory, optimizer states are large)</a></li>
+<li class="toc-l3"><a href="#zero-3-with-cpu-offload-fine-tune-70b-on-4x80-gb-gpus">ZeRO-3 with CPU offload (fine-tune 70B on 4x80 GB GPUs)</a></li>
+<li class="toc-l2"><a href="#flash-attn-and-bitsandbytes-installation-verification">flash-attn and bitsandbytes: Installation &amp;amp; Verification</a></li>
+<li class="toc-l3"><a href="#flash-attn">flash-attn</a></li>
+<li class="toc-l3"><a href="#bitsandbytes">bitsandbytes</a></li>
+<li class="toc-l2"><a href="#vllm-and-sglang-spinning-up-inference-servers">vLLM and SGLang: Spinning Up Inference Servers</a></li>
+<li class="toc-l3"><a href="#vllm">vLLM</a></li>
+<li class="toc-l3"><a href="#sglang">SGLang</a></li>
+<li class="toc-l2"><a href="#trl-and-verl-post-training-infrastructure">TRL and veRL: Post-Training Infrastructure</a></li>
+<li class="toc-l3"><a href="#trl-for-sft-and-rl">TRL for SFT and RL</a></li>
+<li class="toc-l2"><a href="#weights-biases-wandb-experiment-tracking">Weights &amp;amp; Biases (wandb): Experiment Tracking</a></li>
+<li class="toc-l2"><a href="#debugging-profiling-common-gotchas">Debugging, Profiling &amp;amp; Common Gotchas</a></li>
+<li class="toc-l3"><a href="#the-diagnostic-toolkit">The diagnostic toolkit</a></li>
+<li class="toc-l3"><a href="#memory-profiling">Memory profiling</a></li>
+<li class="toc-l3"><a href="#common-errors-and-their-fixes">Common errors and their fixes</a></li>
+<li class="toc-l2"><a href="#useful-one-liners-quick-reference-commands">Useful One-Liners &amp;amp; Quick-Reference Commands</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

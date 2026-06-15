@@ -1,0 +1,1697 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mixture-of-Experts (MoE) Architectures — The LLM Stack</title>
+<meta name="description" content="Sparse MoE: router/gating, top-k, experts as FFNs; load balancing (aux loss, expert-choice), capacity factor, token dropping; Switch/GShard/Mixtral/DeepSeek-MoE">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="active" href="09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part II — The Transformer Architecture</div>
+<h1 id="29-mixture-of-experts-moe-architectures">2.9 Mixture-of-Experts (MoE) Architectures<a class="headerlink" href="#29-mixture-of-experts-moe-architectures" title="Permanent link">¶</a></h1>
+<p>There is a brutal fact at the center of the scaling story: in a dense Transformer, <strong>every parameter does work on every token</strong>. If you want a model that &ldquo;knows more&rdquo; — more facts, more languages, more code idioms — you grow the feed-forward networks (FFNs), and the cost of <em>each forward pass</em> grows in lockstep. A 70-billion-parameter dense model spends roughly 70 billion parameters&rsquo; worth of floating-point operations (FLOPs) on the word &ldquo;the&rdquo; and on a subtle line of CUDA, equally. That is wasteful, and it is the wall that Mixture-of-Experts (MoE) is built to break.</p>
+<p>The MoE idea is almost embarrassingly simple to state: <strong>decouple the number of parameters from the FLOPs per token.</strong> Replace the single FFN in a Transformer block with a <em>bank</em> of FFNs called experts, and add a small learned <strong>router</strong> that, for each token, picks just a few of them. A token is processed by, say, 2 experts out of 256. The model now <em>contains</em> the knowledge of 256 FFNs but <em>pays</em> for only 2 of them per token. You get the memory footprint and representational capacity of a giant model with the compute bill of a small one. This is <strong>conditional computation</strong> — the network decides, per input, which sub-networks to activate — and it is the architectural choice behind GShard, Switch Transformer, Mixtral, DeepSeek-MoE, Qwen-MoE, and most of the frontier &ldquo;trillion-parameter&rdquo; models that nonetheless run at the speed of a much smaller dense model.</p>
+<p>The catch — and this chapter is largely about the catch — is that <em>picking</em> is hard. The router is a discrete, non-differentiable decision sitting in the middle of a network we train with smooth gradients. Tokens must be routed in balanced batches so that GPUs stay busy and no expert is starved or overwhelmed. Experts must be spread across devices, which turns every MoE layer into a communication problem (the <a href="../03-pretraining/06-distributed-model-parallel.html">expert parallelism</a> we preview at the end). Get the load balancing wrong and the model collapses to using one expert, throwing away the whole point. We will build the mechanism from the FFN up, write a correct toy MoE layer you can run, work the numbers on capacity and parameter counts, and tour the landmark designs that got each piece right.</p>
+<p>This chapter assumes you know the <a href="../02-transformer/06-transformer-block.html">Transformer block</a> — especially that the FFN is two linear layers with a nonlinearity — and the softmax from <a href="../01-foundations/02-probability-information.html">Probability, Statistics &amp; Information Theory</a>. It pairs closely with <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws</a> (why sparsity changes the compute-optimal frontier) and with <a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II</a> (how experts are sharded in practice).</p>
+<h2 id="from-one-ffn-to-a-bank-of-experts">From One FFN to a Bank of Experts<a class="headerlink" href="#from-one-ffn-to-a-bank-of-experts" title="Permanent link">¶</a></h2>
+<p>Recall the Transformer block: attention mixes information <em>across</em> tokens, then a position-wise FFN transforms <em>each</em> token independently. For a token representation <span class="arithmatex">\(x \in \mathbb{R}^{d_\text{model}}\)</span> the standard FFN is</p>
+<div class="arithmatex">\[
+\operatorname{FFN}(x) = W_2\,\phi\!\left(W_1 x + b_1\right) + b_2,
+\qquad W_1 \in \mathbb{R}^{d_\text{ff} \times d_\text{model}},\; W_2 \in \mathbb{R}^{d_\text{model} \times d_\text{ff}},
+\]</div>
+<p>with <span class="arithmatex">\(\phi\)</span> a nonlinearity (GELU, or a gated SwiGLU as in modern models — see <a href="../02-transformer/06-transformer-block.html">The Transformer Block</a>). Typically <span class="arithmatex">\(d_\text{ff} = 4\,d_\text{model}\)</span>, so the FFN holds about <span class="arithmatex">\(8\,d_\text{model}^2\)</span> parameters and is usually <strong>two-thirds of the parameters in the whole model</strong>. The FFN is also where most of the &ldquo;knowledge&rdquo; is thought to live: keys-and-values memory, factual associations, n-gram-like circuits. So if you want to add capacity cheaply, the FFN is exactly where you want to do it.</p>
+<p>A <strong>MoE layer</strong> replaces that one FFN with <span class="arithmatex">\(E\)</span> experts, each an independent FFN with its own weights <span class="arithmatex">\(\{\operatorname{FFN}_e\}_{e=1}^{E}\)</span>, plus a <strong>router</strong> (also called the <strong>gate</strong>) <span class="arithmatex">\(g: \mathbb{R}^{d_\text{model}} \to \mathbb{R}^{E}\)</span> that scores how relevant each expert is to the token. The layer output is a weighted combination of the experts the router selects:</p>
+<div class="arithmatex">\[
+\operatorname{MoE}(x) = \sum_{e \in \mathcal{T}(x)} g_e(x)\, \operatorname{FFN}_e(x),
+\]</div>
+<p>where <span class="arithmatex">\(\mathcal{T}(x) \subseteq \{1,\dots,E\}\)</span> is the (small) set of selected experts for token <span class="arithmatex">\(x\)</span> and <span class="arithmatex">\(g_e(x)\)</span> is its gate weight. In a <strong>dense MoE</strong> (the original 1991 Jacobs–Jordan formulation, and a &ldquo;soft&rdquo; baseline today) <span class="arithmatex">\(\mathcal{T}(x) = \{1,\dots,E\}\)</span>: you run <em>all</em> experts and blend them. That is differentiable and clean but defeats the purpose — you pay for all <span class="arithmatex">\(E\)</span> FFNs. The breakthrough that made MoE useful at LLM scale is <strong>sparsity</strong>: make <span class="arithmatex">\(|\mathcal{T}(x)| = k\)</span> with <span class="arithmatex">\(k \ll E\)</span> (typically <span class="arithmatex">\(k=1\)</span> or <span class="arithmatex">\(k=2\)</span>), so each token touches only a handful of experts.</p>
+<figure class="viz" id="fig-moe-dense-vs-sparse-block">
+<svg viewBox="0 0 760 440" role="img" aria-label="Side-by-side comparison: a dense Transformer block routes every token through one FFN using all parameters, while a sparse MoE block routes each token through a router that picks only k of E experts, then combines their outputs with a weighted sum.">
+<style>
+  #fig-moe-dense-vs-sparse-block text { font: 13px var(--sans, sans-serif); fill: var(--ink-soft, #45413a); }
+  #fig-moe-dense-vs-sparse-block .title { font: 700 14px var(--sans, sans-serif); }
+  #fig-moe-dense-vs-sparse-block .caption { font: 11px var(--sans, sans-serif); fill: var(--muted, #6d675d); }
+  #fig-moe-dense-vs-sparse-block .annot  { font: italic 11px var(--sans, sans-serif); fill: var(--muted, #6d675d); }
+  #fig-moe-dense-vs-sparse-block .lbl   { font: 700 12px var(--mono, monospace); }
+  #fig-moe-dense-vs-sparse-block .node  { font: 700 13px var(--sans, sans-serif); }
+</style>
+<defs>
+  <marker id="dvs-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--v-stroke,#45413a)" class="v-stroke" stroke="none"/>
+  </marker>
+  <marker id="dvs-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)" stroke="none"/>
+  </marker>
+</defs>
+
+
+<line x1="380" y1="15" x2="380" y2="435" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.5"/>
+
+
+<text x="190" y="28" text-anchor="middle" class="title v-label">DENSE Transformer block</text>
+
+
+<rect x="165" y="52" width="50" height="26" rx="13" class="v-fill v-stroke" stroke-width="1.5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)"/>
+<text x="190" y="70" text-anchor="middle" class="node" font-style="italic">x</text>
+
+
+<line x1="190" y1="78" x2="190" y2="105" stroke="var(--v-stroke,#45413a)" stroke-width="1.5" marker-end="url(#dvs-arrow)"/>
+
+
+<rect x="135" y="108" width="110" height="55" rx="7" class="v-fill v-stroke" stroke-width="2" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)"/>
+<text x="190" y="131" text-anchor="middle" class="lbl">FFN</text>
+<text x="190" y="149" text-anchor="middle" class="caption">(1 network)</text>
+
+
+<text x="258" y="128" class="annot">all params,</text>
+<text x="258" y="143" class="annot">every token</text>
+
+
+<line x1="190" y1="163" x2="190" y2="198" stroke="var(--v-stroke,#45413a)" stroke-width="1.5" marker-end="url(#dvs-arrow)"/>
+
+
+<rect x="165" y="200" width="50" height="26" rx="13" class="v-fill v-stroke" stroke-width="1.5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)"/>
+<text x="190" y="218" text-anchor="middle" class="node" font-style="italic">y</text>
+
+
+<text x="190" y="260" text-anchor="middle" class="caption">Single path: every token,</text>
+<text x="190" y="274" text-anchor="middle" class="caption">all parameters, always.</text>
+
+
+
+<text x="570" y="28" text-anchor="middle" class="title v-label">SPARSE MoE Transformer block</text>
+
+
+<rect x="545" y="52" width="50" height="26" rx="13" class="v-fill v-stroke" stroke-width="1.5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)"/>
+<text x="570" y="70" text-anchor="middle" class="node" font-style="italic">x</text>
+
+
+<line x1="570" y1="78" x2="570" y2="105" stroke="var(--v-stroke,#45413a)" stroke-width="1.5" marker-end="url(#dvs-arrow)"/>
+
+
+<rect x="503" y="108" width="134" height="48" rx="7" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="570" y="129" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Router</text>
+<text x="570" y="147" text-anchor="middle" class="caption">pick top-k of E</text>
+
+
+<line x1="570" y1="156" x2="570" y2="178" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#dvs-arrow-accent)"/>
+<text x="578" y="172" class="annot" fill="var(--accent,#c15b39)">logits</text>
+
+
+<line x1="430" y1="182" x2="710" y2="182" stroke="var(--accent,#c15b39)" stroke-width="2" stroke-linecap="round"/>
+
+
+
+<rect x="415" y="195" width="38" height="32" rx="5" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="1" stroke-dasharray="4 2" opacity="0.55"/>
+<text x="434" y="208" text-anchor="middle" class="caption">FFN</text>
+<text x="434" y="220" text-anchor="middle" class="caption">1</text>
+<line x1="434" y1="182" x2="434" y2="195" stroke="var(--v-stroke,#45413a)" stroke-width="1" stroke-dasharray="3 2" opacity="0.4"/>
+
+
+<rect x="459" y="195" width="38" height="32" rx="5" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="1" stroke-dasharray="4 2" opacity="0.55"/>
+<text x="478" y="208" text-anchor="middle" class="caption">FFN</text>
+<text x="478" y="220" text-anchor="middle" class="caption">2</text>
+<line x1="478" y1="182" x2="478" y2="195" stroke="var(--v-stroke,#45413a)" stroke-width="1" stroke-dasharray="3 2" opacity="0.4"/>
+
+
+<rect x="503" y="193" width="42" height="36" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="524" y="207" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">FFN</text>
+<text x="524" y="222" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">3</text>
+<line x1="524" y1="182" x2="524" y2="193" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#dvs-arrow-accent)"/>
+
+
+<rect x="551" y="195" width="38" height="32" rx="5" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="1" stroke-dasharray="4 2" opacity="0.55"/>
+<text x="570" y="208" text-anchor="middle" class="caption">FFN</text>
+<text x="570" y="220" text-anchor="middle" class="caption">4</text>
+<line x1="570" y1="182" x2="570" y2="195" stroke="var(--v-stroke,#45413a)" stroke-width="1" stroke-dasharray="3 2" opacity="0.4"/>
+
+
+<rect x="594" y="193" width="42" height="36" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="615" y="207" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">FFN</text>
+<text x="615" y="222" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">17</text>
+<line x1="615" y1="182" x2="615" y2="193" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#dvs-arrow-accent)"/>
+
+
+<rect x="642" y="195" width="38" height="32" rx="5" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="1" stroke-dasharray="4 2" opacity="0.55"/>
+<text x="661" y="208" text-anchor="middle" class="caption">FFN</text>
+<text x="661" y="220" text-anchor="middle" class="caption">E</text>
+<line x1="661" y1="182" x2="661" y2="195" stroke="var(--v-stroke,#45413a)" stroke-width="1" stroke-dasharray="3 2" opacity="0.4"/>
+
+
+<text x="548" y="244" text-anchor="middle" class="caption">E total, only k=2 active (selected)</text>
+
+
+<line x1="524" y1="229" x2="554" y2="285" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#dvs-arrow-accent)"/>
+<line x1="615" y1="229" x2="585" y2="285" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#dvs-arrow-accent)"/>
+
+
+<text x="530" y="264" class="annot" fill="var(--accent,#c15b39)">x g&#x2091;</text>
+
+
+<rect x="490" y="288" width="160" height="44" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="570" y="306" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">weighted sum</text>
+<text x="570" y="324" text-anchor="middle" class="caption" fill="var(--accent,#c15b39)">(x g&#x2091; per expert)</text>
+
+
+<line x1="570" y1="332" x2="570" y2="365" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#dvs-arrow-accent)"/>
+
+
+<rect x="545" y="367" width="50" height="26" rx="13" class="v-fill v-stroke" stroke-width="1.5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)"/>
+<text x="570" y="385" text-anchor="middle" class="node" font-style="italic">y</text>
+
+
+<text x="570" y="415" text-anchor="middle" class="caption">Token picks k experts; only those run.</text>
+<text x="570" y="430" text-anchor="middle" class="caption">Parameters decouple from FLOPs.</text>
+
+</svg>
+<figcaption><b>Dense FFN vs. Sparse MoE block.</b> A dense Transformer block passes every token through a single FFN using all parameters. A sparse MoE block routes each token through a learned router that selects only k of E experts; the selected experts run and their outputs are combined with learned gate weights g_e. Ghosted boxes are present in memory but never run for this token, decoupling total parameter count from per-token FLOPs.</figcaption>
+</figure>
+
+<p>Two vocabulary items you will see constantly. <strong>Total parameters</strong> counts every expert&rsquo;s weights — this is the model&rsquo;s &ldquo;size on disk&rdquo; and its capacity. <strong>Active parameters</strong> counts only what a single token actually uses — this drives the FLOPs and therefore latency. Mixtral 8×7B, for instance, has on the order of 47B total parameters but activates roughly 13B per token (it is <em>not</em> 8×7=56B, because attention and embeddings are shared and only the FFNs are replicated). That ratio — total-to-active — is the sparsity dial, and it is the headline of every MoE model card. The whole bet of MoE is that <strong>a model&rsquo;s quality tracks total parameters while its cost tracks active parameters</strong>, so you want that ratio large.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: &lsquo;expert&rsquo; is a misnomer worth unlearning</p>
+<p>The word <em>expert</em> suggests each FFN specializes in a human-legible domain — one for French, one for Python, one for poetry. Reality is messier. Learned experts specialize along axes that are mostly <em>not</em> interpretable: token frequency, surface n-gram patterns, position, sometimes syntactic role. You will occasionally find an expert that fires on numbers or on whitespace, but do not expect a &ldquo;biology expert.&rdquo; Think of routing as a <em>learned, load-balanced hash</em> of tokens to sub-networks, not a panel of domain specialists. This reframing predicts the real failure modes (imbalance, collapse) far better than the marketing name does.</p>
+</div>
+<h2 id="the-router-gating-top-k-and-the-softmax-then-select-question">The Router: Gating, Top-k, and the Softmax-Then-Select Question<a class="headerlink" href="#the-router-gating-top-k-and-the-softmax-then-select-question" title="Permanent link">¶</a></h2>
+<p>The router is a single linear layer — astonishingly small relative to what it controls. It maps each token to one logit per expert:</p>
+<div class="arithmatex">\[
+h(x) = W_g\, x \in \mathbb{R}^{E}, \qquad W_g \in \mathbb{R}^{E \times d_\text{model}}.
+\]</div>
+<p>For <span class="arithmatex">\(E=256\)</span> experts and <span class="arithmatex">\(d_\text{model}=4096\)</span>, that is about a million parameters governing the routing of a model with hundreds of billions. The router&rsquo;s job is to turn the logit vector <span class="arithmatex">\(h(x)\)</span> into (a) a <em>choice</em> of which <span class="arithmatex">\(k\)</span> experts to run and (b) a set of <em>weights</em> with which to combine their outputs. There are two design knobs, and the order in which you pull them matters.</p>
+<figure class="viz" id="fig-moe-routing">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 392" role="img" aria-label="A token enters a router that scores six expert FFNs; only the top-2 highest-scoring experts run, and their outputs are combined in a weighted sum that returns to the residual stream.">
+  <defs>
+    <marker id="moe-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-moe-routing text{ fill:var(--ink-soft); }
+    #fig-moe-routing .lbl{ font:600 13px var(--sans,sans-serif); }
+    #fig-moe-routing .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-moe-routing .mono{ font:500 11px var(--mono,monospace); }
+    #fig-moe-routing .score{ font:600 11px var(--mono,monospace); }
+    #fig-moe-routing .op{ font:600 17px var(--serif,serif); }
+    #fig-moe-routing .ex{ font:600 12px var(--sans,sans-serif); }
+  </style>
+
+
+  <text x="404" y="24" text-anchor="middle" class="sm">E = 6 experts — a bank of FFNs</text>
+  <text x="612" y="24" text-anchor="middle" class="sm">routing score</text>
+
+
+  <g data-anim="1">
+    <rect x="14" y="172" width="60" height="44" rx="7" class="v-fill v-accent-s" stroke-width="1.6"/>
+    <text x="44" y="192" text-anchor="middle" class="op v-accent" fill="var(--accent)">x</text>
+    <text x="44" y="208" text-anchor="middle" class="sm">token</text>
+    <text x="44" y="236" text-anchor="middle" class="sm">d_model</text>
+  </g>
+  <line x1="76" y1="194" x2="110" y2="194" class="v-muted" stroke="currentColor" stroke-width="1.5" marker-end="url(#moe-arrow)"/>
+
+
+  <g data-anim="2">
+    <rect x="112" y="160" width="80" height="68" rx="8" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.7"/>
+    <text x="152" y="188" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">Router</text>
+    <text x="152" y="206" text-anchor="middle" class="sm">W_g · x</text>
+    <text x="152" y="222" text-anchor="middle" class="sm">6 logits</text>
+    <text x="152" y="248" text-anchor="middle" class="sm">tiny linear gate</text>
+  </g>
+
+
+
+  <g data-anim="3">
+
+    <path d="M192 194 C 280 60,  330 60,  360 60"  fill="none" class="v-grid" stroke-width="1.2" stroke-dasharray="4 4" opacity="0.75"/>
+    <path d="M192 194 C 280 176, 330 176, 360 176" fill="none" class="v-grid" stroke-width="1.2" stroke-dasharray="4 4" opacity="0.75"/>
+    <path d="M192 194 C 280 234, 330 234, 360 234" fill="none" class="v-grid" stroke-width="1.2" stroke-dasharray="4 4" opacity="0.75"/>
+    <path d="M192 194 C 280 350, 330 350, 360 350" fill="none" class="v-grid" stroke-width="1.2" stroke-dasharray="4 4" opacity="0.75"/>
+
+    <path d="M192 194 C 280 118, 330 118, 360 118" fill="none" class="v-accent-s viz-draw" style="--len:210" stroke="var(--accent)" stroke-width="2.3"/>
+    <path d="M192 194 C 280 292, 330 292, 360 292" fill="none" class="v-accent-s viz-draw" style="--len:210" stroke="var(--accent)" stroke-width="2.3"/>
+  </g>
+
+
+
+  <g data-anim="3">
+    <g class="v-fill v-grid" stroke-width="1.3">
+      <rect x="360" y="42"  width="120" height="36" rx="6"/>
+      <rect x="360" y="158" width="120" height="36" rx="6"/>
+      <rect x="360" y="216" width="120" height="36" rx="6"/>
+      <rect x="360" y="332" width="120" height="36" rx="6"/>
+    </g>
+    <text x="420" y="65"  text-anchor="middle" class="ex sm">FFN&#8321;</text>
+    <text x="420" y="181" text-anchor="middle" class="ex sm">FFN&#8323;</text>
+    <text x="420" y="239" text-anchor="middle" class="ex sm">FFN&#8324;</text>
+    <text x="420" y="355" text-anchor="middle" class="ex sm">FFN&#8326;</text>
+    <text x="494" y="65"  class="score sm">0.05</text>
+    <text x="494" y="181" class="score sm">0.07</text>
+    <text x="494" y="239" class="score sm">0.11</text>
+    <text x="494" y="355" class="score sm">0.04</text>
+  </g>
+
+
+  <g data-anim="4">
+    <rect x="360" y="100" width="120" height="36" rx="6" class="v-fill" stroke="var(--accent)" stroke-width="2"/>
+    <rect x="360" y="100" width="120" height="36" rx="6" class="viz-pulse" fill="var(--accent)" fill-opacity="0.16"/>
+    <text x="420" y="123" text-anchor="middle" class="ex v-accent" fill="var(--accent)">FFN&#8322; active</text>
+    <text x="494" y="123" class="score v-accent" fill="var(--accent)">0.62</text>
+
+    <rect x="360" y="274" width="120" height="36" rx="6" class="v-fill" stroke="var(--accent)" stroke-width="2"/>
+    <rect x="360" y="274" width="120" height="36" rx="6" class="viz-pulse" fill="var(--accent)" fill-opacity="0.16"/>
+    <text x="420" y="297" text-anchor="middle" class="ex v-accent" fill="var(--accent)">FFN&#8325; active</text>
+    <text x="494" y="297" class="score v-accent" fill="var(--accent)">0.38</text>
+  </g>
+
+
+  <text x="540" y="119" class="sm" fill="var(--accent)">top-2</text>
+  <text x="540" y="297" class="sm" fill="var(--accent)">top-2</text>
+
+
+  <g data-anim="5">
+    <path d="M540 118 C 560 118, 575 150, 588 175" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="2" marker-end="url(#moe-arrow)"/>
+    <path d="M540 292 C 560 292, 575 230, 588 205" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="2" marker-end="url(#moe-arrow)"/>
+    <text x="560" y="150" class="score v-accent" fill="var(--accent)">×0.62</text>
+    <text x="560" y="252" class="score v-accent" fill="var(--accent)">×0.38</text>
+
+
+    <circle cx="610" cy="190" r="24" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <text x="610" y="197" text-anchor="middle" class="op" fill="var(--good,#2f9e6e)">&#931;</text>
+    <text x="610" y="232" text-anchor="middle" class="sm">weighted sum</text>
+
+    <line x1="634" y1="190" x2="668" y2="190" class="v-muted" stroke="currentColor" stroke-width="1.5" marker-end="url(#moe-arrow)"/>
+
+
+    <rect x="670" y="168" width="60" height="44" rx="7" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.7"/>
+    <rect x="670" y="168" width="60" height="44" rx="7" class="viz-pulse" fill="var(--good,#2f9e6e)" fill-opacity="0.16"/>
+    <text x="700" y="197" text-anchor="middle" class="op" fill="var(--good,#2f9e6e)">y</text>
+    <text x="700" y="160" text-anchor="middle" class="sm">to residual</text>
+  </g>
+
+
+  <text x="14" y="300" class="mono">MoE(x) = g&#8322;·FFN&#8322;(x) + g&#8325;·FFN&#8325;(x)</text>
+  <text x="14" y="317" class="sm">softmax over the 2 selected experts: 0.62 + 0.38 = 1</text>
+  <g data-anim="5">
+    <text x="14" y="348" class="lbl" fill="var(--accent)">Sparse activation</text>
+    <text x="14" y="365" class="sm">k = 2 of E = 6 experts run — the model holds 6 FFNs,</text>
+    <text x="14" y="380" class="sm">but each token pays the compute of only 2.</text>
+  </g>
+</svg>
+<figcaption><b>Sparse top-2 routing: a model with many experts, a bill for only two.</b> A tiny linear <b>router</b> scores all six expert FFNs; only the <b>top-2</b> highest-scoring experts (FFN&#8322;, FFN&#8325;) actually run, and a softmax over just those two gives gate weights (0.62, 0.38) that sum to one. The layer output is their <b>weighted sum</b> — so the model has the capacity of six FFNs while each token pays the compute of two.</figcaption>
+</figure>
+
+<p><strong>Top-k selection.</strong> Take the indices of the <span class="arithmatex">\(k\)</span> largest logits: <span class="arithmatex">\(\mathcal{T}(x) = \operatorname{top\text{-}k}\big(h(x)\big)\)</span>. This is the discrete, non-differentiable heart of the layer. Crucially, gradients flow only through the experts that were <em>selected</em> — an expert that loses the top-k comparison gets no gradient signal this step. (This is also why the gate weights, not the indices, must carry gradient: the selected experts&rsquo; weights <span class="arithmatex">\(g_e\)</span> scale their outputs, so <span class="arithmatex">\(\partial \mathcal{L}/\partial W_g\)</span> flows through them. The <code>top-k</code> operator itself is treated as a stop-gradient on the index decision; the network learns routing only through the magnitudes of the kept weights and the load-balancing loss we add later.)</p>
+<p><strong>Softmax: before or after top-k?</strong> Two conventions exist and they are <em>not</em> equivalent:</p>
+<ul>
+<li><strong>Softmax-then-top-k</strong> (GShard, Switch): compute <span class="arithmatex">\(p = \operatorname{softmax}(h(x))\)</span> over <em>all</em> <span class="arithmatex">\(E\)</span> experts, then keep the <span class="arithmatex">\(k\)</span> largest probabilities as the gate weights. The kept weights are a slice of a full distribution; they do <strong>not</strong> sum to 1.</li>
+<li><strong>Top-k-then-softmax</strong> (Mixtral): select the top-<span class="arithmatex">\(k\)</span> logits first, then softmax <em>only over those <span class="arithmatex">\(k\)</span></em>. The gate weights now sum to 1, which keeps the output magnitude stable regardless of how confident the router was.</li>
+</ul>
+<p>Mixtral&rsquo;s choice — renormalizing over the chosen experts — is the more common modern default because it decouples &ldquo;how much total signal flows&rdquo; from &ldquo;how spread the router&rsquo;s confidence was.&rdquo; With softmax-then-top-k, a router that is uncertain (flat distribution) produces small gate weights and a weak FFN contribution; renormalizing fixes that. Here is the gate, both ways, so you can see the difference is a single line:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">route_softmax_then_topk</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span>
+    <span class="c1"># GShard/Switch style: softmax over ALL experts, then keep the top-k slice.</span>
+    <span class="c1"># The kept weights do NOT sum to 1 (they are a slice of a full distribution).</span>
+    <span class="n">probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>                  <span class="c1"># (tokens, E)</span>
+    <span class="n">weights</span><span class="p">,</span> <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">probs</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>        <span class="c1"># (tokens, k)</span>
+    <span class="k">return</span> <span class="n">weights</span><span class="p">,</span> <span class="n">idx</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">route_topk_then_softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span>
+    <span class="c1"># Mixtral style: pick top-k logits, then softmax over JUST those k.</span>
+    <span class="c1"># The kept weights DO sum to 1 -&gt; stable output magnitude.</span>
+    <span class="n">topk_logits</span><span class="p">,</span> <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># (tokens, k)</span>
+    <span class="n">weights</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">topk_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>           <span class="c1"># (tokens, k), rows sum to 1</span>
+    <span class="k">return</span> <span class="n">weights</span><span class="p">,</span> <span class="n">idx</span>
+
+<span class="n">logits</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">]])</span>  <span class="c1"># 1 token, 8 experts</span>
+<span class="n">w1</span><span class="p">,</span> <span class="n">i1</span> <span class="o">=</span> <span class="n">route_softmax_then_topk</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">w2</span><span class="p">,</span> <span class="n">i2</span> <span class="o">=</span> <span class="n">route_topk_then_softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;softmax-then-topk:&quot;</span><span class="p">,</span> <span class="n">i1</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span> <span class="n">w1</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">decimals</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">tolist</span><span class="p">())</span>  <span class="c1"># weights &lt; 1, no sum-to-1</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;topk-then-softmax:&quot;</span><span class="p">,</span> <span class="n">i2</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span> <span class="n">w2</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">decimals</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">tolist</span><span class="p">())</span>  <span class="c1"># weights sum to 1</span>
+</code></pre></div>
+<p><strong>Noisy / top-k gating.</strong> The original sparse-MoE paper (Shazeer et al., 2017) added tunable Gaussian noise to the logits <em>before</em> top-k:</p>
+<div class="arithmatex">\[
+h(x) = W_g x + \varepsilon \odot \operatorname{softplus}(W_\text{noise}\, x),\qquad \varepsilon \sim \mathcal{N}(0, I).
+\]</div>
+<p>The noise does two jobs: it <strong>breaks ties</strong> so different tokens explore different experts early in training, and it acts as a regularizer that spreads load. Most modern models drop the learned noise (they rely on the auxiliary balancing loss instead) but the lesson — that routing needs <em>exploration</em> to avoid premature collapse onto a few experts — recurs throughout the field. DeepSeek-V3 reintroduced a different exploration mechanism: a per-expert <strong>bias</strong> added to the <em>routing scores used for selection only</em> (not for the gate weights), nudged up or down each step to equalize load without polluting the gradient — an &ldquo;auxiliary-loss-free&rdquo; balancing trick we return to below.</p>
+<figure class="viz" id="fig-moe-router-dispatch-pipeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 720 780" role="img" aria-label="Router dispatch pipeline: a token vector passes through gate W_g to produce E logits, optional noise or bias perturbs them, top-k selects k expert indices, softmax over those k produces gate weights summing to 1, and only the k selected experts run and are summed to produce MoE output.">
+<defs>
+  <marker id="rd-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1.5 L8.5 5 L0 8.5 z" fill="var(--ink-soft,#666)"/>
+  </marker>
+  <marker id="rd-arr-ac" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1.5 L8.5 5 L0 8.5 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+</defs>
+<style>
+  #fig-moe-router-dispatch-pipeline .lbl   { font: 600 13px var(--sans,sans-serif); }
+  #fig-moe-router-dispatch-pipeline .sub   { font: 400 10px var(--mono,monospace); fill: var(--muted,#888); }
+  #fig-moe-router-dispatch-pipeline .elbl  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-moe-router-dispatch-pipeline .annot { font: 400 9px var(--sans,sans-serif);  fill: var(--muted,#888); }
+  #fig-moe-router-dispatch-pipeline .fml   { font: 400 10px var(--mono,monospace);  fill: var(--muted,#888); }
+  #fig-moe-router-dispatch-pipeline .elx   { font: 600 10px var(--sans,sans-serif); }
+  #fig-moe-router-dispatch-pipeline text   { fill: var(--ink-soft,#333); }
+</style>
+
+
+<g data-anim="1">
+  <rect x="260" y="14" width="160" height="40" rx="8"
+        class="v-fill v-stroke" stroke-width="1.5"/>
+  <text x="340" y="33" text-anchor="middle" class="lbl">token  x</text>
+  <text x="340" y="47" text-anchor="middle" class="sub">(d_model)</text>
+</g>
+
+
+<line x1="340" y1="54" x2="340" y2="80"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+
+
+<g data-anim="2">
+  <rect x="240" y="84" width="200" height="46" rx="8"
+        fill="var(--accent,#6366f1)" fill-opacity="0.12"
+        stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="340" y="106" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">W_g  (router / gate)</text>
+  <text x="340" y="121" text-anchor="middle" class="sub">linear: R^d_model -&gt; R^E  (the only routing weight)</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="340" y1="130" x2="340" y2="156"
+        stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+  <text x="352" y="147" class="elbl">logits</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="240" y="160" width="200" height="40" rx="6"
+        class="v-fill v-stroke" stroke-width="1.5"/>
+  <text x="340" y="180" text-anchor="middle" class="lbl">logits  h(x)</text>
+  <text x="340" y="194" text-anchor="middle" class="sub">vector in R^E</text>
+
+
+
+  <rect x="460" y="181" width="10" height="19" rx="1" fill="var(--accent,#6366f1)"/>
+  <rect x="473" y="192" width="10" height="8"  rx="1" fill="var(--border-2,#bbb)" fill-opacity="0.8"/>
+  <rect x="486" y="188" width="10" height="12" rx="1" fill="var(--border-2,#bbb)" fill-opacity="0.8"/>
+  <rect x="499" y="195" width="10" height="5"  rx="1" fill="var(--border-2,#bbb)" fill-opacity="0.8"/>
+  <rect x="512" y="174" width="10" height="26" rx="1" fill="var(--accent,#6366f1)"/>
+  <rect x="525" y="187" width="10" height="13" rx="1" fill="var(--border-2,#bbb)" fill-opacity="0.8"/>
+  <line x1="458" y1="200" x2="538" y2="200" stroke="var(--ink-soft,#666)" stroke-width="0.8"/>
+  <text x="498" y="211" text-anchor="middle" class="annot">per-expert logits</text>
+
+  <line x1="440" y1="182" x2="456" y2="185"
+        stroke="var(--ink-soft,#666)" stroke-width="0.8" stroke-dasharray="3 2"/>
+</g>
+
+
+<line x1="340" y1="200" x2="340" y2="224"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+
+
+<g data-anim="4">
+  <rect x="240" y="228" width="200" height="46" rx="8"
+        fill="var(--surface,#f5f5f5)" fill-opacity="0.5"
+        stroke="var(--ink-soft,#666)" stroke-width="1.4" stroke-dasharray="5 3"/>
+  <text x="340" y="247" text-anchor="middle" class="lbl" fill="var(--muted,#888)">(+ optional noise / bias)</text>
+  <text x="340" y="262" text-anchor="middle" class="sub">Shazeer noise  /  DSv3 bias</text>
+
+
+  <text x="460" y="240" class="annot">noise: exploration</text>
+  <text x="460" y="253" class="annot">bias: load balance</text>
+  <text x="460" y="266" class="annot">(selection only)</text>
+</g>
+
+
+<line x1="340" y1="274" x2="340" y2="298"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+
+
+<g data-anim="5">
+
+  <polygon points="260,308 268,290 412,290 420,308 412,326 268,326"
+           fill="var(--accent,#6366f1)" fill-opacity="0.14"
+           stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="340" y="308" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">top-k  select</text>
+  <text x="340" y="322" text-anchor="middle" class="sub">non-differentiable step</text>
+
+
+  <line x1="420" y1="308" x2="468" y2="308"
+        stroke="var(--accent,#6366f1)" stroke-width="1.3" marker-end="url(#rd-arr-ac)"/>
+  <text x="444" y="300" text-anchor="middle" class="elbl" fill="var(--accent,#6366f1)">k idx</text>
+
+
+  <rect x="470" y="294" width="110" height="28" rx="6"
+        class="v-fill v-stroke" stroke-width="1.2"/>
+  <text x="525" y="308" text-anchor="middle" class="sub" style="font-size:10px">indices {e1..ek}</text>
+  <text x="525" y="320" text-anchor="middle" class="annot">e.g. E1, E5</text>
+</g>
+
+
+<line x1="340" y1="326" x2="340" y2="350"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+
+
+<g data-anim="6">
+  <rect x="240" y="354" width="200" height="46" rx="8"
+        fill="var(--accent,#6366f1)" fill-opacity="0.12"
+        stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="340" y="375" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">softmax  over the  k</text>
+  <text x="340" y="390" text-anchor="middle" class="sub">rows sum to 1  (stable magnitude)</text>
+
+
+  <line x1="440" y1="377" x2="468" y2="377"
+        stroke="var(--accent,#6366f1)" stroke-width="1.3" marker-end="url(#rd-arr-ac)"/>
+  <text x="454" y="369" text-anchor="middle" class="elbl" fill="var(--accent,#6366f1)">g_e</text>
+
+
+  <rect x="470" y="364" width="110" height="26" rx="6"
+        class="v-fill v-stroke" stroke-width="1.2"/>
+  <text x="525" y="381" text-anchor="middle" class="sub" style="font-size:10px">gate weights g_e</text>
+</g>
+
+
+<line x1="340" y1="400" x2="340" y2="424"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+<text x="352" y="416" class="elbl">dispatch</text>
+
+
+<g data-anim="7">
+
+  <rect x="22" y="428" width="586" height="128" rx="10"
+        class="v-fill v-stroke" stroke-width="1.5"/>
+  <text x="315" y="447" text-anchor="middle" class="lbl">run only experts {e1,...,ek}</text>
+
+
+  <rect x="38" y="456" width="60" height="58" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.85"
+        stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="68"  y="482" text-anchor="middle" class="elx" fill="var(--surface,#fff)">E1</text>
+  <text x="68"  y="497" text-anchor="middle" class="annot" fill="var(--surface,#fff)">x g_e</text>
+
+
+  <rect x="110" y="456" width="60" height="58" rx="6"
+        fill="var(--surface-3,#e8e8e8)" fill-opacity="0.35"
+        stroke="var(--border-2,#ccc)" stroke-width="1.2" opacity="0.5"/>
+  <text x="140" y="490" text-anchor="middle" class="elx" fill="var(--muted,#aaa)">E2</text>
+
+
+  <rect x="182" y="456" width="60" height="58" rx="6"
+        fill="var(--surface-3,#e8e8e8)" fill-opacity="0.35"
+        stroke="var(--border-2,#ccc)" stroke-width="1.2" opacity="0.5"/>
+  <text x="212" y="490" text-anchor="middle" class="elx" fill="var(--muted,#aaa)">E3</text>
+
+
+  <rect x="254" y="456" width="60" height="58" rx="6"
+        fill="var(--surface-3,#e8e8e8)" fill-opacity="0.35"
+        stroke="var(--border-2,#ccc)" stroke-width="1.2" opacity="0.5"/>
+  <text x="284" y="490" text-anchor="middle" class="elx" fill="var(--muted,#aaa)">E4</text>
+
+
+  <rect x="326" y="456" width="60" height="58" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.85"
+        stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="356" y="482" text-anchor="middle" class="elx" fill="var(--surface,#fff)">E5</text>
+  <text x="356" y="497" text-anchor="middle" class="annot" fill="var(--surface,#fff)">x g_e</text>
+
+
+  <rect x="398" y="456" width="60" height="58" rx="6"
+        fill="var(--surface-3,#e8e8e8)" fill-opacity="0.35"
+        stroke="var(--border-2,#ccc)" stroke-width="1.2" opacity="0.5"/>
+  <text x="428" y="490" text-anchor="middle" class="elx" fill="var(--muted,#aaa)">E6</text>
+
+
+  <text x="428" y="527" text-anchor="middle" class="annot">no gradient this step</text>
+
+
+  <path d="M598 308 L598 440 L72 440 L68 452"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="1" stroke-dasharray="4 2"
+        marker-end="url(#rd-arr-ac)" opacity="0.6"/>
+  <path d="M598 308 L598 440 L356 440 L356 452"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="1" stroke-dasharray="4 2"
+        marker-end="url(#rd-arr-ac)" opacity="0.6"/>
+  <text x="598" y="334" text-anchor="middle" class="annot" fill="var(--accent,#6366f1)">dispatch idx</text>
+
+
+  <path d="M580 377 L662 377 L662 448 L92 448 L90 452"
+        fill="none" stroke="var(--ink-soft,#666)" stroke-width="0.9" stroke-dasharray="3 2"
+        marker-end="url(#rd-arr)" opacity="0.5"/>
+  <path d="M580 377 L662 377 L662 448 L378 448 L378 452"
+        fill="none" stroke="var(--ink-soft,#666)" stroke-width="0.9" stroke-dasharray="3 2"
+        marker-end="url(#rd-arr)" opacity="0.5"/>
+  <text x="662" y="368" text-anchor="middle" class="annot">weights g_e</text>
+</g>
+
+
+<line x1="340" y1="556" x2="340" y2="578"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+<text x="352" y="572" class="elbl">weighted sum</text>
+
+
+<g data-anim="8">
+  <rect x="196" y="582" width="288" height="52" rx="8"
+        fill="var(--accent,#6366f1)" fill-opacity="0.18"
+        stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="340" y="606" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">scale by g_e,  SUM  --&gt;  MoE(x)</text>
+  <text x="340" y="623" text-anchor="middle" class="fml">MoE(x) = sum_e g_e * FFN_e(x)</text>
+</g>
+
+
+
+</svg>
+<figcaption><b>End-to-end router dispatch pipeline for a single token.</b> The token passes through learned gate <b>W_g</b> to produce E logits; an optional noise or bias term (dashed box) aids exploration or load balancing without polluting gate weights; <b>top-k</b> selects the k expert indices (the non-differentiable step); a <b>softmax over only those k</b> produces gate weights that sum to 1 (Mixtral style, stable magnitude); finally only the k selected experts (E1 and E5, highlighted) execute and are scaled by their gate weights before being summed — the remaining experts receive no gradient this step.</figcaption>
+</figure>
+
+<h2 id="a-toy-moe-layer-from-scratch">A Toy MoE Layer From Scratch<a class="headerlink" href="#a-toy-moe-layer-from-scratch" title="Permanent link">¶</a></h2>
+<p>Let us build a correct, runnable sparse MoE FFN layer. The pedagogical subtlety in <em>every</em> MoE implementation is the same: top-k routing is <strong>ragged</strong> — different tokens go to different experts, so you cannot just run a clean batched matmul over the whole sequence. There are two ways to handle this, and you should know both.</p>
+<ol>
+<li><strong>The dense/masked loop</strong> (simple, what we write first): loop over experts; for each expert, find the tokens routed to it, run that expert on them, scatter the results back. Clear and correct; not the fastest because of the gather/scatter, but it is exactly what grouped-GEMM kernels (Megablocks, the <a href="../04-kernels-efficiency/04-triton-kernels.html">Triton</a> grouped matmul) optimize under the hood.</li>
+<li><strong>The all-experts-then-mask trick</strong> (only for tiny <span class="arithmatex">\(E\)</span>): run <em>every</em> expert on <em>every</em> token and zero out the ones you did not select. Trivial to write, but it throws away the FLOPs savings — useful only for unit tests and teaching.</li>
+</ol>
+<p>We implement the loop version, which is what scales:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Expert</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A single expert: a standard 2-layer FFN (SwiGLU-free for clarity).&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">w1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">w2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_ff</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>                      <span class="c1"># x: (n_tokens_for_this_expert, d_model)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">w2</span><span class="p">(</span><span class="n">F</span><span class="o">.</span><span class="n">gelu</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">w1</span><span class="p">(</span><span class="n">x</span><span class="p">)))</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SparseMoE</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Top-k sparse MoE layer with capacity-based token dropping and an</span>
+<span class="sd">    auxiliary load-balancing loss (Switch Transformer style).&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">,</span> <span class="n">n_experts</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">capacity_factor</span><span class="o">=</span><span class="mf">1.25</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">d_model</span> <span class="o">=</span> <span class="n">d_model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_experts</span> <span class="o">=</span> <span class="n">n_experts</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">k</span> <span class="o">=</span> <span class="n">k</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">capacity_factor</span> <span class="o">=</span> <span class="n">capacity_factor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">router</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">n_experts</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>   <span class="c1"># the gate W_g</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">experts</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">Expert</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_experts</span><span class="p">)]</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="c1"># x: (batch, seq, d_model). Flatten to a flat token list -- routing is per-token.</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>                       <span class="c1"># (N, D), N = B*T</span>
+        <span class="n">N</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+        <span class="c1"># 1) ROUTE: logits -&gt; top-k experts -&gt; renormalized gate weights (Mixtral style).</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">router</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                    <span class="c1"># (N, E)</span>
+        <span class="n">topk_logits</span><span class="p">,</span> <span class="n">topk_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">k</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># (N, k)</span>
+        <span class="n">gate</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">topk_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>      <span class="c1"># (N, k), each row sums to 1</span>
+
+        <span class="c1"># 2) CAPACITY: max tokens any single expert will accept this batch.</span>
+        <span class="c1">#    capacity = capacity_factor * (tokens * k / E), rounded up.</span>
+        <span class="n">capacity</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">capacity_factor</span> <span class="o">*</span> <span class="p">(</span><span class="n">N</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">k</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_experts</span><span class="p">)</span>
+        <span class="n">capacity</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">capacity</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">out</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                  <span class="c1"># accumulate expert outputs here</span>
+        <span class="c1"># Counters for the auxiliary loss and for diagnostics.</span>
+        <span class="c1"># f_e = fraction of tokens dispatched to expert e (hard count, top-1 view).</span>
+        <span class="c1"># P_e = mean router probability mass on expert e (soft).</span>
+        <span class="n">router_prob</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>    <span class="c1"># (N, E) full distribution for aux loss</span>
+        <span class="n">load</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_experts</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># 3) DISPATCH: loop over experts; process the tokens routed to each.</span>
+        <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_experts</span><span class="p">):</span>
+            <span class="c1"># Which (token, slot) pairs picked expert e? slot in {0..k-1}.</span>
+            <span class="n">sel</span> <span class="o">=</span> <span class="p">(</span><span class="n">topk_idx</span> <span class="o">==</span> <span class="n">e</span><span class="p">)</span>                  <span class="c1"># (N, k) bool</span>
+            <span class="n">token_ids</span><span class="p">,</span> <span class="n">slot_ids</span> <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">nonzero</span><span class="p">(</span><span class="n">as_tuple</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># variable length</span>
+            <span class="n">load</span><span class="p">[</span><span class="n">e</span><span class="p">]</span> <span class="o">=</span> <span class="n">token_ids</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span>            <span class="c1"># tokens wanting expert e (pre-drop)</span>
+
+            <span class="k">if</span> <span class="n">token_ids</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="c1"># CAPACITY DROP: keep only the first `capacity` tokens for this expert.</span>
+            <span class="k">if</span> <span class="n">token_ids</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">&gt;</span> <span class="n">capacity</span><span class="p">:</span>
+                <span class="n">token_ids</span> <span class="o">=</span> <span class="n">token_ids</span><span class="p">[:</span><span class="n">capacity</span><span class="p">]</span>
+                <span class="n">slot_ids</span> <span class="o">=</span> <span class="n">slot_ids</span><span class="p">[:</span><span class="n">capacity</span><span class="p">]</span>
+
+            <span class="n">ex_in</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="n">token_ids</span><span class="p">]</span>                    <span class="c1"># (n_e, D) gather</span>
+            <span class="n">ex_out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">experts</span><span class="p">[</span><span class="n">e</span><span class="p">](</span><span class="n">ex_in</span><span class="p">)</span>         <span class="c1"># (n_e, D) run THIS expert only</span>
+            <span class="n">w</span> <span class="o">=</span> <span class="n">gate</span><span class="p">[</span><span class="n">token_ids</span><span class="p">,</span> <span class="n">slot_ids</span><span class="p">]</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>        <span class="c1"># (n_e, 1) gate weight</span>
+            <span class="n">out</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">token_ids</span><span class="p">,</span> <span class="n">w</span> <span class="o">*</span> <span class="n">ex_out</span><span class="p">)</span>           <span class="c1"># scatter-add back</span>
+
+        <span class="c1"># 4) AUXILIARY LOAD-BALANCING LOSS (Switch): encourage uniform routing.</span>
+        <span class="n">f</span> <span class="o">=</span> <span class="n">load</span> <span class="o">/</span> <span class="n">load</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>         <span class="c1"># dispatched fraction per expert</span>
+        <span class="n">P</span> <span class="o">=</span> <span class="n">router_prob</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>                <span class="c1"># mean router prob per expert</span>
+        <span class="n">aux_loss</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_experts</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">f</span> <span class="o">*</span> <span class="n">P</span><span class="p">)</span>   <span class="c1"># minimized when both are uniform</span>
+
+        <span class="k">return</span> <span class="n">out</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="p">),</span> <span class="n">aux_loss</span>
+
+<span class="c1"># --- smoke test: it runs and shapes are right ---</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">moe</span> <span class="o">=</span> <span class="n">SparseMoE</span><span class="p">(</span><span class="n">d_model</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">d_ff</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">n_experts</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">capacity_factor</span><span class="o">=</span><span class="mf">1.25</span><span class="p">)</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">)</span>              <span class="c1"># batch 4, seq 16</span>
+<span class="n">y</span><span class="p">,</span> <span class="n">aux</span> <span class="o">=</span> <span class="n">moe</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">aux</span><span class="p">))</span>             <span class="c1"># torch.Size([4, 16, 32]) &lt;some positive scalar&gt;</span>
+</code></pre></div>
+<p>A few details in that code are load-bearing and worth dwelling on. The <code>index_add_</code> is what makes top-<span class="arithmatex">\(k&gt;1\)</span> correct: a token selected by two experts contributes <em>both</em> weighted outputs to the same output row, and because the gate weights were renormalized to sum to 1, the result is a true convex combination. The capacity clamp <code>token_ids[:capacity]</code> is the <strong>token dropping</strong> mechanism — tokens beyond an expert&rsquo;s quota silently get <em>no</em> FFN contribution this layer (their output stays whatever the residual stream carried in, since we add to a zero buffer that then joins the residual). In a real implementation the dropped token still flows through the residual connection, so it is degraded, not destroyed. And the auxiliary loss combines a <em>hard</em> count <code>f</code> with a <em>soft</em> probability <code>P</code> on purpose — we explain exactly why next.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: forgetting that token dropping makes the layer batch-dependent</p>
+<p>Because capacity is computed from the current batch and excess tokens are dropped, an MoE layer&rsquo;s output for a given token can change depending on <em>which other tokens are in the batch</em> — a property dense layers never have. At training time this is fine (it is a form of noise). At <strong>inference</strong> it is a correctness hazard: two identical prompts batched differently can produce different logits. Production serving either uses a generous capacity factor, drops the capacity limit entirely (dynamic-size grouped GEMM), or pads/recomputes so results are batch-invariant. Always know which regime your serving stack is in.</p>
+</div>
+<h2 id="load-balancing-the-make-or-break-problem">Load Balancing: The Make-or-Break Problem<a class="headerlink" href="#load-balancing-the-make-or-break-problem" title="Permanent link">¶</a></h2>
+<p>Left to its own devices, a sparse router <strong>collapses</strong>. Early in training, one expert is — by random initialization — slightly better. The router sends it more tokens, so it gets more gradient, so it improves faster, so it attracts even more tokens. This is a textbook rich-get-richer feedback loop, and its fixed point is a model that routes (almost) everything to one expert while the rest atrophy, never receiving gradient. You have then paid for <span class="arithmatex">\(E\)</span> experts and trained one. Worse, in a distributed setting, the favored expert&rsquo;s GPU is saturated while the others idle — the slowest device sets the pace, so imbalance directly <em>wastes wall-clock time</em>. Load balancing is therefore not a nicety; it is the difference between MoE working and MoE failing.</p>
+<h3 id="the-auxiliary-load-balancing-loss">The auxiliary load-balancing loss<a class="headerlink" href="#the-auxiliary-load-balancing-loss" title="Permanent link">¶</a></h3>
+<p>The dominant fix, from GShard and refined by Switch, is to add a differentiable penalty that pushes routing toward uniform. Define, over a batch of <span class="arithmatex">\(N\)</span> tokens and <span class="arithmatex">\(E\)</span> experts:</p>
+<ul>
+<li><span class="arithmatex">\(f_e\)</span> = the <strong>fraction of tokens dispatched</strong> to expert <span class="arithmatex">\(e\)</span> (a hard count, <span class="arithmatex">\(\sum_e f_e = 1\)</span> for top-1; for top-<span class="arithmatex">\(k\)</span> it sums to <span class="arithmatex">\(k\)</span> before normalization).</li>
+<li><span class="arithmatex">\(P_e = \frac{1}{N}\sum_{i} p_e(x_i)\)</span> = the <strong>mean router probability</strong> assigned to expert <span class="arithmatex">\(e\)</span> (soft, from the full softmax).</li>
+</ul>
+<p>The Switch auxiliary loss is</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{aux} = \alpha \cdot E \cdot \sum_{e=1}^{E} f_e\, P_e,
+\]</div>
+<p>with a small coefficient <span class="arithmatex">\(\alpha\)</span> (on the order of <span class="arithmatex">\(10^{-2}\)</span>). Two questions: why the <em>product</em> <span class="arithmatex">\(f_e P_e\)</span>, and why mix a hard count with a soft probability?</p>
+<p>The product is minimized, subject to <span class="arithmatex">\(\sum_e P_e = 1\)</span>, exactly when the load is <strong>uniform</strong> (<span class="arithmatex">\(P_e = 1/E\)</span> for all <span class="arithmatex">\(e\)</span>). You can see this with Lagrange multipliers, or intuitively: <span class="arithmatex">\(\sum_e f_e P_e\)</span> is like an expectation that is smallest when probability mass avoids the heavily-loaded experts. The factor <span class="arithmatex">\(E\)</span> rescales it so the loss is <span class="arithmatex">\(\approx 1\)</span> at perfect balance, making <span class="arithmatex">\(\alpha\)</span> interpretable across different <span class="arithmatex">\(E\)</span>.</p>
+<p>The hard/soft mix is the clever part. We <em>want</em> to penalize the hard dispatch counts <span class="arithmatex">\(f_e\)</span> — those are what actually cause imbalance — but <span class="arithmatex">\(f_e\)</span> comes from a <code>top-k</code>/<code>argmax</code> and is <strong>non-differentiable</strong>. So we keep <span class="arithmatex">\(f_e\)</span> as a constant (it provides the <em>direction</em>: which experts are overloaded) and multiply by the differentiable <span class="arithmatex">\(P_e\)</span> (which provides the <em>gradient</em>: nudging the router&rsquo;s probabilities down on overloaded experts and up on starved ones). The loss &ldquo;reads&rdquo; imbalance from the hard counts and &ldquo;writes&rdquo; the correction through the soft probabilities. It is a beautiful little gradient-routing trick and it is why MoE trains at all.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">switch_aux_loss</span><span class="p">(</span><span class="n">router_logits</span><span class="p">,</span> <span class="n">expert_idx</span><span class="p">,</span> <span class="n">n_experts</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">1e-2</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;router_logits: (N, E) pre-softmax. expert_idx: (N,) top-1 choice per token.&quot;&quot;&quot;</span>
+    <span class="n">P</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">router_logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>        <span class="c1"># (E,) soft mass, differentiable</span>
+    <span class="c1"># f: hard dispatch fraction (a count; we detach so only P carries gradient).</span>
+    <span class="n">f</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">expert_idx</span><span class="p">,</span> <span class="n">minlength</span><span class="o">=</span><span class="n">n_experts</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">f</span> <span class="o">=</span> <span class="p">(</span><span class="n">f</span> <span class="o">/</span> <span class="n">f</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>                              <span class="c1"># (E,), constant direction</span>
+    <span class="k">return</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">n_experts</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">f</span> <span class="o">*</span> <span class="n">P</span><span class="p">)</span>
+</code></pre></div>
+<p>A second, smaller term often accompanies it: the <strong>router z-loss</strong> (from ST-MoE), <span class="arithmatex">\(\mathcal{L}_z = \beta \cdot \frac{1}{N}\sum_i \big(\log\sum_e e^{h_e(x_i)}\big)^2\)</span>, which penalizes large router logits. This keeps the router from saturating into a near-one-hot regime where small numerical perturbations flip the top-k choice, dramatically improving training stability in bf16/fp8 (see <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision</a>).</p>
+<h3 id="expert-choice-routing-invert-the-problem">Expert-choice routing: invert the problem<a class="headerlink" href="#expert-choice-routing-invert-the-problem" title="Permanent link">¶</a></h3>
+<p>There is an elegant alternative that makes imbalance <em>impossible by construction</em>. In standard <strong>token-choice</strong> routing, each token picks its top-<span class="arithmatex">\(k\)</span> experts — and nothing stops every token from picking the same expert. <strong>Expert-choice</strong> routing (Zhou et al., 2022) flips it: each <em>expert</em> picks its top-<span class="arithmatex">\(C\)</span> tokens, where <span class="arithmatex">\(C\)</span> is exactly its capacity. Now every expert processes precisely <span class="arithmatex">\(C\)</span> tokens — perfect balance, no auxiliary loss, no dropping in the usual sense. The trade-off: a token might be chosen by <em>many</em> experts or by <em>none</em>, so some tokens get more compute than others (the model decides which tokens are &ldquo;hard&rdquo;), and the scheme is awkward for autoregressive <em>inference</em> because it needs to see the whole batch of tokens to do the selection, which breaks causal, one-token-at-a-time decoding. Expert-choice is therefore most natural in encoder-style or training-time settings; token-choice with an aux loss remains the default for decoder LLMs.</p>
+<figure class="viz" id="fig-moe-token-vs-expert-choice">
+<svg viewBox="0 0 720 420" role="img" aria-label="Token-choice routing: each token picks its top-k experts, potentially overloading one expert and forcing token drops. Expert-choice routing: each expert picks exactly C tokens, guaranteeing balance but giving variable compute per token.">
+<style>
+  #fig-moe-token-vs-expert-choice text { font: 13px var(--sans, sans-serif); fill: var(--ink-soft, #45413a); }
+  #fig-moe-token-vs-expert-choice .title  { font: 700 14px var(--sans, sans-serif); }
+  #fig-moe-token-vs-expert-choice .sub    { font: italic 12px var(--sans, sans-serif); fill: var(--muted, #6d675d); }
+  #fig-moe-token-vs-expert-choice .caption { font: 11px var(--sans, sans-serif); fill: var(--muted, #6d675d); }
+  #fig-moe-token-vs-expert-choice .lbl   { font: 700 12px var(--sans, sans-serif); }
+  #fig-moe-token-vs-expert-choice .badge  { font: 700 10px var(--sans, sans-serif); }
+</style>
+<defs>
+  <marker id="tvc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--v-stroke,#45413a)" stroke="none"/>
+  </marker>
+  <marker id="tvc-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)" stroke="none"/>
+  </marker>
+  <marker id="tvc-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)" stroke="none"/>
+  </marker>
+</defs>
+
+
+<line x1="360" y1="10" x2="360" y2="415" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.5"/>
+
+
+<text x="180" y="26" text-anchor="middle" class="title v-label">TOKEN-CHOICE (default)</text>
+<text x="180" y="44" text-anchor="middle" class="sub">TOKENS pick EXPERTS</text>
+
+
+
+<rect x="44" y="68" width="52" height="26" rx="5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5" class="v-fill v-stroke"/>
+<text x="70" y="86" text-anchor="middle" class="lbl">T1</text>
+
+
+<rect x="44" y="113" width="52" height="26" rx="5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="70" y="131" text-anchor="middle" class="lbl">T2</text>
+
+
+<rect x="44" y="158" width="52" height="26" rx="5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="70" y="176" text-anchor="middle" class="lbl">T3</text>
+
+
+<rect x="44" y="203" width="52" height="26" rx="5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="70" y="221" text-anchor="middle" class="lbl">T4</text>
+
+
+
+<rect x="256" y="73" width="58" height="30" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+<text x="285" y="93" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">E1</text>
+
+<rect x="250" y="57" width="92" height="16" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.85"/>
+<text x="296" y="69" text-anchor="middle" class="badge" fill="white">overloaded -&gt; drop</text>
+
+
+<rect x="256" y="140" width="58" height="30" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="285" y="160" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">E2</text>
+
+
+<rect x="256" y="208" width="58" height="30" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="285" y="228" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">E3</text>
+
+
+
+<line x1="96" y1="77" x2="256" y2="83" stroke="var(--warn,#e0a106)" stroke-width="1.5" marker-end="url(#tvc-arrow-warn)"/>
+<line x1="96" y1="84" x2="256" y2="152" stroke="var(--v-stroke,#45413a)" stroke-width="1.2" marker-end="url(#tvc-arrow)"/>
+
+
+<line x1="96" y1="122" x2="256" y2="90" stroke="var(--warn,#e0a106)" stroke-width="1.5" marker-end="url(#tvc-arrow-warn)"/>
+
+
+<line x1="96" y1="167" x2="256" y2="95" stroke="var(--warn,#e0a106)" stroke-width="1.5" marker-end="url(#tvc-arrow-warn)"/>
+<line x1="96" y1="172" x2="256" y2="158" stroke="var(--v-stroke,#45413a)" stroke-width="1.2" marker-end="url(#tvc-arrow)"/>
+
+
+<line x1="96" y1="215" x2="256" y2="163" stroke="var(--v-stroke,#45413a)" stroke-width="1.2" marker-end="url(#tvc-arrow)"/>
+<line x1="96" y1="220" x2="256" y2="218" stroke="var(--v-stroke,#45413a)" stroke-width="1.2" marker-end="url(#tvc-arrow)"/>
+
+
+<text x="320" y="90" class="caption" fill="var(--warn,#e0a106)">3 arrivals</text>
+
+
+<text x="180" y="275" text-anchor="middle" class="caption">each token -&gt; its top-k experts</text>
+<text x="180" y="291" text-anchor="middle" class="caption" fill="var(--warn,#e0a106)">may overload an expert -&gt; drop</text>
+<text x="180" y="307" text-anchor="middle" class="caption">uniform compute per token</text>
+<text x="180" y="323" text-anchor="middle" class="caption">works for autoregressive decode</text>
+
+
+
+<text x="540" y="26" text-anchor="middle" class="title v-label">EXPERT-CHOICE</text>
+<text x="540" y="44" text-anchor="middle" class="sub">EXPERTS pick TOKENS</text>
+
+
+<rect x="391" y="78" width="62" height="30" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="422" y="98" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">E1</text>
+<text x="422" y="115" text-anchor="middle" class="caption" fill="var(--accent,#c15b39)">C=2</text>
+
+<rect x="391" y="148" width="62" height="30" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="422" y="168" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">E2</text>
+<text x="422" y="185" text-anchor="middle" class="caption" fill="var(--accent,#c15b39)">C=2</text>
+
+<rect x="391" y="218" width="62" height="30" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="422" y="238" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">E3</text>
+<text x="422" y="255" text-anchor="middle" class="caption" fill="var(--accent,#c15b39)">C=2</text>
+
+
+<rect x="612" y="58" width="52" height="26" rx="5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="638" y="76" text-anchor="middle" class="lbl">T1</text>
+
+<rect x="612" y="98" width="52" height="26" rx="5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="638" y="116" text-anchor="middle" class="lbl">T2</text>
+
+
+<rect x="612" y="138" width="52" height="26" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.15" stroke="var(--accent,#c15b39)" stroke-width="2.5"/>
+<text x="638" y="156" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">T3</text>
+
+<rect x="612" y="178" width="52" height="26" rx="5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="638" y="196" text-anchor="middle" class="lbl">T4</text>
+
+
+<rect x="612" y="218" width="52" height="26" rx="5" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.2" stroke-dasharray="4 2" opacity="0.45"/>
+<text x="638" y="236" text-anchor="middle" class="lbl" opacity="0.45">T5</text>
+
+
+
+<line x1="453" y1="88" x2="612" y2="71" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#tvc-arrow-accent)"/>
+<line x1="453" y1="95" x2="612" y2="148" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#tvc-arrow-accent)"/>
+
+
+<line x1="453" y1="158" x2="612" y2="111" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#tvc-arrow-accent)"/>
+<line x1="453" y1="165" x2="612" y2="153" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#tvc-arrow-accent)"/>
+
+
+<line x1="453" y1="228" x2="612" y2="191" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#tvc-arrow-accent)"/>
+<line x1="453" y1="235" x2="612" y2="79" stroke="var(--accent,#c15b39)" stroke-width="1.2" stroke-dasharray="4 2" opacity="0.6" marker-end="url(#tvc-arrow-accent)"/>
+
+
+<text x="540" y="275" text-anchor="middle" class="caption">each expert -&gt; its top-C tokens</text>
+<text x="540" y="291" text-anchor="middle" class="caption" fill="var(--good,#2f9e6e)">exactly C tokens/expert -&gt; balanced</text>
+<text x="540" y="307" text-anchor="middle" class="caption">variable compute per token</text>
+<text x="540" y="323" text-anchor="middle" class="caption">awkward for causal decode</text>
+
+</svg>
+<figcaption><b>Token-choice vs. expert-choice routing.</b> In token-choice (left), each token selects its top-k experts; multiple tokens can choose the same expert, causing overload and token drops (highlighted in amber). In expert-choice (right), each expert picks exactly C tokens, guaranteeing balanced load by construction, but some tokens may receive extra compute (T3) or none at all (T5, ghosted), making it ill-suited for autoregressive decoding.</figcaption>
+</figure>
+
+<h2 id="capacity-factor-token-dropping-and-the-worked-numbers">Capacity Factor, Token Dropping, and the Worked Numbers<a class="headerlink" href="#capacity-factor-token-dropping-and-the-worked-numbers" title="Permanent link">¶</a></h2>
+<p>The <strong>capacity</strong> of an expert is the maximum number of tokens it will accept in a batch. With <span class="arithmatex">\(N\)</span> tokens, top-<span class="arithmatex">\(k\)</span> routing, and <span class="arithmatex">\(E\)</span> experts, the <em>average</em> tokens per expert is <span class="arithmatex">\(Nk/E\)</span>. We multiply by a <strong>capacity factor</strong> <span class="arithmatex">\(C_f \ge 1\)</span> to leave slack for imbalance:</p>
+<div class="arithmatex">\[
+\text{capacity} = \left\lceil C_f \cdot \frac{N\,k}{E} \right\rceil.
+\]</div>
+<p>Why does capacity exist at all? Because GPUs want <strong>static, rectangular tensors</strong>. To run expert <span class="arithmatex">\(e\)</span> as one efficient matmul, you need a fixed-size buffer of tokens for it. Capacity is that buffer size. If more than <code>capacity</code> tokens route to an expert, the overflow is <strong>dropped</strong> (skips the FFN, passes through on the residual). If fewer arrive, the buffer is <strong>padded</strong> with zeros (wasted FLOPs). So <span class="arithmatex">\(C_f\)</span> trades two evils: too low and you drop many tokens (hurting quality); too high and you waste compute and memory on padding. Typical training values are <span class="arithmatex">\(C_f \in [1.0, 2.0]\)</span>; Switch used around 1.0–1.25, GShard often 2.0. Modern systems increasingly use <strong>dropless</strong> MoE (Megablocks) with grouped/block-sparse GEMMs that handle ragged sizes directly, eliminating both dropping and padding — but the capacity concept is essential for understanding the classics and most serving paths.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: capacity, dropping, and the parameter/FLOP split</p>
+<p>Take a configuration close to a small Mixtral-style layer: <span class="arithmatex">\(E = 8\)</span> experts, top-<span class="arithmatex">\(k = 2\)</span>, <span class="arithmatex">\(d_\text{model} = 4096\)</span>, <span class="arithmatex">\(d_\text{ff} = 14336\)</span>, processing a batch of <span class="arithmatex">\(N = 8192\)</span> tokens (e.g. 16 sequences of length 512). Use a capacity factor <span class="arithmatex">\(C_f = 1.25\)</span>.</p>
+<p><strong>Average load:</strong> <span class="arithmatex">\(Nk/E = 8192 \times 2 / 8 = 2048\)</span> tokens per expert on average.</p>
+<p><strong>Capacity per expert:</strong> <span class="arithmatex">\(\lceil 1.25 \times 2048 \rceil = 2560\)</span> tokens. Each expert&rsquo;s dispatch buffer holds 2560 token-slots; the layer reserves <span class="arithmatex">\(8 \times 2560 = 20480\)</span> slots for <span class="arithmatex">\(8192 \times 2 = 16384\)</span> routed token-instances — about 25% headroom for imbalance.</p>
+<p><strong>What if one expert is hot?</strong> Suppose the router (mid-training, imperfectly balanced) sends 3000 tokens to expert 3. Capacity is 2560, so <span class="arithmatex">\(3000 - 2560 = 440\)</span> tokens are <strong>dropped</strong> at this layer — they get no FFN update and pass through on the residual. Across 32 MoE layers, a token has many chances to be dropped somewhere; this is why a too-tight capacity factor visibly hurts loss.</p>
+<p><strong>Parameter count.</strong> Each expert FFN (SwiGLU has 3 matrices; use 2 here for simplicity) holds <span class="arithmatex">\(2 \times d_\text{model} \times d_\text{ff} = 2 \times 4096 \times 14336 \approx 1.17 \times 10^{8}\)</span> params. Eight experts: <span class="arithmatex">\(\approx 9.4 \times 10^{8}\)</span> params in this one MoE layer. A dense FFN would be just <span class="arithmatex">\(1.17 \times 10^{8}\)</span>. So the MoE layer holds <strong>8× the parameters</strong> of a dense FFN.</p>
+<p><strong>FLOP count (the payoff).</strong> Per token, only <span class="arithmatex">\(k = 2\)</span> experts run. The MoE FFN does <span class="arithmatex">\(\approx 2 \times (2 \times d_\text{model} \times d_\text{ff}) \times k\)</span> FLOPs <span class="arithmatex">\(= 2 \times 1.17\times10^8 \times 2 \approx 9.4 \times 10^{8}\)</span> FLOPs per token — i.e. <strong>2 experts&rsquo; worth</strong>, not 8. The model <em>contains</em> 8 experts but each token <em>pays</em> for 2. Total-to-active ratio <span class="arithmatex">\(= 8/2 = 4\times\)</span>. That 4× is the lever: roughly 4× the parameters (capacity) at 1× the per-token FLOPs of a 2-expert dense model.</p>
+</div>
+<p>The takeaway in one line: <strong>capacity factor governs the dropping-vs-padding trade-off; the total-to-active ratio governs the capacity-vs-cost trade-off.</strong> Both are knobs you tune, and both show up directly in training loss and serving latency.</p>
+<h2 id="the-landmark-designs-gshard-switch-mixtral-deepseek-moe">The Landmark Designs: GShard, Switch, Mixtral, DeepSeek-MoE<a class="headerlink" href="#the-landmark-designs-gshard-switch-mixtral-deepseek-moe" title="Permanent link">¶</a></h2>
+<p>The ideas above were not discovered all at once; each landmark model fixed a specific pain point. Knowing the lineage lets you reason about <em>why</em> a given model made its choices.</p>
+<h3 id="gshard-2020-moe-goes-to-scale">GShard (2020): MoE goes to scale<a class="headerlink" href="#gshard-2020-moe-goes-to-scale" title="Permanent link">¶</a></h3>
+<p>GShard (Lepikhin et al., Google) put MoE into a 600B-parameter multilingual translation Transformer and established the recipe that everyone still uses: <strong>top-2 routing</strong>, an <strong>auxiliary load-balancing loss</strong>, a <strong>capacity factor with token dropping</strong>, and — critically — <strong>expert parallelism</strong> via an all-to-all communication primitive that shuffles tokens to wherever their experts live. GShard is where MoE stopped being a curiosity and became a scaling tool, and where the systems problem (the all-to-all, previewed below) was first confronted head-on.</p>
+<h3 id="switch-transformer-2021-top-1-is-enough">Switch Transformer (2021): top-1 is enough<a class="headerlink" href="#switch-transformer-2021-top-1-is-enough" title="Permanent link">¶</a></h3>
+<p>Switch (Fedus, Zoph, Shazeer, Google) made a deliberately aggressive simplification: route each token to exactly <strong>one</strong> expert (<span class="arithmatex">\(k = 1\)</span>). The conventional wisdom had been that you needed top-2 so the router could <em>compare</em> two experts and get a gradient signal for the choice; Switch showed top-1 trains fine with the right tricks. The payoff is roughly halved communication and compute per token. Switch also contributed the cleaner <strong>auxiliary loss</strong> formulation above, careful <strong>bf16 stability</strong> work (selectively casting the router to fp32), and the <strong>router z-loss</strong>. It scaled to 1.6T parameters. If you implement MoE once from scratch, implement Switch; it is the minimal complete design.</p>
+<h3 id="mixtral-87b-2023-moe-for-open-decoder-llms">Mixtral 8×7B (2023): MoE for open decoder LLMs<a class="headerlink" href="#mixtral-87b-2023-moe-for-open-decoder-llms" title="Permanent link">¶</a></h3>
+<p>Mixtral (Mistral AI) was the model that made MoE mainstream for the open-source decoder-only LLM. Eight experts per layer, <strong>top-2</strong> routing, <strong>top-k-then-softmax</strong> gating (renormalized weights), with attention and embeddings <strong>shared</strong> across experts so only the FFNs are replicated. The naming &ldquo;8×7B&rdquo; is a friendly fiction: it is <em>not</em> 56B parameters but <span class="arithmatex">\(\approx 47\)</span>B total (because the non-FFN parts are not multiplied), activating <span class="arithmatex">\(\approx 13\)</span>B per token. Mixtral demonstrated that an MoE could match or beat a much larger dense model (Llama-2 70B) at a fraction of the active compute, on standard chat/reasoning benchmarks — the existence proof that sold the architecture to practitioners.</p>
+<h3 id="deepseek-moe-and-the-fine-grained-shared-expert-idea-2024">DeepSeek-MoE and the fine-grained + shared-expert idea (2024)<a class="headerlink" href="#deepseek-moe-and-the-fine-grained-shared-expert-idea-2024" title="Permanent link">¶</a></h3>
+<p>DeepSeek-MoE introduced two refinements that the frontier has largely adopted, and they are worth understanding precisely because they attack a real limitation of the GShard/Switch design: <strong>coarse experts force redundancy</strong>. If you only have 8 big experts and you want to combine, say, &ldquo;code knowledge&rdquo; with &ldquo;math knowledge&rdquo; on a given token, your only options are coarse. Two changes fix this:</p>
+<ol>
+<li>
+<p><strong>Fine-grained experts.</strong> Instead of <span class="arithmatex">\(E\)</span> big experts, use <span class="arithmatex">\(mE\)</span> experts each <span class="arithmatex">\(1/m\)</span> the size, and increase <span class="arithmatex">\(k\)</span> proportionally. The <em>active</em> parameter count is unchanged, but the number of <em>combinations</em> of experts a token can express explodes combinatorially (<span class="arithmatex">\(\binom{mE}{mk}\)</span> grows fast). More, smaller experts give the router a richer, more composable palette and empirically improve specialization. DeepSeek-V3 takes this far: <strong>256 routed experts</strong>, top-8 per token.</p>
+</li>
+<li>
+<p><strong>Shared experts.</strong> Designate a small number of experts (often 1) that <strong>every</strong> token always uses, in addition to its routed experts. The intuition: common, universal knowledge (&ldquo;how to form a plural,&rdquo; &ldquo;basic syntax&rdquo;) should not have to be redundantly relearned inside many specialized experts. The shared expert absorbs the common case; the routed experts then specialize on the residual. This both improves quality and reduces the redundancy that pure routed-MoE suffers.</p>
+</li>
+</ol>
+<p>DeepSeek-V3 further replaced the auxiliary loss with the <strong>auxiliary-loss-free</strong> bias-adjustment scheme mentioned earlier: a per-expert bias <span class="arithmatex">\(b_e\)</span> is added to the routing logits <em>for selection only</em>, and after each step <span class="arithmatex">\(b_e\)</span> is decremented for overloaded experts and incremented for underloaded ones. This achieves balance without the aux loss&rsquo;s gradient interference, which can slightly degrade quality by fighting the language-modeling objective. The architecture also pairs MoE with <strong>Multi-head Latent Attention (MLA)</strong> for KV-cache compression — see <a href="../02-transformer/04-mha-gqa-mla.html">Multi-Head Attention, MQA, GQA &amp; MLA</a>.</p>
+<figure class="viz" id="fig-moe-dense-gshard-deepseek-lineage">
+<svg viewBox="0 0 860 430" role="img" aria-label="Three-stage architectural evolution: a single dense FFN, then a GShard/Switch MoE with E coarse experts and top-k routing, then DeepSeek-MoE with always-on shared experts plus many fine-grained routed experts combined additively.">
+<style>
+  #fig-moe-dense-gshard-deepseek-lineage text { font: 12px var(--sans, sans-serif); fill: var(--ink-soft, #45413a); }
+  #fig-moe-dense-gshard-deepseek-lineage .title  { font: 700 13px var(--sans, sans-serif); }
+  #fig-moe-dense-gshard-deepseek-lineage .caption { font: 10.5px var(--sans, sans-serif); fill: var(--muted, #6d675d); }
+  #fig-moe-dense-gshard-deepseek-lineage .lbl    { font: 700 11px var(--mono, monospace); }
+  #fig-moe-dense-gshard-deepseek-lineage .node   { font: 700 13px var(--sans, sans-serif); }
+  #fig-moe-dense-gshard-deepseek-lineage .badge  { font: 700 9px var(--sans, sans-serif); }
+  #fig-moe-dense-gshard-deepseek-lineage .eq     { font: 11px var(--mono, monospace); fill: var(--ink-soft, #45413a); }
+</style>
+<defs>
+  <marker id="lin-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--v-stroke,#45413a)" stroke="none"/>
+  </marker>
+  <marker id="lin-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)" stroke="none"/>
+  </marker>
+  <marker id="lin-arrow-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)" stroke="none"/>
+  </marker>
+</defs>
+
+
+<line x1="300" y1="15" x2="300" y2="420" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.45"/>
+<line x1="560" y1="15" x2="560" y2="420" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.45"/>
+
+
+<text x="150" y="26" text-anchor="middle" class="title v-label">DENSE FFN</text>
+
+
+<rect x="124" y="44" width="52" height="24" rx="12" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="150" y="61" text-anchor="middle" class="node" font-style="italic">x</text>
+
+<line x1="150" y1="68" x2="150" y2="92" stroke="var(--v-stroke,#45413a)" stroke-width="1.5" marker-end="url(#lin-arrow)"/>
+
+
+<rect x="103" y="95" width="94" height="52" rx="6" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="2"/>
+<text x="150" y="116" text-anchor="middle" class="lbl">FFN</text>
+<text x="150" y="133" text-anchor="middle" class="caption">all params,</text>
+<text x="150" y="145" text-anchor="middle" class="caption">every token</text>
+
+<line x1="150" y1="147" x2="150" y2="175" stroke="var(--v-stroke,#45413a)" stroke-width="1.5" marker-end="url(#lin-arrow)"/>
+
+
+<rect x="124" y="178" width="52" height="24" rx="12" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="150" y="195" text-anchor="middle" class="node" font-style="italic">y</text>
+
+<text x="150" y="230" text-anchor="middle" class="caption">Baseline: 1 FFN,</text>
+<text x="150" y="244" text-anchor="middle" class="caption">no routing.</text>
+
+
+
+<text x="430" y="26" text-anchor="middle" class="title v-label">GShard / Switch MoE</text>
+
+
+<rect x="404" y="44" width="52" height="24" rx="12" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="430" y="61" text-anchor="middle" class="node" font-style="italic">x</text>
+
+<line x1="430" y1="68" x2="430" y2="90" stroke="var(--v-stroke,#45413a)" stroke-width="1.5" marker-end="url(#lin-arrow)"/>
+
+
+<rect x="370" y="93" width="120" height="40" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="430" y="110" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Router (top-k)</text>
+<text x="430" y="126" text-anchor="middle" class="caption">pick k of E experts</text>
+
+
+<line x1="430" y1="133" x2="430" y2="152" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<line x1="335" y1="152" x2="525" y2="152" stroke="var(--accent,#c15b39)" stroke-width="2" stroke-linecap="round"/>
+
+
+
+<rect x="328" y="158" width="36" height="28" rx="4" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="1" stroke-dasharray="3 2" opacity="0.55"/>
+<text x="346" y="170" text-anchor="middle" class="caption">E1</text>
+<line x1="346" y1="152" x2="346" y2="158" stroke="var(--v-stroke,#45413a)" stroke-width="1" opacity="0.4"/>
+
+
+<rect x="370" y="156" width="38" height="32" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="389" y="169" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">E2</text>
+<line x1="389" y1="152" x2="389" y2="156" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#lin-arrow-accent)"/>
+
+
+<rect x="414" y="158" width="36" height="28" rx="4" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="1" stroke-dasharray="3 2" opacity="0.55"/>
+<text x="432" y="170" text-anchor="middle" class="caption">E3</text>
+<line x1="432" y1="152" x2="432" y2="158" stroke="var(--v-stroke,#45413a)" stroke-width="1" opacity="0.4"/>
+
+
+<rect x="456" y="156" width="38" height="32" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="475" y="169" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">E4</text>
+<line x1="475" y1="152" x2="475" y2="156" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#lin-arrow-accent)"/>
+
+
+<rect x="500" y="158" width="36" height="28" rx="4" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="1" stroke-dasharray="3 2" opacity="0.55"/>
+<text x="518" y="170" text-anchor="middle" class="caption">E5</text>
+<line x1="518" y1="152" x2="518" y2="158" stroke="var(--v-stroke,#45413a)" stroke-width="1" opacity="0.4"/>
+
+<text x="430" y="204" text-anchor="middle" class="caption">E coarse experts, top-k routing</text>
+
+
+<line x1="389" y1="188" x2="415" y2="238" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#lin-arrow-accent)"/>
+<line x1="475" y1="188" x2="447" y2="238" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#lin-arrow-accent)"/>
+
+
+<rect x="372" y="240" width="116" height="38" rx="7" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="430" y="256" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">weighted sum</text>
+<text x="430" y="271" text-anchor="middle" class="caption" fill="var(--accent,#c15b39)">(x g_e)</text>
+
+<line x1="430" y1="278" x2="430" y2="302" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#lin-arrow-accent)"/>
+
+
+<rect x="404" y="305" width="52" height="24" rx="12" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="430" y="322" text-anchor="middle" class="node" font-style="italic">y</text>
+
+
+
+<text x="710" y="26" text-anchor="middle" class="title v-label">DeepSeek-MoE (fine-grained + shared)</text>
+
+
+<rect x="684" y="44" width="52" height="24" rx="12" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="710" y="61" text-anchor="middle" class="node" font-style="italic">x</text>
+
+
+<line x1="710" y1="68" x2="710" y2="78" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<line x1="650" y1="78" x2="770" y2="78" stroke="var(--v-stroke,#45413a)" stroke-width="1.2"/>
+
+<line x1="650" y1="78" x2="650" y2="94" stroke="var(--good,#2f9e6e)" stroke-width="1.5" marker-end="url(#lin-arrow-teal)"/>
+
+<line x1="770" y1="78" x2="770" y2="94" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#lin-arrow-accent)"/>
+
+
+<rect x="609" y="97" width="84" height="44" rx="6" fill="var(--good,#2f9e6e)" fill-opacity="0.12" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+<text x="651" y="114" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">SHARED</text>
+<text x="651" y="128" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">expert(s)</text>
+
+<rect x="615" y="144" width="72" height="14" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+<text x="651" y="155" text-anchor="middle" class="badge" fill="white">always on</text>
+
+
+<rect x="726" y="97" width="88" height="40" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="770" y="113" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">Router</text>
+<text x="770" y="129" text-anchor="middle" class="caption">(top-mk)</text>
+
+
+<line x1="770" y1="137" x2="770" y2="156" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<line x1="595" y1="156" x2="845" y2="156" stroke="var(--accent,#c15b39)" stroke-width="1.5" stroke-linecap="round"/>
+
+
+
+
+
+<rect x="598" y="162" width="18" height="20" rx="3" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" stroke-dasharray="2 2" opacity="0.5"/>
+<line x1="607" y1="156" x2="607" y2="162" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" opacity="0.35"/>
+
+<rect x="621" y="162" width="18" height="20" rx="3" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" stroke-dasharray="2 2" opacity="0.5"/>
+<line x1="630" y1="156" x2="630" y2="162" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" opacity="0.35"/>
+
+
+<rect x="644" y="160" width="20" height="24" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.2" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<line x1="654" y1="156" x2="654" y2="160" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#lin-arrow-accent)"/>
+
+<rect x="668" y="162" width="18" height="20" rx="3" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" stroke-dasharray="2 2" opacity="0.5"/>
+<line x1="677" y1="156" x2="677" y2="162" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" opacity="0.35"/>
+
+
+<rect x="691" y="160" width="20" height="24" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.2" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<line x1="701" y1="156" x2="701" y2="160" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#lin-arrow-accent)"/>
+
+<rect x="715" y="162" width="18" height="20" rx="3" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" stroke-dasharray="2 2" opacity="0.5"/>
+<line x1="724" y1="156" x2="724" y2="162" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" opacity="0.35"/>
+
+
+<rect x="738" y="160" width="20" height="24" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.2" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<line x1="748" y1="156" x2="748" y2="160" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#lin-arrow-accent)"/>
+
+<rect x="762" y="162" width="18" height="20" rx="3" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" stroke-dasharray="2 2" opacity="0.5"/>
+<line x1="771" y1="156" x2="771" y2="162" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" opacity="0.35"/>
+
+
+<rect x="785" y="160" width="20" height="24" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.2" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<line x1="795" y1="156" x2="795" y2="160" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#lin-arrow-accent)"/>
+
+<rect x="809" y="162" width="18" height="20" rx="3" fill="var(--v-muted,#978f83)" fill-opacity="0.18" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" stroke-dasharray="2 2" opacity="0.5"/>
+<line x1="818" y1="156" x2="818" y2="162" stroke="var(--v-stroke,#45413a)" stroke-width="0.8" opacity="0.35"/>
+
+<text x="710" y="198" text-anchor="middle" class="caption">mE fine-grained routed, top-(mk)</text>
+
+
+<line x1="651" y1="159" x2="683" y2="248" stroke="var(--good,#2f9e6e)" stroke-width="1.5" marker-end="url(#lin-arrow-teal)"/>
+<line x1="654" y1="184" x2="690" y2="248" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#lin-arrow-accent)"/>
+<line x1="701" y1="184" x2="710" y2="248" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#lin-arrow-accent)"/>
+<line x1="748" y1="184" x2="728" y2="248" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#lin-arrow-accent)"/>
+<line x1="795" y1="184" x2="745" y2="248" stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#lin-arrow-accent)"/>
+
+
+<rect x="591" y="251" width="238" height="42" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.10" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="710" y="268" text-anchor="middle" class="eq">out = shared(x) +</text>
+<text x="710" y="284" text-anchor="middle" class="eq">&#x3A3; routed_e(x)&#x00B7;g_e</text>
+
+<line x1="710" y1="293" x2="710" y2="316" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#lin-arrow-accent)"/>
+
+
+<rect x="684" y="319" width="52" height="24" rx="12" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.5"/>
+<text x="710" y="336" text-anchor="middle" class="node" font-style="italic">y</text>
+
+
+<text x="310" y="218" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">&gt;&gt;</text>
+<text x="570" y="218" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">&gt;&gt;</text>
+<text x="310" y="234" text-anchor="middle" class="caption">add routing</text>
+<text x="570" y="234" text-anchor="middle" class="caption">finer + shared</text>
+
+
+<text x="150" y="360" text-anchor="middle" class="caption">2 layers, 1 expert,</text>
+<text x="150" y="374" text-anchor="middle" class="caption">8d_model^2 params</text>
+
+<text x="430" y="360" text-anchor="middle" class="caption">8x params, 2x active</text>
+<text x="430" y="374" text-anchor="middle" class="caption">FLOPs per token</text>
+
+<text x="710" y="360" text-anchor="middle" class="caption">256 routed + shared experts</text>
+<text x="710" y="374" text-anchor="middle" class="caption">top-8 routing; DeepSeek-V3</text>
+
+</svg>
+<figcaption><b>Architectural lineage: Dense FFN to GShard/Switch MoE to DeepSeek-MoE.</b> A single dense FFN (left) is replaced in GShard/Switch by E coarse experts with a router, keeping per-token FLOPs low by activating only k. DeepSeek-MoE (right) adds two refinements: always-on shared experts (teal) absorb universal knowledge, while a larger bank of fine-grained routed experts (each 1/m the size, top-mk selection) enables richer compositional routing; their outputs are added together.</figcaption>
+</figure>
+
+<p>A small comparison table to anchor the lineage:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Experts <span class="arithmatex">\(E\)</span></th>
+<th>Top-<span class="arithmatex">\(k\)</span></th>
+<th>Gating</th>
+<th>Balancing</th>
+<th>Notable idea</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Shazeer et al. 2017</td>
+<td>up to 1000s</td>
+<td>k (e.g. 4)</td>
+<td>softmax-then-topk + noise</td>
+<td>aux + importance loss</td>
+<td>first sparse LSTM MoE</td>
+</tr>
+<tr>
+<td>GShard 2020</td>
+<td>per-layer, sharded</td>
+<td>2</td>
+<td>softmax-then-topk</td>
+<td>aux loss, capacity drop</td>
+<td>expert parallel all-to-all</td>
+</tr>
+<tr>
+<td>Switch 2021</td>
+<td>up to thousands</td>
+<td>1</td>
+<td>softmax-then-topk</td>
+<td>aux + z-loss</td>
+<td>top-1 simplicity, bf16 stability</td>
+</tr>
+<tr>
+<td>Mixtral 2023</td>
+<td>8</td>
+<td>2</td>
+<td>topk-then-softmax</td>
+<td>aux loss</td>
+<td>open decoder LLM, shared attn</td>
+</tr>
+<tr>
+<td>DeepSeek-V3 2024</td>
+<td>256 routed (+shared)</td>
+<td>8</td>
+<td>sigmoid/softmax + bias</td>
+<td>aux-loss-free bias</td>
+<td>fine-grained + shared experts</td>
+</tr>
+</tbody>
+</table>
+<h2 id="expert-parallelism-a-systems-preview">Expert Parallelism: A Systems Preview<a class="headerlink" href="#expert-parallelism-a-systems-preview" title="Permanent link">¶</a></h2>
+<p>So far we have treated all experts as living on one device. At frontier scale they cannot — 256 experts of 100M+ parameters each will not fit on one GPU, and even if they did, you would want their compute spread out. <strong>Expert parallelism (EP)</strong> shards the experts across devices: GPU 0 holds experts 0–31, GPU 1 holds 32–63, and so on. This creates the defining systems challenge of MoE, and it is worth previewing here even though <a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II</a> covers it in depth.</p>
+<p>The problem: a token on GPU 0 may route to an expert on GPU 5. Before the MoE layer can run, <strong>every token must be sent to the device holding its chosen expert</strong>, and after the experts run, <strong>every result must be sent back</strong> to the token&rsquo;s home device for the residual add and the next layer. These two shuffles are <strong>all-to-all</strong> collectives (see <a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a>) — the most communication-intensive pattern there is, because in the worst case every device talks to every other device.</p>
+<figure class="viz" id="fig-moe-expert-parallel-all-to-all">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 920 460" role="img" aria-label="Expert parallelism pipeline: tokens live on home GPUs, an all-to-all dispatch sends each token to its expert's GPU, experts run locally, then a second all-to-all combines results back to home GPUs for the residual.">
+<style>
+  #fig-moe-expert-parallel-all-to-all text { font: 12px var(--sans, sans-serif); fill: var(--ink-soft, #45413a); }
+  #fig-moe-expert-parallel-all-to-all .stg   { font: 700 11px var(--sans, sans-serif); }
+  #fig-moe-expert-parallel-all-to-all .gpu   { font: 700 12px var(--sans, sans-serif); }
+  #fig-moe-expert-parallel-all-to-all .tok   { font: 700 10px var(--mono, monospace); }
+  #fig-moe-expert-parallel-all-to-all .caption { font: 10.5px var(--sans, sans-serif); fill: var(--muted, #6d675d); }
+  #fig-moe-expert-parallel-all-to-all .warn  { font: 700 10px var(--sans, sans-serif); fill: var(--warn, #e0a106); }
+
+  /* Animation keyframes */
+  @keyframes fadeIn  { from { opacity:0 } to { opacity:1 } }
+  @keyframes moveD0  { 0%,20%{opacity:0} 30%{opacity:1} 70%{opacity:1} 80%{opacity:0} 100%{opacity:0} }
+  @keyframes moveD1  { 0%,25%{opacity:0} 35%{opacity:1} 70%{opacity:1} 80%{opacity:0} 100%{opacity:0} }
+  @keyframes moveD2  { 0%,22%{opacity:0} 33%{opacity:1} 70%{opacity:1} 80%{opacity:0} 100%{opacity:0} }
+  @keyframes pulsExp { 0%,54%{fill-opacity:0.1} 60%,75%{fill-opacity:0.45} 85%,100%{fill-opacity:0.1} }
+  @keyframes moveC0  { 0%,78%{opacity:0} 88%{opacity:1} 100%{opacity:1} }
+  @keyframes moveC1  { 0%,80%{opacity:0} 90%{opacity:1} 100%{opacity:1} }
+  @keyframes moveC2  { 0%,79%{opacity:0} 89%{opacity:1} 100%{opacity:1} }
+  @keyframes tokenHome { 0%,5%{opacity:1} 25%,75%{opacity:0} 90%,100%{opacity:1} }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-moe-expert-parallel-all-to-all .anim-dispatch,
+    #fig-moe-expert-parallel-all-to-all .anim-combine,
+    #fig-moe-expert-parallel-all-to-all .anim-token { animation: none !important; opacity: 1 !important; }
+    #fig-moe-expert-parallel-all-to-all .anim-exp { animation: none !important; fill-opacity: 0.25 !important; }
+  }
+</style>
+<defs>
+  <marker id="ep-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--v-stroke,#45413a)" stroke="none"/>
+  </marker>
+  <marker id="ep-arrow-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)" stroke="none"/>
+  </marker>
+  <marker id="ep-arrow-g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)" stroke="none"/>
+  </marker>
+  <marker id="ep-arrow-w" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)" stroke="none"/>
+  </marker>
+</defs>
+
+
+<rect x="0" y="0" width="920" height="36" fill="var(--surface-3,#ece7da)" opacity="0.45"/>
+<text x="100" y="21" text-anchor="middle" class="stg">Home GPUs</text>
+<text x="310" y="21" text-anchor="middle" class="stg">all-to-all: DISPATCH</text>
+<text x="555" y="21" text-anchor="middle" class="stg">experts run locally</text>
+<text x="780" y="21" text-anchor="middle" class="stg">all-to-all: COMBINE</text>
+
+
+<line x1="200" y1="36" x2="200" y2="440" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.5"/>
+<line x1="430" y1="36" x2="430" y2="440" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.5"/>
+<line x1="680" y1="36" x2="680" y2="440" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.5"/>
+
+
+
+<rect x="4" y="50" width="912" height="92" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.05" stroke="var(--accent,#c15b39)" stroke-width="1" opacity="0.4"/>
+
+<rect x="4" y="160" width="912" height="92" rx="6" fill="var(--good,#2f9e6e)" fill-opacity="0.05" stroke="var(--good,#2f9e6e)" stroke-width="1" opacity="0.4"/>
+
+<rect x="4" y="270" width="912" height="92" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.05" stroke="var(--warn,#e0a106)" stroke-width="1" opacity="0.4"/>
+
+
+<text x="14" y="100" class="gpu" fill="var(--accent,#c15b39)">GPU0</text>
+<text x="14" y="210" class="gpu" fill="var(--good,#2f9e6e)">GPU1</text>
+<text x="14" y="320" class="gpu" fill="var(--warn,#e0a106)">GPU2</text>
+
+
+
+
+
+
+
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.5s">
+  <rect x="58" y="72" width="26" height="18" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.3" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="71" y="85" text-anchor="middle" class="tok">t0</text>
+</g>
+
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.6s">
+  <rect x="88" y="72" width="26" height="18" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.3" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="101" y="85" text-anchor="middle" class="tok">t1</text>
+</g>
+
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.4s">
+  <rect x="118" y="72" width="26" height="18" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.3" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="131" y="85" text-anchor="middle" class="tok">t2</text>
+</g>
+
+
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.3s">
+  <rect x="58" y="182" width="26" height="18" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.3" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="71" y="195" text-anchor="middle" class="tok">t3</text>
+</g>
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.5s">
+  <rect x="88" y="182" width="26" height="18" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.3" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="101" y="195" text-anchor="middle" class="tok">t4</text>
+</g>
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.7s">
+  <rect x="118" y="182" width="26" height="18" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.3" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="131" y="195" text-anchor="middle" class="tok">t5</text>
+</g>
+
+
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.2s">
+  <rect x="58" y="292" width="26" height="18" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.3" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="71" y="305" text-anchor="middle" class="tok">t6</text>
+</g>
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.45s">
+  <rect x="88" y="292" width="26" height="18" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.3" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="101" y="305" text-anchor="middle" class="tok">t7</text>
+</g>
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.6s">
+  <rect x="118" y="292" width="26" height="18" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.3" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="131" y="305" text-anchor="middle" class="tok">t8</text>
+</g>
+
+
+<text x="58" y="128" class="caption">chip color =</text>
+<text x="58" y="140" class="caption">dest. GPU</text>
+
+
+
+
+<g class="anim-dispatch" style="animation: moveD0 4s ease-in-out infinite">
+  <line x1="210" y1="86" x2="420" y2="196" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#ep-arrow-g)" stroke-dasharray="5 3"/>
+  <rect x="292" y="125" width="24" height="16" rx="3" fill="var(--good,#2f9e6e)" fill-opacity="0.8"/>
+  <text x="304" y="137" text-anchor="middle" class="tok" fill="white">t1</text>
+</g>
+
+<g class="anim-dispatch" style="animation: moveD1 4s ease-in-out infinite">
+  <line x1="210" y1="92" x2="420" y2="296" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#ep-arrow-w)" stroke-dasharray="5 3"/>
+  <rect x="290" y="184" width="24" height="16" rx="3" fill="var(--warn,#e0a106)" fill-opacity="0.8"/>
+  <text x="302" y="196" text-anchor="middle" class="tok" fill="white">t0</text>
+</g>
+
+<g class="anim-dispatch" style="animation: moveD2 4s ease-in-out infinite">
+  <line x1="210" y1="196" x2="420" y2="96" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#ep-arrow-a)" stroke-dasharray="5 3"/>
+  <rect x="295" y="138" width="24" height="16" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.8"/>
+  <text x="307" y="150" text-anchor="middle" class="tok" fill="white">t3</text>
+</g>
+
+<g class="anim-dispatch" style="animation: moveD0 4s ease-in-out infinite 0.15s">
+  <line x1="210" y1="302" x2="420" y2="102" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#ep-arrow-a)" stroke-dasharray="4 4" opacity="0.7"/>
+  <rect x="290" y="198" width="24" height="16" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.7"/>
+  <text x="302" y="210" text-anchor="middle" class="tok" fill="white">t6</text>
+</g>
+
+<g class="anim-dispatch" style="animation: moveD2 4s ease-in-out infinite 0.1s">
+  <line x1="210" y1="80" x2="420" y2="80" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#ep-arrow-a)" stroke-dasharray="4 2" opacity="0.5"/>
+</g>
+
+<text x="315" y="360" text-anchor="middle" class="caption" fill="var(--ink-soft,#45413a)">every GPU talks to every other</text>
+
+
+
+<rect x="440" y="57" width="130" height="68" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.1" stroke="var(--accent,#c15b39)" stroke-width="1.5" class="anim-exp" style="animation: pulsExp 4s ease-in-out infinite"/>
+<text x="505" y="76" text-anchor="middle" class="gpu" fill="var(--accent,#c15b39)">Experts</text>
+<text x="505" y="92" text-anchor="middle" class="caption">experts 0-31</text>
+<text x="505" y="106" text-anchor="middle" class="caption">(GPU0's shard)</text>
+
+
+<rect x="440" y="167" width="130" height="78" rx="6" fill="var(--good,#2f9e6e)" fill-opacity="0.1" stroke="var(--good,#2f9e6e)" stroke-width="1.5" class="anim-exp" style="animation: pulsExp 4s ease-in-out infinite 0.15s"/>
+<text x="505" y="186" text-anchor="middle" class="gpu" fill="var(--good,#2f9e6e)">Experts</text>
+<text x="505" y="202" text-anchor="middle" class="caption">experts 32-63</text>
+<text x="505" y="216" text-anchor="middle" class="caption">(GPU1's shard)</text>
+<text x="505" y="232" text-anchor="middle" class="warn">! more tokens</text>
+
+
+<rect x="440" y="277" width="130" height="68" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.1" stroke="var(--warn,#e0a106)" stroke-width="1.5" class="anim-exp" style="animation: pulsExp 4s ease-in-out infinite 0.3s"/>
+<text x="505" y="296" text-anchor="middle" class="gpu" fill="var(--warn,#e0a106)">Experts</text>
+<text x="505" y="312" text-anchor="middle" class="caption">experts 64-95</text>
+<text x="505" y="326" text-anchor="middle" class="caption">(GPU2's shard)</text>
+
+
+
+<g class="anim-combine" style="animation: moveC0 4s ease-in-out infinite">
+  <line x1="690" y1="190" x2="878" y2="96" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#ep-arrow-a)" stroke-dasharray="5 3"/>
+  <rect x="758" y="130" width="24" height="16" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.8"/>
+  <text x="770" y="142" text-anchor="middle" class="tok" fill="white">t3</text>
+</g>
+<g class="anim-combine" style="animation: moveC1 4s ease-in-out infinite">
+  <line x1="690" y1="96" x2="878" y2="196" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#ep-arrow-g)" stroke-dasharray="5 3"/>
+  <rect x="756" y="140" width="24" height="16" rx="3" fill="var(--good,#2f9e6e)" fill-opacity="0.8"/>
+  <text x="768" y="152" text-anchor="middle" class="tok" fill="white">t1</text>
+</g>
+<g class="anim-combine" style="animation: moveC2 4s ease-in-out infinite">
+  <line x1="690" y1="296" x2="878" y2="96" stroke="var(--warn,#e0a106)" stroke-width="1.5" marker-end="url(#ep-arrow-w)" stroke-dasharray="4 4" opacity="0.7"/>
+  <rect x="756" y="186" width="24" height="16" rx="3" fill="var(--warn,#e0a106)" fill-opacity="0.7"/>
+  <text x="768" y="198" text-anchor="middle" class="tok" fill="white">t0</text>
+</g>
+
+
+<rect x="882" y="63" width="30" height="68" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+<text x="897" y="91" text-anchor="middle" class="caption" fill="var(--accent,#c15b39)">+</text>
+<text x="897" y="103" text-anchor="middle" class="caption" fill="var(--accent,#c15b39)">res</text>
+<text x="897" y="115" text-anchor="middle" class="caption" fill="var(--accent,#c15b39)">next</text>
+
+<rect x="882" y="173" width="30" height="68" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.12" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+<text x="897" y="201" text-anchor="middle" class="caption" fill="var(--good,#2f9e6e)">+</text>
+<text x="897" y="213" text-anchor="middle" class="caption" fill="var(--good,#2f9e6e)">res</text>
+<text x="897" y="225" text-anchor="middle" class="caption" fill="var(--good,#2f9e6e)">next</text>
+
+<rect x="882" y="283" width="30" height="68" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.12" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+<text x="897" y="311" text-anchor="middle" class="caption" fill="var(--warn,#e0a106)">+</text>
+<text x="897" y="323" text-anchor="middle" class="caption" fill="var(--warn,#e0a106)">res</text>
+<text x="897" y="335" text-anchor="middle" class="caption" fill="var(--warn,#e0a106)">next</text>
+
+
+<rect x="210" y="390" width="460" height="42" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.08" stroke="var(--warn,#e0a106)" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="440" y="407" text-anchor="middle" class="warn">all-to-all is a BARRIER: every GPU waits for the slowest</text>
+<text x="440" y="422" text-anchor="middle" class="caption" fill="var(--warn,#e0a106)">load imbalance (e.g. GPU1 overloaded) idles the entire cluster</text>
+
+</svg>
+<figcaption><b>Expert parallelism: two all-to-all collectives wrap each MoE layer.</b> Tokens start on their home GPUs (left), an all-to-all dispatch sends each token to the GPU holding its chosen expert (crossing arrows show the all-to-all pattern), experts compute locally, then a second all-to-all returns results home for the residual add. The all-to-all is a synchronization barrier, so GPU1 processing more tokens (overloaded) stalls all other GPUs — making load balance a direct throughput concern.</figcaption>
+</figure>
+
+<p>This is exactly why <strong>load balancing maps directly to throughput</strong>. If expert 3 (on GPU 5) is overloaded, GPU 5 does more work than the others; because the all-to-all is a barrier, <em>every</em> GPU waits for the slowest. Imbalance does not just hurt quality — it idles your cluster. The all-to-all is also bandwidth-hungry, so production MoE training overlaps it with computation, places experts to minimize cross-node traffic, and tunes the capacity factor to bound the message sizes. DeepSeek-V3&rsquo;s auxiliary-loss-free balancing and its node-limited routing (restricting each token to experts on a bounded number of nodes) are, at bottom, <em>communication</em> optimizations dressed as routing rules. The architecture and the systems are inseparable in MoE; you cannot reason about one without the other.</p>
+<p>For inference, EP interacts with the <a href="../07-inference-serving/01-anatomy-inference.html">serving stack</a>: MoE models have <em>low</em> active-parameter FLOPs (great for decode) but <em>high</em> total-parameter memory (you must keep all experts resident in HBM, since any token might need any of them) and <em>high</em> all-to-all traffic. This makes MoE serving a memory-bandwidth and communication problem more than a compute one — the opposite balance from dense models — and motivates specialized kernels and expert-placement strategies in vLLM and SGLang.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A Mixtral-style model is &ldquo;8×7B&rdquo; but reported as ~47B total parameters activating ~13B per token. Reconcile those three numbers, and explain why the total-to-active ratio, not the raw parameter count, is what you should reason about for both quality and serving cost.</p>
+<p><strong>A:</strong> The &ldquo;8×7B&rdquo; name suggests <span class="arithmatex">\(8 \times 7 = 56\)</span>B, but only the <strong>FFNs</strong> are replicated 8×; <strong>attention, embeddings, norms, and the output head are shared</strong> across experts. So total <span class="arithmatex">\(\approx\)</span> (shared params) + 8 × (one expert&rsquo;s FFN params) <span class="arithmatex">\(\approx\)</span> 47B, not 56B. <strong>Active</strong> parameters count what one token uses: the shared params + the FFNs of just its top-<span class="arithmatex">\(k=2\)</span> experts <span class="arithmatex">\(\approx\)</span> 13B. For <strong>quality</strong>, model capacity (and thus knowledge) tracks <em>total</em> parameters — 47B-class. For <strong>serving cost</strong>: <em>latency/FLOPs</em> track <em>active</em> parameters — 13B-class, so it decodes about as fast as a 13B dense model. But <em>memory</em> tracks <em>total</em> — you must hold all 47B in HBM because any token can route to any expert, so it has the memory footprint of a 47B model. The total-to-active ratio (<span class="arithmatex">\(\approx 3.6\times\)</span> here) is the sparsity dial: it tells you you get ~47B of capacity at ~13B of compute, while paying ~47B of memory and extra all-to-all communication. Reasoning with the ratio, not a single number, is what keeps you from mispredicting either latency or VRAM.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: comparing MoE and dense models by total parameters</p>
+<p>A 47B MoE and a 47B dense model are <em>not</em> comparable: the MoE does the FLOPs of a ~13B model per token, so it trains and serves far cheaper but is generally <em>less capable per total-parameter</em> than an equally-sized dense model (each parameter is exercised less, on a fraction of tokens). The fair comparisons are MoE-vs-dense at equal <em>active</em> params (MoE wins on quality, because it has more total capacity) or at equal <em>training/serving FLOPs</em> (MoE usually wins). Quoting only total parameters is a marketing apples-to-oranges; always ask for the active count and the training token budget.</p>
+</div>
+<h2 id="training-stability-and-when-to-reach-for-moe">Training, Stability, and When to Reach for MoE<a class="headerlink" href="#training-stability-and-when-to-reach-for-moe" title="Permanent link">¶</a></h2>
+<p>A few practitioner realities round out the picture. MoE models are <strong>less FLOP-efficient to <em>train</em> per step but reach a given loss in fewer FLOPs</strong> — the <a href="../03-pretraining/04-scaling-laws.html">scaling-laws</a> story is that, at a fixed compute budget, sparse models sit on a better loss-vs-FLOPs frontier than dense ones, which is the whole economic argument for them. But they come with sharp edges:</p>
+<ul>
+<li><strong>Training instability.</strong> Routers are prone to spiky losses; the router z-loss, fp32 router computation, and careful initialization (small router weights so early routing is near-uniform) are standard mitigations. See <a href="../03-pretraining/11-training-stability.html">Training Stability &amp; Loss Spikes</a>.</li>
+<li><strong>Fine-tuning is finicky.</strong> Sparse models can overfit downstream tasks faster and route inconsistently on small datasets; freezing the router or using a higher capacity factor during fine-tuning helps. Distilling a sparse model into a dense one (<a href="../05-posttraining-alignment/12-distillation-compression.html">Distillation &amp; Compression</a>) is a common deployment path when you want MoE&rsquo;s training efficiency but dense serving simplicity.</li>
+<li><strong>Memory dominates serving.</strong> As above, all experts must be resident, so MoE shifts the bottleneck from compute to HBM capacity and bandwidth. Expert offloading (CPU↔GPU paging of cold experts) and quantizing experts more aggressively than attention are active areas.</li>
+<li><strong>When to use it.</strong> Reach for MoE when you are <em>compute-bound</em> in training or <em>latency-bound</em> in serving but have <em>memory to spare</em> — exactly the frontier-pretraining and high-throughput-serving regimes. If memory is your scarce resource (edge, single-GPU), a dense model of the same <em>total</em> size is simpler and serves with less machinery.</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: watch the routing entropy, not just the loss</p>
+<p>The single most useful MoE training diagnostic is the <strong>per-expert token distribution</strong> (and its entropy) over time. Healthy training shows it rising toward uniform early and then <em>gently</em> specializing — not collapsing to a spike. A sudden drop in routing entropy, or one expert&rsquo;s load climbing past ~2–3× the mean, is an early warning of collapse that precedes any loss spike. Log it every few steps; it will save you a wasted multi-day run.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>MoE decouples parameters from FLOPs.</strong> Replace the FFN with <span class="arithmatex">\(E\)</span> experts and a router; each token uses only <span class="arithmatex">\(k \ll E\)</span> of them, so the model has the <em>capacity</em> of a giant model at the <em>compute</em> of a small one. The total-to-active ratio is the sparsity dial.</li>
+<li><strong>The router is a tiny linear gate</strong> producing per-expert logits; you select <strong>top-<span class="arithmatex">\(k\)</span></strong> (the non-differentiable step) and combine outputs with softmax weights — either softmax-then-topk (Switch/GShard) or topk-then-softmax with renormalized weights (Mixtral).</li>
+<li><strong>Load balancing is make-or-break.</strong> Without it, routing collapses to one expert (rich-get-richer). The <strong>auxiliary loss</strong> <span class="arithmatex">\(\alpha E \sum_e f_e P_e\)</span> mixes a <em>hard</em> dispatch count (direction) with a <em>soft</em> probability (gradient); the <strong>z-loss</strong> stabilizes router logits; <strong>expert-choice</strong> routing balances by construction but breaks causal decode.</li>
+<li><strong>Capacity factor and token dropping</strong> exist because GPUs want rectangular tensors: capacity <span class="arithmatex">\(= \lceil C_f \cdot Nk/E\rceil\)</span> bounds each expert&rsquo;s buffer; overflow is dropped (quality cost), underflow is padded (compute cost). Dropless grouped-GEMM kernels (Megablocks) avoid both.</li>
+<li><strong>The lineage:</strong> Shazeer 2017 (sparse gating) → GShard (top-2, expert parallelism) → Switch (top-1 simplicity, z-loss) → Mixtral (open decoder LLM, renormalized gating) → DeepSeek-MoE (<strong>fine-grained + shared experts</strong>, auxiliary-loss-free bias balancing).</li>
+<li><strong>Expert parallelism makes MoE a communication problem:</strong> tokens are shuffled to their experts&rsquo; devices via <strong>all-to-all</strong> and back. Load imbalance directly idles GPUs because the all-to-all is a barrier — architecture and systems are inseparable.</li>
+<li><strong>MoE serving is memory- and bandwidth-bound,</strong> not compute-bound: low active FLOPs (fast decode) but all experts must stay resident in HBM (high VRAM) with heavy all-to-all traffic.</li>
+<li><strong>Compare MoE to dense by <em>active</em> params or by <em>FLOPs</em>, never by total params</strong> — total-parameter comparisons are marketing apples-to-oranges.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Sparse Mixture-of-Experts is now the dominant architecture for frontier-scale LLMs: virtually every model above ~100B parameters (Gemini, GPT-4, DeepSeek-V3, Grok) uses some form of MoE, with fine-grained expert counts in the hundreds and auxiliary-loss-free load balancing becoming the new standard. The open-source ecosystem has matured around dropless grouped-GEMM kernels and integrated serving stacks.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1701.06538">Shazeer et al., <em>Outrageously Large Neural Networks: The Sparsely-Gated MoE Layer</em> (2017)</a> — introduced noisy top-k gating and the modern sparse MoE recipe for language modeling.</li>
+<li><a href="https://arxiv.org/abs/2006.16668">Lepikhin et al., <em>GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding</em> (2020)</a> — first MoE at 600B+ parameters; established top-2 routing, capacity factor, and expert-parallel all-to-all.</li>
+<li><a href="https://arxiv.org/abs/2101.03961">Fedus, Zoph, Shazeer, <em>Switch Transformers: Scaling to Trillion Parameter Models</em> (2021)</a> — showed top-1 routing suffices; introduced the clean auxiliary loss formulation and bf16 stability tricks.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2202.08906">Zoph et al., <em>ST-MoE: Designing Stable and Transferable Sparse Expert Models</em> (2022)</a> — introduced the router z-loss that stabilizes training; thorough fine-tuning study at 269B parameters.</li>
+<li><a href="https://arxiv.org/abs/2202.09368">Zhou et al., <em>Mixture-of-Experts with Expert Choice Routing</em> (2022)</a> — inverts routing so each expert picks its top-C tokens, guaranteeing perfect load balance by construction.</li>
+<li><a href="https://arxiv.org/abs/2401.04088">Jiang et al. (Mistral AI), <em>Mixtral of Experts</em> (2024)</a> — open decoder-only MoE with top-k-then-softmax renormalized gating; existence proof for MoE in the open-source stack.</li>
+<li><a href="https://arxiv.org/abs/2401.06066">Dai et al. (DeepSeek), <em>DeepSeekMoE: Towards Ultimate Expert Specialization</em> (2024)</a> — fine-grained experts plus always-on shared experts; richer routing combinations at identical active-parameter cost.</li>
+<li><a href="https://arxiv.org/abs/2412.19437">DeepSeek-AI, <em>DeepSeek-V3 Technical Report</em> (2024)</a> — 671B total / 37B active parameters; auxiliary-loss-free bias-adjustment balancing and node-limited routing as communication optimizations.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/databricks/megablocks">databricks/megablocks</a> — dropless MoE training via block-sparse grouped-GEMM kernels; eliminates token dropping and padding, up to 40% faster than prior frameworks.</li>
+<li><a href="https://github.com/deepseek-ai/DeepSeek-V3">deepseek-ai/DeepSeek-V3</a> — open inference and training code for the DeepSeek-V3 MoE architecture including the auxiliary-loss-free balancing implementation.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/blog/moe">Hugging Face, <em>Mixture of Experts Explained</em> (2023)</a> — comprehensive practitioner guide covering routing, capacity, load balancing, serving tradeoffs, and the MegaBlocks/FasterMoE ecosystem.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Shazeer, Mirhoseini, Maziarz, Davis, Le, Hinton, Dean — <em>Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer</em> (2017). The paper that introduced noisy top-k gating and modern sparse MoE.</li>
+<li>Lepikhin, Lee, Xu, Chen, Firat, Huang, Krikun, Shazeer, Chen — <em>GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding</em> (2020). Top-2 routing, capacity, and expert-parallel all-to-all at scale.</li>
+<li>Fedus, Zoph, Shazeer — <em>Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity</em> (2021). Top-1 routing, the auxiliary loss formulation, and bf16 stability tricks.</li>
+<li>Zoph, Bello, Kumar, et al. — <em>ST-MoE: Designing Stable and Transferable Sparse Expert Models</em> (2022). The router z-loss and a careful study of stability and fine-tuning.</li>
+<li>Zhou, Lei, Liu, et al. — <em>Mixture-of-Experts with Expert Choice Routing</em> (2022). The expert-choice scheme that balances load by construction.</li>
+<li>Jiang, Sablayrolles, Roux, et al. (Mistral AI) — <em>Mixtral of Experts</em> (2024). The open decoder-only MoE with top-2 renormalized gating.</li>
+<li>Dai, Deng, Zhao, et al. (DeepSeek) — <em>DeepSeekMoE: Towards Ultimate Expert Specialization</em> (2024), and the <em>DeepSeek-V3 Technical Report</em> (2024). Fine-grained and shared experts; auxiliary-loss-free balancing.</li>
+<li>Gale, Narayanan, Zaharia, et al. — <em>MegaBlocks: Efficient Sparse Training with Mixture-of-Experts</em> (2022). Block-sparse / grouped-GEMM kernels that make MoE dropless.</li>
+<li>Jacobs, Jordan, Nowlan, Hinton — <em>Adaptive Mixtures of Local Experts</em> (1991). The original mixture-of-experts formulation that started it all.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="08-architecture-variants.html"><span class="pn-label">← Previous</span><span class="pn-title">Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</span></a>
+<a class="next" href="10-modern-arch-improvements.html"><span class="pn-label">Next →</span><span class="pn-title">Modern Architecture Improvements &amp; Design Choices</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#from-one-ffn-to-a-bank-of-experts">From One FFN to a Bank of Experts</a></li>
+<li class="toc-l2"><a href="#the-router-gating-top-k-and-the-softmax-then-select-question">The Router: Gating, Top-k, and the Softmax-Then-Select Question</a></li>
+<li class="toc-l2"><a href="#a-toy-moe-layer-from-scratch">A Toy MoE Layer From Scratch</a></li>
+<li class="toc-l2"><a href="#load-balancing-the-make-or-break-problem">Load Balancing: The Make-or-Break Problem</a></li>
+<li class="toc-l3"><a href="#the-auxiliary-load-balancing-loss">The auxiliary load-balancing loss</a></li>
+<li class="toc-l3"><a href="#expert-choice-routing-invert-the-problem">Expert-choice routing: invert the problem</a></li>
+<li class="toc-l2"><a href="#capacity-factor-token-dropping-and-the-worked-numbers">Capacity Factor, Token Dropping, and the Worked Numbers</a></li>
+<li class="toc-l2"><a href="#the-landmark-designs-gshard-switch-mixtral-deepseek-moe">The Landmark Designs: GShard, Switch, Mixtral, DeepSeek-MoE</a></li>
+<li class="toc-l3"><a href="#gshard-2020-moe-goes-to-scale">GShard (2020): MoE goes to scale</a></li>
+<li class="toc-l3"><a href="#switch-transformer-2021-top-1-is-enough">Switch Transformer (2021): top-1 is enough</a></li>
+<li class="toc-l3"><a href="#mixtral-87b-2023-moe-for-open-decoder-llms">Mixtral 8×7B (2023): MoE for open decoder LLMs</a></li>
+<li class="toc-l3"><a href="#deepseek-moe-and-the-fine-grained-shared-expert-idea-2024">DeepSeek-MoE and the fine-grained + shared-expert idea (2024)</a></li>
+<li class="toc-l2"><a href="#expert-parallelism-a-systems-preview">Expert Parallelism: A Systems Preview</a></li>
+<li class="toc-l2"><a href="#training-stability-and-when-to-reach-for-moe">Training, Stability, and When to Reach for MoE</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

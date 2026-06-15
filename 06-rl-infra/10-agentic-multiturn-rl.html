@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic &amp; Multi-Turn RL — The LLM Stack</title>
+<meta name="description" content="RL over multi-turn / tool-using / environment-interacting agents; trajectory-level credit assignment, turn-level rewards, environment design (RAGEN, ReACT-style">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="active" href="10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VI — RL Infrastructure (Deep Dive)</div>
+<h1 id="610-agentic-multi-turn-rl">6.10 Agentic &amp; Multi-Turn RL<a class="headerlink" href="#610-agentic-multi-turn-rl" title="Permanent link">¶</a></h1>
+<p>Everything in Part VI up to this point has assumed a comfortably simple RL setting: a prompt goes in, the policy emits one completion, a reward function scores that completion, and you compute a policy gradient. That is <strong>single-turn RL</strong>. It is the setting of the DeepSeek-R1 math recipe, of <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>, and of most of what people mean when they say &ldquo;RLVR.&rdquo; One prompt, one response, one scalar.</p>
+<p>Agentic RL breaks that assumption in the most consequential way possible. Now the model does not emit a single answer — it emits an <strong>action</strong>, the action hits an <strong>environment</strong> (a Python interpreter, a search engine, a web browser, a shell, a game state), the environment emits an <strong>observation</strong>, and the model must condition on that observation to decide its next action. The episode is a <em>trajectory</em> of interleaved model tokens and environment tokens, possibly dozens of turns long, and the reward may not arrive until the very end. This is the regime that produces tool-using coding agents, deep-research agents, and computer-use agents — and it is where almost every hard problem in RL infrastructure shows up at once.</p>
+<p>This chapter is about the mechanics of doing RL when the rollout is a <em>conversation with an environment</em> rather than a single generation. We will build the trajectory data structure from scratch, work out exactly which tokens get a loss and which do not (the single most common source of silent bugs in agentic RL), derive turn-level versus trajectory-level credit assignment, walk through an environment in the RAGEN/ReAct style, and confront the genuinely hard problems: long-horizon credit assignment, partial rollouts, and the brutal throughput tax of interleaving generation with environment execution. The downstream payoff — what these agents actually <em>do</em> — is the subject of <a href="../08-agents-harness/02-agentic-loop.html">Part VIII</a>; here we focus on how to <em>train</em> them.</p>
+<h2 id="from-single-turn-to-multi-turn-the-trajectory-as-the-unit">From Single-Turn to Multi-Turn: The Trajectory as the Unit<a class="headerlink" href="#from-single-turn-to-multi-turn-the-trajectory-as-the-unit" title="Permanent link">¶</a></h2>
+<p>In single-turn RL the unit of data is a <code>(prompt, response, reward)</code> triple. The policy defines a distribution <span class="arithmatex">\(\pi_\theta(y \mid x)\)</span> over the response <span class="arithmatex">\(y\)</span>, and the response tokens are exactly the tokens we differentiate.</p>
+<p>In multi-turn agentic RL the unit is a <strong>trajectory</strong> <span class="arithmatex">\(\tau\)</span>:</p>
+<div class="arithmatex">\[
+\tau = (s_0, a_0, o_1, a_1, o_2, a_2, \dots, o_{T-1}, a_{T-1}, r)
+\]</div>
+<p>Here <span class="arithmatex">\(s_0\)</span> is the initial system/user prompt (the task), each <span class="arithmatex">\(a_t\)</span> is an <strong>action</strong> the model generates (which may be free-form reasoning, a tool call, or a final answer), each <span class="arithmatex">\(o_t\)</span> is an <strong>observation</strong> returned by the environment after executing <span class="arithmatex">\(a_{t-1}\)</span>, and <span class="arithmatex">\(r\)</span> is the reward — usually a single terminal scalar, sometimes a vector of per-turn rewards. The whole trajectory is flattened into one token sequence that the model sees as its context window.</p>
+<p>The critical structural fact: <strong>the model authored some of those tokens and the environment authored the rest.</strong> The actions <span class="arithmatex">\(a_t\)</span> are sampled from the policy — they are on-policy, differentiable, and carry a <code>log_prob</code>. The observations <span class="arithmatex">\(o_t\)</span> are <em>injected</em> into the context by the environment — they were never sampled from <span class="arithmatex">\(\pi_\theta\)</span>, they have no meaningful log-prob under the policy, and back-propagating a policy-gradient loss through them is simply <em>wrong</em>. We will return to this masking question in its own section because it is the number-one footgun.</p>
+<p>Let us make the data structure concrete. A clean way to represent a trajectory is as a list of <em>segments</em>, each tagged with who produced it and whether it should receive a loss.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">enum</span><span class="w"> </span><span class="kn">import</span> <span class="n">Enum</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Role</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
+    <span class="n">SYSTEM</span> <span class="o">=</span> <span class="s2">&quot;system&quot;</span>          <span class="c1"># task description, tool schemas (no loss)</span>
+    <span class="n">ASSISTANT</span> <span class="o">=</span> <span class="s2">&quot;assistant&quot;</span>    <span class="c1"># model-generated action (LOSS — this is the policy)</span>
+    <span class="n">OBSERVATION</span> <span class="o">=</span> <span class="s2">&quot;observation&quot;</span>  <span class="c1"># tool output / env feedback (no loss, MASKED)</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Segment</span><span class="p">:</span>
+    <span class="n">role</span><span class="p">:</span> <span class="n">Role</span>
+    <span class="n">token_ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>       <span class="c1"># tokens for this segment</span>
+    <span class="n">logprobs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># only for ASSISTANT segments (from rollout)</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Trajectory</span><span class="p">:</span>
+    <span class="n">segments</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Segment</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">reward</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>                 <span class="c1"># terminal reward</span>
+    <span class="n">turn_rewards</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># optional per-turn dense rewards</span>
+    <span class="n">metadata</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>  <span class="c1"># task_id, success flag, n_turns...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">flatten</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Concatenate all segments into one token sequence plus a 0/1</span>
+<span class="sd">        &#39;loss mask&#39; that is 1 exactly on ASSISTANT tokens. This mask is</span>
+<span class="sd">        the single most important object in agentic RL — get it wrong</span>
+<span class="sd">        and you train the model to predict tool outputs (catastrophic).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">all_ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">loss_mask</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">seg</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">segments</span><span class="p">:</span>
+            <span class="n">all_ids</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">seg</span><span class="o">.</span><span class="n">token_ids</span><span class="p">)</span>
+            <span class="n">is_action</span> <span class="o">=</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">seg</span><span class="o">.</span><span class="n">role</span> <span class="o">==</span> <span class="n">Role</span><span class="o">.</span><span class="n">ASSISTANT</span> <span class="k">else</span> <span class="mi">0</span>
+            <span class="n">loss_mask</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="n">is_action</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">seg</span><span class="o">.</span><span class="n">token_ids</span><span class="p">))</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">all_ids</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">loss_mask</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float</span><span class="p">),</span>
+        <span class="p">)</span>
+</code></pre></div>
+<p>This <code>Trajectory</code> object is the in-memory representation that flows from the rollout engine to the trainer. Everything else in this chapter is about how it is produced, how the reward is assigned to its tokens, and how it is batched. Compare this to the single-turn rollout buffer described in <a href="../06-rl-infra/01-anatomy-rl-system.html">The Anatomy of an RL-for-LLM System</a>: the difference is precisely the multiplicity of segments and the loss mask.</p>
+<h3 id="why-not-just-treat-the-whole-trajectory-as-one-big-completion">Why not just treat the whole trajectory as one big completion?<a class="headerlink" href="#why-not-just-treat-the-whole-trajectory-as-one-big-completion" title="Permanent link">¶</a></h3>
+<p>A tempting shortcut: flatten the trajectory into one string and run ordinary GRPO on it as if it were a single completion. This is wrong for two reasons.</p>
+<p>First, the <strong>loss mask</strong>. The flattened string contains tool outputs the model never generated. If you compute the policy-gradient loss over those tokens, you are pushing the policy to <em>predict</em> the environment&rsquo;s responses — to predict the output of a search engine or a Python interpreter from its own weights. At best this wastes capacity; at worst it makes the model hallucinate tool outputs and stop actually calling tools. You must zero the loss on observation tokens.</p>
+<p>First and a half, even the <em>log-probabilities under the old policy</em> must be computed correctly: the importance ratio in PPO/GRPO is <span class="arithmatex">\(\pi_\theta(a_t)/\pi_{\text{old}}(a_t)\)</span> over action tokens only, conditioned on everything before — including observations — as context.</p>
+<p>Second, <strong>the rollout was not generated in one autoregressive pass.</strong> The model generated <span class="arithmatex">\(a_0\)</span>, then <em>stopped</em>, the environment ran, the observation was appended, and the model resumed. There may be sampling-distribution discontinuities at each boundary (different temperature for the final answer, forced formatting tokens, truncation). Treating it as one smooth generation hides those seams and corrupts the log-probs. We must track segment boundaries explicitly.</p>
+<h2 id="the-rollout-loop-interleaving-generation-and-environment">The Rollout Loop: Interleaving Generation and Environment<a class="headerlink" href="#the-rollout-loop-interleaving-generation-and-environment" title="Permanent link">¶</a></h2>
+<p>The heart of agentic RL is a loop that alternates between <em>generating</em> an action and <em>stepping</em> an environment. This is structurally identical to the inference-time agentic loop of <a href="../08-agents-harness/02-agentic-loop.html">The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a> and <a href="../08-agents-harness/01-tool-use-function-calling.html">Tool Use &amp; Function Calling</a> — the difference is that during RL we <em>record</em> every token, its log-prob, and the segment boundaries so we can compute gradients later.</p>
+<p>Here is a from-scratch rollout loop. It uses a generic environment interface (<code>reset</code>, <code>step</code>) modeled on the Gym/RAGEN convention, and an inference engine that exposes per-token log-probs (vLLM and SGLang both do).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Protocol</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Environment</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;RAGEN/Gym-style environment interface for tool-using agents.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">task</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the initial prompt (system + task) as a string.&quot;&quot;&quot;</span>
+        <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">action_text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">bool</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Execute the model&#39;s action against the world.</span>
+<span class="sd">        Returns (observation_text, turn_reward, done).</span>
+<span class="sd">        - observation_text: what the model sees next (tool result, error, etc.)</span>
+<span class="sd">        - turn_reward: dense per-turn reward (often 0.0 until terminal)</span>
+<span class="sd">        - done: True if the episode has ended (success, failure, or give-up)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="o">...</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rollout</span><span class="p">(</span><span class="n">policy_engine</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">env</span><span class="p">:</span> <span class="n">Environment</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span>
+            <span class="n">max_turns</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span> <span class="n">max_action_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Trajectory</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run one agentic episode and record a fully-tagged Trajectory.</span>
+<span class="sd">    `policy_engine.generate` returns (text, token_ids, logprobs) and STOPS</span>
+<span class="sd">    at a tool-call boundary (a stop string like &#39;&lt;/tool_call&gt;&#39; or an EOS).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">traj</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">()</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">reset</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+
+    <span class="c1"># The initial prompt is context the model conditions on but never produced:</span>
+    <span class="c1"># role=SYSTEM =&gt; loss_mask 0.</span>
+    <span class="n">sys_ids</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+    <span class="n">traj</span><span class="o">.</span><span class="n">segments</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Segment</span><span class="p">(</span><span class="n">Role</span><span class="o">.</span><span class="n">SYSTEM</span><span class="p">,</span> <span class="n">sys_ids</span><span class="p">))</span>
+
+    <span class="n">turn_rewards</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">running_text</span> <span class="o">=</span> <span class="n">prompt</span>
+
+    <span class="k">for</span> <span class="n">turn</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_turns</span><span class="p">):</span>
+        <span class="c1"># ---- 1. GENERATE an action (on-policy, differentiable) ----</span>
+        <span class="n">text</span><span class="p">,</span> <span class="n">action_ids</span><span class="p">,</span> <span class="n">logprobs</span> <span class="o">=</span> <span class="n">policy_engine</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
+            <span class="n">running_text</span><span class="p">,</span>
+            <span class="n">max_tokens</span><span class="o">=</span><span class="n">max_action_tokens</span><span class="p">,</span>
+            <span class="n">stop</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;&lt;/tool_call&gt;&quot;</span><span class="p">,</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">eos_token</span><span class="p">],</span>
+        <span class="p">)</span>
+        <span class="n">traj</span><span class="o">.</span><span class="n">segments</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Segment</span><span class="p">(</span><span class="n">Role</span><span class="o">.</span><span class="n">ASSISTANT</span><span class="p">,</span> <span class="n">action_ids</span><span class="p">,</span> <span class="n">logprobs</span><span class="p">))</span>
+        <span class="n">running_text</span> <span class="o">+=</span> <span class="n">text</span>
+
+        <span class="c1"># ---- 2. STEP the environment with the action ----</span>
+        <span class="n">obs_text</span><span class="p">,</span> <span class="n">turn_reward</span><span class="p">,</span> <span class="n">done</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+        <span class="n">turn_rewards</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">turn_reward</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">done</span><span class="p">:</span>
+            <span class="n">traj</span><span class="o">.</span><span class="n">reward</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">turn_rewards</span><span class="p">)</span>          <span class="c1"># terminal credit</span>
+            <span class="n">traj</span><span class="o">.</span><span class="n">turn_rewards</span> <span class="o">=</span> <span class="n">turn_rewards</span>
+            <span class="n">traj</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;n_turns&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">turn</span> <span class="o">+</span> <span class="mi">1</span>
+            <span class="k">return</span> <span class="n">traj</span>
+
+        <span class="c1"># ---- 3. INJECT the observation (NOT generated =&gt; loss_mask 0) ----</span>
+        <span class="c1"># Wrap so the model can parse it, e.g. &lt;tool_response&gt;...&lt;/tool_response&gt;</span>
+        <span class="n">obs_wrapped</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;&lt;tool_response&gt;</span><span class="se">\n</span><span class="si">{</span><span class="n">obs_text</span><span class="si">}</span><span class="se">\n</span><span class="s2">&lt;/tool_response&gt;&quot;</span>
+        <span class="n">obs_ids</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">obs_wrapped</span><span class="p">)</span>
+        <span class="n">traj</span><span class="o">.</span><span class="n">segments</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Segment</span><span class="p">(</span><span class="n">Role</span><span class="o">.</span><span class="n">OBSERVATION</span><span class="p">,</span> <span class="n">obs_ids</span><span class="p">))</span>
+        <span class="n">running_text</span> <span class="o">+=</span> <span class="n">obs_wrapped</span>
+
+    <span class="c1"># Hit max_turns without finishing: episode truncated.</span>
+    <span class="n">traj</span><span class="o">.</span><span class="n">reward</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">turn_rewards</span><span class="p">)</span>
+    <span class="n">traj</span><span class="o">.</span><span class="n">turn_rewards</span> <span class="o">=</span> <span class="n">turn_rewards</span>
+    <span class="n">traj</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;n_turns&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">max_turns</span>
+    <span class="n">traj</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;truncated&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="n">traj</span>
+</code></pre></div>
+<p>Three details deserve emphasis.</p>
+<p><strong>Stop strings define turn boundaries.</strong> The policy engine must stop generation exactly when the model emits a complete tool call (<code>&lt;/tool_call&gt;</code>) or decides to give a final answer (EOS). This is why agentic RL is sensitive to the inference engine&rsquo;s stop-string handling — a missed stop string means the model keeps &ldquo;generating&rdquo; what should have been an observation, which poisons the trajectory. In practice you co-design the chat template, the tool-call format, and the stop strings together.</p>
+<p><strong>Observations can themselves be enormous.</strong> A single web-page fetch or a verbose stack trace can be thousands of tokens. Those tokens consume context budget and inference FLOPs on every subsequent turn but never receive a gradient. This is the agentic version of the context-management problem and connects directly to <a href="../08-agents-harness/04-context-engineering.html">Context Engineering &amp; Management</a>; for RL it means trajectories have wildly variable, observation-dominated lengths.</p>
+<p><strong>The same engine that serves inference must report log-probs.</strong> In single-turn RL you can sometimes get away with recomputing log-probs in the trainer. In multi-turn RL, recomputation must replay the <em>exact</em> interleaving — same observations, same boundaries — or the ratios are wrong. Storing the rollout log-probs per action token (as we do in <code>Segment.logprobs</code>) and reconciling them against a recomputed forward pass is the safe pattern; see the discussion of inference/training log-prob mismatch in <a href="../06-rl-infra/02-generation-training-loop.html">The Generation–Training Loop &amp; Rollout Engines</a>.</p>
+<figure class="viz" id="fig-agentic-trajectory-loss-mask">
+<svg viewBox="0 0 920 270" role="img" aria-label="A flattened agentic trajectory token stream divided into six segments — SYSTEM, ACTION 0, OBSERVATION 0, ACTION 1, OBSERVATION 1, ACTION 2 — with the per-token loss mask (0s and 1s) shown beneath each segment. ACTION segments are shaded blue and carry mask value 1 (live loss); SYSTEM and OBSERVATION segments are grey and carry mask value 0 (no gradient).">
+<defs>
+  <marker id="tlm-up" viewBox="0 0 10 10" refX="5" refY="0" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 10 L5 0 L10 10 z" fill="var(--muted,#888)"/>
+  </marker>
+</defs>
+<style>
+  #fig-agentic-trajectory-loss-mask text { fill: var(--ink-soft,#333); font: 400 12px var(--sans,sans-serif); }
+  #fig-agentic-trajectory-loss-mask .title  { font: 700 15px var(--sans,sans-serif); }
+  #fig-agentic-trajectory-loss-mask .sub    { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#666); }
+  #fig-agentic-trajectory-loss-mask .seg-name { font: 700 11.5px var(--sans,sans-serif); }
+  #fig-agentic-trajectory-loss-mask .seg-desc { font: 400 italic 10px var(--sans,sans-serif); fill: var(--muted,#666); }
+  #fig-agentic-trajectory-loss-mask .mask-dig  { font: 700 11px var(--mono,monospace); }
+  #fig-agentic-trajectory-loss-mask .mask-lbl  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#666); }
+  #fig-agentic-trajectory-loss-mask .callout   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#666); }
+  #fig-agentic-trajectory-loss-mask .leg-lbl   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#666); }
+  #fig-agentic-trajectory-loss-mask .reward-lbl{ font: 700 10px var(--sans,sans-serif); fill: #fff; }
+</style>
+
+
+<text x="30" y="28" class="title">Trajectory token stream</text>
+<text x="30" y="46" class="sub">loss mask = 1 only on ACTION (policy) tokens</text>
+
+
+<rect x="648" y="10" width="12" height="12" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.18" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<text x="664" y="21" class="leg-lbl">loss = 1 (action / policy)</text>
+<rect x="648" y="27" width="12" height="12" rx="2" fill="var(--surface-3,#eceff3)" stroke="var(--border-2,#cbd2da)" stroke-width="1.2"/>
+<text x="664" y="38" class="leg-lbl">loss = 0 (system / observation)</text>
+
+
+
+
+<rect x="30" y="62" width="120" height="74" rx="0"
+      fill="var(--surface-3,#f0f2f5)" stroke="var(--border-2,#c8cdd4)" stroke-width="1.2"/>
+<text x="90" y="97" text-anchor="middle" class="seg-name">SYSTEM</text>
+<text x="90" y="112" text-anchor="middle" class="seg-desc">(prompt)</text>
+
+
+<rect x="150" y="62" width="125" height="74" rx="0"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+<text x="212" y="97" text-anchor="middle" class="seg-name" fill="var(--accent2,#2563eb)">ACTION 0</text>
+<text x="212" y="112" text-anchor="middle" class="seg-desc">tool call</text>
+
+
+<rect x="275" y="62" width="160" height="74" rx="0"
+      fill="var(--surface-3,#eceff3)" stroke="var(--border-2,#cbd2da)" stroke-width="1.2"/>
+<text x="355" y="97" text-anchor="middle" class="seg-name">OBSERVATION 0</text>
+<text x="355" y="112" text-anchor="middle" class="seg-desc">tool result</text>
+
+
+<rect x="435" y="62" width="125" height="74" rx="0"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+<text x="497" y="97" text-anchor="middle" class="seg-name" fill="var(--accent2,#2563eb)">ACTION 1</text>
+<text x="497" y="112" text-anchor="middle" class="seg-desc">tool call</text>
+
+
+<rect x="560" y="62" width="160" height="74" rx="0"
+      fill="var(--surface-3,#eceff3)" stroke="var(--border-2,#cbd2da)" stroke-width="1.2"/>
+<text x="640" y="97" text-anchor="middle" class="seg-name">OBSERVATION 1</text>
+<text x="640" y="112" text-anchor="middle" class="seg-desc">tool result</text>
+
+
+<rect x="720" y="62" width="100" height="74" rx="0"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+<text x="770" y="97" text-anchor="middle" class="seg-name" fill="var(--accent2,#2563eb)">ACTION 2</text>
+<text x="770" y="112" text-anchor="middle" class="seg-desc">answer</text>
+
+
+<rect x="807" y="92" width="18" height="16" rx="8"
+      fill="var(--warn,#e0a106)" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+<text x="816" y="104" text-anchor="middle" class="reward-lbl">r</text>
+
+
+
+
+<text x="35" y="162" class="mask-lbl">loss mask</text>
+
+
+<rect x="30" y="150" width="120" height="34" rx="4"
+      fill="var(--surface-3,#f0f2f5)" stroke="var(--border-2,#c8cdd4)" stroke-width="1.1"/>
+<text x="90" y="172" text-anchor="middle" class="mask-dig" fill="var(--muted,#999)">0  0  0  0</text>
+
+
+<rect x="150" y="150" width="125" height="34" rx="4"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.10" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<text x="212" y="172" text-anchor="middle" class="mask-dig" fill="var(--accent2,#2563eb)">1  1  1  1  1</text>
+
+
+<rect x="275" y="150" width="160" height="34" rx="4"
+      fill="var(--surface-3,#eceff3)" stroke="var(--border-2,#cbd2da)" stroke-width="1.1"/>
+<text x="355" y="172" text-anchor="middle" class="mask-dig" fill="var(--muted,#999)">0  0  0  0  0  0</text>
+
+
+<rect x="435" y="150" width="125" height="34" rx="4"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.10" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<text x="497" y="172" text-anchor="middle" class="mask-dig" fill="var(--accent2,#2563eb)">1  1  1  1  1</text>
+
+
+<rect x="560" y="150" width="160" height="34" rx="4"
+      fill="var(--surface-3,#eceff3)" stroke="var(--border-2,#cbd2da)" stroke-width="1.1"/>
+<text x="640" y="172" text-anchor="middle" class="mask-dig" fill="var(--muted,#999)">0  0  0  0  0  0</text>
+
+
+<rect x="720" y="150" width="100" height="34" rx="4"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.10" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<text x="770" y="172" text-anchor="middle" class="mask-dig" fill="var(--accent2,#2563eb)">1  1  1  1</text>
+
+
+
+
+<line x1="90" y1="197" x2="90" y2="185"
+      stroke="var(--muted,#888)" stroke-width="1.1" marker-end="url(#tlm-up)"/>
+<text x="90" y="212" text-anchor="middle" class="callout">conditioned on,</text>
+<text x="90" y="225" text-anchor="middle" class="callout">no loss</text>
+
+
+<line x1="212" y1="197" x2="212" y2="185"
+      stroke="var(--muted,#888)" stroke-width="1.1" marker-end="url(#tlm-up)"/>
+<text x="212" y="212" text-anchor="middle" class="callout">policy</text>
+<text x="212" y="225" text-anchor="middle" class="callout">(gradient)</text>
+
+
+<line x1="355" y1="197" x2="355" y2="185"
+      stroke="var(--muted,#888)" stroke-width="1.1" marker-end="url(#tlm-up)"/>
+<text x="355" y="212" text-anchor="middle" class="callout">injected by env</text>
+<text x="355" y="225" text-anchor="middle" class="callout">(NO gradient, masked)</text>
+
+
+<line x1="770" y1="197" x2="770" y2="185"
+      stroke="var(--muted,#888)" stroke-width="1.1" marker-end="url(#tlm-up)"/>
+<text x="770" y="212" text-anchor="middle" class="callout">reward r</text>
+<text x="770" y="225" text-anchor="middle" class="callout">assigned here</text>
+
+
+<line x1="30" y1="240" x2="820" y2="240"
+      stroke="var(--border-2,#e0e4ea)" stroke-width="0.7" opacity="0.5"/>
+
+
+<text x="30" y="258" class="sub" font-size="9.5">Token stream flows left-to-right. Gradient flows through ACTION tokens only (mask m_i = 1); SYSTEM and OBSERVATION tokens are frozen context (m_i = 0).</text>
+
+</svg>
+<figcaption><b>The flattened trajectory token stream and its per-token loss mask.</b> Six contiguous segments — SYSTEM (prompt), two ACTION/OBSERVATION pairs, and a final ACTION (answer) — form a single sequence fed to the trainer. The loss mask (row beneath) is 1 only on ACTION tokens, so gradients flow exclusively through the policy's own generated text; environment-injected observations and the conditioning prompt contribute to context but never receive a gradient.</figcaption>
+</figure>
+
+<h2 id="masking-the-single-most-important-detail">Masking: The Single Most Important Detail<a class="headerlink" href="#masking-the-single-most-important-detail" title="Permanent link">¶</a></h2>
+<p>We have flagged it repeatedly; now we make it precise and show how the mask propagates all the way into the loss.</p>
+<p>The policy gradient for a trajectory, in its REINFORCE-with-baseline form, is</p>
+<div class="arithmatex">\[
+\nabla_\theta J = \mathbb{E}_\tau\!\left[\sum_{t} \nabla_\theta \log \pi_\theta(a_t \mid s_t)\, \hat{A}_t\right]
+\]</div>
+<p>where the sum runs over <strong>action tokens only</strong>. The observations <span class="arithmatex">\(o_t\)</span> appear in <span class="arithmatex">\(s_t\)</span> (they are part of the context the next action conditions on) but they are <em>never</em> arguments to <span class="arithmatex">\(\log \pi_\theta\)</span>. The loss mask is exactly the indicator that token <span class="arithmatex">\(i\)</span> is an action token.</p>
+<p>In a token-level PPO/GRPO objective this becomes</p>
+<div class="arithmatex">\[
+\mathcal{L} = -\frac{1}{\sum_i m_i}\sum_{i} m_i \cdot \min\!\Big(\rho_i \hat{A}_i,\; \operatorname{clip}(\rho_i, 1-\epsilon, 1+\epsilon)\,\hat{A}_i\Big)
+\]</div>
+<p>with <span class="arithmatex">\(m_i \in \{0,1\}\)</span> the loss mask and <span class="arithmatex">\(\rho_i = \pi_\theta(t_i)/\pi_{\text{old}}(t_i)\)</span> the per-token importance ratio. Every term where <span class="arithmatex">\(m_i = 0\)</span> — every observation token — drops out. Here is the masked loss in code, written to mirror exactly what veRL or TRL&rsquo;s experimental multi-turn paths do internally.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">masked_grpo_loss</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">token_ids</span><span class="p">,</span> <span class="n">loss_mask</span><span class="p">,</span> <span class="n">advantages</span><span class="p">,</span>
+                     <span class="n">old_logprobs</span><span class="p">,</span> <span class="n">epsilon</span><span class="o">=</span><span class="mf">0.2</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Token-level clipped surrogate with a loss mask.</span>
+
+<span class="sd">    logits:       [B, L, V] current-policy logits (teacher-forced on the trajectory)</span>
+<span class="sd">    token_ids:    [B, L]    the realized tokens (actions AND observations)</span>
+<span class="sd">    loss_mask:    [B, L]    1.0 on action tokens, 0.0 on observation/system tokens</span>
+<span class="sd">    advantages:   [B, L]    per-token advantage (broadcast from trajectory or turn)</span>
+<span class="sd">    old_logprobs: [B, L]    log-probs recorded at rollout time (behaviour policy)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Shift for next-token prediction: logits at position i predict token i+1.</span>
+    <span class="n">logp_all</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>        <span class="c1"># [B, L-1, V]</span>
+    <span class="n">target</span> <span class="o">=</span> <span class="n">token_ids</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>                                   <span class="c1"># [B, L-1]</span>
+    <span class="n">new_logprobs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span>
+        <span class="n">logp_all</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">index</span><span class="o">=</span><span class="n">target</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>                                               <span class="c1"># [B, L-1]</span>
+
+    <span class="c1"># Align the other tensors to the shifted positions.</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">loss_mask</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>
+    <span class="n">adv</span>  <span class="o">=</span> <span class="n">advantages</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>
+    <span class="n">old</span>  <span class="o">=</span> <span class="n">old_logprobs</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>
+
+    <span class="n">ratio</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">new_logprobs</span> <span class="o">-</span> <span class="n">old</span><span class="p">)</span>                      <span class="c1"># ρ_i</span>
+    <span class="n">unclipped</span> <span class="o">=</span> <span class="n">ratio</span> <span class="o">*</span> <span class="n">adv</span>
+    <span class="n">clipped</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="n">ratio</span><span class="p">,</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">epsilon</span><span class="p">,</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">epsilon</span><span class="p">)</span> <span class="o">*</span> <span class="n">adv</span>
+    <span class="n">per_token_loss</span> <span class="o">=</span> <span class="o">-</span><span class="n">torch</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">unclipped</span><span class="p">,</span> <span class="n">clipped</span><span class="p">)</span>            <span class="c1"># PPO surrogate</span>
+
+    <span class="c1"># Mask out observation/system tokens, then average over ACTION tokens only.</span>
+    <span class="n">denom</span> <span class="o">=</span> <span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="p">(</span><span class="n">per_token_loss</span> <span class="o">*</span> <span class="n">mask</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">/</span> <span class="n">denom</span>
+    <span class="k">return</span> <span class="n">loss</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall</p>
+<p>The most insidious masking bug is <em>off-by-one</em>. Because of the next-token shift, the loss at position <span class="arithmatex">\(i\)</span> trains the prediction of token <span class="arithmatex">\(i{+}1\)</span>. If your mask marks &ldquo;this token is an action,&rdquo; but you apply it <em>before</em> the shift, you will (a) compute a loss on the last system/observation token that precedes the first action token&rsquo;s first prediction, and (b) drop a loss on the boundary between the last action token of a turn and the first observation token. Always shift the mask the same way you shift the targets, and unit-test it: feed a trajectory where you <em>know</em> exactly which positions should be live, and assert <code>mask.sum()</code> equals your hand count.</p>
+</div>
+<p>A second, subtler masking issue is the <strong>loss-normalization denominator</strong>. Should you divide by the number of action tokens in the <em>trajectory</em>, in the <em>batch</em>, or in the <em>turn</em>? Dividing by the per-trajectory token count gives every trajectory equal weight regardless of length; dividing by the batch total gives every <em>token</em> equal weight, which over-weights long trajectories. This is the exact same length-bias controversy discussed for single-turn GRPO in <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>, but it bites harder here because trajectory lengths vary by an order of magnitude (a 1-turn success versus an 8-turn flailing failure). Most production systems normalize per-trajectory and then average over trajectories, which neutralizes length bias.</p>
+<h2 id="credit-assignment-trajectory-level-vs-turn-level">Credit Assignment: Trajectory-Level vs Turn-Level<a class="headerlink" href="#credit-assignment-trajectory-level-vs-turn-level" title="Permanent link">¶</a></h2>
+<p>The reward usually lands at the end: did the agent solve the bug, find the answer, win the game? But the trajectory has many actions, only some of which were good. <strong>Credit assignment</strong> is the problem of deciding how much of the terminal reward each action deserves. There are three regimes in practice.</p>
+<h3 id="outcome-reward-broadcast-to-all-actions-trajectory-level">Outcome reward, broadcast to all actions (trajectory-level)<a class="headerlink" href="#outcome-reward-broadcast-to-all-actions-trajectory-level" title="Permanent link">¶</a></h3>
+<p>The simplest scheme: compute one scalar reward <span class="arithmatex">\(r\)</span> for the whole trajectory and assign the <em>same</em> advantage to every action token. With a GRPO-style group baseline, you sample <span class="arithmatex">\(G\)</span> trajectories for the same task, compute each trajectory&rsquo;s terminal reward, and use the group mean as the baseline:</p>
+<div class="arithmatex">\[
+\hat{A}^{(g)} = \frac{r^{(g)} - \mu}{\sigma + \delta}, \qquad
+\mu = \frac{1}{G}\sum_{g} r^{(g)}, \qquad
+\sigma = \sqrt{\tfrac{1}{G}\sum_g (r^{(g)}-\mu)^2}
+\]</div>
+<p>Every action token in trajectory <span class="arithmatex">\(g\)</span> — across all its turns — receives <span class="arithmatex">\(\hat{A}^{(g)}\)</span>. This is <strong>trajectory-level credit assignment</strong>: the policy is told &ldquo;this whole episode was above/below average,&rdquo; and it is up to the credit-assignment magic of stochastic gradient descent over many trajectories to figure out which turns mattered. It is robust, requires no per-turn reward signal, and is what most RLVR-style agentic recipes use. Its weakness is high variance and slow learning on long horizons: a single bad action in an otherwise good 8-turn trajectory still gets a positive advantage.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">assign_trajectory_advantage</span><span class="p">(</span><span class="n">group</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Trajectory</span><span class="p">],</span> <span class="n">delta</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    GRPO-style group-relative advantage at the TRAJECTORY level.</span>
+<span class="sd">    All trajectories in `group` are rollouts for the SAME task/prompt.</span>
+<span class="sd">    Returns each trajectory annotated with a scalar advantage that will</span>
+<span class="sd">    be broadcast onto every one of its action tokens.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rewards</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">t</span><span class="o">.</span><span class="n">reward</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">group</span><span class="p">])</span>
+    <span class="n">mu</span> <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="n">sigma</span> <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">unbiased</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">t</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">group</span><span class="p">,</span> <span class="n">rewards</span><span class="p">):</span>
+        <span class="n">adv</span> <span class="o">=</span> <span class="p">(</span><span class="n">r</span> <span class="o">-</span> <span class="n">mu</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">sigma</span> <span class="o">+</span> <span class="n">delta</span><span class="p">)</span>
+        <span class="n">t</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;advantage&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">adv</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>   <span class="c1"># one number for the whole trajectory</span>
+    <span class="k">return</span> <span class="n">group</span>
+</code></pre></div>
+<h3 id="turn-level-process-rewards-per-turn-credit">Turn-level / process rewards (per-turn credit)<a class="headerlink" href="#turn-level-process-rewards-per-turn-credit" title="Permanent link">¶</a></h3>
+<p>If the environment can emit a meaningful reward <em>per turn</em> — a unit test that now passes, a sub-goal reached, a retrieved document that contained the answer — we can assign credit at turn granularity. Two ways to do this:</p>
+<p><strong>Dense turn rewards with discounting.</strong> Treat each turn as a step in an MDP and compute a discounted return-to-go for each action:</p>
+<div class="arithmatex">\[
+G_t = \sum_{k=t}^{T-1} \gamma^{\,k-t}\, r_k
+\]</div>
+<p>The action at turn <span class="arithmatex">\(t\)</span> gets advantage based on <span class="arithmatex">\(G_t\)</span> rather than the full-trajectory <span class="arithmatex">\(r\)</span>. Discounting <span class="arithmatex">\(\gamma &lt; 1\)</span> means later actions get more credit for the rewards near them. You can run full GAE (Generalized Advantage Estimation) over turns if you have a value head, exactly as in PPO; the difference from token-level GAE is that the &ldquo;step&rdquo; is a whole turn, not a token. See <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a> for the GAE machinery.</p>
+<p><strong>Turn-level group baselines.</strong> A nice critic-free variant: define the advantage of a turn as the difference its action made to the <em>outcome</em>, estimated by branching. Roll out <span class="arithmatex">\(G\)</span> continuations <em>from the same intermediate state</em> and use their mean outcome as the value of that state. The advantage of an action is then the group baseline of the <em>next</em> state minus the baseline of the current state — a Monte-Carlo, critic-free temporal-difference estimate. This is expensive (you branch at every turn) but gives genuinely per-turn credit without a learned value function.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: trajectory-level vs turn-level credit</p>
+<p>A code-fixing agent attempts a bug across 3 turns. The terminal reward is the fraction of unit tests passing at the end: <span class="arithmatex">\(r = 0.75\)</span> (3 of 4 tests pass). The per-turn signals the environment can emit are: tests passing <em>after each turn</em> = <span class="arithmatex">\([0.25, 0.25, 0.75]\)</span>, so the per-turn <em>deltas</em> (new tests fixed) are <span class="arithmatex">\(r_0 = 0.25\)</span>, <span class="arithmatex">\(r_1 = 0.00\)</span>, <span class="arithmatex">\(r_2 = 0.50\)</span>.</p>
+<p><strong>Trajectory-level.</strong> We sampled <span class="arithmatex">\(G = 4\)</span> trajectories for this bug with terminal rewards <span class="arithmatex">\([0.75, 0.50, 0.00, 0.25]\)</span>. Mean <span class="arithmatex">\(\mu = 0.375\)</span>, std <span class="arithmatex">\(\sigma \approx 0.275\)</span>. Our trajectory&rsquo;s advantage is</p>
+<div class="arithmatex">\[\hat{A} = \frac{0.75 - 0.375}{0.275 + 10^{-6}} \approx +1.36\]</div>
+<p>Every action token in all 3 turns gets <span class="arithmatex">\(+1.36\)</span> — including turn 1, which fixed <em>nothing</em>. The signal is correct on average (this was a good trajectory) but rewards the wasted middle turn.</p>
+<p><strong>Turn-level with <span class="arithmatex">\(\gamma = 0.9\)</span>.</strong> Returns-to-go:</p>
+<div class="arithmatex">\[G_0 = 0.25 + 0.9(0.00) + 0.9^2(0.50) = 0.25 + 0 + 0.405 = 0.655$$
+$$G_1 = 0.00 + 0.9(0.50) = 0.450$$
+$$G_2 = 0.50\]</div>
+<p>Now turn 1&rsquo;s action carries <span class="arithmatex">\(G_1 = 0.45\)</span> — still positive (it set up the winning turn 2) but visibly <em>less</em> credit than turn 0&rsquo;s <span class="arithmatex">\(0.655\)</span> or the decisive turn 2. After group-normalizing these per-turn returns against the same-state baselines, turn 1&rsquo;s advantage would be near zero, correctly identifying it as neutral. The turn-level scheme has lower variance and assigns blame/credit far more precisely — at the cost of needing a per-turn reward signal the trajectory-level scheme does not require.</p>
+</div>
+<h3 id="when-to-use-which">When to use which<a class="headerlink" href="#when-to-use-which" title="Permanent link">¶</a></h3>
+<p>Use <strong>trajectory-level</strong> credit when the only honest reward is terminal (did the final answer match? did the PR merge?) and you cannot decompose it — this is the common case and it is what verifiable-reward agentic RL defaults to. Reach for <strong>turn-level</strong> credit when the environment naturally exposes intermediate progress (test pass counts, game score, retrieval hits) and trajectories are long enough that broadcast advantage learns too slowly. Process reward models (PRMs), which <em>learn</em> to score intermediate steps, are a third option discussed in <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>; they are powerful but reward-hackable, so verifiable per-turn signals are preferred when available.</p>
+<h2 id="environment-design-react-and-the-ragen-pattern">Environment Design: ReAct and the RAGEN Pattern<a class="headerlink" href="#environment-design-react-and-the-ragen-pattern" title="Permanent link">¶</a></h2>
+<p>An agentic RL system is only as good as its environments. An environment is a tiny piece of software with a <code>reset</code>/<code>step</code> contract that (a) renders the world into text the model can read, (b) parses the model&rsquo;s action text into a structured operation, &copy; executes it safely, and (d) emits a reward. The ReAct (&ldquo;Reason + Act&rdquo;) format — interleaving <code>Thought:</code> reasoning with <code>Action:</code> tool calls and <code>Observation:</code> results — is the dominant interaction protocol, and frameworks like RAGEN generalize it into a Gym-style API specifically built for training rather than just inference.</p>
+<p>Here is a complete, runnable environment for a multi-turn tool-using search-and-answer task, written in the RAGEN/ReAct style.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">SearchQAEnv</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A multi-turn ReAct environment: the agent must answer a question by</span>
+<span class="sd">    issuing &lt;search&gt;query&lt;/search&gt; calls and finally &lt;answer&gt;...&lt;/answer&gt;.</span>
+<span class="sd">    Terminal reward = 1.0 for a correct answer, with a small format bonus</span>
+<span class="sd">    and a per-turn step penalty to discourage dithering.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">SYSTEM_PROMPT</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;You are a research agent. To find information, emit &quot;</span>
+        <span class="s2">&quot;&lt;search&gt;your query&lt;/search&gt;. When you know the answer, emit &quot;</span>
+        <span class="s2">&quot;&lt;answer&gt;your final answer&lt;/answer&gt;. Think step by step before acting.&quot;</span>
+    <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">retriever</span><span class="p">,</span> <span class="n">max_turns</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">6</span><span class="p">,</span> <span class="n">step_penalty</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.02</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">retriever</span> <span class="o">=</span> <span class="n">retriever</span>          <span class="c1"># callable: query -&gt; list[str] passages</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_turns</span> <span class="o">=</span> <span class="n">max_turns</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">step_penalty</span> <span class="o">=</span> <span class="n">step_penalty</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">task</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="c1"># task = {&quot;question&quot;: ..., &quot;answer&quot;: &quot;&lt;gold&gt;&quot;}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">gold</span> <span class="o">=</span> <span class="n">task</span><span class="p">[</span><span class="s2">&quot;answer&quot;</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">turns</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">SYSTEM_PROMPT</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Question: </span><span class="si">{</span><span class="n">task</span><span class="p">[</span><span class="s1">&#39;question&#39;</span><span class="p">]</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">action_text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">bool</span><span class="p">]:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">turns</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">step_cost</span> <span class="o">=</span> <span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">step_penalty</span>       <span class="c1"># discourage long episodes</span>
+
+        <span class="c1"># --- Parse a final answer first ---</span>
+        <span class="n">ans</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;&lt;answer&gt;(.*?)&lt;/answer&gt;&quot;</span><span class="p">,</span> <span class="n">action_text</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">ans</span><span class="p">:</span>
+            <span class="n">pred</span> <span class="o">=</span> <span class="n">ans</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="n">correct</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_match</span><span class="p">(</span><span class="n">pred</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">gold</span><span class="p">)</span>
+            <span class="n">reward</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1.0</span> <span class="k">if</span> <span class="n">correct</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">)</span> <span class="o">+</span> <span class="n">step_cost</span>
+            <span class="k">return</span> <span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">reward</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>        <span class="c1"># terminal</span>
+
+        <span class="c1"># --- Parse a search action ---</span>
+        <span class="n">srch</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;&lt;search&gt;(.*?)&lt;/search&gt;&quot;</span><span class="p">,</span> <span class="n">action_text</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">srch</span><span class="p">:</span>
+            <span class="n">query</span> <span class="o">=</span> <span class="n">srch</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="n">passages</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">retriever</span><span class="p">(</span><span class="n">query</span><span class="p">)[:</span><span class="mi">3</span><span class="p">]</span>
+            <span class="n">obs</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">p</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">passages</span><span class="p">))</span>
+            <span class="n">done</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">turns</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_turns</span>
+            <span class="c1"># If we ran out of turns mid-search, that&#39;s a failure (reward 0).</span>
+            <span class="k">return</span> <span class="p">(</span><span class="n">obs</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">done</span> <span class="k">else</span> <span class="s2">&quot;Out of turns.&quot;</span><span class="p">,</span> <span class="n">step_cost</span><span class="p">,</span> <span class="n">done</span><span class="p">)</span>
+
+        <span class="c1"># --- Malformed action: tell the model, penalize lightly ---</span>
+        <span class="n">obs</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;Invalid action. Use &lt;search&gt;...&lt;/search&gt; or &quot;</span>
+               <span class="s2">&quot;&lt;answer&gt;...&lt;/answer&gt;.&quot;</span><span class="p">)</span>
+        <span class="n">done</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">turns</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_turns</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">obs</span><span class="p">,</span> <span class="n">step_cost</span><span class="p">,</span> <span class="n">done</span><span class="p">)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_match</span><span class="p">(</span><span class="n">pred</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">gold</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="n">norm</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">s</span><span class="p">:</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\W+&quot;</span><span class="p">,</span> <span class="s2">&quot; &quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">norm</span><span class="p">(</span><span class="n">gold</span><span class="p">)</span> <span class="ow">in</span> <span class="n">norm</span><span class="p">(</span><span class="n">pred</span><span class="p">)</span>      <span class="c1"># lenient containment match</span>
+</code></pre></div>
+<p>This tiny class encodes several environment-design lessons that matter enormously for training dynamics.</p>
+<p><strong>The reward shapes behavior, and the model will exploit every loophole.</strong> The step penalty discourages dithering, but set it too high and the model rushes to a guess; set it to zero and the model learns to &ldquo;search forever&rdquo; because searching is free and occasionally helps. The lenient <code>_match</code> invites reward hacking — the model can pad its answer with many candidate strings hoping one matches. Reward design for agents is the most leverage-heavy and most dangerous part of the system; the failure modes are catalogued in <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>, and the engineering of verifiers and sandboxes in <a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a>.</p>
+<p><strong>Action parsing must be forgiving but deterministic.</strong> Early in training the policy emits malformed actions constantly. If a malformed action crashes the environment, the rollout dies and you lose the gradient signal. Instead, return a structured error observation (as above) so the model gets a learning signal that teaches it the format. This single design choice — <em>errors are observations, not exceptions</em> — is what makes format-following emerge from RL rather than requiring exhaustive SFT.</p>
+<p><strong>Safety and isolation.</strong> A code-execution or shell environment runs <em>model-generated code</em>. During RL the model will, with certainty, eventually generate <code>rm -rf /</code>, an infinite loop, or a fork bomb — not maliciously but because it is exploring. Every such environment must run in a sandbox (container, gVisor, firejail, ephemeral VM) with CPU/memory/time limits and no network unless required. This is non-negotiable infrastructure; see <a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a> and <a href="../08-agents-harness/03-harness-coding-agent.html">Harness Engineering: Building a Coding Agent</a>.</p>
+<h3 id="statefulness-and-reset-semantics">Statefulness and reset semantics<a class="headerlink" href="#statefulness-and-reset-semantics" title="Permanent link">¶</a></h3>
+<p>Single-turn environments are stateless: each <code>step</code> is independent. Agentic environments are <strong>stateful</strong> — a filesystem accumulates edits, a database accumulates writes, a browser accumulates history. This has two consequences for the RL system. First, <code>reset</code> must truly reset: a leaked file from a previous episode is a silent source of reward leakage and non-reproducibility. Second, for group sampling (GRPO with <span class="arithmatex">\(G\)</span> rollouts of the same task) you need <span class="arithmatex">\(G\)</span> <em>independent</em> environment instances, because the rollouts interact with their own copy of the world. A single shared environment would let trajectory 3&rsquo;s writes corrupt trajectory 4&rsquo;s reads. The cost of <span class="arithmatex">\(G\)</span> parallel sandboxes is a real budget line in agentic RL.</p>
+<h2 id="the-hard-problems">The Hard Problems<a class="headerlink" href="#the-hard-problems" title="Permanent link">¶</a></h2>
+<p>Multi-turn RL concentrates almost every open problem in RL-for-LLMs. We treat the four that dominate engineering effort.</p>
+<h3 id="1-long-horizon-credit-assignment">1. Long-horizon credit assignment<a class="headerlink" href="#1-long-horizon-credit-assignment" title="Permanent link">¶</a></h3>
+<p>With 8 turns and 500 action tokens each, a trajectory has ~4000 action tokens, and a single terminal reward must be smeared across all of them. The variance of the gradient grows with horizon, and the signal-to-noise per action plummets. Mitigations, in rough order of how often they are used: (a) <strong>group baselines</strong> to reduce variance for free; (b) <strong>turn-level or process rewards</strong> to localize credit; &copy; <strong>return discounting</strong> <span class="arithmatex">\(\gamma&lt;1\)</span> so distant rewards do not dominate nearby actions; (d) <strong>curriculum</strong> — start with short-horizon tasks and grow the horizon as the policy improves; (e) <strong>hindsight relabeling</strong> — if a &ldquo;failed&rdquo; trajectory accidentally achieved <em>some</em> goal, relabel it as a success for that goal (powerful but tricky to apply to language tasks). The honest state of the art is that long-horizon agentic RL is <em>fragile</em>, and the most reliable lever is a denser, more verifiable reward rather than a cleverer estimator.</p>
+<h3 id="2-partial-rollouts-and-length-skew">2. Partial rollouts and length skew<a class="headerlink" href="#2-partial-rollouts-and-length-skew" title="Permanent link">¶</a></h3>
+<p>Trajectories have wildly different lengths: a lucky 1-turn success finishes in 200 ms while an 8-turn failure with three 4000-token web fetches takes 30 s. In a synchronous batch, the whole training step waits for the slowest trajectory — the <strong>straggler problem</strong>, magnified relative to single-turn RL because the length distribution is far heavier-tailed. Two structural responses:</p>
+<p><strong>Partial rollouts (continuation across steps).</strong> Instead of waiting for every trajectory to finish, cap the <em>generation budget</em> per step. Trajectories that hit the cap are paused mid-episode, their state (KV cache, conversation so far) is saved, and they are <em>resumed</em> in the next iteration — possibly under updated weights. This keeps every rollout worker busy and bounds step latency, at the cost of trajectories that span multiple policy versions (a mild off-policyness, handled by importance sampling). This is the agentic generalization of the partial-rollout idea in async RL systems; see <a href="../06-rl-infra/06-prime-rl-async.html">Prime-RL, Async RL &amp; Decentralized Training</a> and <a href="../06-rl-infra/02-generation-training-loop.html">The Generation–Training Loop &amp; Rollout Engines</a>.</p>
+<p><strong>Length-balanced batching and continuous batching.</strong> Group trajectories so that the per-microbatch length is roughly constant, and use the inference engine&rsquo;s continuous batching so that finished sequences are evicted and new ones admitted without draining the batch — exactly the mechanism described in <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>. The interaction between continuous batching and the <em>interleaved</em> generation of agentic rollouts (each sequence repeatedly pausing to call a tool) is one of the genuinely hard scheduling problems in this space.</p>
+<h3 id="3-the-throughput-tax-of-environment-interaction">3. The throughput tax of environment interaction<a class="headerlink" href="#3-the-throughput-tax-of-environment-interaction" title="Permanent link">¶</a></h3>
+<p>In single-turn RL, the GPU generates continuously. In agentic RL, every turn the GPU <em>stops</em>, waits for the environment (a Python sandbox spin-up, a search API round-trip, a 10-second test suite), then resumes. During that wait the expensive accelerators are idle. If environment latency is comparable to generation latency — and for code execution or web tools it often <em>exceeds</em> it — you can lose half your GPU-hours to waiting.</p>
+<p>The standard fix is <strong>asynchronous, decoupled rollout</strong>: run many environment instances concurrently so that while one trajectory waits on its tool, the GPU generates the next action for another trajectory. This requires an async rollout engine (vLLM&rsquo;s and SGLang&rsquo;s async APIs) feeding a pool of environment workers, with a scheduler that interleaves their requests. Architecturally this is the colocated-vs-disaggregated question of <a href="../06-rl-infra/07-colocated-vs-disaggregated.html">Colocated vs Disaggregated RL &amp; Weight Synchronization</a> applied to environments: you want the inference engine saturated by a <em>fan-out</em> of environments, not blocked on any one of them.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip</p>
+<p>Profile your rollout with two numbers: <strong>GPU-generate time</strong> and <strong>environment-wait time</strong> per trajectory. If env-wait is more than ~20% of generate time, you are leaving real money on the table and should add environment concurrency (more parallel env workers per inference replica) before you touch any algorithmic knob. A common, embarrassing discovery is that a single un-pooled sandbox <code>docker run</code> per turn (cold-start ~1–2 s) dominates the entire training budget; pre-warming a pool of containers can cut wall-clock time by several-fold with zero ML changes.</p>
+</div>
+<h3 id="4-inferencetraining-distribution-mismatch-compounded">4. Inference/training distribution mismatch, compounded<a class="headerlink" href="#4-inferencetraining-distribution-mismatch-compounded" title="Permanent link">¶</a></h3>
+<p>Single-turn RL already suffers a gap between the inference engine&rsquo;s sampling distribution (vLLM in bf16 with its kernels) and the trainer&rsquo;s recomputed log-probs (FSDP forward, possibly different precision). In multi-turn RL this gap <strong>compounds across turns</strong>: a tiny per-token discrepancy at turn 0 changes the action, which changes the observation, which changes the entire downstream trajectory. The model that &ldquo;generated&rdquo; the trajectory under the inference engine is not exactly the model the trainer thinks generated it. The defenses — recompute log-probs in the trainer for the importance ratio, keep precision consistent, clip ratios aggressively, and monitor the inference-vs-train log-prob gap as a first-class metric — are detailed in <a href="../06-rl-infra/02-generation-training-loop.html">The Generation–Training Loop &amp; Rollout Engines</a> and <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>. The agentic-specific advice is to <em>store and reconcile</em> per-action-token log-probs at segment boundaries, never to trust a single end-to-end recomputation of a multi-turn string.</p>
+<h2 id="putting-it-together-a-minimal-agentic-grpo-step">Putting It Together: A Minimal Agentic GRPO Step<a class="headerlink" href="#putting-it-together-a-minimal-agentic-grpo-step" title="Permanent link">¶</a></h2>
+<p>Let us assemble the pieces into one training step that ties rollout, masking, credit assignment, and the masked loss together. This is the skeleton that frameworks like veRL&rsquo;s multi-turn path and TRL&rsquo;s experimental agentic trainers implement; see <a href="../06-rl-infra/04-verl.html">veRL: HybridFlow &amp; The Single-Controller Architecture</a> and <a href="../06-rl-infra/03-trl.html">TRL: HuggingFace&rsquo;s RL Library</a> for the production versions.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">agentic_grpo_step</span><span class="p">(</span><span class="n">policy</span><span class="p">,</span> <span class="n">ref_policy</span><span class="p">,</span> <span class="n">policy_engine</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span>
+                      <span class="n">env_factory</span><span class="p">,</span> <span class="n">tasks</span><span class="p">,</span> <span class="n">G</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">beta</span><span class="o">=</span><span class="mf">0.02</span><span class="p">,</span> <span class="n">optimizer</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    One GRPO step over agentic trajectories.</span>
+<span class="sd">      policy        : trainable model (FSDP-wrapped); provides logits for loss</span>
+<span class="sd">      ref_policy    : frozen reference for KL (see [9])</span>
+<span class="sd">      policy_engine : inference engine that generates actions + logprobs</span>
+<span class="sd">      env_factory   : callable -&gt; fresh, isolated Environment instance</span>
+<span class="sd">      tasks         : list of tasks; we sample G rollouts per task</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">all_trajs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Trajectory</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="c1"># ---- 1. ROLLOUT: G independent episodes per task (group sampling) ----</span>
+    <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="n">tasks</span><span class="p">:</span>
+        <span class="n">group</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">G</span><span class="p">):</span>
+            <span class="n">env</span> <span class="o">=</span> <span class="n">env_factory</span><span class="p">()</span>                  <span class="c1"># ISOLATED env per rollout</span>
+            <span class="n">traj</span> <span class="o">=</span> <span class="n">rollout</span><span class="p">(</span><span class="n">policy_engine</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">env</span><span class="p">,</span> <span class="n">task</span><span class="p">)</span>
+            <span class="n">group</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">traj</span><span class="p">)</span>
+        <span class="c1"># ---- 2. CREDIT ASSIGNMENT: group-relative advantage per trajectory ----</span>
+        <span class="n">assign_trajectory_advantage</span><span class="p">(</span><span class="n">group</span><span class="p">)</span>       <span class="c1"># sets t.metadata[&#39;advantage&#39;]</span>
+        <span class="n">all_trajs</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">group</span><span class="p">)</span>
+
+    <span class="c1"># ---- 3. BATCH: flatten + pad trajectories, build per-token tensors ----</span>
+    <span class="n">seqs</span><span class="p">,</span> <span class="n">masks</span><span class="p">,</span> <span class="n">advs</span><span class="p">,</span> <span class="n">old_lps</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
+    <span class="n">max_len</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="nb">sum</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">token_ids</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">t</span><span class="o">.</span><span class="n">segments</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">all_trajs</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">all_trajs</span><span class="p">:</span>
+        <span class="n">ids</span><span class="p">,</span> <span class="n">mask</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span>                  <span class="c1"># [L], [L]</span>
+        <span class="n">A</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;advantage&quot;</span><span class="p">]</span>
+        <span class="n">adv</span> <span class="o">=</span> <span class="n">mask</span> <span class="o">*</span> <span class="n">A</span>                           <span class="c1"># broadcast scalar adv onto ACTION tokens</span>
+        <span class="c1"># gather rollout-time logprobs aligned to every token (0 where masked)</span>
+        <span class="n">lp</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">ids</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float</span><span class="p">)</span>
+        <span class="n">cursor</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">t</span><span class="o">.</span><span class="n">segments</span><span class="p">:</span>
+            <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">token_ids</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="n">role</span> <span class="o">==</span> <span class="n">Role</span><span class="o">.</span><span class="n">ASSISTANT</span> <span class="ow">and</span> <span class="n">s</span><span class="o">.</span><span class="n">logprobs</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">lp</span><span class="p">[</span><span class="n">cursor</span><span class="p">:</span><span class="n">cursor</span><span class="o">+</span><span class="n">n</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">logprobs</span><span class="p">)</span>
+            <span class="n">cursor</span> <span class="o">+=</span> <span class="n">n</span>
+        <span class="n">pad</span> <span class="o">=</span> <span class="n">max_len</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span>
+        <span class="n">seqs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">ids</span><span class="p">,</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">pad</span><span class="p">)))</span>
+        <span class="n">masks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">pad</span><span class="p">)))</span>
+        <span class="n">advs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">adv</span><span class="p">,</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">pad</span><span class="p">)))</span>
+        <span class="n">old_lps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">lp</span><span class="p">,</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">pad</span><span class="p">)))</span>
+
+    <span class="n">token_ids</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">seqs</span><span class="p">)</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>       <span class="c1"># [B, L]</span>
+    <span class="n">loss_mask</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">masks</span><span class="p">)</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>      <span class="c1"># [B, L]</span>
+    <span class="n">advantages</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">advs</span><span class="p">)</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>       <span class="c1"># [B, L]</span>
+    <span class="n">old_logprobs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">old_lps</span><span class="p">)</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>   <span class="c1"># [B, L]</span>
+
+    <span class="c1"># ---- 4. FORWARD + MASKED LOSS (teacher-forced over the trajectory) ----</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">policy</span><span class="p">(</span><span class="n">token_ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span>            <span class="c1"># [B, L, V]</span>
+    <span class="n">pg_loss</span> <span class="o">=</span> <span class="n">masked_grpo_loss</span><span class="p">(</span>
+        <span class="n">logits</span><span class="p">,</span> <span class="n">token_ids</span><span class="p">,</span> <span class="n">loss_mask</span><span class="p">,</span> <span class="n">advantages</span><span class="p">,</span> <span class="n">old_logprobs</span><span class="p">,</span> <span class="n">epsilon</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># ---- 5. KL penalty to the reference, masked to ACTION tokens ----</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="n">ref_logits</span> <span class="o">=</span> <span class="n">ref_policy</span><span class="p">(</span><span class="n">token_ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span>
+    <span class="n">kl</span> <span class="o">=</span> <span class="n">masked_token_kl</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">ref_logits</span><span class="p">,</span> <span class="n">token_ids</span><span class="p">,</span> <span class="n">loss_mask</span><span class="p">)</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">pg_loss</span> <span class="o">+</span> <span class="n">beta</span> <span class="o">*</span> <span class="n">kl</span>
+
+    <span class="c1"># ---- 6. OPTIMIZE ----</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">policy</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;pg_loss&quot;</span><span class="p">:</span> <span class="n">pg_loss</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span> <span class="s2">&quot;kl&quot;</span><span class="p">:</span> <span class="n">kl</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+            <span class="s2">&quot;mean_reward&quot;</span><span class="p">:</span> <span class="nb">sum</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">reward</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">all_trajs</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">all_trajs</span><span class="p">),</span>
+            <span class="s2">&quot;mean_turns&quot;</span><span class="p">:</span> <span class="nb">sum</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;n_turns&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">all_trajs</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">all_trajs</span><span class="p">)}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">masked_token_kl</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">ref_logits</span><span class="p">,</span> <span class="n">token_ids</span><span class="p">,</span> <span class="n">loss_mask</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Per-token KL(π_θ || π_ref) on realized tokens, averaged over ACTION tokens.&quot;&quot;&quot;</span>
+    <span class="n">lp</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">rlp</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">ref_logits</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">tgt</span> <span class="o">=</span> <span class="n">token_ids</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">lp_tok</span>  <span class="o">=</span> <span class="n">lp</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">tgt</span><span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">rlp_tok</span> <span class="o">=</span> <span class="n">rlp</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">tgt</span><span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="c1"># k3 estimator: exp(Δ) - Δ - 1, low-variance and non-negative</span>
+    <span class="n">diff</span> <span class="o">=</span> <span class="n">rlp_tok</span> <span class="o">-</span> <span class="n">lp_tok</span>
+    <span class="n">per_token_kl</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">diff</span><span class="p">)</span> <span class="o">-</span> <span class="n">diff</span> <span class="o">-</span> <span class="mf">1.0</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">loss_mask</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">per_token_kl</span> <span class="o">*</span> <span class="n">m</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">/</span> <span class="n">m</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+</code></pre></div>
+<p>Read this against the single-turn GRPO loop in <a href="../06-rl-infra/03-trl.html">TRL: HuggingFace&rsquo;s RL Library</a>. The algorithm is the same — group baseline, clipped surrogate, KL to reference. Everything that is <em>new</em> is bookkeeping: the trajectory data structure, the loss mask that survives flattening and padding, the broadcast of one advantage onto many action tokens across many turns, and the storage/alignment of rollout-time log-probs across segment boundaries. That bookkeeping is where agentic RL implementations live or die.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are training a tool-using agent with GRPO. Your reward steadily climbs, but when you deploy the model it has <em>stopped calling tools</em> and just hallucinates plausible-looking tool outputs inline. Training reward looks great. What most likely went wrong, and how would you diagnose and fix it?</p>
+<p><strong>A:</strong> This is the classic missing-loss-mask bug. If observation (tool-output) tokens are <em>not</em> masked from the policy-gradient loss, the model is trained to predict the tool outputs as if it had generated them — so it learns to produce fluent fake observations and skip the actual tool call, which conveniently also lets it &ldquo;match&rdquo; the reward pattern it saw in successful trajectories. <strong>Diagnose:</strong> (1) log <code>loss_mask.sum()</code> versus total tokens per batch — if the mask is live on observation spans, that is the smoking gun; (2) inspect a few flattened trajectories and assert that the mask is zero over every <code>&lt;tool_response&gt;</code> span (a unit test with a hand-counted trajectory); (3) check the off-by-one — the mask must be shifted identically to the next-token targets. <strong>Fix:</strong> zero the loss (and the KL, and the importance ratio&rsquo;s contribution) on all observation and system tokens, normalize over action tokens only, and re-verify the mask with the unit test. A secondary contributor can be a reward that does not <em>require</em> a real tool round-trip (e.g., a verifier that only checks the final answer string), which lets the model get away with faking; tighten the environment so that a final answer is only accepted after genuine tool interactions, or add a verifier that checks tool calls actually executed.</p>
+</div>
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>In multi-turn agentic RL the unit of data is a <strong>trajectory</strong> of interleaved model actions and environment observations; the model authored only the action tokens, and those are the only tokens that get a policy-gradient loss.</li>
+<li>The <strong>loss mask</strong> (1 on action tokens, 0 on observations/system) is the single most important and most bug-prone object; mask the surrogate loss, the KL, and the importance ratio, normalize over action tokens only, and watch the next-token off-by-one.</li>
+<li><strong>Credit assignment</strong> ranges from trajectory-level (one terminal reward broadcast to all actions, robust but high-variance) to turn-level/process rewards (discounted returns-to-go or branched group baselines, lower variance but needs an intermediate signal).</li>
+<li>Use <strong>group-relative (GRPO-style) baselines</strong> to cut variance for free; reach for turn-level credit only when the environment exposes honest intermediate progress.</li>
+<li><strong>Environment design is the lever</strong>: errors should be observations not exceptions (so format-following emerges), every code/shell environment must be sandboxed, and group sampling needs <span class="arithmatex">\(G\)</span> <em>independent</em> environment instances to avoid state leakage.</li>
+<li>The hard problems are <strong>long-horizon credit assignment</strong>, <strong>partial rollouts / length skew</strong> (straggler-dominated, heavy-tailed lengths), the <strong>throughput tax</strong> of GPUs idling on environment latency, and a <strong>compounded inference/training distribution mismatch</strong> across turns.</li>
+<li>The biggest practical wins are usually infrastructural — pooled/pre-warmed sandboxes, async decoupled rollout to hide environment latency, partial rollouts to bound step time — not algorithmic cleverness.</li>
+<li>The training algorithm is the same GRPO/PPO as single-turn RL; what is new is the trajectory bookkeeping, the mask, and the credit broadcast. The downstream agent behavior these methods produce is the subject of <a href="../08-agents-harness/02-agentic-loop.html">Part VIII</a>.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Agentic and multi-turn RL has advanced rapidly since 2023: frameworks such as veRL, RAGEN, and TRL now ship production-ready multi-turn trainers, SWE-bench Verified has become the canonical coding-agent leaderboard, and the field is converging on trajectory-level GRPO with masked policy gradients as the baseline recipe while actively exploring turn-level credit assignment and async rollout architectures.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2210.03629">Yao et al., <em>ReAct: Synergizing Reasoning and Acting in Language Models</em> (2022)</a> — establishes the interleaved Thought/Action/Observation loop that every tool-using agent and agentic RL environment now follows.</li>
+<li><a href="https://arxiv.org/abs/2305.20050">Lightman et al., <em>Let&rsquo;s Verify Step by Step</em> (2023)</a> — introduces process reward models (PRMs) that assign credit at each reasoning step, motivating turn-level reward designs in agentic RL.</li>
+<li><a href="https://arxiv.org/abs/1707.01495">Andrychowicz et al., <em>Hindsight Experience Replay</em> (2017)</a> — canonical technique for sparse long-horizon rewards via goal relabeling; the language-agent analogue is discussed in credit-assignment mitigations.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2504.20073">Wang et al., <em>RAGEN: Understanding Self-Evolution in LLM Agents via Multi-Turn Reinforcement Learning</em> (2025)</a> — proposes StarPO for trajectory-level multi-turn RL, identifies the &ldquo;Echo Trap&rdquo; instability, and provides a Gym-style training framework.</li>
+<li><a href="https://arxiv.org/abs/2510.01132">Wang &amp; Ammanabrolu, <em>A Practitioner&rsquo;s Guide to Multi-Turn Agentic Reinforcement Learning</em> (2025)</a> — empirical map of design choices across environment, reward, and policy axes; the closest thing to a field-wide recipe guide.</li>
+<li><a href="https://arxiv.org/abs/2505.11821">Wei et al., <em>Reinforcing Multi-Turn Reasoning in LLM Agents via Turn-Level Reward Design</em> (2025)</a> — first systematic study of turn-level reward signals for GRPO/PPO in multi-turn settings, directly relevant to the credit-assignment section.</li>
+<li><a href="https://arxiv.org/abs/2310.06770">Jimenez et al., <em>SWE-bench: Can Language Models Resolve Real-World GitHub Issues?</em> (2024)</a> — the canonical benchmark driving multi-turn coding-agent RL, making long-horizon credit assignment a practical necessity.</li>
+<li><a href="https://arxiv.org/abs/2406.12045">Yao et al., <em>τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains</em> (2024)</a> — evaluates agents on multi-turn tool-calling with a simulated user, exposing reliability failures that motivate better trajectory-level training.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/verl-project/verl">verl-project/verl</a> — production RL post-training library (HybridFlow) with multi-turn rollout support, integrates FSDP, Megatron-LM, vLLM, and SGLang.</li>
+<li><a href="https://github.com/RAGEN-AI/RAGEN">RAGEN-AI/RAGEN</a> — StarPO-based multi-turn agentic RL framework with 10 built-in Gym-compatible environments and trajectory filtering for training stability.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2406.04151">Xi et al., <em>AgentGym: Evolving LLM-based Agents across Diverse Environments</em> (2024)</a> — unified ReAct-format benchmark spanning 14 environments (web, games, coding, embodied) used to study generalist agent RL at scale.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Yao et al., &ldquo;ReAct: Synergizing Reasoning and Acting in Language Models&rdquo; (2023)</strong> — the Reason+Act interaction format that nearly every tool-using environment adopts; foundational for the trajectory structure in this chapter.</li>
+<li><strong>Wang et al., &ldquo;RAGEN: Training Agents by Reinforcing Reasoning&rdquo; / the RAGEN framework</strong> — a StarPO-style multi-turn agentic RL framework with a Gym-like environment API built for training (not just inference); a concrete reference implementation of the patterns here.</li>
+<li><strong>Schulman et al., &ldquo;Proximal Policy Optimization Algorithms&rdquo; (2017)</strong> and <strong>Schulman et al., &ldquo;High-Dimensional Continuous Control Using Generalized Advantage Estimation&rdquo; (2016)</strong> — the PPO clipped surrogate and GAE that underlie turn-level advantage estimation.</li>
+<li><strong>Shao et al., &ldquo;DeepSeekMath&rdquo; (2024)</strong> — introduces GRPO and the group-relative advantage that the trajectory-level credit scheme builds on.</li>
+<li><strong>Andrychowicz et al., &ldquo;Hindsight Experience Replay&rdquo; (2017)</strong> — the relabeling idea for sparse, long-horizon rewards referenced under long-horizon credit assignment.</li>
+<li><strong>veRL / HybridFlow (Sheng et al.)</strong> and the <strong>TRL</strong> repository — production frameworks whose multi-turn rollout and masking code paths implement the bookkeeping described here; read their multi-turn trainers alongside <a href="../06-rl-infra/04-verl.html">veRL: HybridFlow &amp; The Single-Controller Architecture</a>.</li>
+<li><strong>SWE-bench (Jimenez et al., 2024)</strong> and <strong>tau-bench / agentic tool-use benchmarks</strong> — the evaluation targets that motivate multi-turn coding and tool-using RL; see <a href="../08-agents-harness/08-agent-evaluation.html">Agent Evaluation &amp; Benchmarks</a>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="09-advantage-kl-tricks.html"><span class="pn-label">← Previous</span><span class="pn-title">Advantage Estimation, KL Control &amp; Stability Tricks</span></a>
+<a class="next" href="11-scaling-rl-tricks.html"><span class="pn-label">Next →</span><span class="pn-title">Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#from-single-turn-to-multi-turn-the-trajectory-as-the-unit">From Single-Turn to Multi-Turn: The Trajectory as the Unit</a></li>
+<li class="toc-l3"><a href="#why-not-just-treat-the-whole-trajectory-as-one-big-completion">Why not just treat the whole trajectory as one big completion?</a></li>
+<li class="toc-l2"><a href="#the-rollout-loop-interleaving-generation-and-environment">The Rollout Loop: Interleaving Generation and Environment</a></li>
+<li class="toc-l2"><a href="#masking-the-single-most-important-detail">Masking: The Single Most Important Detail</a></li>
+<li class="toc-l2"><a href="#credit-assignment-trajectory-level-vs-turn-level">Credit Assignment: Trajectory-Level vs Turn-Level</a></li>
+<li class="toc-l3"><a href="#outcome-reward-broadcast-to-all-actions-trajectory-level">Outcome reward, broadcast to all actions (trajectory-level)</a></li>
+<li class="toc-l3"><a href="#turn-level-process-rewards-per-turn-credit">Turn-level / process rewards (per-turn credit)</a></li>
+<li class="toc-l3"><a href="#when-to-use-which">When to use which</a></li>
+<li class="toc-l2"><a href="#environment-design-react-and-the-ragen-pattern">Environment Design: ReAct and the RAGEN Pattern</a></li>
+<li class="toc-l3"><a href="#statefulness-and-reset-semantics">Statefulness and reset semantics</a></li>
+<li class="toc-l2"><a href="#the-hard-problems">The Hard Problems</a></li>
+<li class="toc-l3"><a href="#1-long-horizon-credit-assignment">1. Long-horizon credit assignment</a></li>
+<li class="toc-l3"><a href="#2-partial-rollouts-and-length-skew">2. Partial rollouts and length skew</a></li>
+<li class="toc-l3"><a href="#3-the-throughput-tax-of-environment-interaction">3. The throughput tax of environment interaction</a></li>
+<li class="toc-l3"><a href="#4-inferencetraining-distribution-mismatch-compounded">4. Inference/training distribution mismatch, compounded</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-minimal-agentic-grpo-step">Putting It Together: A Minimal Agentic GRPO Step</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

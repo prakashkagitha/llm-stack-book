@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distillation, Model Compression &amp; Knowledge Transfer — The LLM Stack</title>
+<meta name="description" content="Knowledge distillation (soft targets, temperature), on-policy vs off-policy distillation, sequence-level KD, distilling reasoning (R1-&gt;small), pruning (structur">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="active" href="12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part V — Post-Training &amp; Alignment</div>
+<h1 id="512-distillation-model-compression-knowledge-transfer">5.12 Distillation, Model Compression &amp; Knowledge Transfer<a class="headerlink" href="#512-distillation-model-compression-knowledge-transfer" title="Permanent link">¶</a></h1>
+<p>Training a 70-billion-parameter model costs millions of dollars and requires a cluster of GPUs. Deploying it on a developer laptop or inside a latency-sensitive API costs even more. The gap between what you can afford to train and what you can afford to serve motivates an entire family of techniques grouped under the banner of <em>model compression</em>. This chapter covers the three most important ones — knowledge distillation, weight pruning, and their synergy with speculative decoding — and shows you how to implement them from scratch.</p>
+<p>The key insight that ties everything together is this: a large, expensive model contains far more &ldquo;knowledge&rdquo; than its parameter count strictly requires. Redundant neurons, near-zero weights, and over-parameterized attention heads all suggest that a smaller model, if trained carefully, can approximate the same function at a fraction of the cost. Our job is to extract that knowledge efficiently.</p>
+<h2 id="51-knowledge-distillation-soft-targets-and-temperature">5.1 Knowledge Distillation: Soft Targets and Temperature<a class="headerlink" href="#51-knowledge-distillation-soft-targets-and-temperature" title="Permanent link">¶</a></h2>
+<p>Geoffrey Hinton, Oriol Vinyals, and Jeff Dean introduced <em>knowledge distillation</em> (KD) in a landmark 2015 paper. The idea is deceptively simple: instead of training a student model on one-hot (hard) labels, train it to match the full output distribution (soft targets) of a larger <em>teacher</em> model.</p>
+<h3 id="why-soft-targets-contain-more-information">Why Soft Targets Contain More Information<a class="headerlink" href="#why-soft-targets-contain-more-information" title="Permanent link">¶</a></h3>
+<p>Consider a cat-vs-dog classifier. A hard label says <code>cat = 1, dog = 0</code>. But a well-trained teacher might output <code>cat = 0.92, dog = 0.06, tiger = 0.02</code>. That distribution says: this cat looks vaguely tiger-like and not at all dog-like. This inter-class similarity is information the student can use to generalize better from less data.</p>
+<p>The same principle applies to language models. When a teacher assigns probability 0.3 to &ldquo;Paris&rdquo;, 0.2 to &ldquo;London&rdquo;, and 0.15 to &ldquo;Berlin&rdquo; as the next token after &ldquo;The capital of France is&rdquo;, the student learns a richer, more structured representation than it would from the hard label &ldquo;Paris&rdquo; alone.</p>
+<h3 id="the-kd-loss">The KD Loss<a class="headerlink" href="#the-kd-loss" title="Permanent link">¶</a></h3>
+<p>For a language model the per-token distillation loss is the Kullback-Leibler divergence between the teacher&rsquo;s soft distribution <span class="arithmatex">\(q\)</span> and the student&rsquo;s distribution <span class="arithmatex">\(p\)</span>:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{KD} = \tau^2 \sum_{v} q_\tau(v) \log \frac{q_\tau(v)}{p_\tau(v)}
+\]</div>
+<p>where the temperature-scaled distributions are:</p>
+<div class="arithmatex">\[
+q_\tau(v) = \frac{\exp(z^T_v / \tau)}{\sum_{v'} \exp(z^T_{v'} / \tau)}, \quad p_\tau(v) = \frac{\exp(z^S_v / \tau)}{\sum_{v'} \exp(z^S_{v'} / \tau)}
+\]</div>
+<p>Here <span class="arithmatex">\(z^T\)</span> and <span class="arithmatex">\(z^S\)</span> are the teacher&rsquo;s and student&rsquo;s logit vectors over the vocabulary, and <span class="arithmatex">\(\tau &gt; 1\)</span> is the <em>temperature</em>. The <span class="arithmatex">\(\tau^2\)</span> prefactor ensures that the gradient magnitude stays constant as <span class="arithmatex">\(\tau\)</span> changes — without it, increasing <span class="arithmatex">\(\tau\)</span> softens the distribution but also shrinks the gradient by <span class="arithmatex">\(1/\tau^2\)</span>, making training effectively slower.</p>
+<p>The full training loss blends distillation with standard cross-entropy on ground-truth labels:</p>
+<div class="arithmatex">\[
+\mathcal{L} = \alpha \, \mathcal{L}_\text{CE}(p_1, y) + (1 - \alpha) \, \mathcal{L}_\text{KD}(p_\tau, q_\tau)
+\]</div>
+<p>Common choices are <span class="arithmatex">\(\tau \in [2, 5]\)</span> and <span class="arithmatex">\(\alpha \in [0.1, 0.5]\)</span>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Temperature Effect on Soft Targets</p>
+<p>Suppose a teacher has logits <span class="arithmatex">\(z^T = [3.0, 1.0, 0.5]\)</span> for three tokens.</p>
+<p>At <span class="arithmatex">\(\tau = 1\)</span>: softmax gives <span class="arithmatex">\([0.825, 0.112, 0.068]\)</span> — nearly all mass on token 0.</p>
+<p>At <span class="arithmatex">\(\tau = 4\)</span>: logits become <span class="arithmatex">\([0.75, 0.25, 0.125]\)</span>, softmax gives <span class="arithmatex">\([0.388, 0.317, 0.295]\)</span> — much softer.</p>
+<p>The soft distribution at <span class="arithmatex">\(\tau = 4\)</span> tells the student that tokens 1 and 2 are plausible alternatives, carrying meaningful signal about inter-token similarity. At <span class="arithmatex">\(\tau = 1\)</span> this information is almost entirely suppressed. Setting <span class="arithmatex">\(\tau\)</span> too high (say, 20) eventually flattens the distribution toward uniform, losing the ordering information — this is why values of 2–5 are typical.</p>
+</div>
+<h2 id="52-on-policy-vs-off-policy-distillation">5.2 On-Policy vs Off-Policy Distillation<a class="headerlink" href="#52-on-policy-vs-off-policy-distillation" title="Permanent link">¶</a></h2>
+<p>The terminology &ldquo;on-policy&rdquo; vs &ldquo;off-policy&rdquo; in distillation borrows from RL and describes <em>who generated the context being trained on</em>.</p>
+<h3 id="off-policy-distillation">Off-Policy Distillation<a class="headerlink" href="#off-policy-distillation" title="Permanent link">¶</a></h3>
+<p>In the standard formulation, you take a fixed dataset of (context, continuation) pairs, run the teacher forward to get <span class="arithmatex">\(q_\tau\)</span>, then train the student to match those distributions. The student never influences which sequences it is trained on — it is trained purely on the teacher&rsquo;s preferred distribution. This is called <em>off-policy</em> distillation (or sometimes <em>teacher-guided</em> distillation).</p>
+<p>It is cheap and simple: compute teacher logits once, save them to disk, train the student on top. The downside is <em>distribution mismatch</em>: the student is trained on sequences the teacher &ldquo;liked&rdquo; but at test time the student must generate its own sequences, which may drift into regions where the teacher&rsquo;s signals don&rsquo;t transfer well.</p>
+<h3 id="on-policy-distillation">On-Policy Distillation<a class="headerlink" href="#on-policy-distillation" title="Permanent link">¶</a></h3>
+<p>In on-policy distillation the student generates text, the teacher scores those generations, and the student is trained on its own outputs. This is a form of imitation learning / behavioral cloning applied at the sequence level.</p>
+<p>The simplest on-policy algorithm:
+1. Sample a batch of prompts <span class="arithmatex">\(x \sim \mathcal{D}\)</span>.
+2. Generate completions <span class="arithmatex">\(\hat{y} \sim p_S(\cdot|x)\)</span> using the student.
+3. For each token position, compute the teacher&rsquo;s distribution <span class="arithmatex">\(q_\tau\)</span> conditioned on <span class="arithmatex">\((x, \hat{y}_{&lt;t})\)</span>.
+4. Minimize <span class="arithmatex">\(\mathcal{L}_\text{KD}(p_{S,\tau}, q_\tau)\)</span> over the student&rsquo;s own rollouts.</p>
+<p>On-policy distillation is closely related to methods like <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">RLHF</a> and <a href="../05-posttraining-alignment/07-dpo-and-variants.html">DPO</a> — you are training the student to behave like the teacher on its own generations rather than on a fixed corpus. The statistical consistency argument for on-policy methods is the same one motivating PPO in RL: you want gradients to reflect the distribution the policy actually encounters.</p>
+<p>On-policy distillation typically outperforms off-policy on longer generations and tasks that require multi-step reasoning, at the cost of running the student (and evaluating the teacher) online during training.</p>
+<h3 id="imitation-gap-and-capacity-gap">Imitation-Gap and Capacity Gap<a class="headerlink" href="#imitation-gap-and-capacity-gap" title="Permanent link">¶</a></h3>
+<p>A practical tension: if the teacher is vastly larger than the student, the student cannot represent the teacher&rsquo;s distribution accurately. Hinton et al. called this the <em>capacity gap</em>. Empirically, distilling a 70B teacher into a 1B student often underperforms distilling a 13B teacher into the same 1B student, because the 70B model&rsquo;s distribution is &ldquo;too complex&rdquo; for the student to model. Progressive distillation — chaining 70B → 13B → 3B → 1B — often produces better final results.</p>
+<h2 id="53-sequence-level-knowledge-distillation">5.3 Sequence-Level Knowledge Distillation<a class="headerlink" href="#53-sequence-level-knowledge-distillation" title="Permanent link">¶</a></h2>
+<p>Token-level KD teaches the student to match the teacher at each position. But language generation is a sequential process and errors compound: a student wrong at position <span class="arithmatex">\(t\)</span> diverges from the teacher at position <span class="arithmatex">\(t+1\)</span> in a way that per-token loss doesn&rsquo;t penalize.</p>
+<p><em>Sequence-level KD</em> (SeqKD), introduced by Kim &amp; Rush (2016), addresses this by distilling at the sequence level rather than the token level.</p>
+<h3 id="seqkd-data-augmentation-view">SeqKD: Data Augmentation View<a class="headerlink" href="#seqkd-data-augmentation-view" title="Permanent link">¶</a></h3>
+<p>The simplest SeqKD recipe:
+1. Run the teacher in greedy decoding (or top-k sampling) over a training prompt set.
+2. Use the teacher&rsquo;s <em>output text</em> as the student&rsquo;s training target (standard cross-entropy, hard labels).
+3. Optionally mix original gold labels with teacher-generated pseudo-labels.</p>
+<p>The student now learns to imitate the teacher&rsquo;s complete output behavior. A critical nuance: greedy teacher outputs are often different from gold labels, and the student may actually score better on downstream tasks by following the teacher&rsquo;s idioms rather than the gold data.</p>
+<h3 id="word-level-vs-sequence-level-vs-intermediate-features">Word-Level vs Sequence-Level vs Intermediate Features<a class="headerlink" href="#word-level-vs-sequence-level-vs-intermediate-features" title="Permanent link">¶</a></h3>
+<p><figure class="viz" id="fig-distill-granularity-tiers">
+<svg viewBox="0 0 760 430" role="img" aria-label="Three distillation granularities: Token-level Hinton KD matches full per-position logits at high cost; Sequence-level SeqKD uses teacher output as hard labels at low cost; Feature-level FitNet matches hidden states via a projector at medium cost.">
+<defs>
+  <marker id="dgt-arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto">
+    <path d="M0 0 L8 4 L0 8 z" fill="var(--accent-3,#8b5cf6)"/>
+  </marker></p>
+<p><clipPath id="dgt-clipA"><rect x="14"  y="130" width="226" height="274"/></clipPath>
+  <clipPath id="dgt-clipB"><rect x="256" y="130" width="226" height="274"/></clipPath>
+  <clipPath id="dgt-clipC"><rect x="498" y="130" width="226" height="274"/></clipPath>
+</defs></p>
+<style>
+  #fig-distill-granularity-tiers text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-distill-granularity-tiers .ttl  { font: 700 17px var(--sans,sans-serif); }
+  #fig-distill-granularity-tiers .sub  { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-distill-granularity-tiers .hdr  { font: 700 14px var(--sans,sans-serif); fill: #fff; }
+  #fig-distill-granularity-tiers .hdri { font: 400 11px var(--sans,sans-serif); font-style:italic; fill:rgba(255,255,255,0.85); }
+  #fig-distill-granularity-tiers .body { font: 600 11px var(--sans,sans-serif); }
+  #fig-distill-granularity-tiers .bod2 { font: 400 11px var(--sans,sans-serif); }
+  #fig-distill-granularity-tiers .pill { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-distill-granularity-tiers .clbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-distill-granularity-tiers .mono { font: 500 8px var(--mono,monospace); }
+  #fig-distill-granularity-tiers .costtxt { font: 600 10px var(--sans,sans-serif); }
+</style>
+
+<p><rect x="14" y="10" width="732" height="50" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+<text x="380" y="32" text-anchor="middle" class="ttl">Distillation Granularity</text>
+<text x="380" y="50" text-anchor="middle" class="sub">What signal does the student match?</text></p>
+<p><rect x="14"  y="76" width="226" height="328" rx="10"
+  fill="var(--surface-2,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/></p>
+<p><rect x="14"  y="76" width="226" height="54" rx="10" fill="var(--accent,#6366f1)"/>
+<rect x="14"  y="112" width="226" height="18"        fill="var(--accent,#6366f1)"/>
+<text x="127" y="99" text-anchor="middle" class="hdr">Token level</text>
+<text x="127" y="117" text-anchor="middle" class="hdri">(Hinton KD)</text></p>
+<p><g clip-path="url(#dgt-clipA)">
+  <text x="127" y="148" text-anchor="middle" class="body">Logits at every position</text>
+  <text x="127" y="162" text-anchor="middle" class="bod2">Full softmax dist. per token</text></p>
+<p><g transform="translate(75,174)">
+    <rect x="0"  y="46" width="18" height="12" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+    <rect x="3"  y="22" width="4"  height="24" rx="1" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+    <rect x="8"  y="30" width="4"  height="16" rx="1" fill="var(--accent,#6366f1)" fill-opacity="0.50"/>
+    <rect x="13" y="38" width="4"  height="8"  rx="1" fill="var(--accent,#6366f1)" fill-opacity="0.28"/></p>
+<div class="highlight"><pre><span></span><code>&lt;rect x=&quot;26&quot; y=&quot;46&quot; width=&quot;18&quot; height=&quot;12&quot; rx=&quot;2&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.15&quot; stroke=&quot;var(--accent,#6366f1)&quot; stroke-width=&quot;1&quot;/&gt;
+&lt;rect x=&quot;29&quot; y=&quot;28&quot; width=&quot;4&quot;  height=&quot;18&quot; rx=&quot;1&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.85&quot;/&gt;
+&lt;rect x=&quot;34&quot; y=&quot;16&quot; width=&quot;4&quot;  height=&quot;30&quot; rx=&quot;1&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.50&quot;/&gt;
+&lt;rect x=&quot;39&quot; y=&quot;34&quot; width=&quot;4&quot;  height=&quot;12&quot; rx=&quot;1&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.28&quot;/&gt;
+
+&lt;rect x=&quot;52&quot; y=&quot;46&quot; width=&quot;18&quot; height=&quot;12&quot; rx=&quot;2&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.15&quot; stroke=&quot;var(--accent,#6366f1)&quot; stroke-width=&quot;1&quot;/&gt;
+&lt;rect x=&quot;55&quot; y=&quot;24&quot; width=&quot;4&quot;  height=&quot;22&quot; rx=&quot;1&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.85&quot;/&gt;
+&lt;rect x=&quot;60&quot; y=&quot;32&quot; width=&quot;4&quot;  height=&quot;14&quot; rx=&quot;1&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.50&quot;/&gt;
+&lt;rect x=&quot;65&quot; y=&quot;40&quot; width=&quot;4&quot;  height=&quot;6&quot;  rx=&quot;1&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.28&quot;/&gt;
+
+&lt;rect x=&quot;78&quot; y=&quot;46&quot; width=&quot;18&quot; height=&quot;12&quot; rx=&quot;2&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.15&quot; stroke=&quot;var(--accent,#6366f1)&quot; stroke-width=&quot;1&quot;/&gt;
+&lt;rect x=&quot;81&quot; y=&quot;30&quot; width=&quot;4&quot;  height=&quot;16&quot; rx=&quot;1&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.85&quot;/&gt;
+&lt;rect x=&quot;86&quot; y=&quot;18&quot; width=&quot;4&quot;  height=&quot;28&quot; rx=&quot;1&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.50&quot;/&gt;
+&lt;rect x=&quot;91&quot; y=&quot;38&quot; width=&quot;4&quot;  height=&quot;8&quot;  rx=&quot;1&quot; fill=&quot;var(--accent,#6366f1)&quot; fill-opacity=&quot;0.28&quot;/&gt;
+
+&lt;text x=&quot;52&quot; y=&quot;70&quot; text-anchor=&quot;middle&quot; class=&quot;clbl&quot;&gt;full dist. per position&lt;/text&gt;
+</code></pre></div>
+<p></g></p>
+<p><rect x="24" y="316" width="206" height="28" rx="6"
+    fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="127" y="328" text-anchor="middle" class="pill">Dense, computationally</text>
+  <text x="127" y="340" text-anchor="middle" class="pill">expensive</text></p>
+<p><text x="50"  y="376" text-anchor="start" class="clbl">Cost:</text>
+  <circle cx="84"  cy="372" r="5" fill="var(--accent,#6366f1)"/>
+  <circle cx="97"  cy="372" r="5" fill="var(--accent,#6366f1)"/>
+  <circle cx="110" cy="372" r="5" fill="var(--accent,#6366f1)"/>
+  <text x="122" y="376" text-anchor="start" class="costtxt" fill="var(--accent,#6366f1)"> HIGH</text>
+</g></p>
+<p><rect x="256" y="76" width="226" height="328" rx="10"
+  fill="var(--surface-2,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/>
+<rect x="256" y="76" width="226" height="54" rx="10" fill="var(--accent2,#3b82f6)"/>
+<rect x="256" y="112" width="226" height="18"        fill="var(--accent2,#3b82f6)"/>
+<text x="369" y="99" text-anchor="middle" class="hdr">Sequence level</text>
+<text x="369" y="117" text-anchor="middle" class="hdri">(SeqKD)</text>
+<g clip-path="url(#dgt-clipB)">
+  <text x="369" y="148" text-anchor="middle" class="body">Hard label: teacher output</text>
+  <text x="369" y="162" text-anchor="middle" class="bod2">Greedy seq., standard CE loss</text></p>
+<p><g transform="translate(317,176)">
+    <rect x="0"  y="36" width="18" height="12" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+    <rect x="4"  y="12" width="10" height="24" rx="1" fill="var(--accent2,#3b82f6)" fill-opacity="0.90"/>
+    <polygon points="9,4 3,14 15,14" fill="var(--accent2,#3b82f6)"/></p>
+<div class="highlight"><pre><span></span><code>&lt;rect x=&quot;26&quot; y=&quot;36&quot; width=&quot;18&quot; height=&quot;12&quot; rx=&quot;2&quot; fill=&quot;var(--accent2,#3b82f6)&quot; fill-opacity=&quot;0.15&quot; stroke=&quot;var(--accent2,#3b82f6)&quot; stroke-width=&quot;1&quot;/&gt;
+&lt;rect x=&quot;30&quot; y=&quot;12&quot; width=&quot;10&quot; height=&quot;24&quot; rx=&quot;1&quot; fill=&quot;var(--accent2,#3b82f6)&quot; fill-opacity=&quot;0.90&quot;/&gt;
+&lt;polygon points=&quot;35,4 29,14 41,14&quot; fill=&quot;var(--accent2,#3b82f6)&quot;/&gt;
+
+&lt;rect x=&quot;52&quot; y=&quot;36&quot; width=&quot;18&quot; height=&quot;12&quot; rx=&quot;2&quot; fill=&quot;var(--accent2,#3b82f6)&quot; fill-opacity=&quot;0.15&quot; stroke=&quot;var(--accent2,#3b82f6)&quot; stroke-width=&quot;1&quot;/&gt;
+&lt;rect x=&quot;56&quot; y=&quot;12&quot; width=&quot;10&quot; height=&quot;24&quot; rx=&quot;1&quot; fill=&quot;var(--accent2,#3b82f6)&quot; fill-opacity=&quot;0.90&quot;/&gt;
+&lt;polygon points=&quot;61,4 55,14 67,14&quot; fill=&quot;var(--accent2,#3b82f6)&quot;/&gt;
+
+&lt;rect x=&quot;78&quot; y=&quot;36&quot; width=&quot;18&quot; height=&quot;12&quot; rx=&quot;2&quot; fill=&quot;var(--accent2,#3b82f6)&quot; fill-opacity=&quot;0.15&quot; stroke=&quot;var(--accent2,#3b82f6)&quot; stroke-width=&quot;1&quot;/&gt;
+&lt;rect x=&quot;82&quot; y=&quot;12&quot; width=&quot;10&quot; height=&quot;24&quot; rx=&quot;1&quot; fill=&quot;var(--accent2,#3b82f6)&quot; fill-opacity=&quot;0.90&quot;/&gt;
+&lt;polygon points=&quot;87,4 81,14 93,14&quot; fill=&quot;var(--accent2,#3b82f6)&quot;/&gt;
+
+&lt;text x=&quot;52&quot; y=&quot;62&quot; text-anchor=&quot;middle&quot; class=&quot;clbl&quot;&gt;one hard pick per position&lt;/text&gt;
+</code></pre></div>
+<p></g></p>
+<p><rect x="266" y="316" width="206" height="28" rx="6"
+    fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="369" y="328" text-anchor="middle" class="pill">Cheap: run teacher once,</text>
+  <text x="369" y="340" text-anchor="middle" class="pill">no logit storage</text></p>
+<p><text x="292" y="376" text-anchor="start" class="clbl">Cost:</text>
+  <circle cx="326" cy="372" r="5" fill="var(--good,#16a34a)"/>
+  <circle cx="339" cy="372" r="5" fill="var(--border-2,#d1d5db)"/>
+  <circle cx="352" cy="372" r="5" fill="var(--border-2,#d1d5db)"/>
+  <text x="364" y="376" text-anchor="start" class="costtxt" fill="var(--good,#16a34a)"> LOW</text>
+</g></p>
+<p><rect x="498" y="76" width="226" height="328" rx="10"
+  fill="var(--surface-2,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/>
+<rect x="498" y="76" width="226" height="54" rx="10" fill="var(--accent-3,#8b5cf6)"/>
+<rect x="498" y="112" width="226" height="18"        fill="var(--accent-3,#8b5cf6)"/>
+<text x="611" y="99" text-anchor="middle" class="hdr">Feature level</text>
+<text x="611" y="117" text-anchor="middle" class="hdri">(FitNet)</text>
+<g clip-path="url(#dgt-clipC)">
+  <text x="611" y="148" text-anchor="middle" class="body">Match hidden states &amp; attn.</text>
+  <text x="611" y="162" text-anchor="middle" class="bod2">Align intermediate reprs.</text></p>
+<p><g transform="translate(530,178)">
+    <text x="20"  y="9" text-anchor="middle" class="mono" fill="var(--accent-3,#8b5cf6)">h^S</text>
+    <rect x="0"   y="16" width="40" height="16" rx="3"
+      fill="var(--accent-3,#8b5cf6)" fill-opacity="0.20" stroke="var(--accent-3,#8b5cf6)" stroke-width="1.2"/></p>
+<div class="highlight"><pre><span></span><code>&lt;line x1=&quot;41&quot; y1=&quot;24&quot; x2=&quot;49&quot; y2=&quot;24&quot; stroke=&quot;var(--accent-3,#8b5cf6)&quot; stroke-width=&quot;1.3&quot; stroke-dasharray=&quot;3 2&quot; marker-end=&quot;url(#dgt-arr)&quot;/&gt;
+
+&lt;rect x=&quot;50&quot;  y=&quot;14&quot; width=&quot;40&quot; height=&quot;20&quot; rx=&quot;3&quot;
+  fill=&quot;var(--surface-2,#f3f4f6)&quot; stroke=&quot;var(--accent-3,#8b5cf6)&quot; stroke-width=&quot;1.2&quot;/&gt;
+&lt;text x=&quot;70&quot;  y=&quot;27&quot; text-anchor=&quot;middle&quot; class=&quot;mono&quot; fill=&quot;var(--accent-3,#8b5cf6)&quot;&gt;W_proj&lt;/text&gt;
+
+&lt;line x1=&quot;91&quot; y1=&quot;24&quot; x2=&quot;99&quot; y2=&quot;24&quot; stroke=&quot;var(--accent-3,#8b5cf6)&quot; stroke-width=&quot;1.3&quot; stroke-dasharray=&quot;3 2&quot; marker-end=&quot;url(#dgt-arr)&quot;/&gt;
+
+&lt;text x=&quot;131&quot; y=&quot;9&quot; text-anchor=&quot;middle&quot; class=&quot;mono&quot; fill=&quot;var(--accent-3,#8b5cf6)&quot;&gt;h^T (teacher)&lt;/text&gt;
+&lt;rect x=&quot;100&quot; y=&quot;16&quot; width=&quot;62&quot; height=&quot;16&quot; rx=&quot;3&quot;
+  fill=&quot;var(--accent-3,#8b5cf6)&quot; fill-opacity=&quot;0.40&quot; stroke=&quot;var(--accent-3,#8b5cf6)&quot; stroke-width=&quot;1.5&quot;/&gt;
+
+&lt;text x=&quot;81&quot; y=&quot;50&quot; text-anchor=&quot;middle&quot; class=&quot;clbl&quot;&gt;||W_proj h^S - h^T||^2&lt;/text&gt;
+&lt;text x=&quot;81&quot; y=&quot;63&quot; text-anchor=&quot;middle&quot; class=&quot;clbl&quot;&gt;dim(teacher) &gt; dim(student)&lt;/text&gt;
+</code></pre></div>
+<p></g></p>
+<p><rect x="508" y="316" width="206" height="28" rx="6"
+    fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="611" y="328" text-anchor="middle" class="pill">Requires projectors;</text>
+  <text x="611" y="340" text-anchor="middle" class="pill">noisier gradient</text></p>
+<p><text x="534" y="376" text-anchor="start" class="clbl">Cost:</text>
+  <circle cx="568" cy="372" r="5" fill="var(--warn,#d97706)"/>
+  <circle cx="581" cy="372" r="5" fill="var(--warn,#d97706)"/>
+  <circle cx="594" cy="372" r="5" fill="var(--border-2,#d1d5db)"/>
+  <text x="606" y="376" text-anchor="start" class="costtxt" fill="var(--warn,#d97706)"> MED</text>
+</g></p>
+<p></svg></p>
+<figcaption><b>Three granularities of knowledge distillation.</b> Token-level (Hinton KD) forces the student to match the teacher's full softmax distribution at every position — richest signal but expensive. Sequence-level (SeqKD) uses the teacher's greedy output as hard labels, requiring only a single teacher inference pass. Feature-level (FitNet) matches intermediate hidden states via a linear projector, needing extra parameters and yielding noisier gradients. Cost ordering: Sequence (low) &lt; Feature (medium) &lt; Token (high).</figcaption>
+</figure>
+<p><strong>FitNet-style distillation</strong> goes beyond output distributions to match <em>intermediate representations</em>: hidden states, attention patterns, or even specific layer outputs. A projector head (typically a linear map) aligns the student&rsquo;s smaller hidden dimension to the teacher&rsquo;s:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{feat} = \| W_\text{proj} \, h^S_l - h^T_{l'} \|_2^2
+\]</div>
+<p>This works well when you want the student&rsquo;s representations to be semantically aligned with the teacher&rsquo;s, which is important for tasks that involve intermediate reasoning steps.</p>
+<h2 id="54-distilling-reasoning-from-large-to-small-reasoning-models">5.4 Distilling Reasoning: From Large to Small Reasoning Models<a class="headerlink" href="#54-distilling-reasoning-from-large-to-small-reasoning-models" title="Permanent link">¶</a></h2>
+<p>The emergence of chain-of-thought (CoT) and extended reasoning models (see <a href="../05-posttraining-alignment/10-reasoning-test-time-compute.html">Reasoning, Chain-of-Thought &amp; Test-Time Compute</a>) created a new distillation problem: how do you transfer <em>reasoning behavior</em> (long CoT traces) from a large model to a small one?</p>
+<h3 id="r1-style-reasoning-distillation">R1-Style Reasoning Distillation<a class="headerlink" href="#r1-style-reasoning-distillation" title="Permanent link">¶</a></h3>
+<p>DeepSeek-R1 demonstrated a recipe for creating small reasoning models that generalizes well:</p>
+<ol>
+<li><strong>Sample long reasoning traces from the large model.</strong> Run the teacher (e.g., a 671B MoE reasoning model) on math, coding, and logic problems. Collect the full <code>&lt;think&gt;...&lt;/think&gt;</code> traces.</li>
+<li><strong>Filter for correctness and quality.</strong> Keep traces where the final answer is verifiable (e.g., answer matches a reference), and discard traces that are overly repetitive or contain hallucinations.</li>
+<li><strong>SFT the student on (prompt, trace, answer) triples.</strong> This is standard supervised fine-tuning (see <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a>) but with the reasoning trace included in the target.</li>
+<li><strong>Optionally apply RL with verifiable rewards</strong> to refine the distilled student further, using the same GRPO/RLOO infrastructure described in <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>.</li>
+</ol>
+<p>The resulting small models (e.g., on the order of 7–14B parameters) can solve problems that require multi-step reasoning at a level that was previously only achievable with much larger models. The key insight is that reasoning <em>behaviors</em> transfer via imitation learning more efficiently than raw capability transfers via weight matching.</p>
+<h3 id="pitfalls-in-reasoning-distillation">Pitfalls in Reasoning Distillation<a class="headerlink" href="#pitfalls-in-reasoning-distillation" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Trace length mismatch.</strong> A teacher that spends 2,000 tokens reasoning may produce traces that are too long for a student to generate reliably during RL fine-tuning. Filtering for concise-but-correct traces helps.</li>
+<li><strong>Format overfitting.</strong> Students may learn to produce <em>the teacher&rsquo;s format</em> without understanding the underlying reasoning. Augment with diverse prompt phrasings.</li>
+<li><strong>Capability ceiling.</strong> A 1B student will hit a hard ceiling regardless of trace quality — if the intermediate steps require knowledge the student doesn&rsquo;t have, imitation fails. Scaling to at least 7B is typically recommended for non-trivial reasoning tasks.</li>
+</ul>
+<h2 id="55-pruning-structured-and-unstructured">5.5 Pruning: Structured and Unstructured<a class="headerlink" href="#55-pruning-structured-and-unstructured" title="Permanent link">¶</a></h2>
+<p>Pruning removes weights or entire structures from a trained model. Unlike distillation (which trains a new small model), pruning modifies the existing model. The two main flavors are <em>unstructured</em> (individual weights) and <em>structured</em> (entire neurons, heads, or layers).</p>
+<h3 id="unstructured-pruning-and-the-magnitude-baseline">Unstructured Pruning and the Magnitude Baseline<a class="headerlink" href="#unstructured-pruning-and-the-magnitude-baseline" title="Permanent link">¶</a></h3>
+<p>The simplest approach: set the smallest-magnitude weights to zero. A weight <span class="arithmatex">\(w\)</span> is pruned if <span class="arithmatex">\(|w| &lt; \theta\)</span> for some threshold <span class="arithmatex">\(\theta\)</span> chosen to achieve a target sparsity level <span class="arithmatex">\(s\)</span> (e.g., 50% of weights are zero).</p>
+<p>Unstructured sparsity at 50–70% has minimal accuracy impact on large models but provides limited wall-clock speedup on standard GPUs, because hardware is optimized for dense matrix multiplications. The benefit is mainly in model file size and in specialized sparse-compute hardware.</p>
+<h3 id="sparsegpt-one-shot-unstructured-pruning">SparseGPT: One-Shot Unstructured Pruning<a class="headerlink" href="#sparsegpt-one-shot-unstructured-pruning" title="Permanent link">¶</a></h3>
+<p>SparseGPT (Frantar &amp; Alistarh, 2023) enables high sparsity in LLMs with a single forward pass, with no gradient computation. It is based on the <em>Optimal Brain Surgeon</em> (OBS) framework, which computes the second-order (Hessian-based) reconstruction error after removing a weight and compensates by updating remaining weights.</p>
+<p>For each linear layer with weight matrix <span class="arithmatex">\(W \in \mathbb{R}^{d_\text{out} \times d_\text{in}}\)</span>, SparseGPT processes the columns of <span class="arithmatex">\(W\)</span> sequentially:</p>
+<ol>
+<li>Collect activation statistics <span class="arithmatex">\(H = X^T X / N\)</span> using calibration data (typically 128 samples).</li>
+<li>For each column <span class="arithmatex">\(q\)</span>: compute the pruning score <span class="arithmatex">\(\text{score}(w_{ij}) = w_{ij}^2 / [H^{-1}]_{jj}\)</span> (analogous to the OBS weight saliency).</li>
+<li>Prune the lowest-score weights in that column to zero.</li>
+<li>Update the remaining weights in the column to compensate: <span class="arithmatex">\(\delta w = -\frac{w_q}{[H^{-1}]_{qq}} H^{-1}_{:,q}\)</span>.</li>
+<li>Update <span class="arithmatex">\(H\)</span> using Cholesky rank-1 updates.</li>
+</ol>
+<p>SparseGPT achieves 50–60% sparsity on models like LLaMA with near-zero perplexity increase, and can be extended to 2:4 structured sparsity (2 nonzeros per 4 weights) that maps directly to NVIDIA&rsquo;s sparse tensor core format and yields about 1.5–2x throughput improvement.</p>
+<h3 id="wanda-pruning-without-hessians">Wanda: Pruning Without Hessians<a class="headerlink" href="#wanda-pruning-without-hessians" title="Permanent link">¶</a></h3>
+<p>Wanda (Sun et al., 2023) (&ldquo;Pruning by Weights and Activations&rdquo;) shows that a much simpler pruning criterion often matches SparseGPT quality:</p>
+<div class="arithmatex">\[
+\text{score}(w_{ij}) = |w_{ij}| \cdot \|x_j\|_2
+\]</div>
+<p>where <span class="arithmatex">\(\|x_j\|_2\)</span> is the RMS magnitude of the <span class="arithmatex">\(j\)</span>-th input feature computed over calibration data. The score combines weight magnitude (what OBS uses) with activation magnitude (how important that feature actually is at runtime). Wanda requires no Hessian inversion — just one forward pass — making it extremely fast to apply even to 70B models.</p>
+<h3 id="structured-pruning">Structured Pruning<a class="headerlink" href="#structured-pruning" title="Permanent link">¶</a></h3>
+<p>Structured pruning removes entire components: attention heads, MLP neurons, or even full transformer layers. This yields speedup on any hardware without needing sparse kernels.</p>
+<p><strong>Attention head pruning.</strong> Michel et al. (2019) showed that many attention heads can be removed with limited performance degradation. A simple sensitivity analysis: mask one head at a time, measure validation loss increase, prune heads with lowest importance.</p>
+<p><strong>Layer dropping.</strong> Some layers in deep transformers are near-identity mappings (the residual stream barely changes). Dropping such layers yields surprisingly small accuracy drops and significant latency reductions.</p>
+<p><strong>Width pruning.</strong> Prune MLP intermediate dimensions or the hidden dimension of attention projections. This requires careful co-pruning of the weight matrices on both sides of a pruned feature.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+<span class="c1"># Simple magnitude + activation (Wanda-style) pruning</span>
+<span class="c1"># for a single linear layer.</span>
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_activation_norms</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span>
+    <span class="n">layer_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">calibration_tokens</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># shape: (n_samples, seq_len)</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Collect per-feature activation L2 norms for one linear layer</span>
+<span class="sd">    by running a small calibration set through the model.</span>
+<span class="sd">    Returns a vector of shape (in_features,).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">activation_sq_sum</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">n_tokens</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">hook_fn</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">inp</span><span class="p">,</span> <span class="n">out</span><span class="p">):</span>
+        <span class="k">nonlocal</span> <span class="n">activation_sq_sum</span><span class="p">,</span> <span class="n">n_tokens</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">inp</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>          <span class="c1"># (batch, seq, in_features)</span>
+        <span class="c1"># Flatten batch and sequence dimensions</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>       <span class="c1"># (B*T, in_features)</span>
+        <span class="n">sq</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>             <span class="c1"># (in_features,)</span>
+        <span class="k">if</span> <span class="n">activation_sq_sum</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">activation_sq_sum</span> <span class="o">=</span> <span class="n">sq</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">activation_sq_sum</span> <span class="o">+=</span> <span class="n">sq</span>
+        <span class="n">n_tokens</span> <span class="o">+=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># Register hook on the target layer</span>
+    <span class="n">target</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">named_modules</span><span class="p">())[</span><span class="n">layer_name</span><span class="p">]</span>
+    <span class="n">handle</span> <span class="o">=</span> <span class="n">target</span><span class="o">.</span><span class="n">register_forward_hook</span><span class="p">(</span><span class="n">hook_fn</span><span class="p">)</span>
+
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">calibration_tokens</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="mi">8</span><span class="p">):</span>        <span class="c1"># micro-batches</span>
+            <span class="n">model</span><span class="p">(</span><span class="n">batch</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">))</span>
+
+    <span class="n">handle</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+    <span class="c1"># RMS activation magnitude per input feature</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">activation_sq_sum</span> <span class="o">/</span> <span class="n">n_tokens</span><span class="p">)</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>         <span class="c1"># shape: (in_features,)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">wanda_prune_layer</span><span class="p">(</span>
+    <span class="n">weight</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>           <span class="c1"># (out_features, in_features)</span>
+    <span class="n">act_norms</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>        <span class="c1"># (in_features,)</span>
+    <span class="n">sparsity</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Apply Wanda pruning to a weight matrix.</span>
+<span class="sd">    Returns a binary mask (1 = keep, 0 = prune).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Score = |W_ij| * ||x_j||_2  (broadcast act_norms across rows)</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">weight</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span> <span class="o">*</span> <span class="n">act_norms</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>       <span class="c1"># (out, in)</span>
+
+    <span class="c1"># Determine threshold so that `sparsity` fraction are below it</span>
+    <span class="n">n_prune</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">sparsity</span> <span class="o">*</span> <span class="n">scores</span><span class="o">.</span><span class="n">numel</span><span class="p">())</span>
+    <span class="n">threshold</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span><span class="o">.</span><span class="n">kthvalue</span><span class="p">(</span><span class="n">n_prune</span><span class="p">)</span><span class="o">.</span><span class="n">values</span>
+
+    <span class="n">mask</span> <span class="o">=</span> <span class="p">(</span><span class="n">scores</span> <span class="o">&gt;</span> <span class="n">threshold</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>                  <span class="c1"># 1 = keep</span>
+    <span class="k">return</span> <span class="n">mask</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+<span class="c1"># Demonstration: prune a tiny test linear layer</span>
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">W</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">128</span><span class="p">)</span>           <span class="c1"># small layer for illustration</span>
+    <span class="n">act_norms</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">128</span><span class="p">)</span> <span class="o">*</span> <span class="mf">2.0</span>  <span class="c1"># simulated per-feature activation norms</span>
+
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">wanda_prune_layer</span><span class="p">(</span><span class="n">W</span><span class="p">,</span> <span class="n">act_norms</span><span class="p">,</span> <span class="n">sparsity</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+    <span class="n">sparsity_achieved</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">mask</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Sparsity achieved: </span><span class="si">{</span><span class="n">sparsity_achieved</span><span class="si">:</span><span class="s2">.1%</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># → ~50.0%</span>
+
+    <span class="n">W_pruned</span> <span class="o">=</span> <span class="n">W</span> <span class="o">*</span> <span class="n">mask</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Non-zero params: </span><span class="si">{</span><span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">int</span><span class="p">()</span><span class="si">}</span><span class="s2"> / </span><span class="si">{</span><span class="n">mask</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="56-knowledge-distillation-full-implementation">5.6 Knowledge Distillation: Full Implementation<a class="headerlink" href="#56-knowledge-distillation-full-implementation" title="Permanent link">¶</a></h2>
+<p>The following is a complete, runnable KD training loop for language models. It handles both the soft-target KD loss and the hard-label cross-entropy loss, with temperature scaling.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.data</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataLoader</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+<span class="c1"># Knowledge Distillation Loss</span>
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">kd_loss</span><span class="p">(</span>
+    <span class="n">student_logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>    <span class="c1"># (B, T, V)</span>
+    <span class="n">teacher_logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>    <span class="c1"># (B, T, V)</span>
+    <span class="n">labels</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>            <span class="c1"># (B, T)  — ground-truth token ids</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.3</span><span class="p">,</span>              <span class="c1"># weight on the hard CE loss</span>
+    <span class="n">ignore_index</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">100</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Combined KD + CE loss.</span>
+
+<span class="sd">    alpha * CE(student, hard_labels) + (1-alpha) * KL(teacher_soft || student_soft)</span>
+
+<span class="sd">    The tau^2 factor is included so gradient scale is invariant to temperature.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="n">student_logits</span><span class="o">.</span><span class="n">shape</span>
+
+    <span class="c1"># ── 1. Hard-label cross-entropy ──────────────────────────────────────────</span>
+    <span class="n">ce</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span>
+        <span class="n">student_logits</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">),</span>
+        <span class="n">labels</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">),</span>
+        <span class="n">ignore_index</span><span class="o">=</span><span class="n">ignore_index</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># ── 2. Soft-target KL divergence ─────────────────────────────────────────</span>
+    <span class="c1"># Mask out ignored positions so they don&#39;t contribute to the KD loss</span>
+    <span class="n">valid_mask</span> <span class="o">=</span> <span class="p">(</span><span class="n">labels</span> <span class="o">!=</span> <span class="n">ignore_index</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">)</span>
+
+    <span class="n">s_flat</span> <span class="o">=</span> <span class="n">student_logits</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">)[</span><span class="n">valid_mask</span><span class="p">]</span>  <span class="c1"># (N_valid, V)</span>
+    <span class="n">t_flat</span> <span class="o">=</span> <span class="n">teacher_logits</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">)[</span><span class="n">valid_mask</span><span class="p">]</span>  <span class="c1"># (N_valid, V)</span>
+
+    <span class="c1"># Temperature-scaled log-softmax for student, softmax for teacher</span>
+    <span class="n">s_log_probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">s_flat</span> <span class="o">/</span> <span class="n">temperature</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># (N, V)</span>
+    <span class="n">t_probs</span>     <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">t_flat</span> <span class="o">/</span> <span class="n">temperature</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>       <span class="c1"># (N, V)</span>
+
+    <span class="c1"># KL(teacher || student) = sum_v q*log(q/p) = sum_v q*(log q - log p)</span>
+    <span class="c1"># F.kl_div(input=log_p, target=q) computes sum_v q*(log q - log p)</span>
+    <span class="c1"># reduction=&#39;batchmean&#39; divides by batch size N_valid</span>
+    <span class="n">kl</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">kl_div</span><span class="p">(</span><span class="n">s_log_probs</span><span class="p">,</span> <span class="n">t_probs</span><span class="p">,</span> <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;batchmean&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Multiply by tau^2 to maintain gradient magnitude</span>
+    <span class="n">kl</span> <span class="o">=</span> <span class="n">kl</span> <span class="o">*</span> <span class="p">(</span><span class="n">temperature</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+
+    <span class="c1"># ── 3. Blend ─────────────────────────────────────────────────────────────</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">ce</span> <span class="o">+</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">alpha</span><span class="p">)</span> <span class="o">*</span> <span class="n">kl</span>
+    <span class="k">return</span> <span class="n">loss</span><span class="p">,</span> <span class="n">ce</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">kl</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+<span class="c1"># Distillation Training Loop</span>
+<span class="c1"># ─────────────────────────────────────────────────────</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">DistillConfig</span><span class="p">:</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.3</span>           <span class="c1"># weight on hard-label CE</span>
+    <span class="n">lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2e-4</span>
+    <span class="n">epochs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>
+    <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span>
+    <span class="n">max_seq_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span>
+    <span class="n">grad_clip</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>
+    <span class="n">save_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;student_distilled.pt&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">distill</span><span class="p">(</span>
+    <span class="n">teacher</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span>
+    <span class="n">student</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span>
+    <span class="n">dataloader</span><span class="p">:</span> <span class="n">DataLoader</span><span class="p">,</span>
+    <span class="n">config</span><span class="p">:</span> <span class="n">DistillConfig</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Off-policy KD training loop.</span>
+<span class="sd">    Teacher is frozen; student is updated.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">teacher</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+    <span class="n">student</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+
+    <span class="n">optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">student</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">lr</span><span class="p">)</span>
+    <span class="n">scaler</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">amp</span><span class="o">.</span><span class="n">GradScaler</span><span class="p">()</span>          <span class="c1"># bf16/fp16 mixed precision</span>
+
+    <span class="k">for</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">epochs</span><span class="p">):</span>
+        <span class="n">total_loss</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="k">for</span> <span class="n">step</span><span class="p">,</span> <span class="n">batch</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">dataloader</span><span class="p">):</span>
+            <span class="n">input_ids</span> <span class="o">=</span> <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>    <span class="c1"># (B, T)</span>
+            <span class="n">labels</span>    <span class="o">=</span> <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;labels&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>       <span class="c1"># (B, T)</span>
+
+            <span class="c1"># ── Teacher forward (no grad, optional float32 for stability) ──</span>
+            <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+                <span class="n">teacher_out</span> <span class="o">=</span> <span class="n">teacher</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>
+                <span class="n">t_logits</span> <span class="o">=</span> <span class="n">teacher_out</span><span class="o">.</span><span class="n">logits</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>    <span class="c1"># (B, T, V)</span>
+
+            <span class="c1"># ── Student forward (with AMP) ─────────────────────────────────</span>
+            <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">amp</span><span class="o">.</span><span class="n">autocast</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">):</span>
+                <span class="n">student_out</span> <span class="o">=</span> <span class="n">student</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>
+                <span class="n">s_logits</span> <span class="o">=</span> <span class="n">student_out</span><span class="o">.</span><span class="n">logits</span>             <span class="c1"># (B, T, V)</span>
+
+                <span class="n">loss</span><span class="p">,</span> <span class="n">ce</span><span class="p">,</span> <span class="n">kl</span> <span class="o">=</span> <span class="n">kd_loss</span><span class="p">(</span>
+                    <span class="n">student_logits</span><span class="o">=</span><span class="n">s_logits</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span>      <span class="c1"># upcasted for KL</span>
+                    <span class="n">teacher_logits</span><span class="o">=</span><span class="n">t_logits</span><span class="p">,</span>
+                    <span class="n">labels</span><span class="o">=</span><span class="n">labels</span><span class="p">,</span>
+                    <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">temperature</span><span class="p">,</span>
+                    <span class="n">alpha</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">alpha</span><span class="p">,</span>
+                <span class="p">)</span>
+
+            <span class="c1"># ── Backward ──────────────────────────────────────────────────</span>
+            <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+            <span class="n">scaler</span><span class="o">.</span><span class="n">scale</span><span class="p">(</span><span class="n">loss</span><span class="p">)</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+            <span class="n">scaler</span><span class="o">.</span><span class="n">unscale_</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">student</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">config</span><span class="o">.</span><span class="n">grad_clip</span><span class="p">)</span>
+            <span class="n">scaler</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+            <span class="n">scaler</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+
+            <span class="n">total_loss</span> <span class="o">+=</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+            <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="mi">50</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;Epoch </span><span class="si">{</span><span class="n">epoch</span><span class="si">}</span><span class="s2"> | step </span><span class="si">{</span><span class="n">step</span><span class="si">:</span><span class="s2">5d</span><span class="si">}</span><span class="s2"> | &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;loss=</span><span class="si">{</span><span class="n">loss</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">  ce=</span><span class="si">{</span><span class="n">ce</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">  kl=</span><span class="si">{</span><span class="n">kl</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="p">)</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Epoch </span><span class="si">{</span><span class="n">epoch</span><span class="si">}</span><span class="s2"> done — avg loss </span><span class="si">{</span><span class="n">total_loss</span><span class="o">/</span><span class="p">(</span><span class="n">step</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">student</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="n">config</span><span class="o">.</span><span class="n">save_path</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Student saved to </span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">save_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: forgetting the τ² scale factor</p>
+<p>A common bug is to compute the KL divergence with temperature-scaled distributions but omit the <span class="arithmatex">\(\tau^2\)</span> multiplicative factor. At <span class="arithmatex">\(\tau = 4\)</span>, this makes the KD gradient 16× smaller than the CE gradient, effectively reducing distillation to near-zero influence. Always include <code>kl * (temperature ** 2)</code> in the loss.</p>
+</div>
+<h2 id="57-speculative-decodings-draft-models-as-distillation">5.7 Speculative Decoding&rsquo;s Draft Models as Distillation<a class="headerlink" href="#57-speculative-decodings-draft-models-as-distillation" title="Permanent link">¶</a></h2>
+<p>Speculative decoding (covered in full in <a href="../07-inference-serving/06-speculative-decoding.html">Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a>) uses a small, fast <em>draft model</em> to propose tokens that a larger <em>verifier model</em> then accepts or rejects. The draft model is effectively a distilled student of the target model.</p>
+<h3 id="the-kd-connection">The KD Connection<a class="headerlink" href="#the-kd-connection" title="Permanent link">¶</a></h3>
+<p>The draft model should approximate the target model&rsquo;s next-token distribution as closely as possible — because the acceptance rate of speculative decoding is:</p>
+<div class="arithmatex">\[
+\alpha = \mathbb{E}_{x \sim p_d} \left[ \min\!\left(1, \frac{p_t(x|c)}{p_d(x|c)}\right) \right]
+\]</div>
+<p>where <span class="arithmatex">\(p_t\)</span> is the target distribution and <span class="arithmatex">\(p_d\)</span> is the draft distribution. When <span class="arithmatex">\(p_d \approx p_t\)</span>, most proposals are accepted. This is exactly the goal of distillation: minimize <span class="arithmatex">\(\text{KL}(p_t \| p_d)\)</span>.</p>
+<p>Training draft models with KD from the target model (rather than from scratch) measurably improves acceptance rates. The target model is available at inference time to provide soft-target signals during training.</p>
+<h3 id="self-speculative-decoding-exit-layers">Self-Speculative Decoding: Exit Layers<a class="headerlink" href="#self-speculative-decoding-exit-layers" title="Permanent link">¶</a></h3>
+<p>A related technique that makes the KD connection even tighter is <em>self-speculative decoding</em> (or &ldquo;early exit&rdquo;). The same model uses its own early-layer hidden states as a draft:</p>
+<figure class="viz" id="fig-distill-selfspec-earlyexit">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 860 360" role="img" aria-label="Self-speculative decoding: the same transformer model runs two paths. Top lane passes all 32 layers to a final head for the accurate verifier distribution. Bottom lane exits after layer 15 via an early_head to produce a fast draft token. A dashed KD arrow from final head to early_head shows the training objective.">
+<defs>
+  <marker id="sse-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#374151)"/>
+  </marker>
+  <marker id="sse-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <marker id="sse-arr-acc2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+  <marker id="sse-arr-kd" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)" opacity="0.75"/>
+  </marker>
+  <radialGradient id="sse-pg1" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="var(--accent,#6366f1)" stop-opacity="0.9"/>
+    <stop offset="100%" stop-color="var(--accent,#6366f1)" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="sse-pg2" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="var(--accent2,#3b82f6)" stop-opacity="0.9"/>
+    <stop offset="100%" stop-color="var(--accent2,#3b82f6)" stop-opacity="0"/>
+  </radialGradient>
+</defs>
+
+<style>
+  #fig-distill-selfspec-earlyexit text { font: 12px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-distill-selfspec-earlyexit .lane-lbl { font: 700 11px var(--sans,sans-serif); }
+  #fig-distill-selfspec-earlyexit .lyr-lbl  { font: 600 9px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+  #fig-distill-selfspec-earlyexit .box-lbl  { font: 600 11px var(--sans,sans-serif); }
+  #fig-distill-selfspec-earlyexit .out-lbl  { font: 500 10px var(--sans,sans-serif); }
+  #fig-distill-selfspec-earlyexit .muted    { fill: var(--muted,#9ca3af); }
+  #fig-distill-selfspec-earlyexit .kd-lbl   { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-distill-selfspec-earlyexit .tag      { font: 600 9px var(--sans,sans-serif); fill: #fff; }
+  #fig-distill-selfspec-earlyexit .exit-cap { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+
+  @keyframes sse-draft  { 0%{transform:translateX(0);opacity:1} 75%{transform:translateX(300px);opacity:1} 90%{transform:translateX(300px);opacity:0} 100%{transform:translateX(300px);opacity:0} }
+  @keyframes sse-verify { 0%{transform:translateX(0);opacity:0} 12%{opacity:1} 88%{transform:translateX(430px);opacity:1} 100%{transform:translateX(430px);opacity:0} }
+  @keyframes sse-kd     { from{stroke-dashoffset:28} to{stroke-dashoffset:0} }
+
+  #fig-distill-selfspec-earlyexit .pd  { animation: sse-draft  2.6s ease-in-out infinite; }
+  #fig-distill-selfspec-earlyexit .pv  { animation: sse-verify 3.6s ease-in-out infinite; }
+  #fig-distill-selfspec-earlyexit .kda { animation: sse-kd 1.2s linear infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-distill-selfspec-earlyexit .pd  { animation:none; transform:translateX(300px); opacity:0.5; }
+    #fig-distill-selfspec-earlyexit .pv  { animation:none; transform:translateX(430px); opacity:0.5; }
+    #fig-distill-selfspec-earlyexit .kda { animation:none; }
+  }
+</style>
+
+
+<rect x="8" y="8" width="844" height="344" rx="10"
+  fill="var(--surface-2,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+
+
+
+<rect x="16" y="80" width="82" height="36" rx="5"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="57" y="94"  text-anchor="middle" class="lane-lbl">Full forward</text>
+<text x="57" y="107" text-anchor="middle" class="lane-lbl">pass (slow)</text>
+
+
+<rect x="16" y="220" width="82" height="36" rx="5"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="57" y="234" text-anchor="middle" class="lane-lbl">Early-exit</text>
+<text x="57" y="247" text-anchor="middle" class="lane-lbl">draft (fast)</text>
+
+
+<line x1="382" y1="44" x2="382" y2="320"
+  stroke="var(--border-2,#d1d5db)" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="382" y="40" text-anchor="middle" class="exit-cap">early-exit point (layer 16)</text>
+
+
+
+<rect x="106" y="82" width="46" height="36" rx="5"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+<text x="129" y="98"  text-anchor="middle" class="out-lbl">Input</text>
+<text x="129" y="110" text-anchor="middle" class="out-lbl muted">h0</text>
+
+<line x1="154" y1="100" x2="184" y2="100"
+  stroke="var(--ink-soft,#374151)" stroke-width="1.2" marker-end="url(#sse-arr)"/>
+
+
+<rect x="186" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="203" y="104" text-anchor="middle" class="lyr-lbl">L0</text>
+
+<rect x="224" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="241" y="104" text-anchor="middle" class="lyr-lbl">L1</text>
+
+<rect x="262" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="279" y="104" text-anchor="middle" class="lyr-lbl">L2</text>
+
+<text x="313" y="104" text-anchor="middle" class="lyr-lbl muted">...</text>
+
+<rect x="326" y="87" width="46" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="349" y="104" text-anchor="middle" class="lyr-lbl">L15</text>
+
+
+
+<text x="394" y="104" text-anchor="middle" class="lyr-lbl muted">...</text>
+
+<rect x="404" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="421" y="104" text-anchor="middle" class="lyr-lbl">L29</text>
+
+<rect x="442" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="459" y="104" text-anchor="middle" class="lyr-lbl">L30</text>
+
+<rect x="480" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="497" y="104" text-anchor="middle" class="lyr-lbl">L31</text>
+
+
+<line x1="516" y1="100" x2="526" y2="100"
+  stroke="var(--accent,#6366f1)" stroke-width="1.4" marker-end="url(#sse-arr-acc)"/>
+
+
+<rect x="528" y="83" width="60" height="34" rx="5" fill="var(--accent,#6366f1)"/>
+<text x="558" y="97"  text-anchor="middle" class="box-lbl" fill="#fff">final</text>
+<text x="558" y="110" text-anchor="middle" class="box-lbl" fill="#fff">head</text>
+
+
+<line x1="590" y1="100" x2="600" y2="100"
+  stroke="var(--accent,#6366f1)" stroke-width="1.4" marker-end="url(#sse-arr-acc)"/>
+
+
+<rect x="602" y="80" width="148" height="40" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="676" y="97"  text-anchor="middle" class="out-lbl">token distribution</text>
+<text x="676" y="111" text-anchor="middle" class="out-lbl muted">(verifier)</text>
+
+
+<rect x="756" y="68" width="58" height="16" rx="4" fill="var(--accent,#6366f1)"/>
+<text x="785" y="79" text-anchor="middle" class="tag">accurate</text>
+
+
+
+
+<line x1="129" y1="120" x2="129" y2="210"
+  stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="135" y="169" class="exit-cap">same</text>
+<text x="135" y="179" class="exit-cap">model</text>
+
+
+<rect x="106" y="222" width="46" height="36" rx="5"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+<text x="129" y="238" text-anchor="middle" class="out-lbl">Input</text>
+<text x="129" y="250" text-anchor="middle" class="out-lbl muted">h0</text>
+
+<line x1="154" y1="240" x2="184" y2="240"
+  stroke="var(--ink-soft,#374151)" stroke-width="1.2" marker-end="url(#sse-arr)"/>
+
+
+<rect x="186" y="227" width="34" height="26" rx="4"
+  fill="var(--accent2,#3b82f6)" fill-opacity="0.14" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<text x="203" y="244" text-anchor="middle" class="lyr-lbl">L0</text>
+<rect x="224" y="227" width="34" height="26" rx="4"
+  fill="var(--accent2,#3b82f6)" fill-opacity="0.14" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<text x="241" y="244" text-anchor="middle" class="lyr-lbl">L1</text>
+<rect x="262" y="227" width="34" height="26" rx="4"
+  fill="var(--accent2,#3b82f6)" fill-opacity="0.14" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<text x="279" y="244" text-anchor="middle" class="lyr-lbl">L2</text>
+<text x="313" y="244" text-anchor="middle" class="lyr-lbl muted">...</text>
+<rect x="326" y="227" width="46" height="26" rx="4"
+  fill="var(--accent2,#3b82f6)" fill-opacity="0.14" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<text x="349" y="244" text-anchor="middle" class="lyr-lbl">L15</text>
+
+
+<text x="394" y="244" text-anchor="middle" class="lyr-lbl muted">...</text>
+<rect x="404" y="227" width="34" height="26" rx="4"
+  fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="421" y="244" text-anchor="middle" class="lyr-lbl muted">L29</text>
+<rect x="442" y="227" width="34" height="26" rx="4"
+  fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="459" y="244" text-anchor="middle" class="lyr-lbl muted">L30</text>
+<rect x="480" y="227" width="34" height="26" rx="4"
+  fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="497" y="244" text-anchor="middle" class="lyr-lbl muted">L31</text>
+<text x="452" y="264" text-anchor="middle" class="exit-cap">skipped on draft path</text>
+
+
+<line x1="349" y1="227" x2="349" y2="198"
+  stroke="var(--accent2,#3b82f6)" stroke-width="1.4" marker-end="url(#sse-arr-acc2)"/>
+
+
+<rect x="318" y="158" width="62" height="38" rx="5" fill="var(--accent2,#3b82f6)"/>
+<text x="349" y="173" text-anchor="middle" class="box-lbl" fill="#fff">early</text>
+<text x="349" y="187" text-anchor="middle" class="box-lbl" fill="#fff">head</text>
+
+
+<line x1="382" y1="177" x2="394" y2="177"
+  stroke="var(--accent2,#3b82f6)" stroke-width="1.4" marker-end="url(#sse-arr-acc2)"/>
+
+
+<rect x="396" y="158" width="116" height="38" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<text x="454" y="173" text-anchor="middle" class="out-lbl">draft token</text>
+<text x="454" y="187" text-anchor="middle" class="out-lbl muted">(draft)</text>
+
+
+<rect x="518" y="160" width="34" height="16" rx="4" fill="var(--good,#16a34a)"/>
+<text x="535" y="171" text-anchor="middle" class="tag">fast</text>
+
+
+<path d="M 558,117 C 558,140 450,140 349,156"
+  fill="none"
+  stroke="var(--accent,#6366f1)"
+  stroke-width="1.8"
+  stroke-dasharray="7 4"
+  stroke-opacity="0.72"
+  marker-end="url(#sse-arr-kd)"
+  class="kda"/>
+<text x="460" y="148" text-anchor="middle" class="kd-lbl">KD: L_EE = KL(p_final || p_early)</text>
+
+
+<circle cx="186" cy="240" r="8" fill="url(#sse-pg2)" class="pd"/>
+<circle cx="186" cy="100" r="8" fill="url(#sse-pg1)" class="pv"/>
+
+</svg>
+<figcaption><b>Self-speculative decoding reuses the same model's early layers as a fast drafter.</b> The <em>full forward pass</em> (top lane) runs all 32 layers plus a final head to produce the accurate verifier distribution. The <em>early-exit draft</em> (bottom lane) exits after layer 15 through a lightweight <code>early_head</code>, skipping the remaining 16 layers. The <code>early_head</code> is trained by KD (dashed arrow) to match the final-layer distribution: <em>L<sub>EE</sub>&amp;nbsp;=&amp;nbsp;KL(p<sub>final</sub>&amp;thinsp;&#8741;&amp;thinsp;p<sub>early</sub>)</em>.</figcaption>
+</figure>
+
+<p>The early-exit head is trained with KD to match the final-layer distribution. At inference time, the model runs the first 16 layers quickly, samples a draft token, then optionally runs the remaining 16 layers to verify. The KD objective here is:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{EE} = \text{KL}(p_\text{final} \| p_\text{early})
+\]</div>
+<p>This is distillation within a single model — the final layers teach the early-exit head — and is a good example of how KD ideas permeate modern LLM engineering far beyond the classic teacher→student setup.</p>
+<h3 id="eagle-speculative-drafting-with-feature-distillation">EAGLE: Speculative Drafting with Feature Distillation<a class="headerlink" href="#eagle-speculative-drafting-with-feature-distillation" title="Permanent link">¶</a></h3>
+<p>EAGLE (Li et al., 2024) takes this further: the draft model conditions on the target model&rsquo;s hidden states (feature distillation) rather than just its output tokens. The draft model is a single transformer layer trained to predict the next token conditioned on the target model&rsquo;s feature map at layer <span class="arithmatex">\(L-1\)</span>. Because the draft model has access to the verifier&rsquo;s internal representations, it achieves acceptance rates in the range of 2–3× speedup on typical text generation tasks.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> What is knowledge distillation, and why does it work? How does temperature affect the distillation signal?</p>
+<p><strong>A:</strong> Knowledge distillation trains a small <em>student</em> model to match the soft output distribution of a larger <em>teacher</em> instead of hard one-hot labels. It works because the teacher&rsquo;s distribution encodes inter-class similarity — e.g., &ldquo;cat&rdquo; is closer to &ldquo;tiger&rdquo; than to &ldquo;car&rdquo; — giving the student a richer learning signal per example than hard labels provide. Temperature <span class="arithmatex">\(\tau &gt; 1\)</span> is applied to both teacher and student logits before softmax. Raising <span class="arithmatex">\(\tau\)</span> makes both distributions softer and brings out the teacher&rsquo;s &ldquo;dark knowledge&rdquo; (the non-dominant token probabilities). However the gradients shrink by <span class="arithmatex">\(1/\tau^2\)</span>, so we multiply the KL loss by <span class="arithmatex">\(\tau^2\)</span> to compensate. A <span class="arithmatex">\(\tau\)</span> of 2–4 is typical for language model distillation — high enough to expose inter-token structure, low enough to retain meaningful signal.</p>
+</div>
+<h2 id="58-combining-compression-techniques">5.8 Combining Compression Techniques<a class="headerlink" href="#58-combining-compression-techniques" title="Permanent link">¶</a></h2>
+<p>In practice, the biggest efficiency wins come from combining multiple compression techniques.</p>
+<h3 id="the-compression-pipeline">The Compression Pipeline<a class="headerlink" href="#the-compression-pipeline" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-distill-compression-pipeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 720 760" role="img" aria-label="Typical LLM compression pipeline: Full Pretrained Model 70B, then Knowledge Distillation to Distilled Student 7B, then Structured Pruning to Pruned Student 5B effective, then Quantization to Quantized Model 1.5GB on disk, then Speculative Decoding to Deployed System with target 7B plus draft quantized 1B.">
+<defs>
+  <marker id="cp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <radialGradient id="cp-pulse" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="var(--accent,#6366f1)" stop-opacity="0.95"/>
+    <stop offset="100%" stop-color="var(--accent,#6366f1)" stop-opacity="0"/>
+  </radialGradient>
+
+  <linearGradient id="cp-meter-grad" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stop-color="var(--accent,#6366f1)"/>
+    <stop offset="100%" stop-color="var(--good,#16a34a)"/>
+  </linearGradient>
+</defs>
+
+<style>
+  #fig-distill-compression-pipeline text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-distill-compression-pipeline .title  { font: 700 15px var(--sans,sans-serif); }
+  #fig-distill-compression-pipeline .node-n { font: 700 13px var(--sans,sans-serif); }
+  #fig-distill-compression-pipeline .node-s { font: 700 18px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+  #fig-distill-compression-pipeline .node-s5 { font: 700 18px var(--sans,sans-serif); fill: var(--good,#16a34a); }
+  #fig-distill-compression-pipeline .op-n   { font: 700 11px var(--sans,sans-serif); }
+  #fig-distill-compression-pipeline .op-s   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-distill-compression-pipeline .muted  { fill: var(--muted,#9ca3af); }
+  #fig-distill-compression-pipeline .meter-lbl { font: 500 9px var(--mono,monospace); fill: var(--muted,#9ca3af); }
+  #fig-distill-compression-pipeline .chip-n { font: 600 9px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+
+  /* Pulse travels top→bottom: total ~660px over 4.5s */
+  @keyframes cp-travel {
+    0%   { transform: translateY(0);    opacity: 1; }
+    85%  { transform: translateY(660px); opacity: 1; }
+    93%  { transform: translateY(660px); opacity: 0; }
+    100% { transform: translateY(660px); opacity: 0; }
+  }
+  /* Node glow on arrival: flash opacity */
+  @keyframes cp-glow2 { 0%,34%{opacity:0} 38%{opacity:1} 48%{opacity:0.3} 52%{opacity:1} 60%{opacity:0.3} 100%{opacity:0} }
+  @keyframes cp-glow3 { 0%,52%{opacity:0} 56%{opacity:1} 64%{opacity:0.3} 68%{opacity:1} 76%{opacity:0.3} 100%{opacity:0} }
+  @keyframes cp-glow4 { 0%,68%{opacity:0} 72%{opacity:1} 80%{opacity:0.3} 84%{opacity:1} 90%{opacity:0.3} 100%{opacity:0} }
+  @keyframes cp-glow5 { 0%,82%{opacity:0} 86%{opacity:1} 92%{opacity:0.3} 96%{opacity:1} 100%{opacity:0.3} }
+
+  #fig-distill-compression-pipeline .cp-p  { animation: cp-travel 4.5s ease-in-out infinite; }
+  #fig-distill-compression-pipeline .gn2   { animation: cp-glow2  4.5s ease-in-out infinite; }
+  #fig-distill-compression-pipeline .gn3   { animation: cp-glow3  4.5s ease-in-out infinite; }
+  #fig-distill-compression-pipeline .gn4   { animation: cp-glow4  4.5s ease-in-out infinite; }
+  #fig-distill-compression-pipeline .gn5   { animation: cp-glow5  4.5s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-distill-compression-pipeline .cp-p { animation:none; transform:translateY(660px); opacity:0.5; }
+    #fig-distill-compression-pipeline .gn2,.gn3,.gn4,.gn5 { animation:none; opacity:0.4; }
+  }
+</style>
+
+
+<rect x="18" y="10" width="684" height="36" rx="7"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+<text x="360" y="33" text-anchor="middle" class="title">Typical Compression Pipeline</text>
+
+
+
+
+<rect x="160" y="58" width="360" height="72" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.8"/>
+<text x="340" y="88"  text-anchor="middle" class="node-n">Full Pretrained Model</text>
+<text x="340" y="110" text-anchor="middle" class="node-s">70B</text>
+
+
+<rect x="160" y="58" width="360" height="72" rx="8"
+  fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="none"/>
+
+
+<line x1="340" y1="132" x2="340" y2="194"
+  stroke="var(--accent,#6366f1)" stroke-width="2.2" marker-end="url(#cp-arr)"/>
+
+<rect x="358" y="144" width="192" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="454" y="158" text-anchor="middle" class="op-n">Knowledge Distillation</text>
+<text x="454" y="172" text-anchor="middle" class="op-s">SFT on teacher traces</text>
+
+
+<rect x="190" y="206" width="300" height="72" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.8"/>
+<text x="340" y="236" text-anchor="middle" class="node-n">Distilled Student</text>
+<text x="340" y="258" text-anchor="middle" class="node-s">7B</text>
+
+<rect x="190" y="206" width="300" height="72" rx="8"
+  fill="var(--accent,#6366f1)" fill-opacity="0" stroke="var(--accent,#6366f1)" stroke-width="2.5" class="gn2"/>
+
+
+<line x1="340" y1="280" x2="340" y2="336"
+  stroke="var(--accent,#6366f1)" stroke-width="2.2" marker-end="url(#cp-arr)"/>
+<rect x="358" y="290" width="192" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="454" y="304" text-anchor="middle" class="op-n">Structured Pruning</text>
+<text x="454" y="318" text-anchor="middle" class="op-s">remove heads / layers</text>
+
+
+<rect x="215" y="348" width="250" height="72" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.8"/>
+<text x="340" y="378" text-anchor="middle" class="node-n">Pruned Student</text>
+<text x="340" y="400" text-anchor="middle" class="node-s">5B effective</text>
+<rect x="215" y="348" width="250" height="72" rx="8"
+  fill="var(--accent,#6366f1)" fill-opacity="0" stroke="var(--accent,#6366f1)" stroke-width="2.5" class="gn3"/>
+
+
+<line x1="340" y1="422" x2="340" y2="470"
+  stroke="var(--accent,#6366f1)" stroke-width="2.2" marker-end="url(#cp-arr)"/>
+<rect x="352" y="432" width="204" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="454" y="446" text-anchor="middle" class="op-n">Quantization</text>
+<text x="454" y="460" text-anchor="middle" class="op-s">INT4 / INT8 (see Ch 4.7-4.8)</text>
+
+
+<rect x="235" y="482" width="210" height="72" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.8"/>
+<text x="340" y="512" text-anchor="middle" class="node-n">Quantized Model</text>
+<text x="340" y="534" text-anchor="middle" class="node-s">~1.5 GB on disk</text>
+<rect x="235" y="482" width="210" height="72" rx="8"
+  fill="var(--accent,#6366f1)" fill-opacity="0" stroke="var(--accent,#6366f1)" stroke-width="2.5" class="gn4"/>
+
+
+<line x1="340" y1="556" x2="340" y2="606"
+  stroke="var(--accent,#6366f1)" stroke-width="2.2" marker-end="url(#cp-arr)"/>
+<rect x="358" y="566" width="192" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="454" y="580" text-anchor="middle" class="op-n">Speculative Decoding</text>
+<text x="454" y="594" text-anchor="middle" class="op-s">use as draft model</text>
+
+
+<rect x="170" y="618" width="340" height="86" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--good,#16a34a)" stroke-width="2.2"/>
+<text x="340" y="640" text-anchor="middle" class="node-n">Deployed System</text>
+
+<rect x="188" y="648" width="118" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--good,#16a34a)" stroke-width="1.4"/>
+<text x="247" y="664" text-anchor="middle" class="chip-n">target 7B</text>
+<text x="247" y="678" text-anchor="middle" class="op-s">(verifier)</text>
+
+<rect x="318" y="648" width="174" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<text x="405" y="664" text-anchor="middle" class="chip-n">draft quantized 1B</text>
+<text x="405" y="678" text-anchor="middle" class="op-s">(speculative draft)</text>
+
+
+<rect x="170" y="618" width="340" height="86" rx="8"
+  fill="var(--good,#16a34a)" fill-opacity="0" stroke="var(--good,#16a34a)" stroke-width="3" class="gn5"/>
+
+
+<text x="680" y="56" text-anchor="middle" class="meter-lbl">size</text>
+
+
+<rect x="672" y="58" width="16" height="646" rx="4"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+
+
+<rect x="672" y="58" width="16" height="646" rx="4"
+  fill="url(#cp-meter-grad)" fill-opacity="0.9"/>
+
+
+
+<text x="668" y="96"  text-anchor="end" class="meter-lbl">70B</text>
+
+<line x1="670" y1="206" x2="690" y2="206" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="668" y="210" text-anchor="end" class="meter-lbl">7B</text>
+
+<line x1="670" y1="348" x2="690" y2="348" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="668" y="352" text-anchor="end" class="meter-lbl">5B</text>
+
+<line x1="670" y1="482" x2="690" y2="482" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="668" y="486" text-anchor="end" class="meter-lbl">1.5G</text>
+
+<line x1="670" y1="618" x2="690" y2="618" stroke="var(--good,#16a34a)" stroke-width="1"/>
+<text x="668" y="660" text-anchor="end" class="meter-lbl" fill="var(--good,#16a34a)">live</text>
+
+
+
+
+
+<circle cx="340" cy="94" r="10" fill="url(#cp-pulse)" class="cp-p"/>
+
+</svg>
+<figcaption><b>A typical LLM compression pipeline shrinks a 70B model to an on-device deployment in four stages.</b> Knowledge distillation produces a 7B student; structured pruning removes redundant heads and layers to reach 5B effective capacity; INT4/INT8 quantization compresses weights to ~1.5 GB on disk; finally the quantized model serves as a speculative draft alongside a full-precision 7B verifier. Each stage compounds the previous one's size reduction.</figcaption>
+</figure>
+
+<h3 id="lora-distillation-lora-kd">LoRA + Distillation: LoRA-KD<a class="headerlink" href="#lora-distillation-lora-kd" title="Permanent link">¶</a></h3>
+<p>A practical pattern for adapting a distilled student to a new domain is to freeze the base student and train only LoRA adapters (see <a href="../05-posttraining-alignment/03-peft-lora-qlora.html">PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a>) with KD from a domain-specialized teacher. This combines:
+- <strong>Low parameter count</strong> of PEFT
+- <strong>Task-specific knowledge</strong> from the teacher
+- <strong>Base capability</strong> of the pretrained student</p>
+<p>The distillation loss is computed on the teacher&rsquo;s logits for domain-specific data while only the LoRA adapter parameters receive gradients.</p>
+<h3 id="quantization-aware-distillation">Quantization-Aware Distillation<a class="headerlink" href="#quantization-aware-distillation" title="Permanent link">¶</a></h3>
+<p>Quantization (covered in <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I: Post-Training Quantization</a>) can degrade model quality, especially at INT4. Quantization-aware distillation (QAD) fine-tunes the quantized student with KD from the full-precision teacher:</p>
+<div class="arithmatex">\[
+\mathcal{L}_\text{QAD} = \text{KL}(q_\tau^\text{FP16-teacher} \| p_\tau^\text{INT4-student})
+\]</div>
+<p>The teacher&rsquo;s soft targets act as a &ldquo;correction signal&rdquo; that helps the INT4 student recover the precision lost by quantization. In practice, QAD can recover 0.5–1.5 perplexity points compared to vanilla quantization of the same model.</p>
+<h3 id="scaling-law-for-distillation">Scaling Law for Distillation<a class="headerlink" href="#scaling-law-for-distillation" title="Permanent link">¶</a></h3>
+<p>An approximate empirical scaling rule: given a teacher with <span class="arithmatex">\(N_T\)</span> parameters and a student with <span class="arithmatex">\(N_S\)</span> parameters (where <span class="arithmatex">\(N_S \ll N_T\)</span>), and a distillation dataset of <span class="arithmatex">\(D\)</span> tokens, the student achieves roughly the quality of a model of the same size trained from scratch on <span class="arithmatex">\(D' &gt; D\)</span> tokens. The quality boost from distillation is equivalent to having access to more data, which explains why distilled small models often outperform matched-size models trained from scratch on the same data budget.</p>
+<p>This connects to scaling laws (see <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>): distillation shifts the effective Chinchilla compute-optimal point by reducing the &ldquo;data requirement&rdquo; for the student.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: Memory Budget for Distillation Training</p>
+<p>Suppose you want to distill a LLaMA-3-70B teacher into a 7B student.</p>
+<p><strong>Teacher forward pass (inference only, no gradient):</strong>
+- 70B params × 2 bytes (BF16) = 140 GB. Requires a minimum of 2 × A100 80GB or 4 × A100 40GB.
+- Teacher activations for a batch of 8 × 512 tokens at 8,192 hidden dim: roughly 8 × 512 × 8192 × 80 layers × 2 bytes ≈ 4 GB. Manageable.</p>
+<p><strong>Student forward + backward:</strong>
+- 7B params × 2 bytes = 14 GB for weights.
+- Gradients: another 14 GB (fp32 = 28 GB, or bf16 = 14 GB).
+- Adam optimizer states: 2× gradients = 28 GB (fp32).
+- Activations for the same batch: ≈ 400 MB with gradient checkpointing.
+- Total student-side memory: roughly 55–60 GB — fits on a single A100 80GB with gradient checkpointing.</p>
+<p><strong>Practical setup:</strong> teacher on 2× A100 (tensor parallel), student on 1× A100. Pre-compute and cache teacher logits on disk (about 40 GB per 1 billion tokens at BF16 for a 32,000-vocab model) to avoid re-running the teacher every epoch.</p>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Knowledge distillation, pruning, and compression are now standard components of every production LLM pipeline: small reasoning models distilled from 70B+ teachers routinely match earlier frontier performance, and one-shot pruning methods (SparseGPT, Wanda) can halve parameter counts with negligible accuracy loss. The field has converged on combining distillation → structured pruning → quantization for edge deployment.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1503.02531">Hinton, Vinyals &amp; Dean, <em>Distilling the Knowledge in a Neural Network</em> (2015)</a> — the original KD paper introducing soft targets and temperature scaling.</li>
+<li><a href="https://arxiv.org/abs/1910.01108">Sanh et al., <em>DistilBERT: smaller, faster, cheaper and lighter</em> (2019)</a> — seminal application of KD to pre-training a 40%-smaller BERT that retains 97% of performance.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2301.00774">Frantar &amp; Alistarh, <em>SparseGPT: Massive Language Models Can Be Accurately Pruned in One-Shot</em> (2023)</a> — Hessian-based one-shot pruning to 50–60% sparsity on LLaMA/OPT with negligible perplexity loss.</li>
+<li><a href="https://arxiv.org/abs/2306.11695">Sun et al., <em>A Simple and Effective Pruning Approach for Large Language Models</em> (2024)</a> — Wanda: prune by |weight| × activation norm, no Hessian inversion needed.</li>
+<li><a href="https://arxiv.org/abs/2306.13649">Agarwal et al., <em>On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes</em> (2024)</a> — GKD: trains student on its own rollouts with teacher feedback, fixing distribution mismatch in standard KD.</li>
+<li><a href="https://arxiv.org/abs/2306.08543">Gu et al., <em>MiniLLM: On-Policy Distillation of Large Language Models</em> (2024)</a> — replaces forward KL with reverse KL to prevent student from over-spreading onto low-probability teacher regions.</li>
+<li><a href="https://arxiv.org/abs/2401.15077">Li et al., <em>EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty</em> (2024)</a> — draft model trained on target model&rsquo;s hidden states achieves 2.7–3.5× inference speedup via feature-level distillation.</li>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI, <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em> (2025)</a> — shows that verified CoT traces from a 671B teacher can SFT-distill strong reasoning into 7–32B student models.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/IST-DASLab/sparsegpt">IST-DASLab/sparsegpt</a> — reference implementation of SparseGPT; supports OPT, BLOOM, and LLaMA with unstructured and 2:4 structured sparsity.</li>
+<li><a href="https://github.com/locuslab/wanda">locuslab/wanda</a> — Wanda pruning code for LLaMA/LLaMA-2/OPT; minimal setup, no retraining required.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2402.13116">Xu et al., <em>A Survey on Knowledge Distillation of Large Language Models</em> (2024)</a> — comprehensive taxonomy covering algorithm design, skill transfer, and enterprise applications of LLM KD.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Hinton, Vinyals &amp; Dean, &ldquo;Distilling the Knowledge in a Neural Network,&rdquo; NIPS 2014 Workshop.</li>
+<li>Kim &amp; Rush, &ldquo;Sequence-Level Knowledge Distillation,&rdquo; EMNLP 2016.</li>
+<li>Sanh et al., &ldquo;DistilBERT, a distilled version of BERT,&rdquo; arXiv 2019.</li>
+<li>Touvron et al., &ldquo;Training data-efficient image transformers &amp; distillation through attention,&rdquo; ICML 2021. (DeiT — a foundational vision distillation paper.)</li>
+<li>Frantar &amp; Alistarh, &ldquo;SparseGPT: Massive Language Models Can be Accurately Pruned in One Shot,&rdquo; ICML 2023.</li>
+<li>Sun et al., &ldquo;A Simple and Effective Pruning Approach for Large Language Models,&rdquo; ICLR 2024. (Wanda)</li>
+<li>DeepSeek-AI, &ldquo;DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning,&rdquo; arXiv 2025. (Section on distillation of reasoning traces.)</li>
+<li>Li et al., &ldquo;EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty,&rdquo; arXiv 2024.</li>
+<li>Leviathan, Kalman &amp; Matias, &ldquo;Fast Inference from Transformers via Speculative Decoding,&rdquo; ICML 2023.</li>
+</ul>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Knowledge distillation trains a student to match a teacher&rsquo;s <em>soft probability distribution</em>, not just its hard predictions. The KD loss is a temperature-scaled KL divergence, and the <span class="arithmatex">\(\tau^2\)</span> factor must be included to keep gradient magnitude invariant to temperature.</li>
+<li>Temperature <span class="arithmatex">\(\tau &gt; 1\)</span> softens both distributions, exposing the teacher&rsquo;s &ldquo;dark knowledge&rdquo; (inter-token similarities). A value of 2–4 is typical; too high and the signal becomes noise.</li>
+<li>Off-policy distillation is cheap but suffers from distribution mismatch. On-policy distillation trains on the student&rsquo;s own generations (evaluated by the teacher) and closes the gap for long, multi-step tasks.</li>
+<li>Sequence-level KD (SeqKD) uses the teacher&rsquo;s greedy output as hard training targets — a simple, cheap alternative to per-token KL that still captures teacher behavior.</li>
+<li>Reasoning distillation (e.g., R1-style) works by collecting verified chain-of-thought traces from a large model and using them as SFT targets for a small model. The student learns <em>behavior</em>, not just output distributions.</li>
+<li>SparseGPT and Wanda enable one-shot unstructured pruning of LLMs at 50%+ sparsity with near-zero perplexity degradation. Wanda&rsquo;s criterion (|w| × activation norm) requires no Hessian inversion and is extremely fast.</li>
+<li>Speculative decoding&rsquo;s draft models are conceptually distilled students: a good draft model minimizes <span class="arithmatex">\(\text{KL}(p_\text{target} \| p_\text{draft})\)</span>, and training the draft with KD from the target measurably improves acceptance rates.</li>
+<li>Compression techniques stack: distillation → structured pruning → quantization → speculative decoding can take a 70B model to a practical on-device deployment. The quality at each step depends heavily on the ordering and the calibration data.</li>
+</ul>
+</div>
+<nav class="page-nav">
+<a class="prev" href="11-constitutional-rlaif.html"><span class="pn-label">← Previous</span><span class="pn-title">Constitutional AI, RLAIF &amp; Self-Improvement</span></a>
+<a class="next" href="13-reward-hacking-failures.html"><span class="pn-label">Next →</span><span class="pn-title">Reward Hacking, Over-Optimization &amp; Alignment Failures</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#51-knowledge-distillation-soft-targets-and-temperature">5.1 Knowledge Distillation: Soft Targets and Temperature</a></li>
+<li class="toc-l3"><a href="#why-soft-targets-contain-more-information">Why Soft Targets Contain More Information</a></li>
+<li class="toc-l3"><a href="#the-kd-loss">The KD Loss</a></li>
+<li class="toc-l2"><a href="#52-on-policy-vs-off-policy-distillation">5.2 On-Policy vs Off-Policy Distillation</a></li>
+<li class="toc-l3"><a href="#off-policy-distillation">Off-Policy Distillation</a></li>
+<li class="toc-l3"><a href="#on-policy-distillation">On-Policy Distillation</a></li>
+<li class="toc-l3"><a href="#imitation-gap-and-capacity-gap">Imitation-Gap and Capacity Gap</a></li>
+<li class="toc-l2"><a href="#53-sequence-level-knowledge-distillation">5.3 Sequence-Level Knowledge Distillation</a></li>
+<li class="toc-l3"><a href="#seqkd-data-augmentation-view">SeqKD: Data Augmentation View</a></li>
+<li class="toc-l3"><a href="#word-level-vs-sequence-level-vs-intermediate-features">Word-Level vs Sequence-Level vs Intermediate Features</a></li>
+<li class="toc-l2"><a href="#54-distilling-reasoning-from-large-to-small-reasoning-models">5.4 Distilling Reasoning: From Large to Small Reasoning Models</a></li>
+<li class="toc-l3"><a href="#r1-style-reasoning-distillation">R1-Style Reasoning Distillation</a></li>
+<li class="toc-l3"><a href="#pitfalls-in-reasoning-distillation">Pitfalls in Reasoning Distillation</a></li>
+<li class="toc-l2"><a href="#55-pruning-structured-and-unstructured">5.5 Pruning: Structured and Unstructured</a></li>
+<li class="toc-l3"><a href="#unstructured-pruning-and-the-magnitude-baseline">Unstructured Pruning and the Magnitude Baseline</a></li>
+<li class="toc-l3"><a href="#sparsegpt-one-shot-unstructured-pruning">SparseGPT: One-Shot Unstructured Pruning</a></li>
+<li class="toc-l3"><a href="#wanda-pruning-without-hessians">Wanda: Pruning Without Hessians</a></li>
+<li class="toc-l3"><a href="#structured-pruning">Structured Pruning</a></li>
+<li class="toc-l2"><a href="#56-knowledge-distillation-full-implementation">5.6 Knowledge Distillation: Full Implementation</a></li>
+<li class="toc-l2"><a href="#57-speculative-decodings-draft-models-as-distillation">5.7 Speculative Decoding&amp;rsquo;s Draft Models as Distillation</a></li>
+<li class="toc-l3"><a href="#the-kd-connection">The KD Connection</a></li>
+<li class="toc-l3"><a href="#self-speculative-decoding-exit-layers">Self-Speculative Decoding: Exit Layers</a></li>
+<li class="toc-l3"><a href="#eagle-speculative-drafting-with-feature-distillation">EAGLE: Speculative Drafting with Feature Distillation</a></li>
+<li class="toc-l2"><a href="#58-combining-compression-techniques">5.8 Combining Compression Techniques</a></li>
+<li class="toc-l3"><a href="#the-compression-pipeline">The Compression Pipeline</a></li>
+<li class="toc-l3"><a href="#lora-distillation-lora-kd">LoRA + Distillation: LoRA-KD</a></li>
+<li class="toc-l3"><a href="#quantization-aware-distillation">Quantization-Aware Distillation</a></li>
+<li class="toc-l3"><a href="#scaling-law-for-distillation">Scaling Law for Distillation</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1266 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embeddings &amp; Representation Learning — The LLM Stack</title>
+<meta name="description" content="Dense embeddings, contrastive learning (InfoNCE), sentence/text embedding models, training (in-batch negatives, hard negatives), Matryoshka embeddings, instruct">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="active" href="01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IX — Retrieval &amp; RAG</div>
+<h1 id="91-embeddings-representation-learning">9.1 Embeddings &amp; Representation Learning<a class="headerlink" href="#91-embeddings-representation-learning" title="Permanent link">¶</a></h1>
+<p>Dense text embeddings are the connective tissue of modern information retrieval. Without them, matching a user&rsquo;s natural-language question to a relevant document requires either exact keyword overlap or hand-crafted rules — both brittle in practice. With them, a 768-dimensional vector encodes semantic meaning so precisely that &ldquo;What is the boiling point of water?&rdquo; and &ldquo;At what temperature does H₂O vaporize?&rdquo; land microseconds apart in vector space. This chapter develops every piece of the pipeline: why dense vectors work, how they are trained with contrastive objectives, how the field settled on architectures like bi-encoders with pooled transformer representations, and how to evaluate them rigorously with MTEB. It ends with a direct bridge to the RAG systems that consume these embeddings at query time.</p>
+<p>If you are looking for the token embeddings inside a transformer (the learned lookup table that maps token IDs to vectors at the input layer), that is covered in <a href="../02-transformer/02-embeddings-input.html">Embeddings &amp; The Input Pipeline</a>. This chapter is about <em>sentence</em>- and <em>document</em>-level representation: a single fixed-size vector that summarizes an entire passage.</p>
+<h2 id="why-dense-representations">Why Dense Representations?<a class="headerlink" href="#why-dense-representations" title="Permanent link">¶</a></h2>
+<p>The classical information retrieval (IR) approach is <strong>sparse retrieval</strong>: represent each document as a high-dimensional bag-of-words vector (TF-IDF or BM25), then compute dot products at query time. BM25 remains a strong baseline, but it fails on vocabulary mismatch — if the query says &ldquo;automobile&rdquo; and the document says &ldquo;car,&rdquo; zero overlap means zero score.</p>
+<p><strong>Dense retrieval</strong> projects documents and queries into a low-dimensional (128–1024 dimensions) continuous space trained so that semantically related pairs are close regardless of word choice. The trade-off is computation: sparse retrieval can be done with an inverted index that touches only non-zero entries; dense retrieval requires either an exhaustive scan or an approximate nearest neighbor (ANN) index (see <a href="../09-rag-retrieval/02-vector-databases-ann.html">Vector Databases &amp; Approximate Nearest Neighbor Search</a>).</p>
+<p>The two paradigms are not mutually exclusive. Hybrid search — combining BM25 scores with dense scores via reciprocal rank fusion or learned weighting — consistently outperforms either alone. That is covered in <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a>.</p>
+<h3 id="the-bi-encoder-architecture">The Bi-Encoder Architecture<a class="headerlink" href="#the-bi-encoder-architecture" title="Permanent link">¶</a></h3>
+<p>Dense embedding models overwhelmingly use the <strong>bi-encoder</strong> design:</p>
+<figure class="viz" id="fig-emb-biencoder-concept">
+<svg viewBox="0 0 560 440" role="img" aria-label="Bi-encoder two-tower diagram: query and document are independently encoded through symmetric transformer pipelines ending in fixed-size d-dimensional vectors, whose dot product yields a similarity score.">
+  <defs>
+    <marker id="bec-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#78716c)"/>
+    </marker>
+    <marker id="bec-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-emb-biencoder-concept text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#1c1917); }
+    #fig-emb-biencoder-concept .lbl { font: 600 13px var(--sans,sans-serif); fill: var(--ink-soft,#1c1917); }
+    #fig-emb-biencoder-concept .soft { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#78716c); }
+    #fig-emb-biencoder-concept .math { font: 600 12px var(--mono,monospace); fill: var(--ink-soft,#1c1917); }
+    #fig-emb-biencoder-concept .cap { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#78716c); }
+  </style>
+
+
+
+
+  <rect x="100" y="20" width="120" height="34" rx="17" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+  <text x="160" y="42" text-anchor="middle" class="lbl">Query q</text>
+
+
+  <line x1="160" y1="54" x2="160" y2="108" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bec-arrow)"/>
+
+
+  <rect x="96" y="108" width="128" height="48" rx="8" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="160" y="131" text-anchor="middle" class="lbl">[Transformer]</text>
+  <text x="160" y="148" text-anchor="middle" class="soft">encoder</text>
+
+
+  <line x1="160" y1="156" x2="160" y2="204" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bec-arrow)"/>
+
+
+  <rect x="101" y="204" width="118" height="40" rx="8" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="160" y="229" text-anchor="middle" class="lbl">Pooling</text>
+
+
+  <line x1="160" y1="244" x2="160" y2="288" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bec-arrow)"/>
+
+
+  <rect x="101" y="288" width="118" height="36" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+
+  <line x1="121" y1="288" x2="121" y2="324" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="140" y1="288" x2="140" y2="324" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="160" y1="288" x2="160" y2="324" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="180" y1="288" x2="180" y2="324" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="200" y1="288" x2="200" y2="324" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <text x="160" y="311" text-anchor="middle" class="math">E_q in R^d</text>
+
+
+
+
+  <rect x="340" y="20" width="120" height="34" rx="17" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+  <text x="400" y="42" text-anchor="middle" class="lbl">Document d</text>
+
+
+  <line x1="400" y1="54" x2="400" y2="108" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bec-arrow)"/>
+
+
+  <rect x="336" y="108" width="128" height="48" rx="8" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="400" y="131" text-anchor="middle" class="lbl">[Transformer]</text>
+  <text x="400" y="148" text-anchor="middle" class="soft">encoder</text>
+
+
+  <line x1="224" y1="132" x2="336" y2="132" stroke="var(--muted,#78716c)" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+  <text x="280" y="126" text-anchor="middle" class="soft">same weights</text>
+
+
+  <line x1="400" y1="156" x2="400" y2="204" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bec-arrow)"/>
+
+
+  <rect x="341" y="204" width="118" height="40" rx="8" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="400" y="229" text-anchor="middle" class="lbl">Pooling</text>
+
+
+  <line x1="400" y1="244" x2="400" y2="288" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bec-arrow)"/>
+
+
+  <rect x="341" y="288" width="118" height="36" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+
+  <line x1="361" y1="288" x2="361" y2="324" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="380" y1="288" x2="380" y2="324" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="400" y1="288" x2="400" y2="324" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="420" y1="288" x2="420" y2="324" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="440" y1="288" x2="440" y2="324" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <text x="400" y="311" text-anchor="middle" class="math">E_d in R^d</text>
+
+
+
+
+  <text x="280" y="344" text-anchor="middle" class="soft">dot product</text>
+
+
+  <line x1="160" y1="324" x2="258" y2="374" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#bec-arrow-acc)"/>
+  <line x1="400" y1="324" x2="302" y2="374" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#bec-arrow-acc)"/>
+
+
+  <circle cx="280" cy="375" r="18" fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="280" y="380" text-anchor="middle" font="700 12px var(--sans,sans-serif)" fill="#ffffff" style="font:700 12px var(--sans,sans-serif)">score</text>
+
+
+  <text x="280" y="412" text-anchor="middle" class="cap">Document embeddings precomputed offline;</text>
+  <text x="280" y="428" text-anchor="middle" class="cap">only the query is encoded at query time.</text>
+</svg>
+<figcaption><b>The bi-encoder encodes query and document independently through identical transformer pipelines.</b> Each tower produces a fixed-size <em>d</em>-dimensional embedding; the shared-weights tie means the same model parameters process both. Similarity is computed as a single dot product between the two vectors, enabling document embeddings to be precomputed and stored offline.</figcaption>
+</figure>
+
+<p>Both query and document are encoded independently by the same (or separate) transformer. The final similarity score is computed as a dot product or cosine similarity at retrieval time. This independence is the key property that enables pre-computation: all document embeddings can be computed offline and stored in an ANN index. Only the query needs to be embedded at inference time.</p>
+<p>The <strong>cross-encoder</strong> alternative runs both query and document through the same forward pass with joint attention, producing higher-quality relevance scores but at <span class="arithmatex">\(O(n)\)</span> inference cost per document. Cross-encoders are used as rerankers on a short candidate list; they cannot be the first-stage retriever. See <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a> for cross-encoder reranking.</p>
+<h2 id="from-token-representations-to-sentence-embeddings-pooling">From Token Representations to Sentence Embeddings: Pooling<a class="headerlink" href="#from-token-representations-to-sentence-embeddings-pooling" title="Permanent link">¶</a></h2>
+<p>A transformer operating on a sequence of <span class="arithmatex">\(n\)</span> tokens produces <span class="arithmatex">\(n\)</span> contextual vectors, each of shape <span class="arithmatex">\(d\)</span>. We need a single vector. The pooling layer performs this reduction.</p>
+<h3 id="cls-pooling">CLS Pooling<a class="headerlink" href="#cls-pooling" title="Permanent link">¶</a></h3>
+<p>BERT-style models prepend a special <code>[CLS]</code> token. After the final layer, the vector at position 0 is used as the sequence representation. BERT was pretrained with a next-sentence prediction (NSP) objective that trained <code>[CLS]</code> to carry sentence-level signal. In practice, raw BERT CLS embeddings are mediocre for semantic similarity — the representation space is anisotropic (vectors cluster near a cone, not spread across the hypersphere). Models like SBERT fine-tune the encoder specifically for sentence embedding, dramatically improving CLS quality.</p>
+<h3 id="mean-pooling">Mean Pooling<a class="headerlink" href="#mean-pooling" title="Permanent link">¶</a></h3>
+<p>Average the final-layer token representations, excluding padding tokens:</p>
+<div class="arithmatex">\[
+\mathbf{e} = \frac{\sum_{i=1}^{n} m_i \mathbf{h}_i}{\sum_{i=1}^{n} m_i}
+\]</div>
+<p>where <span class="arithmatex">\(m_i \in \{0,1\}\)</span> is the attention mask and <span class="arithmatex">\(\mathbf{h}_i\)</span> is the hidden state at position <span class="arithmatex">\(i\)</span>. Mean pooling is empirically stronger than CLS pooling for most bi-encoder tasks, and it is the default in models like <code>sentence-transformers</code> (Reimers &amp; Gurevych, 2019).</p>
+<h3 id="max-pooling-and-weighted-pooling">Max Pooling and Weighted Pooling<a class="headerlink" href="#max-pooling-and-weighted-pooling" title="Permanent link">¶</a></h3>
+<p><strong>Max pooling</strong> takes the element-wise maximum across token positions — capturing the strongest activation for each latent feature. It is less common in production. <strong>Weighted pooling</strong> assigns position or attention-based weights before averaging; some models learn these weights as part of fine-tuning.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">mean_pool</span><span class="p">(</span><span class="n">token_embeddings</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+              <span class="n">attention_mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute attention-mask-weighted mean of token embeddings.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        token_embeddings: shape (batch, seq_len, hidden_dim)</span>
+<span class="sd">        attention_mask:   shape (batch, seq_len), 1 for real tokens</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        sentence_embeddings: shape (batch, hidden_dim)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Expand mask to hidden_dim so we can multiply element-wise</span>
+    <span class="n">mask_expanded</span> <span class="o">=</span> <span class="n">attention_mask</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>  <span class="c1"># (B, L, 1)</span>
+
+    <span class="c1"># Zero out padding positions</span>
+    <span class="n">sum_embeddings</span> <span class="o">=</span> <span class="p">(</span><span class="n">token_embeddings</span> <span class="o">*</span> <span class="n">mask_expanded</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B, H)</span>
+
+    <span class="c1"># Count real tokens per sample (clamp to avoid division by zero)</span>
+    <span class="n">sum_mask</span> <span class="o">=</span> <span class="n">mask_expanded</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-9</span><span class="p">)</span>             <span class="c1"># (B, 1)</span>
+
+    <span class="k">return</span> <span class="n">sum_embeddings</span> <span class="o">/</span> <span class="n">sum_mask</span>  <span class="c1"># (B, H)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">normalize_embeddings</span><span class="p">(</span><span class="n">embeddings</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;L2-normalize so dot product == cosine similarity.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">embeddings</span><span class="p">,</span> <span class="n">p</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>
+<p>After pooling, embeddings are typically L2-normalized so that dot products equal cosine similarities, which lie in <span class="arithmatex">\([-1, 1]\)</span> and are symmetric and bounded.</p>
+<h2 id="contrastive-learning-the-infonce-objective">Contrastive Learning &amp; the InfoNCE Objective<a class="headerlink" href="#contrastive-learning-the-infonce-objective" title="Permanent link">¶</a></h2>
+<p>The core training objective for dense embedding models is <strong>contrastive learning</strong>: pull representations of semantically similar pairs together, push dissimilar ones apart. The dominant loss function is <strong>InfoNCE</strong> (Information Noise-Contrastive Estimation), also known as the NT-Xent loss in the SimCLR literature.</p>
+<h3 id="infonce-derivation">InfoNCE Derivation<a class="headerlink" href="#infonce-derivation" title="Permanent link">¶</a></h3>
+<p>Given a mini-batch of <span class="arithmatex">\(N\)</span> (query, positive document) pairs <span class="arithmatex">\(\{(q_i, d_i^+)\}_{i=1}^N\)</span>, the model produces normalized embeddings <span class="arithmatex">\(\mathbf{e}_{q_i}\)</span> and <span class="arithmatex">\(\mathbf{e}_{d_j}\)</span> for all queries and all documents. The InfoNCE loss treats all <span class="arithmatex">\(N-1\)</span> other documents in the batch as <strong>in-batch negatives</strong> for query <span class="arithmatex">\(i\)</span>:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{InfoNCE}} = -\frac{1}{N} \sum_{i=1}^{N} \log \frac{\exp(\mathbf{e}_{q_i} \cdot \mathbf{e}_{d_i^+} / \tau)}{\sum_{j=1}^{N} \exp(\mathbf{e}_{q_i} \cdot \mathbf{e}_{d_j} / \tau)}
+\]</div>
+<p>where <span class="arithmatex">\(\tau &gt; 0\)</span> is the <strong>temperature</strong> hyperparameter. The loss is a cross-entropy over <span class="arithmatex">\(N\)</span> classes: class <span class="arithmatex">\(i\)</span> is the correct document for query <span class="arithmatex">\(i\)</span>. Minimizing it encourages <span class="arithmatex">\(\mathbf{e}_{q_i} \cdot \mathbf{e}_{d_i^+}\)</span> to be the maximum among all <span class="arithmatex">\(N\)</span> dot products in row <span class="arithmatex">\(i\)</span>.</p>
+<p><strong>Why temperature matters.</strong> A small <span class="arithmatex">\(\tau\)</span> (e.g., 0.01–0.1) sharpens the softmax, creating a steep gradient signal and forcing the model to distinguish very fine-grained differences. A large <span class="arithmatex">\(\tau\)</span> (near 1.0) makes the loss soft and nearly uniform. Typical values: 0.05–0.1 for image encoders (SimCLR used 0.07), 0.02–0.05 for text retrieval.</p>
+<p><strong>Scaling with batch size.</strong> With batch size <span class="arithmatex">\(N\)</span>, each query sees <span class="arithmatex">\(N-1\)</span> negatives. Doubling <span class="arithmatex">\(N\)</span> roughly doubles the number of negatives per query, which empirically improves representation quality — this is why contrastive learning loves large batches. DPR (Karpukhin et al., 2020) used batch size 128; modern models often train with effective batch sizes in the thousands via gradient accumulation.</p>
+<h3 id="full-in-batch-negative-loss-implementation">Full In-Batch Negative Loss Implementation<a class="headerlink" href="#full-in-batch-negative-loss-implementation" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">infonce_loss</span><span class="p">(</span>
+    <span class="n">query_emb</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># (B, D), already L2-normalized</span>
+    <span class="n">doc_emb</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>     <span class="c1"># (B, D), already L2-normalized</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Symmetric InfoNCE loss with in-batch negatives.</span>
+
+<span class="sd">    Each query is matched to the corresponding document (diagonal).</span>
+<span class="sd">    All other documents in the batch serve as negatives.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        query_emb:   Normalized query embeddings.</span>
+<span class="sd">        doc_emb:     Normalized positive-document embeddings.</span>
+<span class="sd">        temperature: Softmax temperature (lower = sharper contrast).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Scalar loss (mean over batch).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span> <span class="o">=</span> <span class="n">query_emb</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="c1"># Similarity matrix: (B, B)</span>
+    <span class="c1"># sim[i][j] = cosine_sim(query_i, doc_j)</span>
+    <span class="n">sim</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">matmul</span><span class="p">(</span><span class="n">query_emb</span><span class="p">,</span> <span class="n">doc_emb</span><span class="o">.</span><span class="n">T</span><span class="p">)</span> <span class="o">/</span> <span class="n">temperature</span>  <span class="c1"># (B, B)</span>
+
+    <span class="c1"># Targets: each query i matches document i (diagonal)</span>
+    <span class="n">labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">query_emb</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="c1"># Query-to-document direction</span>
+    <span class="n">loss_q2d</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span><span class="n">sim</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
+
+    <span class="c1"># Document-to-query direction (symmetric)</span>
+    <span class="n">loss_d2q</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span><span class="n">sim</span><span class="o">.</span><span class="n">T</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">(</span><span class="n">loss_q2d</span> <span class="o">+</span> <span class="n">loss_d2q</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span>
+
+
+<span class="c1"># ---- Quick sanity check ----</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">64</span>
+
+    <span class="c1"># Random normalized embeddings</span>
+    <span class="n">q</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">D</span><span class="p">),</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">D</span><span class="p">),</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">infonce_loss</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.05</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loss (random init): </span><span class="si">{</span><span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># ~ log(B) ≈ 1.386</span>
+
+    <span class="c1"># Perfect embeddings: q[i] == d[i]</span>
+    <span class="n">d_perfect</span> <span class="o">=</span> <span class="n">q</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+    <span class="n">loss_perfect</span> <span class="o">=</span> <span class="n">infonce_loss</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">d_perfect</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.05</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loss (perfect align): </span><span class="si">{</span><span class="n">loss_perfect</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># ≈ 0.0</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked Example: InfoNCE Loss Magnitudes</p>
+<p>Suppose <span class="arithmatex">\(B = 4\)</span>, <span class="arithmatex">\(\tau = 0.05\)</span>, and query <span class="arithmatex">\(i=0\)</span> has cosine similarity 0.90 with its positive document
+and 0.10 with each of the three negatives.</p>
+<p>The raw logits (before softmax) are:</p>
+<div class="arithmatex">\[
+\text{logits} = [0.90/0.05,\ 0.10/0.05,\ 0.10/0.05,\ 0.10/0.05] = [18.0,\ 2.0,\ 2.0,\ 2.0]
+\]</div>
+<p>Softmax probabilities:</p>
+<div class="arithmatex">\[
+p_0 = \frac{e^{18}}{e^{18} + 3e^{2}} \approx \frac{65,659,969}{65,659,969 + 22.17} \approx 0.99997
+\]</div>
+<p>Cross-entropy loss for this query: <span class="arithmatex">\(-\log(0.99997) \approx 0.00003\)</span>. Almost zero — the model
+has near-perfectly separated the positive from the negatives.</p>
+<p>Now suppose similarity with the positive drops to 0.30:</p>
+<div class="arithmatex">\[
+\text{logits} = [6.0,\ 2.0,\ 2.0,\ 2.0]
+\]</div>
+<div class="arithmatex">\[
+p_0 = \frac{e^6}{e^6 + 3e^2} = \frac{403.4}{403.4 + 22.2} \approx 0.948
+\]</div>
+<p>Loss <span class="arithmatex">\(\approx -\log(0.948) \approx 0.053\)</span>. Meaningful gradient — the model must push the positive closer.</p>
+<p>At random initialization with <span class="arithmatex">\(B=4\)</span>, the expected loss is <span class="arithmatex">\(\log 4 \approx 1.386\)</span> (uniform over 4 classes).</p>
+</div>
+<h2 id="hard-negatives-going-beyond-in-batch-sampling">Hard Negatives: Going Beyond In-Batch Sampling<a class="headerlink" href="#hard-negatives-going-beyond-in-batch-sampling" title="Permanent link">¶</a></h2>
+<p>In-batch negatives are easy to implement but are often <em>too easy</em> — randomly sampled passages are unlikely to be genuinely confusable with the query. Hard negatives are passages that are superficially relevant but do not actually answer the query.</p>
+<h3 id="mining-hard-negatives">Mining Hard Negatives<a class="headerlink" href="#mining-hard-negatives" title="Permanent link">¶</a></h3>
+<p><strong>BM25-mined negatives.</strong> Run BM25 retrieval on the query; take high-ranked documents that are not the gold positive. These share vocabulary with the query but differ in meaning.</p>
+<p><strong>Dense-mined negatives.</strong> Use an earlier checkpoint of the embedding model to retrieve top-<span class="arithmatex">\(k\)</span> passages; use non-positive ones as negatives. This &ldquo;ANN negative mining&rdquo; strategy, used in DPR and ANCE (Xiong et al., 2021), iteratively updates the negatives as the model improves. Training with the model&rsquo;s own hard negatives dramatically accelerates convergence.</p>
+<p><strong>Cross-encoder filtered negatives.</strong> Apply a high-quality cross-encoder reranker to a large candidate set, then use passages that the cross-encoder scores as irrelevant as negatives. These are the hardest and most informative.</p>
+<h3 id="triplet-loss-vs-infonce">Triplet Loss vs. InfoNCE<a class="headerlink" href="#triplet-loss-vs-infonce" title="Permanent link">¶</a></h3>
+<p>An alternative to InfoNCE is the <strong>triplet loss</strong> with a margin <span class="arithmatex">\(m\)</span>:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{triplet}} = \max\!\left(0,\ m - s(q, d^+) + s(q, d^-)\right)
+\]</div>
+<p>where <span class="arithmatex">\(s\)</span> is cosine similarity. This only considers one negative per query per step. In practice, InfoNCE with large <span class="arithmatex">\(N\)</span> outperforms triplet loss because it simultaneously considers many negatives, providing a richer gradient signal.</p>
+<h3 id="gnneg-and-denoised-negatives">GNNeg and Denoised Negatives<a class="headerlink" href="#gnneg-and-denoised-negatives" title="Permanent link">¶</a></h3>
+<p>A subtle failure mode: the mining procedure mislabels genuinely relevant documents as negatives (false negatives). This corrupts training gradients. Denoising strategies include:</p>
+<ul>
+<li>Re-annotating mined negatives with a strong model</li>
+<li>Soft-labeling using a teacher&rsquo;s confidence score</li>
+<li>Filtering via conditional negative sampling (only include a mined negative if its teacher score is below a threshold)</li>
+</ul>
+<h2 id="architecture-sentence-transformers-and-the-bert-based-bi-encoder">Architecture: Sentence-Transformers and the BERT-Based Bi-Encoder<a class="headerlink" href="#architecture-sentence-transformers-and-the-bert-based-bi-encoder" title="Permanent link">¶</a></h2>
+<p>The canonical sentence embedding architecture is SBERT (Sentence-BERT, Reimers &amp; Gurevych, 2019), which fine-tuned a BERT-base backbone on sentence pairs using contrastive/siamese networks. Modern models follow the same structure but with stronger backbones and larger training sets.</p>
+<figure class="viz" id="fig-emb-biencoder-detailed">
+<svg viewBox="0 0 640 570" role="img" aria-label="Detailed bi-encoder architecture showing tokenization up to 512 tokens, 12-layer 768-hidden BERT backbone with shared weights, mean pooling reducing shape from (B,L,768) to (B,768), L2 normalization, and final dot-product scoring.">
+  <defs>
+    <marker id="bed-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#78716c)"/>
+    </marker>
+    <marker id="bed-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-emb-biencoder-detailed text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#1c1917); }
+    #fig-emb-biencoder-detailed .lbl { font: 600 13px var(--sans,sans-serif); fill: var(--ink-soft,#1c1917); }
+    #fig-emb-biencoder-detailed .sub { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#78716c); }
+    #fig-emb-biencoder-detailed .mono { font: 500 10.5px var(--mono,monospace); fill: var(--muted,#78716c); }
+    #fig-emb-biencoder-detailed .math { font: 600 12px var(--mono,monospace); fill: var(--ink-soft,#1c1917); }
+    #fig-emb-biencoder-detailed .hdr { font: 700 14px var(--sans,sans-serif); fill: var(--ink-soft,#1c1917); }
+  </style>
+
+
+  <rect x="12" y="12" width="616" height="546" rx="10" fill="none" stroke="var(--border-2,#d6d3d1)" stroke-width="1.5"/>
+
+
+  <rect x="12" y="12" width="616" height="36" rx="10" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--border-2,#d6d3d1)" stroke-width="0"/>
+  <rect x="12" y="36" width="616" height="12" fill="var(--accent,#6366f1)" fill-opacity="0.15"/>
+  <text x="320" y="36" text-anchor="middle" class="hdr">Bi-Encoder Architecture</text>
+
+
+  <text x="200" y="72" text-anchor="middle" class="lbl" style="font:700 13px var(--sans,sans-serif)">Query</text>
+  <text x="440" y="72" text-anchor="middle" class="lbl" style="font:700 13px var(--sans,sans-serif)">Document</text>
+
+
+
+
+  <rect x="128" y="80" width="144" height="32" rx="16" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="200" y="101" text-anchor="middle" class="lbl">Query Text</text>
+
+
+  <line x1="200" y1="112" x2="200" y2="134" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bed-arrow)"/>
+
+
+  <rect x="126" y="134" width="148" height="46" rx="8" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="200" y="155" text-anchor="middle" class="lbl">[Tokenizer]</text>
+  <text x="200" y="172" text-anchor="middle" class="sub">max 512 tok</text>
+
+
+  <line x1="200" y1="180" x2="200" y2="208" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bed-arrow)"/>
+  <text x="84" y="197" text-anchor="middle" class="mono">token ids</text>
+
+
+  <rect x="122" y="208" width="156" height="80" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="200" y="232" text-anchor="middle" class="lbl" style="font:700 13px var(--sans,sans-serif)">BERT</text>
+  <text x="200" y="252" text-anchor="middle" class="sub">12 layers</text>
+  <text x="200" y="270" text-anchor="middle" class="sub">768 hidden</text>
+
+
+  <line x1="200" y1="288" x2="200" y2="316" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bed-arrow)"/>
+  <text x="78" y="305" text-anchor="middle" class="mono">(B, L, 768)</text>
+
+
+  <rect x="126" y="316" width="148" height="40" rx="8" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="200" y="341" text-anchor="middle" class="lbl">[Mean Pool]</text>
+
+
+  <line x1="200" y1="356" x2="200" y2="384" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bed-arrow)"/>
+  <text x="78" y="373" text-anchor="middle" class="mono">(B, 768)</text>
+
+
+  <rect x="126" y="384" width="148" height="40" rx="8" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="200" y="409" text-anchor="middle" class="lbl">[L2 Norm]</text>
+
+
+  <line x1="200" y1="424" x2="200" y2="452" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bed-arrow)"/>
+
+
+  <rect x="126" y="452" width="148" height="36" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+  <line x1="151" y1="452" x2="151" y2="488" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="175" y1="452" x2="175" y2="488" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="200" y1="452" x2="200" y2="488" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="225" y1="452" x2="225" y2="488" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="249" y1="452" x2="249" y2="488" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <text x="200" y="475" text-anchor="middle" class="math">e_q in R^768</text>
+
+
+
+
+  <rect x="368" y="80" width="144" height="32" rx="16" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="440" y="101" text-anchor="middle" class="lbl">Document Text</text>
+
+
+  <line x1="440" y1="112" x2="440" y2="134" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bed-arrow)"/>
+
+
+  <rect x="366" y="134" width="148" height="46" rx="8" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="440" y="155" text-anchor="middle" class="lbl">[Tokenizer]</text>
+  <text x="440" y="172" text-anchor="middle" class="sub">max 512 tok</text>
+
+
+  <line x1="440" y1="180" x2="440" y2="208" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bed-arrow)"/>
+
+
+  <rect x="362" y="208" width="156" height="80" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="440" y="232" text-anchor="middle" class="lbl" style="font:700 13px var(--sans,sans-serif)">BERT</text>
+  <text x="440" y="252" text-anchor="middle" class="sub">12 layers</text>
+  <text x="440" y="270" text-anchor="middle" class="sub">768 hidden</text>
+
+
+  <line x1="278" y1="248" x2="362" y2="248" stroke="var(--muted,#78716c)" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+  <text x="320" y="241" text-anchor="middle" class="sub">shared weights</text>
+
+
+  <line x1="440" y1="288" x2="440" y2="316" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bed-arrow)"/>
+
+
+  <rect x="366" y="316" width="148" height="40" rx="8" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="440" y="341" text-anchor="middle" class="lbl">[Mean Pool]</text>
+
+
+  <line x1="440" y1="356" x2="440" y2="384" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bed-arrow)"/>
+
+
+  <rect x="366" y="384" width="148" height="40" rx="8" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="440" y="409" text-anchor="middle" class="lbl">[L2 Norm]</text>
+
+
+  <line x1="440" y1="424" x2="440" y2="452" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#bed-arrow)"/>
+
+
+  <rect x="366" y="452" width="148" height="36" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+  <line x1="391" y1="452" x2="391" y2="488" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="415" y1="452" x2="415" y2="488" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="440" y1="452" x2="440" y2="488" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="465" y1="452" x2="465" y2="488" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <line x1="489" y1="452" x2="489" y2="488" stroke="var(--accent,#6366f1)" stroke-width="0.7" opacity="0.5"/>
+  <text x="440" y="475" text-anchor="middle" class="math">e_d in R^768</text>
+
+
+
+
+  <text x="320" y="510" text-anchor="middle" class="sub">dot product</text>
+
+
+  <line x1="200" y1="488" x2="300" y2="526" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#bed-arrow-acc)"/>
+  <line x1="440" y1="488" x2="340" y2="526" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#bed-arrow-acc)"/>
+
+
+  <circle cx="320" cy="528" r="16" fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="320" y="533" text-anchor="middle" style="font:700 11px var(--sans,sans-serif); fill:#ffffff;">score</text>
+</svg>
+<figcaption><b>The SBERT-style bi-encoder processes query and document through identical pipelines with shared BERT weights.</b> Each pipeline tokenizes its input (up to 512 tokens), passes it through a 12-layer, 768-hidden BERT encoder producing a <code>(B, L, 768)</code> tensor, mean-pools to <code>(B, 768)</code>, L2-normalizes, and outputs a unit-norm embedding. The final similarity score is the dot product of the two resulting vectors.</figcaption>
+</figure>
+
+<p>Modern choices for the backbone include:</p>
+<table>
+<thead>
+<tr>
+<th>Model family</th>
+<th>Parameters</th>
+<th>Embedding dim</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BERT-base</td>
+<td>110M</td>
+<td>768</td>
+<td>Original SBERT backbone</td>
+</tr>
+<tr>
+<td>RoBERTa-large</td>
+<td>355M</td>
+<td>1024</td>
+<td>Better pretraining, common in early 2020s</td>
+</tr>
+<tr>
+<td>MPNet</td>
+<td>110M</td>
+<td>768</td>
+<td>Permuted LM, strong on sentence tasks</td>
+</tr>
+<tr>
+<td>E5 (Wang et al., 2022)</td>
+<td>110M–560M</td>
+<td>768–1024</td>
+<td>Trained on large-scale text pairs</td>
+</tr>
+<tr>
+<td>GTE (Li et al., 2023)</td>
+<td>110M–7B</td>
+<td>768–3584</td>
+<td>Includes LLM-based variants</td>
+</tr>
+<tr>
+<td>BGE (Zhang et al., 2023)</td>
+<td>110M–7B</td>
+<td>768–4096</td>
+<td>Strong MTEB performer</td>
+</tr>
+<tr>
+<td>Nomic Embed</td>
+<td>137M</td>
+<td>768</td>
+<td>Fully open, MTEB competitive</td>
+</tr>
+</tbody>
+</table>
+<h3 id="training-data-pipelines">Training Data Pipelines<a class="headerlink" href="#training-data-pipelines" title="Permanent link">¶</a></h3>
+<p>Modern embedding models are trained in two or three stages:</p>
+<ol>
+<li><strong>Weakly supervised pre-finetuning</strong> on hundreds of millions of (query, passage) pairs from heterogeneous web sources: QA pairs, title-body pairs from web pages, Reddit question-reply threads, etc.</li>
+<li><strong>Supervised fine-tuning</strong> on curated high-quality datasets (Natural Questions, MS MARCO, SNLI, STSb, etc.) with hard negatives.</li>
+<li><strong>Task-specific fine-tuning</strong> for specialized domains (legal, biomedical, code).</li>
+</ol>
+<p>The <code>sentence-transformers</code> library (Reimers &amp; Gurevych, Hugging Face) is the practical starting point for both training and inference.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">sentence_transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">SentenceTransformer</span><span class="p">,</span> <span class="n">InputExample</span><span class="p">,</span> <span class="n">losses</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.data</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataLoader</span>
+
+<span class="c1"># Load a pre-trained backbone (already fine-tuned for sentence embedding)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">SentenceTransformer</span><span class="p">(</span><span class="s2">&quot;BAAI/bge-small-en-v1.5&quot;</span><span class="p">)</span>
+
+<span class="c1"># Encode a batch of texts -- returns numpy array by default</span>
+<span class="n">texts</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;What is the capital of France?&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Paris is the capital and most populous city of France.&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;The Eiffel Tower is located in Paris.&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+<span class="n">embeddings</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">normalize_embeddings</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Embedding shape: </span><span class="si">{</span><span class="n">embeddings</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># (3, 384)</span>
+
+<span class="c1"># Cosine similarity between query and each document</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="n">query_emb</span> <span class="o">=</span> <span class="n">embeddings</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<span class="n">doc_embs</span>  <span class="o">=</span> <span class="n">embeddings</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+<span class="n">scores</span> <span class="o">=</span> <span class="n">doc_embs</span> <span class="o">@</span> <span class="n">query_emb</span>  <span class="c1"># dot product of L2-normalized = cosine sim</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Scores: </span><span class="si">{</span><span class="n">scores</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>     <span class="c1"># e.g. [0.71, 0.58] — first doc more relevant</span>
+</code></pre></div>
+<h2 id="matryoshka-representation-learning-mrl">Matryoshka Representation Learning (MRL)<a class="headerlink" href="#matryoshka-representation-learning-mrl" title="Permanent link">¶</a></h2>
+<p>A practical limitation of fixed-dimension embeddings: the 1024-dim model is always 1024-dim, even when you want to store billions of vectors at lower cost or serve low-latency queries that do not need full precision.</p>
+<p><strong>Matryoshka Representation Learning</strong> (Kusupati et al., 2022, <em>NeurIPS</em>) trains a single model to produce embeddings that are useful at <em>multiple</em> prefix dimensions simultaneously. Like Russian nesting dolls, the first 64 dimensions alone form a useful embedding, as do the first 128, 256, 512, and 1024.</p>
+<h3 id="how-mrl-training-works">How MRL Training Works<a class="headerlink" href="#how-mrl-training-works" title="Permanent link">¶</a></h3>
+<p>Add a loss term for each dimensionality granularity in a set <span class="arithmatex">\(\mathcal{M} = \{32, 64, 128, 256, 512, d\}\)</span>:</p>
+<div class="arithmatex">\[
+\mathcal{L}_{\text{MRL}} = \sum_{m \in \mathcal{M}} \lambda_m \cdot \mathcal{L}_{\text{InfoNCE}}\!\left(\mathbf{e}_{:m},\, \mathbf{e}'_{:m}\right)
+\]</div>
+<p>where <span class="arithmatex">\(\mathbf{e}_{:m}\)</span> denotes the first <span class="arithmatex">\(m\)</span> dimensions of the full embedding and <span class="arithmatex">\(\lambda_m\)</span> are weighting coefficients (often uniform). The total loss is the weighted sum of contrastive losses at each granularity; gradients flow through all prefix slices simultaneously.</p>
+<p>The effect: the first few dimensions encode the most discriminative signal; later dimensions refine it. At test time you can truncate to any supported size and re-normalize.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">matryoshka_infonce_loss</span><span class="p">(</span>
+    <span class="n">query_emb</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>      <span class="c1"># (B, D) full dimension</span>
+    <span class="n">doc_emb</span><span class="p">:</span>   <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>      <span class="c1"># (B, D) full dimension</span>
+    <span class="n">dims</span><span class="p">:</span>      <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>  <span class="c1"># prefix dimensions to train</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">,</span>
+    <span class="n">weights</span><span class="p">:</span>   <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Matryoshka contrastive loss: InfoNCE at each prefix dimension.</span>
+<span class="sd">    Gradients flow through all prefix slices simultaneously.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">D</span> <span class="o">=</span> <span class="n">query_emb</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">dims</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">dims</span> <span class="o">=</span> <span class="p">[</span><span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="n">D</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">weights</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">weights</span> <span class="o">=</span> <span class="p">[</span><span class="mf">1.0</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">dims</span><span class="p">)</span>
+
+    <span class="n">total_loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">query_emb</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">dim</span><span class="p">,</span> <span class="n">w</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">dims</span><span class="p">,</span> <span class="n">weights</span><span class="p">):</span>
+        <span class="c1"># Slice to prefix dimension and re-normalize</span>
+        <span class="n">q_slice</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">query_emb</span><span class="p">[:,</span> <span class="p">:</span><span class="n">dim</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">d_slice</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">doc_emb</span><span class="p">[:,</span> <span class="p">:</span><span class="n">dim</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># Standard InfoNCE at this granularity</span>
+        <span class="n">loss_at_dim</span> <span class="o">=</span> <span class="n">infonce_loss</span><span class="p">(</span><span class="n">q_slice</span><span class="p">,</span> <span class="n">d_slice</span><span class="p">,</span> <span class="n">temperature</span><span class="p">)</span>
+        <span class="n">total_loss</span> <span class="o">=</span> <span class="n">total_loss</span> <span class="o">+</span> <span class="n">w</span> <span class="o">*</span> <span class="n">loss_at_dim</span>
+
+    <span class="k">return</span> <span class="n">total_loss</span> <span class="o">/</span> <span class="nb">sum</span><span class="p">(</span><span class="n">weights</span><span class="p">)</span>
+</code></pre></div>
+<p>MRL is now standard in leading open embedding models. OpenAI&rsquo;s text-embedding-3 family supports variable dimensions via MRL-style training. BGE-M3 (Chen et al., 2024) combines MRL with multi-lingual and multi-granularity retrieval.</p>
+<h2 id="instruction-following-embeddings">Instruction-Following Embeddings<a class="headerlink" href="#instruction-following-embeddings" title="Permanent link">¶</a></h2>
+<p>Generic embedding models treat every query identically. But &ldquo;software developer&rdquo; is relevant to both a job-listing query and a biography question — the embedding should reflect the task context. <strong>Instruction embeddings</strong> (E5-mistral-7b-instruct, Instructor, GTE-Qwen) prepend a natural-language task instruction to the query at inference time:</p>
+<div class="highlight"><pre><span></span><code>Represent the following sentence for searching relevant passages: &lt;query&gt;
+Represent this sentence for retrieval:
+  Task: Given a question, find the most relevant academic paper.
+  Input: &lt;query&gt;
+</code></pre></div>
+<p>The instruction is tokenized and processed by the encoder together with the query; the pool operation then attends over both. Because the transformer is causal or uses a prefix mask, the instruction&rsquo;s context bleeds into the query representation.</p>
+<p>This is especially powerful for LLM-based embedders. Models like E5-mistral-7b-instruct (Wang et al., 2023) use a decoder-only LLM backbone and use the last-token representation instead of mean pooling (since left-to-right autoregressive models produce context-rich representations at the final token, not the first).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">sentence_transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">SentenceTransformer</span>
+
+<span class="c1"># Instruction-aware embedding model</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">SentenceTransformer</span><span class="p">(</span><span class="s2">&quot;intfloat/e5-large-v2&quot;</span><span class="p">)</span>
+
+<span class="c1"># Prefix &#39;query:&#39; vs &#39;passage:&#39; tells the model the role</span>
+<span class="n">queries</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;query: How do transformers handle long sequences?&quot;</span><span class="p">]</span>
+<span class="n">docs</span>    <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;passage: Transformers scale quadratically with sequence length in attention.&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;passage: The history of the Transformer architecture dates to 2017.&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="n">q_emb</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">queries</span><span class="p">,</span> <span class="n">normalize_embeddings</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">d_emb</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">docs</span><span class="p">,</span>    <span class="n">normalize_embeddings</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">scores</span> <span class="o">=</span> <span class="n">q_emb</span> <span class="o">@</span> <span class="n">d_emb</span><span class="o">.</span><span class="n">T</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>  <span class="c1"># [[0.73, 0.41]] — first document correctly ranked higher</span>
+</code></pre></div>
+<p>The instruction mechanism gives the same frozen backbone very different behaviors for different retrieval tasks without any fine-tuning, a form of lightweight task specification.</p>
+<h2 id="evaluation-mteb">Evaluation: MTEB<a class="headerlink" href="#evaluation-mteb" title="Permanent link">¶</a></h2>
+<p>The <strong>Massive Text Embedding Benchmark</strong> (MTEB, Muennighoff et al., 2023) is the standard leaderboard for embedding model evaluation. It covers 58 datasets across 8 task types:</p>
+<table>
+<thead>
+<tr>
+<th>Task type</th>
+<th>Example datasets</th>
+<th>Metric</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Retrieval</td>
+<td>BEIR (MS MARCO, NQ, HotpotQA, …)</td>
+<td>nDCG@10</td>
+</tr>
+<tr>
+<td>Clustering</td>
+<td>ArXiv topic clustering</td>
+<td>V-measure</td>
+</tr>
+<tr>
+<td>Classification</td>
+<td>Amazon review sentiment</td>
+<td>Accuracy</td>
+</tr>
+<tr>
+<td>Pair classification</td>
+<td>QQP duplicate detection</td>
+<td>AP</td>
+</tr>
+<tr>
+<td>Reranking</td>
+<td>AskUbuntu, StackExchange</td>
+<td>MAP</td>
+</tr>
+<tr>
+<td>STS</td>
+<td>STS12-16, STSBenchmark</td>
+<td>Spearman ρ</td>
+</tr>
+<tr>
+<td>Summarization</td>
+<td>SummEval</td>
+<td>Spearman ρ</td>
+</tr>
+<tr>
+<td>Bitext mining</td>
+<td>Tatoeba (multilingual)</td>
+<td>F1</td>
+</tr>
+</tbody>
+</table>
+<p>MTEB&rsquo;s retrieval sub-tasks (the BEIR benchmark, Thakur et al., 2021) are especially important for RAG use cases. Models are evaluated <strong>zero-shot</strong> on held-out domains, measuring generalization rather than in-distribution performance.</p>
+<h3 id="running-mteb-evaluation">Running MTEB Evaluation<a class="headerlink" href="#running-mteb-evaluation" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>mteb
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">mteb</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sentence_transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">SentenceTransformer</span>
+
+<span class="c1"># Load the model as an MTEB-compatible encoder</span>
+<span class="n">model_name</span> <span class="o">=</span> <span class="s2">&quot;BAAI/bge-small-en-v1.5&quot;</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">mteb</span><span class="o">.</span><span class="n">get_model</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
+
+<span class="c1"># Run a single retrieval task</span>
+<span class="n">tasks</span> <span class="o">=</span> <span class="n">mteb</span><span class="o">.</span><span class="n">get_tasks</span><span class="p">(</span><span class="n">tasks</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;NFCorpus&quot;</span><span class="p">])</span>
+<span class="n">evaluation</span> <span class="o">=</span> <span class="n">mteb</span><span class="o">.</span><span class="n">MTEB</span><span class="p">(</span><span class="n">tasks</span><span class="o">=</span><span class="n">tasks</span><span class="p">)</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">evaluation</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">output_folder</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;results/</span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># results contains nDCG@10 and other metrics per task</span>
+</code></pre></div>
+<p>For a thorough evaluation, run all 58 tasks and report the mean MTEB score. However, for RAG system design, prioritize the BEIR retrieval subset because it directly predicts retrieval quality in your pipeline. Semantic textual similarity (STS) tasks measure something slightly different — fine-grained similarity rather than ranking relevance.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A candidate says &ldquo;I&rsquo;ll just use cosine similarity on BERT embeddings directly for retrieval.&rdquo; What problems do you anticipate, and how would you fix them?</p>
+<p><strong>A:</strong> Raw BERT embeddings have two major problems for retrieval. First, they are <strong>anisotropic</strong>: without contrastive fine-tuning, embeddings cluster in a narrow cone of the embedding space rather than being uniformly distributed. This means cosine similarity between arbitrary sentences is high (often 0.6–0.9) even for unrelated pairs, making the scores uninformative for ranking. Second, BERT&rsquo;s <code>[CLS]</code> token was trained with masked language modeling and next-sentence prediction — neither objective directly encourages semantically similar sentences to be close in vector space.</p>
+<p>The fix is to fine-tune with a contrastive objective (InfoNCE / NTXent) on labeled (query, positive) pairs, which directly trains the similarity space. Models like SBERT, BGE, E5, and GTE do this. After fine-tuning, the embedding space becomes roughly isotropic (embeddings spread across the hypersphere), and similarity scores are meaningful and well-calibrated. In production you would also use a model with MRL support so you can reduce dimensionality to balance cost and quality.</p>
+</div>
+<h2 id="practical-training-recipe">Practical Training Recipe<a class="headerlink" href="#practical-training-recipe" title="Permanent link">¶</a></h2>
+<p>Here is a concrete end-to-end training loop for a fine-tuned bi-encoder, illustrating all the moving pieces:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.data</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataLoader</span><span class="p">,</span> <span class="n">Dataset</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoTokenizer</span><span class="p">,</span> <span class="n">AutoModel</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">BiEncoderConfig</span><span class="p">:</span>
+    <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;BAAI/bge-base-en-v1.5&quot;</span>
+    <span class="n">max_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span>
+    <span class="n">embedding_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">768</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span>
+    <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">64</span>
+    <span class="n">learning_rate</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2e-5</span>
+    <span class="n">warmup_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span>
+    <span class="n">matryoshka_dims</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">list</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># e.g. [128, 256, 768]</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">EmbeddingModel</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">BiEncoderConfig</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">encoder</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">model_name</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">model_name</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">texts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Tokenize, encode, mean-pool, and L2-normalize a list of texts.&quot;&quot;&quot;</span>
+        <span class="n">encoded</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span>
+            <span class="n">texts</span><span class="p">,</span>
+            <span class="n">max_length</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">max_length</span><span class="p">,</span>
+            <span class="n">padding</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">truncation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">,</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="nb">next</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># Forward pass through the transformer backbone</span>
+        <span class="n">outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">encoder</span><span class="p">(</span><span class="o">**</span><span class="n">encoded</span><span class="p">)</span>
+
+        <span class="c1"># Mean pool over token dimension (excluding padding)</span>
+        <span class="n">embeddings</span> <span class="o">=</span> <span class="n">mean_pool</span><span class="p">(</span><span class="n">outputs</span><span class="o">.</span><span class="n">last_hidden_state</span><span class="p">,</span> <span class="n">encoded</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">])</span>
+
+        <span class="c1"># L2 normalize</span>
+        <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">embeddings</span><span class="p">,</span> <span class="n">p</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">queries</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">docs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Compute InfoNCE loss for a batch of (query, doc) pairs.&quot;&quot;&quot;</span>
+        <span class="n">q_emb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">queries</span><span class="p">)</span>
+        <span class="n">d_emb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">docs</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">matryoshka_dims</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">matryoshka_infonce_loss</span><span class="p">(</span>
+                <span class="n">q_emb</span><span class="p">,</span> <span class="n">d_emb</span><span class="p">,</span>
+                <span class="n">dims</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">matryoshka_dims</span><span class="p">,</span>
+                <span class="n">temperature</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">temperature</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">infonce_loss</span><span class="p">(</span><span class="n">q_emb</span><span class="p">,</span> <span class="n">d_emb</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">temperature</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PairDataset</span><span class="p">(</span><span class="n">Dataset</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Simple dataset of (query, positive_document) string pairs.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pairs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pairs</span> <span class="o">=</span> <span class="n">pairs</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pairs</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">idx</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">pairs</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">collate_fn</span><span class="p">(</span><span class="n">batch</span><span class="p">):</span>
+    <span class="n">queries</span><span class="p">,</span> <span class="n">docs</span> <span class="o">=</span> <span class="nb">zip</span><span class="p">(</span><span class="o">*</span><span class="n">batch</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">queries</span><span class="p">),</span> <span class="nb">list</span><span class="p">(</span><span class="n">docs</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">train_one_epoch</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">loader</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">scheduler</span><span class="p">,</span> <span class="n">device</span><span class="p">):</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+    <span class="n">total_loss</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="k">for</span> <span class="n">step</span><span class="p">,</span> <span class="p">(</span><span class="n">queries</span><span class="p">,</span> <span class="n">docs</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">loader</span><span class="p">):</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">queries</span><span class="p">,</span> <span class="n">docs</span><span class="p">)</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+        <span class="c1"># Gradient clipping prevents spikes, especially important with</span>
+        <span class="c1"># large batches and small temperatures</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">max_norm</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+
+        <span class="n">total_loss</span> <span class="o">+=</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="mi">100</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Step </span><span class="si">{</span><span class="n">step</span><span class="si">:</span><span class="s2">5d</span><span class="si">}</span><span class="s2"> | loss </span><span class="si">{</span><span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> | &quot;</span>
+                  <span class="sa">f</span><span class="s2">&quot;lr </span><span class="si">{</span><span class="n">scheduler</span><span class="o">.</span><span class="n">get_last_lr</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">total_loss</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">loader</span><span class="p">)</span>
+
+
+<span class="c1"># Example usage (pseudo-code, requires actual data and GPU):</span>
+<span class="c1"># config = BiEncoderConfig(matryoshka_dims=[128, 256, 768])</span>
+<span class="c1"># model = EmbeddingModel(config).to(&quot;cuda&quot;)</span>
+<span class="c1"># dataset = PairDataset(my_training_pairs)</span>
+<span class="c1"># loader = DataLoader(dataset, batch_size=config.batch_size,</span>
+<span class="c1">#                     shuffle=True, collate_fn=collate_fn)</span>
+<span class="c1"># optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)</span>
+<span class="c1"># scheduler = get_linear_schedule_with_warmup(optimizer, config.warmup_steps, total_steps)</span>
+</code></pre></div>
+<h3 id="key-training-decisions">Key Training Decisions<a class="headerlink" href="#key-training-decisions" title="Permanent link">¶</a></h3>
+<p><strong>Gradient caching.</strong> With large batch sizes, storing all intermediate activations for both query and document towers can overflow GPU memory. Gradient caching (GradCache, Gao et al.) computes embeddings in smaller sub-batches for the forward pass, then accumulates gradients in a second pass — achieving the statistical effect of a large batch at lower memory cost.</p>
+<p><strong>Multi-GPU synchronization.</strong> With distributed training, in-batch negatives from other GPUs can be gathered via all-gather before computing the loss, effectively multiplying the batch size by the number of GPUs with no per-GPU memory increase. This &ldquo;all-gather trick&rdquo; is used in SimCLR, CLIP, and DPR follow-ups.</p>
+<p><strong>Temperature as a learned parameter.</strong> CLIP (Radford et al., 2021) learned the log-temperature as a scalar parameter, allowing the model to adapt the sharpness of its similarity distribution during training. This avoids manual tuning and is increasingly common.</p>
+<h2 id="bridging-to-rag">Bridging to RAG<a class="headerlink" href="#bridging-to-rag" title="Permanent link">¶</a></h2>
+<p>Dense embeddings are the front door of every Retrieval-Augmented Generation (RAG) system. The full pipeline:</p>
+<figure class="viz" id="fig-emb-rag-pipeline">
+<button class="viz-replay" type="button">&#x21bb; replay</button>
+<svg viewBox="0 0 480 510" role="img" aria-label="Animated RAG pipeline: a user query flows through an embedding model, ANN index, optional cross-encoder reranker, LLM context assembly, and LLM generation to produce a response.">
+  <defs>
+    <marker id="rag-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#78716c)"/>
+    </marker>
+  </defs>
+
+  <style>
+    #fig-emb-rag-pipeline text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#1c1917); }
+    #fig-emb-rag-pipeline .lbl  { font: 600 13px var(--sans,sans-serif); fill: var(--ink-soft,#1c1917); }
+    #fig-emb-rag-pipeline .note { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#78716c); }
+    #fig-emb-rag-pipeline .ann  { font: 500 10px var(--mono,monospace); fill: var(--muted,#78716c); }
+
+    /* per-stage highlight: momentarily brighten stroke as the marker passes */
+    @keyframes hl-s1 {
+      0%,100% { stroke: var(--accent,#6366f1); stroke-width:1.4; }
+      8%,92%  { stroke: var(--border-2,#d6d3d1); stroke-width:1.4; }
+    }
+    @keyframes hl-s2 {
+      0%,13%,100% { stroke: var(--border-2,#d6d3d1); stroke-width:1.4; }
+      18%,22%     { stroke: var(--accent,#6366f1); stroke-width:2.2; }
+    }
+    @keyframes hl-s3 {
+      0%,31%,100% { stroke: var(--border-2,#d6d3d1); stroke-width:1.4; }
+      36%,40%     { stroke: var(--accent,#6366f1); stroke-width:2.2; }
+    }
+    @keyframes hl-s4 {
+      0%,49%,100% { stroke: var(--border-2,#d6d3d1); stroke-width:1.4; }
+      54%,58%     { stroke: var(--accent,#6366f1); stroke-width:2.2; }
+    }
+    @keyframes hl-s5 {
+      0%,65%,100% { stroke: var(--border-2,#d6d3d1); stroke-width:1.4; }
+      70%,74%     { stroke: var(--accent,#6366f1); stroke-width:2.2; }
+    }
+    @keyframes hl-s6 {
+      0%,81%,100% { stroke: var(--border-2,#d6d3d1); stroke-width:1.4; }
+      86%,90%     { stroke: var(--accent,#6366f1); stroke-width:2.2; }
+    }
+
+    #fig-emb-rag-pipeline .s1-box { animation: hl-s1 6s ease-in-out 0.3s infinite; }
+    #fig-emb-rag-pipeline .s2-box { animation: hl-s2 6s ease-in-out 0.3s infinite; }
+    #fig-emb-rag-pipeline .s3-box { animation: hl-s3 6s ease-in-out 0.3s infinite; }
+    #fig-emb-rag-pipeline .s4-box { animation: hl-s4 6s ease-in-out 0.3s infinite; }
+    #fig-emb-rag-pipeline .s5-box { animation: hl-s5 6s ease-in-out 0.3s infinite; }
+    #fig-emb-rag-pipeline .s6-box { animation: hl-s6 6s ease-in-out 0.3s infinite; }
+
+    /* traveling dot */
+    @keyframes rag-travel {
+      0%   { transform: translateY(0px);   opacity: 0; }
+      5%   { opacity: 1; }
+      14%  { transform: translateY(68px);  opacity: 1; }
+      19%  { transform: translateY(130px); opacity: 1; }
+      35%  { transform: translateY(196px); opacity: 1; }
+      50%  { transform: translateY(272px); opacity: 1; }
+      66%  { transform: translateY(352px); opacity: 1; }
+      82%  { transform: translateY(432px); opacity: 1; }
+      93%  { transform: translateY(500px); opacity: 1; }
+      95%  { transform: translateY(500px); opacity: 0; }
+      100% { transform: translateY(0px);   opacity: 0; }
+    }
+
+    #fig-emb-rag-pipeline #rag-dot {
+      animation: rag-travel 6s ease-in-out 0.3s infinite;
+      cx: 240; cy: 24;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #fig-emb-rag-pipeline .s1-box,
+      #fig-emb-rag-pipeline .s2-box,
+      #fig-emb-rag-pipeline .s3-box,
+      #fig-emb-rag-pipeline .s4-box,
+      #fig-emb-rag-pipeline .s5-box,
+      #fig-emb-rag-pipeline .s6-box { animation: none !important; stroke: var(--border-2,#d6d3d1); stroke-width:1.4; }
+      #fig-emb-rag-pipeline #rag-dot { display: none; }
+    }
+  </style>
+
+
+  <rect x="148" y="16" width="184" height="36" rx="18" class="s1-box" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+  <text x="240" y="39" text-anchor="middle" class="lbl">User Query</text>
+
+
+  <line x1="240" y1="52" x2="240" y2="78" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#rag-arrow)"/>
+
+
+  <rect x="140" y="78" width="200" height="40" rx="8" class="s2-box" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="240" y="103" text-anchor="middle" class="lbl">[Embedding Model]</text>
+
+
+  <line x1="240" y1="118" x2="240" y2="148" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#rag-arrow)"/>
+  <text x="350" y="136" text-anchor="middle" class="ann">e_q in R^d</text>
+
+
+  <rect x="70" y="148" width="340" height="40" rx="8" class="s3-box" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="240" y="173" text-anchor="middle" class="lbl">[ANN Index (FAISS / Milvus / Qdrant)]</text>
+
+
+  <line x1="240" y1="188" x2="240" y2="218" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#rag-arrow)"/>
+  <text x="350" y="207" text-anchor="middle" class="ann">top-k IDs + scores</text>
+
+
+  <rect x="90" y="218" width="300" height="64" rx="8" class="s4-box" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4" stroke-dasharray="6 3"/>
+  <text x="240" y="243" text-anchor="middle" class="lbl">[Optional Reranker (Cross-Encoder)]</text>
+  <text x="240" y="261" text-anchor="middle" class="note" style="font-style:italic">dashed box = optional step</text>
+
+
+  <line x1="240" y1="282" x2="240" y2="306" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#rag-arrow)"/>
+  <text x="350" y="296" text-anchor="middle" class="ann">reordered top-k</text>
+
+
+  <rect x="100" y="306" width="280" height="62" rx="8" class="s5-box" fill="var(--surface,#f5f5f4)" stroke="var(--border-2,#d6d3d1)" stroke-width="1.4"/>
+  <text x="240" y="328" text-anchor="middle" class="lbl">[LLM Context Assembly]</text>
+  <text x="240" y="347" text-anchor="middle" class="note">prompt = system + retrieved_docs</text>
+  <text x="240" y="361" text-anchor="middle" class="note">+ user_query</text>
+
+
+  <line x1="240" y1="368" x2="240" y2="396" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#rag-arrow)"/>
+  <text x="350" y="384" text-anchor="middle" class="ann">assembled prompt</text>
+
+
+  <rect x="130" y="396" width="220" height="40" rx="8" class="s6-box" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="240" y="421" text-anchor="middle" class="lbl">[LLM Generation]</text>
+
+
+  <line x1="240" y1="436" x2="240" y2="462" stroke="var(--ink-soft,#78716c)" stroke-width="1.4" marker-end="url(#rag-arrow)"/>
+
+
+  <rect x="148" y="462" width="184" height="36" rx="18" fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="240" y="485" text-anchor="middle" style="font:700 13px var(--sans,sans-serif); fill:#ffffff;">Response</text>
+
+
+  <circle id="rag-dot" r="6" fill="var(--accent,#6366f1)" opacity="0"/>
+</svg>
+<figcaption><b>The RAG pipeline converts a user query into a grounded response through five sequential stages.</b> The query is embedded into a dense vector (<code>e_q in R^d</code>), an ANN index retrieves the top-k nearest document chunks, an optional cross-encoder reranker reorders them, the context assembler formats them into a prompt, and the LLM generates the final answer. The animated marker traces the data flow in order; the dashed reranker box signals an optional component.</figcaption>
+</figure>
+
+<p>Several design decisions at the embedding layer propagate through the entire system:</p>
+<p><strong>Asymmetric query/document length.</strong> Queries are short (5–20 tokens); documents are long (100–500 tokens). Some models use separate query and document encoders (DPR-style) or a single encoder with different prefix instructions (E5/BGE). Matching the encoder&rsquo;s training distribution to your actual query and document lengths matters.</p>
+<p><strong>Chunking policy.</strong> A document is split into chunks before embedding. The chunk size (128–512 tokens) and overlap determine how much context each embedded unit contains. This is the first point where RAG quality is determined — see <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a>.</p>
+<p><strong>Index refresh latency.</strong> When new documents arrive, their embeddings must be computed and inserted into the ANN index. With asynchronous pipelines, there is a window where new content is not yet retrievable. High-throughput embedding inference on GPU batches can reduce this lag to seconds.</p>
+<p><strong>Embedding drift.</strong> If the embedding model is updated (e.g., fine-tuned on domain data), all stored document embeddings become stale and must be recomputed. This &ldquo;re-indexing&rdquo; cost — on the order of millions of API calls or hours of GPU time — is a real operational concern in production RAG.</p>
+<p><strong>Token budget vs. retrieved quality.</strong> Retrieving <span class="arithmatex">\(k=20\)</span> chunks provides more coverage but costs more LLM context tokens. The embedding model&rsquo;s precision (ratio of relevant chunks among top-<span class="arithmatex">\(k\)</span>) directly determines whether context budget is spent on signal or noise. LLMs with long-context windows (see <a href="../03-pretraining/13-long-context-pretraining.html">Long-Context Pretraining &amp; Context Extension</a>) relax this tension but do not eliminate it.</p>
+<p>For the next stage — indexing these embeddings and querying them efficiently at scale — see <a href="../09-rag-retrieval/02-vector-databases-ann.html">Vector Databases &amp; Approximate Nearest Neighbor Search</a>. For the full RAG architecture, see <a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: using a general embedding model on a specialized domain</p>
+<p>A general model trained on web text will embed medical or legal text into a space not calibrated for clinical or statutory similarity. The nearest neighbors in the ANN index will be superficially related but factually irrelevant. Always evaluate your embedding model on a small held-out set from your actual domain before committing to it. If performance is poor, fine-tune on domain-specific (query, passage) pairs — even a few thousand pairs of domain examples can significantly improve recall.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: normalize before storing</p>
+<p>Always L2-normalize embeddings before inserting them into your vector database. Then use dot-product distance (IP) rather than cosine distance — they are equivalent for normalized vectors, but IP is faster in most ANN libraries (FAISS IVFFlat, Qdrant, Weaviate). Storing un-normalized vectors and using cosine requires an extra normalization step at query time and often uses a slower code path internally.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Dense bi-encoders embed queries and documents independently; cosine similarity at retrieval time is fast and pre-computable for all documents.</li>
+<li>The InfoNCE (NT-Xent) loss treats all other documents in the mini-batch as negatives; a temperature <span class="arithmatex">\(\tau \approx 0.05\)</span> works well for text retrieval.</li>
+<li>Hard negatives — BM25-mined, ANN-mined, or cross-encoder-filtered — are essential to push past the plateau achieved with random in-batch negatives.</li>
+<li>Mean pooling over non-padding tokens consistently outperforms CLS pooling for sentence-level tasks; L2-normalize before computing cosine similarity.</li>
+<li>Matryoshka Representation Learning trains one model to produce useful embeddings at every prefix dimension, enabling adaptive quality/cost trade-offs at inference time.</li>
+<li>Instruction embeddings prepend task descriptions to queries; LLM-based encoders (E5-mistral, GTE-Qwen) yield strong zero-shot generalization by leveraging decoder-only backbone representations.</li>
+<li>MTEB is the standard benchmark; for RAG use cases, prioritize the BEIR retrieval sub-tasks (nDCG@10 on MS MARCO, NQ, HotpotQA, etc.).</li>
+<li>Embedding model drift after fine-tuning requires full re-indexing of stored document embeddings — plan for this operational cost.</li>
+<li>Hybrid search (dense + BM25) consistently outperforms either method alone; use embeddings as one signal, not the only signal.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Dense text embeddings have matured from BERT fine-tuning into multi-billion-parameter LLM-based encoders that top the MTEB leaderboard; Matryoshka training and instruction-aware prefixes are now industry standard, and multilingual 100-language models are the default choice for new RAG systems.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1908.10084">Reimers &amp; Gurevych, <em>Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks</em> (2019)</a> — established the bi-encoder fine-tuning paradigm that all modern embedding models follow.</li>
+<li><a href="https://arxiv.org/abs/2212.03533">Wang et al., <em>Text Embeddings by Weakly-Supervised Contrastive Pre-training</em> (E5, 2022)</a> — showed that large-scale weakly-supervised CCPairs training yields the first dense model to beat BM25 on BEIR without labeled data.</li>
+<li><a href="https://arxiv.org/abs/2205.13147">Kusupati et al., <em>Matryoshka Representation Learning</em> (NeurIPS 2022)</a> — introduced nested prefix-dimension training, now the standard technique for adaptive-cost embeddings.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2402.03216">Chen et al., <em>BGE M3-Embedding: Multi-Lingual, Multi-Functionality, Multi-Granularity Text Embeddings Through Self-Knowledge Distillation</em> (2024)</a> — single model supporting dense, sparse, and multi-vector retrieval in 100+ languages with up to 8 192-token inputs.</li>
+<li><a href="https://arxiv.org/abs/2404.05961">BehnamGhader et al., <em>LLM2Vec: Large Language Models Are Secretly Powerful Text Encoders</em> (COLM 2024)</a> — converts decoder-only LLMs into strong text encoders via bidirectional attention + masked next-token prediction, reaching SOTA on MTEB using only public data.</li>
+<li><a href="https://arxiv.org/abs/2405.17428">Lee et al., <em>NV-Embed: Improved Techniques for Training LLMs as Generalist Embedding Models</em> (ICLR 2025 Spotlight)</a> — latent-attention pooling and two-stage training bring Llama-3-based embeddings to #1 on MTEB retrieval.</li>
+<li><a href="https://arxiv.org/abs/2210.07316">Muennighoff et al., <em>MTEB: Massive Text Embedding Benchmark</em> (EACL 2023)</a> — the 58-dataset, 8-task benchmark that is now the standard evaluation suite for any embedding model.</li>
+<li><a href="https://arxiv.org/abs/2104.08663">Thakur et al., <em>BEIR: A Heterogenous Benchmark for Zero-shot Evaluation of Information Retrieval Models</em> (NeurIPS 2021)</a> — 18-domain zero-shot retrieval benchmark that exposed brittle generalization in dense models and remains the primary RAG-relevant sub-benchmark inside MTEB.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/UKPLab/sentence-transformers">UKPLab/sentence-transformers</a> — the canonical Python library for training and serving bi-encoder embedding models, maintained by Hugging Face.</li>
+<li><a href="https://github.com/FlagOpen/FlagEmbedding">FlagOpen/FlagEmbedding</a> — BAAI&rsquo;s one-stop toolkit for BGE models, covering fine-tuning, hard-negative mining, reranking, and RAG integration.</li>
+<li><a href="https://github.com/embeddings-benchmark/mteb">embeddings-benchmark/mteb</a> — the official MTEB evaluation library; run any model against all 58 tasks with a single Python call.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://huggingface.co/spaces/mteb/leaderboard">MTEB Leaderboard (Hugging Face)</a> — live rankings of 1 000+ embedding models across MTEB tasks; filter by language, task type, and model size.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Reimers &amp; Gurevych, <strong>Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks</strong>, EMNLP 2019 — the foundational bi-encoder fine-tuning paper.</li>
+<li>Karpukhin et al., <strong>Dense Passage Retrieval for Open-Domain Question Answering</strong> (DPR), EMNLP 2020 — established in-batch negative training for retrieval.</li>
+<li>Xiong et al., <strong>Approximate Nearest Neighbor Negative Contrastive Estimation for Dense Text Retrieval</strong> (ANCE), ICLR 2021 — ANN-mined hard negatives.</li>
+<li>Gao et al., <strong>Simcse: Simple Contrastive Learning of Sentence Embeddings</strong>, EMNLP 2021 — dropout as a data augmentation for contrastive pre-training.</li>
+<li>Thakur et al., <strong>BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models</strong>, NeurIPS 2021 — the standard retrieval evaluation suite.</li>
+<li>Muennighoff et al., <strong>MTEB: Massive Text Embedding Benchmark</strong>, EACL 2023 — comprehensive multi-task embedding leaderboard.</li>
+<li>Kusupati et al., <strong>Matryoshka Representation Learning</strong>, NeurIPS 2022 — multi-granularity embedding training.</li>
+<li>Wang et al., <strong>Text Embeddings by Weakly-Supervised Contrastive Pre-training</strong> (E5), 2022 — large-scale weakly supervised bi-encoder pre-training.</li>
+<li><code>sentence-transformers</code> library (Reimers, Hugging Face) — the practical go-to for embedding model training and inference.</li>
+<li><code>MTEB</code> Python package (Hugging Face) — easy reproducible evaluation of any embedding model.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="../08-agents-harness/09-prompt-engineering.html"><span class="pn-label">← Previous</span><span class="pn-title">Prompt Engineering as Engineering</span></a>
+<a class="next" href="02-vector-databases-ann.html"><span class="pn-label">Next →</span><span class="pn-title">Vector Databases &amp; Approximate Nearest Neighbor Search</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-dense-representations">Why Dense Representations?</a></li>
+<li class="toc-l3"><a href="#the-bi-encoder-architecture">The Bi-Encoder Architecture</a></li>
+<li class="toc-l2"><a href="#from-token-representations-to-sentence-embeddings-pooling">From Token Representations to Sentence Embeddings: Pooling</a></li>
+<li class="toc-l3"><a href="#cls-pooling">CLS Pooling</a></li>
+<li class="toc-l3"><a href="#mean-pooling">Mean Pooling</a></li>
+<li class="toc-l3"><a href="#max-pooling-and-weighted-pooling">Max Pooling and Weighted Pooling</a></li>
+<li class="toc-l2"><a href="#contrastive-learning-the-infonce-objective">Contrastive Learning &amp;amp; the InfoNCE Objective</a></li>
+<li class="toc-l3"><a href="#infonce-derivation">InfoNCE Derivation</a></li>
+<li class="toc-l3"><a href="#full-in-batch-negative-loss-implementation">Full In-Batch Negative Loss Implementation</a></li>
+<li class="toc-l2"><a href="#hard-negatives-going-beyond-in-batch-sampling">Hard Negatives: Going Beyond In-Batch Sampling</a></li>
+<li class="toc-l3"><a href="#mining-hard-negatives">Mining Hard Negatives</a></li>
+<li class="toc-l3"><a href="#triplet-loss-vs-infonce">Triplet Loss vs. InfoNCE</a></li>
+<li class="toc-l3"><a href="#gnneg-and-denoised-negatives">GNNeg and Denoised Negatives</a></li>
+<li class="toc-l2"><a href="#architecture-sentence-transformers-and-the-bert-based-bi-encoder">Architecture: Sentence-Transformers and the BERT-Based Bi-Encoder</a></li>
+<li class="toc-l3"><a href="#training-data-pipelines">Training Data Pipelines</a></li>
+<li class="toc-l2"><a href="#matryoshka-representation-learning-mrl">Matryoshka Representation Learning (MRL)</a></li>
+<li class="toc-l3"><a href="#how-mrl-training-works">How MRL Training Works</a></li>
+<li class="toc-l2"><a href="#instruction-following-embeddings">Instruction-Following Embeddings</a></li>
+<li class="toc-l2"><a href="#evaluation-mteb">Evaluation: MTEB</a></li>
+<li class="toc-l3"><a href="#running-mteb-evaluation">Running MTEB Evaluation</a></li>
+<li class="toc-l2"><a href="#practical-training-recipe">Practical Training Recipe</a></li>
+<li class="toc-l3"><a href="#key-training-decisions">Key Training Decisions</a></li>
+<li class="toc-l2"><a href="#bridging-to-rag">Bridging to RAG</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

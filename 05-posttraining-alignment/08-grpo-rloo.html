@@ -1,0 +1,1225 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GRPO, RLOO &amp; Critic-Free RL — The LLM Stack</title>
+<meta name="description" content="Removing the value model: REINFORCE Leave-One-Out (RLOO), Group Relative Policy Optimization (GRPO, group-normalized advantages), the DeepSeek-R1 recipe; GRPO l">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="active" href="08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part V — Post-Training &amp; Alignment</div>
+<h1 id="58-grpo-rloo-critic-free-rl">5.8 GRPO, RLOO &amp; Critic-Free RL<a class="headerlink" href="#58-grpo-rloo-critic-free-rl" title="Permanent link">¶</a></h1>
+<p>In <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a> we built the canonical RLHF optimizer: a policy network, a frozen reference model for the KL penalty, a reward model, <strong>and</strong> a separate value network — the <em>critic</em> — trained to predict the expected future reward of a partial generation so we can compute low-variance advantages via Generalized Advantage Estimation (GAE). That critic is expensive. It is a second transformer, often the same size as the policy, with its own optimizer state, its own forward and backward passes, and its own failure modes. On a 7B policy, the critic roughly <em>doubles</em> the trainable-parameter memory footprint and adds a whole training subsystem that can silently diverge.</p>
+<p>This chapter is about a simple, radical question that the field answered emphatically in 2024–2025: <strong>what if we just delete the critic?</strong> It turns out that for the LLM setting — where we generate a <em>complete</em> response, score it once at the end, and care about the whole trajectory — we can estimate the advantage we need using nothing but a small <em>group</em> of sampled responses to the same prompt. The group itself becomes the baseline. No value network, no GAE, no bootstrapping. This idea, in two closely related forms — <strong>RLOO</strong> (REINFORCE Leave-One-Out) and <strong>GRPO</strong> (Group Relative Policy Optimization) — is what drove DeepSeek-R1 and most of the open reasoning-model wave. By the end you will be able to derive both, implement GRPO from scratch, reason about its now-famous bugs, and apply the 2025 fixes (Dr. GRPO, token-level loss, clip-higher).</p>
+<p>This chapter pairs tightly with <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a> (where the reward becomes a binary correctness checker) and with <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a> (the infrastructure-level view).</p>
+<h2 id="why-the-critic-is-optional-the-baseline-as-variance-reduction">Why the critic is optional: the baseline as variance reduction<a class="headerlink" href="#why-the-critic-is-optional-the-baseline-as-variance-reduction" title="Permanent link">¶</a></h2>
+<h3 id="the-reinforce-skeleton">The REINFORCE skeleton<a class="headerlink" href="#the-reinforce-skeleton" title="Permanent link">¶</a></h3>
+<p>Strip RLHF down to its core. The policy <span class="arithmatex">\(\pi_\theta\)</span> is an autoregressive language model; a &ldquo;trajectory&rdquo; is a sampled response <span class="arithmatex">\(o\)</span> to a prompt <span class="arithmatex">\(q\)</span>. We observe a single scalar reward <span class="arithmatex">\(R(q,o)\)</span> at the end (from a reward model, a verifier, or a rule). We want to maximize expected reward,</p>
+<div class="arithmatex">\[
+J(\theta) = \mathbb{E}_{q\sim\mathcal{D},\, o\sim\pi_\theta(\cdot\mid q)}\big[R(q,o)\big].
+\]</div>
+<p>The REINFORCE / score-function estimator (see <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>) gives the gradient</p>
+<div class="arithmatex">\[
+\nabla_\theta J(\theta) = \mathbb{E}\Big[ R(q,o)\,\nabla_\theta \log \pi_\theta(o\mid q) \Big],
+\qquad
+\log \pi_\theta(o\mid q) = \sum_{t=1}^{|o|}\log \pi_\theta(o_t \mid q, o_{&lt;t}).
+\]</div>
+<p>This is an unbiased estimator, but its variance is brutal. If every reward is positive (say rewards live in <span class="arithmatex">\([0,5]\)</span>), then <em>every</em> sampled response gets pushed up — good ones harder, bad ones less hard, but all in the &ldquo;more likely&rdquo; direction. The signal we actually care about — <em>which responses were better than typical</em> — is buried in a large common-mode offset.</p>
+<h3 id="baselines-subtract-anything-that-doesnt-depend-on-the-action">Baselines: subtract anything that doesn&rsquo;t depend on the action<a class="headerlink" href="#baselines-subtract-anything-that-doesnt-depend-on-the-action" title="Permanent link">¶</a></h3>
+<p>The classic fix is a <strong>baseline</strong> <span class="arithmatex">\(b(q)\)</span> subtracted from the reward:</p>
+<div class="arithmatex">\[
+\nabla_\theta J(\theta) = \mathbb{E}\Big[ \big(R(q,o) - b(q)\big)\,\nabla_\theta \log \pi_\theta(o\mid q) \Big].
+\]</div>
+<p>This remains unbiased for <em>any</em> <span class="arithmatex">\(b\)</span> that does not depend on the sampled action <span class="arithmatex">\(o\)</span>, because <span class="arithmatex">\(\mathbb{E}_{o}\big[b(q)\,\nabla_\theta \log \pi_\theta(o\mid q)\big] = b(q)\,\nabla_\theta \underbrace{\textstyle\sum_o \pi_\theta(o\mid q)}_{=1} = 0\)</span>. The variance, however, changes a lot. The variance-minimizing baseline is (approximately) the expected reward <span class="arithmatex">\(\mathbb{E}_o[R(q,o)]\)</span> — exactly what PPO&rsquo;s <em>value function</em> tries to learn. The quantity <span class="arithmatex">\(A = R - b\)</span> is the <strong>advantage</strong>: how much better this response was than the baseline.</p>
+<p>The critic-free insight is that we do not need a <em>learned</em> estimate of <span class="arithmatex">\(\mathbb{E}_o[R(q,o)]\)</span>. We can get a <strong>Monte Carlo</strong> estimate of it for free by sampling several responses to the same prompt and averaging their rewards. The group of samples is the baseline. That is the whole trick — everything below is engineering around it.</p>
+<p><figure class="viz" id="fig-grpo-critic-free-vs-ppo">
+<svg viewBox="0 0 920 480" role="img" aria-label="Side-by-side comparison of PPO actor-critic pipeline (left) versus critic-free RLOO/GRPO pipeline (right). PPO requires an expensive Value Network and GAE to compute advantages; GRPO replaces these with a group of sampled responses and uses the group mean as a free baseline.">
+<defs>
+  <marker id="cf-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#6b7280)"/>
+  </marker>
+  <marker id="cf-arr-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="0">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#6b7280)"/>
+  </marker>
+</defs></p>
+<style>
+  #fig-grpo-critic-free-vs-ppo text { fill: var(--ink-soft,#1f2937); font: 400 12px var(--sans,sans-serif); }
+  #fig-grpo-critic-free-vs-ppo .title { font: 700 14px var(--sans,sans-serif); }
+  #fig-grpo-critic-free-vs-ppo .node-lbl { font: 600 12px var(--sans,sans-serif); }
+  #fig-grpo-critic-free-vs-ppo .sub-lbl { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); font-style: italic; }
+  #fig-grpo-critic-free-vs-ppo .arr-lbl { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-grpo-critic-free-vs-ppo .math-lbl { font: 500 11px var(--mono,monospace); }
+  #fig-grpo-critic-free-vs-ppo .accent-lbl { font: 700 12px var(--sans,sans-serif); fill: var(--warn,#d97706); }
+  #fig-grpo-critic-free-vs-ppo .chip-lbl { font: 600 11px var(--mono,monospace); fill: var(--ink-soft,#1f2937); }
+</style>
+
+<p><rect x="10" y="50" width="420" height="420" rx="10" class="v-fill" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/>
+<rect x="490" y="50" width="420" height="420" rx="10" class="v-fill" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/></p>
+<p><text x="220" y="35" text-anchor="middle" class="title">PPO (actor-critic)</text>
+<text x="700" y="35" text-anchor="middle" class="title">Critic-free (RLOO / GRPO)</text></p>
+<p><rect x="155" y="80" width="130" height="38" rx="6" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/>
+<text x="220" y="104" text-anchor="middle" class="node-lbl">prompt  q</text></p>
+<p><line x1="220" y1="118" x2="220" y2="158" stroke="var(--ink-soft,#6b7280)" stroke-width="1.5" marker-end="url(#cf-arr)"/>
+<text x="226" y="142" class="arr-lbl">sample 1 response</text></p>
+<p><rect x="155" y="162" width="130" height="38" rx="6" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/>
+<text x="220" y="186" text-anchor="middle" class="node-lbl">response  o</text></p>
+<p><line x1="285" y1="181" x2="340" y2="181" stroke="var(--ink-soft,#6b7280)" stroke-width="1.5" marker-end="url(#cf-arr)"/>
+<text x="312" y="175" text-anchor="middle" class="arr-lbl">reward</text></p>
+<p><rect x="340" y="166" width="68" height="30" rx="5" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+<text x="374" y="186" text-anchor="middle" class="chip-lbl">reward R</text></p>
+<p><line x1="220" y1="200" x2="220" y2="250" stroke="var(--ink-soft,#6b7280)" stroke-width="1.5" marker-end="url(#cf-arr)"/></p>
+<p><rect x="130" y="254" width="180" height="56" rx="8" fill="var(--warn,#fef3c7)" stroke="var(--warn,#d97706)" stroke-width="2.5"/>
+<text x="220" y="277" text-anchor="middle" class="accent-lbl">VALUE NET  V(s)</text>
+<text x="220" y="294" text-anchor="middle" class="sub-lbl">(extra transformer!)</text></p>
+<p><line x1="310" y1="282" x2="356" y2="282" stroke="var(--warn,#d97706)" stroke-width="1.5" marker-end="url(#cf-arr)"/></p>
+<p><rect x="356" y="268" width="44" height="28" rx="5" fill="var(--warn,#fef3c7)" stroke="var(--warn,#d97706)" stroke-width="1.5"/>
+<text x="378" y="287" text-anchor="middle" class="chip-lbl" style="fill:var(--warn,#d97706)">GAE</text></p>
+<p><line x1="400" y1="282" x2="422" y2="282" stroke="var(--warn,#d97706)" stroke-width="1.5" marker-end="url(#cf-arr)"/></p>
+<p><rect x="422" y="268" width="30" height="28" rx="5" fill="var(--warn,#fef3c7)" stroke="var(--warn,#d97706)" stroke-width="1.5"/>
+<text x="437" y="287" text-anchor="middle" class="chip-lbl" style="fill:var(--warn,#d97706)">A</text></p>
+<p><rect x="126" y="316" width="180" height="10" rx="3" fill="none" stroke="var(--warn,#d97706)" stroke-width="1" stroke-dasharray="4 3" opacity="0.5"/></p>
+<p><text x="220" y="355" text-anchor="middle" class="sub-lbl" style="font-size:11px">Needs 2<sup>nd</sup> transformer + GAE</text>
+<text x="220" y="370" text-anchor="middle" class="sub-lbl" style="font-size:11px">to estimate advantage A</text></p>
+<p><rect x="635" y="80" width="130" height="38" rx="6" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/>
+<text x="700" y="104" text-anchor="middle" class="node-lbl">prompt  q</text></p>
+<p><line x1="700" y1="118" x2="700" y2="158" stroke="var(--ink-soft,#6b7280)" stroke-width="1.5" marker-end="url(#cf-arr)"/>
+<text x="708" y="135" class="arr-lbl">sample a</text>
+<text x="708" y="148" class="arr-lbl" style="font-weight:600;fill:var(--accent2,#3b82f6)">GROUP of G</text></p>
+<p><rect x="510" y="162" width="42" height="30" rx="5" fill="var(--surface-3,#eef2ff)" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+<text x="531" y="181" text-anchor="middle" class="chip-lbl">o₁</text></p>
+<p><rect x="560" y="162" width="42" height="30" rx="5" fill="var(--surface-3,#eef2ff)" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+<text x="581" y="181" text-anchor="middle" class="chip-lbl">o₂</text></p>
+<p><text x="622" y="181" text-anchor="middle" class="arr-lbl">&hellip;</text></p>
+<p><rect x="640" y="162" width="42" height="30" rx="5" fill="var(--surface-3,#eef2ff)" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+<text x="661" y="181" text-anchor="middle" class="chip-lbl">o_G</text></p>
+<p><line x1="682" y1="177" x2="716" y2="177" stroke="var(--ink-soft,#6b7280)" stroke-width="1.4" marker-end="url(#cf-arr)"/></p>
+<p><rect x="716" y="162" width="42" height="30" rx="5" fill="var(--surface-3,#eef2ff)" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+<text x="737" y="179" text-anchor="middle" class="chip-lbl">R₁</text>
+<text x="737" y="191" text-anchor="middle" class="arr-lbl">&hellip;</text></p>
+<p><rect x="764" y="162" width="44" height="30" rx="5" fill="var(--surface-3,#eef2ff)" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+<text x="786" y="179" text-anchor="middle" class="chip-lbl">R_G</text></p>
+<p><line x1="700" y1="196" x2="700" y2="240" stroke="var(--ink-soft,#6b7280)" stroke-width="1.5" marker-end="url(#cf-arr)"/>
+<text x="706" y="215" class="arr-lbl">baseline =</text>
+<text x="706" y="227" class="arr-lbl">mean of group</text></p>
+<p><rect x="575" y="244" width="250" height="56" rx="8" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.8"/>
+<text x="700" y="267" text-anchor="middle" class="math-lbl">A_i = R_i - mean(R)  (over group)</text>
+<text x="700" y="285" text-anchor="middle" class="sub-lbl">(no value net, no GAE)</text></p>
+<p><text x="700" y="355" text-anchor="middle" class="sub-lbl" style="font-size:11px">Group of G samples IS the baseline</text>
+<text x="700" y="370" text-anchor="middle" class="sub-lbl" style="font-size:11px">No second network required</text></p>
+<p><text x="700" y="415" text-anchor="middle" style="font:600 11px var(--sans,sans-serif); fill:var(--muted,#6b7280)">VALUE NET: absent</text>
+<line x1="620" y1="415" x2="780" y2="415" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/></p>
+<p><text x="220" y="415" text-anchor="middle" style="font:600 11px var(--sans,sans-serif); fill:var(--warn,#d97706)">VALUE NET: required</text></p>
+<p><text x="460" y="270" text-anchor="middle" style="font:700 20px var(--sans,sans-serif); fill:var(--muted,#9ca3af)">vs</text></p>
+<p></svg></p>
+<figcaption><b>PPO requires a second transformer (the critic / value network) to estimate advantages; GRPO and RLOO replace it with a free group baseline.</b> On the left, PPO's flow runs through a full Value Network V(s) and GAE to produce an advantage — an extra learned model with its own optimizer state. On the right, sampling G responses to the same prompt is sufficient: the group mean is the baseline, and the advantage is simply each reward minus that mean. No second network, no GAE, no additional parameter memory.</figcaption>
+</figure>
+<h3 id="why-this-is-especially-natural-for-llms">Why this is <em>especially</em> natural for LLMs<a class="headerlink" href="#why-this-is-especially-natural-for-llms" title="Permanent link">¶</a></h3>
+<p>In classic RL (robotics, Atari) the reward is dense and per-step, the horizon is long, and bootstrapping a value function is essential to assign credit across thousands of steps. The LLM-with-verifiable-reward setting is different in three ways that make the critic almost vestigial:</p>
+<ol>
+<li><strong>The reward is terminal.</strong> You generate the whole answer, then score it once. There is no intermediate reward to bootstrap from. GAE with <span class="arithmatex">\(\lambda\to 1\)</span> collapses toward plain Monte Carlo returns anyway.</li>
+<li><strong>You can cheaply resample.</strong> Unlike a robot, you can draw <span class="arithmatex">\(G=8\)</span> or <span class="arithmatex">\(16\)</span> completions for the same prompt in one batched generation call. A Monte Carlo baseline is therefore essentially free relative to the cost you already pay for generation.</li>
+<li><strong>The value function is hard and unstable here.</strong> Training a per-token value head on sparse terminal rewards through a 7B transformer is finicky; it is one of the main sources of RLHF instability. Removing it removes a whole class of bugs.</li>
+</ol>
+<p>So we trade a <em>learned, low-variance, biased-if-wrong</em> baseline (the critic) for a <em>Monte Carlo, slightly-higher-variance, unbiased</em> baseline (the group). For terminal-reward LLM RL, that trade is almost always a win.</p>
+<h2 id="rloo-reinforce-with-a-leave-one-out-baseline">RLOO: REINFORCE with a Leave-One-Out baseline<a class="headerlink" href="#rloo-reinforce-with-a-leave-one-out-baseline" title="Permanent link">¶</a></h2>
+<h3 id="the-estimator">The estimator<a class="headerlink" href="#the-estimator" title="Permanent link">¶</a></h3>
+<p>REINFORCE Leave-One-Out (RLOO; popularized for LLMs by Ahmadian et al., <em>Back to Basics</em>, 2024, building on earlier LOO baselines) sharpens the Monte Carlo baseline with a subtle correctness fix. Suppose for prompt <span class="arithmatex">\(q\)</span> we sample <span class="arithmatex">\(G\)</span> responses <span class="arithmatex">\(o_1,\dots,o_G\)</span> i.i.d. from <span class="arithmatex">\(\pi_\theta\)</span> with rewards <span class="arithmatex">\(R_1,\dots,R_G\)</span>. The naive baseline is the full group mean <span class="arithmatex">\(\bar R = \frac1G\sum_j R_j\)</span>. But <span class="arithmatex">\(\bar R\)</span> <em>includes</em> <span class="arithmatex">\(R_i\)</span>, so the baseline for sample <span class="arithmatex">\(i\)</span> is correlated with <span class="arithmatex">\(R_i\)</span> — and a baseline correlated with the action you are evaluating introduces bias. RLOO removes exactly the offending term: the baseline for response <span class="arithmatex">\(i\)</span> is the mean of the <em>other</em> <span class="arithmatex">\(G-1\)</span> responses:</p>
+<div class="arithmatex">\[
+b_i \;=\; \frac{1}{G-1}\sum_{j\neq i} R_j,
+\qquad
+A_i \;=\; R_i - b_i \;=\; \frac{G}{G-1}\Big(R_i - \bar R\Big).
+\]</div>
+<p>The second equality is a tidy identity worth knowing: leave-one-out is just the full-group-centered advantage rescaled by <span class="arithmatex">\(G/(G-1)\)</span>. The RLOO gradient estimate over the group is</p>
+<div class="arithmatex">\[
+\hat g_{\text{RLOO}} \;=\; \frac{1}{G}\sum_{i=1}^{G} \Big(R_i - b_i\Big)\,\nabla_\theta \log \pi_\theta(o_i\mid q).
+\]</div>
+<p>This is unbiased (each <span class="arithmatex">\(b_i\)</span> is independent of <span class="arithmatex">\(o_i\)</span>), low-variance for modest <span class="arithmatex">\(G\)</span>, and — crucially — uses <strong>no value network and no clipping</strong>. It is &ldquo;back to basics&rdquo;: plain policy gradient with a clever, free baseline. RLOO treats the whole response as a single action; the per-token log-probs are simply summed.</p>
+<h3 id="a-tiny-rloo-implementation">A tiny RLOO implementation<a class="headerlink" href="#a-tiny-rloo-implementation" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rloo_loss</span><span class="p">(</span><span class="n">logprobs_per_token</span><span class="p">,</span> <span class="n">response_mask</span><span class="p">,</span> <span class="n">rewards</span><span class="p">,</span> <span class="n">group_size</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Minimal RLOO loss for one batch of prompts, each with `group_size` responses.</span>
+
+<span class="sd">    logprobs_per_token : (B, T) log pi_theta(o_t | q, o_&lt;t) for the SAMPLED tokens.</span>
+<span class="sd">                         B = num_prompts * group_size, laid out so that every</span>
+<span class="sd">                         contiguous block of `group_size` rows shares a prompt.</span>
+<span class="sd">    response_mask      : (B, T) 1.0 for response tokens, 0.0 for prompt/padding.</span>
+<span class="sd">    rewards            : (B,)   scalar terminal reward per response.</span>
+<span class="sd">    group_size         : G, number of responses per prompt.</span>
+<span class="sd">    Returns a scalar loss to call .backward() on.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span> <span class="o">=</span> <span class="n">logprobs_per_token</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">G</span> <span class="o">=</span> <span class="n">group_size</span>
+    <span class="n">n_prompts</span> <span class="o">=</span> <span class="n">B</span> <span class="o">//</span> <span class="n">G</span>
+
+    <span class="c1"># Sequence log-prob = sum of per-token log-probs over response tokens.</span>
+    <span class="n">seq_logprob</span> <span class="o">=</span> <span class="p">(</span><span class="n">logprobs_per_token</span> <span class="o">*</span> <span class="n">response_mask</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>      <span class="c1"># (B,)</span>
+
+    <span class="c1"># Group rewards: (n_prompts, G)</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">n_prompts</span><span class="p">,</span> <span class="n">G</span><span class="p">)</span>
+    <span class="n">group_sum</span> <span class="o">=</span> <span class="n">r</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>                             <span class="c1"># (n_prompts, 1)</span>
+    <span class="c1"># Leave-one-out baseline: (sum of others) / (G - 1)</span>
+    <span class="n">loo_baseline</span> <span class="o">=</span> <span class="p">(</span><span class="n">group_sum</span> <span class="o">-</span> <span class="n">r</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">G</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>                           <span class="c1"># (n_prompts, G)</span>
+    <span class="n">advantage</span> <span class="o">=</span> <span class="p">(</span><span class="n">r</span> <span class="o">-</span> <span class="n">loo_baseline</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span><span class="p">)</span>                            <span class="c1"># (B,)</span>
+
+    <span class="c1"># Policy-gradient loss. We MAXIMIZE advantage * logprob, so MINIMIZE its negative.</span>
+    <span class="c1"># advantage is detached: it is a weight, not something we differentiate through.</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">advantage</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">*</span> <span class="n">seq_logprob</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">loss</span>
+</code></pre></div>
+<p>Two things to internalize. First, the advantage is <code>detach()</code>-ed: gradients flow only through <code>seq_logprob</code>, never through the reward. Second, RLOO as written is a <em>single-step</em> estimator — it assumes the data was generated by the <em>current</em> <span class="arithmatex">\(\pi_\theta\)</span>. If you reuse the same rollouts for several gradient steps (which you do for efficiency), the estimator becomes off-policy and you need importance weighting and clipping. That is exactly the bridge to GRPO.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: RLOO vs. GRPO in one sentence</p>
+<p>RLOO and GRPO use the <em>same group-baseline idea</em>; GRPO additionally (a) normalizes the advantage by the group&rsquo;s reward standard deviation, (b) wraps it in a PPO-style clipped surrogate so you can take multiple epochs over the same rollouts, and &copy; historically applied the loss per token. The 2025 &ldquo;fixes&rdquo; mostly walk GRPO <em>back toward</em> RLOO&rsquo;s simpler choices.</p>
+</div>
+<h2 id="grpo-group-relative-policy-optimization">GRPO: Group Relative Policy Optimization<a class="headerlink" href="#grpo-group-relative-policy-optimization" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-grpo-advantage">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 432" role="img" aria-label="GRPO advantage: one prompt is sampled into a group of four responses, each scored by a reward; the group mean is the baseline, and each advantage is the reward minus that mean, divided by the group standard deviation — no value network.">
+  <defs>
+    <marker id="ga-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-grpo-advantage text{ fill:var(--ink-soft); }
+    #fig-grpo-advantage .lbl{ font:600 13px var(--sans,sans-serif); }
+    #fig-grpo-advantage .sm{ font:500 11px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-grpo-advantage .mono{ font:600 12px var(--mono,monospace); }
+    #fig-grpo-advantage .monos{ font:500 10.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-grpo-advantage .head{ font:700 13px var(--sans,sans-serif); }
+    #fig-grpo-advantage .op{ font:600 16px var(--serif,serif); }
+  </style>
+
+
+  <g data-anim="1">
+    <rect x="14" y="150" width="92" height="56" rx="8" class="v-fill v-accent-s" stroke-width="1.6"/>
+    <text x="60" y="176" text-anchor="middle" class="lbl" fill="var(--accent)">prompt q</text>
+    <text x="60" y="194" text-anchor="middle" class="sm">17 + 26 = ?</text>
+    <text x="60" y="226" text-anchor="middle" class="sm">sample G = 4</text>
+    <text x="60" y="240" text-anchor="middle" class="sm">from π<tspan dy="2" font-size="8">old</tspan></text>
+
+    <g class="v-muted" stroke="currentColor" stroke-width="1.3">
+      <line x1="108" y1="172" x2="156" y2="76"  marker-end="url(#ga-arrow)"/>
+      <line x1="108" y1="176" x2="156" y2="148" marker-end="url(#ga-arrow)"/>
+      <line x1="108" y1="182" x2="156" y2="220" marker-end="url(#ga-arrow)"/>
+      <line x1="108" y1="186" x2="156" y2="292" marker-end="url(#ga-arrow)"/>
+    </g>
+  </g>
+
+
+
+  <g data-anim="2">
+    <text x="226" y="32" text-anchor="middle" class="head">group of responses</text>
+    <text x="384" y="32" text-anchor="middle" class="head">reward R<tspan dy="2" font-size="9">i</tspan></text>
+
+
+    <rect x="160" y="44" width="132" height="36" rx="7" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+    <text x="172" y="62" class="mono">o₁</text>
+    <text x="172" y="75" class="monos">…&lt;answer&gt;43&lt;/answer&gt;</text>
+    <text x="298" y="66" class="sm" fill="var(--good,#2f9e6e)">✓ correct</text>
+    <rect x="364" y="48" width="44" height="28" rx="6" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="386" y="67" text-anchor="middle" class="mono">1.2</text>
+
+
+    <rect x="160" y="116" width="132" height="36" rx="7" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="172" y="134" class="mono">o₂</text>
+    <text x="172" y="147" class="monos">…&lt;answer&gt;41&lt;/answer&gt;</text>
+    <text x="298" y="138" class="sm" fill="var(--warn,#e0a106)">✗ wrong</text>
+    <rect x="364" y="120" width="44" height="28" rx="6" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="386" y="139" text-anchor="middle" class="mono">0.2</text>
+
+
+    <rect x="160" y="188" width="132" height="36" rx="7" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+    <text x="172" y="206" class="mono">o₃</text>
+    <text x="172" y="219" class="monos">…&lt;answer&gt;43&lt;/answer&gt;</text>
+    <text x="298" y="210" class="sm" fill="var(--good,#2f9e6e)">✓ correct</text>
+    <rect x="364" y="192" width="44" height="28" rx="6" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="386" y="211" text-anchor="middle" class="mono">1.2</text>
+
+
+    <rect x="160" y="260" width="132" height="36" rx="7" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="172" y="278" class="mono">o₄</text>
+    <text x="172" y="291" class="monos">…no tags, 50</text>
+    <text x="298" y="282" class="sm" fill="var(--warn,#e0a106)">✗ wrong</text>
+    <rect x="364" y="264" width="44" height="28" rx="6" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="386" y="283" text-anchor="middle" class="mono">0.0</text>
+  </g>
+
+
+  <g data-anim="3">
+
+    <line x1="420" y1="62" x2="446" y2="62"   class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#ga-arrow)"/>
+    <line x1="420" y1="134" x2="446" y2="134" class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#ga-arrow)"/>
+    <line x1="420" y1="210" x2="446" y2="210" class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#ga-arrow)"/>
+    <line x1="420" y1="283" x2="446" y2="283" class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#ga-arrow)"/>
+
+    <rect x="452" y="120" width="118" height="100" rx="9" class="v-fill v-accent-s" stroke-width="1.6"/>
+    <text x="511" y="146" text-anchor="middle" class="lbl" fill="var(--accent)">baseline</text>
+    <text x="511" y="167" text-anchor="middle" class="sm">= mean(R) — the</text>
+    <text x="511" y="181" text-anchor="middle" class="sm">group is the critic</text>
+    <text x="511" y="206" text-anchor="middle" class="mono" fill="var(--accent)">R̄ = 0.65</text>
+  </g>
+
+
+  <g data-anim="4">
+    <line x1="570" y1="170" x2="600" y2="170" class="v-accent-s" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#ga-arrow)"/>
+    <text x="678" y="32" text-anchor="middle" class="head" fill="var(--accent)">advantage Âᵢ</text>
+    <text x="678" y="48" text-anchor="middle" class="sm">(Rᵢ − R̄) ⁄ std</text>
+
+
+    <line x1="606" y1="170" x2="752" y2="170" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 4" opacity="0.8"/>
+    <text x="752" y="184" text-anchor="end" class="sm" fill="var(--accent)">Â = 0  (baseline)</text>
+
+
+
+
+    <rect x="606" y="62" width="55" height="20" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.85" class="viz-sweep"/>
+    <text x="669" y="77" class="mono" fill="var(--good,#2f9e6e)">+0.99</text>
+
+    <rect x="561" y="124" width="45" height="20" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.85"/>
+    <text x="557" y="139" text-anchor="end" class="mono" fill="var(--warn,#e0a106)">−0.81</text>
+
+    <rect x="606" y="200" width="55" height="20" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.85" class="viz-sweep"/>
+    <text x="669" y="215" class="mono" fill="var(--good,#2f9e6e)">+0.99</text>
+
+    <rect x="541" y="272" width="65" height="20" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.85"/>
+    <text x="537" y="287" text-anchor="end" class="mono" fill="var(--warn,#e0a106)">−1.17</text>
+
+
+    <text x="678" y="100" text-anchor="middle" class="sm" fill="var(--good,#2f9e6e)">push ↑ (above mean)</text>
+    <text x="600" y="252" text-anchor="middle" class="sm" fill="var(--warn,#e0a106)">push ↓ (below mean)</text>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="14" y="320" width="732" height="90" rx="11" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="34" y="348" class="lbl">Group-relative advantage — no value network, no GAE:</text>
+    <text x="34" y="380" class="op">Âᵢ =</text>
+
+    <text x="92" y="372" class="mono" fill="var(--accent)">Rᵢ − mean(R₁…R_G)</text>
+    <line x1="88" y1="378" x2="262" y2="378" class="v-stroke" stroke="var(--ink-soft)" stroke-width="1.3"/>
+    <text x="92" y="396" class="mono" fill="var(--accent)">std(R₁…R_G) + ε</text>
+    <text x="300" y="368" class="sm">subtract the mean → the <tspan font-weight="700">baseline</tspan> (variance reduction);</text>
+    <text x="300" y="386" class="sm">divide by std → a scale-free <tspan font-weight="700">z-score</tspan> shared by every token of oᵢ.</text>
+  </g>
+</svg>
+<figcaption><b>GRPO replaces PPO's critic with the group itself.</b> For one prompt we sample a group of G responses, score each with the reward, and use the group <b>mean</b> as the baseline. Each response's advantage is its reward minus that mean (divided by the group std) — a z-score that pushes above-average responses up and below-average ones down, with no value network at all.</figcaption>
+</figure>
+
+<p>GRPO (introduced by Shao et al. in <em>DeepSeekMath</em>, 2024, and made famous by <em>DeepSeek-R1</em>, 2025) is the workhorse of modern reasoning-model training. It keeps PPO&rsquo;s machinery you actually want — the clipped surrogate objective that makes multi-epoch updates safe — and throws away the part you don&rsquo;t — the value network. The baseline becomes the standardized group reward.</p>
+<h3 id="the-advantage">The advantage<a class="headerlink" href="#the-advantage" title="Permanent link">¶</a></h3>
+<p>For a prompt <span class="arithmatex">\(q\)</span>, sample a group of <span class="arithmatex">\(G\)</span> outputs <span class="arithmatex">\(\{o_1,\dots,o_G\}\)</span> from the <em>behavior</em> policy <span class="arithmatex">\(\pi_{\theta_{\text{old}}}\)</span> (the weights used to generate). Compute rewards <span class="arithmatex">\(\{R_1,\dots,R_G\}\)</span>. The GRPO advantage assigned to <em>every token</em> of response <span class="arithmatex">\(i\)</span> is the group-standardized reward:</p>
+<div class="arithmatex">\[
+\hat A_i \;=\; \frac{R_i - \operatorname{mean}(\{R_1,\dots,R_G\})}{\operatorname{std}(\{R_1,\dots,R_G\}) + \varepsilon}.
+\]</div>
+<p>Note what this is: a <strong>z-score of the reward within its group</strong>. Subtracting the mean is the baseline (variance reduction, exactly as above). Dividing by the std is a normalization that makes the advantage scale-free, so a prompt where rewards happen to be large and a prompt where they are small contribute comparably. Every token in <span class="arithmatex">\(o_i\)</span> shares the same scalar <span class="arithmatex">\(\hat A_i\)</span> — GRPO does no per-token credit assignment, because with a terminal reward there is nothing to assign per token. (We will see in the &ldquo;fixes&rdquo; section that the std-normalization is the most controversial design choice in the whole method.)</p>
+<h3 id="the-clipped-surrogate-objective">The clipped surrogate objective<a class="headerlink" href="#the-clipped-surrogate-objective" title="Permanent link">¶</a></h3>
+<p>Let <span class="arithmatex">\(\pi_\theta\)</span> be the current policy and <span class="arithmatex">\(\pi_{\theta_{\text{old}}}\)</span> the policy that generated the rollouts. Define the per-token importance ratio</p>
+<div class="arithmatex">\[
+r_{i,t}(\theta) \;=\; \frac{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q, o_{i,&lt;t})}.
+\]</div>
+<p>The GRPO objective (in its original DeepSeekMath form) is the PPO clipped surrogate, averaged over tokens within a response and then over responses, plus a KL penalty to a reference model:</p>
+<div class="arithmatex">\[
+\mathcal{J}_{\text{GRPO}}(\theta)
+= \mathbb{E}\!\left[
+\frac{1}{G}\sum_{i=1}^{G}
+\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}
+\Big(
+\min\big( r_{i,t}\hat A_i,\;
+\operatorname{clip}(r_{i,t}, 1-\epsilon, 1+\epsilon)\,\hat A_i \big)
+- \beta\, \mathbb{D}_{\text{KL}}\!\big[\pi_\theta \,\|\, \pi_{\text{ref}}\big]_{i,t}
+\Big)
+\right].
+\]</div>
+<p>We <em>maximize</em> <span class="arithmatex">\(\mathcal J\)</span>, equivalently minimize <span class="arithmatex">\(-\mathcal J\)</span>. Three pieces:</p>
+<ul>
+<li><strong>The clipped term</strong> <span class="arithmatex">\(\min(r\hat A,\ \operatorname{clip}(r,1-\epsilon,1+\epsilon)\hat A)\)</span> is the PPO trust region (see <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>). When the new policy has moved too far on a token (ratio outside <span class="arithmatex">\([1-\epsilon,1+\epsilon]\)</span>) <em>in a direction that would keep increasing the surrogate</em>, the gradient is clipped off. This is what makes it safe to take several gradient epochs on one batch of rollouts. Typical <span class="arithmatex">\(\epsilon \approx 0.2\)</span>.</li>
+<li><strong>The KL penalty</strong> <span class="arithmatex">\(-\beta\,\mathbb{D}_{\text{KL}}[\pi_\theta\|\pi_{\text{ref}}]\)</span> keeps the policy from drifting too far from the SFT model <span class="arithmatex">\(\pi_{\text{ref}}\)</span>, preserving fluency and preventing reward hacking (<a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>). Note that GRPO puts the KL as a <em>penalty term in the loss</em>, not folded into the reward as PPO often does.</li>
+<li><strong>The double average</strong> — mean over tokens <em>within</em> a response (<span class="arithmatex">\(\frac{1}{|o_i|}\sum_t\)</span>), then mean over responses (<span class="arithmatex">\(\frac1G\sum_i\)</span>). This per-response length normalization is, as we&rsquo;ll see, the source of GRPO&rsquo;s length bias.</li>
+</ul>
+<h3 id="the-k3-kl-estimator">The k3 KL estimator<a class="headerlink" href="#the-k3-kl-estimator" title="Permanent link">¶</a></h3>
+<p>GRPO does not compute the exact KL (you would need the full vocabulary distribution from the reference at every position, which is expensive to log). It uses the <strong>k3</strong> unbiased, always-positive, low-variance estimator from John Schulman&rsquo;s well-known note on approximating KL. For a token where <span class="arithmatex">\(\rho = \dfrac{\pi_{\text{ref}}(o_t\mid\cdot)}{\pi_\theta(o_t\mid\cdot)}\)</span>,</p>
+<div class="arithmatex">\[
+\mathbb{D}_{\text{KL}}[\pi_\theta\|\pi_{\text{ref}}]_t \;\approx\; \rho - \log \rho - 1.
+\]</div>
+<p>This is computed only on the sampled tokens (so just one log-prob from each of the policy and reference). It is non-negative for all <span class="arithmatex">\(\rho&gt;0\)</span> (since <span class="arithmatex">\(x-\log x-1\ge 0\)</span>), which is a nice property for a penalty.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">k3_kl</span><span class="p">(</span><span class="n">logprob_policy</span><span class="p">,</span> <span class="n">logprob_ref</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Schulman&#39;s k3 estimator of KL(pi_theta || pi_ref), per token, always &gt;= 0.</span>
+<span class="sd">    Inputs are log pi(o_t | ...) for the SAMPLED token o_t under each model.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">log_ratio</span> <span class="o">=</span> <span class="n">logprob_ref</span> <span class="o">-</span> <span class="n">logprob_policy</span>        <span class="c1"># log(pi_ref / pi_theta)</span>
+    <span class="n">ratio</span> <span class="o">=</span> <span class="n">log_ratio</span><span class="o">.</span><span class="n">exp</span><span class="p">()</span>                         <span class="c1"># pi_ref / pi_theta</span>
+    <span class="k">return</span> <span class="n">ratio</span> <span class="o">-</span> <span class="n">log_ratio</span> <span class="o">-</span> <span class="mf">1.0</span>                  <span class="c1"># rho - log rho - 1</span>
+</code></pre></div>
+<h2 id="grpo-from-scratch-a-complete-runnable-training-step">GRPO from scratch: a complete, runnable training step<a class="headerlink" href="#grpo-from-scratch-a-complete-runnable-training-step" title="Permanent link">¶</a></h2>
+<p>Below is a self-contained GRPO trainer for a small Hugging Face causal LM. It is deliberately explicit: rollout, reward, advantage, the clipped loss with KL, and a multi-epoch update over the same rollouts. It runs on a single GPU with a tiny model and a toy verifiable reward. This is the code an interviewer might ask you to sketch on a whiteboard, fleshed out to actually run.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 0. Setup. Use a tiny instruct model so this runs on a laptop GPU.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="n">MODEL</span> <span class="o">=</span> <span class="s2">&quot;Qwen/Qwen2.5-0.5B-Instruct&quot;</span>
+<span class="n">device</span> <span class="o">=</span> <span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span>
+<span class="n">tok</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">MODEL</span><span class="p">)</span>
+<span class="n">policy</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">MODEL</span><span class="p">,</span> <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="n">ref</span>    <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">MODEL</span><span class="p">,</span> <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="n">ref</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">ref</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+<span class="n">opt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">policy</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">)</span>
+
+<span class="n">GROUP_SIZE</span>   <span class="o">=</span> <span class="mi">8</span>       <span class="c1"># G: responses sampled per prompt</span>
+<span class="n">CLIP_EPS_LOW</span> <span class="o">=</span> <span class="mf">0.2</span>     <span class="c1"># lower clip (1 - eps_low)</span>
+<span class="n">CLIP_EPS_HIGH</span><span class="o">=</span> <span class="mf">0.28</span>    <span class="c1"># upper clip (1 + eps_high); &quot;clip-higher&quot;, see below</span>
+<span class="n">KL_BETA</span>      <span class="o">=</span> <span class="mf">0.0</span>     <span class="c1"># many R1-style recipes drop KL entirely; set &gt;0 to use it</span>
+<span class="n">PPO_EPOCHS</span>   <span class="o">=</span> <span class="mi">2</span>       <span class="c1"># gradient epochs over one batch of rollouts</span>
+<span class="n">MAX_NEW</span>      <span class="o">=</span> <span class="mi">200</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 1. A toy verifiable reward: 1.0 if the response contains the right number,</span>
+<span class="c1">#    plus a small format reward for using &lt;answer&gt;...&lt;/answer&gt;. In a real</span>
+<span class="c1">#    RLVR run this is a math/code/unit-test checker (see chapter 5.9).</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">reward_fn</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">response</span><span class="p">,</span> <span class="n">gold</span><span class="p">):</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="k">if</span> <span class="sa">f</span><span class="s2">&quot;&lt;answer&gt;</span><span class="si">{</span><span class="n">gold</span><span class="si">}</span><span class="s2">&lt;/answer&gt;&quot;</span> <span class="ow">in</span> <span class="n">response</span><span class="p">:</span>
+        <span class="n">r</span> <span class="o">+=</span> <span class="mf">1.0</span>                                   <span class="c1"># correctness</span>
+    <span class="k">if</span> <span class="s2">&quot;&lt;answer&gt;&quot;</span> <span class="ow">in</span> <span class="n">response</span> <span class="ow">and</span> <span class="s2">&quot;&lt;/answer&gt;&quot;</span> <span class="ow">in</span> <span class="n">response</span><span class="p">:</span>
+        <span class="n">r</span> <span class="o">+=</span> <span class="mf">0.2</span>                                   <span class="c1"># format bonus</span>
+    <span class="k">return</span> <span class="n">r</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 2. Rollout: sample GROUP_SIZE responses per prompt with the OLD policy.</span>
+<span class="c1">#    In production this is a vLLM/SGLang server, not model.generate; see</span>
+<span class="c1">#    chapter 6.2 (the generation-training loop).</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">rollout</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">golds</span><span class="p">):</span>
+    <span class="n">seqs</span><span class="p">,</span> <span class="n">masks</span><span class="p">,</span> <span class="n">prompt_lens</span><span class="p">,</span> <span class="n">rewards</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
+    <span class="n">policy</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">q</span><span class="p">,</span> <span class="n">gold</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">golds</span><span class="p">):</span>
+        <span class="n">chat</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">q</span><span class="p">}]</span>
+        <span class="n">ids</span> <span class="o">=</span> <span class="n">tok</span><span class="o">.</span><span class="n">apply_chat_template</span><span class="p">(</span><span class="n">chat</span><span class="p">,</span> <span class="n">add_generation_prompt</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                                      <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">plen</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+        <span class="c1"># Sample G completions in one batched call (num_return_sequences=G).</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">policy</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">ids</span><span class="p">,</span> <span class="n">do_sample</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">top_p</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+                              <span class="n">max_new_tokens</span><span class="o">=</span><span class="n">MAX_NEW</span><span class="p">,</span> <span class="n">num_return_sequences</span><span class="o">=</span><span class="n">GROUP_SIZE</span><span class="p">,</span>
+                              <span class="n">pad_token_id</span><span class="o">=</span><span class="n">tok</span><span class="o">.</span><span class="n">eos_token_id</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">GROUP_SIZE</span><span class="p">):</span>
+            <span class="n">full</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="n">g</span><span class="p">]</span>                          <span class="c1"># (plen + gen_len,)</span>
+            <span class="n">text</span> <span class="o">=</span> <span class="n">tok</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">full</span><span class="p">[</span><span class="n">plen</span><span class="p">:],</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="n">rewards</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">reward_fn</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">gold</span><span class="p">))</span>
+            <span class="n">seqs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">full</span><span class="p">)</span>
+            <span class="n">prompt_lens</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">plen</span><span class="p">)</span>
+    <span class="n">policy</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+    <span class="c1"># Pad to a common length and build a response mask (1 on generated tokens).</span>
+    <span class="n">maxlen</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">seqs</span><span class="p">)</span>
+    <span class="n">B</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">seqs</span><span class="p">)</span>
+    <span class="n">input_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">B</span><span class="p">,</span> <span class="n">maxlen</span><span class="p">),</span> <span class="n">tok</span><span class="o">.</span><span class="n">eos_token_id</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">resp_mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">B</span><span class="p">,</span> <span class="n">maxlen</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">plen</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">seqs</span><span class="p">,</span> <span class="n">prompt_lens</span><span class="p">)):</span>
+        <span class="n">input_ids</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="p">:</span><span class="n">s</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span> <span class="o">=</span> <span class="n">s</span>
+        <span class="n">resp_mask</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">plen</span><span class="p">:</span><span class="n">s</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span> <span class="o">=</span> <span class="mf">1.0</span>        <span class="c1"># mask out the prompt tokens</span>
+    <span class="n">rewards</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">rewards</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">input_ids</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">,</span> <span class="n">rewards</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 3. Per-token log-prob of the SAMPLED tokens under a given model.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">token_logprobs</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">input_ids</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">):</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span><span class="o">.</span><span class="n">logits</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span>       <span class="c1"># predict token t+1 from t</span>
+    <span class="n">logprobs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">targets</span> <span class="o">=</span> <span class="n">input_ids</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>                     <span class="c1"># the actually-sampled next tokens</span>
+    <span class="n">tok_lp</span> <span class="o">=</span> <span class="n">logprobs</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">targets</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B, T-1)</span>
+    <span class="k">return</span> <span class="n">tok_lp</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span>                <span class="c1"># shift mask to align with targets</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 4. GRPO advantage: z-score the reward within each group of GROUP_SIZE.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">grpo_advantage</span><span class="p">(</span><span class="n">rewards</span><span class="p">,</span> <span class="n">group_size</span><span class="p">,</span> <span class="n">normalize_std</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+    <span class="n">g</span> <span class="o">=</span> <span class="n">rewards</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">group_size</span><span class="p">)</span>               <span class="c1"># (n_prompts, G)</span>
+    <span class="n">adv</span> <span class="o">=</span> <span class="n">g</span> <span class="o">-</span> <span class="n">g</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>          <span class="c1"># subtract group mean (baseline)</span>
+    <span class="k">if</span> <span class="n">normalize_std</span><span class="p">:</span>
+        <span class="n">adv</span> <span class="o">=</span> <span class="n">adv</span> <span class="o">/</span> <span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-4</span><span class="p">)</span>   <span class="c1"># divide by group std</span>
+    <span class="k">return</span> <span class="n">adv</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>                          <span class="c1"># (B,) one scalar per response</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 5. The GRPO loss for ONE gradient epoch over a fixed batch of rollouts.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">grpo_loss</span><span class="p">(</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">,</span> <span class="n">advantage</span><span class="p">,</span> <span class="n">old_lp</span><span class="p">,</span> <span class="n">ref_lp</span><span class="p">,</span>
+              <span class="n">token_level</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+    <span class="n">new_lp</span><span class="p">,</span> <span class="n">mask</span> <span class="o">=</span> <span class="n">token_logprobs</span><span class="p">(</span><span class="n">policy</span><span class="p">,</span> <span class="n">input_ids</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">)</span>   <span class="c1"># (B, T-1)</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">advantage</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>                     <span class="c1"># (B, 1) -&gt; broadcast over tokens</span>
+
+    <span class="n">ratio</span> <span class="o">=</span> <span class="p">(</span><span class="n">new_lp</span> <span class="o">-</span> <span class="n">old_lp</span><span class="p">)</span><span class="o">.</span><span class="n">exp</span><span class="p">()</span>                <span class="c1"># pi_theta / pi_old, per token</span>
+    <span class="n">unclipped</span> <span class="o">=</span> <span class="n">ratio</span> <span class="o">*</span> <span class="n">A</span>
+    <span class="n">clipped</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="n">ratio</span><span class="p">,</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">CLIP_EPS_LOW</span><span class="p">,</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">CLIP_EPS_HIGH</span><span class="p">)</span> <span class="o">*</span> <span class="n">A</span>
+    <span class="n">pg</span> <span class="o">=</span> <span class="o">-</span><span class="n">torch</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">unclipped</span><span class="p">,</span> <span class="n">clipped</span><span class="p">)</span>            <span class="c1"># negative surrogate (we minimize)</span>
+
+    <span class="k">if</span> <span class="n">KL_BETA</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">kl</span> <span class="o">=</span> <span class="n">k3_kl</span><span class="p">(</span><span class="n">new_lp</span><span class="p">,</span> <span class="n">ref_lp</span><span class="p">)</span>                 <span class="c1"># per-token KL(theta || ref)</span>
+        <span class="n">pg</span> <span class="o">=</span> <span class="n">pg</span> <span class="o">+</span> <span class="n">KL_BETA</span> <span class="o">*</span> <span class="n">kl</span>
+
+    <span class="k">if</span> <span class="n">token_level</span><span class="p">:</span>
+        <span class="c1"># Dr.GRPO / token-level: sum over ALL tokens, divide by ALL tokens.</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="p">(</span><span class="n">pg</span> <span class="o">*</span> <span class="n">mask</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">/</span> <span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Original GRPO: mean over tokens WITHIN a response, then mean over responses.</span>
+        <span class="n">per_resp</span> <span class="o">=</span> <span class="p">(</span><span class="n">pg</span> <span class="o">*</span> <span class="n">mask</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">per_resp</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">loss</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># 6. One full GRPO outer step: rollout -&gt; advantage -&gt; PPO_EPOCHS updates.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">grpo_step</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">golds</span><span class="p">):</span>
+    <span class="n">input_ids</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">,</span> <span class="n">rewards</span> <span class="o">=</span> <span class="n">rollout</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">golds</span><span class="p">)</span>
+    <span class="n">advantage</span> <span class="o">=</span> <span class="n">grpo_advantage</span><span class="p">(</span><span class="n">rewards</span><span class="p">,</span> <span class="n">GROUP_SIZE</span><span class="p">,</span> <span class="n">normalize_std</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># Cache OLD (behavior) and REF log-probs once; they are fixed for this batch.</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="n">old_lp</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">token_logprobs</span><span class="p">(</span><span class="n">policy</span><span class="p">,</span> <span class="n">input_ids</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">)</span>
+        <span class="n">ref_lp</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">token_logprobs</span><span class="p">(</span><span class="n">ref</span><span class="p">,</span>    <span class="n">input_ids</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">)</span> <span class="k">if</span> <span class="n">KL_BETA</span> <span class="o">&gt;</span> <span class="mi">0</span> \
+                    <span class="k">else</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">old_lp</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">PPO_EPOCHS</span><span class="p">):</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">grpo_loss</span><span class="p">(</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">resp_mask</span><span class="p">,</span> <span class="n">advantage</span><span class="p">,</span> <span class="n">old_lp</span><span class="p">,</span> <span class="n">ref_lp</span><span class="p">)</span>
+        <span class="n">opt</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">policy</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="mf">1.0</span><span class="p">)</span>
+        <span class="n">opt</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">rewards</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+<span class="c1"># Example driver (toy data):</span>
+<span class="c1"># prompts = [&quot;What is 17 + 26? Put the final number in &lt;answer&gt;&lt;/answer&gt;.&quot;]</span>
+<span class="c1"># golds   = [&quot;43&quot;]</span>
+<span class="c1"># for it in range(100):</span>
+<span class="c1">#     mean_r, l = grpo_step(prompts * 4, golds * 4)</span>
+<span class="c1">#     print(it, &quot;mean_reward&quot;, round(mean_r, 3), &quot;loss&quot;, round(l, 4))</span>
+</code></pre></div>
+<p>A few engineering notes that matter in practice:</p>
+<ul>
+<li><strong><code>old_lp</code> is recomputed, not reused from generation.</strong> In the toy code we recompute log-probs with a forward pass. In production, generation happens on a separate inference engine (vLLM/SGLang) and you must be careful that the log-probs used for the ratio come from a <em>consistent</em> policy. Mismatch between the sampler&rsquo;s numerics and the trainer&rsquo;s numerics is a real, subtle source of bias — see <a href="../06-rl-infra/02-generation-training-loop.html">The Generation–Training Loop &amp; Rollout Engines</a>.</li>
+<li><strong>KL is often set to zero in R1-style recipes.</strong> DeepSeek-R1-Zero used essentially no KL/penalty and let the model drift far from the base, which is <em>desired</em> when you want emergent long reasoning. Keep <span class="arithmatex">\(\beta&gt;0\)</span> for chat alignment where you must preserve the SFT persona.</li>
+<li><strong>PPO_EPOCHS &gt; 1 is why we need the ratio and clip at all.</strong> If you only ever take one gradient step on each rollout batch (<span class="arithmatex">\(\pi_\theta=\pi_{\text{old}}\)</span>, ratio <span class="arithmatex">\(=1\)</span>), GRPO collapses into RLOO-with-std-normalization. The clip earns its keep only when you reuse rollouts.</li>
+</ul>
+<h2 id="a-worked-numerical-example">A worked numerical example<a class="headerlink" href="#a-worked-numerical-example" title="Permanent link">¶</a></h2>
+<p>Let&rsquo;s make the magnitudes concrete. Take one prompt, a group of <span class="arithmatex">\(G=4\)</span> sampled responses, and a verifiable reward in <span class="arithmatex">\(\{0, 1\}\)</span> (wrong / right), plus the format bonus from our <code>reward_fn</code>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: computing GRPO advantages and a token&rsquo;s loss</p>
+<p>Four responses are sampled. Their rewards (correctness + format) come out to:</p>
+<table>
+<thead>
+<tr>
+<th>response</th>
+<th>correct?</th>
+<th>format?</th>
+<th>reward <span class="arithmatex">\(R_i\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(o_1\)</span></td>
+<td>yes</td>
+<td>yes</td>
+<td><span class="arithmatex">\(1.2\)</span></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(o_2\)</span></td>
+<td>no</td>
+<td>yes</td>
+<td><span class="arithmatex">\(0.2\)</span></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(o_3\)</span></td>
+<td>yes</td>
+<td>yes</td>
+<td><span class="arithmatex">\(1.2\)</span></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(o_4\)</span></td>
+<td>no</td>
+<td>no</td>
+<td><span class="arithmatex">\(0.0\)</span></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Group mean:</strong> <span class="arithmatex">\(\bar R = (1.2+0.2+1.2+0.0)/4 = 0.65\)</span>.</p>
+<p><strong>Group std (population):</strong> deviations are <span class="arithmatex">\(\{0.55, -0.45, 0.55, -0.65\}\)</span>; their squares sum to <span class="arithmatex">\(0.3025+0.2025+0.3025+0.4225 = 1.23\)</span>; variance <span class="arithmatex">\(=1.23/4 = 0.3075\)</span>; <span class="arithmatex">\(\operatorname{std}=\sqrt{0.3075}\approx 0.5545\)</span>.</p>
+<p><strong>GRPO advantages</strong> <span class="arithmatex">\(\hat A_i = (R_i-\bar R)/(\operatorname{std}+\varepsilon)\)</span>, with <span class="arithmatex">\(\varepsilon=10^{-4}\)</span>:</p>
+<div class="arithmatex">\[
+\hat A_1 = \hat A_3 = \frac{0.55}{0.5546} \approx +0.992,\quad
+\hat A_2 = \frac{-0.45}{0.5546} \approx -0.811,\quad
+\hat A_4 = \frac{-0.65}{0.5546} \approx -1.172.
+\]</div>
+<p>Every token of <span class="arithmatex">\(o_1\)</span> and <span class="arithmatex">\(o_3\)</span> gets advantage <span class="arithmatex">\(\approx +0.99\)</span> (push up); every token of <span class="arithmatex">\(o_2\)</span> gets <span class="arithmatex">\(\approx -0.81\)</span>, of <span class="arithmatex">\(o_4\)</span> gets <span class="arithmatex">\(\approx -1.17\)</span> (push down). Notice the model is told nothing about <em>which</em> tokens were good — it just makes the whole correct trajectory more likely and the whole wrong trajectory less likely. Over many prompts the shared substrings cancel and the genuinely discriminative tokens (the reasoning steps that lead to the right answer) get net-reinforced. This is the &ldquo;weak credit assignment, strong averaging&rdquo; character of GRPO.</p>
+<p><strong>Now one token&rsquo;s contribution.</strong> Take a token in <span class="arithmatex">\(o_1\)</span> (<span class="arithmatex">\(\hat A_1=+0.992\)</span>). Suppose after a gradient step the policy raised this token&rsquo;s probability so the ratio is <span class="arithmatex">\(r_{1,t}=1.35\)</span>. With <span class="arithmatex">\(\epsilon_{\text{high}}=0.28\)</span>, the clip ceiling is <span class="arithmatex">\(1.28\)</span>. Since <span class="arithmatex">\(\hat A&gt;0\)</span>:</p>
+<ul>
+<li>unclipped surrogate <span class="arithmatex">\(= 1.35\times 0.992 = 1.339\)</span></li>
+<li>clipped surrogate <span class="arithmatex">\(= 1.28\times 0.992 = 1.270\)</span></li>
+<li><span class="arithmatex">\(\min(1.339, 1.270) = 1.270\)</span> — <strong>clipped</strong>, so this token&rsquo;s gradient is zeroed out (no further push). Good: the trust region kicked in.</li>
+</ul>
+<p>Take instead a token in <span class="arithmatex">\(o_4\)</span> (<span class="arithmatex">\(\hat A_4=-1.172\)</span>) whose ratio dropped to <span class="arithmatex">\(r=0.6\)</span> (policy already suppressed it). Lower clip floor is <span class="arithmatex">\(1-0.2=0.8\)</span>. With <span class="arithmatex">\(\hat A&lt;0\)</span>:</p>
+<ul>
+<li>unclipped <span class="arithmatex">\(= 0.6\times(-1.172)=-0.703\)</span></li>
+<li>clipped <span class="arithmatex">\(= 0.8\times(-1.172)=-0.938\)</span></li>
+<li><span class="arithmatex">\(\min(-0.703,-0.938)=-0.938\)</span> → the <strong>clipped</strong> branch is selected; the surrogate is the more-negative value, so its gradient is also zeroed. (For negative advantage, <code>min</code> selects the clipped term whenever the ratio fell below the floor — the trust region prevents over-suppressing already-suppressed tokens.)</li>
+</ul>
+<p>The point of the worked numbers: the advantage magnitudes are <span class="arithmatex">\(O(1)\)</span>, clipping engages exactly when a single step moved a token&rsquo;s probability by more than ~20–28%, and the std-normalization made a <span class="arithmatex">\(1.2\)</span>-vs-<span class="arithmatex">\(0.0\)</span> reward gap into a clean <span class="arithmatex">\(\pm 1\)</span> advantage regardless of the raw reward scale.</p>
+</div>
+<h2 id="the-deepseek-r1-recipe">The DeepSeek-R1 recipe<a class="headerlink" href="#the-deepseek-r1-recipe" title="Permanent link">¶</a></h2>
+<p>GRPO is the optimizer; DeepSeek-R1 is the <em>recipe</em> that made it iconic. Two variants matter, and the contrast is instructive.</p>
+<h3 id="r1-zero-pure-rl-from-a-base-model">R1-Zero: pure RL from a base model<a class="headerlink" href="#r1-zero-pure-rl-from-a-base-model" title="Permanent link">¶</a></h3>
+<p>R1-Zero starts from the <strong>base</strong> (pretrained, not even SFT&rsquo;d) DeepSeek-V3 model and applies GRPO directly with a <strong>rule-based verifiable reward</strong> — no reward model, no human preferences. The reward has two parts:</p>
+<ol>
+<li><strong>Accuracy reward:</strong> for math, did the boxed final answer match the gold? For code, did it pass the unit tests in a sandbox (<a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a>)? This is binary and uncheatable in the usual reward-model sense.</li>
+<li><strong>Format reward:</strong> did the model put its reasoning between <code>&lt;think&gt;...&lt;/think&gt;</code> and its answer between <code>&lt;answer&gt;...&lt;/answer&gt;</code>? A small shaping reward that teaches the <em>structure</em>, not the content.</li>
+</ol>
+<div class="highlight"><pre><span></span><code>   R1-Zero reward = accuracy_reward(answer, gold)        # 0 or 1 (the real signal)
+                  + format_reward(uses &lt;think&gt;&lt;/think&gt;)  # small, e.g. +0.x
+   (no reward model, no learned value model, no human labels)
+</code></pre></div>
+<p>The striking empirical result was that, with nothing but GRPO and this rule reward, the model spontaneously learned to <strong>think longer</strong>: response length grew over training, and behaviors like self-verification and backtracking (&ldquo;wait, let me reconsider…&rdquo;) <em>emerged</em> without ever being demonstrated. The famous &ldquo;aha moment&rdquo; — the model catching its own error mid-reasoning — appeared from pure RL pressure on correctness. This is the central evidence that long chain-of-thought reasoning (<a href="../05-posttraining-alignment/10-reasoning-test-time-compute.html">Reasoning, Chain-of-Thought &amp; Test-Time Compute</a>) can be <em>grown</em> by RL rather than only <em>imitated</em> from data.</p>
+<p>R1-Zero had warts: poor readability, language mixing (switching between languages mid-thought), and ugly formatting — precisely because there was no KL anchor to a polished SFT model and the reward only cared about correctness.</p>
+<h3 id="r1-the-multi-stage-pipeline">R1: the multi-stage pipeline<a class="headerlink" href="#r1-the-multi-stage-pipeline" title="Permanent link">¶</a></h3>
+<p>To get a deployable model, DeepSeek-R1 wraps the same GRPO core in a multi-stage pipeline (described qualitatively; we do not cite exact figures):</p>
+<figure class="viz" id="fig-grpo-r1-pipeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 760 660" role="img" aria-label="DeepSeek-R1 four-stage training pipeline: Stage 1 Cold-Start SFT, Stage 2 Reasoning RL with GRPO, Stage 3 Rejection Sampling plus SFT, Stage 4 RL for all scenarios with GRPO. Stages alternate between SFT (grey) and RL (blue) phases.">
+<defs>
+  <marker id="rp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="90">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--border-2,#9ca3af)"/>
+  </marker>
+</defs>
+<style>
+  #fig-grpo-r1-pipeline text { fill: var(--ink-soft,#1f2937); font: 400 12px var(--sans,sans-serif); }
+  #fig-grpo-r1-pipeline .t-title { font: 700 13px var(--sans,sans-serif); }
+  #fig-grpo-r1-pipeline .t-body { font: 400 11.5px var(--sans,sans-serif); }
+  #fig-grpo-r1-pipeline .t-sub { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-grpo-r1-pipeline .t-badge { font: 700 11px var(--sans,sans-serif); fill: #ffffff; }
+  #fig-grpo-r1-pipeline .t-num { font: 700 20px var(--sans,sans-serif); fill: #ffffff; }
+  #fig-grpo-r1-pipeline .t-chip { font: 600 9px var(--sans,sans-serif); }
+  #fig-grpo-r1-pipeline .t-conn { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#9ca3af); font-style: italic; }
+
+  #fig-grpo-r1-pipeline [data-anim] { opacity: 0; animation: rp-fi 0.4s ease forwards; }
+  #fig-grpo-r1-pipeline [data-anim="1"] { animation-delay: 0.1s; }
+  #fig-grpo-r1-pipeline [data-anim="2"] { animation-delay: 0.65s; }
+  #fig-grpo-r1-pipeline [data-anim="3"] { animation-delay: 1.2s; }
+  #fig-grpo-r1-pipeline [data-anim="4"] { animation-delay: 1.75s; }
+  #fig-grpo-r1-pipeline [data-anim="5"] { animation-delay: 2.2s; }
+  @keyframes rp-fi {
+    from { opacity: 0; transform: translateY(5px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  #fig-grpo-r1-pipeline .rp-dot {
+    opacity: 0;
+    animation: rp-tv 4s ease-in-out 2.6s infinite;
+  }
+  @keyframes rp-tv {
+    0%   { transform: translateY(0px);    opacity: 0; }
+    5%   { opacity: 1; }
+    27%  { transform: translateY(148px);  opacity: 1; }
+    33%  { transform: translateY(148px);  opacity: 0; }
+    38%  { transform: translateY(148px);  opacity: 1; }
+    60%  { transform: translateY(296px);  opacity: 1; }
+    66%  { transform: translateY(296px);  opacity: 0; }
+    71%  { transform: translateY(296px);  opacity: 1; }
+    93%  { transform: translateY(444px);  opacity: 1; }
+    98%  { transform: translateY(444px);  opacity: 0; }
+    100% { transform: translateY(444px);  opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-grpo-r1-pipeline [data-anim] { opacity: 1 !important; animation: none !important; transform: none !important; }
+    #fig-grpo-r1-pipeline .rp-dot { display: none; }
+  }
+</style>
+
+
+
+
+<g data-anim="1">
+  <rect x="60" y="20" width="640" height="118" rx="10" class="v-fill" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/>
+
+  <rect x="76" y="36" width="74" height="86" rx="8" fill="var(--muted,#6b7280)"/>
+  <text x="113" y="73" text-anchor="middle" class="t-num">1</text>
+  <text x="113" y="90" text-anchor="middle" class="t-badge" style="font-size:9px">COLD</text>
+  <text x="113" y="104" text-anchor="middle" class="t-badge" style="font-size:9px">START</text>
+
+  <rect x="624" y="36" width="58" height="20" rx="4" class="v-fill" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="653" y="50" text-anchor="middle" class="t-chip" style="fill:var(--muted,#6b7280)">SFT</text>
+
+  <text x="170" y="57" class="t-title">Cold-Start SFT</text>
+  <text x="170" y="76" class="t-body">Small SFT on a few thousand high-quality long-CoT examples</text>
+  <text x="170" y="93" class="t-body">(some distilled from R1-Zero, cleaned by humans).</text>
+  <text x="170" y="112" class="t-sub">Fixes readability; gives RL a sane starting point.</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="380" y1="138" x2="380" y2="178" stroke="var(--border-2,#9ca3af)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+  <text x="390" y="162" class="t-conn">readable base for RL</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="60" y="180" width="640" height="118" rx="10" class="v-fill" fill="var(--surface,#f9fafb)" stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+
+  <rect x="76" y="196" width="74" height="86" rx="8" fill="var(--accent2,#3b82f6)"/>
+  <text x="113" y="233" text-anchor="middle" class="t-num">2</text>
+  <text x="113" y="250" text-anchor="middle" class="t-badge" style="font-size:9px">REASONING</text>
+  <text x="113" y="264" text-anchor="middle" class="t-badge" style="font-size:9px">RL</text>
+
+  <rect x="616" y="196" width="58" height="20" rx="4" fill="var(--surface-3,#eef2ff)" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="645" y="210" text-anchor="middle" class="t-chip" style="fill:var(--accent2,#3b82f6)">GRPO</text>
+
+  <text x="170" y="217" class="t-title">Reasoning RL  (GRPO)</text>
+  <text x="170" y="236" class="t-body">GRPO with rule rewards on math / code / logic.</text>
+  <text x="170" y="253" class="t-body">+ Language-consistency reward to stop language mixing.</text>
+  <text x="170" y="272" class="t-sub">Model learns to reason longer; "aha" self-correction emerges.</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="380" y1="298" x2="380" y2="338" stroke="var(--border-2,#9ca3af)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+  <text x="390" y="322" class="t-conn">reasoning policy</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="60" y="340" width="640" height="118" rx="10" class="v-fill" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.5"/>
+
+  <rect x="76" y="356" width="74" height="86" rx="8" fill="var(--muted,#6b7280)"/>
+  <text x="113" y="393" text-anchor="middle" class="t-num">3</text>
+  <text x="113" y="410" text-anchor="middle" class="t-badge" style="font-size:9px">REJECTION</text>
+  <text x="113" y="424" text-anchor="middle" class="t-badge" style="font-size:9px">SAMP+SFT</text>
+
+  <rect x="610" y="412" width="58" height="20" rx="4" class="v-fill" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="639" y="426" text-anchor="middle" class="t-chip" style="fill:var(--muted,#6b7280)">sample</text>
+  <rect x="610" y="436" width="58" height="20" rx="4" class="v-fill" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="639" y="450" text-anchor="middle" class="t-chip" style="fill:var(--muted,#6b7280)">filter+SFT</text>
+
+  <text x="170" y="377" class="t-title">Rejection Sampling + SFT</text>
+  <text x="170" y="396" class="t-body">Sample from Stage-2 model; keep the best outputs.</text>
+  <text x="170" y="413" class="t-body">Add chat / safety data; SFT on combined set.</text>
+  <text x="170" y="432" class="t-sub">Broadens coverage beyond verifiable tasks.</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="380" y1="458" x2="380" y2="498" stroke="var(--border-2,#9ca3af)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+  <text x="390" y="482" class="t-conn">broadened SFT model</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="60" y="500" width="640" height="118" rx="10" class="v-fill" fill="var(--surface,#f9fafb)" stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+
+  <rect x="76" y="516" width="74" height="86" rx="8" fill="var(--accent2,#3b82f6)"/>
+  <text x="113" y="553" text-anchor="middle" class="t-num">4</text>
+  <text x="113" y="570" text-anchor="middle" class="t-badge" style="font-size:9px">RL  ALL</text>
+  <text x="113" y="584" text-anchor="middle" class="t-badge" style="font-size:9px">SCENARIOS</text>
+
+  <rect x="610" y="572" width="58" height="20" rx="4" fill="var(--surface-3,#eef2ff)" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="639" y="586" text-anchor="middle" class="t-chip" style="fill:var(--accent2,#3b82f6)">GRPO</text>
+  <rect x="594" y="596" width="76" height="20" rx="4" fill="var(--surface-3,#eef2ff)" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="632" y="610" text-anchor="middle" class="t-chip" style="fill:var(--accent2,#3b82f6)">reward model</text>
+
+  <text x="170" y="537" class="t-title">RL for All Scenarios  (GRPO)</text>
+  <text x="170" y="556" class="t-body">Final GRPO pass: rule rewards (reasoning)</text>
+  <text x="170" y="573" class="t-body">+ reward model for helpfulness / harmlessness.</text>
+  <text x="170" y="592" class="t-sub">Mixes verifiable + non-verifiable tasks in one RL phase.</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="60" y="634" width="14" height="12" rx="2" fill="var(--muted,#6b7280)"/>
+  <text x="80" y="645" class="t-conn" style="fill:var(--ink-soft,#4b5563)">SFT stage (grey)</text>
+  <rect x="190" y="634" width="14" height="12" rx="2" fill="var(--accent2,#3b82f6)"/>
+  <text x="210" y="645" class="t-conn" style="fill:var(--ink-soft,#4b5563)">RL / GRPO stage (blue)</text>
+  <text x="510" y="645" text-anchor="middle" class="t-conn">pattern: SFT -> RL -> SFT -> RL</text>
+</g>
+
+
+<circle class="rp-dot" cx="380" cy="138" r="6" fill="var(--accent2,#3b82f6)"/>
+
+</svg>
+<figcaption><b>DeepSeek-R1 trains in four alternating stages: Cold-Start SFT, Reasoning RL (GRPO), Rejection-Sampling SFT, and final RL for all scenarios.</b> Grey-badged stages (1 and 3) are SFT phases that provide stable checkpoints and broaden coverage; blue-badged stages (2 and 4) are GRPO RL phases that grow long chain-of-thought reasoning and then extend it to helpfulness and safety. Each stage feeds its improved model artifact into the next.</figcaption>
+</figure>
+
+<p>The takeaways for an engineer: (1) a tiny <strong>cold-start SFT</strong> dramatically stabilizes RL and improves the final model&rsquo;s polish; (2) <strong>rejection sampling + SFT</strong> (&ldquo;STaR-like&rdquo; self-distillation) is a cheap, stable way to bank RL gains and broaden coverage; (3) you eventually need a <strong>reward model</strong> again for the non-verifiable parts (helpfulness, safety) — GRPO is reward-source-agnostic, it just needs <em>some</em> scalar per response. The DeepSeek team also showed that <strong>distilling</strong> R1&rsquo;s outputs into smaller dense models often beats running GRPO on those small models directly — a result echoed in <a href="../05-posttraining-alignment/12-distillation-compression.html">Distillation, Model Compression &amp; Knowledge Transfer</a>.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: pass@k as your north star, not pass@1</p>
+<p>GRPO can only learn from a prompt if the group contains <em>both</em> successes and failures — otherwise every advantage is zero and the gradient vanishes. So the right difficulty band for your prompt set is &ldquo;hard but not impossible at <span class="arithmatex">\(G\)</span> samples.&rdquo; Track the fraction of prompts with mixed outcomes; if most groups are all-correct or all-wrong, the run is wasting compute. Curriculum (start easy, raise difficulty) and large <span class="arithmatex">\(G\)</span> both help keep groups informative.</p>
+</div>
+<h2 id="the-2025-fixes-dr-grpo-token-level-loss-and-clip-higher">The 2025 fixes: Dr. GRPO, token-level loss, and clip-higher<a class="headerlink" href="#the-2025-fixes-dr-grpo-token-level-loss-and-clip-higher" title="Permanent link">¶</a></h2>
+<p>GRPO as originally written has two now-well-documented <strong>optimization biases</strong> — places where the loss does not faithfully estimate the policy gradient and instead silently rewards or punishes <em>length</em>. The 2025 literature (notably Liu et al., <em>Understanding R1-Zero-like Training</em> / &ldquo;Dr. GRPO&rdquo;, and the Qwen team&rsquo;s <em>DAPO</em>) diagnosed and fixed them. These are favorite interview topics because they require you to actually look at the loss algebra.</p>
+<h3 id="bias-1-the-response-level-length-normalization">Bias 1: the response-level length normalization<a class="headerlink" href="#bias-1-the-response-level-length-normalization" title="Permanent link">¶</a></h3>
+<p>Recall the inner term <span class="arithmatex">\(\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}(\cdot)\)</span>. Dividing each response&rsquo;s summed token loss by its own length <span class="arithmatex">\(|o_i|\)</span> means <strong>each response contributes equally regardless of length</strong>, which sounds fair but isn&rsquo;t, gradient-wise. Consider two responses with the <em>same</em> positive advantage. The gradient signal per token is scaled by <span class="arithmatex">\(1/|o_i|\)</span>, so a <em>long correct</em> response gets a <em>smaller per-token</em> push than a <em>short correct</em> one. Conversely, for negative advantage, long <em>wrong</em> responses are penalized <em>less per token</em> than short wrong ones. The net effect of this asymmetry is a systematic pressure that, combined with std-normalization, <strong>inflates response length</strong> — the model learns that rambling is cheap when wrong and reinforced when right. This is a major driver of the &ldquo;GRPO models get longer and longer&rdquo; phenomenon, separate from genuine reasoning gains.</p>
+<p><strong>The fix (Dr. GRPO / token-level loss):</strong> drop the per-response division and instead sum the loss over <em>all</em> tokens in the batch and divide by a <em>constant</em> (or by the total token count). Every token gets equal weight; length no longer modulates the per-token gradient:</p>
+<div class="arithmatex">\[
+\mathcal{J}_{\text{token-level}}(\theta)
+= \frac{1}{\sum_{i}|o_i|}\sum_{i=1}^{G}\sum_{t=1}^{|o_i|}
+\min\big( r_{i,t}\hat A_i,\;\operatorname{clip}(r_{i,t},1-\epsilon,1+\epsilon)\hat A_i\big).
+\]</div>
+<p>In the code above, this is the <code>token_level=True</code> branch: <code>(pg * mask).sum() / mask.sum()</code>. DAPO frames it as &ldquo;token-level policy-gradient loss&rdquo;; Dr. GRPO removes the length term entirely (dividing by a constant max length). Both kill the length bias.</p>
+<h3 id="bias-2-the-standard-deviation-normalization">Bias 2: the standard-deviation normalization<a class="headerlink" href="#bias-2-the-standard-deviation-normalization" title="Permanent link">¶</a></h3>
+<p>The other half of &ldquo;Dr. GRPO&rdquo; (the name puns on &ldquo;Done Right&rdquo; / removing the <em>bias</em>) targets the <span class="arithmatex">\(\div\,\operatorname{std}(\{R\})\)</span> in the advantage. Dividing by the group std means <strong>prompts with low reward variance get their advantages amplified</strong>. A prompt where the group rewards are <span class="arithmatex">\(\{1,1,1,0\}\)</span> (std small) produces <em>larger-magnitude</em> advantages than a prompt with <span class="arithmatex">\(\{1,1,0,0\}\)</span> (std large), even though the latter is arguably more informative. This re-weights prompts by the inverse of their reward spread — an artifact, not a feature. It particularly distorts very easy and very hard prompts (where std is tiny) and interacts badly with the length bias.</p>
+<p><strong>The fix:</strong> simply <strong>don&rsquo;t divide by the std</strong>. Keep the mean-subtraction (the legitimate baseline) and drop the normalization:</p>
+<div class="arithmatex">\[
+\hat A_i^{\text{Dr.GRPO}} = R_i - \operatorname{mean}(\{R_1,\dots,R_G\}).
+\]</div>
+<p>This is <em>exactly the group-mean baseline of RLOO</em> (up to the <span class="arithmatex">\(G/(G-1)\)</span> factor). In the code, set <code>normalize_std=False</code>. The empirical claim from the Dr. GRPO work is that removing both biases yields more <em>token-efficient</em> models — they reason just as well with shorter chains, because the optimizer is no longer secretly paying them to be verbose.</p>
+<h3 id="fix-3-clip-higher-decoupled-clipping-from-dapo">Fix 3: clip-higher (decoupled clipping, from DAPO)<a class="headerlink" href="#fix-3-clip-higher-decoupled-clipping-from-dapo" title="Permanent link">¶</a></h3>
+<p>PPO&rsquo;s symmetric clip <span class="arithmatex">\([1-\epsilon, 1+\epsilon]\)</span> has a subtle pathology for exploration noted by the DAPO authors. The <em>upper</em> clip <span class="arithmatex">\(1+\epsilon\)</span> caps how much a <em>low-probability but good</em> token can be boosted in one update. Tokens that are currently rare (say <span class="arithmatex">\(\pi_{\text{old}}=0.01\)</span>) but turn out to be useful can only be lifted to at most <span class="arithmatex">\(1.01\times\)</span> their probability per step — so the policy&rsquo;s <strong>entropy collapses</strong>: it doubles down on already-likely tokens and stops exploring. DAPO&rsquo;s fix is <strong>clip-higher</strong>: decouple the lower and upper clip ranges and raise the ceiling,</p>
+<div class="arithmatex">\[
+\operatorname{clip}\big(r_{i,t},\; 1-\epsilon_{\text{low}},\; 1+\epsilon_{\text{high}}\big),\qquad \epsilon_{\text{high}} &gt; \epsilon_{\text{low}}.
+\]</div>
+<p>For example <span class="arithmatex">\(\epsilon_{\text{low}}=0.2,\ \epsilon_{\text{high}}=0.28\)</span>. This gives more headroom to promote promising rare tokens (better exploration / sustained entropy) while keeping the lower clip tight to avoid catastrophic suppression. In the code, that is <code>CLIP_EPS_LOW</code> vs <code>CLIP_EPS_HIGH</code>. DAPO pairs this with two more ideas worth knowing:</p>
+<ul>
+<li><strong>Dynamic sampling:</strong> discard prompts whose entire group is all-correct or all-wrong (zero advantage, zero gradient) and resample, so every gradient step has informative groups. This directly addresses the &ldquo;mixed-outcome&rdquo; requirement from the practitioner tip above.</li>
+<li><strong>Overlong filtering / soft length penalty:</strong> mask the loss (or apply a graded penalty) on responses that hit the generation length cap, so truncated garbage doesn&rsquo;t get treated as a real (and mis-scored) sample.</li>
+</ul>
+<h3 id="putting-the-fixes-together">Putting the fixes together<a class="headerlink" href="#putting-the-fixes-together" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Original GRPO</th>
+<th>Dr. GRPO</th>
+<th>DAPO</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Baseline</td>
+<td>group mean</td>
+<td>group mean</td>
+<td>group mean</td>
+</tr>
+<tr>
+<td>Std normalization</td>
+<td>yes (<span class="arithmatex">\(\div\operatorname{std}\)</span>)</td>
+<td><strong>no</strong></td>
+<td><strong>no</strong></td>
+</tr>
+<tr>
+<td>Loss aggregation</td>
+<td>per-response mean, then mean</td>
+<td>token-level (÷ constant)</td>
+<td><strong>token-level</strong> (÷ total tokens)</td>
+</tr>
+<tr>
+<td>Clipping</td>
+<td>symmetric <span class="arithmatex">\(\epsilon\)</span></td>
+<td>symmetric</td>
+<td><strong>clip-higher</strong> (<span class="arithmatex">\(\epsilon_{\text{low}}\!\neq\!\epsilon_{\text{high}}\)</span>)</td>
+</tr>
+<tr>
+<td>Dynamic sampling</td>
+<td>no</td>
+<td>no</td>
+<td><strong>yes</strong></td>
+</tr>
+<tr>
+<td>KL penalty</td>
+<td>yes (<span class="arithmatex">\(\beta\)</span>)</td>
+<td>optional</td>
+<td>often <strong>dropped</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The arc is clear: each &ldquo;fix&rdquo; removes an artificial scaling from the loss until what remains is, essentially, <strong>a clean token-level REINFORCE with a group-mean baseline and a PPO clip for off-policy safety</strong> — RLOO&rsquo;s spirit with PPO&rsquo;s trust region. If you remember one thing: <em>the legitimate parts of GRPO are the group-mean baseline and the clipped ratio; the std-normalization and per-response length normalization are the parts that caused trouble.</em></p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: the all-equal-reward dead group</p>
+<p>If every response in a group gets the same reward (all correct, all wrong, or a degenerate reward function), then <code>mean</code> equals every <span class="arithmatex">\(R_i\)</span>, every advantage is <span class="arithmatex">\(0\)</span>, and that group contributes <em>exactly zero gradient</em>. With std-normalization you additionally divide <span class="arithmatex">\(0\)</span> by a near-zero std — the <span class="arithmatex">\(\varepsilon\)</span> in the denominator saves you from NaNs, but the group is still dead. This is not a bug to fix in the loss; it is a signal that your prompts are mis-calibrated in difficulty (or your reward is too coarse). Monitor the fraction of non-degenerate groups as a first-class training metric, and use dynamic sampling to refill the batch.</p>
+</div>
+<h2 id="length-format-and-reward-shaping">Length, format, and reward shaping<a class="headerlink" href="#length-format-and-reward-shaping" title="Permanent link">¶</a></h2>
+<p>GRPO&rsquo;s reward can be anything that returns a scalar per response. In practice for reasoning models it is a <em>sum of shaped components</em>, and getting the shaping right is most of the art.</p>
+<ul>
+<li><strong>Correctness (the real signal).</strong> Binary or graded, from a verifier: exact-match on a boxed answer, a math equivalence checker (e.g., symbolic comparison so <span class="arithmatex">\(\frac12\)</span> and <span class="arithmatex">\(0.5\)</span> both count), or unit-test pass-rate for code. This is the only component you truly trust; everything else is a guardrail. Covered in depth in <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a>.</li>
+<li><strong>Format reward.</strong> A small bonus for emitting the required structure (<code>&lt;think&gt;</code>/<code>&lt;answer&gt;</code> tags, a <code>\boxed{}</code>). Keep it <em>small</em> relative to correctness, or the model learns to nail the format on wrong answers — a cheap local optimum. A common pattern: format reward only <em>if</em> the answer is also parseable, so it cannot be farmed independently of attempting the task.</li>
+<li><strong>Length control.</strong> Because uncorrected GRPO inflates length, you may add an explicit length term: a mild penalty above a target budget, or DAPO&rsquo;s overlong-soft-punishment that ramps a penalty as you approach the max-token cap. The cleaner solution, per Dr. GRPO, is to <em>remove the biases that cause length inflation in the first place</em> rather than counter-shaping against them.</li>
+<li><strong>Language consistency.</strong> R1 added a reward for keeping the whole response in the target language, trading a small amount of raw accuracy for readability — a deliberate, documented tradeoff.</li>
+</ul>
+<p>A subtle but important point: <strong>shaped rewards are where reward hacking enters GRPO.</strong> The model optimizes the <em>sum</em>, and any component that is easier to satisfy than &ldquo;be correct&rdquo; becomes a target. Format bonuses get farmed; length bonuses produce padding; an LLM-judge helpfulness reward gets sycophancy. The mean-subtraction in the advantage does <em>not</em> protect you here — if hacking the format raises <em>every</em> response&rsquo;s reward, the baseline rises too and you&rsquo;re fine, but if it raises <em>some</em> responses (the ones that stumble into the exploit), those get positive advantage and the exploit is reinforced. Treat every non-correctness reward component as a liability to be minimized. See <a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>.</p>
+<h2 id="where-grporloo-sit-relative-to-dpo-and-ppo">Where GRPO/RLOO sit relative to DPO and PPO<a class="headerlink" href="#where-grporloo-sit-relative-to-dpo-and-ppo" title="Permanent link">¶</a></h2>
+<p>It helps to place these methods on a single map (full PPO treatment in <a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>; DPO in <a href="../05-posttraining-alignment/07-dpo-and-variants.html">Direct Preference Optimization &amp; Its Variants</a>).</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Needs reward model?</th>
+<th>Needs value net (critic)?</th>
+<th>Online generation?</th>
+<th>Baseline / advantage</th>
+<th>Multi-epoch safe?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DPO</strong></td>
+<td>no (uses preference pairs directly)</td>
+<td>no</td>
+<td>no (offline)</td>
+<td>implicit, closed-form</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><strong>PPO</strong></td>
+<td>yes (or a reward fn)</td>
+<td><strong>yes</strong></td>
+<td>yes</td>
+<td>learned <span class="arithmatex">\(V\)</span> + GAE</td>
+<td>yes (clip)</td>
+</tr>
+<tr>
+<td><strong>RLOO</strong></td>
+<td>reward fn (any scalar)</td>
+<td>no</td>
+<td>yes</td>
+<td>leave-one-out group mean</td>
+<td>no (single step)</td>
+</tr>
+<tr>
+<td><strong>GRPO</strong></td>
+<td>reward fn (any scalar)</td>
+<td>no</td>
+<td>yes</td>
+<td>group z-score</td>
+<td>yes (clip)</td>
+</tr>
+</tbody>
+</table>
+<p>The mental model: <strong>DPO</strong> is the cheapest (offline, no generation) but is limited to pairwise preferences and can&rsquo;t exploit a <em>programmatic</em> reward. <strong>PPO</strong> is the most general and lowest-variance but carries the critic. <strong>GRPO/RLOO</strong> hit the sweet spot for <em>verifiable-reward</em> reasoning RL: online (so the policy explores its own current behavior), critic-free (cheap), and able to consume any scalar reward — which is exactly what a unit-test runner or math checker provides. That is why the entire 2025 reasoning-model wave runs on GRPO and its descendants rather than PPO or DPO.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> PPO and GRPO both use the same clipped surrogate objective. What exactly does GRPO remove, why is that valid for LLM RLHF, and what new failure mode does the replacement introduce?</p>
+<p><strong>A:</strong> GRPO removes the <strong>value network (critic)</strong> and the <strong>GAE</strong> that PPO uses to estimate the advantage. PPO computes <span class="arithmatex">\(A_t = \delta_t + \gamma\lambda\delta_{t+1}+\dots\)</span> from a learned <span class="arithmatex">\(V(s)\)</span>; GRPO replaces the entire advantage with a <strong>group-relative score</strong>: sample <span class="arithmatex">\(G\)</span> responses to the same prompt, and set every token&rsquo;s advantage to the standardized reward <span class="arithmatex">\(\hat A_i=(R_i-\operatorname{mean})/\operatorname{std}\)</span> within the group. This is valid for the LLM setting because the reward is <strong>terminal</strong> (scored once at the end of a full generation), so there&rsquo;s no intermediate reward to bootstrap — the Monte Carlo group mean is a perfectly good, unbiased baseline, and resampling <span class="arithmatex">\(G\)</span> completions is cheap. We keep PPO&rsquo;s clipped ratio only so we can take multiple gradient epochs on the same rollouts. The new failure modes are <strong>optimization biases in the loss</strong>: the per-response <span class="arithmatex">\(1/|o_i|\)</span> length normalization and the <span class="arithmatex">\(\div\operatorname{std}\)</span> normalization both secretly reweight the gradient and inflate response length and over-weight low-variance prompts — which is exactly what Dr. GRPO/DAPO fix by going token-level, dropping the std, and using clip-higher. A strong answer also notes the <strong>dead-group problem</strong>: if all <span class="arithmatex">\(G\)</span> rewards are equal the advantage is zero and the group contributes no gradient, so prompt difficulty must be tuned so groups have mixed outcomes.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Your GRPO run&rsquo;s reward is climbing but average response length is exploding and eval accuracy is flat. What&rsquo;s happening and what knobs do you turn?</p>
+<p><strong>A:</strong> Classic GRPO length inflation. The likely culprits, in order: (1) <strong>per-response length normalization</strong> in the loss — switch to a <strong>token-level</strong> loss (sum over all tokens, divide by total token count or a constant) so long responses don&rsquo;t get a smaller per-token gradient; (2) <strong>std-normalization</strong> of the advantage amplifying low-variance prompts — drop the <span class="arithmatex">\(\div\operatorname{std}\)</span> and keep just the group-mean baseline (Dr. GRPO); (3) a <strong>format or length reward</strong> being farmed — make the format bonus contingent on a correctness attempt and small relative to accuracy; (4) <strong>no length cap handling</strong> — add overlong filtering so truncated samples aren&rsquo;t mis-scored. If exploration also looks dead (entropy collapsing), add <strong>clip-higher</strong> (<span class="arithmatex">\(\epsilon_{\text{high}}&gt;\epsilon_{\text{low}}\)</span>). The fact that accuracy is flat while reward rises is the tell-tale sign that the model is optimizing the <em>artifacts</em> of the loss rather than the <em>correctness</em> signal.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>The critic is optional for terminal-reward LLM RL.</strong> Because we score a full response once, a Monte Carlo baseline from a <em>group</em> of sampled responses replaces PPO&rsquo;s learned value network — no second transformer, no GAE.</li>
+<li><strong>RLOO</strong> = plain REINFORCE with a <strong>leave-one-out</strong> group-mean baseline (<span class="arithmatex">\(b_i=\frac{1}{G-1}\sum_{j\ne i}R_j\)</span>); unbiased, simple, single-step, no clipping.</li>
+<li><strong>GRPO</strong> = group-relative advantage <span class="arithmatex">\(\hat A_i=(R_i-\operatorname{mean})/\operatorname{std}\)</span> assigned to <em>every token</em>, optimized with PPO&rsquo;s <strong>clipped surrogate</strong> so you can take multiple epochs on one batch of rollouts. KL to a reference is an optional penalty (often dropped in R1-style runs).</li>
+<li><strong>DeepSeek-R1-Zero</strong> showed that GRPO + a pure <strong>rule-based reward</strong> (accuracy + format, no reward model) on a <em>base</em> model spontaneously grows long chain-of-thought, self-verification, and &ldquo;aha&rdquo; backtracking. <strong>R1</strong> wraps this in cold-start SFT → reasoning RL → rejection-sampling SFT → final RL.</li>
+<li><strong>GRPO has two real biases:</strong> per-response <strong>length normalization</strong> (<span class="arithmatex">\(1/|o_i|\)</span>) and <strong>std-normalization</strong> (<span class="arithmatex">\(\div\operatorname{std}\)</span>). Both silently inflate length and reweight prompts. <strong>Dr. GRPO</strong> removes both (token-level loss, mean-only advantage); <strong>DAPO</strong> adds <strong>clip-higher</strong>, dynamic sampling, and overlong filtering.</li>
+<li><strong>A group is dead if all its rewards are equal</strong> (advantage <span class="arithmatex">\(=0\)</span>, zero gradient). Tune prompt difficulty and use dynamic sampling so groups have mixed pass/fail outcomes.</li>
+<li><strong>Reward shaping is the attack surface.</strong> Keep correctness dominant; make format/length bonuses small and contingent; treat every non-correctness component as a reward-hacking liability.</li>
+<li><strong>Mental model:</strong> the well-behaved core of GRPO is <em>token-level REINFORCE with a group-mean baseline plus a PPO clip</em> — i.e., RLOO&rsquo;s spirit with a trust region for off-policy reuse.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Critic-free group-baseline RL (GRPO/RLOO) is now the dominant post-training optimizer for open reasoning models; virtually every 2025–2026 open reasoning model—DeepSeek-R1, QwQ, Skywork-o, and their descendants—trains with GRPO or a direct derivative, and the main active research front is removing the remaining optimization biases (length inflation, std-normalization artifacts) identified by Dr. GRPO and DAPO.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2402.03300">Shao et al., <em>DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models</em> (2024)</a> — introduces GRPO as a critic-free, group-relative PPO variant for LLM math reasoning.</li>
+<li><a href="https://arxiv.org/abs/2402.14740">Ahmadian et al., <em>Back to Basics: Revisiting REINFORCE Style Optimization for Learning from Human Feedback in LLMs</em> (2024)</a> — establishes RLOO for LLMs; shows it matches or beats PPO at 3× speed and 70% less RAM.</li>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI, <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em> (2025)</a> — the landmark recipe demonstrating that GRPO + rule-based rewards on a base model spontaneously grows chain-of-thought and &ldquo;aha&rdquo; self-correction.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2503.20783">Liu et al., <em>Understanding R1-Zero-Like Training: A Critical Perspective</em> (2025)</a> — diagnoses GRPO&rsquo;s length-inflation and std-normalization biases; introduces Dr. GRPO (token-level loss, mean-only advantage) to fix both.</li>
+<li><a href="https://arxiv.org/abs/2503.14476">Yu et al., <em>DAPO: An Open-Source LLM Reinforcement Learning System at Scale</em> (2025)</a> — adds clip-higher, dynamic sampling, and overlong filtering; achieves 50 pts on AIME 2024 with Qwen2.5-32B.</li>
+<li><a href="https://arxiv.org/abs/2501.03262">Hu et al., <em>REINFORCE++: Stabilizing Critic-Free Policy Optimization with Global Advantage Normalization</em> (2025)</a> — global batch-level advantage normalization that improves stability over both GRPO and RLOO without a critic.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/huggingface/trl">huggingface/trl</a> — production <code>GRPOTrainer</code> and <code>RLOOTrainer</code> with full HuggingFace ecosystem integration; the most widely used entry point for GRPO experiments.</li>
+<li><a href="https://github.com/verl-project/verl">verl-project/verl</a> — high-throughput GRPO/RLOO/DAPO/DrGRPO training via HybridFlow; integrates vLLM/SGLang for rollouts and FSDP/Megatron for training.</li>
+<li><a href="https://github.com/BytedTsinghua-SIA/DAPO">BytedTsinghua-SIA/DAPO</a> — official open-source DAPO system built on verl, including training code and curated datasets.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="http://joschu.net/blog/kl-approx.html">John Schulman, <em>Approximating KL Divergence</em> (2020)</a> — the canonical note deriving the k1/k2/k3 estimators used for the per-token KL penalty in GRPO.</li>
+<li><a href="https://cameronrwolfe.substack.com/p/grpo">Cameron Wolfe, <em>Group Relative Policy Optimization (GRPO)</em> (2025)</a> — accessible deep-dive connecting GRPO theory to DeepSeekMath and DeepSeek-R1 empirics.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Shao, Wang, Zhu, et al., <strong>DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models</strong> (2024) — introduces GRPO.</li>
+<li>DeepSeek-AI, <strong>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</strong> (2025) — R1-Zero, the multi-stage R1 recipe, distillation results.</li>
+<li>Ahmadian, Cremer, Gallé, et al., <strong>Back to Basics: Revisiting REINFORCE-Style Optimization for Learning from Human Feedback in LLMs</strong> (2024) — RLOO for LLMs.</li>
+<li>Liu, Chen, et al., <strong>Understanding R1-Zero-Like Training: A Critical Perspective</strong> (2025) — the &ldquo;Dr. GRPO&rdquo; analysis of GRPO&rsquo;s length and std biases.</li>
+<li>Yu, et al. (Qwen / ByteDance Seed), <strong>DAPO: An Open-Source LLM Reinforcement Learning System at Scale</strong> (2025) — token-level loss, clip-higher, dynamic sampling, overlong filtering.</li>
+<li>John Schulman, <strong>Approximating KL Divergence</strong> (blog note) — the k1/k2/k3 estimators used for the GRPO KL term.</li>
+<li>Williams, <strong>Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning</strong> (1992) — the original REINFORCE.</li>
+<li>HuggingFace <strong>TRL</strong> (<code>GRPOTrainer</code>, <code>RLOOTrainer</code>) and <strong>veRL</strong> repositories — production implementations of everything in this chapter; see <a href="../06-rl-infra/03-trl.html">TRL: HuggingFace&rsquo;s RL Library</a> and <a href="../06-rl-infra/04-verl.html">veRL: HybridFlow &amp; The Single-Controller Architecture</a>.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="07-dpo-and-variants.html"><span class="pn-label">← Previous</span><span class="pn-title">Direct Preference Optimization &amp; Its Variants</span></a>
+<a class="next" href="09-rlvr-reasoning.html"><span class="pn-label">Next →</span><span class="pn-title">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-the-critic-is-optional-the-baseline-as-variance-reduction">Why the critic is optional: the baseline as variance reduction</a></li>
+<li class="toc-l3"><a href="#the-reinforce-skeleton">The REINFORCE skeleton</a></li>
+<li class="toc-l3"><a href="#baselines-subtract-anything-that-doesnt-depend-on-the-action">Baselines: subtract anything that doesn&amp;rsquo;t depend on the action</a></li>
+<li class="toc-l3"><a href="#why-this-is-especially-natural-for-llms">Why this is especially natural for LLMs</a></li>
+<li class="toc-l2"><a href="#rloo-reinforce-with-a-leave-one-out-baseline">RLOO: REINFORCE with a Leave-One-Out baseline</a></li>
+<li class="toc-l3"><a href="#the-estimator">The estimator</a></li>
+<li class="toc-l3"><a href="#a-tiny-rloo-implementation">A tiny RLOO implementation</a></li>
+<li class="toc-l2"><a href="#grpo-group-relative-policy-optimization">GRPO: Group Relative Policy Optimization</a></li>
+<li class="toc-l3"><a href="#the-advantage">The advantage</a></li>
+<li class="toc-l3"><a href="#the-clipped-surrogate-objective">The clipped surrogate objective</a></li>
+<li class="toc-l3"><a href="#the-k3-kl-estimator">The k3 KL estimator</a></li>
+<li class="toc-l2"><a href="#grpo-from-scratch-a-complete-runnable-training-step">GRPO from scratch: a complete, runnable training step</a></li>
+<li class="toc-l2"><a href="#a-worked-numerical-example">A worked numerical example</a></li>
+<li class="toc-l2"><a href="#the-deepseek-r1-recipe">The DeepSeek-R1 recipe</a></li>
+<li class="toc-l3"><a href="#r1-zero-pure-rl-from-a-base-model">R1-Zero: pure RL from a base model</a></li>
+<li class="toc-l3"><a href="#r1-the-multi-stage-pipeline">R1: the multi-stage pipeline</a></li>
+<li class="toc-l2"><a href="#the-2025-fixes-dr-grpo-token-level-loss-and-clip-higher">The 2025 fixes: Dr. GRPO, token-level loss, and clip-higher</a></li>
+<li class="toc-l3"><a href="#bias-1-the-response-level-length-normalization">Bias 1: the response-level length normalization</a></li>
+<li class="toc-l3"><a href="#bias-2-the-standard-deviation-normalization">Bias 2: the standard-deviation normalization</a></li>
+<li class="toc-l3"><a href="#fix-3-clip-higher-decoupled-clipping-from-dapo">Fix 3: clip-higher (decoupled clipping, from DAPO)</a></li>
+<li class="toc-l3"><a href="#putting-the-fixes-together">Putting the fixes together</a></li>
+<li class="toc-l2"><a href="#length-format-and-reward-shaping">Length, format, and reward shaping</a></li>
+<li class="toc-l2"><a href="#where-grporloo-sit-relative-to-dpo-and-ppo">Where GRPO/RLOO sit relative to DPO and PPO</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

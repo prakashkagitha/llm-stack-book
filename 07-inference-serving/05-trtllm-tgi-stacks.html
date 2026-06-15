@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TensorRT-LLM, TGI &amp; Other Serving Stacks — The LLM Stack</title>
+<meta name="description" content="TensorRT-LLM (compiled engines, in-flight batching, kernels), Text Generation Inference, llama.cpp/Ollama, LMDeploy, MLC; the tradeoff space (portability vs pea">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="active" href="05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VII — Inference &amp; Serving</div>
+<h1 id="75-tensorrt-llm-tgi-other-serving-stacks">7.5 TensorRT-LLM, TGI &amp; Other Serving Stacks<a class="headerlink" href="#75-tensorrt-llm-tgi-other-serving-stacks" title="Permanent link">¶</a></h1>
+<p>The serving stack you choose determines whether your model runs at 10 tokens/second on a laptop or 10,000 tokens/second on a data-center cluster. The transformer forward pass is the same mathematics in both cases — what differs is how aggressively the serving runtime compiles kernels, manages memory, schedules requests, and exposes hardware capabilities. This chapter maps the complete landscape: NVIDIA&rsquo;s TensorRT-LLM for peak GPU throughput, HuggingFace&rsquo;s Text Generation Inference (TGI) for portable production deployments, and llama.cpp / Ollama / LMDeploy / MLC for the long tail of hardware and use cases.</p>
+<p>Before diving in, make sure you are comfortable with how the prefill and decode phases work and why the KV cache is central to serving economics — see <a href="../07-inference-serving/01-anatomy-inference.html">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a>. Continuous batching and in-flight request scheduling, covered in <a href="../07-inference-serving/02-continuous-batching.html">Continuous Batching &amp; Request Scheduling</a>, underpin every production system we discuss here.</p>
+<hr />
+<h2 id="the-performance-hierarchy">The Performance Hierarchy<a class="headerlink" href="#the-performance-hierarchy" title="Permanent link">¶</a></h2>
+<p>Before benchmarking any serving framework, it helps to understand the ceiling imposed by hardware. The roofline model (see <a href="../04-kernels-efficiency/01-roofline-performance.html">The Roofline Model &amp; Performance Engineering</a>) says decode throughput is bounded by memory bandwidth: each decode step reads the full model weight matrix for every generated token. For an A100-80 GB with ~2 TB/s of HBM bandwidth and a 70 B parameter model stored in FP16 (140 GB — so sharded across multiple GPUs), each token costs on the order of 70 GB of reads. That gives a raw ceiling of roughly 14 tokens/second per GPU — before batching amortizes those reads across requests.</p>
+<div class="arithmatex">\[
+\text{tokens\_per\_sec} \leq \frac{\text{HBM bandwidth (bytes/s)}}{\text{model size (bytes per token read)}}
+\]</div>
+<p>Every framework we discuss is fighting to get close to this ceiling. The closer a system gets, the more it relies on compiled, fused, hardware-specific kernels — and the less portable it becomes. That tension is the through-line of this chapter.</p>
+<figure class="viz" id="fig-trtllm-perf-portability-spectrum">
+<svg viewBox="0 0 880 310" role="img" aria-label="A horizontal spectrum axis from Peak Performance on the left to Portability on the right, with four serving frameworks marked: TensorRT-LLM, TGI, llama.cpp, and MLC in order of increasing portability.">
+<defs>
+  <marker id="ps-arrow-left" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M10 0 L0 5 L10 10 z" class="v-stroke" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="ps-arrow-right" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" class="v-stroke" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+</defs>
+<style>
+  #fig-trtllm-perf-portability-spectrum text { fill: var(--ink-soft, #45413a); }
+  #fig-trtllm-perf-portability-spectrum .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-trtllm-perf-portability-spectrum .lbl-sm { font: 400 11px var(--sans,sans-serif); }
+  #fig-trtllm-perf-portability-spectrum .lbl-fw { font: 700 12px var(--sans,sans-serif); }
+  #fig-trtllm-perf-portability-spectrum .cap { font: 400 11px var(--sans,sans-serif); fill: var(--muted, #6d675d); }
+  #fig-trtllm-perf-portability-spectrum .end-lbl { font: 700 14px var(--sans,sans-serif); }
+</style>
+
+
+<line x1="70" y1="120" x2="810" y2="120"
+      class="v-stroke" stroke="var(--ink-soft,#45413a)" stroke-width="3"
+      marker-start="url(#ps-arrow-left)" marker-end="url(#ps-arrow-right)"/>
+
+
+<text x="70" y="90" text-anchor="middle" class="end-lbl v-accent" fill="var(--accent,#c15b39)">Peak performance</text>
+
+
+<text x="810" y="90" text-anchor="middle" class="end-lbl v-accent" fill="var(--accent,#c15b39)">Portability</text>
+
+
+<circle cx="190" cy="120" r="8" class="v-fill v-accent-s" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+
+<rect x="110" y="145" width="165" height="74" rx="8" class="v-fill v-stroke" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+<text x="192" y="165" text-anchor="middle" class="lbl-fw v-accent" fill="var(--accent,#c15b39)">TensorRT-LLM</text>
+<text x="192" y="182" text-anchor="middle" class="lbl-sm cap">NVIDIA only,</text>
+<text x="192" y="197" text-anchor="middle" class="lbl-sm cap">compiled (AOT engine)</text>
+
+<line x1="190" y1="128" x2="190" y2="145" class="v-stroke" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-dasharray="3,2"/>
+
+
+<circle cx="370" cy="120" r="8" class="v-fill v-accent-s" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+
+<rect x="290" y="145" width="165" height="74" rx="8" class="v-fill v-stroke" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+<text x="372" y="165" text-anchor="middle" class="lbl-fw v-accent" fill="var(--accent,#c15b39)">TGI</text>
+<text x="372" y="182" text-anchor="middle" class="lbl-sm cap">PyTorch +</text>
+<text x="372" y="197" text-anchor="middle" class="lbl-sm cap">custom kernels</text>
+<line x1="370" y1="128" x2="370" y2="145" class="v-stroke" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-dasharray="3,2"/>
+
+
+<circle cx="550" cy="120" r="8" class="v-fill v-accent-s" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+
+<rect x="470" y="145" width="165" height="74" rx="8" class="v-fill v-stroke" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+<text x="552" y="165" text-anchor="middle" class="lbl-fw v-accent" fill="var(--accent,#c15b39)">llama.cpp</text>
+<text x="552" y="182" text-anchor="middle" class="lbl-sm cap">CPU / CUDA /</text>
+<text x="552" y="197" text-anchor="middle" class="lbl-sm cap">Metal / AVX</text>
+<line x1="550" y1="128" x2="550" y2="145" class="v-stroke" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-dasharray="3,2"/>
+
+
+<circle cx="730" cy="120" r="8" class="v-fill v-accent-s" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+
+<rect x="648" y="145" width="165" height="74" rx="8" class="v-fill v-stroke" fill="var(--surface-3,#ece7da)" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+<text x="730" y="165" text-anchor="middle" class="lbl-fw v-accent" fill="var(--accent,#c15b39)">MLC</text>
+<text x="730" y="182" text-anchor="middle" class="lbl-sm cap">WASM / Metal /</text>
+<text x="730" y="197" text-anchor="middle" class="lbl-sm cap">Vulkan / WebGPU</text>
+<line x1="730" y1="128" x2="730" y2="145" class="v-stroke" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-dasharray="3,2"/>
+
+
+<text x="440" y="263" text-anchor="middle" class="cap" style="font:italic 11px var(--sans,sans-serif); fill:var(--muted,#6d675d);">The closer to peak performance, the more a stack relies on compiled, hardware-specific kernels — and the less portable it becomes.</text>
+</svg>
+<figcaption><b>The serving-stack spectrum: peak performance vs. portability.</b> TensorRT-LLM occupies the peak-performance end with ahead-of-time compiled NVIDIA-specific engines, while MLC targets the broadest hardware reach (WebGPU, WASM, Vulkan). TGI and llama.cpp occupy the middle ground, trading some throughput for easier deployment.</figcaption>
+</figure>
+
+<hr />
+<h2 id="tensorrt-llm-the-compiled-engine-approach">TensorRT-LLM: The Compiled Engine Approach<a class="headerlink" href="#tensorrt-llm-the-compiled-engine-approach" title="Permanent link">¶</a></h2>
+<h3 id="what-tensorrt-llm-is">What TensorRT-LLM Is<a class="headerlink" href="#what-tensorrt-llm-is" title="Permanent link">¶</a></h3>
+<p>TensorRT-LLM (TRTLLM) is NVIDIA&rsquo;s open-source library for building highly optimized TensorRT engines from transformer checkpoints. A TensorRT engine is a serialized, hardware-specific computation graph with all kernels pre-selected and fused at build time. Think of it as AOT (ahead-of-time) compilation for the GPU.</p>
+<p>The key insight: PyTorch runs an interpreter that dispatches individual CUDA kernels at every step. TensorRT traces the full forward pass, applies a library of graph optimizations — layer fusion, constant folding, precision calibration — and emits a binary engine that the CUDA runtime can execute with minimal host overhead. For a model that runs millions of requests per day, eliminating Python-level dispatch overhead is material.</p>
+<h3 id="build-and-run-pipeline">Build and Run Pipeline<a class="headerlink" href="#build-and-run-pipeline" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Step 1: Convert a HuggingFace checkpoint to TensorRT-LLM format</span>
+<span class="c1"># (here: Llama-2-7B in bfloat16, single GPU)</span>
+python<span class="w"> </span>tensorrt_llm/examples/llama/convert_checkpoint.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model_dir<span class="w"> </span>./llama-2-7b-hf<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--output_dir<span class="w"> </span>./llama-2-7b-trtllm<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--dtype<span class="w"> </span>bfloat16
+
+<span class="c1"># Step 2: Build the TensorRT engine</span>
+<span class="c1"># max_batch_size and max_input_len are compile-time constants —</span>
+<span class="c1"># choose them to match your production workload envelope.</span>
+trtllm-build<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--checkpoint_dir<span class="w"> </span>./llama-2-7b-trtllm<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--output_dir<span class="w"> </span>./llama-2-7b-engine<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max_batch_size<span class="w"> </span><span class="m">32</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max_input_len<span class="w"> </span><span class="m">2048</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max_output_len<span class="w"> </span><span class="m">512</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--use_inflight_batching<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--paged_kv_cache<span class="w"> </span><span class="nb">enable</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--gemm_plugin<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--gpt_attention_plugin<span class="w"> </span>bfloat16
+
+<span class="c1"># Step 3: Run inference via the Python API</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">import tensorrt_llm</span>
+<span class="s2">from tensorrt_llm.runtime import ModelRunner</span>
+<span class="s2">import tensorrt as trt</span>
+
+<span class="s2">runner = ModelRunner.from_dir(&#39;./llama-2-7b-engine&#39;)</span>
+<span class="s2"># Tokenize and run — runner handles batching and KV cache internally</span>
+<span class="s2">outputs = runner.generate(</span>
+<span class="s2">    batch_input_ids=[[1, 2, 3, 4, 5]],</span>
+<span class="s2">    max_new_tokens=50,</span>
+<span class="s2">)</span>
+<span class="s2">print(outputs)</span>
+<span class="s2">&quot;</span>
+</code></pre></div>
+<p>The <code>--gemm_plugin</code> and <code>--gpt_attention_plugin</code> flags activate NVIDIA&rsquo;s hand-tuned GEMM and attention kernels, which are substantially faster than the TensorRT auto-scheduler can find on its own.</p>
+<h3 id="in-flight-batching-in-tensorrt-llm">In-Flight Batching in TensorRT-LLM<a class="headerlink" href="#in-flight-batching-in-tensorrt-llm" title="Permanent link">¶</a></h3>
+<p>TensorRT-LLM implements in-flight batching (also called continuous batching) through its <code>Executor</code> API. New requests are inserted into the active batch at the token boundary — pausing requests that have finished, inserting new ones, and continuing generation — without ever stopping the GPU. This is the same principle as vLLM (see <a href="../07-inference-serving/03-vllm-internals.html">vLLM: Architecture, PagedAttention &amp; Internals</a>), but TensorRT-LLM&rsquo;s version is implemented inside a compiled TensorRT engine rather than in PyTorch.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Minimal TensorRT-LLM Executor example (C++ API wrapped in Python)</span>
+<span class="c1"># This illustrates the async request/response model.</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">tensorrt_llm.executor</span><span class="w"> </span><span class="kn">import</span> <span class="n">GenerationExecutor</span><span class="p">,</span> <span class="n">GenerationRequest</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">serve_requests</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    The Executor runs a background thread that continuously feeds the engine.</span>
+<span class="sd">    Requests are submitted as GenerationRequest objects and picked up</span>
+<span class="sd">    at the next scheduling interval (default: every decode step).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">executor</span> <span class="o">=</span> <span class="n">GenerationExecutor</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">engine_dir</span><span class="o">=</span><span class="s2">&quot;./llama-2-7b-engine&quot;</span><span class="p">,</span>
+        <span class="n">executor_config</span><span class="o">=</span><span class="p">{</span>
+            <span class="s2">&quot;max_beam_width&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+            <span class="s2">&quot;scheduler_policy&quot;</span><span class="p">:</span> <span class="s2">&quot;guaranteed_no_evict&quot;</span><span class="p">,</span>  <span class="c1"># vs &quot;max_utilization&quot;</span>
+        <span class="p">}</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Submit two requests concurrently — they will be batched automatically</span>
+    <span class="n">req_a</span> <span class="o">=</span> <span class="n">GenerationRequest</span><span class="p">(</span>
+        <span class="n">input_token_ids</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">234</span><span class="p">,</span> <span class="mi">567</span><span class="p">],</span>
+        <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+        <span class="n">streaming</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">req_b</span> <span class="o">=</span> <span class="n">GenerationRequest</span><span class="p">(</span>
+        <span class="n">input_token_ids</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">890</span><span class="p">,</span> <span class="mi">123</span><span class="p">,</span> <span class="mi">456</span><span class="p">],</span>
+        <span class="n">max_new_tokens</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+        <span class="n">streaming</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">executor</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">req_a</span><span class="p">)</span>
+    <span class="n">executor</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">req_b</span><span class="p">)</span>
+
+    <span class="c1"># Stream tokens as they arrive</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">token</span> <span class="ow">in</span> <span class="n">req_a</span><span class="o">.</span><span class="n">aiter_tokens</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;A: </span><span class="si">{</span><span class="n">token</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot; &quot;</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">serve_requests</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="paged-kv-cache-and-memory-management">Paged KV Cache and Memory Management<a class="headerlink" href="#paged-kv-cache-and-memory-management" title="Permanent link">¶</a></h3>
+<p>TensorRT-LLM implements a paged KV cache that operates analogously to vLLM&rsquo;s PagedAttention: KV tensors are stored in fixed-size &ldquo;blocks&rdquo; (on the order of 16 or 32 tokens per block), and a block manager allocates/frees blocks as sequences grow and terminate. This means a server can hold many more concurrent sequences than naïve pre-allocation would allow.</p>
+<p>The key parameter is <code>--kv_cache_free_gpu_mem_fraction</code> (default 0.9): the fraction of free GPU memory TensorRT-LLM may use for KV blocks after the model weights are loaded.</p>
+<h3 id="quantization-in-tensorrt-llm">Quantization in TensorRT-LLM<a class="headerlink" href="#quantization-in-tensorrt-llm" title="Permanent link">¶</a></h3>
+<p>TensorRT-LLM has first-class support for INT8 weight-only quantization, INT8 SmoothQuant, FP8 (on H100/H200), and GPTQ/AWQ. These are configured at engine build time:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># FP8 engine for H100 — uses calibration data to determine per-tensor scales</span>
+trtllm-build<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--checkpoint_dir<span class="w"> </span>./llama-2-7b-trtllm<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--output_dir<span class="w"> </span>./llama-2-7b-fp8-engine<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--strongly_typed<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--use_fp8_context_fmha<span class="w"> </span><span class="nb">enable</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max_batch_size<span class="w"> </span><span class="m">64</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max_input_len<span class="w"> </span><span class="m">4096</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max_output_len<span class="w"> </span><span class="m">1024</span>
+</code></pre></div>
+<p>Because quantization scales are baked into the engine at build time, there is zero overhead at serving time — the quantized GEMM kernels simply execute with pre-computed scales.</p>
+<p>For a deeper treatment of the quantization formats, see <a href="../04-kernels-efficiency/08-quantization-formats-qat.html">Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a>.</p>
+<h3 id="multi-gpu-tensor-parallelism">Multi-GPU Tensor Parallelism<a class="headerlink" href="#multi-gpu-tensor-parallelism" title="Permanent link">¶</a></h3>
+<p>TensorRT-LLM supports tensor parallelism and pipeline parallelism at build time. Specify <code>--tp_size 4</code> (for 4-way tensor parallel) at the <code>convert_checkpoint.py</code> and <code>trtllm-build</code> stages; the library handles the all-reduce communication using NCCL. At inference time, the executor launches one process per GPU and co-ordinates automatically. See <a href="../07-inference-serving/11-multi-gpu-inference.html">Multi-GPU &amp; Multi-Node Inference</a> for the broader parallelism strategies.</p>
+<h3 id="the-triton-inference-server-integration">The Triton Inference Server Integration<a class="headerlink" href="#the-triton-inference-server-integration" title="Permanent link">¶</a></h3>
+<p>NVIDIA&rsquo;s standard production path is to serve TensorRT-LLM engines via Triton Inference Server using the <code>tensorrtllm_backend</code>. Triton handles HTTP/gRPC front-end, dynamic batching at the server layer, health checks, and metrics. TensorRT-LLM handles the GPU-side scheduling and execution.</p>
+<figure class="viz" id="fig-trtllm-triton-serving-pipeline">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 640 730" role="img" aria-label="Top-to-bottom request flow: HTTP/gRPC client sends a request into Triton Inference Server (preprocessing, tensorrtllm model, postprocessing sub-models), which calls the TensorRT-LLM Executor that schedules batches on the compiled TensorRT engine on GPU.">
+<defs>
+  <marker id="tp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" class="v-stroke" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+
+  <style>
+    #fig-trtllm-triton-serving-pipeline text { fill: var(--ink-soft,#45413a); }
+    #fig-trtllm-triton-serving-pipeline .title { font: 700 13px var(--sans,sans-serif); }
+    #fig-trtllm-triton-serving-pipeline .sub { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-trtllm-triton-serving-pipeline .note { font: italic 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-trtllm-triton-serving-pipeline .edge-lbl { font: italic 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-trtllm-triton-serving-pipeline .gpu-title { font: 700 12px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-trtllm-triton-serving-pipeline .accent-title { font: 700 13px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+
+    @keyframes tp-travel {
+      0%   { transform: translateY(0px);   opacity: 0; }
+      5%   { opacity: 1; }
+      90%  { opacity: 1; }
+      95%  { transform: translateY(590px); opacity: 0; }
+      100% { transform: translateY(590px); opacity: 0; }
+    }
+    #fig-trtllm-triton-serving-pipeline .tp-dot {
+      animation: tp-travel 3.2s ease-in-out infinite;
+      transform-origin: 320px 105px;
+    }
+    #fig-trtllm-triton-serving-pipeline.paused .tp-dot { animation-play-state: paused; }
+  </style>
+</defs>
+
+
+<rect x="200" y="24" width="240" height="54" rx="8"
+      class="v-fill v-stroke" fill="var(--surface-3,#ece7da)" stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<text x="320" y="48" text-anchor="middle" class="title">Client (HTTP / gRPC)</text>
+<text x="320" y="66" text-anchor="middle" class="sub">external caller</text>
+
+
+<line x1="320" y1="78" x2="320" y2="110"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.8" marker-end="url(#tp-arrow)" class="v-stroke"/>
+<text x="336" y="98" class="edge-lbl">request</text>
+
+
+
+<rect x="100" y="112" width="440" height="230" rx="10"
+      class="v-fill v-stroke" fill="var(--surface-3,#ece7da)" stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+
+<rect x="100" y="112" width="440" height="34" rx="10"
+      fill="var(--accent,#c15b39)" opacity="0.15"/>
+<rect x="100" y="130" width="440" height="16"
+      fill="var(--accent,#c15b39)" opacity="0.15"/>
+<text x="320" y="134" text-anchor="middle" style="font:700 13px var(--sans,sans-serif); fill:var(--accent,#c15b39);">Triton Inference Server</text>
+<text x="320" y="149" text-anchor="middle" class="note">HTTP/gRPC front-end · dynamic batching · health checks · metrics</text>
+
+
+<rect x="122" y="158" width="396" height="48" rx="6"
+      class="v-fill v-stroke" fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1.2"/>
+<text x="320" y="179" text-anchor="middle" class="title">preprocessing model</text>
+<text x="320" y="196" text-anchor="middle" class="sub">tokenization (Python backend)</text>
+
+
+<rect x="122" y="214" width="396" height="48" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<text x="320" y="235" text-anchor="middle" class="accent-title">tensorrtllm model</text>
+<text x="320" y="252" text-anchor="middle" class="sub">TRT-LLM engine backend</text>
+
+
+<rect x="122" y="270" width="396" height="48" rx="6"
+      class="v-fill v-stroke" fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1.2"/>
+<text x="320" y="291" text-anchor="middle" class="title">postprocessing model</text>
+<text x="320" y="308" text-anchor="middle" class="sub">detokenization (Python backend)</text>
+
+
+<line x1="320" y1="342" x2="320" y2="378"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.8" marker-end="url(#tp-arrow)" class="v-stroke"/>
+<text x="336" y="364" class="edge-lbl">GPU scheduling</text>
+
+
+<rect x="130" y="380" width="380" height="72" rx="8"
+      class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="320" y="405" text-anchor="middle" class="accent-title">TensorRT-LLM Executor</text>
+<text x="320" y="422" text-anchor="middle" class="sub">manages KV blocks,</text>
+<text x="320" y="438" text-anchor="middle" class="sub">batches requests (in-flight batching)</text>
+
+
+<line x1="320" y1="452" x2="320" y2="487"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.8" marker-end="url(#tp-arrow)" class="v-stroke"/>
+
+
+<rect x="110" y="489" width="420" height="130" rx="10"
+      class="v-fill v-stroke" fill="var(--surface-3,#ece7da)" stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<text x="130" y="511" class="gpu-title">GPU</text>
+
+
+<rect x="136" y="518" width="368" height="82" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="320" y="549" text-anchor="middle" class="accent-title">compiled TensorRT engine</text>
+<text x="320" y="568" text-anchor="middle" class="sub">pre-fused, hardware-specific kernels</text>
+<text x="320" y="584" text-anchor="middle" class="sub">AOT-compiled for target GPU SKU</text>
+
+
+<circle cx="320" cy="105" r="5" fill="var(--accent,#c15b39)" opacity="0.85" class="tp-dot"/>
+
+</svg>
+<figcaption><b>Serving a TensorRT-LLM engine via Triton Inference Server.</b> A client request enters Triton's HTTP/gRPC front-end and passes through three sub-models in sequence: a Python preprocessing model (tokenization), the TRT-LLM engine backend, and a Python postprocessing model (detokenization). The TensorRT-LLM Executor below Triton manages KV-cache blocks and in-flight batching before dispatching to the AOT-compiled TensorRT engine on the GPU.</figcaption>
+</figure>
+
+<h3 id="tensorrt-llm-what-you-give-up">TensorRT-LLM: What You Give Up<a class="headerlink" href="#tensorrt-llm-what-you-give-up" title="Permanent link">¶</a></h3>
+<p>The engine is platform-specific and must be rebuilt for each GPU SKU (A100 vs H100 vs L40S). Build times for large models can be 30–60 minutes. The <code>max_batch_size</code> and <code>max_input_len</code> are fixed at build time — you cannot exceed them at runtime. If your traffic suddenly shifts to very long prompts, you need a different engine. These constraints mean TensorRT-LLM is most suitable for dedicated GPU fleets with predictable workloads.</p>
+<hr />
+<h2 id="text-generation-inference-tgi">Text Generation Inference (TGI)<a class="headerlink" href="#text-generation-inference-tgi" title="Permanent link">¶</a></h2>
+<h3 id="architecture-overview">Architecture Overview<a class="headerlink" href="#architecture-overview" title="Permanent link">¶</a></h3>
+<p>Hugging Face&rsquo;s Text Generation Inference is a Rust-based server with a Python model-runner process. The Rust front-end handles HTTP/gRPC routing and request queuing; the Python process runs the model using PyTorch + custom CUDA kernels. Importantly, TGI ships its own custom attention kernels (including a FlashAttention-based implementation) and its own continuous batching scheduler.</p>
+<figure class="viz" id="fig-tgi-router-modelserver-architecture">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 660 700" role="img" aria-label="TGI architecture: HTTP client sends requests to a Rust Router that queues and validates them, then passes them over a ZeroMQ socket (process boundary) to a Python model server containing Tokenizer, Model, custom FlashAttention kernel, and continuous batching loop.">
+<defs>
+  <marker id="tgi-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <style>
+    #fig-tgi-router-modelserver-architecture text { fill: var(--ink-soft,#45413a); }
+    #fig-tgi-router-modelserver-architecture .title  { font: 700 13px var(--sans,sans-serif); }
+    #fig-tgi-router-modelserver-architecture .sub    { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-tgi-router-modelserver-architecture .note   { font: italic 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-tgi-router-modelserver-architecture .zmq-lbl{ font: 600 11px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+    #fig-tgi-router-modelserver-architecture .bnd-lbl{ font: italic 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-tgi-router-modelserver-architecture .rust-title { font: 700 13px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+    #fig-tgi-router-modelserver-architecture .py-title   { font: 700 13px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+    #fig-tgi-router-modelserver-architecture .edge-lbl   { font: italic 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+
+    @keyframes tgi-travel {
+      0%   { transform: translateY(0px); opacity: 0; }
+      5%   { opacity: 1; }
+      88%  { opacity: 1; }
+      95%  { transform: translateY(540px); opacity: 0; }
+      100% { transform: translateY(540px); opacity: 0; }
+    }
+    #fig-tgi-router-modelserver-architecture .tgi-dot {
+      animation: tgi-travel 3.4s ease-in-out infinite;
+      transform-origin: 330px 100px;
+    }
+    #fig-tgi-router-modelserver-architecture.paused .tgi-dot {
+      animation-play-state: paused;
+    }
+  </style>
+</defs>
+
+
+<rect x="190" y="20" width="280" height="50" rx="8"
+      class="v-fill v-stroke" fill="var(--surface-3,#ece7da)" stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<text x="330" y="43" text-anchor="middle" class="title">HTTP client</text>
+<text x="330" y="59" text-anchor="middle" class="sub">external caller</text>
+
+
+<line x1="330" y1="70" x2="330" y2="100"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.8" marker-end="url(#tgi-arrow)"/>
+<text x="346" y="89" class="edge-lbl">request</text>
+
+
+<rect x="100" y="102" width="340" height="88" rx="8"
+      class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="270" y="126" text-anchor="middle" class="rust-title">TGI Router (Rust)</text>
+<text x="270" y="143" text-anchor="middle" class="sub">manages request queues, SSE streaming</text>
+<text x="270" y="158" text-anchor="middle" class="sub">validates inputs, enforces max_total_tokens</text>
+<text x="270" y="175" text-anchor="middle" class="note">HTTP/gRPC routing · low-latency queueing</text>
+
+
+
+
+
+<line x1="330" y1="190" x2="330" y2="252"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.8" marker-end="url(#tgi-arrow)"/>
+<text x="346" y="216" class="zmq-lbl">ZeroMQ socket</text>
+
+
+<line x1="60" y1="228" x2="600" y2="228"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-dasharray="6,4" opacity="0.5"/>
+<text x="330" y="241" text-anchor="middle" class="bnd-lbl">process boundary (Rust | Python)</text>
+
+
+<rect x="80" y="248" width="500" height="336" rx="10"
+      class="v-fill v-stroke" fill="var(--surface-3,#ece7da)" stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+
+<rect x="80" y="248" width="500" height="32" rx="10"
+      fill="var(--accent,#c15b39)" opacity="0.15"/>
+<rect x="80" y="264" width="500" height="16"
+      fill="var(--accent,#c15b39)" opacity="0.15"/>
+<text x="330" y="270" text-anchor="middle" class="py-title">Python model server</text>
+
+
+<rect x="102" y="290" width="456" height="52" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1.2"/>
+<text x="330" y="312" text-anchor="middle" class="title">Tokenizer</text>
+<text x="330" y="329" text-anchor="middle" class="sub">HF tokenizers (Rust binding)</text>
+
+
+<rect x="102" y="350" width="456" height="52" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1.2"/>
+<text x="330" y="372" text-anchor="middle" class="title">Model</text>
+<text x="330" y="389" text-anchor="middle" class="sub">PyTorch, BF16/FP8, custom CUDA ops</text>
+
+
+<rect x="102" y="410" width="456" height="52" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="330" y="432" text-anchor="middle" class="rust-title">Custom FlashAttention kernel</text>
+<text x="330" y="449" text-anchor="middle" class="sub">paged or non-paged</text>
+
+
+<rect x="102" y="470" width="456" height="52" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="330" y="492" text-anchor="middle" class="rust-title">Continuous batching loop</text>
+<text x="330" y="509" text-anchor="middle" class="sub">schedules running batch each decode step</text>
+
+
+<text x="330" y="608" text-anchor="middle" class="note">response streamed back up the same path via SSE</text>
+
+
+<circle cx="330" cy="100" r="5" fill="var(--accent,#c15b39)" opacity="0.85" class="tgi-dot"/>
+
+</svg>
+<figcaption><b>TGI architecture: Rust router and Python model server.</b> The Rust front-end handles all HTTP/gRPC routing, request queuing, SSE streaming, and input validation at low latency, then hands requests to the Python model server over a ZeroMQ inter-process socket. The Python side runs the PyTorch model with a custom FlashAttention kernel and a continuous batching loop that schedules the active batch at each decode step.</figcaption>
+</figure>
+
+<h3 id="running-tgi">Running TGI<a class="headerlink" href="#running-tgi" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Launch TGI with Docker — NVIDIA GPU required for full throughput</span>
+docker<span class="w"> </span>run<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-p<span class="w"> </span><span class="m">8080</span>:80<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-v<span class="w"> </span><span class="nv">$PWD</span>/model_cache:/data<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>ghcr.io/huggingface/text-generation-inference:2.4<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model-id<span class="w"> </span>meta-llama/Llama-3-8B-Instruct<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--quantize<span class="w"> </span>bitsandbytes-nf4<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max-input-tokens<span class="w"> </span><span class="m">4096</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max-total-tokens<span class="w"> </span><span class="m">6144</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--max-batch-prefill-tokens<span class="w"> </span><span class="m">16384</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--num-shard<span class="w"> </span><span class="m">1</span><span class="w">  </span><span class="c1"># tensor parallel degree</span>
+
+<span class="c1"># Send a request — TGI implements the Messages API compatible with OpenAI</span>
+curl<span class="w"> </span>http://localhost:8080/v1/chat/completions<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<span class="s1">    &quot;model&quot;: &quot;tgi&quot;,</span>
+<span class="s1">    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Explain KV cache in one paragraph.&quot;}],</span>
+<span class="s1">    &quot;max_tokens&quot;: 200,</span>
+<span class="s1">    &quot;stream&quot;: true</span>
+<span class="s1">  }&#39;</span>
+</code></pre></div>
+<p>TGI exposes a <code>/generate</code> endpoint (its native API), a <code>/v1/chat/completions</code> OpenAI-compatible endpoint, and a <code>/v1/completions</code> endpoint. The OpenAI-compatible surface makes it easy to drop TGI behind any client that speaks the OpenAI protocol.</p>
+<h3 id="tgis-continuous-batching-scheduler">TGI&rsquo;s Continuous Batching Scheduler<a class="headerlink" href="#tgis-continuous-batching-scheduler" title="Permanent link">¶</a></h3>
+<p>TGI implements a &ldquo;token budget&rdquo; scheduler: each request is assigned a <code>max_total_tokens</code> budget, and requests are grouped into batches where the total token budget fits within the KV cache. The scheduler preempts requests if memory pressure grows (evicting KV blocks and later recomputing them). The Rust router enforces these constraints before passing requests to the Python runner, which means request validation and queueing happen with very low latency.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Simplified pseudocode illustrating TGI&#39;s waiting queue logic</span>
+<span class="c1"># Real implementation is in Rust + a Python model server side</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TGIScheduler</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_batch_total_tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_batch_total_tokens</span> <span class="o">=</span> <span class="n">max_batch_total_tokens</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Request</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Request</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">schedule</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Request</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Called every decode step. Fill the running batch up to the token budget.</span>
+<span class="sd">        New requests are added from waiting if budget permits.</span>
+<span class="sd">        Running requests keep their slot as long as they haven&#39;t finished.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">budget_used</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">current_length</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">req</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="p">):</span>
+            <span class="n">needed</span> <span class="o">=</span> <span class="n">req</span><span class="o">.</span><span class="n">max_total_tokens</span>  <span class="c1"># pre-allocated worst case</span>
+            <span class="k">if</span> <span class="n">budget_used</span> <span class="o">+</span> <span class="n">needed</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_batch_total_tokens</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">waiting</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+                <span class="n">budget_used</span> <span class="o">+=</span> <span class="n">needed</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">running</span>
+</code></pre></div>
+<h3 id="tgi-vs-tensorrt-llm-key-differences">TGI vs TensorRT-LLM: Key Differences<a class="headerlink" href="#tgi-vs-tensorrt-llm-key-differences" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>TGI</th>
+<th>TensorRT-LLM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Build step</td>
+<td>None (model loaded at startup)</td>
+<td>Engine must be compiled (30–60 min for large models)</td>
+</tr>
+<tr>
+<td>GPU portability</td>
+<td>Any CUDA GPU supported by PyTorch</td>
+<td>Specific to GPU SKU; must rebuild per SKU</td>
+</tr>
+<tr>
+<td>Custom kernels</td>
+<td>FlashAttention, custom GEMM from Torch</td>
+<td>Full engine compilation, per-op tuning</td>
+</tr>
+<tr>
+<td>Peak throughput</td>
+<td>~80–90% of hardware ceiling (typical)</td>
+<td>~95–100% (typical on target hardware)</td>
+</tr>
+<tr>
+<td>Model support</td>
+<td>Any HF model</td>
+<td>Supported architectures only</td>
+</tr>
+<tr>
+<td>Quantization</td>
+<td>bitsandbytes NF4, GPTQ, AWQ</td>
+<td>INT8, FP8, GPTQ, AWQ (baked at build time)</td>
+</tr>
+<tr>
+<td>Streaming</td>
+<td>Native SSE</td>
+<td>Via Triton streaming protocol</td>
+</tr>
+<tr>
+<td>OpenAI API</td>
+<td>Yes</td>
+<td>Via triton proxy</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="llamacpp-the-cpuedge-champion">llama.cpp: The CPU/Edge Champion<a class="headerlink" href="#llamacpp-the-cpuedge-champion" title="Permanent link">¶</a></h2>
+<h3 id="what-llamacpp-does">What llama.cpp Does<a class="headerlink" href="#what-llamacpp-does" title="Permanent link">¶</a></h3>
+<p>Georgi Gerganov&rsquo;s llama.cpp (2023) proved that a quantized transformer can run usefully fast on commodity hardware — a laptop CPU, an Apple M-series chip, or a consumer GPU. The project is a single C++ codebase with no external deep-learning dependencies that achieves high throughput through:</p>
+<ol>
+<li><strong>GGUF quantization</strong>: 2-bit through 8-bit per-channel integer quantization with mixed precision (Q4_K_M, Q5_K_M, etc.) that keeps key tensors at higher precision.</li>
+<li><strong>Highly optimized BLAS routines</strong>: AVX2/AVX-512 vectorized GEMM for x86, ARM NEON/SVE for ARM, Metal for Apple Silicon, and CUDA for NVIDIA GPUs — all in the same binary via compile-time backends.</li>
+<li><strong>mmap model loading</strong>: The model file is memory-mapped, so the OS controls paging. On a machine with enough RAM, the model loads in seconds; with limited RAM, the OS pages in only the layers currently needed.</li>
+</ol>
+<h3 id="gguf-format">GGUF Format<a class="headerlink" href="#gguf-format" title="Permanent link">¶</a></h3>
+<p>GGUF (GPT-Generated Unified Format) stores model weights, tokenizer data, and metadata in a single binary file. Quantized weights use a block quantization scheme: weights are grouped into blocks of 32 values, each block stores a float32 scale factor and the quantized integers. For Q4_K_M, 4-bit integers are stored for most weights with 6-bit integers for sensitive layers (attention projections, etc.):</p>
+<div class="arithmatex">\[
+\hat{w}_i = \text{scale} \times q_i, \quad q_i \in \{-8, -7, \ldots, 7\}
+\]</div>
+<p>where scale is a per-32-element float32. The storage cost for Q4_K_M is approximately <span class="arithmatex">\(4.5\)</span> bits per weight after accounting for the scale overhead.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Estimate GGUF model file size from parameter count</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gguf_size_gb</span><span class="p">(</span><span class="n">params_billions</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">bits_per_weight</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">4.5</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Rough size estimate for a GGUF-quantized LLM.</span>
+<span class="sd">    bits_per_weight: 4.5 for Q4_K_M, 5.5 for Q5_K_M, 8.5 for Q8_0</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">params</span> <span class="o">=</span> <span class="n">params_billions</span> <span class="o">*</span> <span class="mf">1e9</span>
+    <span class="n">bytes_per_weight</span> <span class="o">=</span> <span class="n">bits_per_weight</span> <span class="o">/</span> <span class="mf">8.0</span>
+    <span class="c1"># Embeddings and norms are typically kept in FP16, ~5% of params</span>
+    <span class="n">emb_fraction</span> <span class="o">=</span> <span class="mf">0.05</span>
+    <span class="n">size_bytes</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">params</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">emb_fraction</span><span class="p">)</span> <span class="o">*</span> <span class="n">bytes_per_weight</span>
+        <span class="o">+</span> <span class="n">params</span> <span class="o">*</span> <span class="n">emb_fraction</span> <span class="o">*</span> <span class="mf">2.0</span>  <span class="c1"># FP16</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">size_bytes</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1024</span><span class="o">**</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="c1"># Llama-3-70B at Q4_K_M:</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;70B Q4_K_M: </span><span class="si">{</span><span class="n">gguf_size_gb</span><span class="p">(</span><span class="mi">70</span><span class="p">,</span><span class="w"> </span><span class="mf">4.5</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> GB&quot;</span><span class="p">)</span>   <span class="c1"># ~38 GB</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;70B Q5_K_M: </span><span class="si">{</span><span class="n">gguf_size_gb</span><span class="p">(</span><span class="mi">70</span><span class="p">,</span><span class="w"> </span><span class="mf">5.5</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> GB&quot;</span><span class="p">)</span>   <span class="c1"># ~46 GB</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;13B Q4_K_M: </span><span class="si">{</span><span class="n">gguf_size_gb</span><span class="p">(</span><span class="mi">13</span><span class="p">,</span><span class="w"> </span><span class="mf">4.5</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> GB&quot;</span><span class="p">)</span>   <span class="c1"># ~7 GB</span>
+</code></pre></div>
+<h3 id="ollama-a-developer-friendly-frontend">Ollama: A Developer-Friendly Frontend<a class="headerlink" href="#ollama-a-developer-friendly-frontend" title="Permanent link">¶</a></h3>
+<p>Ollama wraps llama.cpp in a REST server with a model registry, automatic download, and a simple CLI. It is the fastest path from &ldquo;zero&rdquo; to running a local LLM:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Install and run Llama-3-8B locally</span>
+ollama<span class="w"> </span>pull<span class="w"> </span>llama3.1:8b
+ollama<span class="w"> </span>run<span class="w"> </span>llama3.1:8b<span class="w"> </span><span class="s2">&quot;Explain transformer attention in two sentences.&quot;</span>
+
+<span class="c1"># OpenAI-compatible API (on port 11434 by default)</span>
+curl<span class="w"> </span>http://localhost:11434/v1/chat/completions<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<span class="s1">    &quot;model&quot;: &quot;llama3.1:8b&quot;,</span>
+<span class="s1">    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;What is speculative decoding?&quot;}]</span>
+<span class="s1">  }&#39;</span>
+</code></pre></div>
+<p>Ollama automatically detects available hardware (CUDA, Metal, CPU) and offloads as many layers as possible to GPU. The key flag is <code>--num-gpu</code> (or <code>OLLAMA_NUM_GPU</code> in the environment), which sets how many transformer layers run on GPU versus CPU.</p>
+<h3 id="performance-profile">Performance Profile<a class="headerlink" href="#performance-profile" title="Permanent link">¶</a></h3>
+<p>On Apple M3 Max with 128 GB of unified memory, a Llama-3-70B Q4_K_M model (≈38 GB) fits entirely in unified memory and typically achieves 20–30 tokens/second — genuinely useful for local development. On a consumer NVIDIA 4090 (24 GB), the 13B Q4_K_M fits fully in VRAM and achieves 80–100 tokens/second. For anything requiring production throughput (hundreds of tokens/second, many concurrent users), llama.cpp is not the right tool.</p>
+<hr />
+<h2 id="lmdeploy-efficient-serving-with-turbomind">LMDeploy: Efficient Serving with TurboMind<a class="headerlink" href="#lmdeploy-efficient-serving-with-turbomind" title="Permanent link">¶</a></h2>
+<p>LMDeploy, developed by Shanghai AI Laboratory (the InternLM team), provides a high-throughput serving stack that sits between TGI (easy to use) and TensorRT-LLM (maximum performance). Its core inference engine is TurboMind, a C++/CUDA implementation with:</p>
+<ul>
+<li>Custom blocked KV cache (similar in concept to PagedAttention)</li>
+<li>Continuous batching</li>
+<li>INT4 and INT8 quantization via AWQ</li>
+<li>A Python/gRPC serving layer</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Install and convert a model to TurboMind format</span>
+pip<span class="w"> </span>install<span class="w"> </span>lmdeploy
+
+<span class="c1"># Convert HF checkpoint to TurboMind internal format</span>
+lmdeploy<span class="w"> </span>convert<span class="w"> </span>llama3<span class="w"> </span>/path/to/llama-3-8b-hf<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--dst_path<span class="w"> </span>./llama3-turbomind
+
+<span class="c1"># Launch the serving API</span>
+lmdeploy<span class="w"> </span>serve<span class="w"> </span>api_server<span class="w"> </span>./llama3-turbomind<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--server_port<span class="w"> </span><span class="m">23333</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--tp<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--cache_max_entry_count<span class="w"> </span><span class="m">0</span>.8
+
+<span class="c1"># Or use the Python API directly</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">from lmdeploy import pipeline, TurbomindEngineConfig</span>
+
+<span class="s2">cfg = TurbomindEngineConfig(tp=1, cache_max_entry_count=0.8)</span>
+<span class="s2">pipe = pipeline(&#39;./llama3-turbomind&#39;, backend_config=cfg)</span>
+<span class="s2">response = pipe([&#39;Hello! Explain TurboMind in one sentence.&#39;])</span>
+<span class="s2">print(response[0].text)</span>
+<span class="s2">&quot;</span>
+</code></pre></div>
+<p>LMDeploy also supports the PyTorch backend (<code>--backend pytorch</code>) which is more portable but slower, mirroring TGI&rsquo;s design philosophy. The TurboMind backend is specifically optimized for NVIDIA GPUs and resembles TensorRT-LLM in its use of custom CUDA kernels — but without the full AOT compilation step, making model loading much faster.</p>
+<hr />
+<h2 id="mlc-llm-universal-compilation-via-tvm">MLC-LLM: Universal Compilation via TVM<a class="headerlink" href="#mlc-llm-universal-compilation-via-tvm" title="Permanent link">¶</a></h2>
+<p>MLC-LLM (Machine Learning Compilation for LLMs), from the MLC team led by Tianqi Chen, applies Apache TVM&rsquo;s compilation machinery to LLM serving. The goal is one codebase that runs on essentially any hardware: NVIDIA CUDA, AMD ROCm, Apple Metal, Intel Vulkan, ARM CPU, and even WebGPU (in the browser).</p>
+<h3 id="how-mlc-differs">How MLC Differs<a class="headerlink" href="#how-mlc-differs" title="Permanent link">¶</a></h3>
+<p>Where TensorRT-LLM compiles to a TensorRT engine (NVIDIA-specific), MLC compiles to TVM&rsquo;s intermediate representation (TIR), then lowers TIR to hardware-specific code via TVM&rsquo;s code generation backends. The compilation includes automatic schedule search (AutoTIR) that tunes GEMM tile sizes and memory layouts for the target device.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Compile a model for Metal (Apple Silicon) using MLC</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">mlc_llm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">mlc_llm</span><span class="w"> </span><span class="kn">import</span> <span class="n">MLCEngine</span>
+
+<span class="c1"># mlc_llm.build() emits a compiled library (.dylib on macOS, .so on Linux)</span>
+<span class="c1"># This step is slow once; subsequent loads are fast.</span>
+<span class="n">mlc_llm</span><span class="o">.</span><span class="n">build</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;HF://meta-llama/Llama-3.2-3B-Instruct&quot;</span><span class="p">,</span>
+    <span class="n">target</span><span class="o">=</span><span class="s2">&quot;apple/m3-gpu&quot;</span><span class="p">,</span>   <span class="c1"># or &quot;cuda&quot;, &quot;rocm&quot;, &quot;vulkan&quot;, &quot;webgpu&quot;</span>
+    <span class="n">quantization</span><span class="o">=</span><span class="s2">&quot;q4f16_1&quot;</span><span class="p">,</span>  <span class="c1"># 4-bit weights, FP16 activations</span>
+<span class="p">)</span>
+
+<span class="c1"># Run inference — identical Python API regardless of hardware backend</span>
+<span class="n">engine</span> <span class="o">=</span> <span class="n">MLCEngine</span><span class="p">(</span><span class="s2">&quot;./dist/Llama-3.2-3B-Instruct-q4f16_1-MLC&quot;</span><span class="p">)</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+    <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;What is PagedAttention?&quot;</span><span class="p">}],</span>
+    <span class="n">max_tokens</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
+</code></pre></div>
+<p>MLC is the right choice when you need to deploy to heterogeneous hardware (a fleet with a mix of NVIDIA, AMD, and Apple GPUs), or when you need to run in a browser via WebLLM (which compiles to WebGPU/WASM). The trade-off is that compilation is slow and the tuned performance on any single GPU is typically below TensorRT-LLM.</p>
+<hr />
+<h2 id="the-tradeoff-space-a-practitioners-framework">The Tradeoff Space: A Practitioner&rsquo;s Framework<a class="headerlink" href="#the-tradeoff-space-a-practitioners-framework" title="Permanent link">¶</a></h2>
+<div class="admonition example">
+<p class="admonition-title">Worked example: memory budget for concurrent requests</p>
+<p>Suppose you are serving Llama-3-70B on 4× A100-80 GB (320 GB total HBM).</p>
+<p><strong>Model weights (BF16):</strong> <span class="arithmatex">\(70 \times 10^9 \times 2\ \text{bytes} = 140\ \text{GB}\)</span></p>
+<p><strong>Remaining for KV cache:</strong> <span class="arithmatex">\(320 - 140 = 180\ \text{GB}\)</span></p>
+<p><strong>KV cache per token (per layer):</strong> For Llama-3-70B, there are 80 layers, GQA with 8 KV heads, head dimension 128. Each KV entry in BF16:
+$<span class="arithmatex">\(2 \times 8 \times 128 \times 2\ \text{bytes} = 4096\ \text{bytes} = 4\ \text{KB per token per layer}\)</span>$
+Total per token across all layers: <span class="arithmatex">\(80 \times 4\ \text{KB} = 320\ \text{KB/token}\)</span></p>
+<p><strong>Maximum concurrent tokens:</strong> <span class="arithmatex">\(180\ \text{GB} / 320\ \text{KB} \approx 562{,}500\ \text{tokens}\)</span></p>
+<p>If your average context window is 2048 tokens, you can hold about <strong>275 concurrent sequences</strong> in memory before the system must evict KV blocks. TensorRT-LLM&rsquo;s <code>guaranteed_no_evict</code> scheduler will refuse new requests once this limit is hit; <code>max_utilization</code> will evict-and-recompute some requests to admit more.</p>
+<p>With INT8 KV cache quantization (cutting per-token cost in half), you&rsquo;d reach ~550 concurrent sequences — a meaningful gain for high-fan-out workloads.</p>
+</div>
+<h3 id="decision-matrix">Decision Matrix<a class="headerlink" href="#decision-matrix" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Use Case</th>
+<th>Recommended Stack</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Production NVIDIA fleet, SLA-critical</td>
+<td>TensorRT-LLM + Triton</td>
+</tr>
+<tr>
+<td>Cloud deployment, mixed GPU fleet</td>
+<td>TGI or vLLM</td>
+</tr>
+<tr>
+<td>On-premise single-node A100/H100</td>
+<td>vLLM or LMDeploy</td>
+</tr>
+<tr>
+<td>Apple Silicon local / developer</td>
+<td>Ollama (llama.cpp)</td>
+</tr>
+<tr>
+<td>Consumer NVIDIA GPU, developer</td>
+<td>Ollama or llama.cpp directly</td>
+</tr>
+<tr>
+<td>Heterogeneous or browser deployment</td>
+<td>MLC-LLM / WebLLM</td>
+</tr>
+<tr>
+<td>RL rollout engine (speed is key)</td>
+<td>vLLM or TensorRT-LLM</td>
+</tr>
+<tr>
+<td>Low-latency streaming chat</td>
+<td>TGI (good streaming UX)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="portability-vs-peak-performance-the-core-tension">Portability vs Peak Performance: The Core Tension<a class="headerlink" href="#portability-vs-peak-performance-the-core-tension" title="Permanent link">¶</a></h3>
+<p>The fundamental constraint is this: the more a runtime commits to a specific hardware target, the more aggressive its optimizations can be. TensorRT-LLM achieves peak performance by:
+1. Selecting the exact GEMM algorithm for each matrix shape at build time (profile-guided kernel selection)
+2. Fusing operations that PyTorch would run as separate kernels (e.g., attention + residual + layer norm in one pass)
+3. Emitting machine code rather than dispatching at runtime</p>
+<p>Every step away from that specificity costs performance. TGI&rsquo;s PyTorch-based model runner dispatches CUDA kernels at runtime (some overhead) but works on any HuggingFace model on any CUDA GPU. llama.cpp&rsquo;s AVX2 kernels work on CPUs but obviously cannot exploit tensor cores.</p>
+<p>The quantitative gap is real but often overstated in marketing: well-tuned vLLM or TGI on A100s typically reaches 85–95% of TensorRT-LLM&rsquo;s throughput at matched batch sizes, while being far simpler to deploy and maintain. The remaining 5–15% matters at scale (thousands of dollars per day) but is often dominated by other system costs (networking, load balancing, tokenization) at moderate scale.</p>
+<hr />
+<h2 id="kernel-highlights-what-makes-these-engines-fast">Kernel Highlights: What Makes These Engines Fast<a class="headerlink" href="#kernel-highlights-what-makes-these-engines-fast" title="Permanent link">¶</a></h2>
+<h3 id="fused-attention-kernels">Fused Attention Kernels<a class="headerlink" href="#fused-attention-kernels" title="Permanent link">¶</a></h3>
+<p>All production serving stacks today incorporate FlashAttention or a variant. The key insight (Dao et al., 2022) is that the standard attention computation is memory-bandwidth bound, not compute bound, and by tiling the Q/K/V matrices to fit in on-chip SRAM, we avoid round-trips to HBM. See <a href="../04-kernels-efficiency/02-flash-attention-1.html">FlashAttention I: IO-Awareness &amp; The Online Softmax</a> for the full derivation.</p>
+<p>For paged KV caches, standard FlashAttention (which assumes contiguous key/value tensors) must be modified. TensorRT-LLM, vLLM, and TGI all ship custom &ldquo;paged FlashAttention&rdquo; kernels that index into the block table at each attention step.</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// Simplified pseudocode for paged attention kernel (CUDA C++)</span>
+<span class="c1">// Each thread block handles one query head for one sequence in the batch.</span>
+
+<span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">paged_attention_kernel</span><span class="p">(</span>
+<span class="w">    </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">output</span><span class="p">,</span><span class="w">           </span><span class="c1">// [num_seqs, num_heads, head_dim]</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">queries</span><span class="p">,</span><span class="w">    </span><span class="c1">// [num_seqs, num_heads, head_dim]</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">**</span><span class="w"> </span><span class="n">kv_blocks</span><span class="p">,</span><span class="w"> </span><span class="c1">// array of pointers to KV blocks</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="o">*</span><span class="w"> </span><span class="n">block_table</span><span class="p">,</span><span class="w">  </span><span class="c1">// [num_seqs, max_blocks_per_seq]</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">head_dim</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">block_size</span><span class="p">,</span><span class="w">          </span><span class="c1">// tokens per KV block (e.g., 16)</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">seq_len</span>
+<span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">seq_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">head_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">blockIdx</span><span class="p">.</span><span class="n">y</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// Accumulator for online softmax</span>
+<span class="w">    </span><span class="kt">float</span><span class="w"> </span><span class="n">acc</span><span class="p">[</span><span class="n">HEAD_DIM</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="mf">0.0f</span><span class="p">};</span>
+<span class="w">    </span><span class="kt">float</span><span class="w"> </span><span class="n">max_score</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">-1e9f</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">float</span><span class="w"> </span><span class="n">sum_exp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">;</span>
+
+<span class="w">    </span><span class="c1">// Iterate over KV blocks for this sequence</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">block_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">block_idx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">block_size</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">seq_len</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">block_idx</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">int</span><span class="w"> </span><span class="n">physical_block</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">block_table</span><span class="p">[</span><span class="n">seq_id</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">MAX_BLOCKS</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">block_idx</span><span class="p">];</span>
+<span class="w">        </span><span class="c1">// Load K from this block, compute QK^T, update online softmax...</span>
+<span class="w">        </span><span class="c1">// (full implementation follows standard online softmax pattern)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// Write final attended value to output</span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>For a full treatment of how PagedAttention fits into the memory manager, see <a href="../04-kernels-efficiency/06-paged-attention-kv.html">PagedAttention &amp; KV-Cache Memory Management</a>.</p>
+<h3 id="gemm-kernel-tuning">GEMM Kernel Tuning<a class="headerlink" href="#gemm-kernel-tuning" title="Permanent link">¶</a></h3>
+<p>Decode-phase matrix multiplications are &ldquo;tall-and-skinny&rdquo;: the weight matrix is large (e.g., <span class="arithmatex">\([4096 \times 16384]\)</span> for an FFN layer), but the activation tensor is only <span class="arithmatex">\([\text{batch\_size} \times 4096]\)</span> — often with batch size below 32 during decode. This shape is very different from training GEMM, where batch × sequence length gives a &ldquo;fat&rdquo; activation matrix.</p>
+<p>TensorRT-LLM uses a profiling pass during engine build to time dozens of cuBLAS/cuBLASLt configurations against your specific shapes and selects the best one. This profile-guided selection is a major source of its throughput advantage over frameworks that use PyTorch&rsquo;s general-purpose cuBLAS dispatch.</p>
+<h3 id="kv-cache-quantization">KV Cache Quantization<a class="headerlink" href="#kv-cache-quantization" title="Permanent link">¶</a></h3>
+<p>Beyond paging, modern runtimes also quantize the KV cache itself. INT8 KV cache is now standard in TensorRT-LLM and supported in TGI and LMDeploy. The quantization is applied per-head-per-token with a float scale factor:</p>
+<div class="arithmatex">\[
+\text{KV}_{\text{int8}} = \operatorname{clip}\!\left(\operatorname{round}\!\left(\frac{\text{KV}_{\text{fp16}}}{\text{scale}}\right), -128, 127\right)
+\]</div>
+<p>This halves KV cache memory at the cost of a small accuracy reduction (typically under 0.5 pp on standard benchmarks for INT8).</p>
+<hr />
+<h2 id="structured-output-and-constrained-generation">Structured Output and Constrained Generation<a class="headerlink" href="#structured-output-and-constrained-generation" title="Permanent link">¶</a></h2>
+<p>All major serving stacks support constrained generation — forcing the model to produce valid JSON, follow a regex, or conform to a grammar. The mechanisms differ:</p>
+<ul>
+<li><strong>TGI</strong> uses Outlines (a regex/grammar-to-finite-state-automaton library) to mask logits during sampling to only valid next tokens.</li>
+<li><strong>vLLM</strong> integrates Outlines similarly.</li>
+<li><strong>TensorRT-LLM</strong> requires a custom logit processor passed to the executor.</li>
+<li><strong>llama.cpp</strong> has built-in GBNF (GGML BNF) grammar support.</li>
+</ul>
+<p>For a full treatment of constrained generation mechanics, see <a href="../07-inference-serving/10-structured-generation.html">Structured &amp; Constrained Generation</a>.</p>
+<hr />
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A hiring manager asks: &ldquo;We&rsquo;re building a customer-support chatbot that needs to serve a fine-tuned Llama-3-70B model at under 200 ms time-to-first-token (TTFT) and under 20 ms per token (inter-token latency, ITL), with peak traffic of 500 concurrent users. We have a cluster of 8× A100-80 GB nodes. Which serving stack would you choose, and what are the key configuration decisions?&rdquo;</p>
+<p><strong>A:</strong> I would choose TensorRT-LLM backed by NVIDIA Triton, with the following reasoning:</p>
+<p>The TTFT and ITL requirements are tight — TTFT at 200 ms over a 70B model means the prefill must complete fast, which favors TensorRT-LLM&rsquo;s compiled prefill kernels. ITL under 20 ms constrains the decode throughput at batch size 1 to at least 50 tokens/sec; on A100 with TRT-LLM, a 70B BF16 model sharded over 8 GPUs comfortably exceeds this.</p>
+<p>Key configuration decisions:
+1. <strong>Tensor parallelism = 8</strong> across one node (all-reduce on NVLink, low latency). Evaluate whether a single 8-GPU node suffices before adding nodes.
+2. <strong>FP8 quantization</strong> (if H100 is available) or <strong>INT8 SmoothQuant</strong> (A100) to reduce model size and improve decode bandwidth.
+3. <strong>INT8 KV cache</strong> to roughly double the number of concurrent sequences that fit in KV memory.
+4. <strong><code>max_batch_size</code></strong> should be set based on the memory budget worked out above — roughly 250–500 concurrent tokens at the 70B scale.
+5. <strong>Scheduler policy = <code>guaranteed_no_evict</code></strong> to avoid KV recomputation latency for low-TTFT guarantees; absorb load spikes via queuing in the Triton front-end.
+6. Monitor time-to-first-token and inter-token latency as SLO metrics via Triton&rsquo;s Prometheus metrics endpoint.</p>
+<p>If the team has limited NVIDIA expertise or needs to iterate on the model weekly, TGI or vLLM would be a reasonable second choice — both can reach the SLO with proper tuning and avoid the 30–60 minute build cycle.</p>
+</div>
+<hr />
+<h2 id="stack-selection-cheatsheet">Stack Selection Cheatsheet<a class="headerlink" href="#stack-selection-cheatsheet" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-trtllm-stack-selection-decision-tree">
+<svg viewBox="0 0 980 720" role="img" aria-label="Decision tree for choosing a serving runtime: four yes/no questions route from START HERE down to six recommended stacks: llama.cpp/Ollama, MLC-LLM, TensorRT-LLM, LMDeploy, TGI or vLLM, and vLLM plus SGLang.">
+<defs>
+  <marker id="dt-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="dt-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+</defs>
+<style>
+  #fig-trtllm-stack-selection-decision-tree text { fill: var(--ink-soft,#45413a); }
+  #fig-trtllm-stack-selection-decision-tree .q-title { font: 600 11.5px var(--sans,sans-serif); }
+  #fig-trtllm-stack-selection-decision-tree .cond    { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-trtllm-stack-selection-decision-tree .rec     { font: 700 12px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-trtllm-stack-selection-decision-tree .start   { font: 700 14px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+</style>
+
+
+<rect x="20" y="18" width="130" height="40" rx="8"
+      fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="85" y="43" text-anchor="middle" class="start">START HERE</text>
+
+
+<line x1="85" y1="58" x2="85" y2="660"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.4" stroke-dasharray="none"/>
+
+
+
+<line x1="85" y1="80" x2="168" y2="80"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.4" marker-end="url(#dt-arrow)"/>
+
+<rect x="170" y="62" width="320" height="46" rx="7"
+      fill="var(--surface-3,#ece7da)" stroke="var(--ink-soft,#45413a)" stroke-width="1.4"/>
+<text x="330" y="81" text-anchor="middle" class="q-title">Need to run on non-NVIDIA hardware?</text>
+<text x="330" y="97" text-anchor="middle" class="cond">(CPU, AMD, Apple, browser)</text>
+
+
+<line x1="490" y1="75" x2="548" y2="75"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#dt-arrow)"/>
+
+<rect x="550" y="60" width="148" height="28" rx="5"
+      fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1"/>
+<text x="624" y="78" text-anchor="middle" class="cond">Yes — laptop / edge</text>
+
+<line x1="698" y1="74" x2="726" y2="74"
+      stroke="var(--accent,#c15b39)" stroke-width="1.2" marker-end="url(#dt-arrow-acc)"/>
+<rect x="728" y="59" width="230" height="30" rx="6"
+      fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<text x="843" y="79" text-anchor="middle" class="rec">llama.cpp / Ollama</text>
+
+
+<line x1="490" y1="95" x2="548" y2="110"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#dt-arrow)"/>
+
+<rect x="550" y="96" width="148" height="28" rx="5"
+      fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1"/>
+<text x="624" y="114" text-anchor="middle" class="cond">Yes — hetero. fleet</text>
+
+<line x1="698" y1="110" x2="726" y2="110"
+      stroke="var(--accent,#c15b39)" stroke-width="1.2" marker-end="url(#dt-arrow-acc)"/>
+<rect x="728" y="95" width="230" height="30" rx="6"
+      fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<text x="843" y="115" text-anchor="middle" class="rec">MLC-LLM</text>
+
+
+<line x1="85" y1="205" x2="168" y2="205"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.4" marker-end="url(#dt-arrow)"/>
+<rect x="170" y="185" width="320" height="46" rx="7"
+      fill="var(--surface-3,#ece7da)" stroke="var(--ink-soft,#45413a)" stroke-width="1.4"/>
+<text x="330" y="204" text-anchor="middle" class="q-title">NVIDIA GPU only — need absolute</text>
+<text x="330" y="220" text-anchor="middle" class="q-title">peak throughput?</text>
+
+
+<line x1="490" y1="198" x2="540" y2="198"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#dt-arrow)"/>
+<rect x="542" y="182" width="164" height="32" rx="5"
+      fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1"/>
+<text x="624" y="196" text-anchor="middle" class="cond">Yes, dedicated fleet,</text>
+<text x="624" y="208" text-anchor="middle" class="cond">tolerate 60-min build</text>
+<line x1="706" y1="198" x2="726" y2="198"
+      stroke="var(--accent,#c15b39)" stroke-width="1.2" marker-end="url(#dt-arrow-acc)"/>
+<rect x="728" y="183" width="230" height="30" rx="6"
+      fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<text x="843" y="203" text-anchor="middle" class="rec">TensorRT-LLM</text>
+
+
+<line x1="490" y1="222" x2="540" y2="238"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#dt-arrow)"/>
+<rect x="542" y="224" width="164" height="28" rx="5"
+      fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1"/>
+<text x="624" y="236" text-anchor="middle" class="cond">Yes, but need fast</text>
+<text x="624" y="248" text-anchor="middle" class="cond">iteration cycle</text>
+<line x1="706" y1="238" x2="726" y2="238"
+      stroke="var(--accent,#c15b39)" stroke-width="1.2" marker-end="url(#dt-arrow-acc)"/>
+<rect x="728" y="223" width="230" height="30" rx="6"
+      fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<text x="843" y="243" text-anchor="middle" class="rec">LMDeploy (TurboMind)</text>
+
+
+<line x1="85" y1="370" x2="168" y2="370"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.4" marker-end="url(#dt-arrow)"/>
+<rect x="170" y="350" width="320" height="46" rx="7"
+      fill="var(--surface-3,#ece7da)" stroke="var(--ink-soft,#45413a)" stroke-width="1.4"/>
+<text x="330" y="369" text-anchor="middle" class="q-title">Need easy HuggingFace compatibility</text>
+<text x="330" y="385" text-anchor="middle" class="q-title">+ good performance?</text>
+
+
+<line x1="490" y1="373" x2="548" y2="373"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#dt-arrow)"/>
+<rect x="550" y="358" width="148" height="28" rx="5"
+      fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1"/>
+<text x="624" y="376" text-anchor="middle" class="cond">Yes</text>
+<line x1="698" y1="373" x2="726" y2="373"
+      stroke="var(--accent,#c15b39)" stroke-width="1.2" marker-end="url(#dt-arrow-acc)"/>
+<rect x="728" y="357" width="230" height="32" rx="6"
+      fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<text x="843" y="371" text-anchor="middle" class="rec">TGI or vLLM</text>
+<text x="843" y="383" text-anchor="middle" style="font:400 9px var(--sans,sans-serif); fill:var(--muted,#6d675d);">(see Ch 7.3 for vLLM)</text>
+
+
+<line x1="85" y1="500" x2="168" y2="500"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.4" marker-end="url(#dt-arrow)"/>
+<rect x="170" y="480" width="320" height="46" rx="7"
+      fill="var(--surface-3,#ece7da)" stroke="var(--ink-soft,#45413a)" stroke-width="1.4"/>
+<text x="330" y="499" text-anchor="middle" class="q-title">Building RL rollout engine</text>
+<text x="330" y="515" text-anchor="middle" class="q-title">or research prototype?</text>
+
+
+<line x1="490" y1="503" x2="548" y2="503"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#dt-arrow)"/>
+<rect x="550" y="488" width="148" height="28" rx="5"
+      fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1"/>
+<text x="624" y="506" text-anchor="middle" class="cond">Yes</text>
+<line x1="698" y1="503" x2="726" y2="503"
+      stroke="var(--accent,#c15b39)" stroke-width="1.2" marker-end="url(#dt-arrow-acc)"/>
+<rect x="728" y="486" width="230" height="34" rx="6"
+      fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<text x="843" y="500" text-anchor="middle" class="rec">vLLM (+ SGLang)</text>
+<text x="843" y="514" text-anchor="middle" style="font:400 9px var(--sans,sans-serif); fill:var(--muted,#6d675d);">best async API + structured rollouts</text>
+
+
+<circle cx="85" cy="660" r="4" fill="var(--ink-soft,#45413a)" opacity="0.4"/>
+
+
+<text x="330" y="648" text-anchor="middle" style="font:italic 10px var(--sans,sans-serif); fill:var(--muted,#6d675d);">Question</text>
+<text x="624" y="648" text-anchor="middle" style="font:italic 10px var(--sans,sans-serif); fill:var(--muted,#6d675d);">Condition</text>
+<text x="843" y="648" text-anchor="middle" style="font:italic 10px var(--sans,sans-serif); fill:var(--muted,#6d675d);">Recommended stack</text>
+
+
+<line x1="530" y1="52" x2="530" y2="560"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3,4" opacity="0.6"/>
+<line x1="718" y1="52" x2="718" y2="560"
+      stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3,4" opacity="0.6"/>
+
+</svg>
+<figcaption><b>Stack selection cheatsheet: four decision branches route to six recommended runtimes.</b> Starting at the top, each question isolates a key constraint — hardware portability, NVIDIA-only peak throughput, HuggingFace compatibility, or RL/research needs — and the rightmost column names the best-fit serving framework for that combination.</figcaption>
+</figure>
+
+<hr />
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>TensorRT-LLM achieves peak NVIDIA GPU throughput through AOT compilation: kernels are selected and fused at build time, eliminating runtime dispatch overhead. The cost is hardware-specific engines and 30–60 minute build times.</li>
+<li>TGI provides a production-grade HTTP/gRPC server with continuous batching, custom FlashAttention kernels, and wide HuggingFace model support — no build step required, making it the default choice for teams that iterate quickly on models.</li>
+<li>llama.cpp / Ollama democratize LLM inference on commodity hardware. GGUF&rsquo;s block quantization (Q4_K_M, Q5_K_M) trades a small quality loss for 4–8× memory reduction, enabling 70B models to run on a laptop or a single consumer GPU.</li>
+<li>LMDeploy&rsquo;s TurboMind engine is a practical middle ground: custom CUDA kernels and blocked KV cache without the full AOT compilation step of TensorRT-LLM.</li>
+<li>MLC-LLM uses TVM&rsquo;s compiler infrastructure to target heterogeneous hardware (CUDA, ROCm, Metal, Vulkan, WebGPU) from a single codebase — the right choice for browser deployment via WebLLM or mixed-hardware fleets.</li>
+<li>The KV cache is the primary memory budget constraint at serving time. INT8 KV quantization roughly doubles the number of concurrent sequences you can hold, often improving throughput more than any single kernel optimization.</li>
+<li>The portability vs peak performance trade-off is real but often modest: well-tuned TGI or vLLM reaches 85–95% of TensorRT-LLM&rsquo;s throughput in most workloads. The remaining gap matters most at very large scale (thousands of dollars/day in GPU cost) or tight latency SLOs.</li>
+<li>For production deployments, the serving stack is just one component: request routing, prefix caching, speculative decoding, and disaggregated prefill/decode can each contribute as much to end-to-end efficiency as the choice of framework.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>LLM serving has matured into a rich ecosystem of specialized runtimes ranging from NVIDIA&rsquo;s AOT-compiled TensorRT-LLM for peak GPU throughput to portable frameworks like llama.cpp and MLC-LLM for edge and heterogeneous hardware. The dominant trend through 2024–2026 is disaggregated prefill/decode serving, speculative decoding, and prefix-cache-aware scheduling — each delivering multiplicative throughput gains on top of the foundational PagedAttention memory model.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2309.06180">Kwon et al., <em>Efficient Memory Management for LLM Serving with PagedAttention</em> (2023)</a> — introduced block-paged KV cache management (vLLM); every major serving stack now implements a variant.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2401.09670">Zhong et al., <em>DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving</em> (2024)</a> — OSDI 2024 paper showing that separating prefill and decode onto dedicated GPU pools removes interference and sharply improves latency SLOs.</li>
+<li><a href="https://arxiv.org/abs/2312.07104">Zheng et al., <em>SGLang: Efficient Execution of Structured Language Model Programs</em> (2024)</a> — NeurIPS 2024; introduces RadixAttention for KV-cache prefix reuse and compressed FSMs for constrained decoding; up to 6.4× throughput over prior baselines.</li>
+<li><a href="https://arxiv.org/abs/2511.17593">Kolluru, <em>Comparative Analysis of LLM Inference Serving Systems: vLLM and HuggingFace TGI</em> (2025)</a> — empirical benchmark across throughput, latency, GPU memory, and scalability on LLaMA-2 models.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/NVIDIA/TensorRT-LLM">NVIDIA/TensorRT-LLM</a> — NVIDIA&rsquo;s AOT-compilation library for LLMs; supports FP4/FP8, speculative decoding, multi-GPU tensor parallelism, and disaggregated serving.</li>
+<li><a href="https://github.com/vllm-project/vllm">vllm-project/vllm</a> — the de-facto open-source serving engine (2 000+ contributors); PagedAttention, continuous batching, prefix caching, and broad model support.</li>
+<li><a href="https://github.com/sgl-project/sglang">sgl-project/sglang</a> — high-performance framework with RadixAttention prefix caching and fast structured-output decoding; growing rapidly as a vLLM alternative.</li>
+<li><a href="https://github.com/ggml-org/llama.cpp">ggml-org/llama.cpp</a> — canonical C/C++ runtime for GGUF-quantized models; targets CPU, CUDA, Metal, Vulkan, and ROCm with no external ML dependencies.</li>
+<li><a href="https://github.com/mlc-ai/mlc-llm">mlc-ai/mlc-llm</a> — TVM-based universal LLM compiler targeting NVIDIA, AMD, Apple Metal, Vulkan, WebGPU, and Android from a single codebase.</li>
+<li><a href="https://github.com/InternLM/lmdeploy">InternLM/lmdeploy</a> — TurboMind C++/CUDA engine with blocked KV cache and AWQ quantization; strong mid-tier option between TGI and TensorRT-LLM.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://nvidia.github.io/TensorRT-LLM/overview.html">TensorRT-LLM documentation — Overview</a> — official docs covering the executor API, quantization recipes, multi-GPU configs, and speculative decoding setup.</li>
+<li><a href="https://developer.nvidia.com/blog/tensorrt-llm-speculative-decoding-boosts-inference-throughput-by-up-to-3-6x/">NVIDIA Technical Blog: <em>TensorRT-LLM Speculative Decoding Boosts Inference Throughput by up to 3.6×</em> (2024)</a> — step-by-step guide and benchmark results for draft-model speculative decoding on H200 GPUs.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>TensorRT-LLM repository</strong> — NVIDIA, github.com/NVIDIA/TensorRT-LLM. The primary reference for engine build options, supported models, and the Executor API.</li>
+<li><strong>Text Generation Inference repository</strong> — Hugging Face, github.com/huggingface/text-generation-inference. The Rust router source and Python model server are both readable and well-documented.</li>
+<li><strong>Kwon et al., &ldquo;Efficient Memory Management for Large Language Model Serving with PagedAttention,&rdquo; SOSP 2023</strong> — foundational paper for block-based KV cache management; the ideas are implemented in vLLM, TGI, TRT-LLM, and LMDeploy.</li>
+<li><strong>Dao et al., &ldquo;FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness,&rdquo; NeurIPS 2022</strong> — the attention kernel that every production stack now ships.</li>
+<li><strong>llama.cpp repository</strong> — Georgi Gerganov, github.com/ggerganov/llama.cpp. The GGUF specification and all backend implementations are in this repo.</li>
+<li><strong>MLC-LLM: Universal LLM Deployment</strong> — Chen et al., MLC team, github.com/mlc-ai/mlc-llm. Describes the TVM-based compilation pipeline and cross-platform targets.</li>
+<li><strong>LMDeploy repository</strong> — Shanghai AI Laboratory, github.com/InternLM/lmdeploy. TurboMind engine design documentation and AWQ quantization integration.</li>
+<li><strong>Aminabadi et al., &ldquo;DeepSpeed-Inference: Enabling Efficient Inference of Transformer Models at Unprecedented Scale,&rdquo; SC 2022</strong> — covers multi-GPU inference kernels and the design philosophy behind high-throughput serving at scale.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="04-sglang-radixattention.html"><span class="pn-label">← Previous</span><span class="pn-title">SGLang: RadixAttention &amp; Structured Programs</span></a>
+<a class="next" href="06-speculative-decoding.html"><span class="pn-label">Next →</span><span class="pn-title">Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-performance-hierarchy">The Performance Hierarchy</a></li>
+<li class="toc-l2"><a href="#tensorrt-llm-the-compiled-engine-approach">TensorRT-LLM: The Compiled Engine Approach</a></li>
+<li class="toc-l3"><a href="#what-tensorrt-llm-is">What TensorRT-LLM Is</a></li>
+<li class="toc-l3"><a href="#build-and-run-pipeline">Build and Run Pipeline</a></li>
+<li class="toc-l3"><a href="#in-flight-batching-in-tensorrt-llm">In-Flight Batching in TensorRT-LLM</a></li>
+<li class="toc-l3"><a href="#paged-kv-cache-and-memory-management">Paged KV Cache and Memory Management</a></li>
+<li class="toc-l3"><a href="#quantization-in-tensorrt-llm">Quantization in TensorRT-LLM</a></li>
+<li class="toc-l3"><a href="#multi-gpu-tensor-parallelism">Multi-GPU Tensor Parallelism</a></li>
+<li class="toc-l3"><a href="#the-triton-inference-server-integration">The Triton Inference Server Integration</a></li>
+<li class="toc-l3"><a href="#tensorrt-llm-what-you-give-up">TensorRT-LLM: What You Give Up</a></li>
+<li class="toc-l2"><a href="#text-generation-inference-tgi">Text Generation Inference (TGI)</a></li>
+<li class="toc-l3"><a href="#architecture-overview">Architecture Overview</a></li>
+<li class="toc-l3"><a href="#running-tgi">Running TGI</a></li>
+<li class="toc-l3"><a href="#tgis-continuous-batching-scheduler">TGI&amp;rsquo;s Continuous Batching Scheduler</a></li>
+<li class="toc-l3"><a href="#tgi-vs-tensorrt-llm-key-differences">TGI vs TensorRT-LLM: Key Differences</a></li>
+<li class="toc-l2"><a href="#llamacpp-the-cpuedge-champion">llama.cpp: The CPU/Edge Champion</a></li>
+<li class="toc-l3"><a href="#what-llamacpp-does">What llama.cpp Does</a></li>
+<li class="toc-l3"><a href="#gguf-format">GGUF Format</a></li>
+<li class="toc-l3"><a href="#ollama-a-developer-friendly-frontend">Ollama: A Developer-Friendly Frontend</a></li>
+<li class="toc-l3"><a href="#performance-profile">Performance Profile</a></li>
+<li class="toc-l2"><a href="#lmdeploy-efficient-serving-with-turbomind">LMDeploy: Efficient Serving with TurboMind</a></li>
+<li class="toc-l2"><a href="#mlc-llm-universal-compilation-via-tvm">MLC-LLM: Universal Compilation via TVM</a></li>
+<li class="toc-l3"><a href="#how-mlc-differs">How MLC Differs</a></li>
+<li class="toc-l2"><a href="#the-tradeoff-space-a-practitioners-framework">The Tradeoff Space: A Practitioner&amp;rsquo;s Framework</a></li>
+<li class="toc-l3"><a href="#decision-matrix">Decision Matrix</a></li>
+<li class="toc-l3"><a href="#portability-vs-peak-performance-the-core-tension">Portability vs Peak Performance: The Core Tension</a></li>
+<li class="toc-l2"><a href="#kernel-highlights-what-makes-these-engines-fast">Kernel Highlights: What Makes These Engines Fast</a></li>
+<li class="toc-l3"><a href="#fused-attention-kernels">Fused Attention Kernels</a></li>
+<li class="toc-l3"><a href="#gemm-kernel-tuning">GEMM Kernel Tuning</a></li>
+<li class="toc-l3"><a href="#kv-cache-quantization">KV Cache Quantization</a></li>
+<li class="toc-l2"><a href="#structured-output-and-constrained-generation">Structured Output and Constrained Generation</a></li>
+<li class="toc-l2"><a href="#stack-selection-cheatsheet">Stack Selection Cheatsheet</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

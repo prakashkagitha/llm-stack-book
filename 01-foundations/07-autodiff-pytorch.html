@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Automatic Differentiation &amp; PyTorch Internals — The LLM Stack</title>
+<meta name="description" content="Reverse-mode autodiff, computation graphs, the tape; PyTorch autograd, leaf tensors, .grad, no_grad, custom autograd.Function; dispatcher, ATen, views vs copies">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="active" href="07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part I — Mathematical &amp; Systems Foundations</div>
+<h1 id="17-automatic-differentiation-pytorch-internals">1.7 Automatic Differentiation &amp; PyTorch Internals<a class="headerlink" href="#17-automatic-differentiation-pytorch-internals" title="Permanent link">¶</a></h1>
+<p>Backpropagation is the algorithm that makes deep learning tractable, but writing it by hand for every new architecture is error-prone, slow, and frankly miserable. Automatic differentiation (autodiff) is the engineering discipline that solves this: given any composition of differentiable operations expressed as code, autodiff computes exact gradients — not finite differences, not symbolic algebra output — mechanically and efficiently. PyTorch&rsquo;s <code>autograd</code> engine is the most widely used reverse-mode autodiff system in research and production. Understanding it at the mechanism level pays dividends every time you write a custom loss, a non-standard layer, or debug a gradient that quietly went to zero.</p>
+<p>This chapter covers the full stack: the mathematics of reverse-mode autodiff and the tape metaphor, the PyTorch computation graph and its memory model, leaf tensors and the <code>.grad</code> accumulation protocol, <code>no_grad</code> and inference mode, custom <code>autograd.Function</code>, and the lower layers of PyTorch (the dispatcher, ATen, views vs. copies, contiguity, and broadcasting semantics). We connect the theory to the practice with a fully-worked custom function example and numerical traces you can follow by hand.</p>
+<p>We assume you have read <a href="../01-foundations/06-neural-nets-from-scratch.html">Neural Networks From Scratch: MLPs &amp; Backprop</a> and are comfortable with the chain rule. We also reference <a href="../01-foundations/03-calculus-optimization.html">Calculus, Optimization &amp; Convexity</a> for the Jacobian formalism and <a href="../01-foundations/08-gpu-architecture.html">GPU Architecture &amp; The Memory Hierarchy</a> for the hardware context that makes contiguity matter.</p>
+<hr />
+<h2 id="why-autodiff-exists-the-three-alternatives-and-their-failures">Why Autodiff Exists: The Three Alternatives and Their Failures<a class="headerlink" href="#why-autodiff-exists-the-three-alternatives-and-their-failures" title="Permanent link">¶</a></h2>
+<p>Before diving into the mechanism, it is worth naming the alternatives that autodiff replaced.</p>
+<p><strong>Manual backprop</strong> requires the programmer to derive and implement the gradient of every operation. This was the norm in the symbolic-layer era (Theano, early Caffe). It is correct when done carefully, but it couples forward and backward code, makes architectural experiments tedious, and is a perennial source of subtle bugs.</p>
+<p><strong>Numerical differentiation</strong> (finite differences) approximates the derivative as:</p>
+<div class="arithmatex">\[
+\frac{\partial f}{\partial x_i} \approx \frac{f(x + \epsilon e_i) - f(x - \epsilon e_i)}{2\epsilon}
+\]</div>
+<p>This requires <span class="arithmatex">\(2N\)</span> forward passes for <span class="arithmatex">\(N\)</span> parameters — completely impractical for networks with billions of parameters. It is still useful for <strong>gradient checking</strong> (verifying autodiff implementations), where you compare the autodiff gradient against a small finite-difference estimate for a handful of parameters.</p>
+<p><strong>Symbolic differentiation</strong> (as in computer algebra systems like Mathematica) manipulates expression trees algebraically. The output is a symbolic formula for the derivative. It produces exact answers but suffers from <strong>expression swell</strong> — derivatives of composite functions grow exponentially in size with depth, and the resulting code is typically far slower than an equivalent imperative implementation.</p>
+<p>Reverse-mode autodiff threads the needle: it computes exact derivatives (to floating-point precision), scales in <span class="arithmatex">\(O(1)\)</span> forward passes regardless of <span class="arithmatex">\(N\)</span>, and operates on ordinary imperative code. Its only real cost is memory for the intermediate activations stored during the forward pass — a cost we will see how to reduce with gradient checkpointing (covered in <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a>).</p>
+<hr />
+<h2 id="reverse-mode-autodiff-the-tape">Reverse-Mode Autodiff: The Tape<a class="headerlink" href="#reverse-mode-autodiff-the-tape" title="Permanent link">¶</a></h2>
+<h3 id="the-jacobian-vector-product-view">The Jacobian-Vector Product View<a class="headerlink" href="#the-jacobian-vector-product-view" title="Permanent link">¶</a></h3>
+<p>Let <span class="arithmatex">\(f : \mathbb{R}^n \to \mathbb{R}^m\)</span> be a differentiable function. Its derivative at a point <span class="arithmatex">\(x\)</span> is a linear map <span class="arithmatex">\(Df(x) : \mathbb{R}^n \to \mathbb{R}^m\)</span>, represented as the <span class="arithmatex">\(m \times n\)</span> Jacobian matrix <span class="arithmatex">\(J\)</span>. For most neural network losses, <span class="arithmatex">\(m = 1\)</span>, so the Jacobian is a <span class="arithmatex">\(1 \times n\)</span> row vector — the gradient.</p>
+<p>Reverse-mode autodiff computes the <strong>vector-Jacobian product (VJP)</strong>:</p>
+<div class="arithmatex">\[
+\bar{x} = \bar{y}^\top J
+\]</div>
+<p>where <span class="arithmatex">\(\bar{y}\)</span> is the upstream gradient (a <span class="arithmatex">\(1 \times m\)</span> row vector) and <span class="arithmatex">\(\bar{x}\)</span> is the resulting gradient with respect to <span class="arithmatex">\(x\)</span>. When <span class="arithmatex">\(m = 1\)</span> and <span class="arithmatex">\(\bar{y} = 1\)</span>, this recovers the ordinary gradient <span class="arithmatex">\(\nabla_x f\)</span>.</p>
+<p>The key insight is that we never materialize <span class="arithmatex">\(J\)</span> itself — we only ever compute VJPs. This makes reverse-mode autodiff efficient when the output dimension <span class="arithmatex">\(m\)</span> is small (e.g., <span class="arithmatex">\(m = 1\)</span> for scalar losses) regardless of how large <span class="arithmatex">\(n\)</span> is.</p>
+<h3 id="the-tape-metaphor">The Tape Metaphor<a class="headerlink" href="#the-tape-metaphor" title="Permanent link">¶</a></h3>
+<p>During the <strong>forward pass</strong>, autograd records every operation applied to tensors that require gradients, building a directed acyclic graph (DAG). Edges point from outputs to inputs (in the <em>backward</em> direction). Nodes are <code>Function</code> objects that know how to compute the VJP for their operation. This data structure is called the <strong>tape</strong> or <strong>Wengert list</strong> (after Robert Wengert, who described it in 1964).</p>
+<p>During the <strong>backward pass</strong>, we traverse the tape in reverse topological order. At each node, we:
+1. Receive the upstream gradient <span class="arithmatex">\(\bar{y}\)</span> from the node above.
+2. Call the node&rsquo;s <code>backward</code> function to compute the VJP: <span class="arithmatex">\(\bar{x} = \bar{y}^\top J\)</span>.
+3. Accumulate <span class="arithmatex">\(\bar{x}\)</span> into the gradient of the input tensor and pass it downstream.</p>
+<p>After <code>loss.backward()</code> returns, every leaf tensor with <code>requires_grad=True</code> has its <code>.grad</code> field populated with the accumulated gradient.</p>
+<figure class="viz" id="fig-autodiff-tape-forward-backward">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 980 390" role="img" aria-label="Reverse-mode autodiff tape: forward pass builds the computation graph left-to-right from x through MatMul, ReLU, Linear, CE Loss to L, stashing activations at each op; backward pass propagates VJP gradients right-to-left from L back to x and W.">
+<defs>
+  <marker id="atfb-fwd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <marker id="atfb-bwd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#d9730d)"/>
+  </marker>
+  <marker id="atfb-store" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M10 0 L0 5 L10 10 z" fill="var(--muted,#888)"/>
+  </marker>
+</defs>
+<style>
+  #fig-autodiff-tape-forward-backward text { fill: currentColor; }
+  #fig-autodiff-tape-forward-backward .lbl  { font: 600 12px var(--sans,sans-serif); }
+  #fig-autodiff-tape-forward-backward .sub  { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-autodiff-tape-forward-backward .banner { font: 700 11px var(--sans,sans-serif); }
+  #fig-autodiff-tape-forward-backward .grad  { font: 600 9px var(--mono,monospace); fill: var(--accent-2,#d9730d); }
+  #fig-autodiff-tape-forward-backward .store { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-autodiff-tape-forward-backward .seed  { font: 500 9.5px var(--sans,sans-serif); fill: var(--accent-2,#d9730d); }
+  #fig-autodiff-tape-forward-backward .form  { font: 500 9.5px var(--mono,monospace); fill: var(--accent-2,#d9730d); }
+</style>
+
+
+<g data-anim="1">
+  <text x="490" y="22" text-anchor="middle" class="banner" fill="var(--accent,#6366f1)">Forward pass — builds the graph (left to right)</text>
+</g>
+
+
+
+
+<g data-anim="1">
+  <rect x="14" y="118" width="68" height="40" rx="6" class="v-fill" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="48" y="143" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">x</text>
+  <text x="48" y="168" text-anchor="middle" class="sub">input</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="82" y1="138" x2="86" y2="138" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#atfb-fwd)"/>
+</g>
+
+
+<g data-anim="2">
+  <rect x="86" y="114" width="70" height="48" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="121" y="143" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">MatMul</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="156" y1="138" x2="161" y2="138" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#atfb-fwd)"/>
+</g>
+
+
+<g data-anim="3">
+  <rect x="161" y="118" width="68" height="40" rx="6" class="v-fill" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="195" y="143" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">z</text>
+  <text x="195" y="168" text-anchor="middle" class="sub">pre-ReLU</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="229" y1="138" x2="233" y2="138" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#atfb-fwd)"/>
+</g>
+
+
+<g data-anim="4">
+  <rect x="233" y="114" width="70" height="48" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="268" y="143" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">ReLU</text>
+</g>
+
+
+<g data-anim="5">
+  <line x1="303" y1="138" x2="308" y2="138" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#atfb-fwd)"/>
+</g>
+
+
+<g data-anim="5">
+  <rect x="308" y="118" width="68" height="40" rx="6" class="v-fill" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="342" y="143" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">h</text>
+  <text x="342" y="168" text-anchor="middle" class="sub">hidden</text>
+</g>
+
+
+<g data-anim="6">
+  <line x1="376" y1="138" x2="380" y2="138" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#atfb-fwd)"/>
+</g>
+
+
+<g data-anim="6">
+  <rect x="380" y="114" width="70" height="48" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="415" y="143" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">Linear</text>
+</g>
+
+
+<g data-anim="7">
+  <line x1="450" y1="138" x2="455" y2="138" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#atfb-fwd)"/>
+</g>
+
+
+<g data-anim="7">
+  <rect x="455" y="118" width="68" height="40" rx="6" class="v-fill" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="489" y="143" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">logits</text>
+  <text x="489" y="168" text-anchor="middle" class="sub">raw scores</text>
+</g>
+
+
+<g data-anim="8">
+  <line x1="523" y1="138" x2="529" y2="138" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#atfb-fwd)"/>
+</g>
+
+
+<g data-anim="8">
+  <rect x="529" y="114" width="76" height="48" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="567" y="135" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">CE</text>
+  <text x="567" y="152" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">Loss</text>
+</g>
+
+
+<g data-anim="9">
+  <line x1="605" y1="138" x2="610" y2="138" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#atfb-fwd)"/>
+</g>
+
+
+<g data-anim="9">
+  <rect x="610" y="118" width="68" height="40" rx="6" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="2.5"/>
+  <text x="644" y="143" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">L</text>
+  <text x="644" y="168" text-anchor="middle" class="sub">scalar loss</text>
+  <text x="644" y="182" text-anchor="middle" class="seed">seed ȳ = 1.0</text>
+</g>
+
+
+
+
+<g data-anim="2">
+  <line x1="121" y1="162" x2="121" y2="213" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3"/>
+  <polygon points="116,213 126,213 121,220" fill="var(--muted,#888)" opacity="0.7"/>
+  <rect x="74" y="220" width="94" height="26" rx="5" class="v-fill" fill-opacity="0.6" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="121" y="237" text-anchor="middle" class="store">stores W</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="268" y1="162" x2="268" y2="213" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3"/>
+  <polygon points="263,213 273,213 268,220" fill="var(--muted,#888)" opacity="0.7"/>
+  <rect x="221" y="220" width="94" height="26" rx="5" class="v-fill" fill-opacity="0.6" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="268" y="237" text-anchor="middle" class="store">stores z</text>
+</g>
+
+
+<g data-anim="6">
+  <line x1="415" y1="162" x2="415" y2="213" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3"/>
+  <polygon points="410,213 420,213 415,220" fill="var(--muted,#888)" opacity="0.7"/>
+  <rect x="368" y="220" width="94" height="26" rx="5" class="v-fill" fill-opacity="0.6" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="415" y="237" text-anchor="middle" class="store">stores h</text>
+</g>
+
+
+<g data-anim="8">
+  <line x1="567" y1="162" x2="567" y2="213" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3"/>
+  <polygon points="562,213 572,213 567,220" fill="var(--muted,#888)" opacity="0.7"/>
+  <rect x="514" y="220" width="106" height="26" rx="5" class="v-fill" fill-opacity="0.6" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="567" y="237" text-anchor="middle" class="store">stores logits</text>
+</g>
+
+
+
+
+<g data-anim="10">
+  <text x="490" y="378" text-anchor="middle" class="banner" fill="var(--accent-2,#d9730d)">Backward pass — traverses right to left  (VJP  ȳᵀJ  at each node)</text>
+</g>
+
+
+<g data-anim="10" opacity="0.4">
+  <line x1="644" y1="198" x2="644" y2="310" stroke="var(--accent-2,#d9730d)" stroke-width="1" stroke-dasharray="2 3"/>
+  <line x1="489" y1="198" x2="489" y2="310" stroke="var(--accent-2,#d9730d)" stroke-width="1" stroke-dasharray="2 3"/>
+  <line x1="342" y1="198" x2="342" y2="310" stroke="var(--accent-2,#d9730d)" stroke-width="1" stroke-dasharray="2 3"/>
+  <line x1="195" y1="198" x2="195" y2="310" stroke="var(--accent-2,#d9730d)" stroke-width="1" stroke-dasharray="2 3"/>
+  <line x1="48"  y1="198" x2="48"  y2="310" stroke="var(--accent-2,#d9730d)" stroke-width="1" stroke-dasharray="2 3"/>
+</g>
+
+
+<g data-anim="10">
+  <line x1="638" y1="310" x2="530" y2="310" stroke="var(--accent-2,#d9730d)" stroke-width="2" marker-end="url(#atfb-bwd)"/>
+  <text x="584" y="300" text-anchor="middle" class="grad">dL/dlogits = ȳ</text>
+</g>
+
+
+<g data-anim="11">
+  <line x1="523" y1="310" x2="382" y2="310" stroke="var(--accent-2,#d9730d)" stroke-width="2" marker-end="url(#atfb-bwd)"/>
+  <text x="452" y="300" text-anchor="middle" class="grad">dL/dh</text>
+</g>
+
+
+<g data-anim="12">
+  <line x1="376" y1="310" x2="235" y2="310" stroke="var(--accent-2,#d9730d)" stroke-width="2" marker-end="url(#atfb-bwd)"/>
+  <text x="305" y="300" text-anchor="middle" class="grad">dL/dz</text>
+</g>
+
+
+<g data-anim="13">
+  <line x1="229" y1="310" x2="88" y2="310" stroke="var(--accent-2,#d9730d)" stroke-width="2" marker-end="url(#atfb-bwd)"/>
+  <text x="158" y="300" text-anchor="middle" class="grad">dL/dx</text>
+</g>
+
+
+<g data-anim="13">
+  <line x1="121" y1="310" x2="121" y2="286" stroke="var(--accent-2,#d9730d)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#atfb-bwd)"/>
+  <rect x="78" y="270" width="86" height="22" rx="4" fill="var(--accent-2,#d9730d)" fill-opacity="0.12" stroke="var(--accent-2,#d9730d)" stroke-width="1.2"/>
+  <text x="121" y="285" text-anchor="middle" class="grad">dL/dW</text>
+</g>
+
+
+<g data-anim="10">
+  <rect x="696" y="295" width="72" height="22" rx="4" fill="var(--accent-2,#d9730d)" fill-opacity="0.10" stroke="var(--accent-2,#d9730d)" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="732" y="310" text-anchor="middle" class="form">x&#772; = ȳᵀ J</text>
+</g>
+
+</svg>
+<figcaption><b>The tape in two phases: forward builds the graph, backward propagates VJPs.</b> During the forward pass (blue, left-to-right) each operation is appended to the tape and stashes the activations it will need — W for MatMul, z for ReLU, h for Linear, logits for CE Loss. During the backward pass (orange, right-to-left) the engine traverses the tape in reverse, applying the VJP rule <b>x&#772; = ȳᵀ J</b> at every node; MatMul yields two gradient branches: dL/dx back to the input and dL/dW to the weight matrix.</figcaption>
+</figure>
+
+<hr />
+<h2 id="pytorch-autograd-the-computation-graph">PyTorch Autograd: The Computation Graph<a class="headerlink" href="#pytorch-autograd-the-computation-graph" title="Permanent link">¶</a></h2>
+<h3 id="tensors-requires_grad-and-leaf-nodes">Tensors, <code>requires_grad</code>, and Leaf Nodes<a class="headerlink" href="#tensors-requires_grad-and-leaf-nodes" title="Permanent link">¶</a></h3>
+<p>Every PyTorch tensor has a <code>requires_grad</code> flag. When <code>True</code>, operations on it are tracked. A tensor is a <strong>leaf</strong> if it was created directly by user code (e.g., <code>nn.Parameter</code>, or a tensor created with <code>requires_grad=True</code>), rather than being the output of some tracked operation. After <code>backward()</code>, only leaf tensors&rsquo; <code>.grad</code> fields are populated; intermediate (non-leaf) tensors&rsquo; gradients are not retained by default (to save memory).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="c1"># Leaf tensor: created directly, not the result of an op</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">],</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">w</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">0.5</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">],</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Non-leaf (intermediate) tensor: result of an operation</span>
+<span class="n">y</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">*</span> <span class="n">w</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>   <span class="c1"># y = 2*0.5 + 3*(-1.0) = 1.0 - 3.0 = -2.0</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">is_leaf</span><span class="p">)</span>   <span class="c1"># True</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">is_leaf</span><span class="p">)</span>   <span class="c1"># False</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">grad_fn</span><span class="p">)</span>   <span class="c1"># &lt;SumBackward0 object at 0x...&gt;</span>
+
+<span class="n">y</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+<span class="c1"># Only leaf gradients are populated</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">grad</span><span class="p">)</span>   <span class="c1"># tensor([ 0.5, -1.0])  -- dy/dx_i = w_i</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">w</span><span class="o">.</span><span class="n">grad</span><span class="p">)</span>   <span class="c1"># tensor([ 2.0,  3.0])  -- dy/dw_i = x_i</span>
+<span class="c1"># y.grad would be None (non-leaf, gradient not retained)</span>
+</code></pre></div>
+<p>The <code>grad_fn</code> attribute is a reference to the <code>Function</code> node that created this tensor. Following <code>.grad_fn.next_functions</code> traverses the graph toward the leaves.</p>
+<h3 id="the-grad_fn-graph">The <code>grad_fn</code> Graph<a class="headerlink" href="#the-grad_fn-graph" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Inspecting the graph manually</span>
+<span class="n">a</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">3.0</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">4.0</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">c</span> <span class="o">=</span> <span class="n">a</span> <span class="o">*</span> <span class="n">b</span>           <span class="c1"># MulBackward0</span>
+<span class="n">d</span> <span class="o">=</span> <span class="n">c</span> <span class="o">+</span> <span class="n">a</span>           <span class="c1"># AddBackward0</span>
+<span class="n">e</span> <span class="o">=</span> <span class="n">d</span> <span class="o">**</span> <span class="mi">2</span>          <span class="c1"># PowBackward0</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">grad_fn</span><span class="p">)</span>                          <span class="c1"># PowBackward0</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">grad_fn</span><span class="o">.</span><span class="n">next_functions</span><span class="p">)</span>           <span class="c1"># ((AddBackward0, 0),)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">grad_fn</span><span class="o">.</span><span class="n">next_functions</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">next_functions</span><span class="p">)</span>
+<span class="c1"># ((MulBackward0, 0), (AccumulateGrad, 0))  ← &#39;a&#39; appears twice!</span>
+</code></pre></div>
+<p>Notice that <code>a</code> appears twice in the graph (once as an input to <code>c = a*b</code> and once as the second input to <code>d = c+a</code>). PyTorch correctly accumulates both gradient contributions into <code>a.grad</code>.</p>
+<h3 id="gradient-accumulation-and-grad_fn-ownership">Gradient Accumulation and <code>.grad_fn</code> Ownership<a class="headerlink" href="#gradient-accumulation-and-grad_fn-ownership" title="Permanent link">¶</a></h3>
+<p>By default, <code>.grad</code> accumulates (adds) across multiple <code>.backward()</code> calls. This is intentional and exploited by gradient accumulation in training:</p>
+<div class="highlight"><pre><span></span><code><span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>          <span class="c1"># clear accumulated grads</span>
+<span class="k">for</span> <span class="n">mini_batch</span> <span class="ow">in</span> <span class="n">accumulation_steps</span><span class="p">:</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">mini_batch</span><span class="p">)</span> <span class="o">/</span> <span class="n">accumulation_steps</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>            <span class="c1"># accumulates into .grad</span>
+<span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>               <span class="c1"># update once with the full-batch gradient</span>
+</code></pre></div>
+<p>If you forget <code>zero_grad()</code>, gradients from the previous step corrupt the current one — a classic bug.</p>
+<hr />
+<h2 id="torchno_grad-inference_mode-and-detach"><code>torch.no_grad</code>, <code>inference_mode</code>, and Detach<a class="headerlink" href="#torchno_grad-inference_mode-and-detach" title="Permanent link">¶</a></h2>
+<h3 id="torchno_grad"><code>torch.no_grad()</code><a class="headerlink" href="#torchno_grad" title="Permanent link">¶</a></h3>
+<p>Inside a <code>no_grad</code> context, autograd does not record operations even for tensors with <code>requires_grad=True</code>. No <code>grad_fn</code> is attached to outputs, and no tape is built. Use this for inference and for optimizer steps (parameter updates must not themselves be differentiated).</p>
+<div class="highlight"><pre><span></span><code><span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">output</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="nb">input</span><span class="p">)</span>   <span class="c1"># no graph built; saves memory and compute</span>
+</code></pre></div>
+<h3 id="torchinference_mode"><code>torch.inference_mode()</code><a class="headerlink" href="#torchinference_mode" title="Permanent link">¶</a></h3>
+<p>Introduced in PyTorch 1.9, <code>inference_mode</code> is a stronger version of <code>no_grad</code>: tensors created inside it are marked as &ldquo;inference tensors&rdquo; and cannot be used in a future <code>requires_grad</code> computation. This allows PyTorch to skip additional bookkeeping. Prefer it over <code>no_grad</code> for pure inference paths.</p>
+<div class="highlight"><pre><span></span><code><span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">inference_mode</span><span class="p">():</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>
+    <span class="n">probs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="detach"><code>.detach()</code><a class="headerlink" href="#detach" title="Permanent link">¶</a></h3>
+<p><code>.detach()</code> returns a new tensor that shares the same storage but is detached from the computation graph — it has <code>requires_grad=False</code> and no <code>grad_fn</code>. Common uses:</p>
+<ul>
+<li>Logging or visualization of activations without building a graph.</li>
+<li>Stopping gradient flow in architectures like target networks in RL (where we want the target to be fixed).</li>
+<li>The &ldquo;stop-gradient&rdquo; trick in self-supervised learning (BYOL, SimSiam).</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Stop-gradient for target network</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+    <span class="n">target_features</span> <span class="o">=</span> <span class="n">target_encoder</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># equivalent to detach here</span>
+
+<span class="c1"># Or explicitly:</span>
+<span class="n">target_features</span> <span class="o">=</span> <span class="n">online_encoder</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+</code></pre></div>
+<hr />
+<h2 id="custom-autogradfunction">Custom <code>autograd.Function</code><a class="headerlink" href="#custom-autogradfunction" title="Permanent link">¶</a></h2>
+<p>PyTorch&rsquo;s built-in operations cover almost every need, but sometimes you need a custom forward/backward pair: a fused kernel, a numerically stable reformulation, or a straight-through estimator. <code>torch.autograd.Function</code> gives you a clean interface to plug into the autograd engine.</p>
+<h3 id="the-function-interface">The <code>Function</code> Interface<a class="headerlink" href="#the-function-interface" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.autograd</span><span class="w"> </span><span class="kn">import</span> <span class="n">Function</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MyOp</span><span class="p">(</span><span class="n">Function</span><span class="p">):</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">):</span>
+        <span class="c1"># ctx is a context object for stashing tensors for backward</span>
+        <span class="c1"># return output tensor(s)</span>
+        <span class="o">...</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="o">*</span><span class="n">grad_outputs</span><span class="p">):</span>
+        <span class="c1"># grad_outputs: upstream gradients (one per forward output)</span>
+        <span class="c1"># return gradient tensors (one per forward input, or None if not differentiable)</span>
+        <span class="o">...</span>
+</code></pre></div>
+<p>The <code>ctx</code> object is the bridge: <code>ctx.save_for_backward(...)</code> stashes tensors (only tensors, not Python scalars), and <code>ctx.saved_tensors</code> retrieves them in <code>backward</code>. To stash non-tensor values, assign them as attributes (<code>ctx.alpha = alpha</code>).</p>
+<h3 id="example-numerically-stable-sigmoid-with-custom-backward">Example: Numerically Stable Sigmoid with Custom Backward<a class="headerlink" href="#example-numerically-stable-sigmoid-with-custom-backward" title="Permanent link">¶</a></h3>
+<p>The naive sigmoid <span class="arithmatex">\(\sigma(x) = 1/(1+e^{-x})\)</span> can overflow for large negative <span class="arithmatex">\(x\)</span> (exp of large positive becomes inf) or lose precision for large positive <span class="arithmatex">\(x\)</span>. The stable version clips large magnitudes and uses <code>torch.sigmoid</code> in practice, but here we implement it from scratch with a custom backward to illustrate the interface:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.autograd</span><span class="w"> </span><span class="kn">import</span> <span class="n">Function</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">StableSigmoid</span><span class="p">(</span><span class="n">Function</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Sigmoid with a numerically stable forward and analytic backward.</span>
+<span class="sd">    We store only the output (not input) for memory efficiency,</span>
+<span class="sd">    since d_sigma/dx = sigma(x) * (1 - sigma(x)).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Use PyTorch&#39;s stable sigmoid internally</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="c1"># Save output, not input -- saves memory for large activations</span>
+        <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">y</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="p">(</span><span class="n">y</span><span class="p">,)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
+        <span class="c1"># Jacobian of sigmoid: dy/dx = y * (1 - y)</span>
+        <span class="c1"># VJP: grad_input = grad_output * dy/dx  (element-wise for elt-wise ops)</span>
+        <span class="n">grad_input</span> <span class="o">=</span> <span class="n">grad_output</span> <span class="o">*</span> <span class="n">y</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">y</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">grad_input</span>
+
+
+<span class="c1"># Register as a callable</span>
+<span class="n">stable_sigmoid</span> <span class="o">=</span> <span class="n">StableSigmoid</span><span class="o">.</span><span class="n">apply</span>
+
+
+<span class="c1"># --- Test correctness against autograd ---</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">x_ref</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">y</span> <span class="o">=</span> <span class="n">stable_sigmoid</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">y_ref</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">x_ref</span><span class="p">)</span>
+
+<span class="c1"># Forward agreement</span>
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">y</span><span class="p">,</span> <span class="n">y_ref</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">),</span> <span class="s2">&quot;Forward mismatch&quot;</span>
+
+<span class="c1"># Backward agreement via gradient checking</span>
+<span class="n">y</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="n">y_ref</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">grad</span><span class="p">,</span> <span class="n">x_ref</span><span class="o">.</span><span class="n">grad</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">),</span> <span class="s2">&quot;Backward mismatch&quot;</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;x      :&quot;</span><span class="p">,</span> <span class="n">x</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">4</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;sigma  :&quot;</span><span class="p">,</span> <span class="n">y</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">4</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;grad   :&quot;</span><span class="p">,</span> <span class="n">x</span><span class="o">.</span><span class="n">grad</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">4</span><span class="p">))</span>
+<span class="c1"># x      : [ 1.5410 -0.2934 -2.1788  0.5684]</span>
+<span class="c1"># sigma  : [0.8238 0.4271 0.1017 0.6387]</span>
+<span class="c1"># grad   : [0.1449 0.2446 0.0912 0.2307]  -- sigma*(1-sigma)</span>
+</code></pre></div>
+<h3 id="example-straight-through-estimator-ste">Example: Straight-Through Estimator (STE)<a class="headerlink" href="#example-straight-through-estimator-ste" title="Permanent link">¶</a></h3>
+<p>The STE is a classic trick used in quantization-aware training (QAT) and binary neural networks. The forward pass applies a non-differentiable rounding operation; the backward pass pretends the function was the identity, passing the upstream gradient through unchanged:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">StraightThroughRound</span><span class="p">(</span><span class="n">Function</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Forward:  y = round(x)   (non-differentiable: gradient is 0 a.e.)</span>
+<span class="sd">    Backward: dy/dx = 1      (identity straight-through estimator)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">round</span><span class="p">()</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="c1"># Pass gradient through unchanged -- the &quot;straight-through&quot; trick</span>
+        <span class="k">return</span> <span class="n">grad_output</span>
+
+
+<span class="n">ste_round</span> <span class="o">=</span> <span class="n">StraightThroughRound</span><span class="o">.</span><span class="n">apply</span>
+
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">0.3</span><span class="p">,</span> <span class="mf">1.7</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.6</span><span class="p">],</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">ste_round</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>           <span class="c1"># tensor([ 0.,  2., -1.])</span>
+<span class="n">y</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">grad</span><span class="p">)</span>      <span class="c1"># tensor([1., 1., 1.])  -- as if dy/dx = 1 everywhere</span>
+</code></pre></div>
+<h3 id="gradcheck-numerically-verifying-custom-backwards"><code>gradcheck</code>: Numerically Verifying Custom Backwards<a class="headerlink" href="#gradcheck-numerically-verifying-custom-backwards" title="Permanent link">¶</a></h3>
+<p>PyTorch provides <code>torch.autograd.gradcheck</code> to compare your custom <code>backward</code> against finite differences:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">torch.autograd</span><span class="w"> </span><span class="kn">import</span> <span class="n">gradcheck</span>
+
+<span class="c1"># Use double precision for numerical stability of finite differences</span>
+<span class="n">x_check</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">gradcheck</span><span class="p">(</span><span class="n">stable_sigmoid</span><span class="p">,</span> <span class="p">(</span><span class="n">x_check</span><span class="p">,),</span> <span class="n">eps</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;gradcheck passed: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># True</span>
+</code></pre></div>
+<p>Always run <code>gradcheck</code> on new <code>Function</code> implementations — it catches sign errors, missing factors, and wrongly accumulated terms.</p>
+<hr />
+<h2 id="worked-numerical-example-forward-backward-trace">Worked Numerical Example: Forward + Backward Trace<a class="headerlink" href="#worked-numerical-example-forward-backward-trace" title="Permanent link">¶</a></h2>
+<div class="admonition example">
+<p class="admonition-title">Tracing autograd for a 2-layer network</p>
+<p>Consider a tiny two-layer network with no bias, scalar output, and ReLU:</p>
+<div class="arithmatex">\[
+z_1 = W_1 x, \quad h = \text{ReLU}(z_1), \quad z_2 = w_2^\top h, \quad L = \tfrac{1}{2}z_2^2
+\]</div>
+<p>Let <span class="arithmatex">\(x = [1, 0]^\top\)</span>, <span class="arithmatex">\(W_1 = \begin{bmatrix}2 &amp; 1\\ -1 &amp; 3\end{bmatrix}\)</span>, <span class="arithmatex">\(w_2 = [0.5, 0.5]^\top\)</span>.</p>
+<p><strong>Forward pass:</strong></p>
+<div class="arithmatex">\[
+z_1 = \begin{bmatrix}2\cdot1+1\cdot0\\ -1\cdot1+3\cdot0\end{bmatrix} = \begin{bmatrix}2\\ -1\end{bmatrix}
+\]</div>
+<div class="arithmatex">\[
+h = \text{ReLU}(z_1) = \begin{bmatrix}2\\ 0\end{bmatrix}
+\]</div>
+<div class="arithmatex">\[
+z_2 = 0.5 \cdot 2 + 0.5 \cdot 0 = 1.0
+\]</div>
+<div class="arithmatex">\[
+L = \tfrac{1}{2}(1.0)^2 = 0.5
+\]</div>
+<p><strong>Backward pass (VJPs):</strong></p>
+<p><span class="arithmatex">\(\bar{z}_2 = dL/dz_2 = z_2 = 1.0\)</span></p>
+<p><span class="arithmatex">\(\bar{w}_2 = \bar{z}_2 \cdot h = 1.0 \cdot [2, 0]^\top = [2, 0]^\top\)</span></p>
+<p><span class="arithmatex">\(\bar{h} = \bar{z}_2 \cdot w_2 = 1.0 \cdot [0.5, 0.5]^\top = [0.5, 0.5]^\top\)</span></p>
+<p>ReLU backward: mask where <span class="arithmatex">\(z_1 &gt; 0\)</span> is <span class="arithmatex">\([1, 0]\)</span>, so:
+<span class="arithmatex">\(\bar{z}_1 = \bar{h} \odot \mathbb{1}[z_1 &gt; 0] = [0.5, 0.5]^\top \odot [1, 0]^\top = [0.5, 0]^\top\)</span></p>
+<p><span class="arithmatex">\(\bar{W}_1 = \bar{z}_1 x^\top = [0.5, 0]^\top [1, 0] = \begin{bmatrix}0.5 &amp; 0\\ 0 &amp; 0\end{bmatrix}\)</span></p>
+<p><span class="arithmatex">\(\bar{x} = W_1^\top \bar{z}_1 = \begin{bmatrix}2 &amp; -1\\ 1 &amp; 3\end{bmatrix} \begin{bmatrix}0.5\\ 0\end{bmatrix} = \begin{bmatrix}1\\ 0.5\end{bmatrix}\)</span></p>
+<p>Let us verify with PyTorch:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="n">x</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="mf">1.0</span><span class="p">],</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">]])</span>               <span class="c1"># (2,1)</span>
+<span class="n">W1</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="mf">2.</span><span class="p">,</span> <span class="mf">1.</span><span class="p">],</span> <span class="p">[</span><span class="o">-</span><span class="mf">1.</span><span class="p">,</span> <span class="mf">3.</span><span class="p">]],</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">w2</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="mf">0.5</span><span class="p">],</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">]],</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">z1</span> <span class="o">=</span> <span class="n">W1</span> <span class="o">@</span> <span class="n">x</span>
+<span class="n">h</span>  <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">relu</span><span class="p">(</span><span class="n">z1</span><span class="p">)</span>
+<span class="n">z2</span> <span class="o">=</span> <span class="p">(</span><span class="n">w2</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">h</span><span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">()</span>
+<span class="n">L</span>  <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">z2</span> <span class="o">**</span> <span class="mi">2</span>
+
+<span class="n">L</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;W1.grad:</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">W1</span><span class="o">.</span><span class="n">grad</span><span class="p">)</span>
+<span class="c1"># [[0.5, 0.],</span>
+<span class="c1">#  [0. , 0.]]</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;w2.grad:</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">w2</span><span class="o">.</span><span class="n">grad</span><span class="p">)</span>
+<span class="c1"># [[2.],</span>
+<span class="c1">#  [0.]]</span>
+</code></pre></div>
+<p>The numbers match our hand trace exactly. The ReLU gate for the second neuron (<span class="arithmatex">\(z_1[1] = -1 &lt; 0\)</span>) is closed, so no gradient flows through it.</p>
+</div>
+<hr />
+<h2 id="the-pytorch-dispatcher-and-aten">The PyTorch Dispatcher and ATen<a class="headerlink" href="#the-pytorch-dispatcher-and-aten" title="Permanent link">¶</a></h2>
+<p>Understanding what happens <em>below</em> <code>autograd</code> helps when you need to write custom C++ extensions, debug shape mismatches, or understand <code>torch.compile</code>&rsquo;s transformations.</p>
+<h3 id="layers-of-the-pytorch-stack">Layers of the PyTorch Stack<a class="headerlink" href="#layers-of-the-pytorch-stack" title="Permanent link">¶</a></h3>
+<figure class="viz" id="fig-autodiff-pytorch-stack-layers">
+<svg viewBox="0 0 660 600" role="img" aria-label="PyTorch software stack cross-section: six horizontal layers from Python user code at top through the Python dispatch layer, Autograd layer, Dispatcher, ATen, and Actual computation at the bottom, with the Dispatcher highlighted as the routing hub.">
+<defs>
+  <marker id="psl-down" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M1 0 L9 0 L5 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+</defs>
+<style>
+  #fig-autodiff-pytorch-stack-layers text   { fill: currentColor; }
+  #fig-autodiff-pytorch-stack-layers .title { font: 700 13px var(--sans,sans-serif); }
+  #fig-autodiff-pytorch-stack-layers .sub   { font: 400 10px var(--mono,monospace); fill: var(--muted,#888); }
+  #fig-autodiff-pytorch-stack-layers .edge  { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#888); font-style: italic; }
+  #fig-autodiff-pytorch-stack-layers .bkt   { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#888); }
+</style>
+
+
+
+
+<rect x="100" y="28" width="470" height="60" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="335" y="53" text-anchor="middle" class="title">Python user code</text>
+<text x="335" y="72" text-anchor="middle" class="sub">e.g. torch.mm(a, b)</text>
+
+
+<line x1="335" y1="88" x2="335" y2="113" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#psl-down)"/>
+<text x="335" y="103" text-anchor="middle" class="edge">calls torch.mm(a, b)</text>
+
+
+<rect x="100" y="116" width="470" height="60" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="335" y="141" text-anchor="middle" class="title">Python dispatch layer</text>
+<text x="335" y="160" text-anchor="middle" class="sub">torch/_C/_VariableFunctions.pyi stubs</text>
+
+
+<line x1="335" y1="176" x2="335" y2="201" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#psl-down)"/>
+
+
+<rect x="100" y="204" width="470" height="60" rx="8" fill="var(--accent-2,#d9730d)" fill-opacity="0.10" stroke="var(--accent-2,#d9730d)" stroke-width="1.8"/>
+<text x="335" y="229" text-anchor="middle" class="title">Autograd layer</text>
+<text x="335" y="248" text-anchor="middle" class="sub">Variable / Tensor with grad_fn</text>
+
+
+<line x1="335" y1="264" x2="335" y2="289" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#psl-down)"/>
+<text x="335" y="279" text-anchor="middle" class="edge">records op for backward; strips Variable wrapper</text>
+
+
+<rect x="100" y="292" width="470" height="60" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.18" stroke="var(--accent,#6366f1)" stroke-width="2.5"/>
+<text x="335" y="317" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Dispatcher  (c10::Dispatcher)</text>
+<text x="335" y="336" text-anchor="middle" class="sub">routing table</text>
+
+
+<line x1="335" y1="352" x2="335" y2="377" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#psl-down)"/>
+<text x="335" y="367" text-anchor="middle" class="edge">selects backend by dispatch key (CPU, CUDA, XLA, …)</text>
+
+
+<rect x="100" y="380" width="470" height="60" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="335" y="405" text-anchor="middle" class="title">ATen  (A Tensor Library)</text>
+<text x="335" y="424" text-anchor="middle" class="sub">the "kernel" layer — e.g. at::mm_cpu / at::mm_cuda</text>
+
+
+<line x1="335" y1="440" x2="335" y2="465" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#psl-down)"/>
+
+
+<rect x="100" y="468" width="470" height="60" rx="8" fill="var(--surface-3,#eee)" fill-opacity="0.45" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="335" y="493" text-anchor="middle" class="title">Actual computation</text>
+<text x="335" y="512" text-anchor="middle" class="sub">Eigen, cuBLAS, cuDNN, custom kernels …</text>
+
+
+
+
+<line x1="86" y1="28"  x2="86" y2="264" stroke="var(--muted,#888)" stroke-width="1.2"/>
+<line x1="86" y1="28"  x2="94" y2="28"  stroke="var(--muted,#888)" stroke-width="1.2"/>
+<line x1="86" y1="264" x2="94" y2="264" stroke="var(--muted,#888)" stroke-width="1.2"/>
+<text x="82" y="146" text-anchor="middle" class="bkt" transform="rotate(-90 82 146)">Python-facing</text>
+
+
+<line x1="86" y1="292" x2="86" y2="528" stroke="var(--muted,#888)" stroke-width="1.2"/>
+<line x1="86" y1="292" x2="94" y2="292" stroke="var(--muted,#888)" stroke-width="1.2"/>
+<line x1="86" y1="528" x2="94" y2="528" stroke="var(--muted,#888)" stroke-width="1.2"/>
+<text x="82" y="410" text-anchor="middle" class="bkt" transform="rotate(-90 82 410)">C++ / native</text>
+
+</svg>
+<figcaption><b>The six-layer PyTorch software stack for a single operator call.</b> A Python call descends through the dispatch stub layer, the <b>Autograd layer</b> (orange tint, where grad_fn is attached), and the <b>Dispatcher</b> (blue, the routing hub) before reaching ATen and the hardware library. The clean Dispatcher boundary is what lets torch.compile, vmap, and custom hardware backends plug in without touching user code.</figcaption>
+</figure>
+
+<p>The <strong>dispatcher</strong> is a routing table. Every operation is registered under one or more &ldquo;dispatch keys&rdquo; (tags attached to tensors based on device/dtype/layout). When you call <code>torch.mm(a, b)</code>, the dispatcher inspects the keys of <code>a</code> and <code>b</code> and calls the appropriate backend implementation. This architecture enables:</p>
+<ul>
+<li><strong>Backend extensibility</strong>: XLA, MPS, custom hardware backends plug in without touching existing code.</li>
+<li><strong>Transforms</strong>: <code>torch.compile</code>, <code>vmap</code>, <code>grad</code> (functorch) all work by inserting themselves at a dispatch key layer, intercepting operations.</li>
+<li><strong>Operator overriding</strong>: You can register a custom kernel for a specific (op, backend) pair.</li>
+</ul>
+<h3 id="aten-and-the-operator-schema">ATen and the Operator Schema<a class="headerlink" href="#aten-and-the-operator-schema" title="Permanent link">¶</a></h3>
+<p>ATen is PyTorch&rsquo;s C++ tensor library. Every operation in PyTorch ultimately maps to an ATen operator, defined with a schema string like:</p>
+<div class="highlight"><pre><span></span><code>mm(Tensor self, Tensor mat2) -&gt; Tensor
+</code></pre></div>
+<p>The schema specifies input/output types and is used by the dispatcher, <code>torch.fx</code> tracing, ONNX export, and the JIT compiler. You can browse all ~2000 ATen operators at <code>torch/_C/_VariableFunctions.pyi</code> or via <code>torch._C._VariableFunctions.__dir__()</code>.</p>
+<hr />
+<h2 id="views-copies-contiguity-and-memory-layout">Views, Copies, Contiguity, and Memory Layout<a class="headerlink" href="#views-copies-contiguity-and-memory-layout" title="Permanent link">¶</a></h2>
+<h3 id="views-vs-copies">Views vs Copies<a class="headerlink" href="#views-vs-copies" title="Permanent link">¶</a></h3>
+<p>A <strong>view</strong> of a tensor shares the same underlying storage (memory buffer). Operations like <code>reshape</code>, <code>view</code>, <code>transpose</code>, <code>narrow</code>, <code>expand</code>, and indexing with slices typically return views:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">12</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">T</span>                  <span class="c1"># Transpose: a view, not a copy</span>
+<span class="n">z</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">:</span><span class="mi">2</span><span class="p">,</span> <span class="p">:]</span>            <span class="c1"># Slice: a view</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">data_ptr</span><span class="p">()</span> <span class="o">==</span> <span class="n">y</span><span class="o">.</span><span class="n">data_ptr</span><span class="p">())</span>   <span class="c1"># True -- same storage</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">data_ptr</span><span class="p">()</span> <span class="o">==</span> <span class="n">z</span><span class="o">.</span><span class="n">data_ptr</span><span class="p">())</span>   <span class="c1"># True -- same storage</span>
+
+<span class="c1"># Modifying y modifies x</span>
+<span class="n">y</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">999</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>  <span class="c1"># 999</span>
+</code></pre></div>
+<p>This is critical for autograd: gradients flow through views correctly because the autograd graph records view relationships. But it also means in-place operations on views can corrupt the computation graph — PyTorch will raise a <code>RuntimeError</code> if you do this during a backward pass.</p>
+<h3 id="memory-layout-and-contiguity">Memory Layout and Contiguity<a class="headerlink" href="#memory-layout-and-contiguity" title="Permanent link">¶</a></h3>
+<p>A tensor is <strong>contiguous</strong> if its elements are laid out in row-major (C-style) order: the last dimension varies fastest. Formally, for a tensor with shape <span class="arithmatex">\((d_0, d_1, \ldots, d_{n-1})\)</span> and strides <span class="arithmatex">\((s_0, s_1, \ldots, s_{n-1})\)</span>, contiguity means <span class="arithmatex">\(s_k = \prod_{j=k+1}^{n-1} d_j\)</span> for all <span class="arithmatex">\(k\)</span>.</p>
+<div class="highlight"><pre><span></span><code><span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">())</span>   <span class="c1"># True</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">stride</span><span class="p">())</span>          <span class="c1"># (3, 1)  -- step 3 elements between rows, 1 between cols</span>
+
+<span class="n">y</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">T</span>                    <span class="c1"># Transpose</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">())</span>   <span class="c1"># False</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">stride</span><span class="p">())</span>          <span class="c1"># (1, 3)  -- stride order reversed</span>
+
+<span class="c1"># Force contiguous copy (creates new storage)</span>
+<span class="n">z</span> <span class="o">=</span> <span class="n">y</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">z</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">())</span>   <span class="c1"># True</span>
+</code></pre></div>
+<p>Why does contiguity matter? Most GPU kernels (and ATen CPU kernels) assume contiguous layout. Operating on non-contiguous tensors either triggers an implicit <code>.contiguous()</code> copy (hurting performance) or requires a strided kernel path. In tight training loops, a silent <code>.contiguous()</code> can add meaningful overhead.</p>
+<div class="admonition warning">
+<p class="admonition-title">Silent contiguous copies</p>
+<p><code>torch.nn.functional.layer_norm</code>, <code>nn.Conv2d</code>, and many other ops call <code>.contiguous()</code> internally when their input isn&rsquo;t already contiguous. A common source of unexpected memory traffic is <code>tensor.permute(...)</code> followed by an op that forces contiguity. Check with <code>tensor.is_contiguous()</code> and either permute earlier or fuse permutations.</p>
+</div>
+<h3 id="strides-and-non-standard-layouts">Strides and Non-standard Layouts<a class="headerlink" href="#strides-and-non-standard-layouts" title="Permanent link">¶</a></h3>
+<p>Strides generalize contiguity. A stride-<span class="arithmatex">\(s\)</span> tensor accesses element <span class="arithmatex">\((i, j)\)</span> at memory offset <span class="arithmatex">\(i \cdot s_0 + j \cdot s_1\)</span>. This enables:</p>
+<ul>
+<li><strong>Transposition</strong>: swap strides without moving data.</li>
+<li><strong>Broadcasting</strong>: set a stride to 0 to repeat data logically without copying.</li>
+<li><strong>Slicing</strong>: adjust the base pointer and reduce the size along a dimension.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Broadcasting via zero stride</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">])</span>
+<span class="c1"># Expand to (4, 3) without copying:</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">stride</span><span class="p">())</span>        <span class="c1"># (0, 1) -- stride-0 in the batch dimension</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">())</span> <span class="c1"># False</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">storage</span><span class="p">()</span><span class="o">.</span><span class="n">size</span><span class="p">()</span> <span class="o">==</span> <span class="mi">3</span><span class="p">)</span>  <span class="c1"># True -- only 3 elements in storage</span>
+</code></pre></div>
+<h3 id="broadcasting-semantics">Broadcasting Semantics<a class="headerlink" href="#broadcasting-semantics" title="Permanent link">¶</a></h3>
+<p>NumPy-style broadcasting aligns shapes from the right and stretches size-1 dimensions:</p>
+<div class="arithmatex">\[
+(B, 1, H, W) + (C, H, W) \to (B, C, H, W)
+\]</div>
+<p>PyTorch implements this via the stride-0 trick above: a size-1 dimension that gets broadcast is assigned stride 0. No data is copied. However, when autograd differentiates through a broadcast, the backward must <strong>sum</strong> the gradient over the broadcast dimensions to match the original tensor&rsquo;s shape. This is done automatically by <code>torch.Tensor.expand</code>&rsquo;s backward and by <code>SumBackward</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="n">a</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># shape (3, 1)</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>                       <span class="c1"># shape (3, 4), no grad</span>
+
+<span class="n">c</span> <span class="o">=</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>   <span class="c1"># broadcasts a to (3, 4)</span>
+<span class="n">c</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+<span class="c1"># grad of &#39;a&#39; sums over the broadcast dim:</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">a</span><span class="o">.</span><span class="n">grad</span><span class="p">)</span>   <span class="c1"># tensor([[4.], [4.], [4.]])  -- sum over 4 columns</span>
+</code></pre></div>
+<hr />
+<h2 id="interview-corner-and-practical-patterns">Interview Corner and Practical Patterns<a class="headerlink" href="#interview-corner-and-practical-patterns" title="Permanent link">¶</a></h2>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> Walk me through what happens when you call <code>loss.backward()</code> in PyTorch. What data structures are involved, and what does the engine actually execute?</p>
+<p><strong>A:</strong> When you called forward operations on tensors with <code>requires_grad=True</code>, PyTorch built a DAG of <code>Function</code> nodes connected via <code>next_functions</code> pointers, with each node holding a <code>forward</code> closure and a <code>backward</code> implementation. <code>loss.backward()</code> seeds the process by setting the gradient of <code>loss</code> to 1.0, then it calls <code>torch.autograd.Engine</code>, which runs a topological sort of the DAG and processes nodes in reverse order using a thread pool. At each node it calls the node&rsquo;s <code>backward()</code> method, passing in the accumulated upstream gradient, and receives gradients for the node&rsquo;s inputs, which it accumulates into those tensors&rsquo; <code>.grad</code> fields (for leaves) or pushes onto the work queue (for non-leaves). The key implementation detail is that gradients are <em>accumulated</em> (added), not assigned, which is what allows gradient accumulation across micro-batches. After the traversal completes, leaf tensors with <code>requires_grad=True</code> hold the full gradient in <code>.grad</code>. Non-leaf gradients are discarded unless you called <code>retain_grad()</code> on them. The graph itself is freed after <code>backward()</code> by default (<code>retain_graph=False</code>), releasing the stored intermediate activations.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: retain_graph for multi-task losses</p>
+<p>If you need to call <code>backward()</code> multiple times on the same graph (e.g., computing separate gradients for a shared encoder with two losses applied sequentially), use <code>loss1.backward(retain_graph=True)</code> for all but the last call. Without <code>retain_graph=True</code>, the graph is freed after the first <code>backward()</code> and subsequent calls raise <code>RuntimeError: Trying to backward through the graph a second time</code>.</p>
+</div>
+<h3 id="gradient-checkpointing-activation-recomputation">Gradient Checkpointing (Activation Recomputation)<a class="headerlink" href="#gradient-checkpointing-activation-recomputation" title="Permanent link">¶</a></h3>
+<p>For very deep networks or long transformer sequences, storing all activations for the backward pass dominates memory. <code>torch.utils.checkpoint.checkpoint</code> trades compute for memory by recomputing activations during the backward pass instead of storing them:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.checkpoint</span><span class="w"> </span><span class="kn">import</span> <span class="n">checkpoint</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">block_forward</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">layer</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">layer</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+<span class="c1"># During backward, the forward of this segment will be re-run</span>
+<span class="n">x_out</span> <span class="o">=</span> <span class="n">checkpoint</span><span class="p">(</span><span class="n">block_forward</span><span class="p">,</span> <span class="n">x_in</span><span class="p">,</span> <span class="n">layer</span><span class="p">,</span> <span class="n">use_reentrant</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</code></pre></div>
+<p>This roughly halves activation memory (at the cost of one extra forward pass worth of compute per checkpointed segment), and is nearly universally used in LLM pretraining. See <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a> for a full analysis.</p>
+<h3 id="second-order-gradients-and-create_graph">Second-Order Gradients and <code>create_graph</code><a class="headerlink" href="#second-order-gradients-and-create_graph" title="Permanent link">¶</a></h3>
+<p>PyTorch can differentiate through the backward pass itself by passing <code>create_graph=True</code> to <code>backward()</code> or using <code>torch.autograd.grad</code>. This is used for MAML (model-agnostic meta-learning), Hessian-vector products, and implicit differentiation:</p>
+<div class="highlight"><pre><span></span><code><span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">3.0</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">x</span> <span class="o">**</span> <span class="mi">3</span>         <span class="c1"># y = x^3, dy/dx = 3x^2</span>
+
+<span class="c1"># First-order gradient</span>
+<span class="p">(</span><span class="n">grad_x</span><span class="p">,)</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">grad</span><span class="p">(</span><span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">create_graph</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">grad_x</span><span class="p">)</span>   <span class="c1"># tensor(27.)  -- 3 * 3^2</span>
+
+<span class="c1"># Second-order gradient (differentiates grad_x w.r.t. x)</span>
+<span class="p">(</span><span class="n">grad2_x</span><span class="p">,)</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">grad</span><span class="p">(</span><span class="n">grad_x</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">grad2_x</span><span class="p">)</span>  <span class="c1"># tensor(18.)  -- 6x = 6*3</span>
+</code></pre></div>
+<p>When <code>create_graph=True</code>, the autograd graph for the backward computation is itself tracked, enabling higher-order differentiation. This doubles (or more) the memory cost.</p>
+<h3 id="torchfunc-functorch-functional-transforms"><code>torch.func</code> (functorch): Functional Transforms<a class="headerlink" href="#torchfunc-functorch-functional-transforms" title="Permanent link">¶</a></h3>
+<p>PyTorch&rsquo;s <code>torch.func</code> module (formerly <code>functorch</code>) exposes composable functional transforms over arbitrary PyTorch functions:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">torch.func</span><span class="w"> </span><span class="kn">import</span> <span class="n">grad</span><span class="p">,</span> <span class="n">vmap</span><span class="p">,</span> <span class="n">jacrev</span>
+
+<span class="c1"># Compute gradient of a scalar function</span>
+<span class="n">f</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="p">(</span><span class="n">x</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+<span class="n">grad_f</span> <span class="o">=</span> <span class="n">grad</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">grad_f</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">])))</span>  <span class="c1"># tensor([2., 4., 6.])</span>
+
+<span class="c1"># Batched Jacobian via vmap + jacrev</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">model</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">params</span> <span class="o">@</span> <span class="n">x</span>
+
+<span class="n">J</span> <span class="o">=</span> <span class="n">vmap</span><span class="p">(</span><span class="n">jacrev</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">argnums</span><span class="o">=</span><span class="mi">1</span><span class="p">))(</span><span class="n">params_batch</span><span class="p">,</span> <span class="n">x_batch</span><span class="p">)</span>
+</code></pre></div>
+<p>These transforms work at the dispatcher level, inserting themselves as dispatch keys. They compose: <code>vmap(grad(f))</code> gives a batched gradient function. This is the correct modern approach to Hessian-vector products and per-sample gradients (rather than looping or using <code>create_graph</code>).</p>
+<hr />
+<h2 id="the-full-stack-from-python-op-to-gpu-kernel">The Full Stack: From Python Op to GPU Kernel<a class="headerlink" href="#the-full-stack-from-python-op-to-gpu-kernel" title="Permanent link">¶</a></h2>
+<p>Let us trace <code>torch.mm(a, b)</code> for two CUDA tensors end to end:</p>
+<figure class="viz" id="fig-autodiff-mm-fullstack-trace">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 740 600" role="img" aria-label="End-to-end trace of torch.mm(a,b) descending through 7 stages: Python call, Python binding, Autograd layer (creates MmBackward), Dispatcher (routes to CUDA backend), ATen CUDA kernel, cuBLAS GEMM, and result tensor with grad_fn=MmBackward. A side panel shows the MmBackward derivative formulas.">
+<defs>
+  <marker id="mmft-down" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M1 0 L9 0 L5 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="mmft-dash" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#d9730d)"/>
+  </marker>
+</defs>
+<style>
+  #fig-autodiff-mm-fullstack-trace text    { fill: currentColor; }
+  #fig-autodiff-mm-fullstack-trace .badge  { font: 700 12px var(--sans,sans-serif); }
+  #fig-autodiff-mm-fullstack-trace .title  { font: 600 12.5px var(--sans,sans-serif); }
+  #fig-autodiff-mm-fullstack-trace .detail { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-autodiff-mm-fullstack-trace .pnl    { font: 600 10px var(--sans,sans-serif); fill: var(--accent-2,#d9730d); }
+  #fig-autodiff-mm-fullstack-trace .pnl-f  { font: 500 11px var(--mono,monospace); fill: var(--accent-2,#d9730d); }
+  #fig-autodiff-mm-fullstack-trace .pnl-n  { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-autodiff-mm-fullstack-trace .ovl    { text-decoration: overline; }
+</style>
+
+
+
+
+<g data-anim="1">
+  <rect x="14" y="20" width="372" height="56" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+  <rect x="20" y="30" width="22" height="22" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="31" y="46" text-anchor="middle" class="badge" fill="white" fill-opacity="0.95">1</text>
+  <text x="54" y="45" class="title">Python call</text>
+  <text x="54" y="62" class="detail">torch.mm(a, b)</text>
+</g>
+
+
+<line x1="200" y1="76" x2="200" y2="95" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#mmft-down)"/>
+
+
+<g data-anim="2">
+  <rect x="14" y="98" width="372" height="56" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+  <rect x="20" y="108" width="22" height="22" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="31" y="124" text-anchor="middle" class="badge" fill="white" fill-opacity="0.95">2</text>
+  <text x="54" y="123" class="title">Python binding</text>
+  <text x="54" y="140" class="detail">torch._C._VariableFunctions.mm</text>
+</g>
+
+
+<line x1="200" y1="154" x2="200" y2="173" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#mmft-down)"/>
+
+
+<g data-anim="3">
+  <rect x="14" y="176" width="372" height="56" rx="8" fill="var(--accent-2,#d9730d)" fill-opacity="0.10" stroke="var(--accent-2,#d9730d)" stroke-width="1.8"/>
+  <rect x="20" y="186" width="22" height="22" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="31" y="202" text-anchor="middle" class="badge" fill="white" fill-opacity="0.95">3</text>
+  <text x="54" y="200" class="title">Autograd layer</text>
+  <text x="54" y="216" class="detail">checks requires_grad; if set, creates MmBackward</text>
+</g>
+
+
+<line x1="200" y1="232" x2="200" y2="251" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#mmft-down)"/>
+
+
+<g data-anim="4">
+  <rect x="14" y="254" width="372" height="56" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.16" stroke="var(--accent,#6366f1)" stroke-width="2.5"/>
+  <rect x="20" y="264" width="22" height="22" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="31" y="280" text-anchor="middle" class="badge" fill="white" fill-opacity="0.95">4</text>
+  <text x="54" y="278" class="title" fill="var(--accent,#6366f1)">Dispatcher</text>
+  <text x="54" y="295" class="detail">keys {CUDA, AutogradCUDA}; picks at::mm CUDA</text>
+</g>
+
+
+<line x1="200" y1="310" x2="200" y2="329" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#mmft-down)"/>
+
+
+<g data-anim="5">
+  <rect x="14" y="332" width="372" height="56" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+  <rect x="20" y="342" width="22" height="22" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="31" y="358" text-anchor="middle" class="badge" fill="white" fill-opacity="0.95">5</text>
+  <text x="54" y="356" class="title">ATen CUDA kernel</text>
+  <text x="54" y="373" class="detail">at::mm (CUDA) delegates to cuBLAS gemm</text>
+</g>
+
+
+<line x1="200" y1="388" x2="200" y2="407" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#mmft-down)"/>
+
+
+<g data-anim="6">
+  <rect x="14" y="410" width="372" height="56" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.12" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+  <rect x="20" y="420" width="22" height="22" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="31" y="436" text-anchor="middle" class="badge" fill="white" fill-opacity="0.95">6</text>
+  <text x="54" y="433" class="title" fill="var(--good,#2f9e6e)">cuBLAS</text>
+  <text x="54" y="450" class="detail">optimal tiled GEMM on the GPU (hardware library)</text>
+</g>
+
+
+<line x1="200" y1="466" x2="200" y2="485" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#mmft-down)"/>
+
+
+<g data-anim="7">
+  <rect x="14" y="488" width="372" height="56" rx="8" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <rect x="20" y="498" width="22" height="22" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="31" y="514" text-anchor="middle" class="badge" fill="white" fill-opacity="0.95">7</text>
+  <text x="54" y="512" class="title">Result returned</text>
+  <text x="54" y="529" class="detail">output tensor; grad_fn = MmBackward (if grad needed)</text>
+</g>
+
+
+<g data-anim="3">
+
+  <line x1="386" y1="204" x2="452" y2="204" stroke="var(--accent-2,#d9730d)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#mmft-dash)"/>
+  <line x1="452" y1="204" x2="452" y2="516" stroke="var(--accent-2,#d9730d)" stroke-width="1" stroke-dasharray="4 3"/>
+  <line x1="452" y1="516" x2="386" y2="516" stroke="var(--accent-2,#d9730d)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#mmft-dash)"/>
+
+
+  <rect x="456" y="284" width="270" height="172" rx="8" fill="var(--accent-2,#d9730d)" fill-opacity="0.08" stroke="var(--accent-2,#d9730d)" stroke-width="1.5"/>
+
+
+  <text x="591" y="306" text-anchor="middle" class="pnl">MmBackward</text>
+  <text x="591" y="321" text-anchor="middle" class="pnl">(registered in ATen)</text>
+
+  <text x="470" y="348" class="pnl-f">C = A · B</text>
+
+  <text x="470" y="376" class="pnl-f"><tspan class="ovl">A</tspan> = <tspan class="ovl">C</tspan> B&#x1D40;</text>
+  <text x="470" y="398" class="pnl-f"><tspan class="ovl">B</tspan> = A&#x1D40; <tspan class="ovl">C</tspan></text>
+
+  <text x="470" y="424" class="pnl-n">each is itself an mm call, so it</text>
+  <text x="470" y="438" class="pnl-n">re-enters the Dispatcher</text>
+  <text x="470" y="452" class="pnl-n">(another cuBLAS GEMM).</text>
+</g>
+
+</svg>
+<figcaption><b>torch.mm(a, b) traced end-to-end through the PyTorch stack.</b> The call descends through seven stages — Python call, C++ binding stub, Autograd (where MmBackward is created and a, b are recorded), the <b>Dispatcher</b> (which routes to the CUDA backend), ATen, and finally cuBLAS. On the return path the output tensor carries grad_fn = MmBackward; when backward is later called, that node computes the gradients of A and B — themselves mm calls that re-enter the same Dispatcher path.</figcaption>
+</figure>
+
+<p>The backward <code>MmBackward</code> is registered in ATen&rsquo;s derivative formulas. For <span class="arithmatex">\(C = AB\)</span>:</p>
+<div class="arithmatex">\[
+\bar{A} = \bar{C} B^\top, \qquad \bar{B} = A^\top \bar{C}
+\]</div>
+<p>These are themselves <code>mm</code> calls, so they go through the same dispatcher path and are executed as cuBLAS GEMMs.</p>
+<h3 id="torchcompile-and-the-dispatcher"><code>torch.compile</code> and the Dispatcher<a class="headerlink" href="#torchcompile-and-the-dispatcher" title="Permanent link">¶</a></h3>
+<p><code>torch.compile</code> (based on TorchDynamo + TorchInductor) traces the Python bytecode, extracts a subgraph as a <code>torch.fx.Graph</code>, applies fusion passes, and emits an optimized kernel. It interacts with the dispatcher by inserting a <code>CompiledFunctionBackend</code> dispatch key. Because the dispatcher is a clean abstraction boundary, <code>torch.compile</code> can replace and fuse sequences of ATen ops without touching user code. See <a href="../04-kernels-efficiency/09-compilers-fusion.html">Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a> for details.</p>
+<hr />
+<h2 id="numerical-precision-considerations-in-autograd">Numerical Precision Considerations in Autograd<a class="headerlink" href="#numerical-precision-considerations-in-autograd" title="Permanent link">¶</a></h2>
+<p>Autograd inherits the numerical properties of the operations it differentiates. Two important failure modes:</p>
+<p><strong>Vanishing/exploding gradients</strong> occur when VJPs amplify or attenuate the gradient signal across many layers. ReLU gates reduce flow (any negative pre-activation kills the gradient path), while sigmoid and tanh saturate (their derivatives approach zero). Residual connections, layer norm, and careful initialization (Kaiming, Xavier) combat this. See <a href="../01-foundations/06-neural-nets-from-scratch.html">Neural Networks From Scratch: MLPs &amp; Backprop</a> and <a href="../01-foundations/04-numerics-precision.html">Numerical Computing, Floating Point &amp; Precision</a>.</p>
+<p><strong>Catastrophic cancellation in backward</strong> can occur when forward activations are large and the gradient requires subtracting nearly equal numbers. Log-softmax with cross-entropy is a canonical example: naive implementation computes <span class="arithmatex">\(\log(\sum \exp)\)</span> and then subtracts, losing precision. PyTorch&rsquo;s <code>F.cross_entropy</code> uses the log-sum-exp trick to sidestep this, and the autograd graph for the fused version is more numerically stable than separately differentiating <code>log</code> and <code>softmax</code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">In-place operations and autograd</p>
+<p>In-place ops (those ending in <code>_</code>, like <code>relu_</code>, <code>add_</code>) can corrupt the computation graph because they overwrite a tensor that a backward function holds a reference to. PyTorch tracks version counters and raises a <code>RuntimeError: one of the variables needed for gradient computation has been modified by an inplace operation</code> if you trigger this. The rule of thumb: avoid in-place ops on tensors that <code>requires_grad=True</code>. If you need them for memory reasons, ensure they happen outside the part of the graph that needs to be differentiated.</p>
+</div>
+<hr />
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>Reverse-mode autodiff computes exact gradients in <span class="arithmatex">\(O(1)\)</span> forward passes by recording a tape of operations and traversing it in reverse, computing vector-Jacobian products (VJPs) at each node.</li>
+<li>PyTorch builds the computation graph dynamically (define-by-run) during the forward pass; each output tensor has a <code>grad_fn</code> pointing to the <code>Function</code> node that created it, and <code>next_functions</code> edges point toward the leaves.</li>
+<li>After <code>loss.backward()</code>, only <strong>leaf</strong> tensors (those created directly with <code>requires_grad=True</code>, typically <code>nn.Parameter</code>) accumulate gradients in <code>.grad</code>; intermediate tensors&rsquo; gradients are discarded unless <code>retain_grad()</code> is called.</li>
+<li><code>torch.no_grad()</code> and <code>torch.inference_mode()</code> suppress graph construction for inference; <code>inference_mode</code> is stricter and slightly faster. Always use one or the other during eval.</li>
+<li>Custom <code>autograd.Function</code> subclasses let you inject arbitrary forward/backward logic into the autograd graph; use <code>ctx.save_for_backward</code> for tensors, <code>gradcheck</code> to verify correctness.</li>
+<li>PyTorch&rsquo;s <strong>dispatcher</strong> routes each operation to the correct backend (CPU, CUDA, XLA) based on dispatch keys; <code>torch.compile</code>, <code>vmap</code>, and <code>grad</code> (torch.func) are all dispatcher-level transforms that compose cleanly.</li>
+<li><strong>Views</strong> share storage with the original tensor (zero copy); <strong>contiguity</strong> determines whether kernels can operate without an implicit copy. Non-contiguous tensors frequently cause silent performance regressions.</li>
+<li>Broadcasting is implemented via stride-0 dimensions; the backward pass of a broadcast automatically sums gradients over the expanded dimensions.</li>
+<li>Gradient checkpointing (activation recomputation) trades one extra forward pass for roughly halved activation memory, and is standard practice in LLM pretraining.</li>
+</ul>
+</div>
+<hr />
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Reverse-mode autodiff is a mature and stable discipline; the frontier today lies in composable functional transforms (vmap, jvp, vjp), ahead-of-time graph capture via <code>torch.compile</code>, and second-order methods for meta-learning and physics-based optimization. PyTorch&rsquo;s dispatcher abstraction continues to absorb new hardware backends and compiler passes without breaking user-facing APIs.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1502.05767">Baydin et al., <em>Automatic Differentiation in Machine Learning: a Survey</em> (2018)</a> — the definitive academic survey covering forward-mode, reverse-mode, and their relationships to symbolic and numerical differentiation.</li>
+<li><a href="https://arxiv.org/abs/2105.09469">Frostig et al., <em>Decomposing Reverse-Mode Automatic Differentiation</em> (2021)</a> — the JAX/functorch perspective showing that reverse-mode AD decomposes into forward-mode linearization followed by transposition, simplifying composable implementations.</li>
+<li><a href="https://arxiv.org/abs/1604.06174">Chen et al., <em>Training Deep Nets with Sublinear Memory Cost</em> (2016)</a> — the foundational gradient checkpointing paper; the O(√n) activation-memory algorithm standard in all LLM pretraining stacks.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://openreview.net/forum?id=jEWgxZ1XCe">Ansel, Yang et al., <em>PyTorch 2: Faster Machine Learning Through Dynamic Python Bytecode Transformation and Graph Compilation</em> (ASPLOS 2024)</a> — the paper behind <code>torch.compile</code> / TorchDynamo + TorchInductor; explains how autograd and compilation interact at the dispatcher level.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/pytorch/functorch">pytorch/functorch</a> — the original JAX-like composable transform library (vmap, grad, jacrev) for PyTorch, now merged into <code>torch.func</code>.</li>
+<li><a href="https://github.com/pytorch/pytorch">pytorch/pytorch <code>torch/csrc/autograd/</code></a> — the canonical C++ autograd engine source; <code>engine.cpp</code> and <code>function.h</code> are the fastest path to understanding execution ordering and thread pools.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://docs.pytorch.org/tutorials/beginner/blitz/autograd_tutorial.html">PyTorch official tutorial: <em>A Gentle Introduction to torch.autograd</em></a> — the recommended starting point for understanding the autograd API and DAG mechanics.</li>
+<li><a href="https://docs.pytorch.org/docs/2.12/notes/autograd.html">PyTorch docs: <em>Autograd mechanics</em></a> — deep-dive reference covering saved tensors, in-place ops, multithreaded backward, and Wirtinger calculus for complex numbers.</li>
+<li><a href="https://docs.pytorch.org/docs/stable/notes/extending.html">PyTorch docs: <em>Extending PyTorch</em> (custom autograd.Function)</a> — official reference for writing custom <code>Function</code> subclasses and registering new operators.</li>
+<li><a href="https://blog.ezyang.com/2020/09/lets-talk-about-the-pytorch-dispatcher/">E. Yang, <em>Let&rsquo;s Talk About the PyTorch Dispatcher</em> (2020)</a> — the canonical deep-dive into the dispatch key table, operator registration, and boxing/unboxing.</li>
+<li><a href="https://docs.pytorch.org/tutorials/intermediate/jacobians_hessians.html">PyTorch tutorial: <em>Jacobians, Hessians, hvp, vhp, and more</em> (torch.func)</a> — practical guide to composing vmap, vjp, and jvp for per-sample gradients and higher-order derivatives.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Baydin et al., <strong>&ldquo;Automatic Differentiation in Machine Learning: a Survey&rdquo;</strong> (2018) — the definitive academic survey of all autodiff modes.</li>
+<li>Paszke et al., <strong>&ldquo;Automatic differentiation in PyTorch&rdquo;</strong> (NIPS 2017 Autodiff Workshop) — the original PyTorch autograd paper.</li>
+<li>Wengert, <strong>&ldquo;A simple automatic derivative evaluation program&rdquo;</strong> (1964) — the original Wengert list / tape paper.</li>
+<li>PyTorch documentation, <strong>&ldquo;Extending PyTorch&rdquo;</strong> — official reference for <code>torch.autograd.Function</code> and the dispatcher.</li>
+<li>Pytorch contributor docs, <strong>&ldquo;PyTorch Dispatcher internals&rdquo;</strong> (E. Yang, PyTorch blog, 2021) — deep dive into the dispatcher architecture.</li>
+<li>Frostig et al., <strong>&ldquo;Decomposing reverse-mode automatic differentiation&rdquo;</strong> (2021) — the JAX / functorch perspective on composable transforms.</li>
+<li>PyTorch GitHub, <code>torch/csrc/autograd/</code> — the C++ engine source; reading <code>engine.cpp</code> and <code>function.h</code> is the fastest way to understand execution ordering and thread pools.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="06-neural-nets-from-scratch.html"><span class="pn-label">← Previous</span><span class="pn-title">Neural Networks From Scratch: MLPs &amp; Backprop</span></a>
+<a class="next" href="08-gpu-architecture.html"><span class="pn-label">Next →</span><span class="pn-title">GPU Architecture &amp; The Memory Hierarchy</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-autodiff-exists-the-three-alternatives-and-their-failures">Why Autodiff Exists: The Three Alternatives and Their Failures</a></li>
+<li class="toc-l2"><a href="#reverse-mode-autodiff-the-tape">Reverse-Mode Autodiff: The Tape</a></li>
+<li class="toc-l3"><a href="#the-jacobian-vector-product-view">The Jacobian-Vector Product View</a></li>
+<li class="toc-l3"><a href="#the-tape-metaphor">The Tape Metaphor</a></li>
+<li class="toc-l2"><a href="#pytorch-autograd-the-computation-graph">PyTorch Autograd: The Computation Graph</a></li>
+<li class="toc-l3"><a href="#tensors-requires_grad-and-leaf-nodes">Tensors, requires_grad, and Leaf Nodes</a></li>
+<li class="toc-l3"><a href="#the-grad_fn-graph">The grad_fn Graph</a></li>
+<li class="toc-l3"><a href="#gradient-accumulation-and-grad_fn-ownership">Gradient Accumulation and .grad_fn Ownership</a></li>
+<li class="toc-l2"><a href="#torchno_grad-inference_mode-and-detach">torch.no_grad, inference_mode, and Detach</a></li>
+<li class="toc-l3"><a href="#torchno_grad">torch.no_grad()</a></li>
+<li class="toc-l3"><a href="#torchinference_mode">torch.inference_mode()</a></li>
+<li class="toc-l3"><a href="#detach">.detach()</a></li>
+<li class="toc-l2"><a href="#custom-autogradfunction">Custom autograd.Function</a></li>
+<li class="toc-l3"><a href="#the-function-interface">The Function Interface</a></li>
+<li class="toc-l3"><a href="#example-numerically-stable-sigmoid-with-custom-backward">Example: Numerically Stable Sigmoid with Custom Backward</a></li>
+<li class="toc-l3"><a href="#example-straight-through-estimator-ste">Example: Straight-Through Estimator (STE)</a></li>
+<li class="toc-l3"><a href="#gradcheck-numerically-verifying-custom-backwards">gradcheck: Numerically Verifying Custom Backwards</a></li>
+<li class="toc-l2"><a href="#worked-numerical-example-forward-backward-trace">Worked Numerical Example: Forward + Backward Trace</a></li>
+<li class="toc-l2"><a href="#the-pytorch-dispatcher-and-aten">The PyTorch Dispatcher and ATen</a></li>
+<li class="toc-l3"><a href="#layers-of-the-pytorch-stack">Layers of the PyTorch Stack</a></li>
+<li class="toc-l3"><a href="#aten-and-the-operator-schema">ATen and the Operator Schema</a></li>
+<li class="toc-l2"><a href="#views-copies-contiguity-and-memory-layout">Views, Copies, Contiguity, and Memory Layout</a></li>
+<li class="toc-l3"><a href="#views-vs-copies">Views vs Copies</a></li>
+<li class="toc-l3"><a href="#memory-layout-and-contiguity">Memory Layout and Contiguity</a></li>
+<li class="toc-l3"><a href="#strides-and-non-standard-layouts">Strides and Non-standard Layouts</a></li>
+<li class="toc-l3"><a href="#broadcasting-semantics">Broadcasting Semantics</a></li>
+<li class="toc-l2"><a href="#interview-corner-and-practical-patterns">Interview Corner and Practical Patterns</a></li>
+<li class="toc-l3"><a href="#gradient-checkpointing-activation-recomputation">Gradient Checkpointing (Activation Recomputation)</a></li>
+<li class="toc-l3"><a href="#second-order-gradients-and-create_graph">Second-Order Gradients and create_graph</a></li>
+<li class="toc-l3"><a href="#torchfunc-functorch-functional-transforms">torch.func (functorch): Functional Transforms</a></li>
+<li class="toc-l2"><a href="#the-full-stack-from-python-op-to-gpu-kernel">The Full Stack: From Python Op to GPU Kernel</a></li>
+<li class="toc-l3"><a href="#torchcompile-and-the-dispatcher">torch.compile and the Dispatcher</a></li>
+<li class="toc-l2"><a href="#numerical-precision-considerations-in-autograd">Numerical Precision Considerations in Autograd</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RL Data, Curriculum &amp; Replay Management — The LLM Stack</title>
+<meta name="description" content="How prompts/tasks flow into an RL run: dataset construction and quality control for RLVR/agentic tasks, difficulty estimation and difficulty-targeted online sel">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="active" href="12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part VI — RL Infrastructure (Deep Dive)</div>
+<h1 id="612-rl-data-curriculum-replay-management">6.12 RL Data, Curriculum &amp; Replay Management<a class="headerlink" href="#612-rl-data-curriculum-replay-management" title="Permanent link">¶</a></h1>
+<p>Every chapter in this part so far has treated the <em>prompts</em> as a given — a static <code>.jsonl</code> of math problems or coding tasks that flows into the rollout engine. That is a convenient fiction, and it is the single most expensive fiction in RL-for-LLMs. The dirty secret of reinforcement learning with verifiable rewards (RLVR) is that <strong>most of your rollout budget is wasted on prompts that teach the policy nothing.</strong> A prompt the model already solves 8/8 times produces a group with zero reward variance and therefore zero gradient under GRPO. A prompt the model solves 0/8 times produces the same zero-variance, zero-gradient group from the other end. You paid for <span class="arithmatex">\(G\)</span> full autoregressive rollouts — the most expensive operation in the entire stack (<a href="../06-rl-infra/01-anatomy-rl-system.html">The Anatomy of an RL-for-LLM System</a>) — and got an all-zeros advantage vector for your trouble.</p>
+<p>This chapter is about the <strong>data side</strong> of RL: the levers that determine <em>which</em> prompts the policy sees, <em>when</em> it sees them, and <em>whether a rollout you already paid for gets reused.</em> These levers — dataset construction and quality control, difficulty estimation, difficulty-targeted online selection, prompt curriculum, dynamic sampling, and rollout replay buffers — are collectively the largest free lunch in RL sample efficiency. They are also where theory (the variance of the policy-gradient estimator) and systems (keeping a heavy-tailed generation fleet saturated) collide most violently.</p>
+<p>We assume you know GRPO and the RLVR recipe (<a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a>; <a href="../05-posttraining-alignment/09-rlvr-reasoning.html">RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a>), the throughput model from the previous chapter (<a href="../06-rl-infra/11-scaling-rl-tricks.html">Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a>), and the reward/verifier machinery that turns a completion into a scalar (<a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a>). This is the curriculum-and-data complement to those chapters.</p>
+<h2 id="why-difficulty-is-the-master-variable">Why difficulty is the master variable<a class="headerlink" href="#why-difficulty-is-the-master-variable" title="Permanent link">¶</a></h2>
+<p>Start from the gradient. For a prompt <span class="arithmatex">\(x\)</span> with a binary verifiable reward <span class="arithmatex">\(r\in\{0,1\}\)</span>, sampled <span class="arithmatex">\(G\)</span> times under the current policy, the empirical pass rate is <span class="arithmatex">\(\hat p = \frac{1}{G}\sum_{i} r_i\)</span>. GRPO centers each completion&rsquo;s reward by the group mean and (in vanilla form) divides by the group standard deviation:</p>
+<div class="arithmatex">\[
+A_i \;=\; \frac{r_i - \bar r}{\operatorname{std}(r) + \varepsilon}, \qquad \bar r = \hat p, \qquad \operatorname{std}(r) = \sqrt{\hat p (1-\hat p)}.
+\]</div>
+<p>Two facts fall out immediately. First, if every <span class="arithmatex">\(r_i\)</span> is identical (all <span class="arithmatex">\(0\)</span> or all <span class="arithmatex">\(1\)</span>), then <span class="arithmatex">\(\bar r = r_i\)</span> for all <span class="arithmatex">\(i\)</span>, every <span class="arithmatex">\(A_i = 0\)</span>, and the prompt contributes <strong>exactly zero</strong> to the policy gradient. The group is dead. Second, the amount of <em>usable signal</em> in a group is governed by the variance of the reward, which for a Bernoulli is</p>
+<div class="arithmatex">\[
+\operatorname{Var}(r) \;=\; p(1-p).
+\]</div>
+<p>This is a downward parabola, maximized at <span class="arithmatex">\(p = 0.5\)</span> where <span class="arithmatex">\(\operatorname{Var}(r) = 0.25\)</span>, and falling to zero at both ends. The expected number of <em>informative pairs</em> — completions with different rewards inside a group, which is what GRPO&rsquo;s centering actually exploits — is proportional to <span class="arithmatex">\(p(1-p)\)</span> as well. So the gradient signal-to-noise of a prompt is a single-peaked function of one scalar: <strong>its pass rate under the current policy.</strong></p>
+<figure class="viz" id="fig-rldata-signal-parabola">
+<svg viewBox="0 0 640 420" role="img" aria-label="Line chart showing gradient signal per prompt proportional to p times (1 minus p), a parabola peaking at 0.25 when pass rate is 0.5 and dropping to zero at both ends.">
+<style>
+  #fig-rldata-signal-parabola text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#1e293b); }
+  #fig-rldata-signal-parabola .axis-label { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#1e293b); }
+  #fig-rldata-signal-parabola .tick-label { font: 11px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-rldata-signal-parabola .annot { font: 600 11px var(--sans,sans-serif); }
+  #fig-rldata-signal-parabola .muted { font: 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-rldata-signal-parabola .dead { font: italic 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+</style>
+<defs>
+  <marker id="sp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+</defs>
+
+
+<line x1="90" y1="55" x2="90" y2="350" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+
+<line x1="90" y1="340" x2="610" y2="340" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+
+
+<text transform="rotate(-90,28,200)" x="28" y="200" text-anchor="middle" class="axis-label">signal per prompt ~ p(1-p)</text>
+
+
+<text x="82" y="74" text-anchor="end" class="tick-label">0.25</text>
+<line x1="86" y1="70" x2="90" y2="70" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+<text x="82" y="344" text-anchor="end" class="tick-label">0.00</text>
+
+
+<text x="350" y="400" text-anchor="middle" class="axis-label">pass rate p</text>
+
+
+
+<line x1="90" y1="340" x2="90" y2="347" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+<text x="90" y="362" text-anchor="middle" class="tick-label">0.0</text>
+
+
+<line x1="218" y1="340" x2="218" y2="347" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+<text x="218" y="362" text-anchor="middle" class="tick-label">0.25</text>
+
+
+<line x1="345" y1="340" x2="345" y2="347" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+<text x="345" y="362" text-anchor="middle" class="tick-label">0.5</text>
+
+
+<line x1="472" y1="340" x2="472" y2="347" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+<text x="472" y="362" text-anchor="middle" class="tick-label">0.75</text>
+
+
+<line x1="600" y1="340" x2="600" y2="347" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+<text x="600" y="362" text-anchor="middle" class="tick-label">1.0</text>
+
+
+<line x1="90" y1="70" x2="345" y2="70" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" opacity="0.5"/>
+
+
+<line x1="345" y1="70" x2="345" y2="340" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="4 3"/>
+
+
+<polygon points="
+  90,340
+  115.5,288.7
+  141,243
+  166.5,202.3
+  192,167
+  217.5,137.5
+  243,113
+  268.5,93.9
+  294,80.8
+  319.5,72.6
+  345,70
+  370.5,72.6
+  396,80.8
+  421.5,93.9
+  447,113
+  472.5,137.5
+  498,167
+  523.5,202.3
+  549,243
+  574.5,288.7
+  600,340"
+  fill="var(--accent,#4f7cff)" fill-opacity="0.12" stroke="none"/>
+
+
+
+
+<polyline points="
+  90,340
+  115.5,288.7
+  141,243
+  166.5,202.3
+  192,167
+  217.5,137.5
+  243,113
+  268.5,93.9
+  294,80.8
+  319.5,72.6
+  345,70
+  370.5,72.6
+  396,80.8
+  421.5,93.9
+  447,113
+  472.5,137.5
+  498,167
+  523.5,202.3
+  549,243
+  574.5,288.7
+  600,340"
+  fill="none" stroke="var(--accent,#4f7cff)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+
+<circle cx="345" cy="70" r="5" fill="var(--accent,#4f7cff)" stroke="var(--surface,#fff)" stroke-width="2"/>
+
+
+<text x="345" y="52" text-anchor="middle" class="annot" fill="var(--accent,#4f7cff)">p* = 0.5</text>
+
+
+<text x="354" y="96" text-anchor="start" class="annot" fill="var(--accent,#4f7cff)">Var = 0.25</text>
+
+
+<circle cx="549" cy="243" r="4" fill="none" stroke="var(--accent,#4f7cff)" stroke-width="2"/>
+<text x="556" y="240" text-anchor="start" class="annot" fill="var(--ink-soft,#1e293b)">Var = 0.09</text>
+
+<line x1="549" y1="247" x2="549" y2="340" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/>
+
+
+<circle cx="595" cy="329" r="3" fill="none" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="530" y="322" text-anchor="middle" class="dead">~0.01 (dead)</text>
+
+
+
+<text x="90" y="382" text-anchor="start" class="dead">all-wrong: A_i=0</text>
+
+<text x="600" y="382" text-anchor="end" class="dead">all-correct: A_i=0</text>
+
+
+<line x1="345" y1="115" x2="549" y2="243" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="2 3" opacity="0.5"/>
+<text x="450" y="170" text-anchor="middle" class="dead">2.8x signal</text>
+
+</svg>
+<figcaption><b>Gradient signal per prompt peaks at pass rate 0.5.</b> The Bernoulli variance Var(r) = p(1-p) — the per-prompt contribution to the policy-gradient estimator — is a downward parabola maximized at p=0.5 (Var=0.25) and zero at both ends. A prompt at p=0.9 yields only Var=0.09, roughly 2.8x less signal per rollout than one at p=0.5, making pass rate the master variable controlling sample efficiency.</figcaption>
+</figure>
+
+<p>The practical consequence: <strong>you want to spend rollout compute on prompts whose current pass rate is near 0.5.</strong> A prompt at <span class="arithmatex">\(p=0.9\)</span> gives variance <span class="arithmatex">\(0.09\)</span>; a prompt at <span class="arithmatex">\(p=0.5\)</span> gives <span class="arithmatex">\(0.25\)</span> — roughly <span class="arithmatex">\(2.8\times\)</span> the signal per rollout. A prompt at <span class="arithmatex">\(p=0.99\)</span> gives <span class="arithmatex">\(0.0099\)</span>, essentially nothing. This is the quantitative heart of curriculum learning in RL, and it is why &ldquo;difficulty&rdquo; is not a soft pedagogical nicety but the master variable controlling your estimator&rsquo;s efficiency.</p>
+<p>There is a subtlety the variance argument hides. Pass rate is <strong>non-stationary</strong>: it is a property of the <em>prompt and the current policy together</em>, and the policy moves every step. A prompt that sits at <span class="arithmatex">\(p=0.5\)</span> at step 0 may be at <span class="arithmatex">\(p=0.95\)</span> by step 200 because the model learned it. A static difficulty label computed once, offline, decays. The whole architecture of online difficulty-targeted selection exists to track this moving target.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: why not just always train at p=0.5?</p>
+<p>Because a policy that only ever sees 50%-pass prompts never gets pulled into new regimes. The frontier of &ldquo;things I can do half the time&rdquo; advances only if some signal leaks from harder prompts (occasional lucky successes that the gradient amplifies) and is consolidated on easier ones. In practice you target a <em>band</em> — say <span class="arithmatex">\(p\in[0.2, 0.8]\)</span> — not a razor at <span class="arithmatex">\(0.5\)</span>, and you let the band&rsquo;s contents drift as the policy improves. The band is the curriculum; the policy walks up it.</p>
+</div>
+<h2 id="building-the-dataset-construction-and-quality-control">Building the dataset: construction and quality control<a class="headerlink" href="#building-the-dataset-construction-and-quality-control" title="Permanent link">¶</a></h2>
+<p>Before any online selection can help, you need a corpus of prompts that is (a) <em>verifiable</em>, (b) <em>de-duplicated against your eval sets</em>, and &copy; <em>spread across a usable difficulty range</em>. Garbage in the prompt pool is more corrosive in RL than in SFT, because RL will ruthlessly exploit any defect in the reward signal (<a href="../05-posttraining-alignment/13-reward-hacking-failures.html">Reward Hacking, Over-Optimization &amp; Alignment Failures</a>).</p>
+<h3 id="the-non-negotiables-of-an-rlvr-prompt-set">The non-negotiables of an RLVR prompt set<a class="headerlink" href="#the-non-negotiables-of-an-rlvr-prompt-set" title="Permanent link">¶</a></h3>
+<p>For each task you need a <strong>prompt</strong> and a <strong>checker</strong>. The checker is the verifier — a deterministic (or near-deterministic) function that maps a completion to a reward. For math it is symbolic/numeric answer-equivalence; for code it is a unit-test harness in a sandbox; for agentic tasks it is an environment that returns a terminal success bit (<a href="../06-rl-infra/08-reward-verifiers-sandboxes.html">Reward Engineering, Verifiers &amp; Sandboxes</a>). The data record therefore carries more than text:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Optional</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">RLTask</span><span class="p">:</span>
+    <span class="n">task_id</span><span class="p">:</span> <span class="nb">str</span>                      <span class="c1"># stable hash, used for dedup + replay keys</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span>                       <span class="c1"># the rendered chat prompt fed to the policy</span>
+    <span class="n">answer</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>      <span class="c1"># ground-truth answer for math-style checking</span>
+    <span class="n">tests</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">list</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>      <span class="c1"># unit tests for code tasks</span>
+    <span class="n">domain</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;unknown&quot;</span>           <span class="c1"># math / code / logic / agentic / ...</span>
+    <span class="c1"># difficulty state, maintained ONLINE (see later sections):</span>
+    <span class="n">pass_rate_ema</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span>        <span class="c1"># exponential moving avg of empirical pass rate</span>
+    <span class="n">n_attempts</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>               <span class="c1"># how many groups we&#39;ve spent on this task</span>
+    <span class="n">n_solved_groups</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>          <span class="c1"># groups where at least one sample passed</span>
+    <span class="n">static_difficulty</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># offline estimate, optional prior</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fingerprint</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="c1"># Normalize before hashing so trivial whitespace/casing diffs collapse.</span>
+        <span class="n">norm</span> <span class="o">=</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">prompt</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">())</span>
+        <span class="k">return</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">norm</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()[:</span><span class="mi">16</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">make_checker</span><span class="p">(</span><span class="n">task</span><span class="p">:</span> <span class="n">RLTask</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a verifier closure. In production the code path runs in a sandbox;</span>
+<span class="sd">    here we sketch the math path. The checker MUST be robust to extraction noise.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">task</span><span class="o">.</span><span class="n">domain</span> <span class="o">==</span> <span class="s2">&quot;math&quot;</span><span class="p">:</span>
+        <span class="n">gold</span> <span class="o">=</span> <span class="n">normalize_math</span><span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">answer</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">check</span><span class="p">(</span><span class="n">completion</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+            <span class="n">pred</span> <span class="o">=</span> <span class="n">extract_boxed_answer</span><span class="p">(</span><span class="n">completion</span><span class="p">)</span>   <span class="c1"># parse \boxed{...}</span>
+            <span class="k">return</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">pred</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">math_equal</span><span class="p">(</span><span class="n">pred</span><span class="p">,</span> <span class="n">gold</span><span class="p">)</span> <span class="k">else</span> <span class="mf">0.0</span>
+        <span class="k">return</span> <span class="n">check</span>
+    <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;no checker for domain </span><span class="si">{</span><span class="n">task</span><span class="o">.</span><span class="n">domain</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>A few rules that separate a usable RL corpus from a frustrating one:</p>
+<ol>
+<li>
+<p><strong>Verifiability over volume.</strong> Ten thousand prompts with airtight checkers beat a million with flaky ones. A checker that returns a false positive 2% of the time teaches the policy to <em>find</em> that 2% — RL is an adversary against your verifier. Audit checkers on known-good and known-bad completions before trusting them.</p>
+</li>
+<li>
+<p><strong>Answer extraction is part of the reward.</strong> If your checker only accepts <code>\boxed{}</code> and the model writes &ldquo;The answer is 42,&rdquo; you will mislabel correct completions as failures, depressing pass rates and corrupting your difficulty estimates. Make extraction permissive <em>for grading correctness</em> but be careful it cannot be gamed.</p>
+</li>
+<li>
+<p><strong>Decontaminate against evals — twice.</strong> Run n-gram and embedding-level overlap checks between your prompt pool and every benchmark you will report on. Then do it again after any synthetic augmentation. Contamination inflates eval and is the most common cause of &ldquo;great training curve, flat real-world gains.&rdquo; This mirrors pretraining decontamination (<a href="../03-pretraining/02-data-cleaning-dedup.html">Data Cleaning, Deduplication &amp; Quality Filtering</a>).</p>
+</li>
+<li>
+<p><strong>Dedup near-duplicates inside the pool.</strong> Two prompts that differ only in variable names are one prompt&rsquo;s worth of signal but two prompts&rsquo; worth of compute. MinHash/LSH or embedding clustering collapses them.</p>
+</li>
+<li>
+<p><strong>Track provenance.</strong> Keep <code>domain</code>, source, and a difficulty prior per task. You will want to re-weight domains later, exactly as in pretraining data mixing (<a href="../03-pretraining/14-data-mixing-curriculum.html">Data Mixing, Domain Weighting &amp; Curriculum</a>).</p>
+</li>
+</ol>
+<h3 id="where-the-prompts-come-from">Where the prompts come from<a class="headerlink" href="#where-the-prompts-come-from" title="Permanent link">¶</a></h3>
+<p>Most strong RLVR runs blend several sources: curated competition/benchmark-style problems with known answers; <strong>synthetically generated</strong> variants (a stronger model or a generator produces new problems plus checkable answers, then a solver filters for solvability — see <a href="../03-pretraining/15-synthetic-data.html">Synthetic Data for Pre- and Post-Training</a>); and <strong>mined</strong> failures from a previous policy (prompts the last checkpoint got wrong become the next run&rsquo;s curriculum, a data flywheel — <a href="../12-production-mlops/05-data-flywheel.html">Data Flywheels &amp; Continuous Improvement</a>). For agentic tasks the &ldquo;prompt&rdquo; is a whole environment seed (a repo state, a browser task, a tool sandbox), and construction means building reproducible, resettable environments (<a href="../06-rl-infra/10-agentic-multiturn-rl.html">Agentic &amp; Multi-Turn RL</a>).</p>
+<h2 id="difficulty-estimation-offline-priors-and-online-truth">Difficulty estimation: offline priors and online truth<a class="headerlink" href="#difficulty-estimation-offline-priors-and-online-truth" title="Permanent link">¶</a></h2>
+<p>You ultimately want, for every task, an estimate of its pass rate under the <em>current</em> policy. There are two regimes: an <strong>offline prior</strong> computed once before the run, and the <strong>online estimate</strong> maintained during it.</p>
+<h3 id="offline-difficulty-estimation">Offline difficulty estimation<a class="headerlink" href="#offline-difficulty-estimation" title="Permanent link">¶</a></h3>
+<p>Before the run, sample the base policy (or a reference model) <span class="arithmatex">\(k\)</span> times on each prompt and record <span class="arithmatex">\(\hat p_0 = (\text{successes})/k\)</span>. This is the maximum-likelihood estimate of the pass rate, with the obvious caveat that for small <span class="arithmatex">\(k\)</span> it is coarse — with <span class="arithmatex">\(k=8\)</span> you can only distinguish pass rates in steps of <span class="arithmatex">\(1/8 = 0.125\)</span>, and the standard error is</p>
+<div class="arithmatex">\[
+\operatorname{SE}(\hat p) = \sqrt{\frac{\hat p(1-\hat p)}{k}} \;\le\; \frac{1}{2\sqrt{k}}.
+\]</div>
+<p>For <span class="arithmatex">\(k=8\)</span> that worst-case SE is <span class="arithmatex">\(\approx 0.18\)</span> — so a prompt you measured at <span class="arithmatex">\(\hat p_0 = 0.5\)</span> might truly be anywhere in roughly <span class="arithmatex">\([0.32, 0.68]\)</span>. Offline difficulty is a <em>prior</em>, not a label. Its value is in <strong>bucketing</strong> and in <strong>discarding the unusable tails</strong> (prompts the base model solves <span class="arithmatex">\(0/k\)</span> — possibly impossible or mis-checkered — and <span class="arithmatex">\(k/k\)</span> — already mastered). A common offline pipeline:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">estimate_offline_difficulty</span><span class="p">(</span><span class="n">tasks</span><span class="p">,</span> <span class="n">policy</span><span class="p">,</span> <span class="n">checker_fn</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">batch_gen</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One pass over the pool: k rollouts each, record empirical pass rate.</span>
+<span class="sd">    Returns buckets and prunes the dead tails. batch_gen() should call your</span>
+<span class="sd">    rollout engine (vLLM/SGLang) — batch ALL prompts*k together for throughput.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">tasks</span><span class="p">:</span>
+        <span class="n">completions</span> <span class="o">=</span> <span class="n">batch_gen</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">k</span><span class="p">)</span>            <span class="c1"># k samples</span>
+        <span class="n">rewards</span> <span class="o">=</span> <span class="p">[</span><span class="n">checker_fn</span><span class="p">(</span><span class="n">t</span><span class="p">)(</span><span class="n">c</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">completions</span><span class="p">]</span>
+        <span class="n">t</span><span class="o">.</span><span class="n">static_difficulty</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">rewards</span><span class="p">))</span>     <span class="c1"># p_hat_0 in [0,1]</span>
+        <span class="n">t</span><span class="o">.</span><span class="n">pass_rate_ema</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">static_difficulty</span>             <span class="c1"># seed the online EMA</span>
+
+    <span class="n">keep</span><span class="p">,</span> <span class="n">pruned</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">tasks</span><span class="p">:</span>
+        <span class="c1"># Prune the dead tails: never-solved (maybe broken) and always-solved.</span>
+        <span class="k">if</span> <span class="mf">0.0</span> <span class="o">&lt;</span> <span class="n">t</span><span class="o">.</span><span class="n">static_difficulty</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="n">keep</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">pruned</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">keep</span><span class="p">,</span> <span class="n">pruned</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">difficulty_bucket</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">edges</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.8</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Map a pass rate to a coarse bucket index. Buckets, not raw p, because</span>
+<span class="sd">    raw p from small k is too noisy to act on at fine granularity.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">b</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">edges</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">edges</span><span class="p">[</span><span class="n">b</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">p</span> <span class="o">&lt;</span> <span class="n">edges</span><span class="p">[</span><span class="n">b</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]:</span>
+            <span class="k">return</span> <span class="n">b</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">edges</span><span class="p">)</span> <span class="o">-</span> <span class="mi">2</span>  <span class="c1"># p == 1.0 edge case</span>
+</code></pre></div>
+<p>The <span class="arithmatex">\(0/k\)</span>-and-<span class="arithmatex">\(k/k\)</span> pruning typically removes 20–50% of a raw competition-math pool: a chunk is trivial for a strong base model, and another chunk is currently impossible (genuinely too hard, or the checker is wrong). Both contribute zero gradient and pure rollout waste, so removing them is a direct sample-efficiency win <em>before training begins</em>.</p>
+<h3 id="online-difficulty-the-ema-and-beta-views">Online difficulty: the EMA and Beta views<a class="headerlink" href="#online-difficulty-the-ema-and-beta-views" title="Permanent link">¶</a></h3>
+<p>During training the truth is the online pass rate. Each time task <span class="arithmatex">\(t\)</span> is rolled out as a group of <span class="arithmatex">\(G\)</span>, you observe <span class="arithmatex">\(\hat p_t = (\text{successes})/G\)</span> and update an exponential moving average:</p>
+<div class="arithmatex">\[
+\bar p \;\leftarrow\; (1-\alpha)\,\bar p \;+\; \alpha\,\hat p_t,
+\]</div>
+<p>with <span class="arithmatex">\(\alpha\)</span> around <span class="arithmatex">\(0.1\)</span>–<span class="arithmatex">\(0.3\)</span>. The EMA tracks the moving policy: a prompt that was hard becomes easy as the policy learns, and the EMA follows. A cleaner Bayesian alternative is a <strong>Beta–Bernoulli</strong> posterior per task: maintain counts <span class="arithmatex">\((s, f)\)</span> of successes and failures (optionally discounted over time so old observations decay), and the posterior pass rate is <span class="arithmatex">\(\text{Beta}(s+1, f+1)\)</span> with mean <span class="arithmatex">\(\frac{s+1}{s+f+2}\)</span>. The Beta view gives you not just a point estimate but a <em>credible interval</em>, which is exactly what you need to decide whether a prompt is &ldquo;near 0.5&rdquo; with confidence or just under-sampled — and it plugs naturally into a Thompson-sampling selection policy (below).</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: stale difficulty labels</p>
+<p>The most common difficulty-curriculum bug is computing pass rates <em>once</em> and treating them as fixed. Within a few hundred steps a well-chosen 50%-band collapses toward 100% as the policy masters it, and if you keep sampling the same &ldquo;medium&rdquo; bucket you are now training on solved prompts — zero gradient, wasted compute, and a training curve that mysteriously plateaus. Difficulty MUST be re-estimated online (EMA or decayed Beta). The whole point is that difficulty is a function of the <em>current</em> policy, which is a moving target.</p>
+</div>
+<h2 id="difficulty-targeted-online-selection-keeping-prompts-near-p05">Difficulty-targeted online selection: keeping prompts near p≈0.5<a class="headerlink" href="#difficulty-targeted-online-selection-keeping-prompts-near-p05" title="Permanent link">¶</a></h2>
+<p>Now the central mechanism. Given a pool with online difficulty estimates, how do you choose the next batch of prompts to roll out so that the <em>realized</em> groups cluster near <span class="arithmatex">\(p\approx0.5\)</span> and almost none come back zero-variance?</p>
+<h3 id="selection-as-a-bandit-over-difficulty">Selection as a bandit over difficulty<a class="headerlink" href="#selection-as-a-bandit-over-difficulty" title="Permanent link">¶</a></h3>
+<p>Frame it as a multi-armed bandit where each task (or each difficulty bucket) is an arm and the &ldquo;reward&rdquo; is the <em>informativeness</em> of the group it produces — for example <span class="arithmatex">\(\hat p_t(1-\hat p_t)\)</span>, the realized Bernoulli variance, or simply <span class="arithmatex">\(\mathbb{1}[\text{group had non-zero variance}]\)</span>. You want to pull arms that are currently informative while exploring arms whose difficulty you are unsure about (because the policy moved). Two clean policies:</p>
+<ul>
+<li><strong>Greedy-to-target:</strong> score each task by closeness of its estimated pass rate to the target <span class="arithmatex">\(p^\star\)</span> (usually <span class="arithmatex">\(0.5\)</span>), e.g. <span class="arithmatex">\(\text{score}(t) = -\,|\bar p_t - p^\star|\)</span>, and sample the top-scoring tasks (with noise / temperature so you do not over-commit to a handful). Simple, effective, but blind to estimate uncertainty.</li>
+<li><strong>Thompson sampling on the Beta posterior:</strong> draw <span class="arithmatex">\(\tilde p_t \sim \text{Beta}(s_t+1, f_t+1)\)</span> for each candidate and select tasks whose <em>sampled</em> pass rate is nearest the target. This automatically explores under-sampled tasks (wide posteriors get drawn far from their mean), so freshly-promoted-difficulty prompts get re-evaluated. This is the principled version and is what I reach for in practice.</li>
+</ul>
+<p>A worked implementation appears in the code section. The key design choice is <strong>the band, not the point</strong>: select for <span class="arithmatex">\(\bar p \in [p_{\text{lo}}, p_{\text{hi}}]\)</span> (say <span class="arithmatex">\([0.2, 0.8]\)</span>) rather than exactly <span class="arithmatex">\(0.5\)</span>, so the batch retains some easier prompts (stability, anti-forgetting) and some harder prompts (frontier signal, exploration). Within the band you can still weight toward the center.</p>
+<h3 id="the-relationship-to-dynamic-sampling">The relationship to dynamic sampling<a class="headerlink" href="#the-relationship-to-dynamic-sampling" title="Permanent link">¶</a></h3>
+<p>Difficulty-targeted selection and <strong>dynamic sampling</strong> (DAPO-style) attack the same enemy — zero-variance groups — from opposite ends of the loop. Selection works <em>before</em> generation: pick prompts likely to land in-band. Dynamic sampling works <em>after</em> generation: discard the groups that came back all-same-reward anyway and oversample to refill the batch. You want both, because difficulty estimates are noisy (small-<span class="arithmatex">\(k\)</span> SE is large) and the policy moves between selection and rollout, so even a well-targeted batch will produce some dead groups. Selection reduces how many you have to throw away; dynamic sampling guarantees the batch you train on is fully informative.</p>
+<h2 id="dynamic-sampling-never-train-on-a-zero-variance-batch">Dynamic sampling: never train on a zero-variance batch<a class="headerlink" href="#dynamic-sampling-never-train-on-a-zero-variance-batch" title="Permanent link">¶</a></h2>
+<p>Dynamic sampling, popularized by DAPO, is mechanically simple and statistically important. After generating <span class="arithmatex">\(G\)</span> completions per prompt and scoring them, <strong>drop every prompt whose group has zero reward variance</strong> (all correct or all wrong), then keep generating <em>more</em> prompts until you have collected a full target batch of <span class="arithmatex">\(B_{\text{keep}}\)</span> prompts that all have non-zero variance.</p>
+<div class="arithmatex">\[
+\text{keep prompt } x \iff 0 &lt; \hat p(x) &lt; 1 \quad\Longleftrightarrow\quad \operatorname{std}\big(r(x)\big) &gt; 0.
+\]</div>
+<p>The benefit is that <strong>every</strong> gradient step now operates on a batch where every prompt contributes signal — no dead weight diluting the update, no wasted optimizer step. The cost is <em>throughput</em>: you must oversample. If a fraction <span class="arithmatex">\(\rho\)</span> of generated groups survive the filter, you must generate <span class="arithmatex">\(B_{\text{keep}}/\rho\)</span> groups to fill the batch — and <span class="arithmatex">\(\rho\)</span> shrinks as the policy improves and more prompts saturate to <span class="arithmatex">\(p=1\)</span>. This is the throughput-vs-statistics tension flagged in the scaling chapter (<a href="../06-rl-infra/11-scaling-rl-tricks.html">Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a>): dynamic sampling is <em>cheap on an async, oversubscribed generation layer</em> and <em>brutal on a synchronous one</em>, where the extra rollouts serialize against training.</p>
+<p>Difficulty-targeted selection is the throughput rescue for dynamic sampling: by feeding the generator prompts that are <em>already likely</em> to be in-band, you raise the survival fraction <span class="arithmatex">\(\rho\)</span>, so you oversample less to fill the batch. The two are complementary — selection raises <span class="arithmatex">\(\rho\)</span>, dynamic sampling guarantees correctness when <span class="arithmatex">\(\rho&lt;1\)</span>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: the oversampling tax, with and without targeting</p>
+<p>Suppose you want a training batch of <span class="arithmatex">\(B_{\text{keep}} = 256\)</span> informative prompts, <span class="arithmatex">\(G = 8\)</span> samples each.</p>
+<p><strong>Naive uniform sampling (mid-training).</strong> Your pool&rsquo;s pass-rate distribution, <em>under the current policy</em>, is roughly: 40% of prompts at <span class="arithmatex">\(p\approx0.95\)</span> (nearly mastered), 25% at <span class="arithmatex">\(p\approx0.05\)</span> (nearly impossible), 35% spread in <span class="arithmatex">\([0.2,0.8]\)</span>. What survives the zero-variance filter? A group at <span class="arithmatex">\(p=0.95\)</span> comes back all-correct with probability <span class="arithmatex">\(0.95^8 \approx 0.66\)</span>, i.e. it is <em>dead</em> 66% of the time, surviving only 34%. A group at <span class="arithmatex">\(p=0.05\)</span> is dead <span class="arithmatex">\(0.95^8\approx0.66\)</span> of the time too (all-wrong), surviving 34%. The in-band prompts survive almost always (<span class="arithmatex">\(1 - 0.8^8 - 0.2^8 \approx 0.83\)</span> at <span class="arithmatex">\(p=0.5\)</span>; higher near the band edges is similar). Survival fraction:</p>
+<div class="arithmatex">\[
+\rho \approx 0.40(0.34) + 0.25(0.34) + 0.35(0.83) \approx 0.136 + 0.085 + 0.29 \approx 0.51.
+\]</div>
+<p>To fill 256 you must generate <span class="arithmatex">\(256 / 0.51 \approx 502\)</span> groups — roughly <strong>2× the rollout compute</strong> thrown away as zero-variance, <span class="arithmatex">\(502 \times 8 \approx 4016\)</span> completions for 2048 kept.</p>
+<p><strong>Difficulty-targeted selection.</strong> Now you pre-select prompts whose online EMA sits in <span class="arithmatex">\([0.2,0.8]\)</span>. Even accounting for estimate noise and policy drift (so realized in-band fraction is, say, 80% rather than 100%), survival climbs to roughly</p>
+<div class="arithmatex">\[
+\rho \approx 0.80(0.83) + 0.20(0.34) \approx 0.66 + 0.07 \approx 0.73.
+\]</div>
+<p>Now you generate <span class="arithmatex">\(256/0.73 \approx 351\)</span> groups — you have cut the oversampling tax from <span class="arithmatex">\(\sim\)</span>2× down to <span class="arithmatex">\(\sim\)</span>1.37×, saving about <strong>30% of generation compute</strong> for the same informative batch. On a run where generation is 75% of wall-clock, that is a <span class="arithmatex">\(\sim\)</span>20% end-to-end speedup, for free, from data-side bookkeeping.</p>
+</div>
+<h2 id="prompt-curriculum-walking-the-policy-up-the-difficulty-ladder">Prompt curriculum: walking the policy up the difficulty ladder<a class="headerlink" href="#prompt-curriculum-walking-the-policy-up-the-difficulty-ladder" title="Permanent link">¶</a></h2>
+<p>Difficulty-targeted selection keeps you near <span class="arithmatex">\(p=0.5\)</span> <em>at each step</em>. A <strong>curriculum</strong> is the trajectory of that band over the whole run. Three flavors, increasingly automatic:</p>
+<h3 id="static-staged-curriculum">Static / staged curriculum<a class="headerlink" href="#static-staged-curriculum" title="Permanent link">¶</a></h3>
+<p>Sort prompts into difficulty tiers offline and present them in stages: easy first, then medium, then hard, switching tiers on a schedule or when an aggregate pass-rate threshold is hit. This is the RL analogue of pretraining curriculum (<a href="../03-pretraining/14-data-mixing-curriculum.html">Data Mixing, Domain Weighting &amp; Curriculum</a>). It is simple and sometimes helps warm-start, but it is brittle: the offline tiers decay (the master-variable problem), and a hard stage switch can destabilize the policy.</p>
+<h3 id="automatic-online-curriculum">Automatic / online curriculum<a class="headerlink" href="#automatic-online-curriculum" title="Permanent link">¶</a></h3>
+<p>Let the curriculum <em>emerge</em> from online difficulty targeting. Because difficulty is re-estimated every step and you always select for the band, the contents of the band naturally drift from easy to hard as the policy masters the easier material — the curriculum is an emergent property, not a hand-authored schedule. This is the modern default: you do not write a curriculum, you write a <em>selection rule</em> and the curriculum is its trajectory.</p>
+<h3 id="self-paced-regret-based-curriculum">Self-paced / regret-based curriculum<a class="headerlink" href="#self-paced-regret-based-curriculum" title="Permanent link">¶</a></h3>
+<p>A more aggressive variant (rooted in the unsupervised-environment-design and automatic-curriculum-learning literature) selects prompts by <strong>learning progress</strong> or <strong>regret</strong>: prioritize tasks where the policy is improving fastest, or where there is the largest gap between achievable and current performance. Practically, score a task by the <em>recent change</em> in its pass-rate EMA (a prompt whose <span class="arithmatex">\(\bar p\)</span> is climbing is where learning is happening) and up-weight it. This pushes compute exactly to the frontier of competence. It is powerful but adds estimator complexity and can be unstable if the progress signal is noisy.</p>
+<figure class="viz" id="fig-rldata-curriculum-band-drift">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 760 440" role="img" aria-label="Time-series chart showing three difficulty tiers (easy, medium, hard) rising and saturating over training steps, with the target band at p=0.5 crossed first by easy, then medium, then hard — showing the curriculum band drifting from easy to hard over time.">
+<style>
+  #fig-rldata-curriculum-band-drift text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#1e293b); }
+  #fig-rldata-curriculum-band-drift .axis-label { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#1e293b); }
+  #fig-rldata-curriculum-band-drift .tick-label { font: 11px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-rldata-curriculum-band-drift .tier-label { font: 700 12px var(--sans,sans-serif); }
+  #fig-rldata-curriculum-band-drift .caption-note { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-rldata-curriculum-band-drift .band-label { font: 600 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+
+  /* Animated curve reveals via stroke-dashoffset */
+  #fig-rldata-curriculum-band-drift .viz-draw {
+    stroke-dasharray: var(--len, 800);
+    stroke-dashoffset: var(--len, 800);
+    animation: draw-line 1.6s ease-out forwards;
+  }
+  #fig-rldata-curriculum-band-drift .easy-curve { animation-delay: 0.1s; }
+  #fig-rldata-curriculum-band-drift .medium-curve { animation-delay: 0.7s; }
+  #fig-rldata-curriculum-band-drift .hard-curve { animation-delay: 1.3s; }
+
+  #fig-rldata-curriculum-band-drift .band-rect {
+    opacity: 0;
+    animation: band-sweep 1.8s ease-in-out 0.5s forwards;
+  }
+  #fig-rldata-curriculum-band-drift .crossing-dot {
+    opacity: 0;
+    animation: dot-appear 0.4s ease forwards;
+  }
+  #fig-rldata-curriculum-band-drift .dot-easy { animation-delay: 0.6s; }
+  #fig-rldata-curriculum-band-drift .dot-medium { animation-delay: 1.2s; }
+  #fig-rldata-curriculum-band-drift .dot-hard { animation-delay: 1.8s; }
+
+  @keyframes draw-line {
+    to { stroke-dashoffset: 0; }
+  }
+  @keyframes dot-appear {
+    to { opacity: 1; }
+  }
+  @keyframes band-sweep {
+    0%   { opacity: 0.8; transform: translateX(0px); }
+    33%  { opacity: 0.8; transform: translateX(0px); }
+    66%  { opacity: 0.8; transform: translateX(195px); }
+    100% { opacity: 0.8; transform: translateX(390px); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-rldata-curriculum-band-drift .viz-draw {
+      stroke-dashoffset: 0;
+      animation: none;
+    }
+    #fig-rldata-curriculum-band-drift .band-rect {
+      opacity: 0.6;
+      animation: none;
+      transform: translateX(390px);
+    }
+    #fig-rldata-curriculum-band-drift .crossing-dot {
+      opacity: 1;
+      animation: none;
+    }
+  }
+</style>
+<defs>
+  <marker id="cbd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+</defs>
+
+
+<line x1="80" y1="55" x2="80" y2="370" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+
+<line x1="80" y1="360" x2="690" y2="360" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#cbd-arrow)"/>
+
+
+<text transform="rotate(-90,22,210)" x="22" y="210" text-anchor="middle" class="axis-label">pass rate</text>
+
+
+
+<text x="72" y="64" text-anchor="end" class="tick-label">1.0</text>
+<line x1="76" y1="60" x2="80" y2="60" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+
+<text x="72" y="214" text-anchor="end" class="tick-label">0.5</text>
+<line x1="76" y1="210" x2="80" y2="210" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+
+<text x="72" y="364" text-anchor="end" class="tick-label">0.0</text>
+
+
+<text x="395" y="415" text-anchor="middle" class="axis-label">training steps -&gt;</text>
+
+
+<text x="395" y="392" text-anchor="middle" class="caption-note">the band's contents drift right -&gt;</text>
+
+
+<line x1="80" y1="210" x2="680" y2="210" stroke="var(--accent,#4f7cff)" stroke-width="1.5" stroke-dasharray="6 4" opacity="0.7"/>
+<text x="85" y="197" class="band-label">band target (p*)</text>
+
+
+<rect class="band-rect" x="135" y="60" width="30" height="300" fill="var(--accent,#4f7cff)" fill-opacity="0.15" rx="2"/>
+
+
+<path class="viz-draw easy-curve" style="--len:700"
+  d="M 80,225 C 110,200 130,100 300,71 L 680,71"
+  fill="none" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/>
+
+
+<path class="viz-draw medium-curve" style="--len:750"
+  d="M 80,306 C 160,305 260,215 360,210 C 460,205 540,95 600,90 L 680,90"
+  fill="none" stroke="var(--accent,#4f7cff)" stroke-width="3" stroke-linecap="round"/>
+
+
+<path class="viz-draw hard-curve" style="--len:700"
+  d="M 80,345 C 200,345 350,340 490,280 C 530,250 550,220 560,210 C 600,188 640,160 680,150"
+  fill="none" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/>
+
+
+<text x="685" y="68" class="tier-label" fill="#22c55e">easy</text>
+<text x="685" y="87" class="tier-label" fill="var(--accent,#4f7cff)">medium</text>
+<text x="685" y="147" class="tier-label" fill="#f59e0b">hard</text>
+
+
+
+<circle class="crossing-dot dot-easy" cx="150" cy="210" r="5" fill="var(--surface,#fff)" stroke="#22c55e" stroke-width="2.5"/>
+
+<circle class="crossing-dot dot-medium" cx="360" cy="210" r="5" fill="var(--surface,#fff)" stroke="var(--accent,#4f7cff)" stroke-width="2.5"/>
+
+<circle class="crossing-dot dot-hard" cx="560" cy="210" r="5" fill="var(--surface,#fff)" stroke="#f59e0b" stroke-width="2.5"/>
+
+
+<line x1="150" y1="210" x2="560" y2="210" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/>
+
+
+<text x="355" y="228" text-anchor="middle" class="caption-note">band rides where tiers cross p*</text>
+
+</svg>
+<figcaption><b>The difficulty band slides from easy to hard as tiers saturate.</b> Each difficulty tier rises and saturates toward p=1 over training, but at different rates; the easy tier crosses the target p*=0.5 first (hollow circle), then medium, then hard. The translucent band sweeps right, tracking whichever tier is currently crossing p* — that is the emergent curriculum, automatically advancing without any authored schedule.</figcaption>
+</figure>
+
+<p>The figure is the whole idea: each tier rises and saturates; the <em>band</em> (the prompts currently near <span class="arithmatex">\(p^\star\)</span>) slides from easy through medium to hard. A good online curriculum keeps the training batch riding the diagonal where the tiers cross <span class="arithmatex">\(p^\star\)</span>.</p>
+<h2 id="replay-buffers-reusing-rollouts-you-already-paid-for">Replay buffers: reusing rollouts you already paid for<a class="headerlink" href="#replay-buffers-reusing-rollouts-you-already-paid-for" title="Permanent link">¶</a></h2>
+<p>Generation is the dominant cost (<a href="../06-rl-infra/11-scaling-rl-tricks.html">Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a>). A rollout you used once and discarded is money burned. <strong>Replay</strong> reuses past rollouts — but RL-for-LLMs is <em>on-policy</em> by nature (the policy gradient is an expectation under the <em>current</em> policy), so naive replay is off-policy and biased. Replay in this setting comes in two distinct flavors that solve different problems.</p>
+<h3 id="prompt-level-replay-revisiting-tasks">Prompt-level replay (revisiting tasks)<a class="headerlink" href="#prompt-level-replay-revisiting-tasks" title="Permanent link">¶</a></h3>
+<p>The cheap, safe kind: replay <em>which prompts to attempt</em>, not the old completions. A <strong>prioritized prompt buffer</strong> stores tasks with a priority equal to their current informativeness (e.g. <span class="arithmatex">\(|\bar p_t - p^\star|^{-1}\)</span>, or recent learning progress) and re-samples high-priority prompts more often — this is exactly the prioritized-experience-replay idea (Schaul et al.) applied at the <em>task</em> level rather than the transition level. The completions are always freshly generated under the current policy, so it stays on-policy. This is just difficulty-targeted selection with persistence and is essentially free.</p>
+<h3 id="trajectory-level-replay-reusing-completions">Trajectory-level replay (reusing completions)<a class="headerlink" href="#trajectory-level-replay-reusing-completions" title="Permanent link">¶</a></h3>
+<p>The expensive, dangerous kind: store the <em>actual completions</em> and their per-token log-probs <span class="arithmatex">\(\pi_{\text{old}}(a_t\mid s_t)\)</span>, and reuse them for a few extra gradient steps. Because they were generated under an older policy, you must <strong>importance-correct</strong> with the PPO ratio and rely on clipping to bound the bias (<a href="../05-posttraining-alignment/06-ppo-for-llms.html">Policy Gradients &amp; PPO for Language Models</a>; <a href="../06-rl-infra/09-advantage-kl-tricks.html">Advantage Estimation, KL Control &amp; Stability Tricks</a>):</p>
+<div class="arithmatex">\[
+\rho_t = \frac{\pi_\theta(a_t\mid s_t)}{\pi_{\text{old}}(a_t\mid s_t)}, \qquad
+L = \min\!\big(\rho_t A_t,\; \operatorname{clip}(\rho_t, 1-\epsilon, 1+\epsilon)A_t\big).
+\]</div>
+<p>This is the mechanism behind <strong>asynchronous / off-policy RL</strong> (the generator runs ahead of the trainer; rollouts are 1–4 steps stale by the time they are consumed — <a href="../06-rl-infra/06-prime-rl-async.html">Prime-RL, Async RL &amp; Decentralized Training</a>). The replay &ldquo;buffer&rdquo; here is shallow — a few steps of staleness, not a DQN-style million-transition reservoir — because the importance weights blow up and the clipped gradient goes to zero once <span class="arithmatex">\(\pi_\theta\)</span> has drifted too far from <span class="arithmatex">\(\pi_{\text{old}}\)</span>. <strong>Staleness is the half-life of a stored trajectory.</strong> Beyond a few steps the IS weights are so far from 1 that clipping zeroes the contribution, so the trajectory is dead weight. A practical buffer evicts trajectories older than a staleness bound <span class="arithmatex">\(\tau_{\max}\)</span> (e.g. 2–4 policy versions) and tracks the <em>fraction of tokens being clipped</em> as a health metric — if most tokens are clipped, your buffer is too stale and you are training on noise.</p>
+<p>A third, increasingly important pattern is the <strong>experience / success buffer for agentic RL</strong>: store <em>successful</em> trajectories (especially for hard, rarely-solved tasks) and replay them as on-policy-ish positive examples or as SFT-style anchors, to keep the policy from forgetting a hard-won capability. This blurs into expert iteration / rejection-sampling fine-tuning (the policy generates, you keep the winners, you train on them) and is a robust way to bank progress on sparse-reward agentic tasks (<a href="../06-rl-infra/10-agentic-multiturn-rl.html">Agentic &amp; Multi-Turn RL</a>).</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: keep three buffers, not one</p>
+<p>In a mature RL stack you typically maintain (1) a <strong>prioritized prompt buffer</strong> (which tasks to attempt next — on-policy, free, the curriculum), (2) a <strong>shallow staleness buffer</strong> of recent completions with stored log-probs for async overlap (off-policy, importance-corrected, half-life of a few steps), and (3) a <strong>success/hard-case buffer</strong> of banked winning trajectories for anti-forgetting on sparse tasks. They are different objects with different correctness constraints — do not conflate them. The first is about <em>throughput and signal</em>, the second about <em>latency overlap</em>, the third about <em>retention</em>.</p>
+</div>
+<h2 id="code-a-dynamic-sampling-difficulty-bucketing-rollout-loop">Code: a dynamic-sampling + difficulty-bucketing rollout loop<a class="headerlink" href="#code-a-dynamic-sampling-difficulty-bucketing-rollout-loop" title="Permanent link">¶</a></h2>
+<p>Here is a self-contained, heavily-commented loop that ties the chapter together: difficulty-targeted selection via Thompson sampling, generation, zero-variance filtering with oversampling (dynamic sampling), online difficulty (Beta posterior) updates, and a prioritized prompt buffer. The rollout engine and trainer are stubbed so the <em>data logic</em> is in focus; in a real system <code>engine.generate</code> calls vLLM/SGLang and <code>trainer.step</code> calls your GRPO update.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Task state: a Beta(s+1, f+1) posterior over the *current-policy* pass rate.</span>
+<span class="c1"># We decay old counts so the posterior tracks the moving policy (not lifetime).</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">TaskState</span><span class="p">:</span>
+    <span class="n">task_id</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">true_p</span><span class="p">:</span> <span class="nb">float</span>                 <span class="c1"># SIMULATION ONLY: the latent pass rate</span>
+    <span class="n">s</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>                <span class="c1"># decayed success pseudo-count (+1 prior)</span>
+    <span class="n">f</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>                <span class="c1"># decayed failure pseudo-count (+1 prior)</span>
+    <span class="n">n_groups</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>             <span class="c1"># how many groups we&#39;ve spent here (priority/age)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">posterior_mean</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">s</span> <span class="o">/</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">s</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">f</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">sample_p</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># Thompson draw: sample a plausible pass rate from the posterior.</span>
+        <span class="k">return</span> <span class="n">rng</span><span class="o">.</span><span class="n">beta</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">s</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">f</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">update</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">successes</span><span class="p">,</span> <span class="n">G</span><span class="p">,</span> <span class="n">decay</span><span class="o">=</span><span class="mf">0.9</span><span class="p">):</span>
+        <span class="c1"># Decay then add this group&#39;s evidence. Decay makes the posterior</span>
+        <span class="c1"># forget stale (old-policy) observations so it tracks current p.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">s</span> <span class="o">=</span> <span class="n">decay</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">s</span> <span class="o">+</span> <span class="n">successes</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">f</span> <span class="o">=</span> <span class="n">decay</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">f</span> <span class="o">+</span> <span class="p">(</span><span class="n">G</span> <span class="o">-</span> <span class="n">successes</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_groups</span> <span class="o">+=</span> <span class="mi">1</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Stubs standing in for the real rollout engine and trainer.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">FakeEngine</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Simulates generating G samples for a task; returns #successes ~ Binomial.</span>
+<span class="sd">    A real engine returns text completions; the checker turns them into r in {0,1}.</span>
+<span class="sd">    We also let true_p drift UP a touch each time a task is trained on, to mimic</span>
+<span class="sd">    the policy mastering material (the non-stationarity the EMA/Beta must track).&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">rollout</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">task</span><span class="p">:</span> <span class="n">TaskState</span><span class="p">,</span> <span class="n">G</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="n">succ</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">rng</span><span class="o">.</span><span class="n">binomial</span><span class="p">(</span><span class="n">G</span><span class="p">,</span> <span class="n">task</span><span class="o">.</span><span class="n">true_p</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">succ</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">learn_drift</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">task</span><span class="p">:</span> <span class="n">TaskState</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.02</span><span class="p">):</span>
+        <span class="c1"># Mastering nudges pass rate toward 1; harder material drifts slower.</span>
+        <span class="n">task</span><span class="o">.</span><span class="n">true_p</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="mf">0.999</span><span class="p">,</span> <span class="n">task</span><span class="o">.</span><span class="n">true_p</span> <span class="o">+</span> <span class="n">lr</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">task</span><span class="o">.</span><span class="n">true_p</span><span class="p">))</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Difficulty-targeted selection by Thompson sampling toward a target pass rate.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">select_candidates</span><span class="p">(</span><span class="n">tasks</span><span class="p">,</span> <span class="n">n_select</span><span class="p">,</span> <span class="n">target_p</span><span class="o">=</span><span class="mf">0.5</span><span class="p">):</span>
+    <span class="n">scored</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">tasks</span><span class="p">:</span>
+        <span class="n">p_tilde</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">sample_p</span><span class="p">()</span>              <span class="c1"># explore via posterior uncertainty</span>
+        <span class="n">score</span> <span class="o">=</span> <span class="o">-</span><span class="nb">abs</span><span class="p">(</span><span class="n">p_tilde</span> <span class="o">-</span> <span class="n">target_p</span><span class="p">)</span>    <span class="c1"># prefer tasks near the target band</span>
+        <span class="n">scored</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">score</span><span class="p">,</span> <span class="n">t</span><span class="p">))</span>
+    <span class="n">scored</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">t</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">scored</span><span class="p">[:</span><span class="n">n_select</span><span class="p">]]</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># One RL step: select -&gt; generate -&gt; DYNAMIC SAMPLING filter -&gt; update -&gt; train.</span>
+<span class="c1"># Dynamic sampling: keep only non-zero-variance groups; oversample to refill.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">rl_step</span><span class="p">(</span><span class="n">tasks</span><span class="p">,</span> <span class="n">engine</span><span class="p">,</span> <span class="n">B_keep</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">G</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">target_p</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+            <span class="n">oversample_cap</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span> <span class="n">buckets</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.8</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)):</span>
+    <span class="n">kept</span> <span class="o">=</span> <span class="p">[]</span>                               <span class="c1"># (task, successes) that have signal</span>
+    <span class="n">generated_groups</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">rounds</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="n">kept</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">B_keep</span> <span class="ow">and</span> <span class="n">rounds</span> <span class="o">&lt;</span> <span class="n">oversample_cap</span><span class="p">:</span>
+        <span class="n">rounds</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="c1"># Oversample a generous candidate set so we can refill after filtering.</span>
+        <span class="n">need</span> <span class="o">=</span> <span class="n">B_keep</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">kept</span><span class="p">)</span>
+        <span class="n">cands</span> <span class="o">=</span> <span class="n">select_candidates</span><span class="p">(</span><span class="n">tasks</span><span class="p">,</span> <span class="n">n_select</span><span class="o">=</span><span class="mi">2</span> <span class="o">*</span> <span class="n">need</span><span class="p">,</span> <span class="n">target_p</span><span class="o">=</span><span class="n">target_p</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">cands</span><span class="p">:</span>
+            <span class="n">successes</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">rollout</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">G</span><span class="p">)</span>
+            <span class="n">generated_groups</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="n">t</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">successes</span><span class="p">,</span> <span class="n">G</span><span class="p">)</span>          <span class="c1"># online difficulty (Beta) update</span>
+            <span class="c1"># DYNAMIC SAMPLING: drop zero-variance groups (all pass / all fail).</span>
+            <span class="k">if</span> <span class="mi">0</span> <span class="o">&lt;</span> <span class="n">successes</span> <span class="o">&lt;</span> <span class="n">G</span><span class="p">:</span>
+                <span class="n">kept</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">t</span><span class="p">,</span> <span class="n">successes</span><span class="p">))</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">kept</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">B_keep</span><span class="p">:</span>
+                    <span class="k">break</span>
+
+    <span class="c1"># --- &quot;Train&quot; on the kept (informative) groups: here we just record stats</span>
+    <span class="c1">#     and apply the simulated learning drift so difficulty is non-stationary.</span>
+    <span class="n">bucket_counts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">buckets</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">int</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">t</span><span class="p">,</span> <span class="n">successes</span> <span class="ow">in</span> <span class="n">kept</span><span class="p">:</span>
+        <span class="n">engine</span><span class="o">.</span><span class="n">learn_drift</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>               <span class="c1"># policy improves -&gt; p drifts up</span>
+        <span class="n">p_hat</span> <span class="o">=</span> <span class="n">successes</span> <span class="o">/</span> <span class="n">G</span>
+        <span class="n">b</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">searchsorted</span><span class="p">(</span><span class="n">buckets</span><span class="p">,</span> <span class="n">p_hat</span><span class="p">,</span> <span class="n">side</span><span class="o">=</span><span class="s2">&quot;right&quot;</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">buckets</span><span class="p">)</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">bucket_counts</span><span class="p">[</span><span class="nb">max</span><span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="mi">0</span><span class="p">)]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="n">survival</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">kept</span><span class="p">)</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">generated_groups</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;kept&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">kept</span><span class="p">),</span>
+        <span class="s2">&quot;generated_groups&quot;</span><span class="p">:</span> <span class="n">generated_groups</span><span class="p">,</span>
+        <span class="s2">&quot;survival_rho&quot;</span><span class="p">:</span> <span class="n">survival</span><span class="p">,</span>           <span class="c1"># what fraction survived the filter</span>
+        <span class="s2">&quot;oversample_factor&quot;</span><span class="p">:</span> <span class="n">generated_groups</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">kept</span><span class="p">),</span> <span class="mi">1</span><span class="p">),</span>
+        <span class="s2">&quot;bucket_counts&quot;</span><span class="p">:</span> <span class="n">bucket_counts</span><span class="p">,</span>     <span class="c1"># distribution of kept difficulties</span>
+    <span class="p">}</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Run it. Watch survival rho recover toward 1 (selection feeds in-band prompts)</span>
+<span class="c1"># and the kept-difficulty histogram concentrate near the target band.</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="c1"># A pool spanning the full difficulty range, incl. the dead tails we must avoid.</span>
+    <span class="n">pool</span> <span class="o">=</span> <span class="p">[</span><span class="n">TaskState</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">true_p</span><span class="o">=</span><span class="n">rng</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mf">0.02</span><span class="p">,</span> <span class="mf">0.98</span><span class="p">))</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">4000</span><span class="p">)]</span>
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">8</span><span class="p">):</span>
+        <span class="n">stats</span> <span class="o">=</span> <span class="n">rl_step</span><span class="p">(</span><span class="n">pool</span><span class="p">,</span> <span class="n">FakeEngine</span><span class="p">(),</span> <span class="n">B_keep</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">G</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">target_p</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;step </span><span class="si">{</span><span class="n">step</span><span class="si">:</span><span class="s2">2d</span><span class="si">}</span><span class="s2"> | rho=</span><span class="si">{</span><span class="n">stats</span><span class="p">[</span><span class="s1">&#39;survival_rho&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;| oversample=</span><span class="si">{</span><span class="n">stats</span><span class="p">[</span><span class="s1">&#39;oversample_factor&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x &quot;</span>
+              <span class="sa">f</span><span class="s2">&quot;| buckets[0.0-1.0]=</span><span class="si">{</span><span class="n">stats</span><span class="p">[</span><span class="s1">&#39;bucket_counts&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Two behaviors to watch when you run this. First, the <strong>survival fraction <span class="arithmatex">\(\rho\)</span></strong> is well above the uniform-sampling baseline because Thompson selection feeds in-band prompts — that is the oversampling-tax saving from the worked example, made mechanical. Second, the <strong>kept-difficulty histogram concentrates around the middle buckets</strong> (near <span class="arithmatex">\(p=0.5\)</span>): even though the pool spans <span class="arithmatex">\([0.02, 0.98]\)</span>, the batch you actually train on is the informative middle, by construction. As <code>learn_drift</code> pushes mastered tasks toward <span class="arithmatex">\(p=1\)</span>, the Beta posteriors follow, those tasks stop being selected, and harder tasks rotate into the band — the emergent curriculum, in code.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Bolt-on: a prioritized PROMPT buffer (PER at the task level). Priority = how</span>
+<span class="c1"># close a task is to the target band, with a small age bonus so we revisit</span>
+<span class="c1"># under-sampled tasks. This is the on-policy, FREE kind of replay.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">prompt_priority</span><span class="p">(</span><span class="n">t</span><span class="p">:</span> <span class="n">TaskState</span><span class="p">,</span> <span class="n">target_p</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">age_w</span><span class="o">=</span><span class="mf">0.05</span><span class="p">):</span>
+    <span class="n">closeness</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">posterior_mean</span><span class="p">()</span> <span class="o">-</span> <span class="n">target_p</span><span class="p">)</span> <span class="o">+</span> <span class="mf">0.05</span><span class="p">)</span>  <span class="c1"># near band -&gt; high</span>
+    <span class="n">uncertainty</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">s</span> <span class="o">*</span> <span class="n">t</span><span class="o">.</span><span class="n">f</span><span class="p">)</span> <span class="o">/</span> <span class="p">((</span><span class="n">t</span><span class="o">.</span><span class="n">s</span> <span class="o">+</span> <span class="n">t</span><span class="o">.</span><span class="n">f</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">*</span> <span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">s</span> <span class="o">+</span> <span class="n">t</span><span class="o">.</span><span class="n">f</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span>  <span class="c1"># Beta variance</span>
+    <span class="k">return</span> <span class="n">closeness</span> <span class="o">+</span> <span class="n">age_w</span> <span class="o">*</span> <span class="n">uncertainty</span>  <span class="c1"># exploit band + explore uncertain tasks</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sample_from_buffer</span><span class="p">(</span><span class="n">tasks</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">target_p</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+    <span class="n">pr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">prompt_priority</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">target_p</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">tasks</span><span class="p">])</span>
+    <span class="n">probs</span> <span class="o">=</span> <span class="p">(</span><span class="n">pr</span> <span class="o">**</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="n">temperature</span><span class="p">))</span>
+    <span class="n">probs</span> <span class="o">/=</span> <span class="n">probs</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">tasks</span><span class="p">),</span> <span class="n">size</span><span class="o">=</span><span class="n">n</span><span class="p">,</span> <span class="n">replace</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">p</span><span class="o">=</span><span class="n">probs</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">tasks</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">idx</span><span class="p">]</span>
+</code></pre></div>
+<p>The prioritized prompt buffer is the persistent, sampling-without-replacement-per-step version of the Thompson selector: priority rewards proximity to the band (exploit) plus posterior variance (explore under-sampled tasks). Note this buffer stores <em>tasks</em>, never old completions — it is strictly on-policy and therefore free of importance-weighting concerns, unlike the staleness buffer discussed earlier.</p>
+<h2 id="putting-it-together-the-data-side-knobs-that-move-sample-efficiency">Putting it together: the data-side knobs that move sample efficiency<a class="headerlink" href="#putting-it-together-the-data-side-knobs-that-move-sample-efficiency" title="Permanent link">¶</a></h2>
+<p>Step back. The levers in this chapter form a pipeline, and each one removes a different category of wasted rollout:</p>
+<figure class="viz" id="fig-rldata-sample-efficiency-pipeline">
+<svg viewBox="0 0 820 980" role="img" aria-label="Vertical pipeline flowchart showing six data-side stages that each remove a category of wasted rollout, from raw prompt pool through to informative training batch and GRPO update, with a feedback loop back into stage 3.">
+<style>
+  #fig-rldata-sample-efficiency-pipeline text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#1e293b); }
+  #fig-rldata-sample-efficiency-pipeline .node-text { font: 600 13px var(--sans,sans-serif); fill: var(--ink-soft,#1e293b); }
+  #fig-rldata-sample-efficiency-pipeline .node-text-inv { font: 700 13px var(--sans,sans-serif); fill: #fff; }
+  #fig-rldata-sample-efficiency-pipeline .op-label { font: 600 11.5px var(--sans,sans-serif); fill: var(--ink-soft,#1e293b); }
+  #fig-rldata-sample-efficiency-pipeline .waste-tag { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-rldata-sample-efficiency-pipeline .loop-label { font: 600 11px var(--sans,sans-serif); fill: var(--accent,#4f7cff); }
+  #fig-rldata-sample-efficiency-pipeline .sidenote { font: italic 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+</style>
+<defs>
+  <marker id="sep-arrow-down" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L5 9 L10 0 z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+  <marker id="sep-arrow-hot" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L5 9 L10 0 z" fill="var(--warn,#f59e0b)"/>
+  </marker>
+  <marker id="sep-arrow-loop" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L5 9 L10 0 z" fill="var(--accent,#4f7cff)"/>
+  </marker>
+  <marker id="sep-arrow-right" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f7cff)"/>
+  </marker>
+</defs>
+
+
+
+
+
+
+<rect x="160" y="37" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="300" y="65" text-anchor="middle" class="node-text">raw prompt pool</text>
+
+
+<line x1="300" y1="83" x2="300" y2="147" stroke="var(--muted,#94a3b8)" stroke-width="1.8" marker-end="url(#sep-arrow-down)"/>
+
+<text x="455" y="107" class="op-label">(1) construction + QC + decontam + dedup</text>
+<text x="455" y="122" class="waste-tag">-&gt; remove garbage</text>
+
+
+<rect x="160" y="152" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="300" y="180" text-anchor="middle" class="node-text">verifiable corpus</text>
+
+
+<line x1="300" y1="198" x2="300" y2="262" stroke="var(--muted,#94a3b8)" stroke-width="1.8" marker-end="url(#sep-arrow-down)"/>
+
+<text x="455" y="222" class="op-label">(2) offline difficulty estimate, prune 0/k and k/k</text>
+<text x="455" y="237" class="waste-tag">-&gt; remove dead tails</text>
+
+
+<rect x="160" y="267" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="300" y="295" text-anchor="middle" class="node-text">usable corpus with priors</text>
+
+
+<line x1="300" y1="313" x2="300" y2="377" stroke="var(--muted,#94a3b8)" stroke-width="1.8" marker-end="url(#sep-arrow-down)"/>
+
+<text x="455" y="337" class="op-label">(3) difficulty-targeted online selection (band)</text>
+<text x="455" y="352" class="waste-tag">-&gt; raise survival rho</text>
+
+
+<rect x="160" y="382" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="300" y="410" text-anchor="middle" class="node-text">selected batch (mostly in-band)</text>
+
+
+<line x1="300" y1="428" x2="300" y2="487" stroke="var(--warn,#f59e0b)" stroke-width="3.5" marker-end="url(#sep-arrow-hot)"/>
+
+<text x="455" y="450" class="op-label" fill="var(--warn,#f59e0b)">(4) generate G per prompt</text>
+<text x="455" y="465" class="waste-tag" fill="var(--warn,#f59e0b)">-&gt; the expensive step</text>
+
+
+<rect x="160" y="492" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="300" y="520" text-anchor="middle" class="node-text">raw groups</text>
+
+
+<line x1="300" y1="538" x2="300" y2="602" stroke="var(--muted,#94a3b8)" stroke-width="1.8" marker-end="url(#sep-arrow-down)"/>
+
+<text x="455" y="558" class="op-label">(5) dynamic sampling: drop zero-variance,</text>
+<text x="455" y="573" class="op-label">    oversample</text>
+<text x="455" y="588" class="waste-tag">-&gt; guarantee signal</text>
+
+
+<rect x="160" y="607" width="280" height="46" rx="8"
+      fill="var(--accent,#4f7cff)" stroke="var(--accent,#4f7cff)" stroke-width="2.5"/>
+<text x="300" y="635" text-anchor="middle" class="node-text-inv">informative training batch</text>
+
+
+<line x1="440" y1="630" x2="548" y2="630" stroke="var(--accent,#4f7cff)" stroke-width="2" marker-end="url(#sep-arrow-right)"/>
+
+<rect x="552" y="612" width="130" height="36" rx="18"
+      fill="var(--accent,#4f7cff)" stroke="none"/>
+<text x="617" y="634" text-anchor="middle" class="node-text-inv">GRPO update</text>
+
+
+<line x1="300" y1="653" x2="300" y2="715" stroke="var(--muted,#94a3b8)" stroke-width="1.8" marker-end="url(#sep-arrow-down)"/>
+
+<text x="455" y="676" class="op-label">(6) update online difficulty (EMA/Beta)</text>
+<text x="455" y="691" class="waste-tag">-&gt; track moving p</text>
+
+
+<rect x="160" y="720" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--accent,#4f7cff)" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="300" y="748" text-anchor="middle" class="node-text">prioritized prompt buffer</text>
+
+
+
+
+<path d="M 300,766 L 300,820 Q 300,840 280,840 L 80,840 Q 60,840 60,820 L 60,290 Q 60,268 80,268 L 160,268"
+      fill="none" stroke="var(--accent,#4f7cff)" stroke-width="2" stroke-dasharray="7 4"
+      marker-end="url(#sep-arrow-right)"/>
+
+
+<text transform="rotate(-90,32,560)" x="32" y="560" text-anchor="middle" class="loop-label">feeds back into (3) = emergent curriculum</text>
+
+
+<text x="410" y="888" text-anchor="middle" class="sidenote">(+ optional shallow staleness buffer for async overlap, success buffer for retention)</text>
+
+</svg>
+<figcaption><b>The data-side pipeline: six stages that each remove a category of wasted rollout.</b> Starting from a raw prompt pool, each numbered operation strips away a different class of inefficiency — garbage prompts, dead-tail prompts, out-of-band prompts, zero-variance groups — until only fully-informative groups reach the GRPO update. Stage 4 (generate G per prompt, in amber) is the dominant compute cost; every upstream stage exists to reduce how much of it gets wasted. The feedback loop from stage 6 back into stage 3 is the emergent curriculum: online difficulty estimates continuously re-steer selection as the policy improves.</figcaption>
+</figure>
+
+<p>Each numbered stage is a multiplier on sample efficiency, and they compound: decontamination protects the <em>validity</em> of everything downstream; tail-pruning removes the prompts that can <em>never</em> contribute; targeting raises survival <span class="arithmatex">\(\rho\)</span> so dynamic sampling oversamples less; dynamic sampling guarantees the gradient is never diluted by dead groups; and online difficulty closes the loop so the whole thing tracks the policy as it improves. A run with all six tuned can be <em>several times</em> more sample-efficient — in rollouts-per-unit-improvement — than the same algorithm reading a static shuffled <code>.jsonl</code>, with no change to the loss function at all.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re running GRPO on a math corpus and notice your training reward climbs for 200 steps then plateaus, while GPU utilization stays high and the loss is non-zero but tiny. What&rsquo;s happening, and how do you diagnose and fix it on the <em>data</em> side — without touching the RL algorithm?</p>
+<p><strong>A:</strong> This is the classic <em>difficulty-saturation</em> failure. Early on, many prompts sit near <span class="arithmatex">\(p=0.5\)</span> where reward variance <span class="arithmatex">\(p(1-p)\)</span> — and thus the policy-gradient signal — is maximal. As the policy improves, those prompts drift toward <span class="arithmatex">\(p=1\)</span>; their groups increasingly come back all-correct, contribute zero advantage variance, and the <em>effective</em> batch (the prompts that actually carry gradient) shrinks even though every GPU is busy generating. Utilization stays high because you&rsquo;re still rolling out; the loss is tiny because most groups are near-zero-variance.</p>
+<p>To diagnose, I&rsquo;d log the <strong>per-group pass-rate histogram</strong> and the <strong>fraction of zero-variance groups per step</strong>; the smoking gun is that fraction climbing over training. The fix is entirely data-side: (1) turn on <strong>dynamic sampling</strong> so you only train on <span class="arithmatex">\(0&lt;\hat p&lt;1\)</span> groups and oversample to refill — this immediately restores a fully-informative batch; (2) maintain an <strong>online difficulty estimate</strong> (EMA or decayed Beta posterior) and <strong>target selection</strong> toward the <span class="arithmatex">\(p\approx0.5\)</span> band, so you stop spending rollouts on mastered prompts and the <em>emergent curriculum</em> slides toward harder material; (3) if survival fraction <span class="arithmatex">\(\rho\)</span> is dropping, that confirms saturation and also tells you the oversampling tax you&rsquo;re paying. If the pool itself is exhausted of in-band prompts (everything is now easy), that&rsquo;s a <em>corpus</em> problem — mine the current policy&rsquo;s failures or add harder synthetic prompts to extend the curriculum. Crucially none of this changes the GRPO objective; it changes <em>which prompts the objective sees</em>.</p>
+</div>
+<h2 id="key-takeaways">Key Takeaways<a class="headerlink" href="#key-takeaways" title="Permanent link">¶</a></h2>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Difficulty is the master variable.</strong> For a binary verifiable reward, gradient signal per prompt scales as <span class="arithmatex">\(p(1-p)\)</span>, peaking at pass rate <span class="arithmatex">\(p=0.5\)</span> and vanishing at both ends — so a prompt&rsquo;s <em>current</em> pass rate decides its worth.</li>
+<li><strong>Pass rate is non-stationary.</strong> It&rsquo;s a property of the prompt <em>and the current policy</em>; a static difficulty label decays as the policy learns. Estimate difficulty <strong>online</strong> (EMA or a decayed Beta–Bernoulli posterior), never once-and-forever.</li>
+<li><strong>Construction and QC dominate validity.</strong> Verifiable checkers, eval decontamination, and near-duplicate removal matter more in RL than SFT because RL adversarially exploits any reward defect; prune the <span class="arithmatex">\(0/k\)</span> and <span class="arithmatex">\(k/k\)</span> tails before training to delete prompts that can never contribute.</li>
+<li><strong>Difficulty-targeted online selection</strong> (greedy-to-target or Thompson sampling on the Beta posterior) keeps realized groups near a <span class="arithmatex">\(p\approx0.5\)</span> <em>band</em>, raising the dynamic-sampling survival fraction <span class="arithmatex">\(\rho\)</span> and cutting the oversampling tax — often a ~20–30% end-to-end win, free.</li>
+<li><strong>Dynamic sampling</strong> drops zero-variance groups and oversamples to refill, guaranteeing every gradient step trains on signal — cheap on an async/oversubscribed generator, brutal on a synchronous one.</li>
+<li><strong>Curriculum is emergent, not authored:</strong> with online targeting, the band&rsquo;s contents drift from easy to hard automatically as the policy masters material; regret/learning-progress weighting pushes compute to the competence frontier.</li>
+<li><strong>Three buffers, three jobs:</strong> a prioritized <em>prompt</em> buffer (on-policy, free, the curriculum); a <em>shallow staleness</em> buffer of completions with stored log-probs for async overlap (off-policy, importance-corrected, half-life of a few steps); and a <em>success/hard-case</em> buffer for anti-forgetting on sparse agentic tasks.</li>
+<li><strong>Trajectory replay has a half-life:</strong> stored completions go stale as the policy drifts; importance weights blow up and clipping zeroes their gradient, so evict beyond a staleness bound and monitor the clipped-token fraction.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Data-side RL has converged on a recognizable stack: verifiable corpora with aggressive decontamination, offline difficulty bucketing to prune dead tails, online difficulty tracking, difficulty-targeted selection toward a ~50%-pass band, and DAPO-style dynamic sampling as default practice. The frontier is automatic curriculum (learning-progress/regret weighting) and principled off-policy replay for fully-async, agentic RL.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1511.05952">Schaul et al., <em>Prioritized Experience Replay</em> (2016)</a> — the priority-and-importance-weight machinery that prompt/trajectory buffers adapt to the LLM setting.</li>
+<li><a href="https://arxiv.org/abs/1704.03003">Graves et al., <em>Automated Curriculum Learning for Neural Networks</em> (2017)</a> — learning-progress signals for ordering tasks; the conceptual root of regret-based curricula.</li>
+</ul>
+<p><strong>Recent advances (2024–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2503.14476">Yu et al., <em>DAPO: An Open-Source LLM Reinforcement Learning System at Scale</em> (2025)</a> — dynamic sampling (drop zero-variance groups, oversample to refill) as standard RLVR practice.</li>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI, <em>DeepSeek-R1</em> (2025)</a> and <em>DeepSeekMath</em> — the GRPO/RLVR baseline whose advantage structure makes pass rate the master variable.</li>
+<li><a href="https://arxiv.org/abs/2501.12599">Kimi Team, <em>Kimi k1.5</em> (2025)</a> — curriculum and prioritized sampling at scale alongside partial-rollout infrastructure.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/verl-project/verl">verl-project/verl</a> and <a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF/OpenRLHF</a> — production RL frameworks with dynamic sampling, dataset/curriculum hooks, and async replay.</li>
+<li><a href="https://github.com/PrimeIntellect-ai/prime-rl">PrimeIntellect-ai/prime-rl</a> — fully-async agentic RL where shallow staleness replay and importance correction are first-class.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Schaul, Quan, Antonoglou &amp; Silver, <em>Prioritized Experience Replay</em> — priority and importance weighting; the buffer mechanics this chapter ports to prompts and trajectories.</li>
+<li>Graves et al., <em>Automated Curriculum Learning for Neural Networks</em> — learning-progress-driven task ordering; the basis for regret/progress curricula.</li>
+<li>Yu et al., <em>DAPO: An Open-Source LLM Reinforcement Learning System at Scale</em> — dynamic sampling and the zero-variance-group filter in an RLVR context.</li>
+<li>DeepSeek-AI, <em>DeepSeekMath</em> (GRPO) and <em>DeepSeek-R1</em> — the group-relative advantage that makes pass-rate variance <span class="arithmatex">\(p(1-p)\)</span> the signal-to-noise of a prompt.</li>
+<li>Kimi Team, <em>Kimi k1.5: Scaling Reinforcement Learning with LLMs</em> — curriculum, prioritized sampling, and long-context RL data infrastructure.</li>
+<li>Noukhovitch et al., <em>Asynchronous RLHF: Faster and More Efficient Off-Policy RL for Language Models</em> — the staleness/importance-weight regime that bounds trajectory-replay reuse.</li>
+<li>Schulman et al., <em>Proximal Policy Optimization Algorithms</em> — the clipped importance-sampling objective that makes shallow off-policy replay safe.</li>
+<li>Dennis et al., <em>Emergent Complexity and Zero-shot Transfer via Unsupervised Environment Design</em> (PAIRED) — regret-based automatic curriculum, the theoretical cousin of difficulty-targeted selection.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="11-scaling-rl-tricks.html"><span class="pn-label">← Previous</span><span class="pn-title">Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</span></a>
+<a class="next" href="../07-inference-serving/01-anatomy-inference.html"><span class="pn-label">Next →</span><span class="pn-title">The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-difficulty-is-the-master-variable">Why difficulty is the master variable</a></li>
+<li class="toc-l2"><a href="#building-the-dataset-construction-and-quality-control">Building the dataset: construction and quality control</a></li>
+<li class="toc-l3"><a href="#the-non-negotiables-of-an-rlvr-prompt-set">The non-negotiables of an RLVR prompt set</a></li>
+<li class="toc-l3"><a href="#where-the-prompts-come-from">Where the prompts come from</a></li>
+<li class="toc-l2"><a href="#difficulty-estimation-offline-priors-and-online-truth">Difficulty estimation: offline priors and online truth</a></li>
+<li class="toc-l3"><a href="#offline-difficulty-estimation">Offline difficulty estimation</a></li>
+<li class="toc-l3"><a href="#online-difficulty-the-ema-and-beta-views">Online difficulty: the EMA and Beta views</a></li>
+<li class="toc-l2"><a href="#difficulty-targeted-online-selection-keeping-prompts-near-p05">Difficulty-targeted online selection: keeping prompts near p≈0.5</a></li>
+<li class="toc-l3"><a href="#selection-as-a-bandit-over-difficulty">Selection as a bandit over difficulty</a></li>
+<li class="toc-l3"><a href="#the-relationship-to-dynamic-sampling">The relationship to dynamic sampling</a></li>
+<li class="toc-l2"><a href="#dynamic-sampling-never-train-on-a-zero-variance-batch">Dynamic sampling: never train on a zero-variance batch</a></li>
+<li class="toc-l2"><a href="#prompt-curriculum-walking-the-policy-up-the-difficulty-ladder">Prompt curriculum: walking the policy up the difficulty ladder</a></li>
+<li class="toc-l3"><a href="#static-staged-curriculum">Static / staged curriculum</a></li>
+<li class="toc-l3"><a href="#automatic-online-curriculum">Automatic / online curriculum</a></li>
+<li class="toc-l3"><a href="#self-paced-regret-based-curriculum">Self-paced / regret-based curriculum</a></li>
+<li class="toc-l2"><a href="#replay-buffers-reusing-rollouts-you-already-paid-for">Replay buffers: reusing rollouts you already paid for</a></li>
+<li class="toc-l3"><a href="#prompt-level-replay-revisiting-tasks">Prompt-level replay (revisiting tasks)</a></li>
+<li class="toc-l3"><a href="#trajectory-level-replay-reusing-completions">Trajectory-level replay (reusing completions)</a></li>
+<li class="toc-l2"><a href="#code-a-dynamic-sampling-difficulty-bucketing-rollout-loop">Code: a dynamic-sampling + difficulty-bucketing rollout loop</a></li>
+<li class="toc-l2"><a href="#putting-it-together-the-data-side-knobs-that-move-sample-efficiency">Putting it together: the data-side knobs that move sample efficiency</a></li>
+<li class="toc-l2"><a href="#key-takeaways">Key Takeaways</a></li>
+<li class="toc-l2"><a href="#further-reading">Further reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

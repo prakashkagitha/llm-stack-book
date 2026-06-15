@@ -1,0 +1,1544 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Flywheels &amp; Continuous Improvement — The LLM Stack</title>
+<meta name="description" content="Logging -&gt; labeling -&gt; retraining loops, preference collection in production, active learning, distillation from production traffic, eval-gated deployment, the ">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="active" href="05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part XII — Production, Systems &amp; MLOps</div>
+<h1 id="125-data-flywheels-continuous-improvement">12.5 Data Flywheels &amp; Continuous Improvement<a class="headerlink" href="#125-data-flywheels-continuous-improvement" title="Permanent link">¶</a></h1>
+<p>Every LLM product faces the same tension: you ship a model trained on yesterday&rsquo;s data into a world that keeps changing, with users who keep finding new failure modes. The teams that win long-term are not the ones who launch the best model on day one — they are the ones who have built machinery to observe failures, collect signal, retrain, and redeploy faster than their competitors. This machinery is called the <strong>data flywheel</strong>.</p>
+<p>A data flywheel is a self-reinforcing loop. Better data produces a better model, which earns more users, which generates more interaction data, which feeds the next improvement. The compounding effect is not linear: each trip around the loop tends to reveal sharper edge cases and produces denser training signal than the last. This chapter walks through every component of that loop in detail — logging design, labeling pipelines, preference collection, active learning, distillation from production traffic, and eval-gated deployment — and shows how to wire them together into a live, self-improving system.</p>
+<p>This chapter assumes you are already familiar with <a href="../05-posttraining-alignment/01-sft-instruction-tuning.html">Supervised Fine-Tuning &amp; Instruction Tuning</a>, <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>, and <a href="../12-production-mlops/02-observability-llmops.html">Observability, Logging &amp; LLMOps</a>. It also builds on evaluation concepts covered in <a href="../11-evaluation/01-eval-landscape.html">The Evaluation Problem &amp; Benchmark Landscape</a> and <a href="../11-evaluation/03-eval-harnesses.html">Building Eval Harnesses</a>.</p>
+<h2 id="the-anatomy-of-a-data-flywheel">The Anatomy of a Data Flywheel<a class="headerlink" href="#the-anatomy-of-a-data-flywheel" title="Permanent link">¶</a></h2>
+<p>Before diving into individual components, let us establish the whole picture. A production data flywheel has six stages that cycle continuously:</p>
+<figure class="viz" id="fig-flywheel-six-stage-loop">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 520" role="img" aria-label="The Data Flywheel: six stages arranged in a clockwise ring — SERVE (Model vN), LOG, LABEL/SCORE, RETRAIN, EVAL-GATED GATE, DEPLOY (Model vN+1) — with a pulse animation traveling the loop to convey continuous self-reinforcement.">
+<defs>
+  <marker id="fl6-arr" viewBox="0 0 10 10" refX="9" refY="5"
+    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <path id="fl6-p1" d="M 296,114 Q 380,76 462,114"/>
+  <path id="fl6-p2" d="M 555,143 Q 592,218 555,285"/>
+  <path id="fl6-p3" d="M 528,335 Q 520,387 483,401"/>
+  <path id="fl6-p4" d="M 453,432 Q 380,462 293,432"/>
+  <path id="fl6-p5" d="M 191,394 Q 167,344 175,294"/>
+  <path id="fl6-p6" d="M 182,242 Q 197,154 233,127"/>
+  <style>
+    @media (prefers-reduced-motion: reduce) {
+      .fl6-pulse { animation: none !important; opacity: 0 !important; }
+    }
+    #fig-flywheel-six-stage-loop .nt {
+      font: 700 13px var(--sans,sans-serif);
+    }
+    #fig-flywheel-six-stage-loop .ns {
+      font: 400 10.5px var(--sans,sans-serif);
+    }
+    #fig-flywheel-six-stage-loop .nc {
+      font: 400 9px var(--sans,sans-serif);
+    }
+    #fig-flywheel-six-stage-loop .ct {
+      font: 800 17px var(--sans,sans-serif);
+    }
+    #fig-flywheel-six-stage-loop .cs {
+      font: 400 11px var(--sans,sans-serif);
+    }
+  </style>
+</defs>
+
+
+<path d="M 296,114 Q 380,76 462,114" fill="none"
+  stroke="var(--accent,#4f46e5)" stroke-width="2.2" marker-end="url(#fl6-arr)"/>
+<path d="M 555,143 Q 592,218 555,285" fill="none"
+  stroke="var(--accent,#4f46e5)" stroke-width="2.2" marker-end="url(#fl6-arr)"/>
+<path d="M 528,335 Q 520,387 483,401" fill="none"
+  stroke="var(--accent,#4f46e5)" stroke-width="2.2" marker-end="url(#fl6-arr)"/>
+<path d="M 453,432 Q 380,462 293,432" fill="none"
+  stroke="var(--accent,#4f46e5)" stroke-width="2.2" marker-end="url(#fl6-arr)"/>
+<path d="M 191,394 Q 167,344 175,294" fill="none"
+  stroke="var(--accent,#4f46e5)" stroke-width="2.2" marker-end="url(#fl6-arr)"/>
+<path d="M 182,242 Q 197,154 233,127" fill="none"
+  stroke="var(--accent,#4f46e5)" stroke-width="2.2" marker-end="url(#fl6-arr)"/>
+
+
+<circle class="fl6-pulse" r="7" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="7.2s" repeatCount="indefinite" begin="0s"><mpath href="#fl6-p1"/></animateMotion>
+  <animate attributeName="opacity" dur="7.2s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.01;0.155;0.165;1" values="0;1;1;0;0"/>
+</circle>
+<circle class="fl6-pulse" r="7" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="7.2s" repeatCount="indefinite" begin="0s"><mpath href="#fl6-p2"/></animateMotion>
+  <animate attributeName="opacity" dur="7.2s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.165;0.166;0.32;0.33;1" values="0;0;1;1;0;0"/>
+</circle>
+<circle class="fl6-pulse" r="7" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="7.2s" repeatCount="indefinite" begin="0s"><mpath href="#fl6-p3"/></animateMotion>
+  <animate attributeName="opacity" dur="7.2s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.33;0.331;0.495;0.505;1" values="0;0;1;1;0;0"/>
+</circle>
+<circle class="fl6-pulse" r="7" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="7.2s" repeatCount="indefinite" begin="0s"><mpath href="#fl6-p4"/></animateMotion>
+  <animate attributeName="opacity" dur="7.2s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.505;0.506;0.66;0.67;1" values="0;0;1;1;0;0"/>
+</circle>
+<circle class="fl6-pulse" r="7" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="7.2s" repeatCount="indefinite" begin="0s"><mpath href="#fl6-p5"/></animateMotion>
+  <animate attributeName="opacity" dur="7.2s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.67;0.671;0.83;0.84;1" values="0;0;1;1;0;0"/>
+</circle>
+<circle class="fl6-pulse" r="7" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="7.2s" repeatCount="indefinite" begin="0s"><mpath href="#fl6-p6"/></animateMotion>
+  <animate attributeName="opacity" dur="7.2s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.84;0.841;0.99;1" values="0;0;1;1;0"/>
+</circle>
+
+
+<text x="380" y="244" text-anchor="middle" class="ct"
+  fill="var(--accent,#4f46e5)">THE DATA FLYWHEEL</text>
+<text x="380" y="264" text-anchor="middle" class="cs"
+  fill="var(--muted,#888)">each loop = denser signal</text>
+
+
+<g data-anim="1">
+  <rect x="148" y="80" width="150" height="74" rx="8"
+    fill="var(--surface-3,#ece7da)" stroke="var(--accent,#4f46e5)" stroke-width="2.5"/>
+  <rect x="148" y="80" width="150" height="5" rx="3"
+    fill="var(--accent,#4f46e5)"/>
+  <text x="223" y="114" text-anchor="middle" class="nt"
+    fill="var(--ink-soft,#45413a)">SERVE</text>
+  <text x="223" y="130" text-anchor="middle" class="ns"
+    fill="var(--ink-soft,#45413a)">Model vN</text>
+  <text x="223" y="145" text-anchor="middle" class="nc"
+    fill="var(--muted,#6d675d)">(current production)</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="462" y="80" width="150" height="74" rx="8"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <rect x="462" y="80" width="150" height="5" rx="3"
+    fill="var(--accent,#4f46e5)"/>
+  <text x="537" y="114" text-anchor="middle" class="nt"
+    fill="var(--ink-soft,#45413a)">LOG</text>
+  <text x="537" y="130" text-anchor="middle" class="ns"
+    fill="var(--ink-soft,#45413a)">requests, outputs,</text>
+  <text x="537" y="146" text-anchor="middle" class="ns"
+    fill="var(--ink-soft,#45413a)">signals</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="565" y="272" width="162" height="74" rx="8"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <rect x="565" y="272" width="162" height="5" rx="3"
+    fill="var(--accent,#4f46e5)"/>
+  <text x="646" y="305" text-anchor="middle" class="nt"
+    fill="var(--ink-soft,#45413a)">LABEL / SCORE</text>
+  <text x="646" y="321" text-anchor="middle" class="ns"
+    fill="var(--ink-soft,#45413a)">human + auto</text>
+  <text x="646" y="336" text-anchor="middle" class="nc"
+    fill="var(--muted,#6d675d)">(reward modeling)</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="450" y="392" width="150" height="74" rx="8"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <rect x="450" y="392" width="150" height="5" rx="3"
+    fill="var(--accent,#4f46e5)"/>
+  <text x="525" y="424" text-anchor="middle" class="nt"
+    fill="var(--ink-soft,#45413a)">RETRAIN</text>
+  <text x="525" y="440" text-anchor="middle" class="ns"
+    fill="var(--ink-soft,#45413a)">SFT + RLHF</text>
+  <text x="525" y="456" text-anchor="middle" class="nc"
+    fill="var(--muted,#6d675d)">(new candidate)</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="148" y="392" width="150" height="74" rx="8"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <rect x="148" y="392" width="150" height="5" rx="3"
+    fill="var(--accent,#4f46e5)"/>
+  <text x="223" y="421" text-anchor="middle" class="nt"
+    fill="var(--ink-soft,#45413a)">EVAL-GATED</text>
+  <text x="223" y="437" text-anchor="middle" class="nt"
+    fill="var(--ink-soft,#45413a)">GATE</text>
+  <text x="223" y="455" text-anchor="middle" class="nc"
+    fill="var(--muted,#6d675d)">(must pass before deploy)</text>
+</g>
+
+
+<g data-anim="6">
+  <rect x="18" y="217" width="158" height="74" rx="8"
+    fill="var(--surface-3,#ece7da)" stroke="var(--accent,#4f46e5)" stroke-width="2.5"/>
+  <rect x="18" y="217" width="158" height="5" rx="3"
+    fill="var(--accent,#4f46e5)"/>
+  <text x="97" y="250" text-anchor="middle" class="nt"
+    fill="var(--ink-soft,#45413a)">DEPLOY</text>
+  <text x="97" y="266" text-anchor="middle" class="ns"
+    fill="var(--ink-soft,#45413a)">Model vN+1</text>
+  <text x="97" y="282" text-anchor="middle" class="nc"
+    fill="var(--muted,#6d675d)">(new production)</text>
+</g>
+
+</svg>
+<figcaption><b>The data flywheel is a closed, self-reinforcing loop — not a pipeline.</b> Six stages cycle clockwise: the live model (v<i>N</i>) serves requests and logs them; logs are labeled or scored by human reviewers and automated proxies; scored data retrains a new candidate via SFT and RLHF; the candidate must pass an eval gate before it is deployed as v<i>N</i>+1; and the newly deployed model begins generating the next round of richer training signal. The animated pulse conveys the continuous, compounding circulation of data through the system.</figcaption>
+</figure>
+
+<p>Each stage has concrete engineering requirements. We will trace through them in order, then discuss the math underlying the value of compounding data.</p>
+<h3 id="why-the-flywheel-is-a-moat">Why the flywheel is a moat<a class="headerlink" href="#why-the-flywheel-is-a-moat" title="Permanent link">¶</a></h3>
+<p>For a new entrant competing against a mature product, the challenge is not the model itself — open-weight base models make that accessible. The challenge is the data advantage. After <span class="arithmatex">\(k\)</span> rounds of the flywheel, a product has collected approximately <span class="arithmatex">\(N_0 \cdot r^k\)</span> training examples (where <span class="arithmatex">\(r &gt; 1\)</span> is the per-round growth factor from a growing user base). More important than volume is <em>distribution shift</em>: after many rounds, a well-run flywheel&rsquo;s training set covers the long tail of real user behaviors in a way no static dataset can match. This is the moat.</p>
+<h2 id="structured-logging-as-the-foundation">Structured Logging as the Foundation<a class="headerlink" href="#structured-logging-as-the-foundation" title="Permanent link">¶</a></h2>
+<p>No flywheel works without high-quality logs. Logs are not just debugging artifacts — they are raw material. Every request must produce a logged record that captures enough context to later train or evaluate a model.</p>
+<h3 id="what-to-log">What to log<a class="headerlink" href="#what-to-log" title="Permanent link">¶</a></h3>
+<p>A minimal request record contains: request ID, timestamp, model version, raw user input, any retrieved context, the full model output, latency, token counts, and any client-side signals received (thumbs up/down, copy events, follow-up edits, session end). A richer record adds: the sampled probabilities of the chosen tokens (for distillation and importance weighting), the intermediate chain-of-thought if visible, and the system prompt hash.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># flywheel/logging/request_logger.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Structured request logger that writes Avro records to an append-only</span>
+<span class="sd">object store (e.g., GCS or S3).  Every field is typed to support</span>
+<span class="sd">schema evolution without breaking downstream readers.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">uuid</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">asdict</span><span class="p">,</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">fastavro</span>  <span class="c1"># pip install fastavro</span>
+
+
+<span class="n">SCHEMA</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;record&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;LLMRequest&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;fields&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;request_id&quot;</span><span class="p">,</span>     <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;timestamp_ms&quot;</span><span class="p">,</span>   <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;long&quot;</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;model_version&quot;</span><span class="p">,</span>  <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;system_prompt_hash&quot;</span><span class="p">,</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;null&quot;</span><span class="p">,</span> <span class="s2">&quot;string&quot;</span><span class="p">],</span> <span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;user_input&quot;</span><span class="p">,</span>     <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;retrieved_docs&quot;</span><span class="p">,</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;array&quot;</span><span class="p">,</span> <span class="s2">&quot;items&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">},</span> <span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="p">[]},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;model_output&quot;</span><span class="p">,</span>   <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;output_logprobs&quot;</span><span class="p">,</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;array&quot;</span><span class="p">,</span> <span class="s2">&quot;items&quot;</span><span class="p">:</span> <span class="s2">&quot;float&quot;</span><span class="p">},</span> <span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="p">[]},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;latency_ms&quot;</span><span class="p">,</span>     <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;float&quot;</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;input_tokens&quot;</span><span class="p">,</span>   <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;int&quot;</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;output_tokens&quot;</span><span class="p">,</span>  <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;int&quot;</span><span class="p">},</span>
+        <span class="c1"># Client signals arrive asynchronously; null until received.</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;thumbs_up&quot;</span><span class="p">,</span>      <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;null&quot;</span><span class="p">,</span> <span class="s2">&quot;boolean&quot;</span><span class="p">],</span> <span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;copied_output&quot;</span><span class="p">,</span>  <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;null&quot;</span><span class="p">,</span> <span class="s2">&quot;boolean&quot;</span><span class="p">],</span> <span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;edited_output&quot;</span><span class="p">,</span>  <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;null&quot;</span><span class="p">,</span> <span class="s2">&quot;string&quot;</span><span class="p">],</span>  <span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;session_id&quot;</span><span class="p">,</span>     <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;null&quot;</span><span class="p">,</span> <span class="s2">&quot;string&quot;</span><span class="p">],</span>  <span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span>
+    <span class="p">]</span>
+<span class="p">}</span>
+
+<span class="n">_PARSED_SCHEMA</span> <span class="o">=</span> <span class="n">fastavro</span><span class="o">.</span><span class="n">parse_schema</span><span class="p">(</span><span class="n">SCHEMA</span><span class="p">)</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">RequestRecord</span><span class="p">:</span>
+    <span class="n">request_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()))</span>
+    <span class="n">timestamp_ms</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">*</span> <span class="mi">1000</span><span class="p">))</span>
+    <span class="n">model_version</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;v0&quot;</span>
+    <span class="n">system_prompt_hash</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">user_input</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">retrieved_docs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">model_output</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">output_logprobs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">latency_ms</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="n">input_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">output_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">thumbs_up</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">copied_output</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">edited_output</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">session_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">AvroRequestLogger</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Buffers records and flushes to Avro files on the object store.</span>
+<span class="sd">    In production this would use a background thread or async task.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">output_prefix</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">buffer_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">output_prefix</span> <span class="o">=</span> <span class="n">output_prefix</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer_size</span> <span class="o">=</span> <span class="n">buffer_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_flush_count</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">record</span><span class="p">:</span> <span class="n">RequestRecord</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">asdict</span><span class="p">(</span><span class="n">record</span><span class="p">))</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">buffer_size</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">flush</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">output_prefix</span><span class="si">}</span><span class="s2">/part-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_flush_count</span><span class="si">:</span><span class="s2">05d</span><span class="si">}</span><span class="s2">.avro&quot;</span>
+        <span class="c1"># In production: open a GCS/S3 file object here.</span>
+        <span class="c1"># For illustration we write locally.</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">&quot;wb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">fastavro</span><span class="o">.</span><span class="n">writer</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">_PARSED_SCHEMA</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_flush_count</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Flushed </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2"> records to </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">path</span>
+</code></pre></div>
+<h3 id="joining-async-signals-back-to-requests">Joining async signals back to requests<a class="headerlink" href="#joining-async-signals-back-to-requests" title="Permanent link">¶</a></h3>
+<p>Client signals (thumbs up, copy, regeneration requests) arrive seconds to minutes after the original request. You need a join service that updates the immutable log record. The cleanest approach is an event stream (Kafka or Pub/Sub): the serving tier emits request events; the client browser emits signal events keyed on request ID; a Flink or Spark Streaming job performs a session-windowed join and writes the enriched record to a curated table.</p>
+<figure class="viz" id="fig-flywheel-async-signal-join">
+<svg viewBox="0 0 780 300" role="img" aria-label="Streaming data-flow: serving-tier emits request_events and browser-sdk emits signal_events, both flow into a session-windowed join job (Flink/Spark Streaming on request_id), producing enriched_requests in BigQuery/Delta and a secondary unenriched table for implicit weak-supervision labels.">
+<defs>
+  <marker id="asj-arr" viewBox="0 0 10 10" refX="9" refY="5"
+    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="asj-arr-acc" viewBox="0 0 10 10" refX="9" refY="5"
+    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="asj-arr-mut" viewBox="0 0 10 10" refX="9" refY="5"
+    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#6d675d)"/>
+  </marker>
+  <style>
+    #fig-flywheel-async-signal-join .box-title {
+      font: 700 12px var(--sans,sans-serif);
+    }
+    #fig-flywheel-async-signal-join .box-sub {
+      font: 400 9.5px var(--sans,sans-serif);
+    }
+    #fig-flywheel-async-signal-join .lbl {
+      font: 400 9px var(--sans,sans-serif);
+    }
+    #fig-flywheel-async-signal-join .join-title {
+      font: 700 13px var(--sans,sans-serif);
+    }
+    #fig-flywheel-async-signal-join .join-sub {
+      font: 400 9px var(--sans,sans-serif);
+    }
+  </style>
+</defs>
+
+
+
+<rect x="12" y="50" width="120" height="62" rx="7"
+  fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<text x="72" y="76" text-anchor="middle" class="box-title"
+  fill="var(--ink-soft,#45413a)">serving-tier</text>
+<text x="72" y="92" text-anchor="middle" class="box-sub"
+  fill="var(--muted,#6d675d)">(vLLM / TGI)</text>
+
+
+<rect x="12" y="178" width="120" height="62" rx="7"
+  fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<text x="72" y="204" text-anchor="middle" class="box-title"
+  fill="var(--ink-soft,#45413a)">browser-sdk</text>
+<text x="72" y="220" text-anchor="middle" class="box-sub"
+  fill="var(--muted,#6d675d)">(client signals)</text>
+
+
+
+<rect x="178" y="58" width="130" height="44" rx="22"
+  fill="var(--surface-3,#eef2ff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<text x="243" y="85" text-anchor="middle" class="box-title"
+  fill="var(--ink-soft,#45413a)">request_events</text>
+
+
+<rect x="178" y="188" width="130" height="44" rx="22"
+  fill="var(--surface-3,#eef2ff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<text x="243" y="215" text-anchor="middle" class="box-title"
+  fill="var(--ink-soft,#45413a)">signal_events</text>
+
+
+<rect x="360" y="96" width="168" height="98" rx="8"
+  fill="var(--surface-3,#ece7da)" stroke="var(--accent,#4f46e5)" stroke-width="2.5"/>
+<rect x="360" y="96" width="168" height="5" rx="3"
+  fill="var(--accent,#4f46e5)"/>
+<text x="444" y="126" text-anchor="middle" class="join-title"
+  fill="var(--accent,#4f46e5)">join job</text>
+<text x="444" y="142" text-anchor="middle" class="join-sub"
+  fill="var(--ink-soft,#45413a)">Flink / Spark Streaming</text>
+<text x="444" y="155" text-anchor="middle" class="join-sub"
+  fill="var(--ink-soft,#45413a)">session-windowed join</text>
+<text x="444" y="168" text-anchor="middle" class="join-sub"
+  fill="var(--muted,#6d675d)">on request_id</text>
+
+
+
+<rect x="598" y="50" width="170" height="78" rx="7"
+  fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<rect x="598" y="50" width="5" height="78" rx="2"
+  fill="var(--accent,#4f46e5)"/>
+<text x="685" y="79" text-anchor="middle" class="box-title"
+  fill="var(--accent,#4f46e5)">enriched_requests</text>
+<text x="685" y="95" text-anchor="middle" class="box-sub"
+  fill="var(--ink-soft,#45413a)">BigQuery / Delta</text>
+<text x="685" y="111" text-anchor="middle" class="box-sub"
+  fill="var(--muted,#6d675d)">curated table</text>
+
+
+<rect x="598" y="175" width="170" height="78" rx="7"
+  fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1.5"
+  stroke-dasharray="5 3"/>
+<text x="683" y="204" text-anchor="middle" class="box-title"
+  fill="var(--muted,#6d675d)">unenriched</text>
+<text x="683" y="220" text-anchor="middle" class="box-sub"
+  fill="var(--muted,#6d675d)">no signal received</text>
+<text x="683" y="235" text-anchor="middle" class="box-sub"
+  fill="var(--muted,#6d675d)">implicit weak-supv.</text>
+
+
+
+<line x1="132" y1="81" x2="175" y2="81"
+  stroke="var(--ink-soft,#45413a)" stroke-width="1.6" marker-end="url(#asj-arr)"/>
+<text x="153" y="44" text-anchor="middle" class="lbl"
+  fill="var(--muted,#6d675d)">requests</text>
+
+
+<line x1="132" y1="210" x2="175" y2="210"
+  stroke="var(--ink-soft,#45413a)" stroke-width="1.6" marker-end="url(#asj-arr)"/>
+<text x="153" y="173" text-anchor="middle" class="lbl"
+  fill="var(--muted,#6d675d)">signals</text>
+
+
+<path d="M 308,80 Q 340,80 357,118" fill="none"
+  stroke="var(--ink-soft,#45413a)" stroke-width="1.6" marker-end="url(#asj-arr)"/>
+<text x="336" y="74" text-anchor="middle" class="lbl"
+  fill="var(--muted,#6d675d)">keyed</text>
+
+
+<path d="M 308,210 Q 340,210 357,174" fill="none"
+  stroke="var(--ink-soft,#45413a)" stroke-width="1.6" marker-end="url(#asj-arr)"/>
+<text x="336" y="225" text-anchor="middle" class="lbl"
+  fill="var(--muted,#6d675d)">keyed</text>
+
+
+<path d="M 528,118 Q 562,103 595,89" fill="none"
+  stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#asj-arr-acc)"/>
+<text x="562" y="80" text-anchor="middle" class="lbl"
+  fill="var(--accent,#4f46e5)">matched</text>
+
+
+<path d="M 528,168 Q 562,184 595,200" fill="none"
+  stroke="var(--muted,#6d675d)" stroke-width="1.4" stroke-dasharray="5 3"
+  marker-end="url(#asj-arr-mut)"/>
+<text x="560" y="222" text-anchor="middle" class="lbl"
+  fill="var(--muted,#6d675d)">no signal</text>
+
+</svg>
+<figcaption><b>Two async event streams — request logs and client signals — are joined by <code>request_id</code> in a session-windowed streaming job.</b> Matched records land in a curated <em>enriched_requests</em> table (BigQuery or Delta) that feeds downstream labeling and reward modeling. Records that receive no client signal within the window are not discarded — they flow to an <em>unenriched</em> table whose implicit signals (session continuation, regeneration rate, edit distance) serve as weak-supervision labels for the remaining 95% of unlabeled traffic.</figcaption>
+</figure>
+
+<p>Unenriched records (no explicit signal) are not useless — implicit signals such as session continuation, regeneration rate, and downstream edit distance are powerful weak-supervision labels (see Section 4 below).</p>
+<h2 id="preference-collection-in-production">Preference Collection in Production<a class="headerlink" href="#preference-collection-in-production" title="Permanent link">¶</a></h2>
+<p>Human preference is the highest-quality signal for alignment, but it is expensive and sparse. Production systems use three strategies to maximize its value.</p>
+<h3 id="explicit-feedback-collection">Explicit feedback collection<a class="headerlink" href="#explicit-feedback-collection" title="Permanent link">¶</a></h3>
+<p>Show users a simple thumbs-up / thumbs-down control. Even at a 3–5% click-through rate on a busy product, you may collect tens of thousands of labeled comparisons per day. Design rules:</p>
+<ol>
+<li><strong>Show the comparison, not just a rating.</strong> Present side-by-side outputs from two model variants when running an A/B test. Collect <code>(prompt, output_A, output_B, preference)</code> tuples directly.</li>
+<li><strong>Attach a free-text reason.</strong> A text field after a thumbs-down increases the signal-to-noise ratio and feeds into category analysis.</li>
+<li><strong>Log what you did not show.</strong> You need the counterfactual (what the other variant would have said) for offline reward model training — this requires logging the outputs of both models on every request even when only one is shown.</li>
+</ol>
+<h3 id="structured-preference-from-downstream-behavior">Structured preference from downstream behavior<a class="headerlink" href="#structured-preference-from-downstream-behavior" title="Permanent link">¶</a></h3>
+<p>Production provides implicit preference signals that require no user action:</p>
+<table>
+<thead>
+<tr>
+<th>Signal</th>
+<th>Proxy for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>User edits the response</td>
+<td>Output was close but wrong</td>
+</tr>
+<tr>
+<td>User regenerates</td>
+<td>Output was clearly bad</td>
+</tr>
+<tr>
+<td>User copies the output</td>
+<td>Output was good (often strong positive)</td>
+</tr>
+<tr>
+<td>User continues the conversation</td>
+<td>Output was acceptable</td>
+</tr>
+<tr>
+<td>User abandons the session immediately</td>
+<td>Output may have been very bad</td>
+</tr>
+</tbody>
+</table>
+<p>These signals are noisy individually but highly correlated in aggregate. You can train a lightweight classifier to predict explicit thumbs-up from implicit signals, then use this <strong>proxy reward model</strong> to label the remaining 95% of unlabeled traffic.</p>
+<h3 id="pairwise-preference-labeling-at-scale">Pairwise preference labeling at scale<a class="headerlink" href="#pairwise-preference-labeling-at-scale" title="Permanent link">¶</a></h3>
+<p>For offline reward model training (see <a href="../05-posttraining-alignment/05-rlhf-reward-modeling.html">The RLHF Pipeline &amp; Reward Modeling</a>), you need explicit pairwise preference labels. A practical pipeline:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># flywheel/labeling/preference_sampler.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Sample pairs of responses to the same prompt for human preference</span>
+<span class="sd">annotation.  Pairs are selected so that:</span>
+<span class="sd">  - The responses differ meaningfully (filter near-identical pairs)</span>
+<span class="sd">  - The prompt distribution is diverse (cluster-stratified sampling)</span>
+<span class="sd">  - Hard cases are prioritized (reward model uncertainty sampling)</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">edit_distance_ratio</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Normalized edit distance via dynamic programming.&quot;&quot;&quot;</span>
+    <span class="n">n</span><span class="p">,</span> <span class="n">m</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">a</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">max</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="n">dp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">m</span> <span class="o">+</span> <span class="mi">1</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="n">dp</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="p">:]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">m</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">m</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="n">cost</span> <span class="o">=</span> <span class="mi">0</span> <span class="k">if</span> <span class="n">a</span><span class="p">[</span><span class="n">i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">b</span><span class="p">[</span><span class="n">j</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span> <span class="k">else</span> <span class="mi">1</span>
+            <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">cost</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">dp</span><span class="p">[</span><span class="n">n</span><span class="p">,</span> <span class="n">m</span><span class="p">]</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">uncertainty_score</span><span class="p">(</span><span class="n">reward_a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">reward_b</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A pair is most informative when the reward model is uncertain.</span>
+<span class="sd">    Use the margin |r_a - r_b|: small margin = high uncertainty.</span>
+<span class="sd">    Returns a score in [0, 1] where 1 = maximally uncertain.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">margin</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">reward_a</span> <span class="o">-</span> <span class="n">reward_b</span><span class="p">)</span>
+    <span class="c1"># Clip at 2.0 (typical reward scale); invert so high = uncertain.</span>
+    <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">margin</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sample_pairs_for_labeling</span><span class="p">(</span>
+    <span class="n">candidates</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>  <span class="c1"># list of {prompt, response, reward_model_score}</span>
+    <span class="n">n_pairs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500</span><span class="p">,</span>
+    <span class="n">min_edit_ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.2</span><span class="p">,</span>
+    <span class="n">uncertainty_weight</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.6</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">dict</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Given a pool of (prompt, response) candidates from the same day&#39;s</span>
+<span class="sd">    traffic, return n_pairs pairs for human annotation.</span>
+
+<span class="sd">    Strategy: score each pair by a weighted combination of uncertainty</span>
+<span class="sd">    (high = informative) and diversity (edit distance ensures the pair</span>
+<span class="sd">    is non-trivially different).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Group by prompt to create within-prompt pairs</span>
+    <span class="n">by_prompt</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">candidates</span><span class="p">:</span>
+        <span class="n">by_prompt</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">c</span><span class="p">[</span><span class="s2">&quot;prompt&quot;</span><span class="p">],</span> <span class="p">[])</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
+
+    <span class="n">all_pairs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">dict</span><span class="p">,</span> <span class="nb">dict</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">resps</span> <span class="ow">in</span> <span class="n">by_prompt</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">resps</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="c1"># Enumerate pairs (or sample if too many)</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">resps</span><span class="p">)):</span>
+            <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">5</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">resps</span><span class="p">))):</span>
+                <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">resps</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">resps</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+                <span class="n">ed</span> <span class="o">=</span> <span class="n">edit_distance_ratio</span><span class="p">(</span><span class="n">a</span><span class="p">[</span><span class="s2">&quot;response&quot;</span><span class="p">],</span> <span class="n">b</span><span class="p">[</span><span class="s2">&quot;response&quot;</span><span class="p">])</span>
+                <span class="k">if</span> <span class="n">ed</span> <span class="o">&lt;</span> <span class="n">min_edit_ratio</span><span class="p">:</span>
+                    <span class="k">continue</span>  <span class="c1"># Too similar — not worth annotating</span>
+                <span class="n">unc</span> <span class="o">=</span> <span class="n">uncertainty_score</span><span class="p">(</span><span class="n">a</span><span class="p">[</span><span class="s2">&quot;reward_model_score&quot;</span><span class="p">],</span> <span class="n">b</span><span class="p">[</span><span class="s2">&quot;reward_model_score&quot;</span><span class="p">])</span>
+                <span class="n">diversity</span> <span class="o">=</span> <span class="n">ed</span>  <span class="c1"># Higher distance = more diverse</span>
+                <span class="n">score</span> <span class="o">=</span> <span class="n">uncertainty_weight</span> <span class="o">*</span> <span class="n">unc</span> <span class="o">+</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">uncertainty_weight</span><span class="p">)</span> <span class="o">*</span> <span class="n">diversity</span>
+                <span class="n">all_pairs</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">score</span><span class="p">))</span>
+
+    <span class="c1"># Sort by score descending; take top n_pairs</span>
+    <span class="n">all_pairs</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">all_pairs</span><span class="p">[:</span><span class="n">n_pairs</span><span class="p">]]</span>
+</code></pre></div>
+<h2 id="active-learning-which-examples-to-label-next">Active Learning: Which Examples to Label Next?<a class="headerlink" href="#active-learning-which-examples-to-label-next" title="Permanent link">¶</a></h2>
+<p>Not all unlabeled examples are equally informative. Active learning selects the subset of production traffic where labeling effort will produce the largest model improvement.</p>
+<h3 id="uncertainty-sampling">Uncertainty sampling<a class="headerlink" href="#uncertainty-sampling" title="Permanent link">¶</a></h3>
+<p>The simplest strategy: label examples where the current model is most uncertain. For a language model, uncertainty is hard to compute exactly, but good proxies exist:</p>
+<div class="arithmatex">\[
+H(\text{output}) \approx -\frac{1}{T} \sum_{t=1}^{T} \log p_\theta(y_t \mid y_{&lt;t}, x)
+\]</div>
+<p>This is just the average negative log-probability per token, i.e. the per-token cross-entropy loss. High entropy outputs (low average logprob) correspond to cases where the model was uncertain. You are already computing this during inference; storing it costs a single float per request.</p>
+<h3 id="core-set-diversity-sampling">Core-set / diversity sampling<a class="headerlink" href="#core-set-diversity-sampling" title="Permanent link">¶</a></h3>
+<p>Uncertainty sampling alone leads to annotation of many near-duplicate examples (the model is uncertain in a cluster around the same concept). Add a diversity constraint: after computing uncertainty scores, run k-medoids clustering on the prompt embeddings, then sample the highest-uncertainty example from each cluster.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># flywheel/active_learning/coreset_sampler.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Core-set active learning: select a diverse and uncertain subset of</span>
+<span class="sd">production examples for annotation.  Uses prompt embeddings from a</span>
+<span class="sd">small frozen encoder (e.g., a 100M embedding model).</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">greedy_k_medoids_indices</span><span class="p">(</span>
+    <span class="n">embeddings</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>  <span class="c1"># (N, D) float32</span>
+    <span class="n">k</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">seed</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">42</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Greedy farthest-first traversal (core-set construction).</span>
+<span class="sd">    Returns indices of the k most diverse examples.</span>
+<span class="sd">    Time: O(N * k).  For N &lt; 100k this is fast enough.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    <span class="n">chosen</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">embeddings</span><span class="p">)))]</span>
+    <span class="c1"># Squared distances to the nearest chosen center</span>
+    <span class="n">min_dists</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">embeddings</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">last</span> <span class="o">=</span> <span class="n">embeddings</span><span class="p">[</span><span class="n">chosen</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]]</span>
+        <span class="c1"># Update min distances</span>
+        <span class="n">dists</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">embeddings</span> <span class="o">-</span> <span class="n">last</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">min_dists</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">minimum</span><span class="p">(</span><span class="n">min_dists</span><span class="p">,</span> <span class="n">dists</span><span class="p">)</span>
+        <span class="c1"># Pick the farthest point</span>
+        <span class="n">chosen</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">min_dists</span><span class="p">)))</span>
+
+    <span class="k">return</span> <span class="n">chosen</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">active_learning_sample</span><span class="p">(</span>
+    <span class="n">embeddings</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>          <span class="c1"># (N, D)</span>
+    <span class="n">uncertainty_scores</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>  <span class="c1"># (N,) higher = more uncertain</span>
+    <span class="n">budget</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">diversity_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Two-stage selection:</span>
+<span class="sd">    1. Diversity: pick budget * diversity_fraction examples via core-set.</span>
+<span class="sd">    2. Uncertainty: pick remainder by highest uncertainty from leftovers.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">n_diverse</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">budget</span> <span class="o">*</span> <span class="n">diversity_fraction</span><span class="p">)</span>
+    <span class="n">n_uncertain</span> <span class="o">=</span> <span class="n">budget</span> <span class="o">-</span> <span class="n">n_diverse</span>
+
+    <span class="n">diverse_idx</span> <span class="o">=</span> <span class="n">greedy_k_medoids_indices</span><span class="p">(</span><span class="n">embeddings</span><span class="p">,</span> <span class="n">n_diverse</span><span class="p">)</span>
+    <span class="n">diverse_set</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">diverse_idx</span><span class="p">)</span>
+
+    <span class="c1"># Remaining examples ranked by uncertainty</span>
+    <span class="n">remaining</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">uncertainty_scores</span><span class="p">[</span><span class="n">i</span><span class="p">]))</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">embeddings</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">i</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">diverse_set</span>
+    <span class="p">]</span>
+    <span class="n">remaining</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">uncertain_idx</span> <span class="o">=</span> <span class="p">[</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">remaining</span><span class="p">[:</span><span class="n">n_uncertain</span><span class="p">]]</span>
+
+    <span class="k">return</span> <span class="n">diverse_idx</span> <span class="o">+</span> <span class="n">uncertain_idx</span>
+</code></pre></div>
+<h3 id="hard-negative-mining">Hard-negative mining<a class="headerlink" href="#hard-negative-mining" title="Permanent link">¶</a></h3>
+<p>A special case of active learning: examples where the model confidently produced an incorrect answer. For tasks with verifiable ground truth (math, code execution, structured extraction), you can automatically identify hard negatives using a test oracle and route them directly to the training set without human review.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: budget allocation</p>
+<p>Suppose you have 10,000 unlabeled examples from one day&rsquo;s traffic and a budget of 500 human labels.</p>
+<ul>
+<li>Your reward model gives average per-token logprob scores; you compute the bottom 2,000 by score (most uncertain).</li>
+<li>You embed all 2,000 with a 100M sentence encoder (takes ~30 seconds on a single A100).</li>
+<li>Core-set sampling selects 250 diverse examples from this uncertain pool.</li>
+<li>An additional 250 are selected from hard negatives: code examples where the generated code failed the unit tests (you run the code in a sandbox for every coding request).</li>
+<li>Total: 500 labeled examples. At USD 0.10 per label (HITL vendors), cost is USD 50.</li>
+</ul>
+<p>After one week of this process at 500 labels/day, you have 3,500 high-quality examples. Fine-tuning on these (in addition to the base SFT dataset) typically improves reward model Spearman correlation by on the order of 3–8 percentage points — the exact gain depends on task difficulty and the quality of the base RM.</p>
+</div>
+<h2 id="distillation-from-production-traffic">Distillation from Production Traffic<a class="headerlink" href="#distillation-from-production-traffic" title="Permanent link">¶</a></h2>
+<p>Beyond labeling for reward models and SFT, you can use production traffic to distill the model&rsquo;s own knowledge into a smaller or faster version. See also <a href="../05-posttraining-alignment/12-distillation-compression.html">Distillation, Model Compression &amp; Knowledge Transfer</a> for the full distillation picture.</p>
+<h3 id="sequence-level-knowledge-distillation">Sequence-level knowledge distillation<a class="headerlink" href="#sequence-level-knowledge-distillation" title="Permanent link">¶</a></h3>
+<p>Classic KD (Hinton et al.) trains a student on the teacher&rsquo;s soft probability distribution over tokens. For LLMs at scale you cannot store the full vocabulary distribution for every token of every production request. Two practical alternatives:</p>
+<ol>
+<li><strong>Top-k logit storage.</strong> Log the top-32 token IDs and their logprobs for each output position. This is ~5x more data than the text alone but gives a useful soft target.</li>
+<li><strong>Speculative pseudo-labels.</strong> Run the teacher model on the sampled output and record whether it would have chosen the same token. Use this agreement signal as a binary label for on-policy distillation.</li>
+</ol>
+<h3 id="on-policy-distillation-pipeline">On-policy distillation pipeline<a class="headerlink" href="#on-policy-distillation-pipeline" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># flywheel/distillation/on_policy_distill.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">On-policy distillation: the teacher model generates responses to</span>
+<span class="sd">production prompts; we train the student to match the teacher&#39;s</span>
+<span class="sd">distribution using a combination of cross-entropy on the text and</span>
+<span class="sd">KL divergence on the top-k logits.</span>
+
+<span class="sd">This is a simplified illustration; in production you would use a</span>
+<span class="sd">proper distributed training harness (e.g., TRL&#39;s SFT trainer).</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tensor</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">top_k_kl_loss</span><span class="p">(</span>
+    <span class="n">student_logits</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>   <span class="c1"># (batch, seq_len, vocab)</span>
+    <span class="n">teacher_top_k_ids</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (batch, seq_len, k) long</span>
+    <span class="n">teacher_top_k_logprobs</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (batch, seq_len, k) float</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute KL divergence between student and teacher restricted to</span>
+<span class="sd">    the teacher&#39;s top-k vocabulary positions.  This is a memory-</span>
+<span class="sd">    efficient approximation of full-distribution KL.</span>
+
+<span class="sd">    Steps:</span>
+<span class="sd">      1. Gather student logits at the teacher&#39;s top-k positions.</span>
+<span class="sd">      2. Re-normalize both distributions over those k positions.</span>
+<span class="sd">      3. Compute KL(teacher || student) (forward KL).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">k</span> <span class="o">=</span> <span class="n">teacher_top_k_ids</span><span class="o">.</span><span class="n">shape</span>
+
+    <span class="c1"># Gather student log-probs at teacher&#39;s top-k positions</span>
+    <span class="n">student_gathered</span> <span class="o">=</span> <span class="n">student_logits</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span>
+        <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+        <span class="n">index</span><span class="o">=</span><span class="n">teacher_top_k_ids</span>  <span class="c1"># (B, T, k)</span>
+    <span class="p">)</span>  <span class="c1"># -&gt; (B, T, k)</span>
+
+    <span class="c1"># Apply temperature scaling and normalize (teacher)</span>
+    <span class="n">teacher_logprobs_scaled</span> <span class="o">=</span> <span class="n">teacher_top_k_logprobs</span> <span class="o">/</span> <span class="n">temperature</span>
+    <span class="n">teacher_probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">teacher_logprobs_scaled</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B, T, k)</span>
+
+    <span class="c1"># Student soft distribution at top-k positions</span>
+    <span class="n">student_logprobs_scaled</span> <span class="o">=</span> <span class="n">student_gathered</span> <span class="o">/</span> <span class="n">temperature</span>
+    <span class="n">student_log_probs</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">log_softmax</span><span class="p">(</span><span class="n">student_logprobs_scaled</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (B, T, k)</span>
+
+    <span class="c1"># KL(teacher || student): sum_i p_t * (log p_t - log p_s)</span>
+    <span class="n">kl</span> <span class="o">=</span> <span class="p">(</span><span class="n">teacher_probs</span> <span class="o">*</span> <span class="p">(</span><span class="n">teacher_probs</span><span class="o">.</span><span class="n">log</span><span class="p">()</span> <span class="o">-</span> <span class="n">student_log_probs</span><span class="p">))</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">kl</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">distillation_loss</span><span class="p">(</span>
+    <span class="n">student_logits</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>          <span class="c1"># (B, T, V)</span>
+    <span class="n">labels</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>                  <span class="c1"># (B, T) long, -100 for masked positions</span>
+    <span class="n">teacher_top_k_ids</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>       <span class="c1"># (B, T, k)</span>
+    <span class="n">teacher_top_k_logprobs</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>  <span class="c1"># (B, T, k)</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Combined SFT + distillation loss.</span>
+
+<span class="sd">    L = alpha * L_CE(student, labels) + (1 - alpha) * L_KL(student, teacher)</span>
+
+<span class="sd">    alpha=1.0 degrades to standard SFT; alpha=0.0 is pure distillation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Standard cross-entropy on hard labels</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span> <span class="o">=</span> <span class="n">student_logits</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">ce_loss</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span>
+        <span class="n">student_logits</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">),</span>
+        <span class="n">labels</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">B</span> <span class="o">*</span> <span class="n">T</span><span class="p">),</span>
+        <span class="n">ignore_index</span><span class="o">=-</span><span class="mi">100</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># KL from teacher soft labels</span>
+    <span class="n">kl_loss</span> <span class="o">=</span> <span class="n">top_k_kl_loss</span><span class="p">(</span>
+        <span class="n">student_logits</span><span class="p">,</span> <span class="n">teacher_top_k_ids</span><span class="p">,</span> <span class="n">teacher_top_k_logprobs</span><span class="p">,</span> <span class="n">temperature</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">ce_loss</span> <span class="o">+</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">alpha</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">temperature</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="n">kl_loss</span>
+</code></pre></div>
+<p>The <span class="arithmatex">\(T^2\)</span> factor in the combined loss corrects for the fact that temperature scaling reduces gradient magnitudes (it was proved in the original Hinton et al., 2015 paper and is easy to derive: if logits are divided by <span class="arithmatex">\(T\)</span>, the softmax output is flatter, reducing entropy by <span class="arithmatex">\(T^2\)</span> in expectation for Gaussian logits).</p>
+<h3 id="data-flywheel-for-cheaper-inference">Data flywheel for cheaper inference<a class="headerlink" href="#data-flywheel-for-cheaper-inference" title="Permanent link">¶</a></h3>
+<p>A compelling use of distillation from production traffic is to progressively compress the serving model. As the product matures and the training set grows, you retrain a student model that has fewer parameters but covers the distribution well — because it was trained specifically on the traffic distribution your users actually produce. This compounds with quantization (see <a href="../04-kernels-efficiency/07-quantization-ptq.html">Quantization I</a>) to reduce inference cost over time while maintaining quality.</p>
+<h2 id="retraining-pipelines">Retraining Pipelines<a class="headerlink" href="#retraining-pipelines" title="Permanent link">¶</a></h2>
+<p>Retraining is not fine-tuning a model once. It is an automated pipeline triggered on a schedule or by a data threshold, with reproducibility as a first-class requirement.</p>
+<h3 id="the-retraining-recipe">The retraining recipe<a class="headerlink" href="#the-retraining-recipe" title="Permanent link">¶</a></h3>
+<p>A typical LLM product retraining loop runs SFT followed by a preference optimization step (DPO, RLHF-PPO, or GRPO — see <a href="../05-posttraining-alignment/07-dpo-and-variants.html">Direct Preference Optimization &amp; Its Variants</a> and <a href="../05-posttraining-alignment/08-grpo-rloo.html">GRPO, RLOO &amp; Critic-Free RL</a> for the trade-offs). The new training data is mixed with a frozen replay buffer of earlier data at a ratio that prevents catastrophic forgetting:</p>
+<div class="arithmatex">\[
+\mathcal{D}_{\text{train}} = (1 - \rho) \cdot \mathcal{D}_{\text{new}} \cup \rho \cdot \mathcal{D}_{\text{replay}}
+\]</div>
+<p>Typical values of the replay fraction <span class="arithmatex">\(\rho\)</span> are 0.3–0.5. Too low and the model forgets earlier capabilities; too high and the new signal is diluted.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># flywheel/pipelines/retrain_config.yaml</span>
+<span class="c1">#</span>
+<span class="c1"># Example Kubeflow / Argo Workflows DAG configuration</span>
+<span class="c1"># for a weekly retraining run.</span>
+
+<span class="nt">retraining_job</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">trigger</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">schedule</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0</span><span class="nv"> </span><span class="s">2</span><span class="nv"> </span><span class="s">*</span><span class="nv"> </span><span class="s">*</span><span class="nv"> </span><span class="s">1&quot;</span><span class="w">          </span><span class="c1"># Every Monday at 02:00 UTC</span>
+<span class="w">    </span><span class="nt">data_threshold_new_examples</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5000</span><span class="w">  </span><span class="c1"># Also trigger if this many new labels accumulated</span>
+
+<span class="w">  </span><span class="nt">data_assembly</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">new_sft_data</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gs://my-logs/labeled/sft/&quot;</span>
+<span class="w">      </span><span class="nt">date_window_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">7</span>
+<span class="w">    </span><span class="nt">new_preference_data</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gs://my-logs/labeled/preferences/&quot;</span>
+<span class="w">      </span><span class="nt">date_window_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">7</span>
+<span class="w">    </span><span class="nt">replay_buffer</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gs://my-data/replay-buffer-v3/&quot;</span>
+<span class="w">      </span><span class="nt">sample_fraction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.40</span><span class="w">          </span><span class="c1"># rho = 0.40</span>
+
+<span class="w">  </span><span class="nt">sft_step</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">base_model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gs://my-models/checkpoint-stable&quot;</span><span class="w">  </span><span class="c1"># Pinned stable base</span>
+<span class="w">    </span><span class="nt">epochs</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<span class="w">    </span><span class="nt">learning_rate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2.0e-5</span>
+<span class="w">    </span><span class="nt">batch_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">128</span>
+<span class="w">    </span><span class="nt">peft</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lora</span><span class="w">                       </span><span class="c1"># LoRA to keep training cheap</span>
+<span class="w">    </span><span class="nt">lora_rank</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64</span>
+<span class="w">    </span><span class="nt">output</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gs://my-models/sft-candidate/&quot;</span>
+
+<span class="w">  </span><span class="nt">preference_step</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">algorithm</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dpo</span><span class="w">                   </span><span class="c1"># or: ppo, grpo</span>
+<span class="w">    </span><span class="nt">beta</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span><span class="w">                        </span><span class="c1"># KL regularization strength</span>
+<span class="w">    </span><span class="nt">base_model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sft-candidate&quot;</span>
+<span class="w">    </span><span class="nt">output</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gs://my-models/dpo-candidate/&quot;</span>
+
+<span class="w">  </span><span class="nt">eval_gate</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">harness</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;internal-eval-v2&quot;</span><span class="w">      </span><span class="c1"># See eval-gated deployment section</span>
+<span class="w">    </span><span class="nt">pass_thresholds</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">safety_refusal_rate</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&gt;=</span><span class="nv"> </span><span class="s">0.98&quot;</span>
+<span class="w">      </span><span class="nt">helpfulness_win_rate</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&gt;=</span><span class="nv"> </span><span class="s">0.52&quot;</span><span class="w">  </span><span class="c1"># vs. production model in A/B judge</span>
+<span class="w">      </span><span class="nt">regression_suite</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0</span><span class="nv"> </span><span class="s">regressions</span><span class="nv"> </span><span class="s">on</span><span class="nv"> </span><span class="s">all</span><span class="nv"> </span><span class="s">priority-1</span><span class="nv"> </span><span class="s">cases&quot;</span>
+<span class="w">    </span><span class="nt">on_failure</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">alert_slack_and_halt</span>
+<span class="w">    </span><span class="nt">on_pass</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deploy_to_canary_10pct</span>
+</code></pre></div>
+<h3 id="preventing-catastrophic-forgetting">Preventing catastrophic forgetting<a class="headerlink" href="#preventing-catastrophic-forgetting" title="Permanent link">¶</a></h3>
+<p>The biggest practical failure mode is a new model that is better on the new data but worse on some existing capability. Three defenses:</p>
+<ol>
+<li><strong>Replay buffers.</strong> Mix old data in at ratio <span class="arithmatex">\(\rho\)</span> as above.</li>
+<li><strong>EWC-style regularization.</strong> Elastic Weight Consolidation adds a penalty proportional to the Fisher information of the old task. In practice, a simpler proxy — adding a KL divergence penalty relative to the frozen previous checkpoint — is more common for LLMs (this is essentially the PPO KL term applied during SFT).</li>
+<li><strong>Regression test suite.</strong> A hardcoded set of golden examples that the new model must answer identically to the old model (or better). Any regression on these blocks the deployment.</li>
+</ol>
+<h2 id="eval-gated-deployment">Eval-Gated Deployment<a class="headerlink" href="#eval-gated-deployment" title="Permanent link">¶</a></h2>
+<p>A new model should never go to production without passing an automated evaluation gate. The gate is a decision function:</p>
+<div class="arithmatex">\[
+\text{deploy}(v_{\text{new}}) = \begin{cases} \text{yes} &amp; \text{if } \forall k: \text{score}_k(v_{\text{new}}) \geq \tau_k \text{ and no regression} \\ \text{no} &amp; \text{otherwise} \end{cases}
+\]</div>
+<p>where <span class="arithmatex">\(k\)</span> indexes the set of evaluation dimensions and <span class="arithmatex">\(\tau_k\)</span> is the minimum acceptable score on dimension <span class="arithmatex">\(k\)</span>.</p>
+<h3 id="building-the-eval-gate">Building the eval gate<a class="headerlink" href="#building-the-eval-gate" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># flywheel/eval_gate/gate.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Eval gate: runs a model candidate through a suite of evals and returns</span>
+<span class="sd">a pass/fail verdict.  Designed to be called from a CI/CD pipeline</span>
+<span class="sd">(Argo Workflow, GitHub Actions, etc.).</span>
+
+<span class="sd">See also: Part XI (Evaluation) for how to build the eval harnesses</span>
+<span class="sd">that this gate calls.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">EvalResult</span><span class="p">:</span>
+    <span class="n">metric_name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">comparator</span><span class="p">:</span> <span class="nb">str</span>  <span class="c1"># &quot;&gt;=&quot; or &quot;&lt;=&quot;</span>
+    <span class="n">passed</span><span class="p">:</span> <span class="nb">bool</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">evaluate</span><span class="p">(</span><span class="n">metric_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">comparator</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;EvalResult&quot;</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">comparator</span> <span class="o">==</span> <span class="s2">&quot;&gt;=&quot;</span><span class="p">:</span>
+            <span class="n">passed</span> <span class="o">=</span> <span class="n">value</span> <span class="o">&gt;=</span> <span class="n">threshold</span>
+        <span class="k">elif</span> <span class="n">comparator</span> <span class="o">==</span> <span class="s2">&quot;&lt;=&quot;</span><span class="p">:</span>
+            <span class="n">passed</span> <span class="o">=</span> <span class="n">value</span> <span class="o">&lt;=</span> <span class="n">threshold</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown comparator: </span><span class="si">{</span><span class="n">comparator</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">EvalResult</span><span class="p">(</span><span class="n">metric_name</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">threshold</span><span class="p">,</span> <span class="n">comparator</span><span class="p">,</span> <span class="n">passed</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run_eval_harness</span><span class="p">(</span><span class="n">model_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">harness_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Calls an external eval harness binary / Python script and parses</span>
+<span class="sd">    its JSON output.  In production this would be a gRPC call to an</span>
+<span class="sd">    eval service.  Here we invoke a CLI for illustration.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">cmd</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="s2">&quot;-m&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;evals.</span><span class="si">{</span><span class="n">harness_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;--model-path&quot;</span><span class="p">,</span> <span class="n">model_path</span><span class="p">,</span>
+        <span class="s2">&quot;--config&quot;</span><span class="p">,</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">config</span><span class="p">),</span>
+        <span class="s2">&quot;--output-format&quot;</span><span class="p">,</span> <span class="s2">&quot;json&quot;</span><span class="p">,</span>
+    <span class="p">]</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">3600</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">returncode</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Eval harness failed:</span><span class="se">\n</span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">stderr</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">eval_gate</span><span class="p">(</span>
+    <span class="n">candidate_model_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">production_model_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">gate_config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">EvalResult</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run the full eval gate.</span>
+
+<span class="sd">    gate_config example:</span>
+<span class="sd">    {</span>
+<span class="sd">      &quot;harnesses&quot;: {</span>
+<span class="sd">        &quot;safety&quot;: {&quot;harness&quot;: &quot;safety_suite&quot;, &quot;config&quot;: {}},</span>
+<span class="sd">        &quot;helpfulness&quot;: {&quot;harness&quot;: &quot;lm_judge_winrate&quot;, &quot;config&quot;:</span>
+<span class="sd">                        {&quot;judge_model&quot;: &quot;gpt-4o&quot;, &quot;n_examples&quot;: 500}},</span>
+<span class="sd">        &quot;regression&quot;: {&quot;harness&quot;: &quot;golden_regression&quot;, &quot;config&quot;: {}}</span>
+<span class="sd">      },</span>
+<span class="sd">      &quot;thresholds&quot;: {</span>
+<span class="sd">        &quot;safety.refusal_rate&quot;: {&quot;value&quot;: 0.98, &quot;comparator&quot;: &quot;&gt;=&quot;},</span>
+<span class="sd">        &quot;helpfulness.win_rate&quot;: {&quot;value&quot;: 0.52, &quot;comparator&quot;: &quot;&gt;=&quot;},</span>
+<span class="sd">        &quot;regression.failures&quot;: {&quot;value&quot;: 0.0, &quot;comparator&quot;: &quot;&lt;=&quot;},</span>
+<span class="sd">      }</span>
+<span class="sd">    }</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">all_results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">EvalResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">harness_key</span><span class="p">,</span> <span class="n">harness_spec</span> <span class="ow">in</span> <span class="n">gate_config</span><span class="p">[</span><span class="s2">&quot;harnesses&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">run_eval_harness</span><span class="p">(</span>
+            <span class="n">candidate_model_path</span><span class="p">,</span>
+            <span class="n">harness_spec</span><span class="p">[</span><span class="s2">&quot;harness&quot;</span><span class="p">],</span>
+            <span class="n">harness_spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;config&quot;</span><span class="p">,</span> <span class="p">{}),</span>
+        <span class="p">)</span>
+        <span class="c1"># Also run on production model for relative metrics</span>
+        <span class="n">prod_scores</span> <span class="o">=</span> <span class="n">run_eval_harness</span><span class="p">(</span>
+            <span class="n">production_model_path</span><span class="p">,</span>
+            <span class="n">harness_spec</span><span class="p">[</span><span class="s2">&quot;harness&quot;</span><span class="p">],</span>
+            <span class="n">harness_spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;config&quot;</span><span class="p">,</span> <span class="p">{}),</span>
+        <span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">metric_key</span><span class="p">,</span> <span class="n">thresh_spec</span> <span class="ow">in</span> <span class="n">gate_config</span><span class="p">[</span><span class="s2">&quot;thresholds&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">h_key</span><span class="p">,</span> <span class="n">m_name</span> <span class="o">=</span> <span class="n">metric_key</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">h_key</span> <span class="o">!=</span> <span class="n">harness_key</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">m_name</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="n">EvalResult</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span>
+                <span class="n">metric_name</span><span class="o">=</span><span class="n">metric_key</span><span class="p">,</span>
+                <span class="n">value</span><span class="o">=</span><span class="n">value</span><span class="p">,</span>
+                <span class="n">threshold</span><span class="o">=</span><span class="n">thresh_spec</span><span class="p">[</span><span class="s2">&quot;value&quot;</span><span class="p">],</span>
+                <span class="n">comparator</span><span class="o">=</span><span class="n">thresh_spec</span><span class="p">[</span><span class="s2">&quot;comparator&quot;</span><span class="p">],</span>
+            <span class="p">)</span>
+            <span class="n">all_results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+
+    <span class="n">passed</span> <span class="o">=</span> <span class="nb">all</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">passed</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">all_results</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">passed</span><span class="p">,</span> <span class="n">all_results</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">()</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--candidate&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--production&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--config&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">config</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+    <span class="n">passed</span><span class="p">,</span> <span class="n">results</span> <span class="o">=</span> <span class="n">eval_gate</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">candidate</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">production</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
+        <span class="n">status</span> <span class="o">=</span> <span class="s2">&quot;PASS&quot;</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">passed</span> <span class="k">else</span> <span class="s2">&quot;FAIL&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">status</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">metric_name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">value</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">comparator</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">threshold</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">passed</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Eval gate FAILED. Blocking deployment.&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Eval gate PASSED. Proceeding to canary deployment.&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="the-win-rate-judge">The win-rate judge<a class="headerlink" href="#the-win-rate-judge" title="Permanent link">¶</a></h3>
+<p>The most commonly used gate metric for open-ended generation quality is the <strong>win rate against production</strong>: an LLM judge (often GPT-4o or an internal judge model) evaluates 500–1,000 prompt/response pairs and decides which of candidate vs. production is better. A win rate <span class="arithmatex">\(\geq 0.52\)</span> with statistical significance is a typical deployment gate. This approach is described in detail in <a href="../11-evaluation/02-llm-as-judge.html">LLM-as-a-Judge &amp; Automated Evaluation</a>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: eval distribution mismatch</p>
+<p>If your eval suite is assembled once and never updated, it will diverge from the distribution of real user traffic over time. The model can overfit to the eval suite — passing all gates while regressing on real users (a form of Goodhart&rsquo;s Law). Fix this by <em>adding new golden examples from production traffic to the regression suite</em> on every release, and rotating out examples that the model has easily solved for multiple consecutive releases.</p>
+</div>
+<h2 id="the-compounding-data-advantage">The Compounding Data Advantage<a class="headerlink" href="#the-compounding-data-advantage" title="Permanent link">¶</a></h2>
+<p>Let us formalize the compounding effect. Suppose:
+- At round <span class="arithmatex">\(k\)</span>, the product has <span class="arithmatex">\(N_k\)</span> users generating <span class="arithmatex">\(D_k\)</span> training examples.
+- Model quality at round <span class="arithmatex">\(k\)</span> is <span class="arithmatex">\(Q_k\)</span>, and better quality attracts more users: <span class="arithmatex">\(N_{k+1} = N_k \cdot (1 + \alpha \cdot \Delta Q_k)\)</span>.
+- Each new user generates <span class="arithmatex">\(d\)</span> examples per unit time, so <span class="arithmatex">\(D_{k+1} = D_k + d \cdot N_{k+1}\)</span>.
+- Model quality improves with data: <span class="arithmatex">\(Q_{k+1} = Q_k + \beta \cdot \log(D_{k+1} / D_k)\)</span> (log-linear in data, consistent with scaling law intuitions from <a href="../03-pretraining/04-scaling-laws.html">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a>).</p>
+<p>Even with modest values (<span class="arithmatex">\(\alpha = 0.1\)</span>, <span class="arithmatex">\(\beta = 0.05\)</span>, <span class="arithmatex">\(d = 10\)</span>), after 10 rounds:</p>
+<div class="arithmatex">\[
+\frac{N_{10}}{N_0} \approx \prod_{k=0}^{9} (1 + \alpha \cdot \Delta Q_k)
+\]</div>
+<p>The product is super-linear in the number of rounds because <span class="arithmatex">\(\Delta Q_k\)</span> is driven by <span class="arithmatex">\(\log\)</span> data growth, but user growth is multiplicative. A new entrant starting at round 10 with the same initial model but no training data faces a gap that is essentially impossible to close through model architecture improvements alone.</p>
+<p>This analysis also explains why <em>data quality</em> matters more than <em>data volume</em> past a certain scale. Once you have covered the main distribution, the marginal value of a new random example is small; the marginal value of a hard example from the tail of the distribution remains high throughout.</p>
+<h2 id="putting-it-all-together-a-self-improving-product">Putting It All Together: A Self-Improving Product<a class="headerlink" href="#putting-it-all-together-a-self-improving-product" title="Permanent link">¶</a></h2>
+<p>Here is a complete end-to-end picture of how the components described above wire together in a real production system. The key insight is that this is not a sequential pipeline — it is a continuously running set of services that all interact.</p>
+<p><figure class="viz" id="fig-flywheel-system-architecture">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 900 600" role="img" aria-label="Production data flywheel system diagram: Users send requests to the Serving Tier (vLLM/TGI). Logs flow into an Offline Processing panel containing five numbered stages: 1 Async Signal Join (Kafka+Flink), 2 Weak Supervision/Proxy Reward Scoring, 3 Active Learning Sampler, 4 Human Annotation Queue, 5 Data Assembly and Replay Buffer Mixing. Stage 5 feeds the Retrain DAG (Argo/Kubeflow), which goes to the Eval Gate (CI/CD), which on pass sends the new model back to the Serving Tier, closing the loop.">
+<defs>
+  <marker id="fsa-arr" viewBox="0 0 10 10" refX="9" refY="5"
+    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="fsa-arr-acc" viewBox="0 0 10 10" refX="9" refY="5"
+    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#4f46e5)"/>
+  </marker></p>
+<p><path id="fsa-mp1" d="M 196,168 Q 300,168 390,185"/>
+  <path id="fsa-mp2" d="M 445,240 L 445,265"/>
+  <path id="fsa-mp3" d="M 445,308 L 445,333"/>
+  <path id="fsa-mp4" d="M 445,375 L 445,399"/>
+  <path id="fsa-mp5" d="M 445,442 L 445,466"/>
+  <path id="fsa-mp6" d="M 390,510 Q 200,520 170,495"/>
+  <path id="fsa-mp7" d="M 155,460 L 155,406"/>
+  <path id="fsa-mp8" d="M 155,362 L 155,308"/>
+  <path id="fsa-mp9" d="M 155,270 L 155,215"/>
+<br />
+<style>
+    @media (prefers-reduced-motion: reduce) {
+      #fig-flywheel-system-architecture .fsa-pulse { animation: none !important; opacity: 0 !important; }
+      #fig-flywheel-system-architecture .fsa-dash-flow { stroke-dashoffset: 0 !important; animation: none !important; }
+    }
+    #fig-flywheel-system-architecture .box-title {
+      font: 700 12px var(--sans,sans-serif);
+    }
+    #fig-flywheel-system-architecture .box-sub {
+      font: 400 9.5px var(--sans,sans-serif);
+    }
+    #fig-flywheel-system-architecture .section-title {
+      font: 600 11px var(--sans,sans-serif);
+    }
+    #fig-flywheel-system-architecture .outer-title {
+      font: 700 13px var(--sans,sans-serif);
+    }
+    #fig-flywheel-system-architecture .arr-lbl {
+      font: 400 9px var(--sans,sans-serif);
+    }
+    #fig-flywheel-system-architecture .stage-num {
+      font: 700 10px var(--sans,sans-serif);
+    }
+    @keyframes fsa-dash {
+      to { stroke-dashoffset: -24; }
+    }
+    #fig-flywheel-system-architecture .fsa-dash-flow {
+      stroke-dasharray: 6 4;
+      animation: fsa-dash 1.2s linear infinite;
+    }
+  </style></p>
+<p></defs></p>
+<p><rect x="8" y="8" width="884" height="582" rx="10"
+  fill="none" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<text x="450" y="31" text-anchor="middle" class="outer-title"
+  fill="var(--ink-soft,#45413a)">PRODUCTION DATA FLYWHEEL — SYSTEM DIAGRAM</text></p>
+<p><rect x="350" y="50" width="528" height="522" rx="8"
+  fill="var(--surface-3,#eef2ff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"
+  opacity="0.55"/>
+<text x="614" y="75" text-anchor="middle" class="section-title"
+  fill="var(--muted,#6d675d)">Offline Processing</text></p>
+<p><g data-anim="2">
+  <rect x="380" y="90" width="468" height="56" rx="7"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/></p>
+<p><circle cx="402" cy="118" r="12" fill="var(--accent,#4f46e5)"/>
+  <text x="402" y="122" text-anchor="middle" class="stage-num" fill="#fff">1</text>
+  <text x="510" y="112" text-anchor="middle" class="box-title"
+    fill="var(--ink-soft,#45413a)">Async Signal Join</text>
+  <text x="510" y="128" text-anchor="middle" class="box-sub"
+    fill="var(--muted,#6d675d)">(Kafka + Flink)</text>
+</g></p>
+<p><g data-anim="2">
+  <rect x="380" y="170" width="468" height="56" rx="7"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <circle cx="402" cy="198" r="12" fill="var(--accent,#4f46e5)"/>
+  <text x="402" y="202" text-anchor="middle" class="stage-num" fill="#fff">2</text>
+  <text x="510" y="192" text-anchor="middle" class="box-title"
+    fill="var(--ink-soft,#45413a)">Weak Supervision</text>
+  <text x="510" y="208" text-anchor="middle" class="box-sub"
+    fill="var(--muted,#6d675d)">Proxy Reward Scoring</text>
+</g></p>
+<p><g data-anim="2">
+  <rect x="380" y="250" width="468" height="56" rx="7"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <circle cx="402" cy="278" r="12" fill="var(--accent,#4f46e5)"/>
+  <text x="402" y="282" text-anchor="middle" class="stage-num" fill="#fff">3</text>
+  <text x="510" y="272" text-anchor="middle" class="box-title"
+    fill="var(--ink-soft,#45413a)">Active Learning Sampler</text>
+  <text x="510" y="288" text-anchor="middle" class="box-sub"
+    fill="var(--muted,#6d675d)">(core-set)</text>
+</g></p>
+<p><g data-anim="2">
+  <rect x="380" y="330" width="468" height="56" rx="7"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <circle cx="402" cy="358" r="12" fill="var(--accent,#4f46e5)"/>
+  <text x="402" y="362" text-anchor="middle" class="stage-num" fill="#fff">4</text>
+  <text x="510" y="352" text-anchor="middle" class="box-title"
+    fill="var(--ink-soft,#45413a)">Human Annotation Queue</text>
+</g></p>
+<p><g data-anim="2">
+  <rect x="380" y="410" width="468" height="56" rx="7"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <circle cx="402" cy="438" r="12" fill="var(--accent,#4f46e5)"/>
+  <text x="402" y="442" text-anchor="middle" class="stage-num" fill="#fff">5</text>
+  <text x="510" y="432" text-anchor="middle" class="box-title"
+    fill="var(--ink-soft,#45413a)">Data Assembly +</text>
+  <text x="510" y="449" text-anchor="middle" class="box-title"
+    fill="var(--ink-soft,#45413a)">Replay Buffer Mixing</text>
+</g></p>
+<p><line x1="614" y1="146" x2="614" y2="167" class="fsa-dash-flow"
+  stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#fsa-arr-acc)"/>
+<line x1="614" y1="226" x2="614" y2="247" class="fsa-dash-flow"
+  stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#fsa-arr-acc)"/>
+<line x1="614" y1="306" x2="614" y2="327" class="fsa-dash-flow"
+  stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#fsa-arr-acc)"/>
+<line x1="614" y1="386" x2="614" y2="407" class="fsa-dash-flow"
+  stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#fsa-arr-acc)"/></p>
+<p><g data-anim="1">
+  <rect x="58" y="58" width="158" height="54" rx="7"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="137" y="84" text-anchor="middle" class="box-title"
+    fill="var(--ink-soft,#45413a)">Users (N_k)</text>
+  <text x="137" y="100" text-anchor="middle" class="box-sub"
+    fill="var(--muted,#6d675d)">(growing user base)</text>
+</g></p>
+<p><g data-anim="1">
+  <rect x="58" y="152" width="158" height="58" rx="7"
+    fill="var(--surface-3,#ece7da)" stroke="var(--accent,#4f46e5)" stroke-width="2.2"/>
+  <rect x="58" y="152" width="158" height="5" rx="3"
+    fill="var(--accent,#4f46e5)"/>
+  <text x="137" y="183" text-anchor="middle" class="box-title"
+    fill="var(--ink-soft,#45413a)">Serving Tier</text>
+  <text x="137" y="200" text-anchor="middle" class="box-sub"
+    fill="var(--muted,#6d675d)">(vLLM / TGI)</text>
+</g></p>
+<p><g data-anim="3">
+  <rect x="58" y="332" width="158" height="58" rx="7"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="137" y="360" text-anchor="middle" class="box-title"
+    fill="var(--ink-soft,#45413a)">Eval Gate</text>
+  <text x="137" y="377" text-anchor="middle" class="box-sub"
+    fill="var(--muted,#6d675d)">(CI/CD)</text>
+</g></p>
+<p><g data-anim="3">
+  <rect x="58" y="430" width="158" height="58" rx="7"
+    fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="137" y="458" text-anchor="middle" class="box-title"
+    fill="var(--ink-soft,#45413a)">Retrain DAG</text>
+  <text x="137" y="474" text-anchor="middle" class="box-sub"
+    fill="var(--muted,#6d675d)">(Argo / Kubeflow)</text>
+</g></p>
+<p><line x1="137" y1="112" x2="137" y2="149"
+  stroke="var(--ink-soft,#45413a)" stroke-width="1.6" marker-end="url(#fsa-arr)"/>
+<text x="143" y="134" class="arr-lbl" fill="var(--muted,#6d675d)">requests</text></p>
+<p><path d="M 216,181 Q 300,181 377,118" fill="none"
+  stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#fsa-arr-acc)"/>
+<text x="295" y="165" text-anchor="middle" class="arr-lbl"
+  fill="var(--accent,#4f46e5)">logs</text></p>
+<p><path d="M 380,454 Q 260,480 218,462" fill="none"
+  stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#fsa-arr-acc)"/>
+<text x="295" y="500" text-anchor="middle" class="arr-lbl"
+  fill="var(--accent,#4f46e5)">training data</text></p>
+<p><line x1="137" y1="430" x2="137" y2="393"
+  stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#fsa-arr-acc)"/>
+<text x="143" y="415" class="arr-lbl" fill="var(--accent,#4f46e5)">candidate</text></p>
+<p><line x1="137" y1="332" x2="137" y2="213"
+  stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#fsa-arr-acc)"/>
+<text x="143" y="278" class="arr-lbl" fill="var(--accent,#4f46e5)">pass /</text>
+<text x="143" y="291" class="arr-lbl" fill="var(--accent,#4f46e5)">new model</text></p>
+<p><circle class="fsa-pulse" r="6" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="9s" repeatCount="indefinite" begin="0s"><mpath href="#fsa-mp1"/></animateMotion>
+  <animate attributeName="opacity" dur="9s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.01;0.1;0.11;1" values="0;1;1;0;0"/>
+</circle></p>
+<p><circle class="fsa-pulse" r="6" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="9s" repeatCount="indefinite" begin="0s"><mpath href="#fsa-mp2"/></animateMotion>
+  <animate attributeName="opacity" dur="9s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.11;0.112;0.2;0.21;1" values="0;0;1;1;0;0"/>
+</circle>
+<circle class="fsa-pulse" r="6" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="9s" repeatCount="indefinite" begin="0s"><mpath href="#fsa-mp3"/></animateMotion>
+  <animate attributeName="opacity" dur="9s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.21;0.212;0.3;0.31;1" values="0;0;1;1;0;0"/>
+</circle>
+<circle class="fsa-pulse" r="6" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="9s" repeatCount="indefinite" begin="0s"><mpath href="#fsa-mp4"/></animateMotion>
+  <animate attributeName="opacity" dur="9s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.31;0.312;0.4;0.41;1" values="0;0;1;1;0;0"/>
+</circle>
+<circle class="fsa-pulse" r="6" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="9s" repeatCount="indefinite" begin="0s"><mpath href="#fsa-mp5"/></animateMotion>
+  <animate attributeName="opacity" dur="9s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.41;0.412;0.5;0.51;1" values="0;0;1;1;0;0"/>
+</circle></p>
+<p><circle class="fsa-pulse" r="6" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="9s" repeatCount="indefinite" begin="0s"><mpath href="#fsa-mp6"/></animateMotion>
+  <animate attributeName="opacity" dur="9s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.51;0.512;0.64;0.65;1" values="0;0;1;1;0;0"/>
+</circle></p>
+<p><circle class="fsa-pulse" r="6" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="9s" repeatCount="indefinite" begin="0s"><mpath href="#fsa-mp7"/></animateMotion>
+  <animate attributeName="opacity" dur="9s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.65;0.652;0.76;0.77;1" values="0;0;1;1;0;0"/>
+</circle></p>
+<p><circle class="fsa-pulse" r="6" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="9s" repeatCount="indefinite" begin="0s"><mpath href="#fsa-mp8"/></animateMotion>
+  <animate attributeName="opacity" dur="9s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.77;0.772;0.9;0.91;1" values="0;0;1;1;0;0"/>
+</circle></p>
+<p><circle class="fsa-pulse" r="6" fill="var(--accent,#4f46e5)" opacity="0">
+  <animateMotion dur="9s" repeatCount="indefinite" begin="0s"><mpath href="#fsa-mp9"/></animateMotion>
+  <animate attributeName="opacity" dur="9s" repeatCount="indefinite" begin="0s"
+    keyTimes="0;0.91;0.912;0.99;1" values="0;0;1;1;0"/>
+</circle></p>
+<p><line x1="107" y1="152" x2="107" y2="115"
+  stroke="var(--ink-soft,#45413a)" stroke-width="1.4" stroke-dasharray="4 3"
+  marker-end="url(#fsa-arr)"/>
+<text x="60" y="137" class="arr-lbl" fill="var(--muted,#6d675d)">serve</text></p>
+<p></svg></p>
+<figcaption><b>The full production data flywheel is a continuously running closed loop — not a sequential pipeline.</b> The Serving Tier (vLLM/TGI) emits logs that enter the Offline Processing panel at Stage 1 (Async Signal Join via Kafka+Flink); data flows through Weak Supervision scoring, Active Learning sampling, Human Annotation, and Replay Buffer assembly (Stages 2–5) before feeding the Retrain DAG (Argo/Kubeflow). The retrained candidate passes through an Eval Gate (CI/CD) and, on success, is deployed back to the Serving Tier, closing the loop. The animated accent pulse traces this macro feedback path; the inner stage arrows show continuous asynchronous data flow through each offline step.</figcaption>
+</figure>
+<h3 id="operational-cadence">Operational cadence<a class="headerlink" href="#operational-cadence" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Cadence</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Real-time</td>
+<td>Serve requests, log records, emit client signal events</td>
+</tr>
+<tr>
+<td>Minutes</td>
+<td>Async signal join, proxy reward scoring</td>
+</tr>
+<tr>
+<td>Hours</td>
+<td>Active learning sampling, annotation queue refresh</td>
+</tr>
+<tr>
+<td>Days</td>
+<td>Human annotation batch completes</td>
+</tr>
+<tr>
+<td>Weekly</td>
+<td>Retrain DAG triggers, eval gate runs, canary deploy</td>
+</tr>
+<tr>
+<td>Monthly</td>
+<td>Replay buffer refresh, annotation taxonomy review</td>
+</tr>
+</tbody>
+</table>
+<p>The weekly retraining cycle is a practical baseline. Teams with very high traffic (millions of requests/day) and strong automation can run daily cycles; teams with sparse human annotation budgets may run monthly.</p>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are designing the ML system for a production coding assistant used by 500,000 developers. How would you build a data flywheel to continuously improve it?</p>
+<p><strong>A:</strong> I would structure it as a six-stage loop. First, <strong>structured logging</strong>: every request logs the prompt, output, per-token logprobs, and a session ID so client signals can be joined later. Second, <strong>preference collection</strong>: the IDE plugin emits implicit signals (code accepted/rejected, tests passing/failing after accepting, immediate edits) which a proxy reward model uses to score the 95% of traffic with no explicit feedback. Third, <strong>active learning</strong>: daily, I run a core-set sampler over the preceding day&rsquo;s uncertain requests (low logprob, high proxy-reward variance) and hard negatives (accepted code that failed CI) to fill a 500-example annotation quota routed to domain-expert annotators. Fourth, <strong>retraining</strong>: weekly SFT + DPO run on the new data mixed with a 40% replay buffer, using LoRA to keep compute tractable. Fifth, <strong>eval gate</strong>: the candidate must beat production in a GPT-4o win-rate judge on 1,000 held-out examples, pass a regression suite of 200 priority-1 golden cases, and show no safety regressions. Sixth, <strong>canary deploy</strong> at 10% traffic for 48 hours, monitoring regression on live task-completion rate before full rollout. The compounding effect comes from the fact that each week&rsquo;s better model attracts more usage, which provides higher-quality signal for the next week.</p>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Data flywheels have matured from research concept to core production practice: major labs now run weekly or faster retraining loops, closed-loop preference collection, and automated eval gates as standard infrastructure. The field has converged on mixing active data selection, weak supervision from implicit signals, and replay-buffered SFT+DPO cycles as the workhorse recipe.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2206.14486">Sorscher et al., <em>Beyond Neural Scaling Laws: Beating Power Law Scaling via Data Pruning</em> (NeurIPS 2022)</a> — NeurIPS Outstanding Paper; proves that intelligent data pruning can shift error from power-law to exponential decay, establishing the theoretical case for quality over quantity.</li>
+<li><a href="https://arxiv.org/abs/1503.02531">Hinton, Vinyals &amp; Dean, <em>Distilling the Knowledge in a Neural Network</em> (2015)</a> — the temperature-scaled soft-label KD paper cited throughout this chapter; the <span class="arithmatex">\(T^2\)</span> loss correction derives from here.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2407.10627">Luo et al., <em>Arena Learning: Build Data Flywheel for LLMs Post-training via Simulated Chatbot Arena</em> (2024)</a> — replaces expensive human arena battles with AI-judged simulated competitions to drive iterative SFT+RL improvement; introduces WizardArena for offline Elo estimation.</li>
+<li><a href="https://arxiv.org/abs/2510.06674">Zhao et al., <em>Agent-in-the-Loop: A Data Flywheel for Continuous Improvement in LLM-based Customer Support</em> (2025)</a> — production case study showing four annotation types (preference, explanation, relevance, gap) fed back into weekly retraining, cutting cycles from months to weeks with +8.4% helpfulness.</li>
+<li><a href="https://arxiv.org/abs/2603.01973">Nie et al., <em>CharacterFlywheel: Scaling Iterative Improvement of Engaging and Steerable LLMs in Production</em> (2026)</a> — Meta&rsquo;s 15-generation flywheel over real user traffic, integrating reward modeling, SFT, and RL; instruction-following accuracy rose from 59% to 85% over the run.</li>
+<li><a href="https://arxiv.org/abs/2402.04333">Xia et al., <em>LESS: Selecting Influential Data for Targeted Instruction Tuning</em> (ICML 2024)</a> — gradient-similarity-based data selection; training on a LESS-selected 5% of data often outperforms training on the full set, making active learning tractable at scale.</li>
+<li><a href="https://arxiv.org/abs/2405.20541">Ankner et al., <em>Perplexed by Perplexity: Perplexity-Based Data Pruning With Small Reference Models</em> (2024)</a> — a 125M proxy model scoring perplexity on training candidates improves a 3B model by up to 2 points on downstream tasks; practical guidance for flywheel data-quality filtering.</li>
+<li><a href="https://arxiv.org/abs/2310.07177">Liu et al., <em>Online Speculative Decoding</em> (ICML 2024)</a> — continuously distills the production target model into the draft model using live query traffic, improving token acceptance by 10–65% with cost-neutral retraining on idle serving capacity.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/princeton-nlp/LESS">princeton-nlp/LESS</a> — official ICML 2024 implementation of gradient-based influential-data selection for instruction tuning, with scripts for warmup, gradient collection, and LoRA fine-tuning.</li>
+<li><a href="https://github.com/opendilab/awesome-RLHF">opendilab/awesome-RLHF</a> — continuously updated catalogue of RLHF papers (2020–2026), codebases, datasets, and blog posts; the best single index for tracking the preference-learning literature.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://rlhfbook.com/">Nathan Lambert, <em>RLHF Book: Reinforcement Learning from Human Feedback and LLM Post-Training</em> (2026)</a> — comprehensive free book covering instruction tuning, reward modeling, rejection sampling, DPO, and online RLHF; the clearest end-to-end reference for the full preference-learning pipeline that drives every flywheel.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Ouyang et al., &ldquo;Training language models to follow instructions with human feedback&rdquo; (InstructGPT), arXiv 2022 — the foundational RLHF-from-production-feedback paper.</li>
+<li>Ziegler et al., &ldquo;Fine-Tuning Language Models from Human Preferences,&rdquo; arXiv 2019 — first demonstration of reward modeling from human preference labels.</li>
+<li>Settles, &ldquo;Active Learning Literature Survey,&rdquo; University of Wisconsin, 2010 — comprehensive reference on uncertainty sampling, query by committee, and core-set methods.</li>
+<li>Hinton, Vinyals, and Dean, &ldquo;Distilling the Knowledge in a Neural Network,&rdquo; NIPS Deep Learning Workshop 2015 — the temperature-scaled soft-label distillation paper.</li>
+<li>Kim and Rush, &ldquo;Sequence-Level Knowledge Distillation,&rdquo; EMNLP 2016 — adapts KD to sequence-to-sequence models; the on-policy variant is widely used for LLM compression.</li>
+<li>Sorscher et al., &ldquo;Beyond Neural Scaling Laws: Beating Power Law Scaling via Data Pruning,&rdquo; NeurIPS 2022 — argues that intelligent data selection can beat scaling on a fixed compute budget.</li>
+<li>Ankner et al., &ldquo;Perplexed by Perplexity: Perplexity-Based Data Pruning With Small Reference Models,&rdquo; arXiv 2024 — practical guidance on using small proxy models to filter training data quality.</li>
+</ul>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>The data flywheel is a compounding advantage: better model → more users → more signal → better model. After enough rounds, the training distribution gap is larger than any architectural advantage a new entrant can claim.</li>
+<li>Every logged request is raw material. Design schemas for schema evolution (Avro/Protobuf), join client signals asynchronously, and store per-token logprobs even if you do not use them immediately.</li>
+<li>Explicit preference labels are expensive and sparse; proxy reward models trained on implicit signals (copy, edit, session continuation) can extend coverage to 100% of traffic.</li>
+<li>Active learning with core-set diversity sampling is 3–5x more label-efficient than random sampling — you get coverage of the hard tail without annotation redundancy on easy clusters.</li>
+<li>Distillation from production traffic with top-k logit storage lets you continuously compress the serving model, reducing inference cost while maintaining quality on the actual user distribution.</li>
+<li>Replay buffers at <span class="arithmatex">\(\rho \approx 0.3\)</span>–<span class="arithmatex">\(0.5\)</span> are the primary defense against catastrophic forgetting during weekly retraining cycles.</li>
+<li>The eval gate is not optional: win-rate vs. production, a regression suite, and safety checks must all pass before any deployment, however small. Without this gate, the flywheel degrades via Goodhart&rsquo;s Law — the model optimizes for the training distribution rather than genuine quality.</li>
+<li>Data quality beats data volume past a certain scale. Hard negatives, diverse examples from the long tail, and preference labels on uncertain cases have far higher marginal value than additional random samples of easy cases.</li>
+</ul>
+</div>
+<nav class="page-nav">
+<a class="prev" href="04-safety-guardrails.html"><span class="pn-label">← Previous</span><span class="pn-title">Safety, Guardrails &amp; Content Moderation</span></a>
+<a class="next" href="06-security-prompt-injection.html"><span class="pn-label">Next →</span><span class="pn-title">Security: Prompt Injection, Jailbreaks &amp; Defenses</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#the-anatomy-of-a-data-flywheel">The Anatomy of a Data Flywheel</a></li>
+<li class="toc-l3"><a href="#why-the-flywheel-is-a-moat">Why the flywheel is a moat</a></li>
+<li class="toc-l2"><a href="#structured-logging-as-the-foundation">Structured Logging as the Foundation</a></li>
+<li class="toc-l3"><a href="#what-to-log">What to log</a></li>
+<li class="toc-l3"><a href="#joining-async-signals-back-to-requests">Joining async signals back to requests</a></li>
+<li class="toc-l2"><a href="#preference-collection-in-production">Preference Collection in Production</a></li>
+<li class="toc-l3"><a href="#explicit-feedback-collection">Explicit feedback collection</a></li>
+<li class="toc-l3"><a href="#structured-preference-from-downstream-behavior">Structured preference from downstream behavior</a></li>
+<li class="toc-l3"><a href="#pairwise-preference-labeling-at-scale">Pairwise preference labeling at scale</a></li>
+<li class="toc-l2"><a href="#active-learning-which-examples-to-label-next">Active Learning: Which Examples to Label Next?</a></li>
+<li class="toc-l3"><a href="#uncertainty-sampling">Uncertainty sampling</a></li>
+<li class="toc-l3"><a href="#core-set-diversity-sampling">Core-set / diversity sampling</a></li>
+<li class="toc-l3"><a href="#hard-negative-mining">Hard-negative mining</a></li>
+<li class="toc-l2"><a href="#distillation-from-production-traffic">Distillation from Production Traffic</a></li>
+<li class="toc-l3"><a href="#sequence-level-knowledge-distillation">Sequence-level knowledge distillation</a></li>
+<li class="toc-l3"><a href="#on-policy-distillation-pipeline">On-policy distillation pipeline</a></li>
+<li class="toc-l3"><a href="#data-flywheel-for-cheaper-inference">Data flywheel for cheaper inference</a></li>
+<li class="toc-l2"><a href="#retraining-pipelines">Retraining Pipelines</a></li>
+<li class="toc-l3"><a href="#the-retraining-recipe">The retraining recipe</a></li>
+<li class="toc-l3"><a href="#preventing-catastrophic-forgetting">Preventing catastrophic forgetting</a></li>
+<li class="toc-l2"><a href="#eval-gated-deployment">Eval-Gated Deployment</a></li>
+<li class="toc-l3"><a href="#building-the-eval-gate">Building the eval gate</a></li>
+<li class="toc-l3"><a href="#the-win-rate-judge">The win-rate judge</a></li>
+<li class="toc-l2"><a href="#the-compounding-data-advantage">The Compounding Data Advantage</a></li>
+<li class="toc-l2"><a href="#putting-it-all-together-a-self-improving-product">Putting It All Together: A Self-Improving Product</a></li>
+<li class="toc-l3"><a href="#operational-cadence">Operational cadence</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

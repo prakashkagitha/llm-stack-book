@@ -1,0 +1,1652 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG — The LLM Stack</title>
+<meta name="description" content="GraphRAG (entity/community graphs), agentic/iterative retrieval, multi-hop, self-RAG/corrective RAG, contextual retrieval, the long-context-vs-RAG debate and wh">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="active" href="05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IX — Retrieval &amp; RAG</div>
+<h1 id="95-advanced-rag-graphrag-agentic-rag-long-context-vs-rag">9.5 Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG<a class="headerlink" href="#95-advanced-rag-graphrag-agentic-rag-long-context-vs-rag" title="Permanent link">¶</a></h1>
+<p>Standard Retrieval-Augmented Generation (RAG) — embed a query, fetch the top-<span class="arithmatex">\(k\)</span> chunks, stuff them into the context — is a remarkable baseline. It is also frequently inadequate. Real corpora contain long-range dependencies that span documents, questions that require synthesizing information from many sources, and queries where a single retrieval step structurally cannot answer multi-hop reasoning chains. This chapter covers the frontier techniques that address those limitations: <strong>GraphRAG</strong>, which builds explicit entity and community graphs over the corpus; <strong>agentic and iterative retrieval</strong>, which lets a language model decide what to retrieve next and when to stop; <strong>self-RAG and corrective RAG</strong>, which teach the model to evaluate its own retrievals; <strong>contextual retrieval</strong>, which conditions chunk representations on their document; and the architectural question of whether to retrieve at all when context windows have grown to millions of tokens.</p>
+<p>We assume familiarity with the material in <a href="../09-rag-retrieval/03-rag-architectures.html">Retrieval-Augmented Generation Architectures</a> and <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a>. For embedding fundamentals see <a href="../09-rag-retrieval/01-embeddings-representation.html">Embeddings &amp; Representation Learning</a>; for vector search mechanics see <a href="../09-rag-retrieval/02-vector-databases-ann.html">Vector Databases &amp; Approximate Nearest Neighbor Search</a>.</p>
+<h2 id="why-naive-rag-breaks">Why Naive RAG Breaks<a class="headerlink" href="#why-naive-rag-breaks" title="Permanent link">¶</a></h2>
+<p>Before fixing something it helps to know exactly how it breaks. Consider a corpus of financial reports spanning a decade. The question &ldquo;How has ACME Corp&rsquo;s R&amp;D spending evolved relative to its revenue growth?&rdquo; requires:</p>
+<ol>
+<li>Identifying ACME&rsquo;s R&amp;D and revenue figures across ten years of filings.</li>
+<li>Computing or reasoning about a ratio that is never stated verbatim.</li>
+<li>Comparing trends — a conclusion that spans many documents.</li>
+</ol>
+<p>A top-<span class="arithmatex">\(k\)</span> semantic search will likely return a handful of relevant-sounding paragraphs but will miss the temporal continuity. There is also the <strong>multi-hop problem</strong>: &ldquo;Which portfolio company of the VC firm that led ACME&rsquo;s Series B later went public?&rdquo; requires resolving the VC firm first, then finding their portfolio, then finding an IPO — three sequential hops, each dependent on the previous answer. No single chunk can answer this; the retriever cannot know which chunks are relevant until after it has already partially answered the question.</p>
+<p>More failure modes:</p>
+<ul>
+<li><strong>Fragmented context.</strong> A single entity (a person, a product, a regulation) may be described across dozens of chunks. Fetching only a few will give an incomplete picture.</li>
+<li><strong>Contradictory retrievals.</strong> Chunks from different time periods or sources may contradict each other. The LLM has no way to arbitrate without explicit provenance metadata.</li>
+<li><strong>Lost-in-the-middle.</strong> Even when the right chunks are retrieved, LLMs notoriously under-attend to information in the middle of a long context (Liu et al., <em>Lost in the Middle</em>, 2023). Retrieval order matters.</li>
+<li><strong>Retrieval-generation mismatch.</strong> The retrieved chunk may technically be relevant but not in the right form for the generation task — e.g., a table when the model needs a narrative, or vice versa.</li>
+</ul>
+<p>Each technique in this chapter targets one or more of these failure modes.</p>
+<h2 id="graphrag-entity-and-community-graphs">GraphRAG: Entity and Community Graphs<a class="headerlink" href="#graphrag-entity-and-community-graphs" title="Permanent link">¶</a></h2>
+<h3 id="from-flat-chunks-to-knowledge-graphs">From Flat Chunks to Knowledge Graphs<a class="headerlink" href="#from-flat-chunks-to-knowledge-graphs" title="Permanent link">¶</a></h3>
+<p>GraphRAG, introduced by Edge et al. (Microsoft Research, 2024), replaces the flat chunk index with a knowledge graph built by having an LLM extract entities and relationships from every document, then running community detection to cluster related entities into hierarchical &ldquo;communities,&rdquo; and finally generating community-level summaries.</p>
+<figure class="viz" id="fig-advrag-graphrag-indexing-pipeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 720" role="img" aria-label="GraphRAG indexing pipeline: raw corpus flows through an LLM extraction pass to an entity graph, then community detection with Leiden algorithm, and finally LLM summarization of each community into a vector database.">
+<defs>
+  <marker id="gip-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+</defs>
+<style>
+  #fig-advrag-graphrag-indexing-pipeline .lbl { font: 600 13px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-advrag-graphrag-indexing-pipeline .lbl-bold { font: 700 14px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-advrag-graphrag-indexing-pipeline .lbl-sm { font: 500 11px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-advrag-graphrag-indexing-pipeline .mono { font: 500 11px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-advrag-graphrag-indexing-pipeline .ann { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-advrag-graphrag-indexing-pipeline .arrow-lbl { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-advrag-graphrag-indexing-pipeline .db-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+</style>
+
+
+<g data-anim="1">
+  <rect x="300" y="14" width="160" height="44" rx="8"
+        fill="var(--surface-3,#e8eef5)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="380" y="41" text-anchor="middle" class="lbl">Raw corpus</text>
+</g>
+
+
+<g data-anim="1">
+  <line x1="380" y1="58" x2="380" y2="84"
+        stroke="var(--border-2,#94a3b8)" stroke-width="1.8"
+        marker-end="url(#gip-arrow)"
+        class="viz-draw" style="--len:26"/>
+</g>
+
+
+<g data-anim="2">
+  <rect x="160" y="88" width="440" height="128" rx="10"
+        fill="var(--accent,#dbeafe)" fill-opacity="0.35"
+        stroke="var(--accent,#3b82f6)" stroke-width="1.8"/>
+  <text x="380" y="110" text-anchor="middle" class="lbl-bold">LLM extraction pass (per chunk)</text>
+  <text x="184" y="136" text-anchor="start" class="mono">entities: {ACME Corp, Alice Lee, Series B, 2019}</text>
+  <text x="184" y="158" text-anchor="start" class="mono">relations: {(ACME, CEO, Alice), (Alice, joined, 2019)}</text>
+  <text x="184" y="180" text-anchor="start" class="mono">relations: {(ACME, raised, Series B, 2019)}</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="380" y1="216" x2="380" y2="252"
+        stroke="var(--border-2,#94a3b8)" stroke-width="1.8"
+        marker-end="url(#gip-arrow)"
+        class="viz-draw" style="--len:36"/>
+  <text x="390" y="238" text-anchor="start" class="arrow-lbl">extracted elements</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="220" y="256" width="300" height="96" rx="10"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#94a3b8)" stroke-width="1.8"/>
+  <text x="280" y="282" text-anchor="middle" class="lbl-bold">Entity graph</text>
+  <text x="280" y="300" text-anchor="middle" class="lbl-sm">(nodes + edges)</text>
+
+
+
+  <circle cx="376" cy="274" r="7" fill="var(--accent,#3b82f6)" fill-opacity="0.7" stroke="var(--accent,#3b82f6)" stroke-width="1"/>
+  <circle cx="404" cy="290" r="7" fill="var(--accent,#3b82f6)" fill-opacity="0.7" stroke="var(--accent,#3b82f6)" stroke-width="1"/>
+  <circle cx="390" cy="316" r="7" fill="var(--accent,#3b82f6)" fill-opacity="0.7" stroke="var(--accent,#3b82f6)" stroke-width="1"/>
+  <circle cx="358" cy="310" r="7" fill="var(--accent,#3b82f6)" fill-opacity="0.7" stroke="var(--accent,#3b82f6)" stroke-width="1"/>
+  <circle cx="420" cy="314" r="5" fill="var(--accent,#3b82f6)" fill-opacity="0.5" stroke="var(--accent,#3b82f6)" stroke-width="1"/>
+
+  <line x1="376" y1="274" x2="404" y2="290" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <line x1="404" y1="290" x2="390" y2="316" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <line x1="390" y1="316" x2="358" y2="310" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <line x1="376" y1="274" x2="358" y2="310" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <line x1="404" y1="290" x2="420" y2="314" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+</g>
+
+
+<g data-anim="3">
+  <text x="532" y="294" text-anchor="start" class="ann">merge by entity</text>
+  <text x="532" y="308" text-anchor="start" class="ann">name / alias</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="380" y1="352" x2="380" y2="388"
+        stroke="var(--border-2,#94a3b8)" stroke-width="1.8"
+        marker-end="url(#gip-arrow)"
+        class="viz-draw" style="--len:36"/>
+</g>
+
+
+<g data-anim="4">
+  <rect x="200" y="392" width="360" height="130" rx="10"
+        fill="var(--accent-2,#c7d2fe)" fill-opacity="0.3"
+        stroke="var(--accent-2,#818cf8)" stroke-width="1.8"/>
+  <text x="380" y="416" text-anchor="middle" class="lbl-bold">Community detection (Leiden)</text>
+
+
+  <rect x="218" y="426" width="324" height="24" rx="6"
+        fill="var(--accent-2,#c7d2fe)" fill-opacity="0.4" stroke="var(--accent-2,#818cf8)" stroke-width="1"/>
+  <text x="380" y="443" text-anchor="middle" class="lbl-sm">level 0: coarse (industries)</text>
+
+  <rect x="226" y="456" width="308" height="24" rx="6"
+        fill="var(--accent-2,#c7d2fe)" fill-opacity="0.55" stroke="var(--accent-2,#818cf8)" stroke-width="1"/>
+  <text x="380" y="473" text-anchor="middle" class="lbl-sm">level 1: medium (companies)</text>
+
+  <rect x="234" y="486" width="292" height="24" rx="6"
+        fill="var(--accent-2,#c7d2fe)" fill-opacity="0.75" stroke="var(--accent-2,#818cf8)" stroke-width="1"/>
+  <text x="380" y="503" text-anchor="middle" class="lbl-sm">level 2: fine (products)</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="380" y1="522" x2="380" y2="558"
+        stroke="var(--border-2,#94a3b8)" stroke-width="1.8"
+        marker-end="url(#gip-arrow)"
+        class="viz-draw" style="--len:36"/>
+  <text x="390" y="544" text-anchor="start" class="arrow-lbl">clustered communities</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="160" y="562" width="440" height="104" rx="10"
+        fill="var(--accent,#dbeafe)" fill-opacity="0.35"
+        stroke="var(--accent,#3b82f6)" stroke-width="1.8"/>
+  <text x="340" y="588" text-anchor="middle" class="lbl-bold">LLM summarizes each community</text>
+  <text x="340" y="610" text-anchor="middle" class="lbl-sm">community report stored in vector DB</text>
+  <text x="340" y="632" text-anchor="middle" class="lbl-sm">(one report per community per level)</text>
+
+
+  <ellipse cx="548" cy="594" rx="18" ry="6" fill="var(--accent,#3b82f6)" fill-opacity="0.25" stroke="var(--accent,#3b82f6)" stroke-width="1.2"/>
+  <rect x="530" y="594" width="36" height="30" fill="var(--accent,#3b82f6)" fill-opacity="0.12" stroke="var(--accent,#3b82f6)" stroke-width="1.2"/>
+  <ellipse cx="548" cy="624" rx="18" ry="6" fill="var(--accent,#3b82f6)" fill-opacity="0.25" stroke="var(--accent,#3b82f6)" stroke-width="1.2"/>
+  <text x="548" y="643" text-anchor="middle" class="db-lbl">vector DB</text>
+</g>
+
+</svg>
+<figcaption><b>GraphRAG indexing pipeline: four stages from raw text to searchable community reports.</b> The two LLM-driven stages (extraction and summarization, shown in blue) bracket a purely structural phase — entity merging and Leiden community detection — highlighted in purple to distinguish algorithmic from generative work. The output is a hierarchy of community reports indexed in a vector database, enabling both local and global retrieval at query time.</figcaption>
+</figure>
+
+<p>At query time, two modes are offered:</p>
+<ul>
+<li><strong>Local search</strong>: query → entity match in graph → expand neighborhood → fetch related source chunks and community reports → generate.</li>
+<li><strong>Global search</strong>: query → fetch top community reports at the right granularity → generate a synthesis across many communities.</li>
+</ul>
+<p>Global search is uniquely powerful for questions like &ldquo;What are the major themes in this corpus?&rdquo; that have no single-document answer and are completely intractable for flat retrieval.</p>
+<h3 id="building-a-minimal-graphrag-pipeline">Building a Minimal GraphRAG Pipeline<a class="headerlink" href="#building-a-minimal-graphrag-pipeline" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">minimal_graphrag.py — A stripped-down GraphRAG implementation.</span>
+<span class="sd">Requires: openai, networkx, python-louvain (community), sentence-transformers</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Tuple</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">networkx</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nx</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">community</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">community_louvain</span>  <span class="c1"># pip install python-louvain</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sentence_transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">SentenceTransformer</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAI</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">()</span>
+<span class="n">embedder</span> <span class="o">=</span> <span class="n">SentenceTransformer</span><span class="p">(</span><span class="s2">&quot;all-MiniLM-L6-v2&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># ── 1. Entity + relation extraction ──────────────────────────────────────────</span>
+
+<span class="n">EXTRACT_PROMPT</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">Extract entities and relationships from the text below.</span>
+<span class="s2">Return JSON only, no commentary.</span>
+
+<span class="s2">Format:</span>
+<span class="s2">{</span>
+<span class="s2">  &quot;entities&quot;: [{&quot;id&quot;: &quot;E1&quot;, &quot;name&quot;: &quot;...&quot;, &quot;type&quot;: &quot;person|org|concept|event&quot;}],</span>
+<span class="s2">  &quot;relations&quot;: [{&quot;src&quot;: &quot;E1&quot;, &quot;dst&quot;: &quot;E2&quot;, &quot;label&quot;: &quot;...&quot;}]</span>
+<span class="s2">}</span>
+
+<span class="s2">Text:</span>
+<span class="si">{text}</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_graph_elements</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Ask the LLM to extract entities and relations from one chunk.&quot;&quot;&quot;</span>
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">EXTRACT_PROMPT</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="n">text</span><span class="p">)}],</span>
+        <span class="n">response_format</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;json_object&quot;</span><span class="p">},</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">resp</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
+
+
+<span class="c1"># ── 2. Build the knowledge graph ─────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_knowledge_graph</span><span class="p">(</span><span class="n">chunks</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">nx</span><span class="o">.</span><span class="n">Graph</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Process every chunk, merge entities by name, build an undirected graph.</span>
+<span class="sd">    Returns (graph, entity_to_chunks) so we can fetch source text later.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">G</span> <span class="o">=</span> <span class="n">nx</span><span class="o">.</span><span class="n">Graph</span><span class="p">()</span>
+    <span class="n">entity_to_chunks</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">name_to_node</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>  <span class="c1"># canonical name → node id</span>
+
+    <span class="k">for</span> <span class="n">chunk_idx</span><span class="p">,</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">chunks</span><span class="p">):</span>
+        <span class="n">elements</span> <span class="o">=</span> <span class="n">extract_graph_elements</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+        <span class="n">local_id_to_name</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="k">for</span> <span class="n">ent</span> <span class="ow">in</span> <span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;entities&quot;</span><span class="p">,</span> <span class="p">[]):</span>
+            <span class="n">name</span> <span class="o">=</span> <span class="n">ent</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">name_to_node</span><span class="p">:</span>
+                <span class="n">node_id</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;node_</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">name_to_node</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="n">name_to_node</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">node_id</span>
+                <span class="n">G</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">node_id</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">ent</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">],</span> <span class="nb">type</span><span class="o">=</span><span class="n">ent</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;type&quot;</span><span class="p">,</span> <span class="s2">&quot;unknown&quot;</span><span class="p">))</span>
+            <span class="n">nid</span> <span class="o">=</span> <span class="n">name_to_node</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+            <span class="n">local_id_to_name</span><span class="p">[</span><span class="n">ent</span><span class="p">[</span><span class="s2">&quot;id&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="n">nid</span>
+            <span class="n">entity_to_chunks</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">nid</span><span class="p">,</span> <span class="p">[])</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">rel</span> <span class="ow">in</span> <span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;relations&quot;</span><span class="p">,</span> <span class="p">[]):</span>
+            <span class="n">src</span> <span class="o">=</span> <span class="n">local_id_to_name</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">rel</span><span class="p">[</span><span class="s2">&quot;src&quot;</span><span class="p">])</span>
+            <span class="n">dst</span> <span class="o">=</span> <span class="n">local_id_to_name</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">rel</span><span class="p">[</span><span class="s2">&quot;dst&quot;</span><span class="p">])</span>
+            <span class="k">if</span> <span class="n">src</span> <span class="ow">and</span> <span class="n">dst</span> <span class="ow">and</span> <span class="n">src</span> <span class="o">!=</span> <span class="n">dst</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">G</span><span class="o">.</span><span class="n">has_edge</span><span class="p">(</span><span class="n">src</span><span class="p">,</span> <span class="n">dst</span><span class="p">):</span>
+                    <span class="n">G</span><span class="p">[</span><span class="n">src</span><span class="p">][</span><span class="n">dst</span><span class="p">][</span><span class="s2">&quot;weight&quot;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>  <span class="c1"># co-occurrence reinforcement</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">G</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">src</span><span class="p">,</span> <span class="n">dst</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="n">rel</span><span class="p">[</span><span class="s2">&quot;label&quot;</span><span class="p">],</span> <span class="n">weight</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">G</span><span class="p">,</span> <span class="n">entity_to_chunks</span>
+
+
+<span class="c1"># ── 3. Community detection + summarisation ───────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">detect_communities</span><span class="p">(</span><span class="n">G</span><span class="p">:</span> <span class="n">nx</span><span class="o">.</span><span class="n">Graph</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Louvain community detection. Returns node → community_id map.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">G</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{}</span>
+    <span class="k">return</span> <span class="n">community_louvain</span><span class="o">.</span><span class="n">best_partition</span><span class="p">(</span><span class="n">G</span><span class="p">)</span>
+
+
+<span class="n">COMMUNITY_SUMMARY_PROMPT</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">You are summarising a community of related entities from a knowledge graph.</span>
+<span class="s2">Entities in this community: </span><span class="si">{entities}</span>
+<span class="s2">Key relationships: </span><span class="si">{relationships}</span>
+
+<span class="s2">Write a concise 3-5 sentence summary of what this community represents,</span>
+<span class="s2">its key members, and the most important connections.</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">summarise_community</span><span class="p">(</span><span class="n">G</span><span class="p">:</span> <span class="n">nx</span><span class="o">.</span><span class="n">Graph</span><span class="p">,</span> <span class="n">node_ids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Generate an LLM summary of a single community.&quot;&quot;&quot;</span>
+    <span class="n">node_set</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">node_ids</span><span class="p">)</span>
+    <span class="n">entities</span> <span class="o">=</span> <span class="p">[</span><span class="n">G</span><span class="o">.</span><span class="n">nodes</span><span class="p">[</span><span class="n">n</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">node_ids</span><span class="p">[:</span><span class="mi">20</span><span class="p">]]</span>  <span class="c1"># cap to avoid huge prompts</span>
+    <span class="n">rels</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">G</span><span class="o">.</span><span class="n">nodes</span><span class="p">[</span><span class="n">u</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;name&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">u</span><span class="p">)</span><span class="si">}</span><span class="s2"> —</span><span class="si">{</span><span class="n">d</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;label&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;?&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">→ </span><span class="si">{</span><span class="n">G</span><span class="o">.</span><span class="n">nodes</span><span class="p">[</span><span class="n">v</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;name&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">for</span> <span class="n">u</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">G</span><span class="o">.</span><span class="n">edges</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">u</span> <span class="ow">in</span> <span class="n">node_set</span> <span class="ow">and</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">node_set</span>
+    <span class="p">][:</span><span class="mi">30</span><span class="p">]</span>
+
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[{</span>
+            <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">COMMUNITY_SUMMARY_PROMPT</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+                <span class="n">entities</span><span class="o">=</span><span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">entities</span><span class="p">),</span>
+                <span class="n">relationships</span><span class="o">=</span><span class="s2">&quot;; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">rels</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">}],</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">resp</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_community_index</span><span class="p">(</span>
+    <span class="n">G</span><span class="p">:</span> <span class="n">nx</span><span class="o">.</span><span class="n">Graph</span><span class="p">,</span>
+    <span class="n">partition</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Build a list of community records with text summaries and embeddings</span>
+<span class="sd">    suitable for storing in a vector DB.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span>
+    <span class="n">comm_nodes</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">list</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">node</span><span class="p">,</span> <span class="n">comm_id</span> <span class="ow">in</span> <span class="n">partition</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">comm_nodes</span><span class="p">[</span><span class="n">comm_id</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+
+    <span class="n">records</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">comm_id</span><span class="p">,</span> <span class="n">nodes</span> <span class="ow">in</span> <span class="n">comm_nodes</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">summary</span> <span class="o">=</span> <span class="n">summarise_community</span><span class="p">(</span><span class="n">G</span><span class="p">,</span> <span class="n">nodes</span><span class="p">)</span>
+        <span class="n">embedding</span> <span class="o">=</span> <span class="n">embedder</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">summary</span><span class="p">)</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+        <span class="n">records</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+            <span class="s2">&quot;community_id&quot;</span><span class="p">:</span> <span class="n">comm_id</span><span class="p">,</span>
+            <span class="s2">&quot;node_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">nodes</span><span class="p">),</span>
+            <span class="s2">&quot;summary&quot;</span><span class="p">:</span> <span class="n">summary</span><span class="p">,</span>
+            <span class="s2">&quot;embedding&quot;</span><span class="p">:</span> <span class="n">embedding</span><span class="p">,</span>
+        <span class="p">})</span>
+    <span class="k">return</span> <span class="n">records</span>
+
+
+<span class="c1"># ── 4. Query: global search ───────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">global_search</span><span class="p">(</span>
+    <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">community_records</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">],</span>
+    <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Embed query, find nearest community summaries, synthesise.&quot;&quot;&quot;</span>
+    <span class="n">q_emb</span> <span class="o">=</span> <span class="n">embedder</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+    <span class="c1"># cosine similarity</span>
+    <span class="n">sims</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">q_emb</span><span class="p">,</span> <span class="n">rec</span><span class="p">[</span><span class="s2">&quot;embedding&quot;</span><span class="p">])</span> <span class="o">/</span>
+        <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">q_emb</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">rec</span><span class="p">[</span><span class="s2">&quot;embedding&quot;</span><span class="p">])</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">community_records</span>
+    <span class="p">]</span>
+    <span class="n">top_indices</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">sims</span><span class="p">)[::</span><span class="o">-</span><span class="mi">1</span><span class="p">][:</span><span class="n">top_k</span><span class="p">]</span>
+    <span class="n">context</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">community_records</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="s2">&quot;summary&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">top_indices</span><span class="p">)</span>
+
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[</span>
+            <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;Answer based only on the provided community summaries.&quot;</span><span class="p">},</span>
+            <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;Context:</span><span class="se">\n</span><span class="si">{</span><span class="n">context</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">Question: </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">},</span>
+        <span class="p">],</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">resp</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>
+</code></pre></div>
+<p>The key insight of GraphRAG is the <strong>separation of indexing granularity from retrieval granularity</strong>. A community summary might distill 500 chunks of text into two paragraphs, allowing global questions to be answered without fitting 500 chunks into a single context window.</p>
+<h2 id="multi-hop-retrieval-chaining-queries">Multi-Hop Retrieval: Chaining Queries<a class="headerlink" href="#multi-hop-retrieval-chaining-queries" title="Permanent link">¶</a></h2>
+<p>Multi-hop retrieval solves the problem that the answer to a question may require information from documents that have no direct semantic overlap with the original query. The standard technique is <strong>iterative query decomposition</strong>:</p>
+<div class="arithmatex">\[
+q_0 \xrightarrow{\text{LLM decompose}} \{q_1, q_2, \ldots\} \xrightarrow{\text{retrieve}} \{D_1, D_2, \ldots\} \xrightarrow{\text{LLM reason}} q_{1}^{(2)}, q_{2}^{(2)}, \ldots
+\]</div>
+<p>Each round of retrieval produces evidence that informs the next query. The depth of the chain is bounded by a maximum step count or by the LLM deciding it has enough information. This architecture was formalised in IRCoT (Trivedi et al., 2022) and later in BeamRAG and various implementations.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">multihop_rag.py — Iterative Chain-of-Thought retrieval with explicit decomposition.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">textwrap</span>
+
+<span class="c1"># Assume `retrieve(query, k)` calls your vector DB and returns a list of chunk strings.</span>
+<span class="c1"># Assume `llm(prompt)` calls your LLM and returns a string.</span>
+<span class="c1"># Both are injected for testability.</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">multihop_rag</span><span class="p">(</span>
+    <span class="n">original_question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">retrieve</span><span class="p">,</span>      <span class="c1"># callable(query: str, k: int) -&gt; List[str]</span>
+    <span class="n">llm</span><span class="p">,</span>           <span class="c1"># callable(prompt: str) -&gt; str</span>
+    <span class="n">max_hops</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+    <span class="n">chunks_per_hop</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Iterative retrieval: retrieve → reason → decide whether to retrieve again.</span>
+<span class="sd">    Returns the final answer string.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">accumulated_context</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">trajectory</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">[]</span>  <span class="c1"># (sub-query, retrieved_chunks)</span>
+
+    <span class="n">DECOMPOSE_PROMPT</span> <span class="o">=</span> <span class="n">textwrap</span><span class="o">.</span><span class="n">dedent</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">        You are answering the question step by step.</span>
+
+<span class="s2">        Original question: </span><span class="si">{question}</span>
+
+<span class="s2">        Information gathered so far:</span>
+<span class="s2">        </span><span class="si">{context}</span>
+
+<span class="s2">        What is the SINGLE most important piece of information you still need?</span>
+<span class="s2">        Write it as a short search query (one sentence).</span>
+<span class="s2">        If you have enough information to answer, write &quot;ANSWER:&quot; followed by your final answer.</span>
+
+<span class="s2">        Your response:</span>
+<span class="s2">    &quot;&quot;&quot;</span><span class="p">)</span>
+
+    <span class="n">current_query</span> <span class="o">=</span> <span class="n">original_question</span>
+
+    <span class="k">for</span> <span class="n">hop</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_hops</span><span class="p">):</span>
+        <span class="c1"># Retrieve chunks for this iteration&#39;s sub-query</span>
+        <span class="n">chunks</span> <span class="o">=</span> <span class="n">retrieve</span><span class="p">(</span><span class="n">current_query</span><span class="p">,</span> <span class="n">chunks_per_hop</span><span class="p">)</span>
+        <span class="n">accumulated_context</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">chunks</span><span class="p">)</span>
+        <span class="n">trajectory</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">current_query</span><span class="p">,</span> <span class="n">chunks</span><span class="p">))</span>
+
+        <span class="c1"># Ask the LLM whether we have enough information or need another hop</span>
+        <span class="n">context_str</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">---</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">accumulated_context</span><span class="p">)</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="n">DECOMPOSE_PROMPT</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+            <span class="n">question</span><span class="o">=</span><span class="n">original_question</span><span class="p">,</span>
+            <span class="n">context</span><span class="o">=</span><span class="n">context_str</span><span class="p">[:</span><span class="mi">6000</span><span class="p">],</span>  <span class="c1"># guard against context overflow</span>
+        <span class="p">)</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="n">llm</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;ANSWER:&quot;</span><span class="p">):</span>
+            <span class="c1"># The model has enough to answer — we&#39;re done</span>
+            <span class="k">return</span> <span class="n">response</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="s2">&quot;ANSWER:&quot;</span><span class="p">):]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+        <span class="c1"># Otherwise, the model&#39;s response IS the next sub-query</span>
+        <span class="n">current_query</span> <span class="o">=</span> <span class="n">response</span>
+
+    <span class="c1"># Fallback: force an answer with whatever we have</span>
+    <span class="n">final_prompt</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Based on the following information, answer: </span><span class="si">{</span><span class="n">original_question</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">---</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">accumulated_context</span><span class="p">[:</span><span class="mi">5000</span><span class="p">])</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">llm</span><span class="p">(</span><span class="n">final_prompt</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example — multi-hop traversal</p>
+<p>Suppose the question is &ldquo;What programming language does the company founded by the author of PyTorch use?&rdquo;</p>
+<p><strong>Hop 1</strong> — query: &ldquo;author of PyTorch&rdquo; → chunk: &ldquo;PyTorch was created by Soumith Chintala at Facebook AI Research.&rdquo;</p>
+<p><strong>Hop 2</strong> — query: &ldquo;company founded by Soumith Chintala&rdquo; → chunk: &ldquo;Soumith Chintala co-founded Extropic AI in 2023.&rdquo;</p>
+<p><strong>Hop 3</strong> — query: &ldquo;programming language used at Extropic AI&rdquo; → chunk: &ldquo;Extropic AI&rsquo;s hardware control software is written primarily in Rust.&rdquo;</p>
+<p><strong>Answer</strong>: Rust. Each hop is unretievable without the previous one because the final query (&ldquo;programming language at Extropic AI&rdquo;) has no semantic overlap with the original question.</p>
+</div>
+<h2 id="self-rag-and-corrective-rag">Self-RAG and Corrective RAG<a class="headerlink" href="#self-rag-and-corrective-rag" title="Permanent link">¶</a></h2>
+<h3 id="self-rag-retrieval-and-quality-tokens">Self-RAG: Retrieval and Quality Tokens<a class="headerlink" href="#self-rag-retrieval-and-quality-tokens" title="Permanent link">¶</a></h3>
+<p>Asai et al. (<em>Self-RAG</em>, 2023) fine-tune an LLM to generate four types of <strong>reflection tokens</strong> interleaved with its normal output:</p>
+<table>
+<thead>
+<tr>
+<th>Token type</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>[Retrieve]</code></td>
+<td>&ldquo;I need external information here&rdquo;</td>
+</tr>
+<tr>
+<td><code>[Relevant]</code> / <code>[Irrelevant]</code></td>
+<td>&ldquo;This retrieved passage is / is not useful&rdquo;</td>
+</tr>
+<tr>
+<td><code>[Supported]</code> / <code>[Partially Supported]</code> / <code>[No Support]</code></td>
+<td>&ldquo;My generation is factually grounded by the passage&rdquo;</td>
+</tr>
+<tr>
+<td><code>[Utility]</code> 1–5</td>
+<td>&ldquo;This overall response is how useful to the user&rdquo;</td>
+</tr>
+</tbody>
+</table>
+<p>The model learns to insert these tokens at appropriate positions. During inference, if the model generates <code>[Retrieve]</code>, the system fetches passages and feeds them back. If it generates <code>[Irrelevant]</code>, it continues generating without that passage. This creates a feedback loop where retrieval is demand-driven rather than always-on.</p>
+<p>A simpler variant is <strong>Corrective RAG (CRAG)</strong> (Yan et al., 2024): after the initial retrieval, a lightweight evaluator scores each retrieved document&rsquo;s relevance. Low-scoring documents trigger a web search to supplement or replace the original retrieval. Documents that score ambiguously are decomposed into individual factual claims and each claim is re-verified.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">corrective_rag.py — CRAG-style retrieval with relevance scoring and fallback.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">NamedTuple</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RetrievedDoc</span><span class="p">(</span><span class="n">NamedTuple</span><span class="p">):</span>
+    <span class="n">text</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">score</span><span class="p">:</span> <span class="nb">float</span>   <span class="c1"># initial retrieval similarity</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">evaluate_relevance</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">doc</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">llm</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Ask the LLM to score relevance 0.0–1.0.</span>
+<span class="sd">    In production, use a cross-encoder reranker (faster, no API call).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;On a scale of 0.0 to 1.0, how relevant is the following document &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;to the query: &#39;</span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">&#39;?</span><span class="se">\n</span><span class="s2">Document: </span><span class="si">{</span><span class="n">doc</span><span class="p">[:</span><span class="mi">500</span><span class="p">]</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Return only a float like 0.85.&quot;</span>
+    <span class="p">)</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">llm</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.5</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">corrective_rag</span><span class="p">(</span>
+    <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">initial_docs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">RetrievedDoc</span><span class="p">],</span>
+    <span class="n">web_search</span><span class="p">,</span>      <span class="c1"># callable(query: str) -&gt; List[str]</span>
+    <span class="n">llm</span><span class="p">,</span>
+    <span class="n">high_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.7</span><span class="p">,</span>
+    <span class="n">low_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.3</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    CRAG algorithm:</span>
+<span class="sd">      - relevance &gt;= high_threshold → accept as-is</span>
+<span class="sd">      - relevance &lt;= low_threshold  → discard, trigger web search</span>
+<span class="sd">      - in between                  → keep but also do web search</span>
+<span class="sd">    Returns a final list of text passages for the generator.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">final_passages</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">need_web</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">for</span> <span class="n">doc</span> <span class="ow">in</span> <span class="n">initial_docs</span><span class="p">:</span>
+        <span class="n">rel</span> <span class="o">=</span> <span class="n">evaluate_relevance</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">doc</span><span class="o">.</span><span class="n">text</span><span class="p">,</span> <span class="n">llm</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">rel</span> <span class="o">&gt;=</span> <span class="n">high_threshold</span><span class="p">:</span>
+            <span class="n">final_passages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">doc</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">rel</span> <span class="o">&lt;=</span> <span class="n">low_threshold</span><span class="p">:</span>
+            <span class="n">need_web</span> <span class="o">=</span> <span class="kc">True</span>  <span class="c1"># discard this doc</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Ambiguous: decompose into fine-grained sentences and keep good ones</span>
+            <span class="n">sentences</span> <span class="o">=</span> <span class="p">[</span><span class="n">s</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">doc</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
+            <span class="k">for</span> <span class="n">sent</span> <span class="ow">in</span> <span class="n">sentences</span><span class="p">:</span>
+                <span class="n">sent_rel</span> <span class="o">=</span> <span class="n">evaluate_relevance</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">sent</span><span class="p">,</span> <span class="n">llm</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">sent_rel</span> <span class="o">&gt;=</span> <span class="n">high_threshold</span><span class="p">:</span>
+                    <span class="n">final_passages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sent</span><span class="p">)</span>
+            <span class="n">need_web</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="k">if</span> <span class="n">need_web</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">final_passages</span><span class="p">:</span>
+        <span class="n">web_results</span> <span class="o">=</span> <span class="n">web_search</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+        <span class="n">final_passages</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">web_results</span><span class="p">[:</span><span class="mi">3</span><span class="p">])</span>
+
+    <span class="k">return</span> <span class="n">final_passages</span>
+</code></pre></div>
+<h3 id="key-design-choice-when-to-retrieve">Key Design Choice: When to Retrieve<a class="headerlink" href="#key-design-choice-when-to-retrieve" title="Permanent link">¶</a></h3>
+<p>Llama-Index and LangChain both provide &ldquo;router&rdquo; components that decide whether retrieval is warranted at all. The routing decision can be made with:</p>
+<ul>
+<li><strong>A classifier</strong> trained to distinguish factual questions (retrieve) from conversational or creative questions (skip).</li>
+<li><strong>LLM self-assessment</strong>: prompt the LLM with &ldquo;do you need external information to answer X?&rdquo;.</li>
+<li><strong>Uncertainty estimation</strong>: if the model&rsquo;s top token probability is high, maybe it does not need retrieval; if it is low, retrieve. This is noisy but requires no extra calls.</li>
+</ul>
+<h2 id="contextual-retrieval-and-dense-representations">Contextual Retrieval and Dense Representations<a class="headerlink" href="#contextual-retrieval-and-dense-representations" title="Permanent link">¶</a></h2>
+<p>A limitation of standard chunking is that a chunk often loses its context when it is embedded in isolation. Anthropic&rsquo;s <strong>contextual retrieval</strong> technique (2024) prepends a generated context sentence to each chunk before embedding:</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">contextual_retrieval.py — Prepend document-level context to each chunk before embedding.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span>
+
+
+<span class="n">CONTEXT_PROMPT</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">Here is the chunk we want to situate within the full document.</span>
+<span class="s2">&lt;document&gt;</span>
+<span class="si">{document}</span>
+<span class="s2">&lt;/document&gt;</span>
+<span class="s2">&lt;chunk&gt;</span>
+<span class="si">{chunk}</span>
+<span class="s2">&lt;/chunk&gt;</span>
+<span class="s2">Please give a short succinct context (1-2 sentences) to situate</span>
+<span class="s2">this chunk within the overall document for improved search retrieval.</span>
+<span class="s2">Answer only with the succinct context, nothing else.</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_contextual_chunks</span><span class="p">(</span>
+    <span class="n">document</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">chunks</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">llm</span><span class="p">,</span>
+    <span class="n">max_doc_chars</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8000</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    For each chunk, generate a context prefix using the full document,</span>
+<span class="sd">    then prepend it. The result is stored in the embedding index instead</span>
+<span class="sd">    of the raw chunk.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Truncate the doc to fit in context (use a sliding reference window in prod)</span>
+    <span class="n">doc_excerpt</span> <span class="o">=</span> <span class="n">document</span><span class="p">[:</span><span class="n">max_doc_chars</span><span class="p">]</span>
+    <span class="n">contextual_chunks</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">chunks</span><span class="p">:</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="n">CONTEXT_PROMPT</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">document</span><span class="o">=</span><span class="n">doc_excerpt</span><span class="p">,</span> <span class="n">chunk</span><span class="o">=</span><span class="n">chunk</span><span class="p">)</span>
+        <span class="n">context_sentence</span> <span class="o">=</span> <span class="n">llm</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="c1"># The embedded text includes context, but the stored text can be the raw chunk</span>
+        <span class="n">embedded_text</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">context_sentence</span><span class="si">}</span><span class="se">\n\n</span><span class="si">{</span><span class="n">chunk</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="n">contextual_chunks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">embedded_text</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">contextual_chunks</span>
+</code></pre></div>
+<p>The mechanism: the embedding of &ldquo;the plaintiff argued&hellip;&rdquo; is ambiguous without knowing this is an employment discrimination case from 2019. The prefix &ldquo;This chunk is from a 2019 employment discrimination ruling in which the plaintiff argues constructive dismissal&hellip;&rdquo; resolves that ambiguity and pushes the embedding toward the right neighbourhood.</p>
+<p>Empirically (Anthropic&rsquo;s own report), contextual retrieval combined with BM25 hybrid search reduced retrieval failure rates substantially on the tasks tested. The cost is one additional LLM call per chunk at indexing time — acceptable for corpora that do not change frequently, expensive for streaming ingestion.</p>
+<h2 id="agentic-rag-the-retrieval-loop-as-an-agent">Agentic RAG: The Retrieval Loop as an Agent<a class="headerlink" href="#agentic-rag-the-retrieval-loop-as-an-agent" title="Permanent link">¶</a></h2>
+<p>Agentic RAG treats retrieval as a <strong>tool in an agent&rsquo;s tool set</strong> rather than a fixed preprocessing step. The agent from <a href="../08-agents-harness/02-agentic-loop.html">The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a> issues search tool calls, inspects results, decides whether they suffice, and may issue follow-up searches, reformulated queries, or queries to different sources.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">agentic_rag.py — RAG as an agent tool, using ReAct-style prompting.</span>
+<span class="sd">Each &quot;thought&quot; is followed by an &quot;action&quot; (retrieve, synthesize, answer).</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Any</span>
+
+
+<span class="n">SYSTEM_PROMPT</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">You are a research assistant with access to a document retrieval tool.</span>
+<span class="s2">Use the tool as many times as needed before giving a final answer.</span>
+
+<span class="s2">Available tool:</span>
+<span class="s2">  retrieve(query: str, k: int) → list of text passages</span>
+
+<span class="s2">Format your reasoning as:</span>
+<span class="s2">  Thought: &lt;what you&#39;re thinking&gt;</span>
+<span class="s2">  Action: retrieve(query=&quot;...&quot;, k=3)</span>
+<span class="s2">  Observation: &lt;tool result&gt;</span>
+<span class="s2">  ... (repeat as needed)</span>
+<span class="s2">  Final Answer: &lt;your answer&gt;</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_action</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract a retrieve() call from the LLM&#39;s output, if present.&quot;&quot;&quot;</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+        <span class="sa">r</span><span class="s1">&#39;Action:\s*retrieve\(query=[&quot;</span><span class="se">\&#39;</span><span class="s1">](.+?)[&quot;</span><span class="se">\&#39;</span><span class="s1">],\s*k=(\d+)\)&#39;</span><span class="p">,</span>
+        <span class="n">text</span><span class="p">,</span>
+        <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">match</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;query&quot;</span><span class="p">:</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span> <span class="s2">&quot;k&quot;</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">))}</span>
+    <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">agentic_rag_loop</span><span class="p">(</span>
+    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">retrieve</span><span class="p">,</span>       <span class="c1"># callable(query, k) -&gt; List[str]</span>
+    <span class="n">llm_chat</span><span class="p">,</span>       <span class="c1"># callable(messages: List[Dict]) -&gt; str  (chat format)</span>
+    <span class="n">max_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run the ReAct-style agentic retrieval loop until the LLM produces</span>
+<span class="sd">    a &#39;Final Answer:&#39; or we exhaust max_steps.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">messages</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">SYSTEM_PROMPT</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;Question: </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">},</span>
+    <span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_steps</span><span class="p">):</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="n">llm_chat</span><span class="p">(</span><span class="n">messages</span><span class="p">)</span>
+        <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;assistant&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">response</span><span class="p">})</span>
+
+        <span class="c1"># Check if the model has finished</span>
+        <span class="k">if</span> <span class="s2">&quot;Final Answer:&quot;</span> <span class="ow">in</span> <span class="n">response</span><span class="p">:</span>
+            <span class="n">idx</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="s2">&quot;Final Answer:&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">response</span><span class="p">[</span><span class="n">idx</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="s2">&quot;Final Answer:&quot;</span><span class="p">):]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+        <span class="c1"># Try to parse and execute a tool call</span>
+        <span class="n">action</span> <span class="o">=</span> <span class="n">parse_action</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">action</span><span class="p">:</span>
+            <span class="n">passages</span> <span class="o">=</span> <span class="n">retrieve</span><span class="p">(</span><span class="n">action</span><span class="p">[</span><span class="s2">&quot;query&quot;</span><span class="p">],</span> <span class="n">action</span><span class="p">[</span><span class="s2">&quot;k&quot;</span><span class="p">])</span>
+            <span class="n">observation</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">---</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">passages</span><span class="p">)</span> <span class="k">if</span> <span class="n">passages</span> <span class="k">else</span> <span class="s2">&quot;No relevant documents found.&quot;</span>
+            <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+                <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;Observation: </span><span class="si">{</span><span class="n">observation</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="p">})</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Model didn&#39;t format a tool call — nudge it</span>
+            <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+                <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;Please continue your reasoning or provide a Final Answer.&quot;</span><span class="p">,</span>
+            <span class="p">})</span>
+
+    <span class="c1"># Exhausted steps — force a conclusion</span>
+    <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+        <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;Please provide your Final Answer now based on what you have gathered.&quot;</span><span class="p">,</span>
+    <span class="p">})</span>
+    <span class="k">return</span> <span class="n">llm_chat</span><span class="p">(</span><span class="n">messages</span><span class="p">)</span>
+</code></pre></div>
+<p>Agentic RAG has higher latency than single-shot RAG (multiple LLM round-trips), but it dramatically improves accuracy on complex questions. The agent can also invoke <strong>multiple retrieval backends</strong>: a code search index for code questions, a web search tool for current events, a SQL query tool for structured data, and a vector database for long-form prose — all in the same conversation.</p>
+<p>The connection to <a href="../08-agents-harness/07-multi-agent-systems.html">Multi-Agent Systems &amp; Orchestration</a> is direct: in multi-agent architectures, individual sub-agents may each be a specialised RAG pipeline. A router agent dispatches to the right specialist.</p>
+<h2 id="rag-over-structured-data-and-code">RAG Over Structured Data and Code<a class="headerlink" href="#rag-over-structured-data-and-code" title="Permanent link">¶</a></h2>
+<h3 id="sql-and-tabular-data">SQL and Tabular Data<a class="headerlink" href="#sql-and-tabular-data" title="Permanent link">¶</a></h3>
+<p>When the knowledge base is a relational database rather than free text, the retrieval problem becomes <strong>Text-to-SQL</strong>: translate the natural language question into a query, execute it, and feed the results to the generator.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">text_to_sql_rag.py — Minimal Text-to-SQL RAG with schema grounding.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">sqlite3</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span>
+
+
+<span class="n">TEXT_TO_SQL_PROMPT</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">Given the following SQLite schema, write a SQL query to answer the question.</span>
+<span class="s2">Return ONLY the SQL, no explanation.</span>
+
+<span class="s2">Schema:</span>
+<span class="si">{schema}</span>
+
+<span class="s2">Question: </span><span class="si">{question}</span>
+
+<span class="s2">SQL:</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+<span class="n">SCHEMA_REFLECT_PROMPT</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">The query failed with: </span><span class="si">{error}</span>
+<span class="s2">Original question: </span><span class="si">{question}</span>
+<span class="s2">Schema: </span><span class="si">{schema}</span>
+<span class="s2">Previous SQL attempt: </span><span class="si">{sql}</span>
+
+<span class="s2">Write a corrected SQL query. Return ONLY the SQL.</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_schema</span><span class="p">(</span><span class="n">conn</span><span class="p">:</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Connection</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract CREATE TABLE statements from an SQLite database.&quot;&quot;&quot;</span>
+    <span class="n">cursor</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+    <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT sql FROM sqlite_master WHERE type=&#39;table&#39;&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span> <span class="k">if</span> <span class="n">row</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">text_to_sql_rag</span><span class="p">(</span>
+    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">db_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">llm</span><span class="p">,</span>
+    <span class="n">max_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Convert question → SQL → execute → generate final answer.</span>
+<span class="sd">    Implements self-correction on SQL errors.</span>
+<span class="sd">    Returns (answer, sql_used).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">db_path</span><span class="p">)</span>
+    <span class="n">schema</span> <span class="o">=</span> <span class="n">get_schema</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+
+    <span class="n">sql</span> <span class="o">=</span> <span class="n">llm</span><span class="p">(</span><span class="n">TEXT_TO_SQL_PROMPT</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">schema</span><span class="o">=</span><span class="n">schema</span><span class="p">,</span> <span class="n">question</span><span class="o">=</span><span class="n">question</span><span class="p">))</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="c1"># Strip markdown fences if the model wrapped it</span>
+    <span class="n">sql</span> <span class="o">=</span> <span class="n">sql</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">&quot;`&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lstrip</span><span class="p">(</span><span class="s2">&quot;sql&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+    <span class="k">for</span> <span class="n">attempt</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_retries</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">cursor</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+            <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">sql</span><span class="p">)</span>
+            <span class="n">rows</span> <span class="o">=</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+            <span class="n">col_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">desc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">desc</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">description</span> <span class="ow">or</span> <span class="p">[]]</span>
+
+            <span class="c1"># Format results as a readable table</span>
+            <span class="k">if</span> <span class="n">rows</span><span class="p">:</span>
+                <span class="n">header</span> <span class="o">=</span> <span class="s2">&quot; | &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">col_names</span><span class="p">)</span>
+                <span class="n">body</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot; | &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">row</span><span class="p">)</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">[:</span><span class="mi">50</span><span class="p">])</span>
+                <span class="n">result_text</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">header</span><span class="si">}</span><span class="se">\n</span><span class="si">{</span><span class="n">body</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">result_text</span> <span class="o">=</span> <span class="s2">&quot;(no rows returned)&quot;</span>
+
+            <span class="c1"># Generate a natural language answer from the SQL result</span>
+            <span class="n">answer_prompt</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;The question was: </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;SQL executed: </span><span class="si">{</span><span class="n">sql</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Results:</span><span class="se">\n</span><span class="si">{</span><span class="n">result_text</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Write a clear, concise answer.&quot;</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">llm</span><span class="p">(</span><span class="n">answer_prompt</span><span class="p">),</span> <span class="n">sql</span>
+
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">attempt</span> <span class="o">&lt;</span> <span class="n">max_retries</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="n">sql</span> <span class="o">=</span> <span class="n">llm</span><span class="p">(</span><span class="n">SCHEMA_REFLECT_PROMPT</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+                    <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span> <span class="n">question</span><span class="o">=</span><span class="n">question</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">schema</span><span class="p">,</span> <span class="n">sql</span><span class="o">=</span><span class="n">sql</span>
+                <span class="p">))</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">&quot;`&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lstrip</span><span class="p">(</span><span class="s2">&quot;sql&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;SQL generation failed after </span><span class="si">{</span><span class="n">max_retries</span><span class="si">}</span><span class="s2"> attempts&quot;</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
+
+    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="code-retrieval">Code Retrieval<a class="headerlink" href="#code-retrieval" title="Permanent link">¶</a></h3>
+<p>For RAG over code repositories, the chunking strategy must respect code structure. Chunk at the <strong>function or class boundary</strong>, not at fixed token counts. Include the function signature in every chunk&rsquo;s context (contextual retrieval applied to code).</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">code_rag_chunker.py — AST-aware chunking for Python code repositories.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">ast</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Dict</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_python_chunks</span><span class="p">(</span><span class="n">source</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">filepath</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Parse Python source with AST and return one chunk per function/class.</span>
+<span class="sd">    Each chunk includes: the full source text, a context string with</span>
+<span class="sd">    the module docstring and all parent class names.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">source</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">SyntaxError</span><span class="p">:</span>
+        <span class="c1"># Fall back to whole-file chunking if parsing fails</span>
+        <span class="k">return</span> <span class="p">[{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">source</span><span class="p">,</span> <span class="s2">&quot;context&quot;</span><span class="p">:</span> <span class="n">filepath</span><span class="p">,</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;file&quot;</span><span class="p">}]</span>
+
+    <span class="n">module_doc</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">get_docstring</span><span class="p">(</span><span class="n">tree</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">chunks</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="n">ast</span><span class="o">.</span><span class="n">walk</span><span class="p">(</span><span class="n">tree</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">FunctionDef</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">AsyncFunctionDef</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">ClassDef</span><span class="p">)):</span>
+            <span class="n">start</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">lineno</span> <span class="o">-</span> <span class="mi">1</span>
+            <span class="n">end</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">end_lineno</span>  <span class="c1"># Python 3.8+</span>
+            <span class="n">code_lines</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()[</span><span class="n">start</span><span class="p">:</span><span class="n">end</span><span class="p">]</span>
+            <span class="n">code_text</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">code_lines</span><span class="p">)</span>
+
+            <span class="c1"># Build a context string: module doc + qualified name</span>
+            <span class="n">qualname</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">name</span>
+            <span class="n">context</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;File: </span><span class="si">{</span><span class="n">filepath</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Module context: </span><span class="si">{</span><span class="n">module_doc</span><span class="p">[:</span><span class="mi">200</span><span class="p">]</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Definition: </span><span class="si">{</span><span class="n">qualname</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+            <span class="n">chunks</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+                <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">code_text</span><span class="p">,</span>
+                <span class="s2">&quot;context&quot;</span><span class="p">:</span> <span class="n">context</span><span class="p">,</span>
+                <span class="s2">&quot;embedded_text&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">context</span><span class="si">}</span><span class="se">\n\n</span><span class="si">{</span><span class="n">code_text</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>  <span class="c1"># what gets embedded</span>
+                <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="nb">type</span><span class="p">(</span><span class="n">node</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+                <span class="s2">&quot;lineno&quot;</span><span class="p">:</span> <span class="n">node</span><span class="o">.</span><span class="n">lineno</span><span class="p">,</span>
+            <span class="p">})</span>
+
+    <span class="k">return</span> <span class="n">chunks</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">index_repository</span><span class="p">(</span><span class="n">repo_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">embedder</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Walk a Python repository and produce embeddable chunks.&quot;&quot;&quot;</span>
+    <span class="n">all_chunks</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">py_file</span> <span class="ow">in</span> <span class="n">Path</span><span class="p">(</span><span class="n">repo_path</span><span class="p">)</span><span class="o">.</span><span class="n">rglob</span><span class="p">(</span><span class="s2">&quot;*.py&quot;</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">source</span> <span class="o">=</span> <span class="n">py_file</span><span class="o">.</span><span class="n">read_text</span><span class="p">(</span><span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="n">errors</span><span class="o">=</span><span class="s2">&quot;ignore&quot;</span><span class="p">)</span>
+            <span class="n">chunks</span> <span class="o">=</span> <span class="n">extract_python_chunks</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">py_file</span><span class="p">))</span>
+            <span class="n">all_chunks</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">chunks</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+    <span class="c1"># Embed the chunks</span>
+    <span class="n">texts</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span><span class="p">[</span><span class="s2">&quot;embedded_text&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">all_chunks</span><span class="p">]</span>
+    <span class="n">embeddings</span> <span class="o">=</span> <span class="n">embedder</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">show_progress_bar</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">chunk</span><span class="p">,</span> <span class="n">emb</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">all_chunks</span><span class="p">,</span> <span class="n">embeddings</span><span class="p">):</span>
+        <span class="n">chunk</span><span class="p">[</span><span class="s2">&quot;embedding&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">emb</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">all_chunks</span>
+</code></pre></div>
+<p>The embedding should be the <strong>comment-stripped, docstring-enriched</strong> function signature plus body. For very large functions (&gt;200 lines), split at the logical block level and use the function signature as the contextual prefix for each sub-chunk.</p>
+<h2 id="long-context-vs-rag-a-framework-for-the-choice">Long Context vs. RAG: A Framework for the Choice<a class="headerlink" href="#long-context-vs-rag-a-framework-for-the-choice" title="Permanent link">¶</a></h2>
+<p>The most important architectural decision in 2025 is whether to retrieve at all. With context windows of 128k, 200k, and even 1M tokens, it is tempting to skip the retrieval pipeline entirely and simply stuff the entire corpus into the prompt. This section gives you a framework for making that tradeoff.</p>
+<h3 id="memory-and-cost-analysis">Memory and Cost Analysis<a class="headerlink" href="#memory-and-cost-analysis" title="Permanent link">¶</a></h3>
+<p>Let <span class="arithmatex">\(n\)</span> be the number of documents in the corpus, <span class="arithmatex">\(\bar{L}\)</span> the average document length in tokens, and <span class="arithmatex">\(d\)</span> the model&rsquo;s context window size.</p>
+<p><strong>Trivially fits in context:</strong> if <span class="arithmatex">\(n \cdot \bar{L} \ll d\)</span>, just put everything in the context. Retrieval adds engineering complexity for no gain. For a 200k-token window, this means corpora up to roughly 150 books worth of text at 1,000 words each.</p>
+<p><strong>Attention cost at long contexts:</strong> for a prefill of <span class="arithmatex">\(L\)</span> tokens, the attention computation is <span class="arithmatex">\(O(L^2 d_{\text{model}} / d_k)\)</span> FLOPs. Doubling the context quadruples the FLOPs (and the cost, for API-based systems).</p>
+<div class="admonition example">
+<p class="admonition-title">Cost comparison: retrieval vs. long context</p>
+<p>Suppose you have a corpus of 1,000 documents, each 2,000 tokens — total 2 million tokens. The LLM charges USD 2.00 per million tokens input.</p>
+<p><strong>Long-context approach (put everything in):</strong>
+Cost per query = 2,000,000 tokens × USD 2.00/1M = <strong>USD 4.00 per query</strong>.
+At 1,000 queries/day, that&rsquo;s USD 4,000/day.</p>
+<p><strong>RAG approach (retrieve top 10 chunks of 200 tokens each):</strong>
+Retrieval overhead ≈ 1× embedding call (cheap) + query tokens.
+Context sent to LLM ≈ 2,000 tokens = <strong>USD 0.004 per query</strong>.
+At 1,000 queries/day, that&rsquo;s USD 4/day.</p>
+<p>The RAG approach is 1,000× cheaper here. The long-context approach is superior only if the question genuinely requires holistic synthesis across the entire corpus and RAG would miss key connections — which is the case GraphRAG&rsquo;s global search handles more cheaply than stuffing everything in.</p>
+</div>
+<h3 id="when-long-context-wins">When Long Context Wins<a class="headerlink" href="#when-long-context-wins" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Winner</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Few documents, holistic analysis</td>
+<td>Long context</td>
+<td>Retrieval might miss the right passages</td>
+</tr>
+<tr>
+<td>&ldquo;Summarize this 50-page contract&rdquo;</td>
+<td>Long context</td>
+<td>All information is needed</td>
+</tr>
+<tr>
+<td>Needle-in-a-haystack on small corpus</td>
+<td>Long context</td>
+<td>Simpler pipeline, high recall</td>
+</tr>
+<tr>
+<td>Reading a codebase to answer one question</td>
+<td>RAG</td>
+<td>Most code is irrelevant</td>
+</tr>
+<tr>
+<td>Question-answering over millions of docs</td>
+<td>RAG</td>
+<td>Cannot fit in context window</td>
+</tr>
+<tr>
+<td>Multi-hop over structured relationships</td>
+<td>GraphRAG</td>
+<td>Semantic search alone cannot hop</td>
+</tr>
+<tr>
+<td>Time-sensitive / frequently updated data</td>
+<td>RAG</td>
+<td>Reindexing is cheaper than re-prompting</td>
+</tr>
+</tbody>
+</table>
+<h3 id="lost-in-the-middle-the-catch">Lost-in-the-Middle: The Catch<a class="headerlink" href="#lost-in-the-middle-the-catch" title="Permanent link">¶</a></h3>
+<p>Even when documents fit in the context window, placement matters. LLMs reliably attend to information at the beginning and end of the context but under-attend to the middle (Liu et al., 2023). If you have 20 relevant chunks and the answer is in chunk 14, placing it 75% of the way through the context hurts performance more than just retrieving the right chunk alone.</p>
+<p>Mitigation strategies:</p>
+<ul>
+<li><strong>Relevance-order placement</strong>: put the most relevant retrieved chunk first, not interleaved at random.</li>
+<li><strong>Recency bias correction</strong>: for time-stamped corpora, recent documents tend to be more relevant and should be placed near the query.</li>
+<li><strong>Chain-of-density reranking</strong>: rerank retrieved chunks by predicted reading order, not retrieval score.</li>
+</ul>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> A candidate says &ldquo;My corpus is only 50,000 tokens, so I&rsquo;ll just throw it all in the context window every time. RAG is unnecessary complexity.&rdquo; How do you evaluate this claim?</p>
+<p><strong>A:</strong> The claim is reasonable for that corpus size but incomplete. Three considerations push back: (1) <strong>Latency and cost</strong>: even 50k tokens in prefill adds meaningful TTFT (time-to-first-token) delay and costs money at scale — at 1,000 queries/day, the bill adds up. (2) <strong>Lost-in-the-middle</strong>: if the answer is in a specific document, placing all 50k tokens in context may actually harm accuracy versus a targeted 2k-token retrieval. (3) <strong>Freshness and privacy</strong>: if the corpus updates frequently or contains sensitive documents the user shouldn&rsquo;t always see, selective retrieval is architecturally cleaner. The right answer is &ldquo;it depends on query load, update frequency, and whether holistic reasoning across all documents is genuinely needed.&rdquo; A retrieval-free approach is valid when queries require synthesising the full corpus and the corpus is small enough not to trigger lost-in-the-middle issues.</p>
+</div>
+<h2 id="frontier-techniques-hipporag-raptor-and-beyond">Frontier Techniques: HippoRAG, RAPTOR, and Beyond<a class="headerlink" href="#frontier-techniques-hipporag-raptor-and-beyond" title="Permanent link">¶</a></h2>
+<h3 id="raptor-recursive-summarisation-trees">RAPTOR: Recursive Summarisation Trees<a class="headerlink" href="#raptor-recursive-summarisation-trees" title="Permanent link">¶</a></h3>
+<p>RAPTOR (Sarthi et al., 2024) addresses the multi-granularity problem. Instead of only indexing leaf chunks, it builds a tree by recursively clustering chunks, summarising each cluster with an LLM, and indexing both the summaries and the leaves.</p>
+<figure class="viz" id="fig-advrag-raptor-summary-tree">
+<svg viewBox="0 0 820 520" role="img" aria-label="RAPTOR recursive summarization tree: leaf chunks c1 through c8 at the bottom are clustered into level-1 summary nodes s1, s2, s3, which are further summarized into level-2 nodes s4 and s5 at the top. All nodes are indexed in the same vector database.">
+<defs>
+  <marker id="rt-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+</defs>
+<style>
+  #fig-advrag-raptor-summary-tree .lbl     { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-advrag-raptor-summary-tree .lbl-sm  { font: 500 10px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-advrag-raptor-summary-tree .lbl-hdr { font: 700 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-advrag-raptor-summary-tree .idx-lbl { font: 600 12px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-advrag-raptor-summary-tree .db-lbl  { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+</style>
+
+
+<text x="8" y="94"  text-anchor="start" class="lbl-hdr">Lvl 2</text>
+<text x="8" y="270" text-anchor="start" class="lbl-hdr">Lvl 1</text>
+<text x="8" y="400" text-anchor="start" class="lbl-hdr">Leaves</text>
+
+
+
+
+
+
+
+<g id="rt-leaves">
+
+  <rect x="42" y="410" width="52" height="36" rx="6" fill="var(--surface,#ffffff)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="68" y="433" text-anchor="middle" class="lbl">c1</text>
+
+  <rect x="132" y="410" width="52" height="36" rx="6" fill="var(--surface,#ffffff)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="158" y="433" text-anchor="middle" class="lbl">c2</text>
+
+  <rect x="222" y="410" width="52" height="36" rx="6" fill="var(--surface,#ffffff)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="248" y="433" text-anchor="middle" class="lbl">c3</text>
+
+  <rect x="320" y="410" width="52" height="36" rx="6" fill="var(--surface,#ffffff)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="346" y="433" text-anchor="middle" class="lbl">c4</text>
+
+  <rect x="406" y="410" width="52" height="36" rx="6" fill="var(--surface,#ffffff)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="432" y="433" text-anchor="middle" class="lbl">c5</text>
+
+  <rect x="492" y="410" width="52" height="36" rx="6" fill="var(--surface,#ffffff)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="518" y="433" text-anchor="middle" class="lbl">c6</text>
+
+  <rect x="580" y="410" width="52" height="36" rx="6" fill="var(--surface,#ffffff)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="606" y="433" text-anchor="middle" class="lbl">c7</text>
+
+  <rect x="666" y="410" width="52" height="36" rx="6" fill="var(--surface,#ffffff)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="692" y="433" text-anchor="middle" class="lbl">c8</text>
+</g>
+
+
+
+
+
+
+<g id="rt-level1">
+
+  <rect x="82" y="240" width="152" height="44" rx="8"
+        fill="var(--accent,#dbeafe)" fill-opacity="0.5"
+        stroke="var(--accent,#3b82f6)" stroke-width="1.6"/>
+  <text x="158" y="259" text-anchor="middle" class="lbl">s1</text>
+  <text x="158" y="276" text-anchor="middle" class="lbl-sm">summarize(c1, c2, c3)</text>
+
+
+  <rect x="356" y="240" width="152" height="44" rx="8"
+        fill="var(--accent,#dbeafe)" fill-opacity="0.5"
+        stroke="var(--accent,#3b82f6)" stroke-width="1.6"/>
+  <text x="432" y="259" text-anchor="middle" class="lbl">s2</text>
+  <text x="432" y="276" text-anchor="middle" class="lbl-sm">summarize(c4, c5, c6)</text>
+
+
+  <rect x="573" y="240" width="152" height="44" rx="8"
+        fill="var(--accent,#dbeafe)" fill-opacity="0.5"
+        stroke="var(--accent,#3b82f6)" stroke-width="1.6"/>
+  <text x="649" y="259" text-anchor="middle" class="lbl">s3</text>
+  <text x="649" y="276" text-anchor="middle" class="lbl-sm">summarize(c7, c8)</text>
+</g>
+
+
+
+
+
+<g id="rt-level2">
+
+  <rect x="206" y="56" width="178" height="48" rx="8"
+        fill="var(--accent-2,#c7d2fe)" fill-opacity="0.5"
+        stroke="var(--accent-2,#818cf8)" stroke-width="1.6"/>
+  <text x="295" y="76" text-anchor="middle" class="lbl">s4</text>
+  <text x="295" y="93" text-anchor="middle" class="lbl-sm">summarize(s1, s2)</text>
+
+
+  <rect x="562" y="56" width="178" height="48" rx="8"
+        fill="var(--accent-2,#c7d2fe)" fill-opacity="0.5"
+        stroke="var(--accent-2,#818cf8)" stroke-width="1.6"/>
+  <text x="651" y="76" text-anchor="middle" class="lbl">s5</text>
+  <text x="651" y="93" text-anchor="middle" class="lbl-sm">summarize(s3, ...)</text>
+</g>
+
+
+
+<line x1="68"  y1="410" x2="140" y2="284" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" marker-end="url(#rt-arrow)"/>
+<line x1="158" y1="410" x2="158" y2="284" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" marker-end="url(#rt-arrow)"/>
+<line x1="248" y1="410" x2="176" y2="284" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" marker-end="url(#rt-arrow)"/>
+
+<line x1="346" y1="410" x2="410" y2="284" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" marker-end="url(#rt-arrow)"/>
+<line x1="432" y1="410" x2="432" y2="284" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" marker-end="url(#rt-arrow)"/>
+<line x1="518" y1="410" x2="454" y2="284" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" marker-end="url(#rt-arrow)"/>
+
+<line x1="606" y1="410" x2="630" y2="284" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" marker-end="url(#rt-arrow)"/>
+<line x1="692" y1="410" x2="668" y2="284" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" marker-end="url(#rt-arrow)"/>
+
+
+
+<line x1="158" y1="240" x2="265" y2="104" stroke="var(--border-2,#94a3b8)" stroke-width="1.4" marker-end="url(#rt-arrow)"/>
+<line x1="432" y1="240" x2="325" y2="104" stroke="var(--border-2,#94a3b8)" stroke-width="1.4" marker-end="url(#rt-arrow)"/>
+
+<line x1="649" y1="240" x2="651" y2="104" stroke="var(--border-2,#94a3b8)" stroke-width="1.4" marker-end="url(#rt-arrow)"/>
+
+
+<rect x="44" y="462" width="724" height="42" rx="8"
+      fill="none" stroke="var(--border-2,#94a3b8)" stroke-width="1.2" stroke-dasharray="5 3"/>
+
+
+<ellipse cx="742" cy="476" rx="14" ry="4" fill="var(--accent,#3b82f6)" fill-opacity="0.25" stroke="var(--accent,#3b82f6)" stroke-width="1.2"/>
+<rect x="728" y="476" width="28" height="20" fill="var(--accent,#3b82f6)" fill-opacity="0.1" stroke="var(--accent,#3b82f6)" stroke-width="1.2"/>
+<ellipse cx="742" cy="496" rx="14" ry="4" fill="var(--accent,#3b82f6)" fill-opacity="0.25" stroke="var(--accent,#3b82f6)" stroke-width="1.2"/>
+
+
+<text x="400" y="488" text-anchor="middle" class="idx-lbl">All nodes (leaves c1..c8 AND summaries s1..s5) indexed in one vector DB</text>
+
+</svg>
+<figcaption><b>RAPTOR builds a recursive summarization tree so retrieval can operate at any granularity.</b> Leaf chunks (c1–c8) are clustered and summarized into level-1 nodes (s1–s3), which are in turn summarized into level-2 nodes (s4, s5). Crucially, every node — leaf and summary alike — is indexed in the same vector database, so a specific-detail query matches leaf chunks while a high-level synthesis query matches the upper summary nodes.</figcaption>
+</figure>
+
+<p>A query that requires high-level synthesis will match summary nodes; a query for a specific detail will match leaf chunks. The retrieval score propagates to the appropriate level automatically.</p>
+<h3 id="hipporag-personalized-pagerank-over-entity-graphs">HippoRAG: Personalized PageRank over Entity Graphs<a class="headerlink" href="#hipporag-personalized-pagerank-over-entity-graphs" title="Permanent link">¶</a></h3>
+<p>HippoRAG (Gutierrez et al., 2024) combines the semantic richness of dense retrieval with the structure of knowledge graphs. After extracting a Hippocampus-inspired entity-centric graph, HippoRAG uses <strong>Personalized PageRank</strong> (PPR) seeded at query-matched entities to propagate relevance through the graph:</p>
+<div class="arithmatex">\[
+\text{PPR}(v) = \alpha \cdot \frac{1}{|\text{seed}|}\sum_{s \in \text{seed}} \mathbf{1}[v = s] + (1 - \alpha) \sum_{u \in \text{in-neighbours}(v)} \frac{\text{PPR}(u)}{|\text{out-neighbours}(u)|}
+\]</div>
+<p>where <span class="arithmatex">\(\alpha\)</span> is the teleport probability (typically 0.15) and seed nodes are the entities that match the query. PPR propagates importance from the seed nodes through the graph&rsquo;s edges, meaning passages connected to multiple relevant entities get boosted even if they don&rsquo;t match the query directly. This handles the &ldquo;integration across entities&rdquo; problem that flat vector search misses.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">hippoppr.py — Personalized PageRank over an entity graph for HippoRAG-style retrieval.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">networkx</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nx</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Set</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">personalized_pagerank</span><span class="p">(</span>
+    <span class="n">G</span><span class="p">:</span> <span class="n">nx</span><span class="o">.</span><span class="n">DiGraph</span><span class="p">,</span>
+    <span class="n">seed_nodes</span><span class="p">:</span> <span class="n">Set</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.15</span><span class="p">,</span>
+    <span class="n">max_iter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100</span><span class="p">,</span>
+    <span class="n">tol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Power-iteration PPR.</span>
+<span class="sd">    alpha: teleport probability back to seed nodes.</span>
+<span class="sd">    Returns a dict of node → PPR score.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">nodes</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">G</span><span class="o">.</span><span class="n">nodes</span><span class="p">())</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">nodes</span><span class="p">)</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="p">{</span><span class="n">node</span><span class="p">:</span> <span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">node</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">nodes</span><span class="p">)}</span>
+
+    <span class="c1"># Personalisation vector: uniform over seed nodes</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">seed_nodes</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">idx</span><span class="p">:</span>
+            <span class="n">p</span><span class="p">[</span><span class="n">idx</span><span class="p">[</span><span class="n">s</span><span class="p">]]</span> <span class="o">=</span> <span class="mf">1.0</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">/</span> <span class="n">n</span>  <span class="c1"># fallback: uniform</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">p</span> <span class="o">/=</span> <span class="n">p</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+    <span class="c1"># Stochastic transition matrix (column-normalised)</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">nx</span><span class="o">.</span><span class="n">to_numpy_array</span><span class="p">(</span><span class="n">G</span><span class="p">,</span> <span class="n">nodelist</span><span class="o">=</span><span class="n">nodes</span><span class="p">)</span>
+    <span class="n">col_sums</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">col_sums</span><span class="p">[</span><span class="n">col_sums</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>  <span class="c1"># dangling nodes</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">A</span> <span class="o">/</span> <span class="n">col_sums</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">newaxis</span><span class="p">,</span> <span class="p">:]</span>
+
+    <span class="c1"># Power iteration: r = alpha * p + (1 - alpha) * A^T r</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_iter</span><span class="p">):</span>
+        <span class="n">r_new</span> <span class="o">=</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">p</span> <span class="o">+</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">alpha</span><span class="p">)</span> <span class="o">*</span> <span class="n">A</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">r</span>
+        <span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">r_new</span> <span class="o">-</span> <span class="n">r</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">tol</span><span class="p">:</span>
+            <span class="k">break</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">r_new</span>
+
+    <span class="k">return</span> <span class="p">{</span><span class="n">node</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="n">idx</span><span class="p">[</span><span class="n">node</span><span class="p">]])</span> <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="n">nodes</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">hippoppr_retrieve</span><span class="p">(</span>
+    <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">G</span><span class="p">:</span> <span class="n">nx</span><span class="o">.</span><span class="n">DiGraph</span><span class="p">,</span>
+    <span class="n">entity_to_chunks</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
+    <span class="n">entity_embeddings</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+    <span class="n">query_embedding</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">top_entities</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
+    <span class="n">top_chunks</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.15</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Full HippoRAG-style retrieval:</span>
+<span class="sd">      1. Find seed entities by embedding similarity to query.</span>
+<span class="sd">      2. Run PPR to propagate relevance.</span>
+<span class="sd">      3. Collect chunks associated with high-PPR entities.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Step 1: identify seed entities</span>
+    <span class="n">sims</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="n">eid</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">query_embedding</span><span class="p">,</span> <span class="n">emb</span><span class="p">)</span> <span class="o">/</span>
+                   <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">query_embedding</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">emb</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">))</span>
+        <span class="k">for</span> <span class="n">eid</span><span class="p">,</span> <span class="n">emb</span> <span class="ow">in</span> <span class="n">entity_embeddings</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+    <span class="p">}</span>
+    <span class="n">seed_nodes</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span>
+        <span class="nb">sorted</span><span class="p">(</span><span class="n">sims</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="n">sims</span><span class="o">.</span><span class="n">get</span><span class="p">,</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)[:</span><span class="n">top_entities</span><span class="p">]</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Step 2: PPR</span>
+    <span class="n">ppr_scores</span> <span class="o">=</span> <span class="n">personalized_pagerank</span><span class="p">(</span><span class="n">G</span><span class="p">,</span> <span class="n">seed_nodes</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">)</span>
+
+    <span class="c1"># Step 3: rank entities by PPR, collect their source chunks</span>
+    <span class="n">ranked_entities</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">ppr_scores</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="n">ppr_scores</span><span class="o">.</span><span class="n">get</span><span class="p">,</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">seen_chunks</span><span class="p">:</span> <span class="n">Set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="n">result_chunks</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">entity</span> <span class="ow">in</span> <span class="n">ranked_entities</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">entity_to_chunks</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">entity</span><span class="p">,</span> <span class="p">[]):</span>
+            <span class="k">if</span> <span class="n">chunk</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">seen_chunks</span><span class="p">:</span>
+                <span class="n">seen_chunks</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+                <span class="n">result_chunks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">result_chunks</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">top_chunks</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="n">result_chunks</span>
+
+    <span class="k">return</span> <span class="n">result_chunks</span>
+</code></pre></div>
+<p>The power of PPR is that it naturally handles <strong>transitive relevance</strong>: an entity three hops away from the query seed can still accumulate high PPR score if it is densely connected to highly-scored intermediate entities. This is the multi-hop reasoning capability that flat vector search lacks, implemented without requiring the LLM to explicitly generate sub-queries.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall — graph quality bottleneck</p>
+<p>All graph-based RAG methods are only as good as the entity extraction step. If the LLM-based extractor misses aliases (ACME Corp vs. Acme Corporation vs. the company), the graph becomes disconnected and multi-hop reasoning fails. Always normalise entity names (lowercasing, fuzzy matching, co-reference resolution with a dedicated NER model) before adding nodes. Evaluate entity extraction recall separately from end-to-end RAG quality.</p>
+</div>
+<h2 id="putting-it-all-together-choosing-your-rag-architecture">Putting It All Together: Choosing Your RAG Architecture<a class="headerlink" href="#putting-it-all-together-choosing-your-rag-architecture" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-advrag-architecture-decision-tree">
+<style>
+  #fig-advrag-architecture-decision-tree .lbl     { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-advrag-architecture-decision-tree .lbl-sm  { font: 500 11px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-advrag-architecture-decision-tree .lbl-xs  { font: 500 10px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-advrag-architecture-decision-tree .root-lbl{ font: 700 12px var(--sans,sans-serif); fill: var(--surface,#ffffff); }
+</style>
+<svg viewBox="0 0 980 760" role="img" aria-label="Decision tree for choosing a RAG architecture: seven question-type branches from a central root node each route to a recommended retrieval strategy.">
+<defs>
+  <marker id="adt-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+  <marker id="adt-arrow-dk" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+</defs>
+
+
+<rect x="18" y="334" width="160" height="92" rx="10"
+      fill="var(--accent,#2563eb)" fill-opacity="0.85"
+      stroke="var(--accent,#2563eb)" stroke-width="2"/>
+<text x="98" y="369" text-anchor="middle" class="root-lbl">START</text>
+<text x="98" y="387" text-anchor="middle" class="root-lbl">What kind of</text>
+<text x="98" y="405" text-anchor="middle" class="root-lbl">question is this?</text>
+
+
+
+<line x1="178" y1="380" x2="228" y2="380"
+      stroke="var(--border-2,#94a3b8)" stroke-width="1.6"/>
+
+
+<line x1="228" y1="43" x2="228" y2="717"
+      stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+
+
+
+
+
+<line x1="228" y1="43"  x2="248" y2="43"  stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+<line x1="228" y1="153" x2="248" y2="153" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+<line x1="228" y1="263" x2="248" y2="263" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+<line x1="228" y1="373" x2="248" y2="373" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+<line x1="228" y1="483" x2="248" y2="483" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+<line x1="228" y1="593" x2="248" y2="593" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+<line x1="228" y1="703" x2="248" y2="703" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+
+
+<rect x="248" y="18" width="290" height="50" rx="8"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="393" y="39" text-anchor="middle" class="lbl">Single factual lookup,</text>
+<text x="393" y="57" text-anchor="middle" class="lbl">well-defined scope</text>
+
+
+<rect x="248" y="128" width="290" height="50" rx="8"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="393" y="149" text-anchor="middle" class="lbl">Synthesize many documents</text>
+<text x="393" y="167" text-anchor="middle" class="lbl">at a high level</text>
+
+
+<rect x="248" y="238" width="290" height="50" rx="8"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="393" y="259" text-anchor="middle" class="lbl">Follow a chain of</text>
+<text x="393" y="277" text-anchor="middle" class="lbl">relationships (multi-hop)</text>
+
+
+<rect x="248" y="348" width="290" height="50" rx="8"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="393" y="369" text-anchor="middle" class="lbl">Structured data</text>
+<text x="393" y="387" text-anchor="middle" class="lbl">(tables, SQL databases)</text>
+
+
+<rect x="248" y="458" width="290" height="50" rx="8"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="393" y="479" text-anchor="middle" class="lbl">Code repository</text>
+<text x="393" y="497" text-anchor="middle" class="lbl">question</text>
+
+
+<rect x="248" y="568" width="290" height="50" rx="8"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="393" y="589" text-anchor="middle" class="lbl">Small corpus (&lt; ~100k tokens)</text>
+<text x="393" y="607" text-anchor="middle" class="lbl">and holistic question</text>
+
+
+<rect x="248" y="678" width="290" height="50" rx="8"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="393" y="699" text-anchor="middle" class="lbl">High-value question,</text>
+<text x="393" y="717" text-anchor="middle" class="lbl">hallucination unacceptable</text>
+
+
+<line x1="538" y1="43"  x2="568" y2="43"  stroke="var(--border-2,#94a3b8)" stroke-width="1.4" marker-end="url(#adt-arrow)"/>
+<line x1="538" y1="153" x2="568" y2="153" stroke="var(--border-2,#94a3b8)" stroke-width="1.4" marker-end="url(#adt-arrow)"/>
+<line x1="538" y1="263" x2="568" y2="263" stroke="var(--border-2,#94a3b8)" stroke-width="1.4" marker-end="url(#adt-arrow)"/>
+<line x1="538" y1="373" x2="568" y2="373" stroke="var(--border-2,#94a3b8)" stroke-width="1.4" marker-end="url(#adt-arrow)"/>
+<line x1="538" y1="483" x2="568" y2="483" stroke="var(--border-2,#94a3b8)" stroke-width="1.4" marker-end="url(#adt-arrow)"/>
+<line x1="538" y1="593" x2="568" y2="593" stroke="var(--border-2,#94a3b8)" stroke-width="1.4" marker-end="url(#adt-arrow)"/>
+<line x1="538" y1="703" x2="568" y2="703" stroke="var(--border-2,#94a3b8)" stroke-width="1.4" marker-end="url(#adt-arrow)"/>
+
+
+
+
+<rect x="570" y="14" width="396" height="58" rx="8"
+      fill="var(--accent,#dbeafe)" fill-opacity="0.4"
+      stroke="var(--accent,#3b82f6)" stroke-width="1.4"/>
+<text x="768" y="36" text-anchor="middle" class="lbl">Standard dense retrieval +</text>
+<text x="768" y="54" text-anchor="middle" class="lbl">cross-encoder reranker (Ch. 9.3 / 9.4)</text>
+
+
+<rect x="570" y="124" width="396" height="58" rx="8"
+      fill="var(--accent-2,#c7d2fe)" fill-opacity="0.4"
+      stroke="var(--accent-2,#818cf8)" stroke-width="1.4"/>
+<text x="768" y="146" text-anchor="middle" class="lbl">GraphRAG global search</text>
+<text x="768" y="164" text-anchor="middle" class="lbl">(community summaries)</text>
+
+
+<rect x="570" y="234" width="396" height="58" rx="8"
+      fill="var(--accent-2,#c7d2fe)" fill-opacity="0.4"
+      stroke="var(--accent-2,#818cf8)" stroke-width="1.4"/>
+<text x="768" y="256" text-anchor="middle" class="lbl">HippoRAG / iterative retrieval</text>
+<text x="768" y="274" text-anchor="middle" class="lbl">/ agentic RAG</text>
+
+
+<rect x="570" y="344" width="396" height="58" rx="8"
+      fill="var(--warn,#fef3c7)" fill-opacity="0.5"
+      stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+<text x="768" y="366" text-anchor="middle" class="lbl">Text-to-SQL RAG</text>
+<text x="768" y="384" text-anchor="middle" class="lbl-xs">(structured data / tabular)</text>
+
+
+<rect x="570" y="454" width="396" height="58" rx="8"
+      fill="var(--warn,#fef3c7)" fill-opacity="0.5"
+      stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+<text x="768" y="476" text-anchor="middle" class="lbl">AST-chunked code RAG</text>
+<text x="768" y="494" text-anchor="middle" class="lbl-xs">(code repository)</text>
+
+
+<rect x="570" y="564" width="396" height="58" rx="8"
+      fill="var(--surface-3,#e2e8f0)" fill-opacity="0.7"
+      stroke="var(--border-2,#94a3b8)" stroke-width="1.4"/>
+<text x="768" y="586" text-anchor="middle" class="lbl">Long-context, no retrieval</text>
+<text x="768" y="604" text-anchor="middle" class="lbl-xs">(fits entirely in context window)</text>
+
+
+<rect x="570" y="674" width="396" height="58" rx="8"
+      fill="var(--good,#bbf7d0)" fill-opacity="0.45"
+      stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+<text x="768" y="696" text-anchor="middle" class="lbl">Corrective RAG or Self-RAG</text>
+<text x="768" y="714" text-anchor="middle" class="lbl">with explicit grounding checks</text>
+
+
+
+</svg>
+<figcaption><b>Choosing a RAG architecture: seven question types, seven strategies.</b> The root question branches into mutually exclusive conditions; color codes group strategies by family — blue for standard retrieval, purple for graph-based methods, amber for structured/code data, neutral grey for long-context bypass, and green for hallucination-critical self-checking workflows.</figcaption>
+</figure>
+
+<p>In practice, production systems combine multiple approaches: a <strong>router</strong> that classifies the query type, dispatches to the appropriate retrieval strategy, and optionally falls back to long-context if retrieval fails. This is exactly the <a href="../08-agents-harness/04-context-engineering.html">Context Engineering &amp; Management</a> problem addressed in Part VIII.</p>
+<p>For indexing, the Anthropic contextual retrieval finding is almost universally applicable: the marginal cost of adding a one-sentence LLM-generated context prefix to each chunk at index time is small, and the retrieval recall improvement is consistent. Pair it with hybrid BM25 + dense retrieval (see <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a>) and a cross-encoder reranker for a strong baseline before reaching for more complex graph-based methods.</p>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>GraphRAG</strong> builds entity/community graphs over the corpus and enables global synthesis questions that flat retrieval cannot answer; community summaries are the key primitive.</li>
+<li><strong>Multi-hop retrieval</strong> (IRCoT, agentic RAG) solves questions where no single chunk is sufficient by iteratively retrieving and reasoning, using each retrieval&rsquo;s result to form the next query.</li>
+<li><strong>Self-RAG</strong> and <strong>Corrective RAG</strong> teach the model to judge its own retrievals and trigger additional search when retrieved content is irrelevant or contradictory.</li>
+<li><strong>Contextual retrieval</strong> reduces chunk decontextualisation by prepending an LLM-generated context sentence before embedding; works especially well combined with hybrid BM25+dense search.</li>
+<li><strong>Long context vs. RAG</strong> is a cost/quality tradeoff: long context wins on holistic synthesis over small corpora; RAG wins on large corpora, high query volume, and cases where a targeted chunk suffices.</li>
+<li><strong>Lost-in-the-middle</strong> means that even when you use long context, the placement of relevant information matters — put the most relevant material at the beginning or end.</li>
+<li><strong>HippoRAG&rsquo;s Personalized PageRank</strong> propagates relevance through the entity graph without requiring explicit sub-query generation, handling transitive multi-hop paths naturally.</li>
+<li><strong>RAG over structured data</strong> requires Text-to-SQL with self-correction; RAG over code requires AST-aware chunking at function/class boundaries.</li>
+<li><strong>Entity extraction quality</strong> is the bottleneck for all graph-based methods — invest in alias normalisation and co-reference resolution before graph construction.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Advanced RAG has matured into a rich ecosystem: graph-based methods (GraphRAG, HippoRAG) handle multi-hop synthesis; agentic and iterative pipelines (IRCoT, Self-RAG, CRAG) adapt retrieval dynamically; and the long-context vs. RAG tradeoff is now a principled cost/quality decision rather than a guess.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2212.10509">Trivedi et al., <em>IRCoT: Interleaving Retrieval with Chain-of-Thought Reasoning</em> (2022)</a> — established iterative CoT-guided retrieval for multi-hop QA; the template for modern multi-hop pipelines.</li>
+<li><a href="https://arxiv.org/abs/2307.03172">Liu et al., <em>Lost in the Middle: How Language Models Use Long Contexts</em> (2023)</a> — demonstrated that LLMs under-attend to middle-context information, motivating placement-aware retrieval strategies.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2310.11511">Asai et al., <em>Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection</em> (2023)</a> — introduced reflection tokens so models demand retrieval on-demand and self-grade relevance; ICLR 2024 oral.</li>
+<li><a href="https://arxiv.org/abs/2401.15884">Yan et al., <em>Corrective Retrieval Augmented Generation</em> (2024)</a> — lightweight evaluator triggers web search fallback when retrieved docs score too low; plug-and-play on any RAG stack.</li>
+<li><a href="https://arxiv.org/abs/2404.16130">Edge et al., <em>From Local to Global: A Graph RAG Approach to Query-Focused Summarization</em> (2024)</a> — Microsoft&rsquo;s GraphRAG using community detection and hierarchical summaries; uniquely addresses global sensemaking questions.</li>
+<li><a href="https://arxiv.org/abs/2401.18059">Sarthi et al., <em>RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval</em> (2024)</a> — recursive clustering+summarization builds multi-granularity trees, improving holistic synthesis; ICLR 2024.</li>
+<li><a href="https://arxiv.org/abs/2405.14831">Gutiérrez et al., <em>HippoRAG: Neurobiologically Inspired Long-Term Memory for LLMs</em> (2024)</a> — Personalized PageRank over entity graphs propagates relevance for multi-hop retrieval without explicit sub-query generation; NeurIPS 2024.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/microsoft/graphrag">microsoft/graphrag</a> — official Microsoft GraphRAG library; full pipeline from LLM entity extraction to community reports and local/global query modes.</li>
+<li><a href="https://github.com/osu-nlp-group/hipporag">OSU-NLP-Group/HippoRAG</a> — reference implementation of HippoRAG with KG construction, PPR retrieval, and HippoRAG 2 updates.</li>
+<li><a href="https://github.com/parthsarthi03/raptor">parthsarthi03/raptor</a> — official RAPTOR implementation for recursive tree-organized retrieval.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://www.anthropic.com/news/contextual-retrieval">Anthropic, <em>Introducing Contextual Retrieval</em> (2024)</a> — Anthropic&rsquo;s report on prepending LLM-generated context to chunks; reduces retrieval failures by 49% and 67% with reranking.</li>
+<li><a href="https://www.llamaindex.ai/blog/agentic-rag-with-llamaindex-2721b8a49ff6">LlamaIndex, <em>Agentic RAG With LlamaIndex</em> (blog)</a> — practical walkthrough of hierarchical document-agent architectures for production agentic RAG.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Edge et al., <em>From Local to Global: A Graph RAG Approach to Query-Focused Summarization</em>, Microsoft Research, 2024.</li>
+<li>Asai et al., <em>Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection</em>, ICLR 2024.</li>
+<li>Yan et al., <em>Corrective Retrieval Augmented Generation (CRAG)</em>, 2024.</li>
+<li>Trivedi et al., <em>Interleaving Retrieval with Chain-of-Thought Reasoning for Knowledge-Intensive Multi-Step Questions (IRCoT)</em>, ACL 2023.</li>
+<li>Sarthi et al., <em>RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval</em>, ICLR 2024.</li>
+<li>Gutierrez et al., <em>HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models</em>, NeurIPS 2024.</li>
+<li>Liu et al., <em>Lost in the Middle: How Language Models Use Long Contexts</em>, TACL 2023.</li>
+<li>Anthropic, <em>Contextual Retrieval</em> (blog post), 2024.</li>
+<li>Lewis et al., <em>Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks</em>, NeurIPS 2020 — the original RAG paper.</li>
+<li>Microsoft GraphRAG open-source repository: <code>microsoft/graphrag</code> on GitHub.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="04-chunking-reranking-hybrid.html"><span class="pn-label">← Previous</span><span class="pn-title">Chunking, Reranking &amp; Hybrid Search</span></a>
+<a class="next" href="06-multimodal-visual-retrieval.html"><span class="pn-label">Next →</span><span class="pn-title">Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-naive-rag-breaks">Why Naive RAG Breaks</a></li>
+<li class="toc-l2"><a href="#graphrag-entity-and-community-graphs">GraphRAG: Entity and Community Graphs</a></li>
+<li class="toc-l3"><a href="#from-flat-chunks-to-knowledge-graphs">From Flat Chunks to Knowledge Graphs</a></li>
+<li class="toc-l3"><a href="#building-a-minimal-graphrag-pipeline">Building a Minimal GraphRAG Pipeline</a></li>
+<li class="toc-l2"><a href="#multi-hop-retrieval-chaining-queries">Multi-Hop Retrieval: Chaining Queries</a></li>
+<li class="toc-l2"><a href="#self-rag-and-corrective-rag">Self-RAG and Corrective RAG</a></li>
+<li class="toc-l3"><a href="#self-rag-retrieval-and-quality-tokens">Self-RAG: Retrieval and Quality Tokens</a></li>
+<li class="toc-l3"><a href="#key-design-choice-when-to-retrieve">Key Design Choice: When to Retrieve</a></li>
+<li class="toc-l2"><a href="#contextual-retrieval-and-dense-representations">Contextual Retrieval and Dense Representations</a></li>
+<li class="toc-l2"><a href="#agentic-rag-the-retrieval-loop-as-an-agent">Agentic RAG: The Retrieval Loop as an Agent</a></li>
+<li class="toc-l2"><a href="#rag-over-structured-data-and-code">RAG Over Structured Data and Code</a></li>
+<li class="toc-l3"><a href="#sql-and-tabular-data">SQL and Tabular Data</a></li>
+<li class="toc-l3"><a href="#code-retrieval">Code Retrieval</a></li>
+<li class="toc-l2"><a href="#long-context-vs-rag-a-framework-for-the-choice">Long Context vs. RAG: A Framework for the Choice</a></li>
+<li class="toc-l3"><a href="#memory-and-cost-analysis">Memory and Cost Analysis</a></li>
+<li class="toc-l3"><a href="#when-long-context-wins">When Long Context Wins</a></li>
+<li class="toc-l3"><a href="#lost-in-the-middle-the-catch">Lost-in-the-Middle: The Catch</a></li>
+<li class="toc-l2"><a href="#frontier-techniques-hipporag-raptor-and-beyond">Frontier Techniques: HippoRAG, RAPTOR, and Beyond</a></li>
+<li class="toc-l3"><a href="#raptor-recursive-summarisation-trees">RAPTOR: Recursive Summarisation Trees</a></li>
+<li class="toc-l3"><a href="#hipporag-personalized-pagerank-over-entity-graphs">HippoRAG: Personalized PageRank over Entity Graphs</a></li>
+<li class="toc-l2"><a href="#putting-it-all-together-choosing-your-rag-architecture">Putting It All Together: Choosing Your RAG Architecture</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

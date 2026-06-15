@@ -1,0 +1,1750 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP — The LLM Stack</title>
+<meta name="description" content="Data parallelism, gradient all-reduce, DDP internals (bucketing, overlap); the memory problem (params+grads+optimizer states); ZeRO stages 1/2/3, FSDP sharding,">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="active" href="05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../09-rag-retrieval/01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="../09-rag-retrieval/02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="" href="../09-rag-retrieval/03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="../09-rag-retrieval/04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="../09-rag-retrieval/05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="../09-rag-retrieval/06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part III — Pretraining at Scale</div>
+<h1 id="35-distributed-training-i-data-parallelism-ddp-zero-fsdp">3.5 Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP<a class="headerlink" href="#35-distributed-training-i-data-parallelism-ddp-zero-fsdp" title="Permanent link">¶</a></h1>
+<p>A single modern GPU can hold a few billion parameters of model state, but the models we actually want to train have tens or hundreds of billions of parameters — and even when the <em>parameters</em> fit, the <em>optimizer states</em> and <em>activations</em> usually do not. Data parallelism is the first and most important answer to the question &ldquo;how do I use more than one GPU?&rdquo; It is conceptually simple — replicate the model, split the batch — but the engineering required to make it fast (overlapping communication with computation) and memory-efficient (sharding state across devices) is the difference between a training run that finishes and one that runs out of memory on the first step.</p>
+<p>This chapter develops data parallelism from first principles. We start with the math of gradient averaging, build a from-scratch Distributed Data Parallel (DDP) wrapper to expose its bucketing-and-overlap machinery, then confront the memory problem head-on with a precise accounting of where every byte goes. That accounting motivates the <strong>ZeRO</strong> family of optimizations and its PyTorch-native cousin <strong>FSDP</strong> (Fully Sharded Data Parallel), which shard optimizer states, gradients, and finally parameters themselves across the data-parallel group. We assume you have read <a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a> — we lean heavily on the collectives (all-reduce, reduce-scatter, all-gather) and the alpha-beta cost model developed there. The orthogonal forms of parallelism (tensor, pipeline, expert) are the subject of <a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a>.</p>
+<h2 id="data-parallelism-from-first-principles">Data Parallelism From First Principles<a class="headerlink" href="#data-parallelism-from-first-principles" title="Permanent link">¶</a></h2>
+<h3 id="the-core-idea-replicate-the-model-shard-the-batch">The Core Idea: Replicate the Model, Shard the Batch<a class="headerlink" href="#the-core-idea-replicate-the-model-shard-the-batch" title="Permanent link">¶</a></h3>
+<p>In <strong>data parallelism (DP)</strong>, every one of the <span class="arithmatex">\(N\)</span> workers (one per GPU) holds a complete copy of the model. We take a global mini-batch <span class="arithmatex">\(B\)</span> and split it into <span class="arithmatex">\(N\)</span> disjoint <strong>local batches</strong> of size <span class="arithmatex">\(b = B / N\)</span>. Each worker <span class="arithmatex">\(i\)</span> computes a forward and backward pass on its own local batch, producing a <strong>local gradient</strong> <span class="arithmatex">\(g_i\)</span>. The key fact that makes this correct is that the gradient of a sum-of-losses objective is the sum of per-example gradients.</p>
+<p>Consider the standard average loss over a mini-batch:</p>
+<div class="arithmatex">\[
+\mathcal{L}(\theta) = \frac{1}{B} \sum_{j=1}^{B} \ell(x_j; \theta)
+\]</div>
+<p>Because differentiation is linear, the gradient decomposes exactly across any partition of the batch into <span class="arithmatex">\(N\)</span> shards <span class="arithmatex">\(S_1, \dots, S_N\)</span>:</p>
+<div class="arithmatex">\[
+\nabla_\theta \mathcal{L} = \frac{1}{B} \sum_{j=1}^{B} \nabla_\theta \ell(x_j; \theta) = \frac{1}{N} \sum_{i=1}^{N} \underbrace{\left( \frac{1}{b} \sum_{j \in S_i} \nabla_\theta \ell(x_j; \theta) \right)}_{\text{local gradient } g_i}
+\]</div>
+<p>So if each worker computes the <em>average</em> gradient over its own local batch of size <span class="arithmatex">\(b\)</span>, then the <strong>mean of the local gradients equals the true full-batch gradient</strong>. This is why the canonical DP gradient synchronization is an <strong>all-reduce with a mean</strong> (equivalently, sum-then-divide-by-<span class="arithmatex">\(N\)</span>): after the all-reduce, every worker holds the identical averaged gradient <span class="arithmatex">\(\bar g = \frac{1}{N}\sum_i g_i\)</span>, applies the identical optimizer update, and so every replica stays bit-for-bit in lockstep.</p>
+<figure class="viz" id="fig-ddp-dp-allreduce-mean">
+<svg viewBox="0 0 880 460" role="img" aria-label="Data-parallel step across N=4 GPUs: global batch of 256 is split into 4 local batches of 64; each GPU holds a full model copy and runs forward/backward on its shard to produce a local gradient; all four gradients are averaged via ALL-REDUCE(mean) into g-bar; every GPU applies optimizer.step() with the same g-bar, keeping replicas in lockstep.">
+  <defs>
+    <marker id="ar-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="v-muted"/>
+    </marker>
+    <marker id="ar-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+    <marker id="ar-arrow-dash" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="v-stroke"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-ddp-dp-allreduce-mean text { fill: var(--ink-soft); }
+    #fig-ddp-dp-allreduce-mean .lbl  { font: 600 12px var(--sans,sans-serif); }
+    #fig-ddp-dp-allreduce-mean .sm   { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-ddp-dp-allreduce-mean .mono { font: 600 11px var(--mono,monospace); }
+    #fig-ddp-dp-allreduce-mean .hdr  { font: 700 13px var(--sans,sans-serif); }
+    #fig-ddp-dp-allreduce-mean .cap  { font: italic 500 10.5px var(--sans,sans-serif); fill: var(--muted); }
+  </style>
+
+
+  <rect x="10" y="10" width="860" height="56" rx="8" class="v-fill v-stroke" stroke-width="1.2" fill-opacity="0.6"/>
+  <text x="440" y="28" text-anchor="middle" class="hdr">Global batch B = 256  →  local batch b = 64 per GPU</text>
+
+  <rect x="30" y="35" width="180" height="14" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.35" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="120" y="46" text-anchor="middle" class="mono" fill="var(--accent,#6366f1)" font-size="10">B = 256</text>
+
+  <g stroke="var(--accent,#6366f1)" stroke-width="1" fill="none" opacity="0.7">
+    <line x1="210" y1="42" x2="268" y2="112"/>
+    <line x1="210" y1="42" x2="268" y2="197"/>
+    <line x1="210" y1="42" x2="268" y2="282"/>
+    <line x1="210" y1="42" x2="268" y2="367"/>
+  </g>
+
+
+
+  <rect x="40" y="88" width="230" height="64" rx="8" class="v-fill v-accent-s" stroke-width="1.4"/>
+  <text x="155" y="110" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">GPU 0</text>
+  <text x="155" y="124" text-anchor="middle" class="sm">model copy (full)</text>
+
+  <g fill="var(--accent,#6366f1)" fill-opacity="0.3" stroke="var(--accent,#6366f1)" stroke-width="0.7" transform="translate(48,132)">
+    <rect width="44" height="6" rx="1"/><rect y="8" width="44" height="6" rx="1"/><rect y="16" width="44" height="6" rx="1"/>
+  </g>
+
+  <rect x="158" y="133" width="104" height="14" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.2" stroke="var(--accent,#6366f1)" stroke-width="0.8"/>
+  <text x="210" y="143" text-anchor="middle" class="mono" font-size="9" fill="var(--accent,#6366f1)">shard 0 (64)</text>
+
+
+  <rect x="40" y="173" width="230" height="64" rx="8" class="v-fill v-accent-s" stroke-width="1.4"/>
+  <text x="155" y="195" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">GPU 1</text>
+  <text x="155" y="209" text-anchor="middle" class="sm">model copy (full)</text>
+  <g fill="var(--accent,#6366f1)" fill-opacity="0.3" stroke="var(--accent,#6366f1)" stroke-width="0.7" transform="translate(48,217)">
+    <rect width="44" height="6" rx="1"/><rect y="8" width="44" height="6" rx="1"/><rect y="16" width="44" height="6" rx="1"/>
+  </g>
+  <rect x="158" y="218" width="104" height="14" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.2" stroke="var(--accent,#6366f1)" stroke-width="0.8"/>
+  <text x="210" y="228" text-anchor="middle" class="mono" font-size="9" fill="var(--accent,#6366f1)">shard 1 (64)</text>
+
+
+  <rect x="40" y="258" width="230" height="64" rx="8" class="v-fill v-accent-s" stroke-width="1.4"/>
+  <text x="155" y="280" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">GPU 2</text>
+  <text x="155" y="294" text-anchor="middle" class="sm">model copy (full)</text>
+  <g fill="var(--accent,#6366f1)" fill-opacity="0.3" stroke="var(--accent,#6366f1)" stroke-width="0.7" transform="translate(48,302)">
+    <rect width="44" height="6" rx="1"/><rect y="8" width="44" height="6" rx="1"/><rect y="16" width="44" height="6" rx="1"/>
+  </g>
+  <rect x="158" y="303" width="104" height="14" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.2" stroke="var(--accent,#6366f1)" stroke-width="0.8"/>
+  <text x="210" y="313" text-anchor="middle" class="mono" font-size="9" fill="var(--accent,#6366f1)">shard 2 (64)</text>
+
+
+  <rect x="40" y="343" width="230" height="64" rx="8" class="v-fill v-accent-s" stroke-width="1.4"/>
+  <text x="155" y="365" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">GPU 3</text>
+  <text x="155" y="379" text-anchor="middle" class="sm">model copy (full)</text>
+  <g fill="var(--accent,#6366f1)" fill-opacity="0.3" stroke="var(--accent,#6366f1)" stroke-width="0.7" transform="translate(48,387)">
+    <rect width="44" height="6" rx="1"/><rect y="8" width="44" height="6" rx="1"/><rect y="16" width="44" height="6" rx="1"/>
+  </g>
+  <rect x="158" y="388" width="104" height="14" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.2" stroke="var(--accent,#6366f1)" stroke-width="0.8"/>
+  <text x="210" y="398" text-anchor="middle" class="mono" font-size="9" fill="var(--accent,#6366f1)">shard 3 (64)</text>
+
+
+
+  <line x1="270" y1="120" x2="410" y2="120" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#ar-arrow-acc)"/>
+  <text x="340" y="112" text-anchor="middle" class="sm" fill="var(--muted)">fwd/bwd shard 0</text>
+
+  <rect x="415" y="110" width="40" height="20" rx="10" fill="var(--accent,#6366f1)" fill-opacity="0.25" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="435" y="124" text-anchor="middle" class="mono" font-size="11" fill="var(--accent,#6366f1)">g₀</text>
+
+
+  <line x1="270" y1="205" x2="410" y2="205" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#ar-arrow-acc)"/>
+  <text x="340" y="197" text-anchor="middle" class="sm" fill="var(--muted)">fwd/bwd shard 1</text>
+  <rect x="415" y="195" width="40" height="20" rx="10" fill="var(--accent,#6366f1)" fill-opacity="0.25" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="435" y="209" text-anchor="middle" class="mono" font-size="11" fill="var(--accent,#6366f1)">g₁</text>
+
+
+  <line x1="270" y1="290" x2="410" y2="290" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#ar-arrow-acc)"/>
+  <text x="340" y="282" text-anchor="middle" class="sm" fill="var(--muted)">fwd/bwd shard 2</text>
+  <rect x="415" y="280" width="40" height="20" rx="10" fill="var(--accent,#6366f1)" fill-opacity="0.25" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="435" y="294" text-anchor="middle" class="mono" font-size="11" fill="var(--accent,#6366f1)">g₂</text>
+
+
+  <line x1="270" y1="375" x2="410" y2="375" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#ar-arrow-acc)"/>
+  <text x="340" y="367" text-anchor="middle" class="sm" fill="var(--muted)">fwd/bwd shard 3</text>
+  <rect x="415" y="365" width="40" height="20" rx="10" fill="var(--accent,#6366f1)" fill-opacity="0.25" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="435" y="379" text-anchor="middle" class="mono" font-size="11" fill="var(--accent,#6366f1)">g₃</text>
+
+
+  <g stroke="var(--accent,#6366f1)" stroke-width="1.2" fill="none" opacity="0.8">
+    <line x1="455" y1="120" x2="560" y2="247"/>
+    <line x1="455" y1="205" x2="560" y2="247"/>
+    <line x1="455" y1="290" x2="560" y2="247"/>
+    <line x1="455" y1="375" x2="560" y2="247"/>
+  </g>
+
+
+  <rect x="560" y="210" width="130" height="74" rx="10" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="625" y="235" text-anchor="middle" class="hdr" fill="var(--accent,#6366f1)">ALL-REDUCE</text>
+  <text x="625" y="252" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">(mean)</text>
+  <text x="625" y="272" text-anchor="middle" class="sm">g&#772; = (1/N) &#x2211; g&#x1D62;</text>
+
+
+  <line x1="690" y1="247" x2="730" y2="247" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#ar-arrow-acc)"/>
+  <rect x="734" y="233" width="42" height="28" rx="14" fill="var(--accent,#6366f1)" fill-opacity="0.3" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="755" y="251" text-anchor="middle" class="mono" font-size="13" fill="var(--accent,#6366f1)">g&#772;</text>
+
+
+  <g stroke="var(--ink-soft)" stroke-width="1.1" stroke-dasharray="4 3" fill="none" opacity="0.65">
+    <line x1="755" y1="233" x2="755" y2="120"/>
+    <line x1="755" y1="120" x2="270" y2="120"/>
+    <line x1="755" y1="247" x2="770" y2="247"/>
+    <line x1="770" y1="120" x2="770" y2="375"/>
+    <line x1="770" y1="205" x2="270" y2="205"/>
+    <line x1="770" y1="290" x2="270" y2="290"/>
+    <line x1="770" y1="375" x2="270" y2="375"/>
+  </g>
+
+  <text x="590" y="105" text-anchor="middle" class="sm">optimizer.step() with SAME g&#772;</text>
+
+
+  <text x="440" y="448" text-anchor="middle" class="cap">Identical g&#772; &#8594; identical update &#8594; replicas stay in lockstep.</text>
+</svg>
+<figcaption><b>Data-parallel step: replicate the model, shard the batch, all-reduce the mean gradient.</b> Each of the 4 GPUs holds a complete model copy and processes its own 64-example shard to produce a local gradient g&#x1D62;. A single <b>ALL-REDUCE(mean)</b> produces the averaged gradient g&#772; = (&#x2211;g&#x1D62;)/N — exactly the true full-batch gradient — and every GPU applies the same optimizer step, keeping all replicas bit-identical.</figcaption>
+</figure>
+
+<h3 id="two-invariants-you-must-maintain">Two Invariants You Must Maintain<a class="headerlink" href="#two-invariants-you-must-maintain" title="Permanent link">¶</a></h3>
+<p>Data parallelism is only correct if two invariants hold. Both are easy to violate, and violations produce silent divergence rather than crashes.</p>
+<ol>
+<li>
+<p><strong>Identical initialization.</strong> All replicas must start from the same parameters. In practice you either construct the model with a fixed seed on every rank, or you build it on rank 0 and <code>broadcast</code> the weights (and any registered buffers, like BatchNorm running statistics) to all other ranks. If replicas start different, averaging gradients does nothing to bring them back together.</p>
+</li>
+<li>
+<p><strong>Identical gradients after sync.</strong> Every parameter&rsquo;s gradient must be all-reduced before the optimizer step. Forget one parameter (a common bug when you add a new module and its grad isn&rsquo;t in the bucket), and that parameter drifts independently on each rank.</p>
+</li>
+</ol>
+<p>There is a third, subtler concern: the <em>effective batch size</em> grows with <span class="arithmatex">\(N\)</span>. Going from 1 GPU to 64 GPUs at fixed local batch size multiplies your global batch by 64, which changes the optimization dynamics. You typically must re-tune the learning rate (the linear scaling rule, warmup) — that interaction is the subject of <a href="../03-pretraining/10-lr-schedules-hparams.html">Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a>. Data parallelism is a <em>systems</em> technique that has <em>statistical</em> consequences.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: DP scales throughput, not model size</p>
+<p>Plain data parallelism does <strong>not</strong> let you train a bigger model — every GPU still holds the full model, so the largest trainable model is bounded by one GPU&rsquo;s memory. DP scales <em>throughput</em> (tokens/sec) by processing more data in parallel. The memory-saving variants later in this chapter (ZeRO, FSDP) are what let DP also scale <em>model size</em>, by sharding the replicated state across the group.</p>
+</div>
+<h3 id="the-naive-implementation-and-why-its-slow">The Naive Implementation and Why It&rsquo;s Slow<a class="headerlink" href="#the-naive-implementation-and-why-its-slow" title="Permanent link">¶</a></h3>
+<p>A correct but slow data-parallel loop simply all-reduces each gradient after <code>loss.backward()</code> completes. We saw exactly this in <a href="../01-foundations/09-parallel-collectives.html">Parallel Computing &amp; Collective Communication</a>. The problem is twofold:</p>
+<ul>
+<li><strong>No overlap.</strong> The backward pass finishes <em>entirely</em>, then communication starts. Compute and network sit idle waiting for each other. With backward and all-reduce each taking, say, 200 ms, you&rsquo;ve serialized them into 400 ms.</li>
+<li><strong>Too many tiny messages.</strong> A transformer has thousands of parameter tensors, many small (layer norms, biases). All-reducing each one separately pays the latency cost <span class="arithmatex">\(\alpha\)</span> thousands of times per step. Recall the alpha-beta model <span class="arithmatex">\(T(B) = \alpha + B/\beta\)</span>: for tiny <span class="arithmatex">\(B\)</span>, the fixed <span class="arithmatex">\(\alpha\)</span> dominates and bandwidth is wasted.</li>
+</ul>
+<p>Fixing both is exactly what production DDP does, and it&rsquo;s worth building from scratch to understand.</p>
+<h2 id="ddp-internals-bucketing-and-communication-overlap">DDP Internals: Bucketing and Communication Overlap<a class="headerlink" href="#ddp-internals-bucketing-and-communication-overlap" title="Permanent link">¶</a></h2>
+<p>PyTorch&rsquo;s <code>DistributedDataParallel</code> (DDP) is the workhorse of single-model-fits-on-one-GPU training. Its two central ideas are <strong>gradient bucketing</strong> and <strong>autograd-hook-driven overlap</strong>. The result is that the gradient all-reduce of layer <span class="arithmatex">\(L\)</span> runs on the network <em>while the backward pass is still computing gradients for layer <span class="arithmatex">\(L-1\)</span> on the GPU</em>.</p>
+<figure class="viz" id="fig-data-parallel">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 392" role="img" aria-label="Four GPU replicas each hold the full model and process a different data shard to produce a local gradient; an all-reduce averages the gradients so every replica applies the same optimizer step and stays identical.">
+  <defs>
+    <marker id="dp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-data-parallel text{ fill:var(--ink-soft); }
+    #fig-data-parallel .gpu{ font:600 12px var(--sans,sans-serif); }
+    #fig-data-parallel .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-data-parallel .mono{ font:600 11px var(--mono,monospace); }
+    #fig-data-parallel .grad{ font:600 12px var(--mono,monospace); }
+    #fig-data-parallel .hdr{ font:600 12.5px var(--sans,sans-serif); }
+    #fig-data-parallel .big{ font:600 17px var(--mono,monospace); }
+  </style>
+
+
+  <g class="sm" text-anchor="start">
+    <text x="12" y="64">data shard</text>
+    <text x="12" y="125">replica</text>
+    <text x="12" y="170">fwd / bwd</text>
+    <text x="12" y="210">local grad</text>
+  </g>
+
+
+  <g data-anim="1">
+    <text x="400" y="22" text-anchor="middle" class="hdr">Global mini-batch split across N = 4 replicas into local batches</text>
+    <text x="400" y="38" text-anchor="middle" class="sm">each replica processes a different shard of b = B / N = 64 examples</text>
+  </g>
+
+
+
+  <g data-anim="2">
+
+    <g class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.3">
+      <rect x="118" y="48" width="84" height="22" rx="5"/>
+      <rect x="278" y="48" width="84" height="22" rx="5"/>
+      <rect x="438" y="48" width="84" height="22" rx="5"/>
+      <rect x="598" y="48" width="84" height="22" rx="5"/>
+    </g>
+    <g class="mono" text-anchor="middle" fill="var(--accent2,#3b82f6)">
+      <text x="160" y="63">shard 0</text>
+      <text x="320" y="63">shard 1</text>
+      <text x="480" y="63">shard 2</text>
+      <text x="640" y="63">shard 3</text>
+    </g>
+
+    <g stroke="currentColor" class="v-muted" stroke-width="1.3" marker-end="url(#dp-arrow)">
+      <line x1="160" y1="70" x2="160" y2="92"/>
+      <line x1="320" y1="70" x2="320" y2="92"/>
+      <line x1="480" y1="70" x2="480" y2="92"/>
+      <line x1="640" y1="70" x2="640" y2="92"/>
+    </g>
+  </g>
+
+
+  <g data-anim="3">
+    <g class="v-fill v-accent-s" stroke-width="1.6">
+      <rect x="100" y="94" width="120" height="78" rx="9"/>
+      <rect x="260" y="94" width="120" height="78" rx="9"/>
+      <rect x="420" y="94" width="120" height="78" rx="9"/>
+      <rect x="580" y="94" width="120" height="78" rx="9"/>
+    </g>
+
+    <g class="gpu" text-anchor="middle" fill="var(--accent)">
+      <text x="160" y="113">GPU 0</text>
+      <text x="320" y="113">GPU 1</text>
+      <text x="480" y="113">GPU 2</text>
+      <text x="640" y="113">GPU 3</text>
+    </g>
+
+    <g class="v-accent" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="0.9">
+      <g transform="translate(122,124)"><rect width="76" height="9" rx="2"/><rect y="13" width="76" height="9" rx="2"/><rect y="26" width="76" height="9" rx="2"/></g>
+      <g transform="translate(282,124)"><rect width="76" height="9" rx="2"/><rect y="13" width="76" height="9" rx="2"/><rect y="26" width="76" height="9" rx="2"/></g>
+      <g transform="translate(442,124)"><rect width="76" height="9" rx="2"/><rect y="13" width="76" height="9" rx="2"/><rect y="26" width="76" height="9" rx="2"/></g>
+      <g transform="translate(602,124)"><rect width="76" height="9" rx="2"/><rect y="13" width="76" height="9" rx="2"/><rect y="26" width="76" height="9" rx="2"/></g>
+    </g>
+    <g class="sm" text-anchor="middle" fill="var(--muted)">
+      <text x="160" y="167">full model copy</text>
+      <text x="320" y="167">full model copy</text>
+      <text x="480" y="167">full model copy</text>
+      <text x="640" y="167">full model copy</text>
+    </g>
+  </g>
+
+
+  <g data-anim="3" stroke="currentColor" class="v-muted" stroke-width="1.3" marker-end="url(#dp-arrow)">
+    <line x1="160" y1="172" x2="160" y2="194"/>
+    <line x1="320" y1="172" x2="320" y2="194"/>
+    <line x1="480" y1="172" x2="480" y2="194"/>
+    <line x1="640" y1="172" x2="640" y2="194"/>
+  </g>
+
+
+  <g data-anim="3" class="grad" text-anchor="middle">
+    <text x="160" y="214" class="v-accent" fill="var(--accent)">g₀</text>
+    <text x="320" y="214" class="v-accent" fill="var(--accent)">g₁</text>
+    <text x="480" y="214" class="v-accent" fill="var(--accent)">g₂</text>
+    <text x="640" y="214" class="v-accent" fill="var(--accent)">g₃</text>
+  </g>
+
+
+  <g data-anim="4">
+
+    <g stroke="var(--accent)" class="v-accent-s" stroke-width="1.4" marker-end="url(#dp-arrow)">
+      <line x1="160" y1="220" x2="160" y2="240"/>
+      <line x1="320" y1="220" x2="320" y2="240"/>
+      <line x1="480" y1="220" x2="480" y2="240"/>
+      <line x1="640" y1="220" x2="640" y2="240"/>
+    </g>
+
+    <rect x="100" y="242" width="600" height="38" rx="10" class="v-accent" fill="var(--accent)" fill-opacity="0.14" stroke="var(--accent)" stroke-width="1.6"/>
+    <rect x="100" y="242" width="600" height="38" rx="10" fill="none" stroke="var(--accent)" stroke-width="1.6" class="viz-sweep"/>
+    <text x="400" y="266" text-anchor="middle" class="hdr v-accent" fill="var(--accent)">ALL-REDUCE (mean)  —  ḡ = (g₀ + g₁ + g₂ + g₃) / N</text>
+  </g>
+
+
+  <g data-anim="5">
+    <g stroke="var(--good,#2f9e6e)" stroke-width="1.5" marker-end="url(#dp-arrow)">
+      <line x1="160" y1="280" x2="160" y2="304"/>
+      <line x1="320" y1="280" x2="320" y2="304"/>
+      <line x1="480" y1="280" x2="480" y2="304"/>
+      <line x1="640" y1="280" x2="640" y2="304"/>
+    </g>
+
+    <g fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.5">
+      <rect x="108" y="306" width="104" height="40" rx="8"/>
+      <rect x="268" y="306" width="104" height="40" rx="8"/>
+      <rect x="428" y="306" width="104" height="40" rx="8"/>
+      <rect x="588" y="306" width="104" height="40" rx="8"/>
+    </g>
+    <g class="mono" text-anchor="middle" fill="var(--good,#2f9e6e)">
+      <text x="160" y="324">step(ḡ)</text>
+      <text x="320" y="324">step(ḡ)</text>
+      <text x="480" y="324">step(ḡ)</text>
+      <text x="640" y="324">step(ḡ)</text>
+    </g>
+    <g class="sm" text-anchor="middle" fill="var(--muted)">
+      <text x="160" y="339">same ḡ</text>
+      <text x="320" y="339">same ḡ</text>
+      <text x="480" y="339">same ḡ</text>
+      <text x="640" y="339">same ḡ</text>
+    </g>
+  </g>
+
+
+  <g data-anim="5">
+    <text x="400" y="372" text-anchor="middle" class="hdr">Same ḡ, same update: <tspan class="v-accent" fill="var(--good,#2f9e6e)">replicas stay in lockstep</tspan></text>
+  </g>
+</svg>
+<figcaption><b>Data parallelism: replicate the model, shard the batch, average the gradients.</b> Each of the N GPUs holds a full copy of the model and runs forward/backward on its own data shard, producing a local gradient gᵢ. A single <b>all-reduce</b> averages them into ḡ = (Σ gᵢ)/N — exactly the true full-batch gradient by linearity — so every replica applies the same optimizer step and stays identical for the next iteration.</figcaption>
+</figure>
+
+<h3 id="the-backward-pass-produces-gradients-in-reverse-order">The Backward Pass Produces Gradients in Reverse Order<a class="headerlink" href="#the-backward-pass-produces-gradients-in-reverse-order" title="Permanent link">¶</a></h3>
+<p>Backpropagation computes gradients layer by layer from the output back to the input. The gradient for the <em>last</em> layer is ready first; the gradient for the <em>first</em> layer is ready last. This ordering is the key opportunity: as soon as the last layer&rsquo;s gradient is computed, we can start its all-reduce immediately — there is no reason to wait for the rest of the backward pass.</p>
+<p>DDP registers an <strong>autograd hook</strong> on every parameter. When that parameter&rsquo;s <code>.grad</code> is populated during backward, the hook fires. The hook&rsquo;s job is to mark the gradient &ldquo;ready&rdquo; and, when enough gradients are ready, kick off communication.</p>
+<h3 id="bucketing-coalescing-gradients-to-amortize-latency">Bucketing: Coalescing Gradients to Amortize Latency<a class="headerlink" href="#bucketing-coalescing-gradients-to-amortize-latency" title="Permanent link">¶</a></h3>
+<p>Rather than all-reduce each parameter&rsquo;s gradient individually (thousands of tiny messages), DDP groups parameters into <strong>buckets</strong> — contiguous flat buffers of, by default, about 25 MB. When <em>all</em> gradients in a bucket have been produced, DDP fires a single all-reduce for the whole bucket. This trades thousands of latency-bound small all-reduces for a few dozen bandwidth-bound large ones.</p>
+<p>Buckets are assigned in (roughly) <strong>reverse order of the forward pass</strong>, so that the bucket containing the last-computed-in-forward / first-computed-in-backward parameters is filled and ready to communicate earliest. The ordering matters: a poor ordering would leave a bucket waiting on one straggler gradient, stalling overlap.</p>
+<figure class="viz" id="fig-ddp-bucketed-overlap-timeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 940 480" role="img" aria-label="DDP bucketed overlap timeline: gradients become ready in reverse layer order L12 first L0 last; as each 25MB bucket fills it fires an async all-reduce while the GPU keeps computing; only the last bucket's all-reduce is exposed past the end of backward compute.">
+  <defs>
+    <marker id="tl-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="v-muted"/>
+    </marker>
+    <marker id="tl-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+    <pattern id="tl-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="var(--accent,#6366f1)" stroke-width="3" stroke-opacity="0.5"/>
+    </pattern>
+    <pattern id="tl-hatch2" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="var(--accent2,#3b82f6)" stroke-width="3" stroke-opacity="0.45"/>
+    </pattern>
+    <pattern id="tl-hatch3" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="var(--good,#2f9e6e)" stroke-width="3" stroke-opacity="0.45"/>
+    </pattern>
+    <pattern id="tl-hatch4" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="var(--warn,#e0a106)" stroke-width="3" stroke-opacity="0.5"/>
+    </pattern>
+  </defs>
+  <style>
+    #fig-ddp-bucketed-overlap-timeline text { fill: var(--ink-soft); }
+    #fig-ddp-bucketed-overlap-timeline .lbl  { font: 600 12px var(--sans,sans-serif); }
+    #fig-ddp-bucketed-overlap-timeline .sm   { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-ddp-bucketed-overlap-timeline .mono { font: 600 11px var(--mono,monospace); }
+    #fig-ddp-bucketed-overlap-timeline .hdr  { font: 700 12px var(--sans,sans-serif); }
+    #fig-ddp-bucketed-overlap-timeline .lane { font: 600 11px var(--sans,sans-serif); fill: var(--muted); }
+
+    /* data-anim groups start invisible and fade in */
+    #fig-ddp-bucketed-overlap-timeline [data-anim] { opacity: 0; }
+    #fig-ddp-bucketed-overlap-timeline [data-anim="1"] { animation: tl-in 0.4s ease-out 0.2s  forwards; }
+    #fig-ddp-bucketed-overlap-timeline [data-anim="2"] { animation: tl-in 0.4s ease-out 0.8s  forwards; }
+    #fig-ddp-bucketed-overlap-timeline [data-anim="3"] { animation: tl-in 0.4s ease-out 1.5s  forwards; }
+    #fig-ddp-bucketed-overlap-timeline [data-anim="4"] { animation: tl-in 0.4s ease-out 2.2s  forwards; }
+    #fig-ddp-bucketed-overlap-timeline [data-anim="5"] { animation: tl-in 0.4s ease-out 2.8s  forwards; }
+    #fig-ddp-bucketed-overlap-timeline [data-anim="6"] { animation: tl-in 0.4s ease-out 3.4s  forwards; }
+    #fig-ddp-bucketed-overlap-timeline [data-anim="7"] { animation: tl-in 0.5s ease-out 4.2s  forwards; }
+
+    /* Compute bar sweeps via viz-draw */
+    #fig-ddp-bucketed-overlap-timeline .comp-fill {
+      stroke-dasharray: 800;
+      stroke-dashoffset: 800;
+      animation: tl-draw 4.0s ease-out 0.2s forwards;
+    }
+
+    @keyframes tl-in   { from { opacity:0; } to { opacity:1; } }
+    @keyframes tl-draw { from { stroke-dashoffset:800; } to { stroke-dashoffset:0; } }
+  </style>
+
+
+  <rect x="70" y="42" width="855" height="46" rx="5" class="v-fill v-stroke" stroke-width="0.8" fill-opacity="0.35"/>
+  <rect x="70" y="138" width="855" height="44" rx="5" class="v-fill v-stroke" stroke-width="0.8" fill-opacity="0.3"/>
+  <rect x="70" y="202" width="855" height="82" rx="5" class="v-fill v-stroke" stroke-width="0.8" fill-opacity="0.2"/>
+  <rect x="70" y="324" width="855" height="52" rx="5" class="v-fill v-stroke" stroke-width="0.8" fill-opacity="0.3"/>
+
+
+  <text x="9" y="67" class="lane" dominant-baseline="middle">GRAD</text>
+  <text x="9" y="162" class="lane" dominant-baseline="middle">GPU</text>
+  <text x="9" y="244" class="lane" dominant-baseline="middle">FIRE</text>
+  <text x="9" y="352" class="lane" dominant-baseline="middle">NCCL</text>
+
+
+  <text x="75" y="34" class="sm">backward order: last layer grad ready first (L12 → L0 in time)</text>
+
+
+
+  <g data-anim="1">
+    <rect x="78"  y="48" width="58" height="34" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.3" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="107" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--accent,#6366f1)">L12</text>
+    <rect x="140" y="48" width="58" height="34" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.25" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="169" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--accent,#6366f1)">L11</text>
+    <rect x="202" y="48" width="58" height="34" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.25" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="231" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--accent,#6366f1)">L10</text>
+    <rect x="264" y="48" width="58" height="34" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.25" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="293" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--accent,#6366f1)">L9</text>
+  </g>
+
+  <g data-anim="2">
+    <rect x="326" y="48" width="58" height="34" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.25" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <text x="355" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--accent2,#3b82f6)">L8</text>
+    <rect x="388" y="48" width="58" height="34" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.2" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <text x="417" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--accent2,#3b82f6)">L7</text>
+    <rect x="450" y="48" width="58" height="34" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.2" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <text x="479" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--accent2,#3b82f6)">L6</text>
+    <rect x="512" y="48" width="58" height="34" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.2" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <text x="541" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--accent2,#3b82f6)">L5</text>
+  </g>
+
+  <g data-anim="3">
+    <rect x="574" y="48" width="58" height="34" rx="3" fill="var(--good,#2f9e6e)" fill-opacity="0.2" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="603" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--good,#2f9e6e)">L4</text>
+    <rect x="636" y="48" width="58" height="34" rx="3" fill="var(--good,#2f9e6e)" fill-opacity="0.2" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="665" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--good,#2f9e6e)">L3</text>
+  </g>
+
+  <g data-anim="4">
+    <rect x="698" y="48" width="55" height="34" rx="3" fill="var(--warn,#e0a106)" fill-opacity="0.2" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+    <text x="725" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--warn,#e0a106)">L2</text>
+    <rect x="757" y="48" width="55" height="34" rx="3" fill="var(--warn,#e0a106)" fill-opacity="0.2" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+    <text x="784" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--warn,#e0a106)">L1</text>
+    <rect x="816" y="48" width="55" height="34" rx="3" fill="var(--warn,#e0a106)" fill-opacity="0.2" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+    <text x="843" y="67" text-anchor="middle" class="mono" font-size="10" fill="var(--warn,#e0a106)">L0</text>
+  </g>
+
+
+
+  <rect x="70" y="142" width="800" height="36" rx="4" fill="var(--accent,#6366f1)" fill-opacity="0.65"/>
+  <text x="470" y="162" text-anchor="middle" class="hdr" fill="var(--surface,#fff)" opacity="0.9">GPU compute (backward pass)</text>
+
+  <line x1="870" y1="136" x2="870" y2="390" stroke="var(--ink-soft)" stroke-width="1" stroke-dasharray="4 3" opacity="0.45"/>
+
+
+
+  <g data-anim="1">
+    <line x1="107" y1="210" x2="293" y2="210" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+    <line x1="107" y1="207" x2="107" y2="213" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+    <line x1="293" y1="207" x2="293" y2="213" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+    <text x="200" y="223" text-anchor="middle" class="sm" fill="var(--accent,#6366f1)">bucket A (L12..L9, ~25MB)</text>
+    <line x1="293" y1="224" x2="293" y2="268" stroke="var(--accent,#6366f1)" stroke-width="1.5" stroke-dasharray="3 2" marker-end="url(#tl-arr-acc)"/>
+    <text x="300" y="253" class="sm" fill="var(--accent,#6366f1)">all-reduce(A)</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="355" y1="210" x2="541" y2="210" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <line x1="355" y1="207" x2="355" y2="213" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <line x1="541" y1="207" x2="541" y2="213" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <text x="448" y="223" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">bucket B (L8..L5, ~25MB)</text>
+    <line x1="541" y1="224" x2="541" y2="268" stroke="var(--accent2,#3b82f6)" stroke-width="1.5" stroke-dasharray="3 2" marker-end="url(#tl-arr-acc)"/>
+    <text x="548" y="253" class="sm" fill="var(--accent2,#3b82f6)">all-reduce(B)</text>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="603" y1="210" x2="665" y2="210" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+    <line x1="603" y1="207" x2="603" y2="213" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+    <line x1="665" y1="207" x2="665" y2="213" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+    <text x="634" y="223" text-anchor="middle" class="sm" fill="var(--good,#2f9e6e)">bucket C</text>
+    <line x1="634" y1="224" x2="634" y2="268" stroke="var(--good,#2f9e6e)" stroke-width="1.5" stroke-dasharray="3 2" marker-end="url(#tl-arr-acc)"/>
+    <text x="642" y="253" class="sm" fill="var(--good,#2f9e6e)">all-reduce(C)</text>
+  </g>
+
+
+  <g data-anim="4">
+    <line x1="725" y1="210" x2="843" y2="210" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <line x1="725" y1="207" x2="725" y2="213" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <line x1="843" y1="207" x2="843" y2="213" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <text x="784" y="223" text-anchor="middle" class="sm" fill="var(--warn,#e0a106)">bucket D</text>
+    <line x1="784" y1="224" x2="784" y2="268" stroke="var(--warn,#e0a106)" stroke-width="1.5" stroke-dasharray="3 2" marker-end="url(#tl-arr-acc)"/>
+    <text x="792" y="253" class="sm" fill="var(--warn,#e0a106)">all-reduce(D)</text>
+  </g>
+
+
+
+  <g data-anim="2">
+    <rect x="293" y="330" width="192" height="40" rx="4" fill="url(#tl-hatch)" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+    <text x="389" y="354" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">A</text>
+  </g>
+
+  <g data-anim="3">
+    <rect x="490" y="330" width="180" height="40" rx="4" fill="url(#tl-hatch2)" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <text x="580" y="354" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">B</text>
+  </g>
+
+  <g data-anim="4">
+    <rect x="672" y="330" width="148" height="40" rx="4" fill="url(#tl-hatch3)" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+    <text x="746" y="354" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">C</text>
+  </g>
+
+  <g data-anim="5">
+    <rect x="784" y="330" width="148" height="40" rx="4" fill="url(#tl-hatch4)" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+    <text x="858" y="354" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">D</text>
+  </g>
+
+
+  <g data-anim="6">
+    <rect x="870" y="390" width="60" height="40" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.15" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="900" y="405" text-anchor="middle" class="sm" fill="var(--warn,#e0a106)">exposed</text>
+    <text x="900" y="418" text-anchor="middle" class="sm" fill="var(--warn,#e0a106)">comm</text>
+    <line x1="900" y1="389" x2="900" y2="372" stroke="var(--warn,#e0a106)" stroke-width="1.2" marker-end="url(#tl-arr-acc)"/>
+  </g>
+
+
+  <g data-anim="7" opacity="0.75">
+    <line x1="76" y1="182" x2="76" y2="326" stroke="currentColor" class="v-stroke" stroke-width="1.2"/>
+    <line x1="76" y1="254" x2="90" y2="254" stroke="currentColor" class="v-stroke" stroke-width="1.2"/>
+    <text x="93" y="250" class="sm">comm overlapped with</text>
+    <text x="93" y="262" class="sm">still-running backward</text>
+  </g>
+
+
+  <line x1="70" y1="445" x2="920" y2="445" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#tl-arr)"/>
+  <text x="490" y="463" text-anchor="middle" class="sm">time &#8594;</text>
+</svg>
+<figcaption><b>DDP bucketed overlap: backward compute and all-reduce run concurrently.</b> Gradients become ready in reverse layer order (L12 first, L0 last). As each ~25 MB bucket fills it immediately fires an async NCCL all-reduce while the GPU keeps computing earlier-layer gradients. Only the <b>final bucket D's</b> all-reduce is exposed past the end of backward compute — all others are hidden behind it for free.</figcaption>
+</figure>
+
+<p>The win is large: in the ideal case, the only exposed (non-overlapped) communication is the <em>last</em> bucket&rsquo;s all-reduce, which has no remaining backward compute to hide behind. Everything else is free.</p>
+<h3 id="a-from-scratch-ddp-wrapper">A From-Scratch DDP Wrapper<a class="headerlink" href="#a-from-scratch-ddp-wrapper" title="Permanent link">¶</a></h3>
+<p>Here is a minimal but faithful reimplementation of DDP&rsquo;s core mechanics — broadcast-on-init, per-parameter hooks, bucketing, and async all-reduce overlap. It is runnable and heavily commented so you can see every moving part.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># tiny_ddp.py — a from-scratch DistributedDataParallel.</span>
+<span class="c1"># Run: torchrun --nproc_per_node=4 tiny_ddp.py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TinyDDP</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A minimal DistributedDataParallel that demonstrates the two core ideas:</span>
+<span class="sd">      1. Broadcast parameters at init so all replicas start identical.</span>
+<span class="sd">      2. Bucket gradients and all-reduce each bucket asynchronously as soon</span>
+<span class="sd">         as it is full during the backward pass, overlapping comm with compute.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">module</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">bucket_cap_mb</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">25.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">module</span> <span class="o">=</span> <span class="n">module</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">get_world_size</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bucket_bytes_cap</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">bucket_cap_mb</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">)</span>
+
+        <span class="c1"># ── Invariant 1: identical initialization ───────────────────────────────</span>
+        <span class="c1"># Broadcast params AND buffers (e.g. BN running stats) from rank 0.</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">module</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+            <span class="n">dist</span><span class="o">.</span><span class="n">broadcast</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">src</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">b</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">module</span><span class="o">.</span><span class="n">buffers</span><span class="p">():</span>
+            <span class="n">dist</span><span class="o">.</span><span class="n">broadcast</span><span class="p">(</span><span class="n">b</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">src</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+
+        <span class="c1"># ── Assign parameters to buckets in REVERSE registration order ──────────</span>
+        <span class="c1"># Reverse order approximates reverse-of-forward = order-of-backward,</span>
+        <span class="c1"># so the first bucket to fill is the first to be communicable.</span>
+        <span class="n">params</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">module</span><span class="o">.</span><span class="n">parameters</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">]</span>
+        <span class="n">params</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">reversed</span><span class="p">(</span><span class="n">params</span><span class="p">))</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_buckets</span> <span class="o">=</span> <span class="p">[]</span>          <span class="c1"># list of dicts describing each bucket</span>
+        <span class="n">cur</span><span class="p">,</span> <span class="n">cur_bytes</span> <span class="o">=</span> <span class="p">[],</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">params</span><span class="p">:</span>
+            <span class="n">pbytes</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">*</span> <span class="n">p</span><span class="o">.</span><span class="n">element_size</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">cur</span> <span class="ow">and</span> <span class="n">cur_bytes</span> <span class="o">+</span> <span class="n">pbytes</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">bucket_bytes_cap</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_buckets</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cur</span><span class="p">)</span>
+                <span class="n">cur</span><span class="p">,</span> <span class="n">cur_bytes</span> <span class="o">=</span> <span class="p">[],</span> <span class="mi">0</span>
+            <span class="n">cur</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+            <span class="n">cur_bytes</span> <span class="o">+=</span> <span class="n">pbytes</span>
+        <span class="k">if</span> <span class="n">cur</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_buckets</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cur</span><span class="p">)</span>
+
+        <span class="c1"># Map each parameter -&gt; (bucket_index) and track readiness counters.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_param_to_bucket</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">bidx</span><span class="p">,</span> <span class="n">bucket</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_buckets</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">bucket</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_param_to_bucket</span><span class="p">[</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">bidx</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_pending_work</span> <span class="o">=</span> <span class="p">[]</span>     <span class="c1"># async all-reduce handles to wait on</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ready_counts</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_buckets</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_register_hooks</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_register_hooks</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Attach a post-accumulate-grad hook to every parameter.&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">module</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="c1"># This hook fires AFTER p.grad has been accumulated in backward.</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">register_post_accumulate_grad_hook</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_make_hook</span><span class="p">(</span><span class="n">p</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_make_hook</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">param</span><span class="p">):</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">hook</span><span class="p">(</span><span class="n">p</span><span class="p">):</span>
+            <span class="n">bidx</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_param_to_bucket</span><span class="p">[</span><span class="n">p</span><span class="p">]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_ready_counts</span><span class="p">[</span><span class="n">bidx</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="c1"># When every parameter in this bucket has a gradient, communicate.</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ready_counts</span><span class="p">[</span><span class="n">bidx</span><span class="p">]</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_buckets</span><span class="p">[</span><span class="n">bidx</span><span class="p">]):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_all_reduce_bucket</span><span class="p">(</span><span class="n">bidx</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">hook</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_all_reduce_bucket</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bidx</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Flatten the bucket&#39;s grads, async all-reduce, store the handle.&quot;&quot;&quot;</span>
+        <span class="n">grads</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">grad</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_buckets</span><span class="p">[</span><span class="n">bidx</span><span class="p">]]</span>
+        <span class="n">flat</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">_utils</span><span class="o">.</span><span class="n">_flatten_dense_tensors</span><span class="p">(</span><span class="n">grads</span><span class="p">)</span>  <span class="c1"># one contiguous buffer</span>
+        <span class="c1"># async_op=True returns immediately; NCCL runs in the background while</span>
+        <span class="c1"># the backward pass keeps producing earlier-layer gradients.</span>
+        <span class="n">handle</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">all_reduce</span><span class="p">(</span><span class="n">flat</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="n">dist</span><span class="o">.</span><span class="n">ReduceOp</span><span class="o">.</span><span class="n">SUM</span><span class="p">,</span> <span class="n">async_op</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_pending_work</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">handle</span><span class="p">,</span> <span class="n">flat</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_buckets</span><span class="p">[</span><span class="n">bidx</span><span class="p">]))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">module</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">finish_gradient_synchronization</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Call once after loss.backward(). Waits on all in-flight all-reduces,</span>
+<span class="sd">        scatters the reduced flat buffers back into each .grad, and averages.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">handle</span><span class="p">,</span> <span class="n">flat</span><span class="p">,</span> <span class="n">bucket</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pending_work</span><span class="p">:</span>
+            <span class="n">handle</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>                      <span class="c1"># block until this bucket is reduced</span>
+            <span class="n">flat</span> <span class="o">/=</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span>            <span class="c1"># SUM -&gt; MEAN</span>
+            <span class="c1"># Unflatten the contiguous buffer back into per-parameter grads.</span>
+            <span class="n">synced</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">_utils</span><span class="o">.</span><span class="n">_unflatten_dense_tensors</span><span class="p">(</span>
+                <span class="n">flat</span><span class="p">,</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">grad</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">bucket</span><span class="p">]</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">p</span><span class="p">,</span> <span class="n">g</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">bucket</span><span class="p">,</span> <span class="n">synced</span><span class="p">):</span>
+                <span class="n">p</span><span class="o">.</span><span class="n">grad</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">g</span><span class="p">)</span>
+        <span class="c1"># Reset for next iteration.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_pending_work</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ready_counts</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_buckets</span><span class="p">)</span>
+
+
+<span class="c1"># ── Usage ───────────────────────────────────────────────────────────────────────</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">dist</span><span class="o">.</span><span class="n">init_process_group</span><span class="p">(</span><span class="n">backend</span><span class="o">=</span><span class="s2">&quot;nccl&quot;</span><span class="p">)</span>
+    <span class="n">rank</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">get_rank</span><span class="p">()</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">set_device</span><span class="p">(</span><span class="n">rank</span><span class="p">)</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cuda:</span><span class="si">{</span><span class="n">rank</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">model</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">1024</span><span class="p">,</span> <span class="mi">4096</span><span class="p">),</span> <span class="n">nn</span><span class="o">.</span><span class="n">GELU</span><span class="p">(),</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">4096</span><span class="p">,</span> <span class="mi">4096</span><span class="p">),</span> <span class="n">nn</span><span class="o">.</span><span class="n">GELU</span><span class="p">(),</span>
+        <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">4096</span><span class="p">,</span> <span class="mi">1024</span><span class="p">),</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">ddp</span> <span class="o">=</span> <span class="n">TinyDDP</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">bucket_cap_mb</span><span class="o">=</span><span class="mf">25.0</span><span class="p">)</span>
+    <span class="n">opt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">ddp</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">1024</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>   <span class="c1"># different data per rank</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">ddp</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>                    <span class="c1"># toy loss</span>
+        <span class="n">opt</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">(</span><span class="n">set_to_none</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">y</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>                                <span class="c1"># hooks fire, comm overlaps</span>
+        <span class="n">ddp</span><span class="o">.</span><span class="n">finish_gradient_synchronization</span><span class="p">()</span>       <span class="c1"># wait + average</span>
+        <span class="n">opt</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;step </span><span class="si">{</span><span class="n">step</span><span class="si">}</span><span class="s2">: loss=</span><span class="si">{</span><span class="n">y</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">dist</span><span class="o">.</span><span class="n">destroy_process_group</span><span class="p">()</span>
+</code></pre></div>
+<p>The production DDP differs from this toy in important ways — it rebuilds bucket order after the first iteration based on the <em>observed</em> backward order, handles unused parameters (the <code>find_unused_parameters</code> flag), uses a dedicated CUDA stream for communication, and overlaps the bucket <em>copy-out</em> too — but the essence is exactly what&rsquo;s above: hooks fire as grads are produced; full buckets are all-reduced asynchronously; one final wait synchronizes everything.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: the no_sync() context for gradient accumulation</p>
+<p>When doing gradient accumulation (several micro-batches per optimizer step), you do <strong>not</strong> want an all-reduce after every micro-batch — only after the last one. Real DDP provides <code>model.no_sync()</code>, a context manager that suppresses the hooks&rsquo; communication, letting <code>.grad</code> accumulate locally. Run the first <span class="arithmatex">\(k-1\)</span> micro-batches under <code>no_sync()</code> and the last one normally. This cuts communication volume by a factor of <span class="arithmatex">\(k\)</span> at the cost of holding the accumulated gradient locally. Forgetting it is a classic &ldquo;why is my 4-step accumulation 4× slower than expected&rdquo; bug.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: DDP with unused parameters</p>
+<p>If your forward pass conditionally skips a sub-module (e.g. an auxiliary head used only some steps), that module&rsquo;s parameters never receive a gradient, their hooks never fire, and the corresponding bucket never completes — so DDP hangs at the <code>wait()</code> forever. The fix is <code>DistributedDataParallel(model, find_unused_parameters=True)</code>, which traverses the autograd graph to detect which parameters were used and marks the rest &ldquo;ready&rdquo; immediately. It costs a graph traversal per step, so only enable it when you actually have conditionally-unused parameters.</p>
+</div>
+<h2 id="the-memory-problem-where-every-byte-goes">The Memory Problem: Where Every Byte Goes<a class="headerlink" href="#the-memory-problem-where-every-byte-goes" title="Permanent link">¶</a></h2>
+<p>Plain DDP replicates <em>everything</em> on every GPU. To see why that&rsquo;s a problem — and what ZeRO/FSDP fix — we need a precise accounting of training memory. There are four consumers: parameters, gradients, optimizer states, and activations. The first three are what ZeRO shards; activations are handled separately (activation checkpointing, covered in <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a>).</p>
+<h3 id="mixed-precision-adam-the-standard-memory-model">Mixed-Precision Adam: The Standard Memory Model<a class="headerlink" href="#mixed-precision-adam-the-standard-memory-model" title="Permanent link">¶</a></h3>
+<p>The dominant training recipe is <strong>mixed-precision with Adam/AdamW</strong> (see <a href="../03-pretraining/08-mixed-precision-fp8.html">Mixed Precision, bf16 &amp; FP8 Training</a> and <a href="../03-pretraining/09-optimizers.html">Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a>). With <span class="arithmatex">\(\Psi\)</span> parameters, the per-GPU memory for the <em>persistent</em> model state (everything except activations) in the canonical bf16-compute / fp32-master-weights setup is:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Precision</th>
+<th>Bytes per parameter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Parameters (bf16, for fwd/bwd)</td>
+<td>2 bytes</td>
+<td><span class="arithmatex">\(2\Psi\)</span></td>
+</tr>
+<tr>
+<td>Gradients (bf16)</td>
+<td>2 bytes</td>
+<td><span class="arithmatex">\(2\Psi\)</span></td>
+</tr>
+<tr>
+<td>Master weights (fp32 copy)</td>
+<td>4 bytes</td>
+<td><span class="arithmatex">\(4\Psi\)</span></td>
+</tr>
+<tr>
+<td>Adam first moment <span class="arithmatex">\(m\)</span> (fp32)</td>
+<td>4 bytes</td>
+<td><span class="arithmatex">\(4\Psi\)</span></td>
+</tr>
+<tr>
+<td>Adam second moment <span class="arithmatex">\(v\)</span> (fp32)</td>
+<td>4 bytes</td>
+<td><span class="arithmatex">\(4\Psi\)</span></td>
+</tr>
+</tbody>
+</table>
+<p>Summing: <span class="arithmatex">\(2\Psi + 2\Psi + 4\Psi + 4\Psi + 4\Psi = 16\Psi\)</span> bytes. This is the famous <strong>&ldquo;16 bytes per parameter&rdquo;</strong> rule for mixed-precision Adam. (Some accountings put gradients in fp32 too, giving <span class="arithmatex">\(18\Psi\)</span>; the exact split depends on the framework, but the order of magnitude is fixed.)</p>
+<p>The crucial observation behind ZeRO: of those 16 bytes, <strong>12 bytes — the fp32 master weights and the two Adam moments — are &ldquo;optimizer state&rdquo; that is only touched once per step, during <code>optimizer.step()</code></strong>. There is no reason for every GPU to store a full copy. Only the 2 bytes of bf16 params (needed every forward/backward) and 2 bytes of gradient (produced every backward) genuinely need to be present on each GPU at all times — and even those can be sharded if we&rsquo;re willing to gather them on demand.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: a 7.5B model on 80 GB GPUs</p>
+<p>Take <span class="arithmatex">\(\Psi = 7.5 \times 10^9\)</span> parameters (a GPT-2-XL-to-Llama-7B-class model). Persistent state under mixed-precision Adam:</p>
+<div class="arithmatex">\[
+16 \times \Psi = 16 \times 7.5\times10^9 = 120 \times 10^9 \text{ bytes} = 120 \text{ GB}
+\]</div>
+<p>That already <strong>exceeds a single 80 GB H100</strong>, before we&rsquo;ve allocated a single byte for activations. Pure DDP simply cannot train this model — every replica needs 120 GB. Now spread it over <span class="arithmatex">\(N = 64\)</span> GPUs:</p>
+<ul>
+<li><strong>DDP:</strong> 120 GB per GPU. <strong>Does not fit. Impossible.</strong></li>
+<li><strong>ZeRO-1</strong> (shard the 12 bytes of optimizer state): per-GPU <span class="arithmatex">\(= 2\Psi + 2\Psi + 12\Psi/N = 30 + 1.5\,\text{GB-ish}\)</span>. Concretely <span class="arithmatex">\(4\Psi + 12\Psi/64 = 30\text{ GB} + 1.4\text{ GB} \approx 31.4\)</span> GB. <strong>Fits with room for activations.</strong></li>
+<li><strong>ZeRO-2</strong> (also shard the 2 bytes of gradients): <span class="arithmatex">\(2\Psi + (2\Psi + 12\Psi)/N = 15\text{ GB} + 14\Psi/64 = 15 + 1.6 \approx 16.6\)</span> GB.</li>
+<li><strong>ZeRO-3 / FSDP</strong> (also shard the 2 bytes of params): <span class="arithmatex">\(16\Psi/N = 120/64 \approx 1.9\)</span> GB per GPU.</li>
+</ul>
+<p>The progression <span class="arithmatex">\(120 \to 31 \to 17 \to 1.9\)</span> GB per GPU is the entire point of ZeRO. As <span class="arithmatex">\(N \to \infty\)</span>, ZeRO-3 drives per-GPU model-state memory toward zero. This is what makes 100B+ parameter training on commodity 80 GB GPUs possible.</p>
+</div>
+<h3 id="activations-are-the-other-half-of-the-story">Activations Are the Other Half of the Story<a class="headerlink" href="#activations-are-the-other-half-of-the-story" title="Permanent link">¶</a></h3>
+<p>The <span class="arithmatex">\(16\Psi\)</span> figure is <em>persistent</em> state. <strong>Activations</strong> — the intermediate tensors saved during the forward pass for use in the backward pass — are transient but can dwarf the parameters for long sequences and large batches. Roughly, activation memory scales as <span class="arithmatex">\(O(\text{batch} \times \text{seq\_len} \times \text{layers} \times \text{hidden})\)</span> and is <em>not</em> sharded by data parallelism (each GPU has its own local batch&rsquo;s activations). ZeRO/FSDP do not directly reduce activation memory; that&rsquo;s the job of activation checkpointing (recompute instead of store) and sequence/tensor parallelism. Keep this in mind: ZeRO-3 can shrink model state to nearly nothing yet still OOM on activations. See <a href="../04-kernels-efficiency/10-memory-efficient-training.html">Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a>.</p>
+<h2 id="zero-sharding-the-redundancy-away">ZeRO: Sharding the Redundancy Away<a class="headerlink" href="#zero-sharding-the-redundancy-away" title="Permanent link">¶</a></h2>
+<p><strong>ZeRO</strong> (Zero Redundancy Optimizer), introduced by Rajbhandari et al. in the DeepSpeed project, is the observation that data parallelism stores <span class="arithmatex">\(N\)</span> identical copies of state that is mostly idle. ZeRO partitions that state across the <span class="arithmatex">\(N\)</span> data-parallel workers so each owns only a <span class="arithmatex">\(1/N\)</span> slice, and reconstructs the full tensors on demand via collectives — trading memory for a modest amount of extra communication. It comes in three cumulative stages.</p>
+<h3 id="zero-1-shard-optimizer-states">ZeRO-1: Shard Optimizer States<a class="headerlink" href="#zero-1-shard-optimizer-states" title="Permanent link">¶</a></h3>
+<p>Stage 1 partitions only the <strong>optimizer states</strong> (the fp32 master weights and Adam&rsquo;s <span class="arithmatex">\(m\)</span>, <span class="arithmatex">\(v\)</span>) — the 12-bytes-per-parameter that are touched only at <code>optimizer.step()</code>. Each GPU <span class="arithmatex">\(i\)</span> owns the optimizer state for parameter-shard <span class="arithmatex">\(i\)</span> (a contiguous <span class="arithmatex">\(1/N\)</span> slice of the flattened parameter space).</p>
+<p>The step proceeds:</p>
+<ol>
+<li>Forward/backward as in DDP — every GPU has full bf16 params and computes full local gradients.</li>
+<li><strong>Reduce-scatter</strong> the gradients: instead of an all-reduce (which gives every GPU the full averaged gradient), reduce-scatter gives GPU <span class="arithmatex">\(i\)</span> only the averaged gradient for <em>its</em> shard. This is cheaper — recall all-reduce = reduce-scatter + all-gather — so stage 1 already halves gradient communication relative to a naive all-reduce.</li>
+<li>Each GPU updates <em>only its shard&rsquo;s</em> fp32 master weights using its <span class="arithmatex">\(m, v\)</span>, producing updated bf16 params for its shard.</li>
+<li><strong>All-gather</strong> the updated bf16 parameters so every GPU again has the full model for the next forward pass.</li>
+</ol>
+<p>Memory per GPU: <span class="arithmatex">\(2\Psi + 2\Psi + 12\Psi/N\)</span>. Communication volume is essentially the same as DDP (<span class="arithmatex">\(2\Psi\)</span> worth: a reduce-scatter plus an all-gather), so <strong>ZeRO-1 gives a large memory saving for free</strong>.</p>
+<h3 id="zero-2-also-shard-gradients">ZeRO-2: Also Shard Gradients<a class="headerlink" href="#zero-2-also-shard-gradients" title="Permanent link">¶</a></h3>
+<p>Stage 2 additionally partitions the <strong>gradients</strong>. The insight: once GPU <span class="arithmatex">\(i\)</span> has reduce-scattered its gradient shard and only needs <em>that</em> shard to update <em>its</em> optimizer state, there&rsquo;s no reason to keep the full gradient buffer materialized everywhere. As each bucket&rsquo;s gradient is reduced, GPU <span class="arithmatex">\(i\)</span> keeps only its slice and frees the rest.</p>
+<p>Memory per GPU: <span class="arithmatex">\(2\Psi + (2\Psi + 12\Psi)/N = 2\Psi + 14\Psi/N\)</span>. Communication is again the same <span class="arithmatex">\(2\Psi\)</span> (reduce-scatter of grads + all-gather of params). ZeRO-2 is the sweet spot for many setups: it shards everything except the bf16 parameters (which must be present for forward/backward), at the same communication cost as DDP.</p>
+<h3 id="zero-3-also-shard-parameters">ZeRO-3: Also Shard Parameters<a class="headerlink" href="#zero-3-also-shard-parameters" title="Permanent link">¶</a></h3>
+<p>Stage 3 takes the final step and partitions the <strong>parameters themselves</strong>. Now no GPU holds the full model at rest — GPU <span class="arithmatex">\(i\)</span> permanently stores only its <span class="arithmatex">\(1/N\)</span> slice of the bf16 parameters (plus its grad shard and optimizer shard). To run the forward pass, parameters must be reconstructed <em>layer by layer, just in time</em>:</p>
+<ul>
+<li><strong>Forward:</strong> before computing layer <span class="arithmatex">\(\ell\)</span>, <strong>all-gather</strong> layer <span class="arithmatex">\(\ell\)</span>&rsquo;s parameters from all GPUs, compute the layer, then <strong>free</strong> the gathered parameters immediately. Only one (or a few prefetched) layers&rsquo; worth of full parameters is materialized at any instant.</li>
+<li><strong>Backward:</strong> <strong>all-gather</strong> the layer&rsquo;s parameters again (they were freed), compute gradients, <strong>reduce-scatter</strong> the gradients to their owner, free everything.</li>
+</ul>
+<p>Memory per GPU: <span class="arithmatex">\(16\Psi/N\)</span> for model state — it shards linearly with the number of GPUs. The cost is an <strong>extra all-gather</strong>: ZeRO-3 communicates roughly <span class="arithmatex">\(3\Psi\)</span> worth (all-gather params in forward, all-gather params in backward, reduce-scatter grads) versus <span class="arithmatex">\(2\Psi\)</span> for ZeRO-&frac12; — about <strong>1.5× the communication</strong> of DDP. That extra all-gather is the price of never storing the full model.</p>
+<figure class="viz" id="fig-zero-stages-sharding-ladder">
+<svg viewBox="0 0 980 470" role="img" aria-label="ZeRO stages sharding ladder: four rows for DDP, ZeRO-1, ZeRO-2, ZeRO-3 showing per-parameter memory as stacked horizontal bars for params (2B), grads (2B), and optimizer state (12B), with sharded categories shown as narrow slivers and ghost outlines; right panel shows communication cost per step in units of psi.">
+  <defs>
+    <marker id="zs-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="v-muted"/>
+    </marker>
+    <marker id="zs-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-zero-stages-sharding-ladder text { fill: var(--ink-soft); }
+    #fig-zero-stages-sharding-ladder .lbl  { font: 600 12px var(--sans,sans-serif); }
+    #fig-zero-stages-sharding-ladder .sm   { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-zero-stages-sharding-ladder .mono { font: 600 11px var(--mono,monospace); }
+    #fig-zero-stages-sharding-ladder .hdr  { font: 700 13px var(--sans,sans-serif); }
+    #fig-zero-stages-sharding-ladder .row-lbl { font: 700 13px var(--mono,monospace); }
+    #fig-zero-stages-sharding-ladder .total   { font: 700 12px var(--mono,monospace); fill: var(--ink-soft); }
+    #fig-zero-stages-sharding-ladder .leg  { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted); }
+  </style>
+
+
+
+  <text x="380" y="22" text-anchor="middle" class="hdr">Per-GPU model-state memory (bytes per parameter, N = world size)</text>
+
+
+
+
+  <g class="sm" text-anchor="middle">
+    <line x1="148" y1="36" x2="148" y2="42" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <line x1="206" y1="36" x2="206" y2="42" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <line x1="264" y1="36" x2="264" y2="42" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <line x1="322" y1="36" x2="322" y2="42" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <line x1="380" y1="36" x2="380" y2="42" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <line x1="496" y1="36" x2="496" y2="42" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <line x1="612" y1="36" x2="612" y2="42" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <text x="148" y="54">0</text>
+    <text x="206" y="54">2</text>
+    <text x="264" y="54">4</text>
+    <text x="380" y="54">8</text>
+    <text x="496" y="54">12</text>
+    <text x="612" y="54">16 B</text>
+  </g>
+  <line x1="148" y1="38" x2="625" y2="38" stroke="currentColor" class="v-muted" stroke-width="1"/>
+
+
+
+  <rect x="30" y="57" width="14" height="12" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="49" y="68" class="leg">params (bf16, 2B)</text>
+
+  <rect x="158" y="57" width="14" height="12" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.8"/>
+  <text x="177" y="68" class="leg">grads (bf16, 2B)</text>
+
+  <rect x="286" y="57" width="14" height="12" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.35"/>
+  <text x="305" y="68" class="leg">optim state fp32 x3 (master+m+v, 12B)</text>
+
+  <rect x="30" y="75" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1.2"/>
+  <text x="49" y="84" class="leg">sharded away (ghost = removed slice)</text>
+
+
+
+
+
+  <text x="136" y="128" text-anchor="end" class="row-lbl">DDP</text>
+
+  <rect x="148" y="102" width="58" height="42" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="177" y="127" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">2B</text>
+
+  <rect x="206" y="102" width="58" height="42" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.8"/>
+  <text x="235" y="127" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">2B</text>
+
+  <rect x="264" y="102" width="348" height="42" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.35"/>
+  <text x="438" y="127" text-anchor="middle" class="mono" font-size="9">12B</text>
+
+  <text x="626" y="128" class="total" fill="var(--ink-soft)">= 16 B</text>
+
+
+  <text x="136" y="190" text-anchor="end" class="row-lbl">ZeRO-1</text>
+
+  <rect x="148" y="164" width="58" height="42" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="177" y="189" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">2B</text>
+
+  <rect x="206" y="164" width="58" height="42" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.8"/>
+  <text x="235" y="189" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">2B</text>
+
+  <rect x="264" y="164" width="348" height="42" rx="3" fill="none" stroke="currentColor" stroke-dasharray="4 3" class="v-stroke" stroke-width="1.2" opacity="0.5"/>
+
+  <rect x="264" y="164" width="36" height="42" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.35"/>
+  <text x="282" y="189" text-anchor="middle" class="mono" font-size="8">12/N</text>
+
+  <text x="626" y="190" class="total">4+12/N</text>
+
+
+  <text x="136" y="252" text-anchor="end" class="row-lbl">ZeRO-2</text>
+
+  <rect x="148" y="226" width="58" height="42" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="177" y="251" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">2B</text>
+
+  <rect x="206" y="226" width="58" height="42" rx="3" fill="none" stroke="currentColor" stroke-dasharray="4 3" class="v-stroke" stroke-width="1.2" opacity="0.5"/>
+  <rect x="206" y="226" width="10" height="42" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.75"/>
+  <text x="216" y="251" class="mono" font-size="7" fill="var(--accent2,#3b82f6)">2/N</text>
+
+  <rect x="264" y="226" width="348" height="42" rx="3" fill="none" stroke="currentColor" stroke-dasharray="4 3" class="v-stroke" stroke-width="1.2" opacity="0.5"/>
+  <rect x="264" y="226" width="36" height="42" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.35"/>
+  <text x="282" y="251" text-anchor="middle" class="mono" font-size="8">12/N</text>
+
+  <text x="626" y="252" class="total">2+14/N</text>
+
+
+  <rect x="10" y="282" width="630" height="52" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="var(--accent,#6366f1)" stroke-width="0.8" stroke-dasharray="3 3"/>
+  <text x="136" y="314" text-anchor="end" class="row-lbl" fill="var(--accent,#6366f1)">ZeRO-3</text>
+
+  <rect x="148" y="288" width="58" height="42" rx="3" fill="none" stroke="currentColor" stroke-dasharray="4 3" class="v-stroke" stroke-width="1.2" opacity="0.5"/>
+  <rect x="148" y="288" width="10" height="42" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.8"/>
+  <text x="158" y="313" class="mono" font-size="7" fill="var(--accent,#6366f1)">2/N</text>
+
+  <rect x="206" y="288" width="58" height="42" rx="3" fill="none" stroke="currentColor" stroke-dasharray="4 3" class="v-stroke" stroke-width="1.2" opacity="0.5"/>
+  <rect x="206" y="288" width="10" height="42" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.75"/>
+  <text x="216" y="313" class="mono" font-size="7" fill="var(--accent2,#3b82f6)">2/N</text>
+
+  <rect x="264" y="288" width="348" height="42" rx="3" fill="none" stroke="currentColor" stroke-dasharray="4 3" class="v-stroke" stroke-width="1.2" opacity="0.5"/>
+  <rect x="264" y="288" width="36" height="42" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.35"/>
+  <text x="282" y="313" text-anchor="middle" class="mono" font-size="8">12/N</text>
+
+  <text x="626" y="314" class="total" fill="var(--accent,#6366f1)">16/N</text>
+
+  <text x="626" y="328" class="sm" fill="var(--accent,#6366f1)">&#8594; 0 as N&#8594;&#8734;</text>
+
+
+
+  <line x1="140" y1="158" x2="640" y2="158" stroke="currentColor" class="v-muted" stroke-width="0.5" stroke-dasharray="2 4" opacity="0.5"/>
+  <line x1="140" y1="220" x2="640" y2="220" stroke="currentColor" class="v-muted" stroke-width="0.5" stroke-dasharray="2 4" opacity="0.5"/>
+  <line x1="140" y1="282" x2="640" y2="282" stroke="currentColor" class="v-muted" stroke-width="0.5" stroke-dasharray="2 4" opacity="0.5"/>
+  <line x1="140" y1="344" x2="640" y2="344" stroke="currentColor" class="v-muted" stroke-width="0.5" stroke-dasharray="2 4" opacity="0.5"/>
+
+
+  <text x="324" y="384" text-anchor="middle" class="sm">Ghost outline = replicated size; solid fill = what each GPU stores.</text>
+  <text x="324" y="396" text-anchor="middle" class="sm">N = 64: 120 GB &#8594; 31 &#8594; 17 &#8594; 1.9 GB per GPU.</text>
+
+
+
+  <line x1="668" y1="30" x2="668" y2="440" stroke="currentColor" class="v-muted" stroke-width="1" stroke-dasharray="4 4" opacity="0.5"/>
+
+  <text x="822" y="22" text-anchor="middle" class="hdr">Comm per step</text>
+
+
+  <rect x="688" y="108" width="56" height="34" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.7"/>
+  <text x="716" y="130" text-anchor="middle" class="mono" fill="var(--surface,#fff)" font-size="11">~2&#x3A8;</text>
+  <text x="752" y="129" class="sm">all-reduce grads</text>
+
+
+  <rect x="688" y="170" width="56" height="34" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.7"/>
+  <text x="716" y="192" text-anchor="middle" class="mono" fill="var(--surface,#fff)" font-size="11">~2&#x3A8;</text>
+  <text x="752" y="182" class="sm">reduce-scatter grads</text>
+  <text x="752" y="194" class="sm">+ all-gather params</text>
+
+
+  <rect x="688" y="232" width="56" height="34" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.7"/>
+  <text x="716" y="254" text-anchor="middle" class="mono" fill="var(--surface,#fff)" font-size="11">~2&#x3A8;</text>
+  <text x="752" y="244" class="sm">reduce-scatter grads</text>
+  <text x="752" y="256" class="sm">+ all-gather params</text>
+
+
+  <rect x="688" y="290" width="56" height="34" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="716" y="312" text-anchor="middle" class="mono" fill="var(--surface,#fff)" font-size="11">~3&#x3A8;</text>
+  <text x="752" y="297" class="sm">all-gather (fwd)</text>
+  <text x="752" y="309" class="sm">+ all-gather (bwd)</text>
+  <text x="752" y="321" class="sm">+ reduce-scatter</text>
+
+
+  <line x1="716" y1="325" x2="716" y2="341" stroke="var(--warn,#e0a106)" stroke-width="1.2" marker-end="url(#zs-arr-acc)"/>
+  <text x="688" y="352" class="sm" fill="var(--warn,#e0a106)">~1.5x DDP: price of</text>
+  <text x="688" y="364" class="sm" fill="var(--warn,#e0a106)">never storing full model</text>
+
+
+  <text x="688" y="386" class="sm">Relative comm:</text>
+  <rect x="688" y="394" width="64" height="11" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.6"/>
+  <text x="758" y="404" class="sm">2&#x3A8; (DDP/Z1/Z2)</text>
+  <rect x="688" y="411" width="96" height="11" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="790" y="421" class="sm">3&#x3A8; (ZeRO-3)</text>
+
+
+  <text x="490" y="455" text-anchor="middle" class="sm">&#x3A8; = total parameter count. Stages 1-2 cost the same comm as DDP; Stage 3 pays ~1.5x for sharding parameters.</text>
+</svg>
+<figcaption><b>ZeRO stages: per-parameter memory and communication at a glance.</b> Each row shows how 16 bytes per parameter (params 2B + grads 2B + optimizer state 12B) are distributed across GPUs at rest — solid bars are what each GPU stores; ghost outlines show what has been sharded away. ZeRO-3 shrinks storage to 16/N bytes per GPU (approaching zero as N grows), at the cost of ~1.5x the communication of plain DDP.</figcaption>
+</figure>
+
+<h3 id="zero-offload-and-zero-infinity">ZeRO-Offload and ZeRO-Infinity<a class="headerlink" href="#zero-offload-and-zero-infinity" title="Permanent link">¶</a></h3>
+<p>DeepSpeed extends ZeRO with <strong>offload</strong>: push the sharded optimizer states (and optionally gradients/params) to CPU RAM or NVMe SSD, fetching them only when needed. ZeRO-Infinity orchestrates GPU↔CPU↔NVMe movement to train models far larger than aggregate GPU memory. The tradeoff is bandwidth: PCIe/CPU-memory bandwidth is an order of magnitude below HBM, so offload is for &ldquo;fits nowhere else&rdquo; regimes, not for speed. We treat offload mechanics in <a href="../03-pretraining/07-megatron-deepspeed.html">Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a>.</p>
+<div class="admonition note">
+<p class="admonition-title">Aside: ZeRO is still data parallelism</p>
+<p>A common confusion is to call ZeRO-3 &ldquo;model parallelism.&rdquo; It is not. Every GPU still processes a <em>different data shard</em> and the <em>full computation</em> of every layer (after gathering that layer&rsquo;s params) — that&rsquo;s data parallelism. The model is <em>sharded for storage</em> but <em>replicated for compute</em>. Contrast with tensor parallelism (Chapter 3.6), where each GPU computes a <em>different slice of every layer&rsquo;s math</em> on the <em>same</em> data. ZeRO shards memory; TP shards compute. They are orthogonal and routinely combined.</p>
+</div>
+<h2 id="fsdp-pytorch-native-fully-sharded-data-parallel">FSDP: PyTorch-Native Fully Sharded Data Parallel<a class="headerlink" href="#fsdp-pytorch-native-fully-sharded-data-parallel" title="Permanent link">¶</a></h2>
+<p><strong>FSDP</strong> (Fully Sharded Data Parallel) is PyTorch&rsquo;s native implementation of the ZeRO-3 idea, built into <code>torch.distributed</code>. Conceptually it is ZeRO-3; in practice it has its own vocabulary and knobs worth knowing because FSDP (and its successor FSDP2) is what most PyTorch-native large-model training uses today.</p>
+<h3 id="the-fsdp-unit-and-the-flat-parameter">The FSDP Unit and the Flat Parameter<a class="headerlink" href="#the-fsdp-unit-and-the-flat-parameter" title="Permanent link">¶</a></h3>
+<p>FSDP groups parameters into <strong>FSDP units</strong> (a unit is typically one transformer block, set via an <em>auto-wrap policy</em>). Within a unit, all parameters are flattened and concatenated into a single 1-D <strong>FlatParameter</strong>, which is then sharded evenly across the <span class="arithmatex">\(N\)</span> ranks: rank <span class="arithmatex">\(i\)</span> owns the <span class="arithmatex">\(i\)</span>-th contiguous slice. Sharding a flat buffer (rather than each tensor individually) means the all-gather/reduce-scatter operate on big contiguous messages — bandwidth-efficient, exactly the bucketing lesson from DDP applied to sharding.</p>
+<p>The lifecycle of a unit during a step:</p>
+<figure class="viz" id="fig-fsdp-unit-lifecycle">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 920 560" role="img" aria-label="FSDP unit lifecycle for one transformer block across forward, backward, and optimizer phases: all-gather reconstructs full params from shards, forward runs then frees params back to one shard; backward re-gathers, runs, reduce-scatters gradients to per-rank shards, frees; optimizer steps only this rank's shard.">
+  <defs>
+    <marker id="fl-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="v-muted"/>
+    </marker>
+    <marker id="fl-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+    <marker id="fl-arr-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-fsdp-unit-lifecycle text  { fill: var(--ink-soft); }
+    #fig-fsdp-unit-lifecycle .lbl  { font: 600 12px var(--sans,sans-serif); }
+    #fig-fsdp-unit-lifecycle .sm   { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-fsdp-unit-lifecycle .mono { font: 600 11px var(--mono,monospace); }
+    #fig-fsdp-unit-lifecycle .hdr  { font: 700 12px var(--sans,sans-serif); }
+    #fig-fsdp-unit-lifecycle .phase { font: 700 12px var(--sans,sans-serif); }
+
+    /* Animation: data-anim groups */
+    #fig-fsdp-unit-lifecycle [data-anim] { opacity: 0; }
+    #fig-fsdp-unit-lifecycle [data-anim="1"]  { animation: fl-in 0.4s ease-out 0.2s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="2"]  { animation: fl-in 0.4s ease-out 0.9s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="3"]  { animation: fl-in 0.4s ease-out 1.5s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="4"]  { animation: fl-in 0.5s ease-out 2.1s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="5"]  { animation: fl-in 0.4s ease-out 2.9s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="6"]  { animation: fl-in 0.4s ease-out 3.5s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="7"]  { animation: fl-in 0.5s ease-out 4.1s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="8"]  { animation: fl-in 0.4s ease-out 4.8s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="9"]  { animation: fl-in 0.4s ease-out 5.3s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="10"] { animation: fl-in 0.4s ease-out 5.8s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="11"] { animation: fl-in 0.4s ease-out 6.2s  forwards; }
+
+    /* Pulse for full-params box (transient spike) */
+    #fig-fsdp-unit-lifecycle .fl-pulse {
+      animation: fl-pulse 0.6s ease-in-out infinite alternate;
+    }
+    @keyframes fl-in    { from { opacity:0; } to { opacity:1; } }
+    @keyframes fl-pulse { from { opacity:0.7; } to { opacity:1.0; } }
+  </style>
+
+
+
+  <rect x="8" y="28" width="905" height="178" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.04" stroke="var(--accent,#6366f1)" stroke-width="0.8" stroke-dasharray="4 3"/>
+
+  <rect x="8" y="212" width="905" height="180" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.04" stroke="var(--accent2,#3b82f6)" stroke-width="0.8" stroke-dasharray="4 3"/>
+
+  <rect x="8" y="402" width="905" height="110" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.04" stroke="var(--good,#2f9e6e)" stroke-width="0.8" stroke-dasharray="4 3"/>
+
+
+
+  <rect x="12" y="30" width="130" height="22" rx="11" fill="var(--accent,#6366f1)" fill-opacity="0.8"/>
+  <text x="77" y="45" text-anchor="middle" class="phase" fill="var(--surface,#fff)">FORWARD</text>
+  <text x="150" y="45" class="sm">entering block &#8594;</text>
+
+
+  <rect x="12" y="214" width="136" height="22" rx="11" fill="var(--accent2,#3b82f6)" fill-opacity="0.8"/>
+  <text x="80" y="229" text-anchor="middle" class="phase" fill="var(--surface,#fff)">BACKWARD</text>
+  <text x="156" y="229" class="sm">entering block &#8594;</text>
+
+
+  <rect x="12" y="404" width="120" height="22" rx="11" fill="var(--good,#2f9e6e)" fill-opacity="0.8"/>
+  <text x="72" y="419" text-anchor="middle" class="phase" fill="var(--surface,#fff)">OPTIMIZER</text>
+
+
+
+  <g data-anim="1">
+
+    <rect x="20" y="64" width="90" height="22" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.8" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="65" y="79" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">rank0 shard</text>
+    <rect x="20" y="89" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="101" text-anchor="middle" class="sm">rank1 shard</text>
+    <rect x="20" y="110" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="122" text-anchor="middle" class="sm">rank2 shard</text>
+    <rect x="20" y="131" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="143" text-anchor="middle" class="sm">rank3 shard</text>
+    <text x="65" y="162" text-anchor="middle" class="sm">FlatParam shards</text>
+    <text x="65" y="173" text-anchor="middle" class="sm">(1/N each)</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="110" y1="108" x2="168" y2="108" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#fl-arr-acc)"/>
+    <text x="139" y="100" text-anchor="middle" class="sm" fill="var(--accent,#6366f1)">all-gather</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="172" y="66" width="160" height="92" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.6" class="fl-pulse"/>
+    <text x="252" y="88" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">full block params</text>
+    <text x="252" y="102" text-anchor="middle" class="sm">(materialized)</text>
+
+    <g transform="translate(192,110)" fill="var(--accent,#6366f1)" fill-opacity="0.4" stroke="var(--accent,#6366f1)" stroke-width="0.6">
+      <rect width="120" height="8" rx="2"/>
+      <rect y="12" width="120" height="8" rx="2"/>
+      <rect y="24" width="120" height="8" rx="2"/>
+    </g>
+    <text x="252" y="156" text-anchor="middle" class="sm">peak mem spike</text>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="332" y1="108" x2="396" y2="108" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#fl-arr-acc)"/>
+    <text x="364" y="100" text-anchor="middle" class="sm" fill="var(--accent,#6366f1)">forward</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="400" y="76" width="140" height="64" rx="6" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="470" y="101" text-anchor="middle" class="lbl">run block</text>
+    <text x="470" y="116" text-anchor="middle" class="lbl">forward</text>
+    <text x="470" y="130" text-anchor="middle" class="sm">compute output</text>
+  </g>
+
+
+  <g data-anim="4">
+    <line x1="540" y1="108" x2="598" y2="108" stroke="var(--ink-soft)" stroke-width="1.4" stroke-dasharray="3 2" marker-end="url(#fl-arr)"/>
+    <text x="569" y="100" text-anchor="middle" class="sm">free</text>
+  </g>
+
+
+  <g data-anim="4">
+
+    <rect x="604" y="70" width="100" height="22" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.8" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="654" y="84" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">rank0 shard</text>
+
+    <rect x="604" y="96" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="108" text-anchor="middle" class="sm" opacity="0.5">freed</text>
+    <rect x="604" y="118" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="130" text-anchor="middle" class="sm" opacity="0.5">freed</text>
+    <rect x="604" y="140" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="152" text-anchor="middle" class="sm" opacity="0.5">freed</text>
+    <text x="654" y="172" text-anchor="middle" class="sm">keep only this</text>
+    <text x="654" y="183" text-anchor="middle" class="sm">rank's shard</text>
+
+    <rect x="758" y="88" width="148" height="32" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.12" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+    <text x="832" y="104" text-anchor="middle" class="sm" fill="var(--good,#2f9e6e)">peak param mem</text>
+    <text x="832" y="116" text-anchor="middle" class="sm" fill="var(--good,#2f9e6e)">bounded here</text>
+  </g>
+
+
+
+  <g data-anim="5">
+    <rect x="20" y="248" width="90" height="22" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.8" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <text x="65" y="263" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">rank0 shard</text>
+    <rect x="20" y="273" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="285" text-anchor="middle" class="sm">rank1</text>
+    <rect x="20" y="294" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="306" text-anchor="middle" class="sm">rank2</text>
+    <rect x="20" y="315" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="327" text-anchor="middle" class="sm">rank3</text>
+    <text x="65" y="346" text-anchor="middle" class="sm">params freed &#8594;</text>
+    <text x="65" y="357" text-anchor="middle" class="sm">gather again</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="110" y1="292" x2="168" y2="292" stroke="var(--accent2,#3b82f6)" stroke-width="1.8" marker-end="url(#fl-arr-acc)"/>
+    <text x="139" y="284" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">all-gather</text>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="172" y="250" width="160" height="80" rx="6" fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+    <text x="252" y="270" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">full block params</text>
+    <g transform="translate(192,278)" fill="var(--accent2,#3b82f6)" fill-opacity="0.4" stroke="var(--accent2,#3b82f6)" stroke-width="0.6">
+      <rect width="120" height="7" rx="2"/>
+      <rect y="11" width="120" height="7" rx="2"/>
+      <rect y="22" width="120" height="7" rx="2"/>
+    </g>
+    <text x="252" y="338" text-anchor="middle" class="sm">re-materialized</text>
+  </g>
+
+
+  <g data-anim="6">
+    <line x1="332" y1="292" x2="396" y2="292" stroke="var(--accent2,#3b82f6)" stroke-width="1.5" marker-end="url(#fl-arr-acc)"/>
+    <text x="364" y="284" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">backward</text>
+  </g>
+
+
+  <g data-anim="6">
+    <rect x="400" y="258" width="140" height="72" rx="6" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="470" y="283" text-anchor="middle" class="lbl">run block</text>
+    <text x="470" y="298" text-anchor="middle" class="lbl">backward</text>
+
+    <rect x="412" y="308" width="116" height="16" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.3" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+    <text x="470" y="320" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">&#8594; full grads</text>
+  </g>
+
+
+  <g data-anim="7">
+    <line x1="540" y1="292" x2="598" y2="292" stroke="var(--accent2,#3b82f6)" stroke-width="1.8" stroke-dasharray="5 2" marker-end="url(#fl-arr-acc)"/>
+    <text x="569" y="283" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">reduce-</text>
+    <text x="569" y="294" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">scatter</text>
+  </g>
+
+
+  <g data-anim="7">
+    <rect x="604" y="252" width="100" height="22" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.8" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <text x="654" y="267" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">grad shard r0</text>
+    <rect x="604" y="278" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="290" text-anchor="middle" class="sm" opacity="0.5">grad r1 (gone)</text>
+    <rect x="604" y="300" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="312" text-anchor="middle" class="sm" opacity="0.5">grad r2 (gone)</text>
+    <rect x="604" y="322" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="334" text-anchor="middle" class="sm" opacity="0.5">grad r3 (gone)</text>
+    <text x="654" y="353" text-anchor="middle" class="sm">each rank keeps</text>
+    <text x="654" y="364" text-anchor="middle" class="sm">only ITS grad shard</text>
+  </g>
+
+
+  <g data-anim="8">
+    <rect x="758" y="270" width="148" height="40" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="832" y="286" text-anchor="middle" class="sm">free gathered params</text>
+    <text x="832" y="298" text-anchor="middle" class="sm">+ full grads</text>
+  </g>
+
+
+  <g data-anim="9">
+
+    <rect x="48" y="428" width="108" height="42" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.7" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="102" y="446" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">param shard</text>
+    <text x="102" y="460" text-anchor="middle" class="sm" fill="var(--surface,#ffffffaa)">this rank's 1/N</text>
+  </g>
+  <g data-anim="9">
+
+    <rect x="186" y="428" width="152" height="42" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.4" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="262" y="446" text-anchor="middle" class="lbl">optim-state shard</text>
+    <text x="262" y="460" text-anchor="middle" class="sm">fp32 master + m + v</text>
+  </g>
+  <g data-anim="10">
+    <line x1="338" y1="449" x2="398" y2="449" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#fl-arr-good)"/>
+    <text x="368" y="441" text-anchor="middle" class="sm" fill="var(--good,#2f9e6e)">step()</text>
+  </g>
+  <g data-anim="10">
+
+    <rect x="402" y="428" width="138" height="42" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.7" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="471" y="446" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">updated param shard</text>
+    <text x="471" y="460" text-anchor="middle" class="sm" fill="var(--surface,#ffffffaa)">rank's 1/N slice</text>
+  </g>
+  <g data-anim="10">
+    <text x="560" y="445" text-anchor="start" class="sm">no cross-rank comm;</text>
+    <text x="560" y="458" text-anchor="start" class="sm">each rank steps only its 1/N</text>
+  </g>
+
+
+  <g data-anim="11">
+    <rect x="8" y="526" width="905" height="28" rx="5" class="v-fill" fill-opacity="0.4"/>
+    <text x="454" y="536" text-anchor="middle" class="sm">Only one unit unsharded at a time &#8594; peak = one block's full params + this rank's 1/N of whole model.</text>
+    <text x="454" y="548" text-anchor="middle" class="sm">Smaller unit &#8594; lower peak but more, smaller all-gathers. Wrapping per transformer block is the standard tradeoff.</text>
+  </g>
+</svg>
+<figcaption><b>FSDP unit lifecycle: just-in-time gather, compute, and free bounds peak memory.</b> In both forward and backward, parameter shards are <b>all-gathered</b> into a full block only when needed, then immediately freed after the block's compute. Gradients are <b>reduce-scattered</b> so each rank keeps only its 1/N slice. The optimizer steps solely on each rank's own shard — no cross-rank communication. At most one block is ever fully materialized, keeping peak memory proportional to one block's size plus 1/N of the whole model.</figcaption>
+</figure>
+
+<p>Because only one unit (plus prefetched neighbors) is unsharded at a time, peak parameter memory is roughly (one block&rsquo;s full params) + (this rank&rsquo;s <span class="arithmatex">\(1/N\)</span> shard of the whole model), not the whole model. The smaller the unit, the lower the peak — but the more frequent and smaller the all-gathers, hurting bandwidth. Wrapping per transformer block is the standard compromise.</p>
+<h3 id="prefetching-communication-streams-and-overlap">Prefetching, Communication Streams, and Overlap<a class="headerlink" href="#prefetching-communication-streams-and-overlap" title="Permanent link">¶</a></h3>
+<p>FSDP overlaps just like DDP, but in <em>both</em> directions. It runs collectives on a separate CUDA stream and <strong>prefetches</strong>: while computing block <span class="arithmatex">\(\ell\)</span>, it issues the all-gather for block <span class="arithmatex">\(\ell+1\)</span> (forward) or <span class="arithmatex">\(\ell-1\)</span> (backward) so the params are ready by the time compute needs them. This hides the all-gather latency behind compute. The reduce-scatter of gradients in backward overlaps with the backward compute of the next block — the same compute/comm pipeline as DDP, now with an extra gather to hide.</p>
+<h3 id="a-complete-runnable-fsdp-example">A Complete, Runnable FSDP Example<a class="headerlink" href="#a-complete-runnable-fsdp-example" title="Permanent link">¶</a></h3>
+<p>Here is an end-to-end FSDP training script for a small transformer, using the modern API. It shows the auto-wrap policy, mixed precision, activation checkpointing, sharded optimizer, and — critically — how to save a checkpoint when no rank has the full model.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># fsdp_train.py — end-to-end FSDP on a toy transformer.</span>
+<span class="c1"># Run: torchrun --nproc_per_node=4 fsdp_train.py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">functools</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.distributed</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dist</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.distributed.fsdp</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">FullyShardedDataParallel</span> <span class="k">as</span> <span class="n">FSDP</span><span class="p">,</span>
+    <span class="n">MixedPrecision</span><span class="p">,</span>
+    <span class="n">ShardingStrategy</span><span class="p">,</span>
+    <span class="n">StateDictType</span><span class="p">,</span>
+    <span class="n">FullStateDictConfig</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.distributed.fsdp.wrap</span><span class="w"> </span><span class="kn">import</span> <span class="n">transformer_auto_wrap_policy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.distributed.algorithms._checkpoint.checkpoint_wrapper</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">checkpoint_wrapper</span><span class="p">,</span> <span class="n">CheckpointImpl</span><span class="p">,</span> <span class="n">apply_activation_checkpointing</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="c1"># ── A tiny transformer block — the unit FSDP will shard around ───────────────────</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Block</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mi">16</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ln1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attn</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">MultiheadAttention</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">batch_first</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ln2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mlp</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">d</span><span class="p">),</span> <span class="n">nn</span><span class="o">.</span><span class="n">GELU</span><span class="p">(),</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">4</span> <span class="o">*</span> <span class="n">d</span><span class="p">,</span> <span class="n">d</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">a</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ln1</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">ln1</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">ln1</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">need_weights</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="n">a</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ln2</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">x</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ToyTransformer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vocab</span><span class="o">=</span><span class="mi">50_000</span><span class="p">,</span> <span class="n">d</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span> <span class="n">n_layers</span><span class="o">=</span><span class="mi">12</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">emb</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">vocab</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ModuleList</span><span class="p">([</span><span class="n">Block</span><span class="p">(</span><span class="n">d</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_layers</span><span class="p">)])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">head</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">vocab</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">idx</span><span class="p">):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">emb</span><span class="p">(</span><span class="n">idx</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">blk</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">blocks</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">blk</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">dist</span><span class="o">.</span><span class="n">init_process_group</span><span class="p">(</span><span class="n">backend</span><span class="o">=</span><span class="s2">&quot;nccl&quot;</span><span class="p">)</span>
+    <span class="n">rank</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">get_rank</span><span class="p">()</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">set_device</span><span class="p">(</span><span class="n">rank</span><span class="p">)</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cuda:</span><span class="si">{</span><span class="n">rank</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Build the model on meta/CPU; FSDP will shard it onto the GPUs.</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">ToyTransformer</span><span class="p">()</span>
+
+    <span class="c1"># ── Auto-wrap policy: make every `Block` its own FSDP unit ──────────────────</span>
+    <span class="c1"># Each Block becomes a FlatParameter sharded across ranks. Params are</span>
+    <span class="c1"># all-gathered just-in-time per block and freed right after.</span>
+    <span class="n">auto_wrap</span> <span class="o">=</span> <span class="n">functools</span><span class="o">.</span><span class="n">partial</span><span class="p">(</span>
+        <span class="n">transformer_auto_wrap_policy</span><span class="p">,</span> <span class="n">transformer_layer_cls</span><span class="o">=</span><span class="p">{</span><span class="n">Block</span><span class="p">}</span>
+    <span class="p">)</span>
+
+    <span class="c1"># ── Mixed precision: bf16 compute, fp32 reductions for numerical safety ─────</span>
+    <span class="n">mp</span> <span class="o">=</span> <span class="n">MixedPrecision</span><span class="p">(</span>
+        <span class="n">param_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>      <span class="c1"># params gathered/used in bf16</span>
+        <span class="n">reduce_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>      <span class="c1"># grad reduce-scatter accumulates in fp32</span>
+        <span class="n">buffer_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">model</span> <span class="o">=</span> <span class="n">FSDP</span><span class="p">(</span>
+        <span class="n">model</span><span class="p">,</span>
+        <span class="n">auto_wrap_policy</span><span class="o">=</span><span class="n">auto_wrap</span><span class="p">,</span>
+        <span class="n">mixed_precision</span><span class="o">=</span><span class="n">mp</span><span class="p">,</span>
+        <span class="n">sharding_strategy</span><span class="o">=</span><span class="n">ShardingStrategy</span><span class="o">.</span><span class="n">FULL_SHARD</span><span class="p">,</span>   <span class="c1"># ZeRO-3 semantics</span>
+        <span class="n">device_id</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">use_orig_params</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>            <span class="c1"># play nicely with torch.compile &amp; optims</span>
+    <span class="p">)</span>
+
+    <span class="c1"># ── Activation checkpointing: recompute block activations in backward to</span>
+    <span class="c1">#    save activation memory (orthogonal to FSDP param sharding) ─────────────</span>
+    <span class="n">apply_activation_checkpointing</span><span class="p">(</span>
+        <span class="n">model</span><span class="p">,</span>
+        <span class="n">checkpoint_wrapper_fn</span><span class="o">=</span><span class="n">functools</span><span class="o">.</span><span class="n">partial</span><span class="p">(</span>
+            <span class="n">checkpoint_wrapper</span><span class="p">,</span> <span class="n">checkpoint_impl</span><span class="o">=</span><span class="n">CheckpointImpl</span><span class="o">.</span><span class="n">NO_REENTRANT</span>
+        <span class="p">),</span>
+        <span class="n">check_fn</span><span class="o">=</span><span class="k">lambda</span> <span class="n">m</span><span class="p">:</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">Block</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># The optimizer sees only this rank&#39;s parameter shards (sharded optim state).</span>
+    <span class="n">opt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">3e-4</span><span class="p">,</span> <span class="n">betas</span><span class="o">=</span><span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">))</span>
+
+    <span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">20</span><span class="p">):</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">50_000</span><span class="p">,</span> <span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>   <span class="c1"># local batch</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">idx</span><span class="p">)</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">cross_entropy</span><span class="p">(</span>
+            <span class="n">logits</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">logits</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)),</span> <span class="n">idx</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">opt</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">(</span><span class="n">set_to_none</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>        <span class="c1"># all-gathers + reduce-scatters happen inside, overlapped</span>
+        <span class="c1"># Gradient clipping across shards: FSDP provides a sharded-aware clip.</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+        <span class="n">opt</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;step </span><span class="si">{</span><span class="n">step</span><span class="si">:</span><span class="s2">3d</span><span class="si">}</span><span class="s2"> | loss </span><span class="si">{</span><span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># ── Checkpointing: no single rank holds the full model under FULL_SHARD.</span>
+    <span class="c1">#    Gather a full (unsharded) state dict ONLY on rank 0 to write to disk. ──</span>
+    <span class="n">save_cfg</span> <span class="o">=</span> <span class="n">FullStateDictConfig</span><span class="p">(</span><span class="n">offload_to_cpu</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">rank0_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">FSDP</span><span class="o">.</span><span class="n">state_dict_type</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">StateDictType</span><span class="o">.</span><span class="n">FULL_STATE_DICT</span><span class="p">,</span> <span class="n">save_cfg</span><span class="p">):</span>
+        <span class="n">full_sd</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span>       <span class="c1"># all-gathers params, materialized on rank 0</span>
+        <span class="k">if</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">full_sd</span><span class="p">,</span> <span class="s2">&quot;ckpt_full.pt&quot;</span><span class="p">)</span>
+    <span class="c1"># For large models prefer SHARDED_STATE_DICT (each rank writes its own shard),</span>
+    <span class="c1"># which avoids materializing the whole model on one GPU/host.</span>
+
+    <span class="n">dist</span><span class="o">.</span><span class="n">destroy_process_group</span><span class="p">()</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</code></pre></div>
+<p>A few load-bearing details in that script:</p>
+<ul>
+<li><strong><code>ShardingStrategy.FULL_SHARD</code></strong> is ZeRO-3. FSDP also offers <code>SHARD_GRAD_OP</code> (ZeRO-2: shard grads + optimizer state but keep params resident — less communication, more memory) and <code>NO_SHARD</code> (plain DDP). <code>HYBRID_SHARD</code> shards <em>within</em> a node and replicates <em>across</em> nodes, which avoids slow inter-node all-gathers for the parameter reconstruction — a critical optimization on clusters where intra-node NVLink is far faster than inter-node InfiniBand.</li>
+<li><strong><code>reduce_dtype=torch.float32</code></strong> keeps the gradient reduce-scatter in fp32 even though params are bf16 — bf16 gradient summation across many ranks loses precision (bf16 has only 8 mantissa bits), so reducing in fp32 protects convergence at negligible cost.</li>
+<li><strong><code>use_orig_params=True</code></strong> exposes the original parameter tensors (not just the opaque FlatParameter), which is required for <code>torch.compile</code>, parameter-group-specific learning rates, and selective freezing.</li>
+<li><strong>Checkpointing is genuinely different under sharding.</strong> No rank has the whole model, so saving requires either an all-gather to materialize a full state dict on rank 0 (simple, but a memory spike and a bottleneck for huge models) or a <em>sharded</em> state dict where each rank writes its own slice (scalable). This is covered in depth in <a href="../03-pretraining/12-checkpointing-fault-tolerance.html">Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a>.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: clipping and gradient norms under sharding</p>
+<p>Never call the plain <code>torch.nn.utils.clip_grad_norm_</code> on FSDP parameters. Each rank only sees its <em>shard</em> of every gradient, so a naive per-rank norm is the norm of a slice, not the global norm — clipping with it scales gradients incorrectly and silently destabilizes training. Use the FSDP-aware <code>model.clip_grad_norm_(...)</code>, which all-reduces the squared norm across ranks before computing the global norm. The same care applies to any logging of gradient statistics: reduce across ranks first.</p>
+</div>
+<h3 id="fsdp2-per-parameter-sharding-with-dtensor">FSDP2: Per-Parameter Sharding with DTensor<a class="headerlink" href="#fsdp2-per-parameter-sharding-with-dtensor" title="Permanent link">¶</a></h3>
+<p>The newer <strong>FSDP2</strong> redesigns sharding around per-parameter <code>DTensor</code> (distributed tensor) representations instead of the monolithic FlatParameter. Each parameter is individually a sharded <code>DTensor</code>, which composes cleanly with tensor parallelism (you can have a parameter that is both TP-sharded along one mesh dimension and FSDP-sharded along another), removes FlatParameter&rsquo;s awkward edge cases around mixed dtypes and frozen parameters, and integrates better with <code>torch.compile</code>. The mental model — all-gather a unit&rsquo;s params before compute, free after, reduce-scatter grads — is unchanged; FSDP2 mostly makes the <em>composition</em> with other parallelism dimensions (the &ldquo;<span class="arithmatex">\(N\)</span>-D parallelism&rdquo; of Chapter 3.6 and 3.7) far cleaner via a unified <code>DeviceMesh</code>.</p>
+<h2 id="choosing-and-combining-strategies">Choosing and Combining Strategies<a class="headerlink" href="#choosing-and-combining-strategies" title="Permanent link">¶</a></h2>
+<h3 id="a-decision-guide">A Decision Guide<a class="headerlink" href="#a-decision-guide" title="Permanent link">¶</a></h3>
+<p>The right choice is a function of how the model and its state fit relative to one GPU&rsquo;s memory:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Recommended strategy</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Model + Adam state (<span class="arithmatex">\(16\Psi\)</span>) fits comfortably on one GPU</td>
+<td><strong>DDP</strong></td>
+<td>Lowest communication, simplest, fastest</td>
+</tr>
+<tr>
+<td>Model fits but optimizer state is tight</td>
+<td><strong>ZeRO-1</strong> / FSDP <code>SHARD_GRAD_OP</code>-lite</td>
+<td>Free memory win, same comm as DDP</td>
+</tr>
+<tr>
+<td>Model fits but grads + optim state too big</td>
+<td><strong>ZeRO-2</strong> / FSDP <code>SHARD_GRAD_OP</code></td>
+<td>Shard grads+optim, params stay resident</td>
+</tr>
+<tr>
+<td>Model state (<span class="arithmatex">\(16\Psi\)</span>) exceeds one GPU</td>
+<td><strong>ZeRO-3</strong> / FSDP <code>FULL_SHARD</code></td>
+<td>Only way to fit; pay ~1.5× comm</td>
+</tr>
+<tr>
+<td>Even sharded params exceed aggregate GPU memory</td>
+<td><strong>ZeRO-Infinity</strong> (NVMe offload) or add tensor/pipeline parallelism</td>
+<td>Spill to CPU/NVMe, or shard <em>compute</em> too</td>
+</tr>
+<tr>
+<td>Inter-node network is the bottleneck</td>
+<td><strong>HYBRID_SHARD</strong></td>
+<td>Shard within node, replicate across nodes</td>
+</tr>
+</tbody>
+</table>
+<p>The general principle: <strong>use the least sharding that fits.</strong> Each step from DDP toward ZeRO-3 trades communication for memory. If DDP fits, sharding only adds overhead. The moment it doesn&rsquo;t fit, climb the ladder exactly as far as needed.</p>
+<h3 id="composing-with-model-parallelism">Composing With Model Parallelism<a class="headerlink" href="#composing-with-model-parallelism" title="Permanent link">¶</a></h3>
+<p>For the largest models, data parallelism alone is insufficient and is combined with tensor and pipeline parallelism into <strong>N-D parallelism</strong>. A typical layout assigns a <code>DeviceMesh</code> with axes for data-parallel (FSDP), tensor-parallel, and pipeline-parallel dimensions, with FSDP sharding the data-parallel axis and TP/PP sharding the model axis. The interaction — for instance, FSDP-sharding the <em>tensor-parallel</em> parameters so that you shard along two mesh dimensions at once — is exactly what FSDP2 + DTensor makes ergonomic. We develop these combinations in <a href="../03-pretraining/06-distributed-model-parallel.html">Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a> and <a href="../03-pretraining/07-megatron-deepspeed.html">Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a>.</p>
+<div class="admonition example">
+<p class="admonition-title">Worked example: communication cost of FSDP on a slow network</p>
+<p>Suppose a 13B model trained with FSDP <code>FULL_SHARD</code> across <span class="arithmatex">\(N = 16\)</span> GPUs spanning 2 nodes, where the inter-node link is the bottleneck at an effective <span class="arithmatex">\(\beta \approx 25\)</span> GB/s (200 Gb/s InfiniBand). Per optimizer step, FSDP moves roughly <span class="arithmatex">\(3\Psi\)</span> worth of bf16 traffic (all-gather params in fwd + all-gather in bwd + reduce-scatter grads), where each &ldquo;<span class="arithmatex">\(\Psi\)</span> worth&rdquo; is <span class="arithmatex">\(\Psi \times 2\)</span> bytes <span class="arithmatex">\(= 26\)</span> GB.</p>
+<p>Naively that&rsquo;s <span class="arithmatex">\(3 \times 26 = 78\)</span> GB of traffic per rank, but the <em>per-rank</em> volume of a reduce-scatter or all-gather over <span class="arithmatex">\(N\)</span> ranks is <span class="arithmatex">\(\frac{N-1}{N}\Psi \cdot 2 \approx 26\)</span> GB each, so:</p>
+<div class="arithmatex">\[
+T_{\text{comm}} \approx \frac{3 \times 26 \text{ GB}}{25 \text{ GB/s}} \approx 3.1 \text{ s/step}
+\]</div>
+<p>If forward+backward compute is, say, 1.5 s, the job is badly communication-bound — the extra all-gather of ZeRO-3 is exposed because the inter-node link is slow. <strong>Switching to <code>HYBRID_SHARD</code></strong> keeps the bandwidth-heavy parameter all-gathers <em>inside</em> each node (fast NVLink, <span class="arithmatex">\(\beta \approx 300\)</span> GB/s) and only does a once-per-step inter-node all-reduce of gradients — roughly <span class="arithmatex">\(2\Psi\)</span> over the slow link <span class="arithmatex">\(\approx \frac{2 \times 26}{25} \approx 2.1\)</span> s, partly overlappable, and the all-gathers nearly vanish from the critical path. This is why hybrid sharding is the default for multi-node FSDP whenever the model <em>fits</em> in a single node&rsquo;s aggregate memory.</p>
+</div>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You&rsquo;re training a 30B-parameter model with mixed-precision AdamW on 32 GPUs (4 nodes × 8). With DDP you immediately OOM. Walk me through what&rsquo;s consuming the memory, which sharding strategy you&rsquo;d pick, and the communication tradeoff you&rsquo;re accepting.</p>
+<p><strong>A:</strong> Persistent state under mixed-precision Adam is ~16 bytes/param: 2 (bf16 params) + 2 (bf16 grads) + 4 (fp32 master) + 4 (Adam <span class="arithmatex">\(m\)</span>) + 4 (Adam <span class="arithmatex">\(v\)</span>). For 30B that&rsquo;s <span class="arithmatex">\(16 \times 30\text{B} = 480\)</span> GB per replica — impossible on an 80 GB GPU, so DDP (which replicates all of it) OOMs as expected.</p>
+<p>I&rsquo;d use <strong>FSDP <code>FULL_SHARD</code> (ZeRO-3)</strong>, which shards all three categories across the 32 GPUs: per-GPU model state drops to <span class="arithmatex">\(480/32 = 15\)</span> GB, leaving headroom for activations (which I&rsquo;d further cut with activation checkpointing). The tradeoff is communication: ZeRO-3 adds an all-gather of parameters in <em>both</em> forward and backward (to reconstruct each layer just-in-time), so total comm is ~<span class="arithmatex">\(3\Psi\)</span> versus DDP&rsquo;s ~<span class="arithmatex">\(2\Psi\)</span> — about 1.5×. FSDP hides most of it by prefetching the next layer&rsquo;s all-gather on a separate stream during the current layer&rsquo;s compute, so on fast intra-node NVLink it&rsquo;s nearly free.</p>
+<p>Since I&rsquo;m multi-node and the inter-node InfiniBand is much slower than NVLink, the parameter all-gathers across nodes would be the bottleneck. If the model <em>fits within one node&rsquo;s</em> 8×80=640 GB, I&rsquo;d switch to <strong><code>HYBRID_SHARD</code></strong>: shard within each node (fast) and only all-reduce gradients across nodes once per step (the cheap part), keeping the expensive all-gathers on NVLink. If it doesn&rsquo;t fit in a node, I&rsquo;d combine FSDP with tensor parallelism (TP=8 within node, FSDP across nodes) to shrink the per-GPU footprint further while keeping cross-node traffic to gradient sync.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li><strong>Data parallelism</strong> replicates the model and shards the batch; correctness rests on the linearity of gradients (mean of local gradients = full-batch gradient) plus two invariants: identical init and identical post-sync gradients (an all-reduce/mean).</li>
+<li><strong>DDP</strong> makes DP fast via <strong>gradient bucketing</strong> (coalesce many tiny tensors into ~25 MB buffers to amortize latency) and <strong>autograd-hook-driven overlap</strong> (all-reduce a bucket as soon as it fills, while the backward pass keeps computing). Use <code>no_sync()</code> for gradient accumulation.</li>
+<li>The memory problem: mixed-precision Adam costs <strong>~16 bytes/param</strong> (2 bf16 params + 2 bf16 grads + 4 fp32 master + 4+4 Adam moments). Plain DDP replicates all 16 on every GPU; 12 of them are idle except at <code>optimizer.step()</code>.</li>
+<li><strong>ZeRO</strong> shards the redundant state across the DP group: <strong>Stage 1</strong> shards optimizer states (<span class="arithmatex">\(16 \to 4 + 12/N\)</span> B/param), <strong>Stage 2</strong> also shards gradients (<span class="arithmatex">\(2 + 14/N\)</span>), <strong>Stage 3</strong> also shards parameters (<span class="arithmatex">\(16/N\)</span>). Stages 1–2 cost the <em>same</em> communication as DDP; stage 3 adds an all-gather (~1.5× comm).</li>
+<li><strong>FSDP</strong> is PyTorch-native ZeRO-3: it shards a per-unit <strong>FlatParameter</strong>, all-gathers each unit&rsquo;s params just-in-time for forward/backward, frees them after, and reduce-scatters gradients to their owner. <code>FULL_SHARD</code>=ZeRO-3, <code>SHARD_GRAD_OP</code>=ZeRO-2, <code>NO_SHARD</code>=DDP, <code>HYBRID_SHARD</code>=shard-in-node/replicate-across.</li>
+<li>ZeRO/FSDP shard <em>storage</em>, not <em>compute</em> — they are still data parallelism, orthogonal to (and combinable with) tensor and pipeline parallelism. They do <strong>not</strong> reduce activation memory; pair them with activation checkpointing.</li>
+<li><strong>Choose the least sharding that fits.</strong> Each rung from DDP to ZeRO-3 trades communication for memory; on slow inter-node networks, <code>HYBRID_SHARD</code> keeps the heavy all-gathers on fast intra-node links.</li>
+<li>Sharding changes auxiliary operations: use FSDP-aware <strong>gradient clipping</strong> (global norm across shards) and <strong>sharded checkpoints</strong> (each rank writes its slice) rather than their single-GPU equivalents.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>Data parallelism with sharded optimizer state (ZeRO/FSDP) is now the standard baseline for any LLM pretraining run; virtually every frontier model is trained with some combination of ZeRO-3 / FSDP2, tensor parallelism, and pipeline parallelism. The frontier in 2025–2026 is compiler-driven overlap (SimpleFSDP, torch.compile) and tight float8 + FSDP2 co-design pushing throughput 50%+ beyond baseline bf16 FSDP1.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/1910.02054">Rajbhandari et al., <em>ZeRO: Memory Optimizations Toward Training Trillion Parameter Models</em> (2020)</a> — introduces the three-stage sharding of optimizer state, gradients, and parameters that underpins all modern large-model training.</li>
+<li><a href="https://arxiv.org/abs/2006.15704">Li et al., <em>PyTorch Distributed: Experiences on Accelerating Data Parallel Training</em> (2020)</a> — the design paper for PyTorch DDP: gradient bucketing, autograd hooks, and overlap that this chapter reconstructs from scratch.</li>
+<li><a href="https://arxiv.org/abs/2304.11277">Zhao et al., <em>PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel</em> (2023)</a> — the FSDP design paper covering FlatParameter sharding, prefetching, hybrid sharding, and mixed precision.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2104.07857">Rajbhandari et al., <em>ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning</em> (2021)</a> — heterogeneous CPU/NVMe offload extending ZeRO to models too large for aggregate GPU memory.</li>
+<li><a href="https://arxiv.org/abs/2410.06511">Liang et al., <em>TorchTitan: One-stop PyTorch native solution for production ready LLM pre-training</em> (2024)</a> — production reference showing FSDP2 + 3D parallelism + DTensor on Llama 3.1 up to 405B; accepted ICLR 2025.</li>
+<li><a href="https://arxiv.org/abs/2411.00284">Zhang et al., <em>SimpleFSDP: Simpler Fully Sharded Data Parallel with torch.compile</em> (2024)</a> — compiler-based FSDP that traces the full compute-communication graph, enabling IR-level bucketing and up to 68% throughput improvement over FSDP2 eager.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/deepspeedai/DeepSpeed">deepspeedai/DeepSpeed</a> — the production reference implementation of ZeRO stages 1–3, ZeRO-Infinity (NVMe offload), and ZeRO++ communication compression.</li>
+<li><a href="https://github.com/pytorch/torchtitan">pytorch/torchtitan</a> — PyTorch-native training platform using FSDP2, DTensor, and torch.compile; the canonical example of composing all parallelism axes cleanly.</li>
+</ul>
+<p><strong>Go deeper</strong></p>
+<ul>
+<li><a href="https://pytorch.org/blog/training-using-float8-fsdp2/">PyTorch: <em>Supercharging Training using float8 and FSDP2</em> (2024)</a> — official blog post showing float8 all-gathers + FSDP2 + torch.compile delivering ~50% throughput gains on 70B–405B Llama models.</li>
+<li><a href="https://docs.pytorch.org/tutorials/beginner/ddp_series_theory.html">PyTorch Tutorials: <em>What is Distributed Data Parallel (DDP)</em></a> — official beginner tutorial series covering DDP mechanics, multi-GPU, and multi-node setups with working code.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Rajbhandari, Rajbhandari, Ruwase, He (2020):</strong> &ldquo;ZeRO: Memory Optimizations Toward Training Trillion Parameter Models&rdquo; — the foundational paper introducing the three-stage sharding of optimizer states, gradients, and parameters, with the per-parameter memory accounting this chapter builds on.</li>
+<li><strong>Ren et al. (2021):</strong> &ldquo;ZeRO-Offload: Democratizing Billion-Scale Model Training&rdquo; and <strong>Rajbhandari et al. (2021):</strong> &ldquo;ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning&rdquo; — CPU/NVMe offload extensions.</li>
+<li><strong>Li et al. (2020):</strong> &ldquo;PyTorch Distributed: Experiences on Accelerating Data Parallel Training&rdquo; — the design of DDP, including bucketing, gradient hooks, and the overlap strategy reconstructed in this chapter.</li>
+<li><strong>Zhao et al. (2023):</strong> &ldquo;PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel&rdquo; — the FSDP design paper covering FlatParameter sharding, prefetching, hybrid sharding, and mixed precision.</li>
+<li><strong>PyTorch documentation:</strong> <code>torch.distributed.fsdp</code> and the FSDP2 / <code>DTensor</code> / <code>DeviceMesh</code> tutorials — the authoritative, version-current reference for the APIs used in this chapter.</li>
+<li><strong>DeepSpeed documentation and repository</strong> (github.com/microsoft/DeepSpeed) — the production reference implementation of ZeRO stages 1–3, offload, and their configuration.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="04-scaling-laws.html"><span class="pn-label">← Previous</span><span class="pn-title">Scaling Laws: Kaplan, Chinchilla &amp; Beyond</span></a>
+<a class="next" href="06-distributed-model-parallel.html"><span class="pn-label">Next →</span><span class="pn-title">Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#data-parallelism-from-first-principles">Data Parallelism From First Principles</a></li>
+<li class="toc-l3"><a href="#the-core-idea-replicate-the-model-shard-the-batch">The Core Idea: Replicate the Model, Shard the Batch</a></li>
+<li class="toc-l3"><a href="#two-invariants-you-must-maintain">Two Invariants You Must Maintain</a></li>
+<li class="toc-l3"><a href="#the-naive-implementation-and-why-its-slow">The Naive Implementation and Why It&amp;rsquo;s Slow</a></li>
+<li class="toc-l2"><a href="#ddp-internals-bucketing-and-communication-overlap">DDP Internals: Bucketing and Communication Overlap</a></li>
+<li class="toc-l3"><a href="#the-backward-pass-produces-gradients-in-reverse-order">The Backward Pass Produces Gradients in Reverse Order</a></li>
+<li class="toc-l3"><a href="#bucketing-coalescing-gradients-to-amortize-latency">Bucketing: Coalescing Gradients to Amortize Latency</a></li>
+<li class="toc-l3"><a href="#a-from-scratch-ddp-wrapper">A From-Scratch DDP Wrapper</a></li>
+<li class="toc-l2"><a href="#the-memory-problem-where-every-byte-goes">The Memory Problem: Where Every Byte Goes</a></li>
+<li class="toc-l3"><a href="#mixed-precision-adam-the-standard-memory-model">Mixed-Precision Adam: The Standard Memory Model</a></li>
+<li class="toc-l3"><a href="#activations-are-the-other-half-of-the-story">Activations Are the Other Half of the Story</a></li>
+<li class="toc-l2"><a href="#zero-sharding-the-redundancy-away">ZeRO: Sharding the Redundancy Away</a></li>
+<li class="toc-l3"><a href="#zero-1-shard-optimizer-states">ZeRO-1: Shard Optimizer States</a></li>
+<li class="toc-l3"><a href="#zero-2-also-shard-gradients">ZeRO-2: Also Shard Gradients</a></li>
+<li class="toc-l3"><a href="#zero-3-also-shard-parameters">ZeRO-3: Also Shard Parameters</a></li>
+<li class="toc-l3"><a href="#zero-offload-and-zero-infinity">ZeRO-Offload and ZeRO-Infinity</a></li>
+<li class="toc-l2"><a href="#fsdp-pytorch-native-fully-sharded-data-parallel">FSDP: PyTorch-Native Fully Sharded Data Parallel</a></li>
+<li class="toc-l3"><a href="#the-fsdp-unit-and-the-flat-parameter">The FSDP Unit and the Flat Parameter</a></li>
+<li class="toc-l3"><a href="#prefetching-communication-streams-and-overlap">Prefetching, Communication Streams, and Overlap</a></li>
+<li class="toc-l3"><a href="#a-complete-runnable-fsdp-example">A Complete, Runnable FSDP Example</a></li>
+<li class="toc-l3"><a href="#fsdp2-per-parameter-sharding-with-dtensor">FSDP2: Per-Parameter Sharding with DTensor</a></li>
+<li class="toc-l2"><a href="#choosing-and-combining-strategies">Choosing and Combining Strategies</a></li>
+<li class="toc-l3"><a href="#a-decision-guide">A Decision Guide</a></li>
+<li class="toc-l3"><a href="#composing-with-model-parallelism">Composing With Model Parallelism</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

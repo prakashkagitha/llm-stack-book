@@ -1,0 +1,1400 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retrieval-Augmented Generation Architectures — The LLM Stack</title>
+<meta name="description" content="The RAG pipeline (chunk-&gt;embed-&gt;index-&gt;retrieve-&gt;generate), why RAG (grounding, freshness, citations), naive RAG and its failure modes, evaluation (faithfulness">
+<script>(function(){try{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/pygments.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+</head>
+<body>
+<div class="progress-bar"></div>
+<header class="topbar">
+  <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html"><span class="logo">Λ</span><span class="brand-text">The LLM Stack<small>From Silicon to Agents</small></span></a>
+  <div class="spacer"></div>
+  <div class="search-box">
+    <span class="si">⌕</span>
+    <input id="search-input" type="text" placeholder="Search… ( / )" autocomplete="off" spellcheck="false" data-base="../" data-index="search-index.json">
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">☾</button>
+</header>
+<div class="scrim"></div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+<div class="nav-part" data-part="00-frontmatter">
+<div class="nav-part-title"><span>Front Matter</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../00-frontmatter/00-preface.html">Preface: How to Read This Book &amp; The Map of the Stack</a></li>
+</ul></div>
+<div class="nav-part" data-part="01-foundations">
+<div class="nav-part-title"><span>Part I — Mathematical &amp; Systems Foundations</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../01-foundations/01-linear-algebra.html"><span class="nav-num">1.1</span>Linear Algebra for Deep Learning</a></li>
+<li><a class="" href="../01-foundations/02-probability-information.html"><span class="nav-num">1.2</span>Probability, Statistics &amp; Information Theory</a></li>
+<li><a class="" href="../01-foundations/03-calculus-optimization.html"><span class="nav-num">1.3</span>Calculus, Optimization &amp; Convexity</a></li>
+<li><a class="" href="../01-foundations/04-numerics-precision.html"><span class="nav-num">1.4</span>Numerical Computing, Floating Point &amp; Precision</a></li>
+<li><a class="" href="../01-foundations/05-ml-fundamentals.html"><span class="nav-num">1.5</span>Machine Learning Fundamentals</a></li>
+<li><a class="" href="../01-foundations/06-neural-nets-from-scratch.html"><span class="nav-num">1.6</span>Neural Networks From Scratch: MLPs &amp; Backprop</a></li>
+<li><a class="" href="../01-foundations/07-autodiff-pytorch.html"><span class="nav-num">1.7</span>Automatic Differentiation &amp; PyTorch Internals</a></li>
+<li><a class="" href="../01-foundations/08-gpu-architecture.html"><span class="nav-num">1.8</span>GPU Architecture &amp; The Memory Hierarchy</a></li>
+<li><a class="" href="../01-foundations/09-parallel-collectives.html"><span class="nav-num">1.9</span>Parallel Computing &amp; Collective Communication</a></li>
+<li><a class="" href="../01-foundations/10-accelerator-landscape.html"><span class="nav-num">1.10</span>The Accelerator Landscape: TPUs, Trainium, AMD/ROCm &amp; Gaudi</a></li>
+</ul></div>
+<div class="nav-part" data-part="02-transformer">
+<div class="nav-part-title"><span>Part II — The Transformer Architecture</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../02-transformer/01-tokenization.html"><span class="nav-num">2.1</span>Tokenization: BPE, WordPiece, Unigram &amp; Byte-Level</a></li>
+<li><a class="" href="../02-transformer/02-embeddings-input.html"><span class="nav-num">2.2</span>Embeddings &amp; The Input Pipeline</a></li>
+<li><a class="" href="../02-transformer/03-attention-from-scratch.html"><span class="nav-num">2.3</span>The Attention Mechanism From Scratch</a></li>
+<li><a class="" href="../02-transformer/04-mha-gqa-mla.html"><span class="nav-num">2.4</span>Multi-Head Attention, MQA, GQA &amp; MLA</a></li>
+<li><a class="" href="../02-transformer/05-positional-encoding.html"><span class="nav-num">2.5</span>Positional Encodings: Sinusoidal, Learned, RoPE &amp; ALiBi</a></li>
+<li><a class="" href="../02-transformer/06-transformer-block.html"><span class="nav-num">2.6</span>The Transformer Block: Norms, Residuals, MLPs &amp; Activations</a></li>
+<li><a class="" href="../02-transformer/07-build-gpt-from-scratch.html"><span class="nav-num">2.7</span>Building a GPT From Scratch (nanoGPT-style)</a></li>
+<li><a class="" href="../02-transformer/08-architecture-variants.html"><span class="nav-num">2.8</span>Architecture Variants: Encoder-Decoder, Decoder-Only &amp; Prefix-LM</a></li>
+<li><a class="" href="../02-transformer/09-mixture-of-experts.html"><span class="nav-num">2.9</span>Mixture-of-Experts (MoE) Architectures</a></li>
+<li><a class="" href="../02-transformer/10-modern-arch-improvements.html"><span class="nav-num">2.10</span>Modern Architecture Improvements &amp; Design Choices</a></li>
+<li><a class="" href="../02-transformer/11-ssm-and-alternatives.html"><span class="nav-num">2.11</span>Beyond Attention: SSMs, Mamba, RWKV &amp; Linear Attention</a></li>
+<li><a class="" href="../02-transformer/12-diffusion-nonAR-lms.html"><span class="nav-num">2.12</span>Diffusion &amp; Non-Autoregressive Language Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="03-pretraining">
+<div class="nav-part-title"><span>Part III — Pretraining at Scale</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../03-pretraining/01-pretraining-data.html"><span class="nav-num">3.1</span>Pretraining Data: Sources, Crawling &amp; The Data Pipeline</a></li>
+<li><a class="" href="../03-pretraining/02-data-cleaning-dedup.html"><span class="nav-num">3.2</span>Data Cleaning, Deduplication &amp; Quality Filtering</a></li>
+<li><a class="" href="../03-pretraining/03-pretraining-objective.html"><span class="nav-num">3.3</span>The Pretraining Objective &amp; Loss</a></li>
+<li><a class="" href="../03-pretraining/04-scaling-laws.html"><span class="nav-num">3.4</span>Scaling Laws: Kaplan, Chinchilla &amp; Beyond</a></li>
+<li><a class="" href="../03-pretraining/05-distributed-data-parallel.html"><span class="nav-num">3.5</span>Distributed Training I: Data Parallelism, DDP, ZeRO &amp; FSDP</a></li>
+<li><a class="" href="../03-pretraining/06-distributed-model-parallel.html"><span class="nav-num">3.6</span>Distributed Training II: Tensor, Pipeline, Sequence &amp; Expert Parallelism</a></li>
+<li><a class="" href="../03-pretraining/07-megatron-deepspeed.html"><span class="nav-num">3.7</span>Megatron-LM, DeepSpeed &amp; Parallelism in Practice</a></li>
+<li><a class="" href="../03-pretraining/08-mixed-precision-fp8.html"><span class="nav-num">3.8</span>Mixed Precision, bf16 &amp; FP8 Training</a></li>
+<li><a class="" href="../03-pretraining/09-optimizers.html"><span class="nav-num">3.9</span>Optimizers: SGD, Adam, Adafactor, Lion, Muon &amp; Shampoo</a></li>
+<li><a class="" href="../03-pretraining/10-lr-schedules-hparams.html"><span class="nav-num">3.10</span>Learning Rate Schedules, Warmup, Batch Size &amp; Hyperparameters</a></li>
+<li><a class="" href="../03-pretraining/11-training-stability.html"><span class="nav-num">3.11</span>Training Stability, Loss Spikes &amp; Debugging Large Runs</a></li>
+<li><a class="" href="../03-pretraining/12-checkpointing-fault-tolerance.html"><span class="nav-num">3.12</span>Checkpointing, Fault Tolerance &amp; Long-Running Jobs</a></li>
+<li><a class="" href="../03-pretraining/13-long-context-pretraining.html"><span class="nav-num">3.13</span>Long-Context Pretraining &amp; Context Extension</a></li>
+<li><a class="" href="../03-pretraining/14-data-mixing-curriculum.html"><span class="nav-num">3.14</span>Data Mixing, Domain Weighting &amp; Curriculum</a></li>
+<li><a class="" href="../03-pretraining/15-synthetic-data.html"><span class="nav-num">3.15</span>Synthetic Data for Pre- and Post-Training</a></li>
+<li><a class="" href="../03-pretraining/16-continual-pretraining.html"><span class="nav-num">3.16</span>Continual &amp; Domain-Adaptive Pretraining</a></li>
+</ul></div>
+<div class="nav-part" data-part="04-kernels-efficiency">
+<div class="nav-part-title"><span>Part IV — Kernels, Efficiency &amp; Quantization</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../04-kernels-efficiency/01-roofline-performance.html"><span class="nav-num">4.1</span>The Roofline Model &amp; Performance Engineering</a></li>
+<li><a class="" href="../04-kernels-efficiency/02-flash-attention-1.html"><span class="nav-num">4.2</span>FlashAttention I: IO-Awareness &amp; The Online Softmax</a></li>
+<li><a class="" href="../04-kernels-efficiency/03-flash-attention-2-3.html"><span class="nav-num">4.3</span>FlashAttention 2 &amp; 3: Work Partitioning, Warp Specialization &amp; FP8</a></li>
+<li><a class="" href="../04-kernels-efficiency/04-triton-kernels.html"><span class="nav-num">4.4</span>Writing GPU Kernels with Triton</a></li>
+<li><a class="" href="../04-kernels-efficiency/05-cuda-essentials.html"><span class="nav-num">4.5</span>CUDA Programming Essentials for ML Engineers</a></li>
+<li><a class="" href="../04-kernels-efficiency/06-paged-attention-kv.html"><span class="nav-num">4.6</span>PagedAttention &amp; KV-Cache Memory Management</a></li>
+<li><a class="" href="../04-kernels-efficiency/07-quantization-ptq.html"><span class="nav-num">4.7</span>Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)</a></li>
+<li><a class="" href="../04-kernels-efficiency/08-quantization-formats-qat.html"><span class="nav-num">4.8</span>Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes &amp; QAT</a></li>
+<li><a class="" href="../04-kernels-efficiency/09-compilers-fusion.html"><span class="nav-num">4.9</span>Kernel Fusion, torch.compile, CUDA Graphs &amp; Compilers</a></li>
+<li><a class="" href="../04-kernels-efficiency/10-memory-efficient-training.html"><span class="nav-num">4.10</span>Memory-Efficient Training: Checkpointing, Offloading &amp; LoRA Math</a></li>
+</ul></div>
+<div class="nav-part" data-part="05-posttraining-alignment">
+<div class="nav-part-title"><span>Part V — Post-Training &amp; Alignment</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../05-posttraining-alignment/01-sft-instruction-tuning.html"><span class="nav-num">5.1</span>Supervised Fine-Tuning &amp; Instruction Tuning</a></li>
+<li><a class="" href="../05-posttraining-alignment/02-chat-templates-packing.html"><span class="nav-num">5.2</span>Chat Templates, Data Formatting &amp; Sequence Packing</a></li>
+<li><a class="" href="../05-posttraining-alignment/03-peft-lora-qlora.html"><span class="nav-num">5.3</span>PEFT I: LoRA, QLoRA, DoRA &amp; The Adapter Family</a></li>
+<li><a class="" href="../05-posttraining-alignment/04-peft-prompt-merging.html"><span class="nav-num">5.4</span>PEFT II: Prompt/Prefix Tuning, IA3, Model Merging &amp; Soups</a></li>
+<li><a class="" href="../05-posttraining-alignment/05-rlhf-reward-modeling.html"><span class="nav-num">5.5</span>The RLHF Pipeline &amp; Reward Modeling</a></li>
+<li><a class="" href="../05-posttraining-alignment/06-ppo-for-llms.html"><span class="nav-num">5.6</span>Policy Gradients &amp; PPO for Language Models</a></li>
+<li><a class="" href="../05-posttraining-alignment/07-dpo-and-variants.html"><span class="nav-num">5.7</span>Direct Preference Optimization &amp; Its Variants</a></li>
+<li><a class="" href="../05-posttraining-alignment/08-grpo-rloo.html"><span class="nav-num">5.8</span>GRPO, RLOO &amp; Critic-Free RL</a></li>
+<li><a class="" href="../05-posttraining-alignment/09-rlvr-reasoning.html"><span class="nav-num">5.9</span>RL with Verifiable Rewards (RLVR) &amp; The Reasoning Recipe</a></li>
+<li><a class="" href="../05-posttraining-alignment/10-reasoning-test-time-compute.html"><span class="nav-num">5.10</span>Reasoning, Chain-of-Thought &amp; Test-Time Compute</a></li>
+<li><a class="" href="../05-posttraining-alignment/11-constitutional-rlaif.html"><span class="nav-num">5.11</span>Constitutional AI, RLAIF &amp; Self-Improvement</a></li>
+<li><a class="" href="../05-posttraining-alignment/12-distillation-compression.html"><span class="nav-num">5.12</span>Distillation, Model Compression &amp; Knowledge Transfer</a></li>
+<li><a class="" href="../05-posttraining-alignment/13-reward-hacking-failures.html"><span class="nav-num">5.13</span>Reward Hacking, Over-Optimization &amp; Alignment Failures</a></li>
+</ul></div>
+<div class="nav-part" data-part="06-rl-infra">
+<div class="nav-part-title"><span>Part VI — RL Infrastructure (Deep Dive)</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../06-rl-infra/01-anatomy-rl-system.html"><span class="nav-num">6.1</span>The Anatomy of an RL-for-LLM System</a></li>
+<li><a class="" href="../06-rl-infra/02-generation-training-loop.html"><span class="nav-num">6.2</span>The Generation–Training Loop &amp; Rollout Engines</a></li>
+<li><a class="" href="../06-rl-infra/03-trl.html"><span class="nav-num">6.3</span>TRL: HuggingFace&#x27;s RL Library</a></li>
+<li><a class="" href="../06-rl-infra/04-verl.html"><span class="nav-num">6.4</span>veRL: HybridFlow &amp; The Single-Controller Architecture</a></li>
+<li><a class="" href="../06-rl-infra/05-openrlhf-nemo-ray.html"><span class="nav-num">6.5</span>OpenRLHF, NeMo-Aligner &amp; Ray-Based Systems</a></li>
+<li><a class="" href="../06-rl-infra/06-prime-rl-async.html"><span class="nav-num">6.6</span>Prime-RL, Async RL &amp; Decentralized Training</a></li>
+<li><a class="" href="../06-rl-infra/07-colocated-vs-disaggregated.html"><span class="nav-num">6.7</span>Colocated vs Disaggregated RL &amp; Weight Synchronization</a></li>
+<li><a class="" href="../06-rl-infra/08-reward-verifiers-sandboxes.html"><span class="nav-num">6.8</span>Reward Engineering, Verifiers &amp; Sandboxes</a></li>
+<li><a class="" href="../06-rl-infra/09-advantage-kl-tricks.html"><span class="nav-num">6.9</span>Advantage Estimation, KL Control &amp; Stability Tricks</a></li>
+<li><a class="" href="../06-rl-infra/10-agentic-multiturn-rl.html"><span class="nav-num">6.10</span>Agentic &amp; Multi-Turn RL</a></li>
+<li><a class="" href="../06-rl-infra/11-scaling-rl-tricks.html"><span class="nav-num">6.11</span>Scaling RL: Throughput, Load Balancing &amp; The Latest Tricks</a></li>
+<li><a class="" href="../06-rl-infra/12-rl-data-curriculum-replay.html"><span class="nav-num">6.12</span>RL Data, Curriculum &amp; Replay Management</a></li>
+</ul></div>
+<div class="nav-part" data-part="07-inference-serving">
+<div class="nav-part-title"><span>Part VII — Inference &amp; Serving</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../07-inference-serving/01-anatomy-inference.html"><span class="nav-num">7.1</span>The Anatomy of LLM Inference: Prefill, Decode &amp; The KV Cache</a></li>
+<li><a class="" href="../07-inference-serving/02-continuous-batching.html"><span class="nav-num">7.2</span>Continuous Batching &amp; Request Scheduling</a></li>
+<li><a class="" href="../07-inference-serving/03-vllm-internals.html"><span class="nav-num">7.3</span>vLLM: Architecture, PagedAttention &amp; Internals</a></li>
+<li><a class="" href="../07-inference-serving/04-sglang-radixattention.html"><span class="nav-num">7.4</span>SGLang: RadixAttention &amp; Structured Programs</a></li>
+<li><a class="" href="../07-inference-serving/05-trtllm-tgi-stacks.html"><span class="nav-num">7.5</span>TensorRT-LLM, TGI &amp; Other Serving Stacks</a></li>
+<li><a class="" href="../07-inference-serving/06-speculative-decoding.html"><span class="nav-num">7.6</span>Speculative Decoding: Draft Models, Medusa, EAGLE &amp; Lookahead</a></li>
+<li><a class="" href="../07-inference-serving/07-prefix-caching.html"><span class="nav-num">7.7</span>Prefix Caching &amp; KV-Cache Reuse</a></li>
+<li><a class="" href="../07-inference-serving/08-disaggregated-chunked-prefill.html"><span class="nav-num">7.8</span>Disaggregated Prefill/Decode &amp; Chunked Prefill</a></li>
+<li><a class="" href="../07-inference-serving/09-sampling-decoding.html"><span class="nav-num">7.9</span>Sampling Strategies &amp; Decoding Algorithms</a></li>
+<li><a class="" href="../07-inference-serving/10-structured-generation.html"><span class="nav-num">7.10</span>Structured &amp; Constrained Generation</a></li>
+<li><a class="" href="../07-inference-serving/11-multi-gpu-inference.html"><span class="nav-num">7.11</span>Multi-GPU &amp; Multi-Node Inference</a></li>
+<li><a class="" href="../07-inference-serving/12-inference-economics.html"><span class="nav-num">7.12</span>Inference Economics: Latency, Throughput &amp; Cost</a></li>
+<li><a class="" href="../07-inference-serving/13-serving-moe.html"><span class="nav-num">7.13</span>Serving Mixture-of-Experts: Expert Parallelism &amp; All-to-All Inference</a></li>
+<li><a class="" href="../07-inference-serving/14-multi-tenant-lora-serving.html"><span class="nav-num">7.14</span>Multi-Tenant LoRA &amp; Adapter Serving at Scale</a></li>
+</ul></div>
+<div class="nav-part" data-part="08-agents-harness">
+<div class="nav-part-title"><span>Part VIII — Agents &amp; Harness Engineering</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../08-agents-harness/01-tool-use-function-calling.html"><span class="nav-num">8.1</span>Tool Use &amp; Function Calling</a></li>
+<li><a class="" href="../08-agents-harness/02-agentic-loop.html"><span class="nav-num">8.2</span>The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a></li>
+<li><a class="" href="../08-agents-harness/03-harness-coding-agent.html"><span class="nav-num">8.3</span>Harness Engineering: Building a Coding Agent</a></li>
+<li><a class="" href="../08-agents-harness/04-context-engineering.html"><span class="nav-num">8.4</span>Context Engineering &amp; Management</a></li>
+<li><a class="" href="../08-agents-harness/05-agent-memory.html"><span class="nav-num">8.5</span>Memory Systems for Agents</a></li>
+<li><a class="" href="../08-agents-harness/06-mcp.html"><span class="nav-num">8.6</span>The Model Context Protocol (MCP)</a></li>
+<li><a class="" href="../08-agents-harness/07-multi-agent-systems.html"><span class="nav-num">8.7</span>Multi-Agent Systems &amp; Orchestration</a></li>
+<li><a class="" href="../08-agents-harness/08-agent-evaluation.html"><span class="nav-num">8.8</span>Agent Evaluation &amp; Benchmarks</a></li>
+<li><a class="" href="../08-agents-harness/09-prompt-engineering.html"><span class="nav-num">8.9</span>Prompt Engineering as Engineering</a></li>
+</ul></div>
+<div class="nav-part" data-part="09-rag-retrieval">
+<div class="nav-part-title"><span>Part IX — Retrieval &amp; RAG</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="01-embeddings-representation.html"><span class="nav-num">9.1</span>Embeddings &amp; Representation Learning</a></li>
+<li><a class="" href="02-vector-databases-ann.html"><span class="nav-num">9.2</span>Vector Databases &amp; Approximate Nearest Neighbor Search</a></li>
+<li><a class="active" href="03-rag-architectures.html"><span class="nav-num">9.3</span>Retrieval-Augmented Generation Architectures</a></li>
+<li><a class="" href="04-chunking-reranking-hybrid.html"><span class="nav-num">9.4</span>Chunking, Reranking &amp; Hybrid Search</a></li>
+<li><a class="" href="05-advanced-rag.html"><span class="nav-num">9.5</span>Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a></li>
+<li><a class="" href="06-multimodal-visual-retrieval.html"><span class="nav-num">9.6</span>Multimodal &amp; Visual-Document Retrieval: ColPali &amp; Late Interaction</a></li>
+</ul></div>
+<div class="nav-part" data-part="10-multimodal-and-arch">
+<div class="nav-part-title"><span>Part X — Multimodal &amp; Generative Frontiers</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../10-multimodal-and-arch/01-vision-transformers.html"><span class="nav-num">10.1</span>Vision Transformers &amp; Image Encoders</a></li>
+<li><a class="" href="../10-multimodal-and-arch/02-vision-language-models.html"><span class="nav-num">10.2</span>Vision-Language Models</a></li>
+<li><a class="" href="../10-multimodal-and-arch/03-audio-speech-multimodal.html"><span class="nav-num">10.3</span>Audio, Speech &amp; Multimodal Fusion</a></li>
+<li><a class="" href="../10-multimodal-and-arch/04-diffusion-generative.html"><span class="nav-num">10.4</span>Diffusion Models &amp; Generative Modeling (Breadth)</a></li>
+<li><a class="" href="../10-multimodal-and-arch/05-unified-any-to-any.html"><span class="nav-num">10.5</span>Unified &amp; Any-to-Any Models</a></li>
+</ul></div>
+<div class="nav-part" data-part="11-evaluation">
+<div class="nav-part-title"><span>Part XI — Evaluation</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../11-evaluation/01-eval-landscape.html"><span class="nav-num">11.1</span>The Evaluation Problem &amp; Benchmark Landscape</a></li>
+<li><a class="" href="../11-evaluation/02-llm-as-judge.html"><span class="nav-num">11.2</span>LLM-as-a-Judge &amp; Automated Evaluation</a></li>
+<li><a class="" href="../11-evaluation/03-eval-harnesses.html"><span class="nav-num">11.3</span>Building Eval Harnesses</a></li>
+<li><a class="" href="../11-evaluation/04-reasoning-coding-agentic-evals.html"><span class="nav-num">11.4</span>Reasoning, Coding &amp; Agentic Evals</a></li>
+<li><a class="" href="../11-evaluation/05-redteaming-safety-eval.html"><span class="nav-num">11.5</span>Red-Teaming, Safety &amp; Robustness Evaluation</a></li>
+<li><a class="" href="../11-evaluation/06-statistical-rigor-eval.html"><span class="nav-num">11.6</span>Statistical Rigor in Evaluation: Confidence Intervals &amp; Significance</a></li>
+</ul></div>
+<div class="nav-part" data-part="12-production-mlops">
+<div class="nav-part-title"><span>Part XII — Production, Systems &amp; MLOps</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../12-production-mlops/01-serving-system-design.html"><span class="nav-num">12.1</span>Designing an LLM Serving System</a></li>
+<li><a class="" href="../12-production-mlops/02-observability-llmops.html"><span class="nav-num">12.2</span>Observability, Logging &amp; LLMOps</a></li>
+<li><a class="" href="../12-production-mlops/03-caching-routing-cost.html"><span class="nav-num">12.3</span>Caching, Routing &amp; Cost Control in Production</a></li>
+<li><a class="" href="../12-production-mlops/04-safety-guardrails.html"><span class="nav-num">12.4</span>Safety, Guardrails &amp; Content Moderation</a></li>
+<li><a class="" href="../12-production-mlops/05-data-flywheel.html"><span class="nav-num">12.5</span>Data Flywheels &amp; Continuous Improvement</a></li>
+<li><a class="" href="../12-production-mlops/06-security-prompt-injection.html"><span class="nav-num">12.6</span>Security: Prompt Injection, Jailbreaks &amp; Defenses</a></li>
+<li><a class="" href="../12-production-mlops/07-online-eval-ab-testing.html"><span class="nav-num">12.7</span>Online Evaluation: A/B Testing, Canaries &amp; Guardrail Metrics</a></li>
+<li><a class="" href="../12-production-mlops/08-reliability-engineering.html"><span class="nav-num">12.8</span>Reliability Engineering for LLM Systems: SLOs &amp; Incident Response</a></li>
+</ul></div>
+<div class="nav-part" data-part="13-interp-safety-gov">
+<div class="nav-part-title"><span>Part XIII — Interpretability, Safety &amp; Governance</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../13-interp-safety-gov/01-mechanistic-interpretability.html"><span class="nav-num">13.1</span>Mechanistic Interpretability &amp; Model Internals</a></li>
+<li><a class="" href="../13-interp-safety-gov/02-knowledge-editing-unlearning.html"><span class="nav-num">13.2</span>Knowledge Editing &amp; Machine Unlearning</a></li>
+<li><a class="" href="../13-interp-safety-gov/03-privacy-memorization-dp.html"><span class="nav-num">13.3</span>Privacy, Memorization &amp; Differential Privacy for LLMs</a></li>
+<li><a class="" href="../13-interp-safety-gov/04-watermarking-provenance.html"><span class="nav-num">13.4</span>Watermarking, Provenance &amp; AI-Content Detection</a></li>
+<li><a class="" href="../13-interp-safety-gov/05-ai-safety-oversight.html"><span class="nav-num">13.5</span>AI Safety: Scalable Oversight, Dangerous-Capability Evals &amp; Frontier Safety</a></li>
+<li><a class="" href="../13-interp-safety-gov/06-governance-compliance.html"><span class="nav-num">13.6</span>AI Governance, Compliance &amp; Regulation</a></li>
+</ul></div>
+<div class="nav-part" data-part="99-appendix">
+<div class="nav-part-title"><span>Appendix</span><span class="chev">▾</span></div>
+<ul class="nav-chapters">
+<li><a class="" href="../99-appendix/01-glossary.html">Glossary of Terms</a></li>
+<li><a class="" href="../99-appendix/02-math-reference.html">The Math Reference Sheet</a></li>
+<li><a class="" href="../99-appendix/03-papers-reading-list.html">Key Papers: An Annotated Reading List</a></li>
+<li><a class="" href="../99-appendix/04-tooling-setup.html">Tooling &amp; Environment Setup Cheatsheet</a></li>
+<li><a class="" href="../99-appendix/05-from-scratch-index.html">From-Scratch Code Index</a></li>
+</ul></div>
+</nav>
+<main class="main">
+<article class="content">
+<div class="chapter-eyebrow">Part IX — Retrieval &amp; RAG</div>
+<h1 id="93-retrieval-augmented-generation-architectures">9.3 Retrieval-Augmented Generation Architectures<a class="headerlink" href="#93-retrieval-augmented-generation-architectures" title="Permanent link">¶</a></h1>
+<p>A language model trained six months ago does not know about last week&rsquo;s earnings call. A 7-billion-parameter model that has memorized Wikipedia cannot tell you what is in your company&rsquo;s internal runbook. Even a frontier model with a 128 k-token context window will confidently confabulate a citation if the relevant fact falls outside its training distribution. Retrieval-Augmented Generation (RAG) addresses all three problems with a single architectural shift: rather than forcing the model to answer from parametric memory alone, we first retrieve the most relevant documents from an external store and inject them into the context before the model generates its answer.</p>
+<p>This chapter dissects the full RAG pipeline — from corpus ingestion to final generation — explains why each design decision matters, catalogs the most important failure modes, and shows you how to build a minimal but production-faithful implementation from scratch. We also cover how to measure whether your RAG system is actually working with the RAGAS framework of faithfulness, answer relevance, and context precision.</p>
+<p>Related chapters: <a href="../09-rag-retrieval/01-embeddings-representation.html">Embeddings &amp; Representation Learning</a> covers how dense encoders produce the vectors we retrieve against. <a href="../09-rag-retrieval/02-vector-databases-ann.html">Vector Databases &amp; Approximate Nearest Neighbor Search</a> covers the indexing and search algorithms in depth. <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a> extends the ideas here with more sophisticated retrieval pipelines. <a href="../09-rag-retrieval/05-advanced-rag.html">Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a> covers the frontier.</p>
+<h2 id="why-rag-exists-three-hard-problems">Why RAG Exists: Three Hard Problems<a class="headerlink" href="#why-rag-exists-three-hard-problems" title="Permanent link">¶</a></h2>
+<h3 id="the-parametric-memory-wall">The Parametric Memory Wall<a class="headerlink" href="#the-parametric-memory-wall" title="Permanent link">¶</a></h3>
+<p>A transformer&rsquo;s weights are a lossy, distributed compression of the training corpus. Factual knowledge is stored implicitly across billions of parameters, which means:</p>
+<ol>
+<li><strong>Temporal staleness.</strong> Pre-training is expensive and infrequent. A model trained on data through mid-2024 cannot answer questions about events after that date.</li>
+<li><strong>Capacity limits.</strong> Even a 70 B-parameter model has finite capacity. Long-tail facts, private documents, and domain-specific knowledge may never be reliably memorized.</li>
+<li><strong>No attribution.</strong> When a model answers from parametric memory, there is no provenance trail — no page number, no document, no timestamp. For enterprise or legal contexts, this is often a blocker.</li>
+</ol>
+<h3 id="what-rag-changes">What RAG Changes<a class="headerlink" href="#what-rag-changes" title="Permanent link">¶</a></h3>
+<p>RAG augments each inference call with a retrieval step. The model&rsquo;s parametric knowledge becomes a reasoning engine rather than a fact store:</p>
+<div class="arithmatex">\[
+P(y \mid q) \;\longrightarrow\; P(y \mid q,\, \mathcal{D}_{q})
+\]</div>
+<p>where <span class="arithmatex">\(q\)</span> is the user query and <span class="arithmatex">\(\mathcal{D}_{q} = \{d_1, d_2, \ldots, d_k\}\)</span> is the set of <span class="arithmatex">\(k\)</span> documents retrieved for that specific query. The generation is conditioned on fresh, verifiable context. Updating the knowledge base requires only re-indexing documents, not re-training the model.</p>
+<p>This trades off context-window tokens for factual accuracy, freshness, and citability — a trade that is almost always worth making for knowledge-intensive tasks.</p>
+<h2 id="the-rag-pipeline-five-stages">The RAG Pipeline: Five Stages<a class="headerlink" href="#the-rag-pipeline-five-stages" title="Permanent link">¶</a></h2>
+<figure class="viz" id="fig-rag-pipeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 772 392" role="img" aria-label="The online RAG pipeline: a user query is embedded into a vector, used to retrieve the top-k nearest chunks from a vector store, those chunks augment the prompt, and the LLM generates an answer grounded in the retrieved context with inline citations.">
+  <defs>
+    <marker id="rg-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-rag-pipeline text{ fill:var(--ink-soft); }
+    #fig-rag-pipeline .stage{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-rag-pipeline .step{ font:500 11px var(--sans,sans-serif); }
+    #fig-rag-pipeline .sub{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rag-pipeline .mono{ font:600 10.5px var(--mono,monospace); }
+    #fig-rag-pipeline .tag{ font:700 9.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-rag-pipeline .cap{ font:600 10px var(--sans,sans-serif); fill:var(--muted); }
+  </style>
+
+
+  <g data-anim="1">
+    <rect x="14" y="150" width="118" height="62" rx="9" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <text x="73" y="166" text-anchor="middle" class="stage" fill="var(--accent)">Query</text>
+    <text x="73" y="184" text-anchor="middle" class="sub">"How does Flash-</text>
+    <text x="73" y="196" text-anchor="middle" class="sub">Attention save</text>
+    <text x="73" y="206" text-anchor="middle" class="sub">memory?"</text>
+  </g>
+
+
+  <g data-anim="1">
+    <line x1="132" y1="181" x2="166" y2="181" stroke="currentColor" class="v-muted" stroke-width="1.5" marker-end="url(#rg-arrow)"/>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="168" y="150" width="118" height="62" rx="9" class="v-fill v-grid" stroke-width="1.3"/>
+    <text x="227" y="166" text-anchor="middle" class="stage">Embed</text>
+    <text x="227" y="183" text-anchor="middle" class="sub">bi-encoder →</text>
+    <text x="227" y="201" text-anchor="middle" class="mono" fill="var(--accent)">q ∈ R&#8341;</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="286" y1="181" x2="320" y2="181" stroke="currentColor" class="v-muted" stroke-width="1.5" marker-end="url(#rg-arrow)"/>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="322" y="40" width="156" height="304" rx="10" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="334" y="32" class="tag">VECTOR STORE · ANN</text>
+    <text x="400" y="62" text-anchor="middle" class="stage" fill="var(--accent)">Retrieve top-k</text>
+    <text x="400" y="78" text-anchor="middle" class="sub">nearest chunks · cosine</text>
+
+
+    <g class="mono">
+
+      <rect x="338" y="92"  width="124" height="26" rx="5" class="v-accent" fill="var(--accent)" fill-opacity="0.18" stroke="var(--accent)" stroke-width="1.4"/>
+      <text x="350" y="109" class="mono" fill="var(--accent)">c₁₂</text>
+      <text x="452" y="109" text-anchor="end" class="mono" fill="var(--accent)">0.83</text>
+
+      <rect x="338" y="122" width="124" height="26" rx="5" class="v-accent" fill="var(--accent)" fill-opacity="0.18" stroke="var(--accent)" stroke-width="1.4"/>
+      <text x="350" y="139" class="mono" fill="var(--accent)">c₀₇</text>
+      <text x="452" y="139" text-anchor="end" class="mono" fill="var(--accent)">0.79</text>
+
+      <rect x="338" y="152" width="124" height="26" rx="5" class="v-accent" fill="var(--accent)" fill-opacity="0.18" stroke="var(--accent)" stroke-width="1.4"/>
+      <text x="350" y="169" class="mono" fill="var(--accent)">c₃₁</text>
+      <text x="452" y="169" text-anchor="end" class="mono" fill="var(--accent)">0.74</text>
+
+
+      <rect x="338" y="186" width="124" height="22" rx="5" class="v-fill v-grid" stroke-width="1"/>
+      <text x="350" y="201" class="mono" fill="var(--muted)">c₄₅</text>
+      <text x="452" y="201" text-anchor="end" class="mono" fill="var(--muted)">0.41</text>
+
+      <rect x="338" y="212" width="124" height="22" rx="5" class="v-fill v-grid" stroke-width="1"/>
+      <text x="350" y="227" class="mono" fill="var(--muted)">c₀₂</text>
+      <text x="452" y="227" text-anchor="end" class="mono" fill="var(--muted)">0.38</text>
+    </g>
+
+    <text x="400" y="256" text-anchor="middle" class="sub">… N indexed chunk vectors …</text>
+
+
+    <rect x="356" y="272" width="88" height="22" rx="11" fill="var(--accent)" fill-opacity="0.14" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="400" y="287" text-anchor="middle" class="mono" fill="var(--accent)">k = 3</text>
+
+    <text x="400" y="316" text-anchor="middle" class="sub">offline: chunk → embed →</text>
+    <text x="400" y="330" text-anchor="middle" class="sub">index (HNSW / IVF)</text>
+  </g>
+
+
+  <g data-anim="4">
+    <line x1="478" y1="135" x2="512" y2="135" stroke="currentColor" class="v-muted" stroke-width="1.5" marker-end="url(#rg-arrow)"/>
+    <text x="495" y="124" text-anchor="middle" class="cap">top-k</text>
+  </g>
+
+
+  <g data-anim="4">
+    <rect x="514" y="44" width="232" height="178" rx="10" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="526" y="36" class="tag">PROMPT TEMPLATE</text>
+    <text x="630" y="64" text-anchor="middle" class="stage" fill="var(--accent)">Augment</text>
+
+    <rect x="528" y="76" width="204" height="20" rx="4" class="v-fill v-grid" stroke-width="1"/>
+    <text x="538" y="90" class="mono">system: answer from context only</text>
+
+    <rect x="528" y="100" width="204" height="60" rx="4" fill="var(--accent)" fill-opacity="0.12" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="538" y="115" class="mono" fill="var(--accent)">context:</text>
+    <text x="544" y="130" class="mono" fill="var(--accent)">[1] c₁₂  [2] c₀₇  [3] c₃₁</text>
+    <text x="538" y="148" class="sub">retrieved chunks, numbered</text>
+
+    <rect x="528" y="164" width="204" height="20" rx="4" class="v-fill v-grid" stroke-width="1"/>
+    <text x="538" y="178" class="mono">user: {query}</text>
+
+    <text x="630" y="206" text-anchor="middle" class="sub">grounding + numbered passages</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="630" y1="222" x2="630" y2="256" stroke="currentColor" class="v-muted" stroke-width="1.5" marker-end="url(#rg-arrow)"/>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="514" y="258" width="232" height="100" rx="10" fill="var(--good,#2f9e6e)" fill-opacity="0.14" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="630" y="280" text-anchor="middle" class="stage" fill="var(--good,#2f9e6e)">LLM → grounded answer</text>
+    <text x="528" y="302" class="step">It tiles Q,K,V into SRAM blocks and</text>
+    <text x="528" y="317" class="step">never materializes the N×N matrix,</text>
+    <text x="528" y="332" class="step">cutting memory to O(N)
+      <tspan class="mono" fill="var(--good,#2f9e6e)" dx="3">[1]</tspan>.</text>
+    <text x="630" y="350" text-anchor="middle" class="sub">claims trace back to cited chunks</text>
+  </g>
+
+
+  <g data-anim="5">
+    <text x="170" y="300" text-anchor="middle" class="cap">P(y | q)  →  P(y | q, D_q)</text>
+    <text x="170" y="320" text-anchor="middle" class="sub">condition generation on retrieved</text>
+    <text x="170" y="333" text-anchor="middle" class="sub">documents, not parametric memory</text>
+  </g>
+</svg>
+<figcaption><b>RAG conditions generation on retrieved documents instead of parametric memory.</b> The query is embedded by the same bi-encoder as the corpus, the vector store returns the top-<span class="mono">k</span> nearest chunks by cosine similarity, those numbered passages augment the prompt, and the LLM answers grounded in that context with inline citations — turning <span class="mono">P(y | q)</span> into <span class="mono">P(y | q, D_q)</span>.</figcaption>
+</figure>
+
+<p>The full pipeline from raw documents to final answer has five conceptually distinct stages. Each is a design space in its own right.</p>
+<figure class="viz" id="fig-rag-arch-pipeline-five-stages">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 960 570" role="img" aria-label="The RAG pipeline in two lanes: an offline lane (Raw Docs, Chunk, Embed, Index) builds a persistent vector store once; a bridge arrow connects Index to the online lane (Query, Embed, Retrieve top-k, Rerank, Generate) that runs per query.">
+<defs>
+  <marker id="rp-arr" viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="rp-arr-bl" viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+  <style>
+    @media (prefers-reduced-motion: no-preference) {
+      #fig-rag-arch-pipeline-five-stages .d1 {animation:rpd1 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .d2 {animation:rpd2 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .d3 {animation:rpd3 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .d4 {animation:rpd4 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .dbr{animation:rpdbr 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .d5 {animation:rpd5 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .d6 {animation:rpd6 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .d7 {animation:rpd7 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .d8 {animation:rpd8 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .h1 {animation:rph1 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .h2 {animation:rph2 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .h3 {animation:rph3 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .h4 {animation:rph4 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .h5 {animation:rph5 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .h6 {animation:rph6 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .h7 {animation:rph7 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .h8 {animation:rph8 9s linear infinite}
+      #fig-rag-arch-pipeline-five-stages .h9 {animation:rph9 9s linear infinite}
+
+      /* offline dots travel 50px (gap width) each hop */
+      @keyframes rpd1{0%,100%{opacity:0;transform:translateX(0)} 3%{opacity:1} 9%{opacity:1;transform:translateX(50px)} 11%{opacity:0}}
+      @keyframes rpd2{0%,100%{opacity:0;transform:translateX(0)}13%{opacity:1}19%{opacity:1;transform:translateX(50px)}21%{opacity:0}}
+      @keyframes rpd3{0%,100%{opacity:0;transform:translateX(0)}23%{opacity:1}29%{opacity:1;transform:translateX(50px)}31%{opacity:0}}
+      @keyframes rpd4{0%,100%{opacity:0;transform:translateX(0)}33%{opacity:1}38%{opacity:1;transform:translateX(50px)}40%{opacity:0}}
+      /* bridge dot travels ~213px down then 268px left then 115px down */
+      @keyframes rpdbr{0%,100%{opacity:0;transform:translate(0,0)}43%{opacity:1}50%{opacity:1;transform:translate(-268px,213px)}52%{opacity:0}}
+      /* online dots travel ~50px each */
+      @keyframes rpd5{0%,100%{opacity:0;transform:translateX(0)}55%{opacity:1}60%{opacity:1;transform:translateX(50px)}62%{opacity:0}}
+      @keyframes rpd6{0%,100%{opacity:0;transform:translateX(0)}63%{opacity:1}69%{opacity:1;transform:translateX(50px)}71%{opacity:0}}
+      @keyframes rpd7{0%,100%{opacity:0;transform:translateX(0)}73%{opacity:1}78%{opacity:1;transform:translateX(50px)}80%{opacity:0}}
+      @keyframes rpd8{0%,100%{opacity:0;transform:translateX(0)}83%{opacity:1}88%{opacity:1;transform:translateX(50px)}90%{opacity:0}}
+
+      /* node highlight pulses staggered through 9s loop */
+      @keyframes rph1{0%,2%,12%,100%{opacity:0} 5%,10%{opacity:.28}}
+      @keyframes rph2{0%,12%,22%,100%{opacity:0}15%,20%{opacity:.28}}
+      @keyframes rph3{0%,22%,32%,100%{opacity:0}25%,30%{opacity:.28}}
+      @keyframes rph4{0%,32%,42%,100%{opacity:0}35%,40%{opacity:.50}}
+      @keyframes rph5{0%,53%,63%,100%{opacity:0}56%,61%{opacity:.28}}
+      @keyframes rph6{0%,63%,73%,100%{opacity:0}66%,71%{opacity:.28}}
+      @keyframes rph7{0%,73%,83%,100%{opacity:0}76%,81%{opacity:.28}}
+      @keyframes rph8{0%,83%,93%,100%{opacity:0}86%,91%{opacity:.28}}
+      @keyframes rph9{0%,88%,98%,100%{opacity:0}90%,96%{opacity:.40}}
+    }
+  </style>
+</defs>
+
+<style>
+  #fig-rag-arch-pipeline-five-stages .lbl  {font:600 13px var(--sans,sans-serif)}
+  #fig-rag-arch-pipeline-five-stages .sub  {font:400 10px var(--mono,monospace);fill:var(--muted,#6d675d)}
+  #fig-rag-arch-pipeline-five-stages .llbl {font:600 11px var(--sans,sans-serif);fill:var(--muted,#6d675d);letter-spacing:.06em}
+  #fig-rag-arch-pipeline-five-stages .albl {font:400 9px var(--sans,sans-serif);fill:var(--muted,#6d675d)}
+  #fig-rag-arch-pipeline-five-stages .blbl {font:400 9.5px var(--sans,sans-serif);fill:var(--accent2,#3b82f6)}
+  #fig-rag-arch-pipeline-five-stages .stg  {font:400 8.5px var(--sans,sans-serif);fill:var(--muted,#6d675d)}
+  #fig-rag-arch-pipeline-five-stages text  {fill:var(--ink-soft,#45413a)}
+</style>
+
+
+
+
+<rect x="12" y="28" width="936" height="208" rx="12"
+      fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<text x="28" y="50" class="llbl">OFFLINE — runs once / on update</text>
+
+
+<g data-anim="1">
+  <rect x="22" y="114" width="148" height="72" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <rect x="31" y="123" width="13" height="17" rx="2" fill="none"
+        stroke="var(--ink-soft,#45413a)" stroke-width="1.1"/>
+  <line x1="31" y1="128" x2="44" y2="128" stroke="var(--ink-soft,#45413a)" stroke-width="0.7"/>
+  <line x1="31" y1="132" x2="44" y2="132" stroke="var(--ink-soft,#45413a)" stroke-width="0.7"/>
+  <line x1="31" y1="136" x2="40" y2="136" stroke="var(--ink-soft,#45413a)" stroke-width="0.7"/>
+  <text x="96" y="137" text-anchor="middle" class="lbl">Raw Docs</text>
+  <text x="96" y="150" text-anchor="middle" class="sub">PDF / HTML</text>
+  <text x="96" y="161" text-anchor="middle" class="sub">code / transcripts</text>
+  <rect x="22" y="114" width="148" height="72" rx="8"
+        fill="var(--accent,#c15b39)" opacity="0" class="h1"/>
+</g>
+<text x="96" y="197" text-anchor="middle" class="stg">input corpus</text>
+
+
+<line x1="170" y1="150" x2="220" y2="150"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+<text x="195" y="144" text-anchor="middle" class="albl">split</text>
+<circle cx="170" cy="150" r="4.5" fill="var(--accent,#c15b39)" opacity="0" class="d1"/>
+
+
+<g data-anim="2">
+  <rect x="222" y="114" width="148" height="72" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="296" y="137" text-anchor="middle" class="lbl">Chunk</text>
+  <text x="296" y="150" text-anchor="middle" class="sub">256-512 tokens</text>
+  <text x="296" y="161" text-anchor="middle" class="sub">10-20% overlap</text>
+  <rect x="222" y="114" width="148" height="72" rx="8"
+        fill="var(--accent,#c15b39)" opacity="0" class="h2"/>
+</g>
+<text x="296" y="197" text-anchor="middle" class="stg">Stage 1 — Chunk</text>
+
+
+<line x1="370" y1="150" x2="420" y2="150"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+<text x="395" y="144" text-anchor="middle" class="albl">encode</text>
+<circle cx="370" cy="150" r="4.5" fill="var(--accent,#c15b39)" opacity="0" class="d2"/>
+
+
+<g data-anim="3">
+  <rect x="422" y="114" width="148" height="72" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="496" y="137" text-anchor="middle" class="lbl">Embed</text>
+  <text x="496" y="150" text-anchor="middle" class="sub">bi-encoder</text>
+  <text x="496" y="161" text-anchor="middle" class="sub">v in R^d</text>
+  <rect x="422" y="114" width="148" height="72" rx="8"
+        fill="var(--accent,#c15b39)" opacity="0" class="h3"/>
+</g>
+<text x="496" y="197" text-anchor="middle" class="stg">Stage 2 — Embed</text>
+
+
+<line x1="570" y1="150" x2="618" y2="150"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+<text x="594" y="144" text-anchor="middle" class="albl">add</text>
+<circle cx="570" cy="150" r="4.5" fill="var(--accent,#c15b39)" opacity="0" class="d3"/>
+
+
+<g data-anim="4">
+  <rect x="620" y="118" width="180" height="64" rx="4"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.13"
+        stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+  <ellipse cx="710" cy="118" rx="90" ry="11"
+           fill="var(--accent2,#3b82f6)" fill-opacity="0.22"
+           stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <ellipse cx="710" cy="182" rx="90" ry="11"
+           fill="var(--accent2,#3b82f6)" fill-opacity="0.16"
+           stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+  <text x="710" y="140" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">Index</text>
+  <text x="710" y="153" text-anchor="middle" class="sub" fill="var(--accent2,#3b82f6)">Vector DB</text>
+  <text x="710" y="165" text-anchor="middle" class="sub" fill="var(--accent2,#3b82f6)">FAISS / HNSW / IVF</text>
+  <rect x="620" y="107" width="180" height="86" rx="8"
+        fill="var(--accent2,#3b82f6)" opacity="0" class="h4"/>
+</g>
+<text x="710" y="214" text-anchor="middle" class="stg" style="fill:var(--accent2,#3b82f6)">Stage 3 — Index (persistent)</text>
+<circle cx="618" cy="150" r="4.5" fill="var(--accent,#c15b39)" opacity="0" class="d4"/>
+
+
+<path d="M710 193 L710 300 L442 300 L442 390"
+      stroke="var(--accent2,#3b82f6)" stroke-width="2.2" fill="none"
+      stroke-dasharray="7 4" marker-end="url(#rp-arr-bl)"/>
+<circle cx="710" cy="193" r="4.5" fill="var(--accent2,#3b82f6)" opacity="0" class="dbr"/>
+
+<text x="724" y="242" class="blbl">query-time</text>
+<text x="724" y="256" class="blbl">top-k lookup</text>
+
+
+<rect x="12" y="378" width="936" height="178" rx="12"
+      fill="var(--surface-2,#f3efe6)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+<rect x="12" y="378" width="936" height="178" rx="12"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.06" stroke="none"/>
+<text x="28" y="398" class="llbl">ONLINE — runs per query</text>
+
+
+<g data-anim="5">
+  <rect x="22" y="413" width="116" height="68" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="80" y="434" text-anchor="middle" class="lbl">Query</text>
+  <text x="80" y="448" text-anchor="middle" class="sub">user question q</text>
+  <rect x="22" y="413" width="116" height="68" rx="8"
+        fill="var(--accent2,#3b82f6)" opacity="0" class="h5"/>
+</g>
+<text x="80" y="493" text-anchor="middle" class="stg">Stage 4 — Query</text>
+
+
+<line x1="138" y1="447" x2="188" y2="447"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+<text x="163" y="439" text-anchor="middle" class="albl">encode</text>
+<circle cx="138" cy="447" r="4.5" fill="var(--accent2,#3b82f6)" opacity="0" class="d5"/>
+
+
+<g data-anim="5">
+  <rect x="190" y="413" width="132" height="68" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="256" y="434" text-anchor="middle" class="lbl">Embed</text>
+  <text x="256" y="448" text-anchor="middle" class="sub">same encoder</text>
+  <text x="256" y="459" text-anchor="middle" class="sub">q in R^d</text>
+  <rect x="190" y="413" width="132" height="68" rx="8"
+        fill="var(--accent2,#3b82f6)" opacity="0" class="h6"/>
+</g>
+<text x="256" y="493" text-anchor="middle" class="stg">Stage 4 — Embed</text>
+
+
+<line x1="322" y1="447" x2="370" y2="447"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+<text x="346" y="441" text-anchor="middle" class="albl">search</text>
+<circle cx="322" cy="447" r="4.5" fill="var(--accent2,#3b82f6)" opacity="0" class="d6"/>
+
+
+<g data-anim="5">
+  <rect x="372" y="413" width="140" height="68" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+  <text x="442" y="434" text-anchor="middle" class="lbl">Retrieve top-k</text>
+  <text x="442" y="448" text-anchor="middle" class="sub">ANN, k=5-20</text>
+  <rect x="372" y="413" width="140" height="68" rx="8"
+        fill="var(--accent2,#3b82f6)" opacity="0" class="h7"/>
+</g>
+<text x="442" y="493" text-anchor="middle" class="stg">Stage 4 — Retrieve</text>
+
+
+<line x1="512" y1="447" x2="562" y2="447"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+<text x="537" y="441" text-anchor="middle" class="albl">score</text>
+<circle cx="512" cy="447" r="4.5" fill="var(--accent2,#3b82f6)" opacity="0" class="d7"/>
+
+
+<g data-anim="5">
+  <rect x="564" y="413" width="142" height="68" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"
+        stroke-dasharray="5 3"/>
+  <text x="635" y="430" text-anchor="middle" class="lbl">Rerank</text>
+  <text x="635" y="443" text-anchor="middle" class="sub">(optional)</text>
+  <text x="635" y="454" text-anchor="middle" class="sub">cross-encoder</text>
+  <text x="635" y="465" text-anchor="middle" class="sub">k'=3-5</text>
+  <rect x="564" y="413" width="142" height="68" rx="8"
+        fill="var(--accent2,#3b82f6)" opacity="0" class="h8"/>
+</g>
+<text x="635" y="493" text-anchor="middle" class="stg">Stage 4 — Rerank</text>
+
+
+<line x1="706" y1="447" x2="754" y2="447"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rp-arr)"/>
+<text x="730" y="441" text-anchor="middle" class="albl">prompt</text>
+<circle cx="706" cy="447" r="4.5" fill="var(--accent2,#3b82f6)" opacity="0" class="d8"/>
+
+
+<g data-anim="5">
+  <rect x="756" y="413" width="190" height="68" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <text x="851" y="434" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Generate</text>
+  <text x="851" y="448" text-anchor="middle" class="sub">LLM</text>
+  <text x="851" y="459" text-anchor="middle" class="sub">grounded answer</text>
+  <rect x="756" y="413" width="190" height="68" rx="8"
+        fill="var(--good,#2f9e6e)" opacity="0" class="h9"/>
+</g>
+<text x="851" y="493" text-anchor="middle" class="stg" style="fill:var(--good,#2f9e6e)">Stage 5 — Generate</text>
+
+</svg>
+<figcaption><b>The RAG pipeline separates into an offline indexing phase (Stages 1-3) and an online query phase (Stages 4-5).</b> Raw documents are chunked into 256-512 token windows with 10-20% overlap (Stage 1), encoded by a bi-encoder into dense vectors (Stage 2), and stored in a persistent vector database using an HNSW or IVF index (Stage 3). At query time, the same encoder embeds the user question; an ANN search retrieves k=5-20 candidates; an optional cross-encoder reranker narrows to k'=3-5; and the LLM generates a grounded answer conditioned on the retrieved passages (Stage 5).</figcaption>
+</figure>
+
+<h3 id="stage-1-chunking">Stage 1 — Chunking<a class="headerlink" href="#stage-1-chunking" title="Permanent link">¶</a></h3>
+<p>A raw document (PDF, HTML, code file, transcript) must be split into chunks that fit inside a retrieval unit. Chunks that are too large decrease retrieval precision because a 2,000-token chunk retrieved for one sentence drags in irrelevant text. Chunks that are too small lose local context — a sentence about &ldquo;the acquisition&rdquo; means nothing without the surrounding paragraph.</p>
+<p>Common strategies:</p>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Size</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fixed-size sliding window</td>
+<td>256–512 tokens, 10–20% overlap</td>
+<td>Baseline; works for structured prose</td>
+</tr>
+<tr>
+<td>Sentence/paragraph boundary</td>
+<td>Varies</td>
+<td>Better coherence, avoids splitting mid-idea</td>
+</tr>
+<tr>
+<td>Semantic chunking</td>
+<td>Dynamic</td>
+<td>Splits where embedding similarity drops</td>
+</tr>
+<tr>
+<td>Document-aware (section headers)</td>
+<td>Varies</td>
+<td>PDFs, wikis, Markdown with structure</td>
+</tr>
+</tbody>
+</table>
+<p>Chapter <a href="../09-rag-retrieval/04-chunking-reranking-hybrid.html">Chunking, Reranking &amp; Hybrid Search</a> covers the design space in full detail.</p>
+<h3 id="stage-2-embedding">Stage 2 — Embedding<a class="headerlink" href="#stage-2-embedding" title="Permanent link">¶</a></h3>
+<p>Each chunk is encoded into a dense vector <span class="arithmatex">\(\mathbf{v} \in \mathbb{R}^d\)</span> by a bi-encoder (also called a dual-encoder). The same encoder maps the query to <span class="arithmatex">\(\mathbf{q} \in \mathbb{R}^d\)</span>. Retrieval is then a nearest-neighbor search in this space. See <a href="../09-rag-retrieval/01-embeddings-representation.html">Embeddings &amp; Representation Learning</a> for the full treatment of encoder architectures and training.</p>
+<p>Popular open-source choices include models from the <code>sentence-transformers</code> family, <code>e5-large-v2</code>, <code>bge-m3</code>, and others. Typical dimensionality <span class="arithmatex">\(d\)</span> ranges from 384 to 1536.</p>
+<h3 id="stage-3-indexing">Stage 3 — Indexing<a class="headerlink" href="#stage-3-indexing" title="Permanent link">¶</a></h3>
+<p>The chunk vectors are stored in a vector database (FAISS, Pinecone, Weaviate, Qdrant, pgvector, etc.) with an Approximate Nearest Neighbor (ANN) index such as HNSW or IVF. See <a href="../09-rag-retrieval/02-vector-databases-ann.html">Vector Databases &amp; Approximate Nearest Neighbor Search</a> for internals.</p>
+<p>At query time, the query vector is compared against all indexed vectors, and the top-<span class="arithmatex">\(k\)</span> most similar chunks (by cosine similarity or dot product) are returned in sub-millisecond to low-millisecond time even for corpora of tens of millions of chunks.</p>
+<h3 id="stage-4-retrieve-and-optionally-rerank">Stage 4 — Retrieve (and optionally Rerank)<a class="headerlink" href="#stage-4-retrieve-and-optionally-rerank" title="Permanent link">¶</a></h3>
+<p>The ANN index returns approximate top-<span class="arithmatex">\(k\)</span> results, typically <span class="arithmatex">\(k = 5\)</span>–<span class="arithmatex">\(20\)</span>. A cross-encoder reranker (e.g., <code>bge-reranker-large</code>) then scores the query alongside each candidate chunk jointly, producing a more accurate relevance ranking. The top-<span class="arithmatex">\(k'\)</span> (typically <span class="arithmatex">\(k' = 3\)</span>–<span class="arithmatex">\(5\)</span>) chunks after reranking form the retrieved context.</p>
+<h3 id="stage-5-generate">Stage 5 — Generate<a class="headerlink" href="#stage-5-generate" title="Permanent link">¶</a></h3>
+<p>The retrieved chunks are concatenated into a context block, formatted with a prompt template, and sent to the LLM. The model generates an answer grounded in the retrieved evidence.</p>
+<div class="highlight"><pre><span></span><code>System: You are a helpful assistant. Answer based on the context below.
+        If the answer is not in the context, say &quot;I don&#39;t know.&quot;
+
+Context:
+[Chunk 1 text]
+---
+[Chunk 2 text]
+---
+[Chunk 3 text]
+
+User: {query}
+</code></pre></div>
+<h2 id="a-minimal-rag-implementation">A Minimal RAG Implementation<a class="headerlink" href="#a-minimal-rag-implementation" title="Permanent link">¶</a></h2>
+<p>The following implementation is self-contained and runnable. It uses <code>sentence-transformers</code> for embedding, <code>faiss-cpu</code> for indexing, and the <code>openai</code> client for generation. Every design decision is annotated.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Minimal RAG from scratch.</span>
+<span class="sd">Dependencies: sentence-transformers, faiss-cpu, openai</span>
+<span class="sd">  pip install sentence-transformers faiss-cpu openai</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">textwrap</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">faiss</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAI</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sentence_transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">SentenceTransformer</span>
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># 1. Corpus (replace with your real documents)</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="n">CORPUS</span> <span class="o">=</span> <span class="p">[</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;FlashAttention is an IO-aware exact attention algorithm. It tiles the</span>
+<span class="sd">    Q, K, V matrices into blocks that fit in SRAM and computes attention</span>
+<span class="sd">    without materializing the full N×N attention matrix, reducing memory</span>
+<span class="sd">    from O(N²) to O(N). Published by Dao et al. in 2022.&quot;&quot;&quot;</span><span class="p">,</span>
+
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;RLHF (Reinforcement Learning from Human Feedback) is a post-training</span>
+<span class="sd">    technique that fine-tunes a language model to align with human</span>
+<span class="sd">    preferences. It requires a reward model trained on comparison data and</span>
+<span class="sd">    uses PPO to optimize the policy against that reward signal.&quot;&quot;&quot;</span><span class="p">,</span>
+
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;RAG (Retrieval-Augmented Generation) was introduced by Lewis et al.</span>
+<span class="sd">    in 2020. It combines a dense retriever (DPR) with a seq2seq generator</span>
+<span class="sd">    (BART) and trains both end-to-end. The retriever is frozen during</span>
+<span class="sd">    inference but the generator is conditioned on retrieved documents.&quot;&quot;&quot;</span><span class="p">,</span>
+
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The Chinchilla scaling law (Hoffmann et al., 2022) showed that for a</span>
+<span class="sd">    given compute budget, training tokens should scale roughly 1:1 with</span>
+<span class="sd">    model parameters. A 70 B model is optimally trained on about 1.4 T</span>
+<span class="sd">    tokens, not the ~300 B tokens used for the original GPT-3 scale models.&quot;&quot;&quot;</span><span class="p">,</span>
+
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;FAISS (Facebook AI Similarity Search) is a library for efficient</span>
+<span class="sd">    similarity search. Its IVF index (Inverted File Index) partitions</span>
+<span class="sd">    vectors into Voronoi cells using k-means clustering. At query time,</span>
+<span class="sd">    only the closest nprobe cells are searched, trading recall for speed.&quot;&quot;&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># 2. Chunking (trivial for this demo — each doc</span>
+<span class="c1">#    is already one chunk; in practice you would</span>
+<span class="c1">#    split long docs into overlapping windows)</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">chunk_text</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">200</span><span class="p">,</span> <span class="n">overlap</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">20</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Simple word-level sliding window chunker.</span>
+<span class="sd">    For production use a sentence boundary splitter or spacy.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">words</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="n">chunks</span><span class="p">,</span> <span class="n">start</span> <span class="o">=</span> <span class="p">[],</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="n">start</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">):</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">start</span> <span class="o">+</span> <span class="n">max_tokens</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">))</span>
+        <span class="n">chunks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">words</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">end</span><span class="p">]))</span>
+        <span class="k">if</span> <span class="n">end</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">):</span>
+            <span class="k">break</span>
+        <span class="n">start</span> <span class="o">=</span> <span class="n">end</span> <span class="o">-</span> <span class="n">overlap</span>  <span class="c1"># overlap keeps context across boundaries</span>
+    <span class="k">return</span> <span class="n">chunks</span>
+
+
+<span class="c1"># Flatten corpus into chunks</span>
+<span class="n">all_chunks</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">for</span> <span class="n">doc</span> <span class="ow">in</span> <span class="n">CORPUS</span><span class="p">:</span>
+    <span class="n">all_chunks</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">chunk_text</span><span class="p">(</span><span class="n">doc</span><span class="p">))</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total chunks: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">all_chunks</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># 3. Embed all chunks (bi-encoder)</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="n">EMBED_MODEL</span> <span class="o">=</span> <span class="s2">&quot;sentence-transformers/all-MiniLM-L6-v2&quot;</span>
+<span class="n">encoder</span> <span class="o">=</span> <span class="n">SentenceTransformer</span><span class="p">(</span><span class="n">EMBED_MODEL</span><span class="p">)</span>
+
+<span class="c1"># encode() returns (n_chunks, d) float32 numpy array</span>
+<span class="n">chunk_embeddings</span> <span class="o">=</span> <span class="n">encoder</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span>
+    <span class="n">all_chunks</span><span class="p">,</span>
+    <span class="n">batch_size</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span>
+    <span class="n">show_progress_bar</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">normalize_embeddings</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># unit-norm so dot product == cosine similarity</span>
+<span class="p">)</span>
+<span class="n">d</span> <span class="o">=</span> <span class="n">chunk_embeddings</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>   <span class="c1"># embedding dimensionality (384 for MiniLM)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Embedding dim: </span><span class="si">{</span><span class="n">d</span><span class="si">}</span><span class="s2">, corpus size: </span><span class="si">{</span><span class="n">chunk_embeddings</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># 4. Build FAISS index</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># IndexFlatIP = exact inner product (cosine on unit vectors) — fine for small corpora.</span>
+<span class="c1"># For production use IndexIVFPQ for speed and memory efficiency at scale.</span>
+<span class="n">index</span> <span class="o">=</span> <span class="n">faiss</span><span class="o">.</span><span class="n">IndexFlatIP</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+<span class="n">index</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">chunk_embeddings</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;FAISS index has </span><span class="si">{</span><span class="n">index</span><span class="o">.</span><span class="n">ntotal</span><span class="si">}</span><span class="s2"> vectors&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># 5. Retrieval function</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">retrieve</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Encode the query and return the top-k (chunk, score) pairs.</span>
+<span class="sd">    Score is cosine similarity in [0, 1] because vectors are unit-normed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">q_vec</span> <span class="o">=</span> <span class="n">encoder</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span>
+        <span class="p">[</span><span class="n">query</span><span class="p">],</span>
+        <span class="n">normalize_embeddings</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="n">scores</span><span class="p">,</span> <span class="n">indices</span> <span class="o">=</span> <span class="n">index</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">q_vec</span><span class="p">,</span> <span class="n">k</span><span class="p">)</span>
+    <span class="c1"># scores shape: (1, k), indices shape: (1, k)</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">score</span><span class="p">,</span> <span class="n">idx</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">scores</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">indices</span><span class="p">[</span><span class="mi">0</span><span class="p">]):</span>
+        <span class="k">if</span> <span class="n">idx</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">:</span>  <span class="c1"># FAISS returns -1 for missing results</span>
+            <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">all_chunks</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span> <span class="nb">float</span><span class="p">(</span><span class="n">score</span><span class="p">)))</span>
+    <span class="k">return</span> <span class="n">results</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># 6. Generation with injected context</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="n">SYSTEM_PROMPT</span> <span class="o">=</span> <span class="n">textwrap</span><span class="o">.</span><span class="n">dedent</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">    You are a precise technical assistant. Answer the user&#39;s question using</span>
+<span class="s2">    ONLY the provided context passages. If the answer cannot be found in the</span>
+<span class="s2">    context, respond with &quot;I don&#39;t know based on the provided context.&quot;</span>
+<span class="s2">    Cite the relevant passage(s) inline as [1], [2], etc.</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_context_block</span><span class="p">(</span><span class="n">retrieved</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">chunk</span><span class="p">,</span> <span class="n">score</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">retrieved</span><span class="p">,</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">] (relevance=</span><span class="si">{</span><span class="n">score</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">)</span><span class="se">\n</span><span class="si">{</span><span class="n">chunk</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rag_query</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="c1"># Step A: retrieve</span>
+    <span class="n">retrieved</span> <span class="o">=</span> <span class="n">retrieve</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">k</span><span class="p">)</span>
+    <span class="n">context_block</span> <span class="o">=</span> <span class="n">build_context_block</span><span class="p">(</span><span class="n">retrieved</span><span class="p">)</span>
+
+    <span class="c1"># Step B: generate</span>
+    <span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">()</span>  <span class="c1"># reads OPENAI_API_KEY from env</span>
+    <span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">SYSTEM_PROMPT</span><span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Context:</span><span class="se">\n</span><span class="si">{</span><span class="n">context_block</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Question: </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">),</span>
+        <span class="p">},</span>
+    <span class="p">]</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="n">messages</span><span class="p">,</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>   <span class="c1"># deterministic for RAG — no creativity needed</span>
+        <span class="n">max_tokens</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># 7. Demo</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">query</span> <span class="o">=</span> <span class="s2">&quot;How does FlashAttention reduce memory usage?&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Q: </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">answer</span> <span class="o">=</span> <span class="n">rag_query</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;A: </span><span class="si">{</span><span class="n">answer</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Worked example: memory and latency budget</p>
+<p>Suppose you have a corpus of 100,000 documents, each split into roughly 10 chunks of 256 tokens. That gives <span class="arithmatex">\(N = 10^6\)</span> chunk vectors.</p>
+<p><strong>Index memory.</strong> With embedding dimension <span class="arithmatex">\(d = 1536\)</span> (OpenAI <code>text-embedding-3-small</code>) and float32 storage:</p>
+<div class="arithmatex">\[
+\text{Memory} = N \times d \times 4\,\text{bytes} = 10^6 \times 1536 \times 4 = 6.14\,\text{GB}
+\]</div>
+<p>That fits comfortably on a single A10G GPU with 24 GB VRAM, or on a machine with 32 GB RAM using CPU inference. For <span class="arithmatex">\(d = 384\)</span> (MiniLM), the same corpus is only 1.5 GB.</p>
+<p><strong>Latency budget.</strong> An exact <code>IndexFlatIP</code> search over <span class="arithmatex">\(10^6\)</span> vectors at <span class="arithmatex">\(d = 384\)</span> takes roughly 20–50 ms on a single CPU core (FAISS is BLAS-accelerated). With an HNSW index, the same search takes under 2 ms. The embedding step for the query adds another 5–10 ms. Total retrieval latency before generation: on the order of 10–60 ms depending on index type and hardware — typically negligible compared to LLM generation time.</p>
+<p><strong>Reranker cost.</strong> A cross-encoder reranker scoring 20 candidates against the query takes roughly 50–100 ms on a single GPU (batched). If you retrieve <span class="arithmatex">\(k = 20\)</span> for ANN and rerank to <span class="arithmatex">\(k' = 5\)</span>, this is the dominant retrieval cost.</p>
+</div>
+<h2 id="naive-rag-and-its-failure-modes">Naive RAG and Its Failure Modes<a class="headerlink" href="#naive-rag-and-its-failure-modes" title="Permanent link">¶</a></h2>
+<p>&ldquo;Naive RAG&rdquo; refers to the minimal pipeline: fixed-size chunks, single-pass dense retrieval, no reranking, concatenate-and-prompt generation. Practitioners who deploy this baseline quickly run into a characteristic set of failure modes.</p>
+<h3 id="retrieval-failures">Retrieval Failures<a class="headerlink" href="#retrieval-failures" title="Permanent link">¶</a></h3>
+<p><strong>Semantic mismatch between query and chunk vocabulary.</strong> Dense embeddings capture meaning, not keywords. A query &ldquo;What is the interest rate hike in Q3?&rdquo; may miss a chunk that uses the phrase &ldquo;Federal Reserve raised the federal funds rate by 75 bps in the third quarter&rdquo; because the two sentences are in different parts of the semantic space if the encoder was not fine-tuned on financial text.</p>
+<p><strong>Chunking boundary problems.</strong> A chunk that begins mid-sentence (&ldquo;&hellip;increased revenue, driven by strong performance in the cloud segment&rdquo;) provides poor context to the retriever and the reader. The embedding may not capture the key entity because it appears in the previous chunk.</p>
+<p><strong>Top-k may not contain the answer at all.</strong> For long-tail or multi-hop questions (&ldquo;Who acquired the company that made the chip used in the iPhone 6?&rdquo;), a single retrieval step may not find all necessary evidence. The answer requires stitching together two or more documents.</p>
+<p><strong>Stale index.</strong> If documents are updated but the index is not rebuilt, retrieved chunks may contain outdated information.</p>
+<h3 id="context-utilization-failures">Context Utilization Failures<a class="headerlink" href="#context-utilization-failures" title="Permanent link">¶</a></h3>
+<p><strong>Lost-in-the-middle.</strong> Liu et al. (2023) documented that LLMs are significantly worse at using information in the middle of a long context compared to information at the beginning or end. If you inject <span class="arithmatex">\(k = 10\)</span> chunks, the ones in positions 4–6 are likely to be ignored.</p>
+<p><strong>Context-answer inconsistency (hallucination despite context).</strong> The model may generate information that is <em>not</em> in the retrieved chunks, especially when the retrieved context is ambiguous or partially relevant.</p>
+<p><strong>Prompt over-crowding.</strong> Too many retrieved chunks consume the context budget, leaving insufficient room for chain-of-thought reasoning or multi-turn history. For agents, this competes with tool call outputs and conversation history. See <a href="../08-agents-harness/04-context-engineering.html">Context Engineering &amp; Management</a> for strategies.</p>
+<h3 id="ranking-and-diversity-failures">Ranking and Diversity Failures<a class="headerlink" href="#ranking-and-diversity-failures" title="Permanent link">¶</a></h3>
+<p><strong>Semantic redundancy.</strong> ANN retrieval can return five near-duplicate chunks from the same section of a document. Each chunk has a high similarity score to the query, but they provide no additional information. A Maximal Marginal Relevance (MMR) or diversity filter is needed.</p>
+<p><strong>No cross-encoder reranking.</strong> Bi-encoders embed query and document independently, so they cannot capture fine-grained interaction. A query &ldquo;disadvantages of batch normalization&rdquo; may retrieve the highest-scoring chunk being a general overview of batch norm that only tangentially mentions its disadvantages.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common pitfall: trusting cosine similarity as a quality signal</p>
+<p>A cosine similarity of 0.85 between a query and a chunk does not guarantee the chunk is relevant. In high-dimensional embedding spaces, cosine similarities cluster in a narrow band (often 0.7–0.95 for any reasonable pair). Always pair vector retrieval with a reranker for high-stakes applications.</p>
+</div>
+<h2 id="rag-evaluation-ragas-and-the-three-metrics">RAG Evaluation: RAGAS and the Three Metrics<a class="headerlink" href="#rag-evaluation-ragas-and-the-three-metrics" title="Permanent link">¶</a></h2>
+<p>Measuring whether your RAG system is working requires disaggregating the pipeline into retrieval quality and generation quality. The RAGAS framework (Es et al., 2023) defines three core metrics that cover both concerns, all computable without human labels using an LLM-as-judge.</p>
+<h3 id="faithfulness">Faithfulness<a class="headerlink" href="#faithfulness" title="Permanent link">¶</a></h3>
+<p><strong>Definition.</strong> Given the retrieved context <span class="arithmatex">\(\mathcal{D}_{q}\)</span> and the generated answer <span class="arithmatex">\(y\)</span>, faithfulness measures whether every claim in <span class="arithmatex">\(y\)</span> is entailed by <span class="arithmatex">\(\mathcal{D}_{q}\)</span>. It is computed as:</p>
+<div class="arithmatex">\[
+\text{Faithfulness} = \frac{|\{\text{claims in } y \text{ that are supported by } \mathcal{D}_{q}\}|}{|\{\text{claims in } y\}|}
+\]</div>
+<p>A faithfulness score of 1.0 means the answer is fully grounded. A score below 0.8 is a strong signal of hallucination.</p>
+<p><strong>Implementation.</strong> An LLM (the judge) first decomposes <span class="arithmatex">\(y\)</span> into a list of atomic claims, then classifies each claim as supported or unsupported by the context passages.</p>
+<h3 id="answer-relevance">Answer Relevance<a class="headerlink" href="#answer-relevance" title="Permanent link">¶</a></h3>
+<p><strong>Definition.</strong> Answer relevance measures whether the generated answer is relevant to the query, independent of whether it is faithful. A system could achieve high faithfulness (all claims supported by context) but low answer relevance (the context and answer are about a different aspect of the query).</p>
+<p>Formally, the judge generates <span class="arithmatex">\(n\)</span> hypothetical questions <span class="arithmatex">\(q_1, \ldots, q_n\)</span> that the answer <span class="arithmatex">\(y\)</span> appears to address, then measures:</p>
+<div class="arithmatex">\[
+\text{AnswerRelevance} = \frac{1}{n} \sum_{i=1}^{n} \cos(\mathbf{e}_{q_i},\, \mathbf{e}_{q})
+\]</div>
+<p>where <span class="arithmatex">\(\mathbf{e}_{q}\)</span> is the embedding of the original query. A high score means the hypothetical questions regenerated from the answer closely resemble the original query.</p>
+<h3 id="context-precision-and-recall">Context Precision and Recall<a class="headerlink" href="#context-precision-and-recall" title="Permanent link">¶</a></h3>
+<p>Two retrieval-quality metrics round out the picture:</p>
+<ul>
+<li><strong>Context Precision.</strong> Of the <span class="arithmatex">\(k\)</span> retrieved chunks, how many are actually useful for answering the question? Precision penalizes noisy retrieval.</li>
+<li><strong>Context Recall.</strong> Given ground-truth relevant passages, how many were retrieved? Recall penalizes missed evidence.</li>
+</ul>
+<div class="arithmatex">\[
+\text{ContextPrecision@k} = \frac{|\{\text{relevant chunks in top-}k\}|}{k}
+\]</div>
+<p>In the LLM-as-judge variant (no ground truth), the judge is asked: &ldquo;Is this chunk necessary to produce the correct answer?&rdquo; for each retrieved chunk.</p>
+<h3 id="ragas-in-practice">RAGAS in Practice<a class="headerlink" href="#ragas-in-practice" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Minimal RAGAS-style evaluation loop.</span>
+<span class="sd">Requires: pip install ragas datasets openai</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">ragas</span><span class="w"> </span><span class="kn">import</span> <span class="n">evaluate</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ragas.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">faithfulness</span><span class="p">,</span>
+    <span class="n">answer_relevancy</span><span class="p">,</span>
+    <span class="n">context_precision</span><span class="p">,</span>
+    <span class="n">context_recall</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datasets</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dataset</span>
+
+<span class="c1"># Build evaluation dataset in RAGAS format</span>
+<span class="c1"># ground_truth is optional (needed for context_recall)</span>
+<span class="n">eval_data</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">{</span>
+        <span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;How does FlashAttention reduce memory?&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="s2">&quot;FlashAttention tiles Q, K, V into SRAM blocks and avoids materializing the O(N²) attention matrix, reducing memory to O(N).&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;contexts&quot;</span><span class="p">:</span> <span class="p">[</span>
+            <span class="s2">&quot;FlashAttention is an IO-aware exact attention algorithm. It tiles the Q, K, V matrices into blocks that fit in SRAM...&quot;</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="s2">&quot;ground_truth&quot;</span><span class="p">:</span> <span class="s2">&quot;FlashAttention avoids storing the full N×N attention matrix by using tiled SRAM computation.&quot;</span><span class="p">,</span>
+    <span class="p">},</span>
+<span class="p">]</span>
+
+<span class="n">dataset</span> <span class="o">=</span> <span class="n">Dataset</span><span class="o">.</span><span class="n">from_list</span><span class="p">(</span><span class="n">eval_data</span><span class="p">)</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">evaluate</span><span class="p">(</span>
+    <span class="n">dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span>
+    <span class="n">metrics</span><span class="o">=</span><span class="p">[</span><span class="n">faithfulness</span><span class="p">,</span> <span class="n">answer_relevancy</span><span class="p">,</span> <span class="n">context_precision</span><span class="p">,</span> <span class="n">context_recall</span><span class="p">],</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">results</span><span class="p">)</span>
+<span class="c1"># Example output:</span>
+<span class="c1"># {&#39;faithfulness&#39;: 0.97, &#39;answer_relevancy&#39;: 0.92,</span>
+<span class="c1">#  &#39;context_precision&#39;: 1.00, &#39;context_recall&#39;: 0.95}</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Aside: RAGAS requires an LLM judge</p>
+<p>RAGAS calls an LLM (default: GPT-4) to decompose answers into claims and to score them. This means evaluation costs money and is subject to judge bias. For large-scale offline evaluation, cache judge responses or use a cheaper model for preliminary sweeps.</p>
+</div>
+<h2 id="the-rag-design-space">The RAG Design Space<a class="headerlink" href="#the-rag-design-space" title="Permanent link">¶</a></h2>
+<p>Naive RAG is a starting point, not a destination. The design space is large and each axis can be tuned independently.</p>
+<h3 id="retrieval-strategy">Retrieval Strategy<a class="headerlink" href="#retrieval-strategy" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Axis</th>
+<th>Options</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Index type</td>
+<td>Dense only, sparse (BM25) only, hybrid (dense + sparse)</td>
+</tr>
+<tr>
+<td>Retrieval granularity</td>
+<td>Paragraph, sentence, document, hierarchical</td>
+</tr>
+<tr>
+<td>Query rewriting</td>
+<td>None, HyDE, step-back, multi-query expansion</td>
+</tr>
+<tr>
+<td>Multi-hop</td>
+<td>Single retrieval, iterative retrieval, chain-of-thought retrieval</td>
+</tr>
+<tr>
+<td>Filtering</td>
+<td>Metadata filters, date range, access control</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Hybrid search</strong> combines a BM25 sparse index (exact keyword matching) with a dense embedding index, fusing scores via Reciprocal Rank Fusion (RRF). This is almost universally better than either alone for general-purpose corpora:</p>
+<div class="arithmatex">\[
+\text{RRF}(d, R_1, R_2) = \frac{1}{k + \text{rank}_{R_1}(d)} + \frac{1}{k + \text{rank}_{R_2}(d)}
+\]</div>
+<p>where <span class="arithmatex">\(k = 60\)</span> is a smoothing constant, <span class="arithmatex">\(R_1\)</span> is the BM25 ranking, and <span class="arithmatex">\(R_2\)</span> is the dense ranking.</p>
+<p><strong>HyDE (Hypothetical Document Embedding)</strong>, introduced by Gao et al. (2022), flips the retrieval problem: instead of embedding the short query directly, the LLM generates a hypothetical answer document, and that document is used as the retrieval query. Since the hypothetical document uses the same vocabulary and style as the corpus, the retrieval often improves substantially for queries where the question and answer have very different surface forms.</p>
+<h3 id="indexing-strategies">Indexing Strategies<a class="headerlink" href="#indexing-strategies" title="Permanent link">¶</a></h3>
+<p><strong>Parent-child chunks.</strong> Index small child chunks (128 tokens) for high retrieval precision, but when a child chunk is retrieved, look up and return its parent chunk (512 tokens) for generation context. This avoids losing context while keeping retrieval sharp.</p>
+<p><strong>Summary indexes.</strong> For each document, store a summary chunk alongside the raw chunks. The retriever can match against the summary (capturing document-level semantics), then return the full document or relevant sections.</p>
+<p><strong>Knowledge graph indexes (GraphRAG).</strong> Convert the corpus into a knowledge graph of entities and relationships, enabling retrieval by entity traversal rather than pure semantic similarity. See <a href="../09-rag-retrieval/05-advanced-rag.html">Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a>.</p>
+<h3 id="generator-configuration">Generator Configuration<a class="headerlink" href="#generator-configuration" title="Permanent link">¶</a></h3>
+<p>The way retrieved context is formatted and prompted has a large impact on generation quality:</p>
+<ol>
+<li><strong>Positional bias mitigation.</strong> Shuffle retrieved chunks between runs, or put the most relevant chunk first <em>and</em> last.</li>
+<li><strong>Explicit grounding instruction.</strong> &ldquo;Answer ONLY using the provided passages. If the answer is not there, say &lsquo;I don&rsquo;t know&rsquo;.&rdquo; This reduces hallucination significantly compared to implicit grounding.</li>
+<li><strong>Citation format.</strong> Instructing the model to cite &ldquo;[chunk index]&rdquo; inline allows post-processing to verify every cited claim.</li>
+<li><strong>Temperature.</strong> For factual QA, temperature 0.0 or very low temperatures are preferred — we do not want creative paraphrasing of facts.</li>
+</ol>
+<div class="admonition interview">
+<p class="admonition-title">Interview Corner</p>
+<p><strong>Q:</strong> You are designing a RAG system for a customer-support chatbot. The retrieval precision is high (users get relevant passages) but faithfulness is low (the model often adds information not in the retrieved context). How would you diagnose and fix this?</p>
+<p><strong>A:</strong> Low faithfulness with high precision is almost always a generation problem, not a retrieval problem. The model is generating from its parametric memory instead of strictly following the context.</p>
+<p>Diagnosis: Run RAGAS faithfulness on a sample. Decompose generated answers into atomic claims and check which claims are unsupported. Look for patterns — does the model add details about products, prices, or policies that are not in the chunks?</p>
+<p>Fixes, in order of effort:
+1. Strengthen the system prompt: &ldquo;You MUST answer using only the passages below. Do not add information from your own knowledge.&rdquo;
+2. Add chain-of-thought grounding: ask the model to first quote the relevant sentence, then answer based on the quote.
+3. Use a model fine-tuned for RAG (e.g., a model fine-tuned with RAFT — Retrieval-Augmented Fine Tuning — which trains the model to distinguish relevant from irrelevant context).
+4. Use a smaller, more instruction-following model that has less parametric knowledge to &ldquo;leak.&rdquo;
+5. Post-process outputs with an NLI classifier to flag ungrounded claims before serving.</p>
+</div>
+<h2 id="putting-it-together-a-more-complete-pipeline">Putting It Together: A More Complete Pipeline<a class="headerlink" href="#putting-it-together-a-more-complete-pipeline" title="Permanent link">¶</a></h2>
+<p>Here is a pipeline that incorporates hybrid retrieval, parent-child chunk lookup, and explicit faithfulness checking. This is close to a production-quality open-source RAG system.</p>
+<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Production-style RAG pipeline:</span>
+<span class="sd">  - BM25 + dense hybrid retrieval (RRF fusion)</span>
+<span class="sd">  - Parent-child chunk hierarchy</span>
+<span class="sd">  - Faithfulness check (NLI-based)</span>
+<span class="sd">Dependencies: rank_bm25, sentence-transformers, faiss-cpu, transformers</span>
+<span class="sd">  pip install rank_bm25 sentence-transformers faiss-cpu transformers</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rank_bm25</span><span class="w"> </span><span class="kn">import</span> <span class="n">BM25Okapi</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sentence_transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">SentenceTransformer</span><span class="p">,</span> <span class="n">CrossEncoder</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">pipeline</span> <span class="k">as</span> <span class="n">hf_pipeline</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">faiss</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Tuple</span>
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># Data structures</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Chunk</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">chunk_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">parent_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">text</span> <span class="o">=</span> <span class="n">text</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">chunk_id</span> <span class="o">=</span> <span class="n">chunk_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">parent_id</span> <span class="o">=</span> <span class="n">parent_id</span>   <span class="c1"># index into parent_docs list</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Document</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">full_text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">doc_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">full_text</span> <span class="o">=</span> <span class="n">full_text</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">doc_id</span> <span class="o">=</span> <span class="n">doc_id</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># Build parent-child index</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">build_parent_child_index</span><span class="p">(</span>
+    <span class="n">documents</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">child_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>    <span class="c1"># words per child chunk</span>
+    <span class="n">overlap</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">Document</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">Chunk</span><span class="p">]]:</span>
+    <span class="n">parent_docs</span> <span class="o">=</span> <span class="p">[</span><span class="n">Document</span><span class="p">(</span><span class="n">doc</span><span class="p">,</span> <span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">doc</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">documents</span><span class="p">)]</span>
+    <span class="n">child_chunks</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">chunk_id</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">doc</span> <span class="ow">in</span> <span class="n">parent_docs</span><span class="p">:</span>
+        <span class="n">words</span> <span class="o">=</span> <span class="n">doc</span><span class="o">.</span><span class="n">full_text</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+        <span class="n">start</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">while</span> <span class="n">start</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">):</span>
+            <span class="n">end</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">start</span> <span class="o">+</span> <span class="n">child_size</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">))</span>
+            <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">words</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">end</span><span class="p">])</span>
+            <span class="n">child_chunks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Chunk</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">chunk_id</span><span class="p">,</span> <span class="n">doc</span><span class="o">.</span><span class="n">doc_id</span><span class="p">))</span>
+            <span class="n">chunk_id</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="n">end</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">):</span>
+                <span class="k">break</span>
+            <span class="n">start</span> <span class="o">=</span> <span class="n">end</span> <span class="o">-</span> <span class="n">overlap</span>
+    <span class="k">return</span> <span class="n">parent_docs</span><span class="p">,</span> <span class="n">child_chunks</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># Hybrid retrieval: BM25 + dense, fused by RRF</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">HybridRetriever</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">chunks</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Chunk</span><span class="p">],</span> <span class="n">embed_model</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">chunks</span> <span class="o">=</span> <span class="n">chunks</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">texts</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span><span class="o">.</span><span class="n">text</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">chunks</span><span class="p">]</span>
+
+        <span class="c1"># BM25</span>
+        <span class="n">tokenized</span> <span class="o">=</span> <span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">()</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">texts</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bm25</span> <span class="o">=</span> <span class="n">BM25Okapi</span><span class="p">(</span><span class="n">tokenized</span><span class="p">)</span>
+
+        <span class="c1"># Dense (FAISS)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">encoder</span> <span class="o">=</span> <span class="n">SentenceTransformer</span><span class="p">(</span><span class="n">embed_model</span><span class="p">)</span>
+        <span class="n">embeddings</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">encoder</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">texts</span><span class="p">,</span> <span class="n">normalize_embeddings</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">show_progress_bar</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="n">embeddings</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">index</span> <span class="o">=</span> <span class="n">faiss</span><span class="o">.</span><span class="n">IndexFlatIP</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">embeddings</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_rrf</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">rank_lists</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">60</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Reciprocal Rank Fusion over multiple ranked lists of chunk indices.&quot;&quot;&quot;</span>
+        <span class="n">scores</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">ranked</span> <span class="ow">in</span> <span class="n">rank_lists</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">rank</span><span class="p">,</span> <span class="n">idx</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">ranked</span><span class="p">):</span>
+                <span class="n">scores</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">k</span> <span class="o">+</span> <span class="n">rank</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">scores</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">retrieve</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">top_n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Chunk</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
+        <span class="c1"># BM25 ranking</span>
+        <span class="n">bm25_scores</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">bm25</span><span class="o">.</span><span class="n">get_scores</span><span class="p">(</span><span class="n">query</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">())</span>
+        <span class="n">bm25_ranked</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">bm25_scores</span><span class="p">)[::</span><span class="o">-</span><span class="mi">1</span><span class="p">][:</span><span class="n">top_n</span><span class="p">])</span>
+
+        <span class="c1"># Dense ranking</span>
+        <span class="n">q_vec</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">encoder</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">query</span><span class="p">],</span> <span class="n">normalize_embeddings</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">dense_indices</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">q_vec</span><span class="p">,</span> <span class="n">top_n</span><span class="p">)</span>
+        <span class="n">dense_ranked</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">dense_indices</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+        <span class="c1"># Fuse</span>
+        <span class="n">fused</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_rrf</span><span class="p">(</span><span class="n">bm25_ranked</span><span class="p">,</span> <span class="n">dense_ranked</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">60</span><span class="p">)</span>
+        <span class="n">sorted_ids</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">fused</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="o">-</span><span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">])[:</span><span class="n">top_n</span><span class="p">]</span>
+        <span class="k">return</span> <span class="p">[(</span><span class="bp">self</span><span class="o">.</span><span class="n">chunks</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span> <span class="n">score</span><span class="p">)</span> <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">score</span> <span class="ow">in</span> <span class="n">sorted_ids</span><span class="p">]</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># Cross-encoder reranker</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Reranker</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cross-encoder/ms-marco-MiniLM-L-6-v2&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">CrossEncoder</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">rerank</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">candidates</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Chunk</span><span class="p">,</span> <span class="nb">float</span><span class="p">]],</span>
+        <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Chunk</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
+        <span class="n">pairs</span> <span class="o">=</span> <span class="p">[(</span><span class="n">query</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">text</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">candidates</span><span class="p">]</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">pairs</span><span class="p">)</span>
+        <span class="n">ranked</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span>
+            <span class="nb">zip</span><span class="p">([</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">candidates</span><span class="p">],</span> <span class="n">scores</span><span class="p">),</span>
+            <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="o">-</span><span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">ranked</span><span class="p">[:</span><span class="n">top_k</span><span class="p">]</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># NLI faithfulness checker (optional post-filter)</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">FaithfulnessChecker</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Uses an NLI model to check whether the generated answer</span>
+<span class="sd">    is entailed by the retrieved context.</span>
+<span class="sd">    Returns a float in [0, 1]; &lt;0.5 suggests hallucination.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># mnli model: entailment, neutral, contradiction</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">nli</span> <span class="o">=</span> <span class="n">hf_pipeline</span><span class="p">(</span>
+            <span class="s2">&quot;text-classification&quot;</span><span class="p">,</span>
+            <span class="n">model</span><span class="o">=</span><span class="s2">&quot;cross-encoder/nli-deberta-v3-small&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">score</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">premise</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">hypothesis</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns probability of entailment.&quot;&quot;&quot;</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">nli</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">premise</span><span class="si">}</span><span class="s2"> [SEP] </span><span class="si">{</span><span class="n">hypothesis</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">truncation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">max_length</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">label_score</span> <span class="o">=</span> <span class="p">{</span><span class="n">r</span><span class="p">[</span><span class="s2">&quot;label&quot;</span><span class="p">]:</span> <span class="n">r</span><span class="p">[</span><span class="s2">&quot;score&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">result</span><span class="p">}</span>
+        <span class="k">return</span> <span class="n">label_score</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;entailment&quot;</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">check_answer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">answer</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return True if answer appears to be grounded in context.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">score</span><span class="p">(</span><span class="n">premise</span><span class="o">=</span><span class="n">context</span><span class="p">,</span> <span class="n">hypothesis</span><span class="o">=</span><span class="n">answer</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">threshold</span>
+
+
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="c1"># Assemble the full pipeline</span>
+<span class="c1"># ─────────────────────────────────────────────</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">run_pipeline</span><span class="p">(</span>
+    <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">retriever</span><span class="p">:</span> <span class="n">HybridRetriever</span><span class="p">,</span>
+    <span class="n">reranker</span><span class="p">:</span> <span class="n">Reranker</span><span class="p">,</span>
+    <span class="n">parent_docs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Document</span><span class="p">],</span>
+    <span class="n">faithfulness_checker</span><span class="p">:</span> <span class="n">FaithfulnessChecker</span><span class="p">,</span>
+    <span class="n">generate_fn</span><span class="p">,</span>  <span class="c1"># callable(prompt: str) -&gt; str</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">:</span>
+    <span class="c1"># Step 1: Retrieve child chunks</span>
+    <span class="n">candidates</span> <span class="o">=</span> <span class="n">retriever</span><span class="o">.</span><span class="n">retrieve</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">top_n</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+
+    <span class="c1"># Step 2: Rerank</span>
+    <span class="n">top_chunks</span> <span class="o">=</span> <span class="n">reranker</span><span class="o">.</span><span class="n">rerank</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">candidates</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+    <span class="c1"># Step 3: Look up parent documents for richer context</span>
+    <span class="n">seen_parents</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="n">context_parts</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">chunk</span><span class="p">,</span> <span class="n">score</span> <span class="ow">in</span> <span class="n">top_chunks</span><span class="p">:</span>
+        <span class="n">parent_id</span> <span class="o">=</span> <span class="n">chunk</span><span class="o">.</span><span class="n">parent_id</span>
+        <span class="k">if</span> <span class="n">parent_id</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">seen_parents</span><span class="p">:</span>
+            <span class="n">context_parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">parent_docs</span><span class="p">[</span><span class="n">parent_id</span><span class="p">]</span><span class="o">.</span><span class="n">full_text</span><span class="p">)</span>
+            <span class="n">seen_parents</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">parent_id</span><span class="p">)</span>
+
+    <span class="n">context</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">---</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">context_parts</span><span class="p">)</span>
+
+    <span class="c1"># Step 4: Generate</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Context:</span><span class="se">\n</span><span class="si">{</span><span class="n">context</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Answer the question based ONLY on the context above.</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;Question: </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="se">\n</span><span class="s2">Answer:&quot;</span>
+    <span class="p">)</span>
+    <span class="n">answer</span> <span class="o">=</span> <span class="n">generate_fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+
+    <span class="c1"># Step 5: Faithfulness check</span>
+    <span class="n">is_faithful</span> <span class="o">=</span> <span class="n">faithfulness_checker</span><span class="o">.</span><span class="n">check_answer</span><span class="p">(</span><span class="n">answer</span><span class="p">,</span> <span class="n">context</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="n">answer</span><span class="p">,</span>
+        <span class="s2">&quot;context&quot;</span><span class="p">:</span> <span class="n">context</span><span class="p">,</span>
+        <span class="s2">&quot;top_chunks&quot;</span><span class="p">:</span> <span class="p">[(</span><span class="n">c</span><span class="o">.</span><span class="n">text</span><span class="p">,</span> <span class="n">s</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span><span class="p">,</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">top_chunks</span><span class="p">],</span>
+        <span class="s2">&quot;faithful&quot;</span><span class="p">:</span> <span class="n">is_faithful</span><span class="p">,</span>
+    <span class="p">}</span>
+</code></pre></div>
+<h2 id="long-context-llms-vs-rag-the-design-decision">Long-Context LLMs vs RAG: The Design Decision<a class="headerlink" href="#long-context-llms-vs-rag-the-design-decision" title="Permanent link">¶</a></h2>
+<p>A recurring question for practitioners is: &ldquo;If the model has a 128 k-token context window, why do I need RAG at all — can&rsquo;t I just stuff the whole knowledge base into the prompt?&rdquo;</p>
+<p>The honest answer is: it depends.</p>
+<table>
+<thead>
+<tr>
+<th>Consideration</th>
+<th>Long-Context LLM</th>
+<th>RAG</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Corpus size</td>
+<td>Must fit in context; cost scales <span class="arithmatex">\(O(N)\)</span> with tokens</td>
+<td>Scales to billions of documents</td>
+</tr>
+<tr>
+<td>Freshness</td>
+<td>Re-prompt each time (cheap)</td>
+<td>Re-index on document update</td>
+</tr>
+<tr>
+<td>Latency</td>
+<td>Prefilling 100 k tokens takes seconds</td>
+<td>Retrieval adds ~50–100 ms</td>
+</tr>
+<tr>
+<td>Inference cost</td>
+<td>Very high (attention is <span class="arithmatex">\(O(N^2)\)</span> in prefill)</td>
+<td>Cheap: only top-<span class="arithmatex">\(k\)</span> docs injected</td>
+</tr>
+<tr>
+<td>Retrieval precision</td>
+<td>Perfect (nothing is missed)</td>
+<td>Recall depends on retriever quality</td>
+</tr>
+<tr>
+<td>Lost-in-middle</td>
+<td>Significant beyond ~32 k tokens</td>
+<td>Controlled; inject 1–5 k tokens</td>
+</tr>
+</tbody>
+</table>
+<p>For corpora that fit in a long context (e.g., a single legal contract, a codebase under 100 k tokens), long-context prompting is simpler and more reliable. For large, dynamic, multi-document corpora (knowledge bases, enterprise wikis, customer support databases), RAG is the right tool. See <a href="../09-rag-retrieval/05-advanced-rag.html">Advanced RAG: GraphRAG, Agentic RAG &amp; Long-Context vs RAG</a> for a detailed comparison.</p>
+<p>The two approaches also compose: <strong>iterative RAG</strong> retrieves a small context, reasons over it, then decides whether to retrieve more, effectively using long-context reasoning to stitch together multi-hop evidence. <a href="../08-agents-harness/02-agentic-loop.html">The Agentic Loop: ReAct, Plan-Execute &amp; Reflection</a> covers this pattern.</p>
+<h2 id="serving-a-rag-system-in-production">Serving a RAG System in Production<a class="headerlink" href="#serving-a-rag-system-in-production" title="Permanent link">¶</a></h2>
+<p>A few operational concerns that come up in every production RAG deployment:</p>
+<p><strong>Indexing latency vs freshness.</strong> Real-time re-embedding and re-indexing is expensive. Common patterns: batch re-index nightly; maintain a &ldquo;hot&rdquo; real-time index for recent documents and a &ldquo;cold&rdquo; indexed corpus for historical ones; serve queries against both and merge results.</p>
+<p><strong>Multi-tenancy and access control.</strong> Retrieved documents must respect document-level permissions. FAISS alone has no ACL support. Solutions include: metadata-filtered retrieval (Qdrant, Weaviate, Pinecone all support filter expressions), per-tenant index shards, or post-retrieval filtering.</p>
+<p><strong>Caching.</strong> Embedding the same query repeatedly is wasteful. Cache query embeddings keyed by the (normalized) query string. Also cache retrieval results for frequent queries. See <a href="../12-production-mlops/03-caching-routing-cost.html">Caching, Routing &amp; Cost Control in Production</a>.</p>
+<p><strong>Monitoring.</strong> Log every query, retrieved chunk IDs, faithfulness scores, and user feedback. A RAGAS-style offline eval batch should run on a sample of production logs nightly. See <a href="../12-production-mlops/02-observability-llmops.html">Observability, Logging &amp; LLMOps</a>.</p>
+<p><strong>Embedding model upgrades.</strong> If you switch encoder models, you must re-embed the entire corpus — the new model&rsquo;s embedding space is incompatible with the old one. Plan for full re-indexing as a first-class operation. Dual-write during migration: index new documents with both old and new models until the old index is retired.</p>
+<div class="admonition tip">
+<p class="admonition-title">Practitioner tip: start with BM25 only</p>
+<p>Before investing in a dense embedding pipeline, run BM25 (sparse retrieval) alone on your corpus. For many enterprise knowledge bases with domain-specific terminology, BM25 outperforms a generic dense model. Once you have a BM25 baseline, add a dense retriever and measure whether hybrid search beats the baseline. Never optimize before measuring.</p>
+</div>
+<div class="admonition key">
+<p class="admonition-title">Key Takeaways</p>
+<ul>
+<li>RAG addresses three core limitations of parametric LLMs: temporal staleness, capacity limits, and lack of attribution. It conditions generation on freshly retrieved external documents rather than memorized facts.</li>
+<li>The pipeline has five stages: chunk, embed, index, retrieve, and generate. Each stage is a distinct design dimension with its own failure modes.</li>
+<li>Naive RAG fails due to chunking boundary issues, semantic mismatch, lost-in-the-middle generation degradation, and semantic redundancy in retrieved results.</li>
+<li>Hybrid retrieval (BM25 + dense, fused by RRF) and cross-encoder reranking are the two single highest-leverage improvements over naive RAG.</li>
+<li>RAGAS provides three core evaluation metrics — faithfulness, answer relevance, and context precision — that decompose system quality into retrieval and generation components without requiring human labels.</li>
+<li>Parent-child chunking decouples retrieval precision (small child chunks) from generation context quality (full parent document).</li>
+<li>Long-context LLMs and RAG are complementary: use long-context for corpora that fit in the window; use RAG for large, dynamic, or multi-tenant knowledge bases.</li>
+<li>Production RAG requires solving indexing freshness, access control, embedding model versioning, and per-query observability — these are often harder than the core retrieval logic.</li>
+</ul>
+</div>
+<div class="admonition sota">
+<p class="admonition-title">State of the Art &amp; Resources (2026)</p>
+<p>RAG has evolved from a single-pass dense-retrieval pipeline into a rich ecosystem of hybrid search, agentic multi-hop retrieval, and standardized evaluation frameworks — making it one of the most production-deployed LLM architectural patterns as of 2026.</p>
+<p><strong>Foundational work</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2005.11401">Lewis et al., <em>Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks</em> (2020)</a> — the original RAG paper combining DPR retrieval with BART generation end-to-end; defines the retrieve-then-generate paradigm.</li>
+<li><a href="https://arxiv.org/abs/2004.04906">Karpukhin et al., <em>Dense Passage Retrieval for Open-Domain Question Answering</em> (2020)</a> — the DPR dual-encoder that underlies most modern dense retrievers; showed dense representations outperform BM25 by 9–19% on top-20 recall.</li>
+</ul>
+<p><strong>Recent advances (2023–2026)</strong></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2212.10496">Gao et al., <em>Precise Zero-Shot Dense Retrieval without Relevance Labels</em> (HyDE, 2022)</a> — generates a hypothetical answer document as the retrieval query, bridging the vocabulary gap between short queries and long documents.</li>
+<li><a href="https://arxiv.org/abs/2307.03172">Liu et al., <em>Lost in the Middle: How Language Models Use Long Contexts</em> (2023)</a> — empirical evidence that LLMs degrade on information in the middle of long contexts; directly motivates careful chunk ordering in RAG prompts.</li>
+<li><a href="https://arxiv.org/abs/2309.15217">Es et al., <em>Ragas: Automated Evaluation of Retrieval Augmented Generation</em> (2023)</a> — reference-free faithfulness, answer relevancy, and context precision metrics; the de facto RAG evaluation standard.</li>
+<li><a href="https://arxiv.org/abs/2403.10131">Zhang et al., <em>RAFT: Adapting Language Model to Domain Specific RAG</em> (2024)</a> — fine-tuning recipe that teaches models to cite supporting passages and ignore distractor documents in RAG settings.</li>
+<li><a href="https://arxiv.org/abs/2410.12837">Gupta et al., <em>A Comprehensive Survey of RAG: Evolution, Current Landscape and Future Directions</em> (2024)</a> — broad survey covering modular RAG, GraphRAG, agentic retrieval, and evaluation benchmarks up to late 2024.</li>
+<li><a href="https://arxiv.org/abs/2501.09136">Singh et al., <em>Agentic Retrieval-Augmented Generation: A Survey on Agentic RAG</em> (2025)</a> — surveys how autonomous agents dynamically decide when and what to retrieve, enabling multi-hop and self-correcting pipelines.</li>
+</ul>
+<p><strong>Open-source &amp; tools</strong></p>
+<ul>
+<li><a href="https://github.com/explodinggradients/ragas">explodinggradients/ragas</a> — the ragas Python library implementing faithfulness, answer relevancy, and context precision; integrates with LangChain and LlamaIndex.</li>
+<li><a href="https://github.com/langchain-ai/langchain">langchain-ai/langchain</a> — the dominant RAG orchestration framework (138 k GitHub stars); provides document loaders, text splitters, retrievers, and LLM chains with 300+ integrations.</li>
+<li><a href="https://github.com/run-llama/llama_index">run-llama/llama_index</a> — LlamaIndex, specialized for advanced indexing patterns (parent-child, summary indexes, knowledge graphs) and agentic retrieval workflows.</li>
+</ul>
+</div>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li>Lewis et al., <strong>&ldquo;Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks&rdquo;</strong>, NeurIPS 2020 — the original RAG paper combining DPR retrieval with BART generation end-to-end.</li>
+<li>Karpukhin et al., <strong>&ldquo;Dense Passage Retrieval for Open-Domain Question Answering&rdquo;</strong> (DPR), EMNLP 2020 — the bi-encoder retrieval model that underlies most dense RAG systems.</li>
+<li>Gao et al., <strong>&ldquo;Precise Zero-Shot Dense Retrieval without Relevance Labels&rdquo;</strong> (HyDE), ACL 2023 — hypothetical document embedding for improved query-document alignment.</li>
+<li>Es et al., <strong>&ldquo;RAGAS: Automated Evaluation of Retrieval Augmented Generation&rdquo;</strong>, 2023 — defines the faithfulness, answer relevance, and context precision metrics implemented by the <code>ragas</code> library.</li>
+<li>Liu et al., <strong>&ldquo;Lost in the Middle: How Language Models Use Long Contexts&rdquo;</strong>, TACL 2024 — empirical study of positional bias in long-context generation, directly relevant to multi-chunk RAG.</li>
+<li>Shi et al., <strong>&ldquo;REPLUG: Retrieval-Augmented Black-Box Language Models&rdquo;</strong>, NAACL 2023 — treats the LLM as a black box and trains only the retriever via LM likelihood signals.</li>
+<li>Zhang et al., <strong>&ldquo;RAFT: Adapting Language Model to Domain Specific RAG&rdquo;</strong>, 2024 — fine-tuning recipe for making models better at extracting answers from retrieved context while ignoring distractor documents.</li>
+<li>LangChain and LlamaIndex open-source repos — the two most widely used RAG orchestration frameworks, with extensive examples of advanced retrieval patterns.</li>
+</ul>
+<nav class="page-nav">
+<a class="prev" href="02-vector-databases-ann.html"><span class="pn-label">← Previous</span><span class="pn-title">Vector Databases &amp; Approximate Nearest Neighbor Search</span></a>
+<a class="next" href="04-chunking-reranking-hybrid.html"><span class="pn-label">Next →</span><span class="pn-title">Chunking, Reranking &amp; Hybrid Search</span></a>
+</nav>
+</article>
+<footer class="site-footer">
+  <span>The LLM Stack · From Silicon to Agents</span>
+  <span>Built from first principles. Improved continually.</span>
+</footer>
+</main>
+<aside class="toc-side"><div class="toc-title">On this page</div><ul><li class="toc-l2"><a href="#why-rag-exists-three-hard-problems">Why RAG Exists: Three Hard Problems</a></li>
+<li class="toc-l3"><a href="#the-parametric-memory-wall">The Parametric Memory Wall</a></li>
+<li class="toc-l3"><a href="#what-rag-changes">What RAG Changes</a></li>
+<li class="toc-l2"><a href="#the-rag-pipeline-five-stages">The RAG Pipeline: Five Stages</a></li>
+<li class="toc-l3"><a href="#stage-1-chunking">Stage 1 — Chunking</a></li>
+<li class="toc-l3"><a href="#stage-2-embedding">Stage 2 — Embedding</a></li>
+<li class="toc-l3"><a href="#stage-3-indexing">Stage 3 — Indexing</a></li>
+<li class="toc-l3"><a href="#stage-4-retrieve-and-optionally-rerank">Stage 4 — Retrieve (and optionally Rerank)</a></li>
+<li class="toc-l3"><a href="#stage-5-generate">Stage 5 — Generate</a></li>
+<li class="toc-l2"><a href="#a-minimal-rag-implementation">A Minimal RAG Implementation</a></li>
+<li class="toc-l2"><a href="#naive-rag-and-its-failure-modes">Naive RAG and Its Failure Modes</a></li>
+<li class="toc-l3"><a href="#retrieval-failures">Retrieval Failures</a></li>
+<li class="toc-l3"><a href="#context-utilization-failures">Context Utilization Failures</a></li>
+<li class="toc-l3"><a href="#ranking-and-diversity-failures">Ranking and Diversity Failures</a></li>
+<li class="toc-l2"><a href="#rag-evaluation-ragas-and-the-three-metrics">RAG Evaluation: RAGAS and the Three Metrics</a></li>
+<li class="toc-l3"><a href="#faithfulness">Faithfulness</a></li>
+<li class="toc-l3"><a href="#answer-relevance">Answer Relevance</a></li>
+<li class="toc-l3"><a href="#context-precision-and-recall">Context Precision and Recall</a></li>
+<li class="toc-l3"><a href="#ragas-in-practice">RAGAS in Practice</a></li>
+<li class="toc-l2"><a href="#the-rag-design-space">The RAG Design Space</a></li>
+<li class="toc-l3"><a href="#retrieval-strategy">Retrieval Strategy</a></li>
+<li class="toc-l3"><a href="#indexing-strategies">Indexing Strategies</a></li>
+<li class="toc-l3"><a href="#generator-configuration">Generator Configuration</a></li>
+<li class="toc-l2"><a href="#putting-it-together-a-more-complete-pipeline">Putting It Together: A More Complete Pipeline</a></li>
+<li class="toc-l2"><a href="#long-context-llms-vs-rag-the-design-decision">Long-Context LLMs vs RAG: The Design Decision</a></li>
+<li class="toc-l2"><a href="#serving-a-rag-system-in-production">Serving a RAG System in Production</a></li>
+<li class="toc-l2"><a href="#further-reading">Further Reading</a></li></ul></aside>
+</div>
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$$',right:'$$',display:true}],throwOnError:false});"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>
